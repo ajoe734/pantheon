@@ -316,14 +316,24 @@ touches the hot path.
   (`ready_dispatcher.use_rewrite_dispatch_reason=false`).
   Behaviour preservation is pinned by `rewrite/test_cutover.py` (rewrite-vs-legacy
   parity across a config matrix).
-- **Phase 2 — in progress (offline tool landed; hot-path removal pending).**
-  `rewrite/verify_activity_integrity.py` is the standalone offline verifier §3.2
-  calls for: it reuses the incumbent validator (`common.stream_logical_activity`,
-  faithful by construction), runs outside any cycle, and **alerts via exit code
-  (0 ok / 2 integrity / 3 operational) instead of `raise`ing**. Validated on the
-  live log (37,270 rows). Remaining: wire it as a cron, then delete the on-hot-
-  path lineage `raise` (currently isolated by Phase 0's `_safe_phase`) and switch
-  rotation to size-based atomic-rename.
+- **Phase 2 — done (integrity off the hot path).** Two parts, both landed:
+  (a) `rewrite/verify_activity_integrity.py` — the standalone offline verifier
+  §3.2 calls for: reuses the incumbent validator (`common.stream_logical_activity`,
+  faithful by construction), runs outside any cycle, **alerts via exit code
+  (0 ok / 2 integrity / 3 operational) instead of `raise`ing** (validated on the
+  live log, 37,270 rows). (b) `common.write_activity_log` no longer lets an
+  integrity fault abort the cycle: a genuine **lineage-integrity drift** fault
+  (missing archive, digest/conservation mismatch — the exact 4h-outage class)
+  degrades to a stderr warning + a guaranteed forced append, so
+  dispatch/finalize/archive keep running; the offline verifier owns the alert.
+  Security faults (symlink / non-regular leaf) and correctness guards
+  ("recovery is pending", mid-rotation intent) keep their fail-closed contract
+  via a tight drift allow-list. Escape hatch: `PANTHEON_ACTIVITY_LOG_STRICT=1` or
+  `config.activity_log_strict_hot_path=true` restores incumbent fail-closed
+  writes. Pinned by `rewrite/test_activity_resilient_write.py`; full
+  `test_common.py` audit suite still green.
+  Follow-up (optional hardening, not blocking): fully size-based atomic-rename
+  rotation to retire the lineage-build cost on healthy writes too.
 - **Phases 4, 5, 6, 7 — pending.** Not yet started in code. Each remains a
   parallel-package build + shadow + one-flag cutover per the discipline below.
 
