@@ -33,6 +33,11 @@ pressure, restart budget, and circuit breaker state. If the supervisor is dead
 or stale and restart gates allow it, the watchdog writes safe mode into
 `.orchestrator/state.json` and starts the supervisor.
 
+The systemd service is a oneshot with `KillMode=process`. The watchdog main
+process exits after each probe, but a supervisor child started by a permitted
+restart must remain alive in its own session. The singleton flock and later
+watchdog ticks, not the oneshot cgroup teardown, govern that child.
+
 Do not treat tmux or dashboard uptime as supervisor health. The dashboard can
 remain up while the supervisor and auto workers are dead.
 

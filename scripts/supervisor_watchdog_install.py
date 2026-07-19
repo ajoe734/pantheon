@@ -53,6 +53,11 @@ def render_systemd_service(repo_root: Path, config_path: Path | None = None) -> 
             "",
             "[Service]",
             "Type=oneshot",
+            # The watchdog intentionally launches the long-running supervisor.
+            # Keep systemd from killing that child when the oneshot main process
+            # exits; singleton flock and the next watchdog tick remain the
+            # supervisor liveness authority.
+            "KillMode=process",
             f"WorkingDirectory={systemd_quote(repo_root)}",
             "Environment=PYTHONUNBUFFERED=1",
             f"ExecStart={systemd_quote(script)} {render_watchdog_arguments(config_path)}",
