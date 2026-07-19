@@ -345,7 +345,16 @@ touches the hot path.
   remaining copies of the pause/rotate/reassign branch (in poll_workers) through
   the same decision, and add the owner-side pre-dispatch auth probe that promotes
   `classify_health` from reactive to proactive.
-- **Phases 4, 6, 7 — pending.** Each remains a parallel-package build + shadow +
+- **Phase 4 — partial (two correctness fixes cut over; full decomposition pending).**
+  `rewrite/worker_lifecycle.py`: (a) `confirm_kill` (SIGTERM → wait → SIGKILL →
+  verify) now backs `terminate_worker_pid`, ending SIGTERM-and-assume-dead
+  (a worker was marked `failed` while still alive and mutating state); legacy one
+  flag away via `PANTHEON_LEGACY_TERMINATE=1`. (b) `has_work_progress` (new
+  commit / more completed tool-calls — NOT heartbeat) is the observed-progress
+  primitive lease renewal should bind to, fixing "hangs but heartbeats". Pending:
+  decompose the 751-line `poll_workers` into the enum+table driver, and rebind
+  lease renewal to `has_work_progress`.
+- **Phases 6, 7 — pending.** Each remains a parallel-package build + shadow +
   one-flag cutover per the discipline below.
 
 **Build discipline:** the new modules land in a parallel package and are
