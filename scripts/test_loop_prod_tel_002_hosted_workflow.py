@@ -43,6 +43,11 @@ def test_nonprod_workflow_has_opt_in_read_only_canonical_lifecycle_probe() -> No
     assert "DEV_BFF_OIDC_CLIENT_SECRET: ${{ secrets.DEV_BFF_OIDC_CLIENT_SECRET }}" in source
     assert "LOOP-PROD-TEL-002 hosted proof requires dev/root with strict auth." in source
     assert "loop-prod-tel-002-hosted-${{ github.run_id }}" in source
+    deploy = source.index("- name: Deploy dev VM stack under lease")
+    bootstrap = source.index("- name: Ensure governed dev paper baseline under lease")
+    lifecycle = source.index("- name: Dev canonical paper lifecycle hosted probe")
+    assert deploy < bootstrap < lifecycle
+    assert "bootstrap_dev_paper_baseline.py --timeout-seconds 420" in source
 
 
 def test_hosted_probe_artifact_upload_runs_even_when_probe_fails_closed() -> None:

@@ -1,0 +1,160 @@
+from __future__ import annotations
+
+import os
+from unittest.mock import patch
+
+import pytest
+
+from scripts import bootstrap_dev_paper_baseline as bootstrap
+
+
+DEV_ENV = {
+    "PANTHEON_ENV": "dev",
+    "PANTHEON_BFF_AUTH_MODE": "strict",
+    "PANTHEON_BFF_AUTH_STUB": "false",
+    "PANTHEON_LIVE_BROKER_ENABLED": "false",
+    "PANTHEON_BFF_OIDC_CLIENT_ID": "operator-id",
+    "PANTHEON_BFF_OIDC_CLIENT_SECRET": "operator-secret",
+}
+
+
+def _run(**overrides):
+    params = {
+        "base_url": "http://127.0.0.1:8001",
+        "name": bootstrap.DEFAULT_NAME,
+        "idempotency_key": bootstrap.DEFAULT_IDEMPOTENCY_KEY,
+        "timeout_seconds": 30,
+        "poll_seconds": 0.1,
+        "request_timeout_seconds": 5,
+        "monotonic": lambda: 0,
+        "sleep": lambda _seconds: None,
+    }
+    params.update(overrides)
+    return bootstrap.ensure_paper_baseline(**params)
+
+
+def test_replays_one_idempotent_request_until_authoritative_readback() -> None:
+    responses = [
+        (
+            200,
+            {"access_token": "short-lived", "meta": {"identity": "operator"}},
+        ),
+        (
+            201,
+            {
+                "data": {"id": "persona-1", "state": "provisioning", "capitalMode": "paper"},
+                "meta": {
+                    "provisioning_state": "provisioning",
+                    "provisioning_step": "schedule_registered",
+                    "live_capital_side_effects": False,
+                },
+            },
+        ),
+        (
+            201,
+            {
+                "data": {"id": "persona-1", "state": "paper_running", "capitalMode": "paper"},
+                "meta": {
+                    "provisioning_state": "succeeded",
+                    "provisioning_step": "authoritative_readback_complete",
+                    "runtime_id": "rt-1",
+                    "runtime_binding_id": "rb-1",
+                    "deployment_plan_id": "plan-1",
+                    "live_capital_side_effects": False,
+                },
+            },
+        ),
+    ]
+
+    with patch.dict(os.environ, DEV_ENV, clear=True), patch.object(
+        bootstrap, "_post_json", side_effect=responses
+    ) as post:
+        result = _run()
+
+    assert result == {
+        "status": "ok",
+        "attempts": 2,
+        "persona_id": "persona-1",
+        "state": "paper_running",
+        "provisioning_state": "succeeded",
+        "provisioning_step": "authoritative_readback_complete",
+        "runtime_id": "rt-1",
+        "runtime_binding_id": "rb-1",
+        "deployment_plan_id": "plan-1",
+        "capital_mode": "paper",
+        "live_capital_side_effects": False,
+    }
+    assert post.call_count == 3
+    first_create = post.call_args_list[1]
+    second_create = post.call_args_list[2]
+    assert first_create.kwargs["headers"]["Idempotency-Key"] == bootstrap.DEFAULT_IDEMPOTENCY_KEY
+    assert second_create.kwargs["headers"]["Idempotency-Key"] == bootstrap.DEFAULT_IDEMPOTENCY_KEY
+    assert first_create.kwargs["headers"]["Authorization"] == "Bearer short-lived"
+
+
+@pytest.mark.parametrize(
+    ("env_update", "message"),
+    [
+        ({"PANTHEON_ENV": "staging-live"}, "PANTHEON_ENV=dev"),
+        ({"PANTHEON_BFF_AUTH_STUB": "true"}, "strict BFF auth"),
+        ({"PANTHEON_BFF_AUTH_MODE": "permissive"}, "strict BFF auth"),
+        ({"PANTHEON_LIVE_BROKER_ENABLED": "true"}, "live broker enabled"),
+    ],
+)
+def test_refuses_to_leave_strict_dev_paper_boundary(env_update, message) -> None:
+    env = {**DEV_ENV, **env_update}
+    with patch.dict(os.environ, env, clear=True), pytest.raises(
+        bootstrap.BootstrapError, match=message
+    ):
+        _run()
+
+
+def test_surfaces_sanitized_terminal_provisioning_error() -> None:
+    responses = [
+        (200, {"access_token": "short-lived", "meta": {"identity": "operator"}}),
+        (
+            502,
+            {
+                "error": {
+                    "code": "UPSTREAM_ERROR",
+                    "message": "Persona provisioning failed",
+                    "details": {
+                        "precondition_failed": "schedule_registration",
+                        "reason": "device pairing required",
+                    },
+                }
+            },
+        ),
+    ]
+    with patch.dict(os.environ, DEV_ENV, clear=True), patch.object(
+        bootstrap, "_post_json", side_effect=responses
+    ), pytest.raises(bootstrap.BootstrapError) as exc_info:
+        _run()
+
+    message = str(exc_info.value)
+    assert "schedule_registration" in message
+    assert "device pairing required" in message
+    assert "operator-secret" not in message
+    assert "short-lived" not in message
+
+
+def test_refuses_non_paper_or_live_side_effect_response() -> None:
+    responses = [
+        (200, {"access_token": "short-lived", "meta": {"identity": "operator"}}),
+        (
+            201,
+            {
+                "data": {"id": "persona-1", "state": "paper_running", "capitalMode": "live"},
+                "meta": {
+                    "provisioning_state": "succeeded",
+                    "runtime_id": "rt-1",
+                    "runtime_binding_id": "rb-1",
+                    "live_capital_side_effects": True,
+                },
+            },
+        ),
+    ]
+    with patch.dict(os.environ, DEV_ENV, clear=True), patch.object(
+        bootstrap, "_post_json", side_effect=responses
+    ), pytest.raises(bootstrap.BootstrapError, match="paper-only boundary"):
+        _run()

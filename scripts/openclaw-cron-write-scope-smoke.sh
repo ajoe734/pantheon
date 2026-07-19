@@ -12,8 +12,9 @@
 # docs/runbooks/openclaw-adapter-device-pairing.md). cron.list alone staying
 # green does not prove cron.add works.
 #
-# This script adds one job, confirms it via cron.list, then removes it again
-# (cron.remove) so it leaves no residue in the shared Gateway cron store.
+# This script adds one complete Persona-owned job, confirms it via cron.list,
+# then removes it again (cron.remove) so it leaves no residue in the shared
+# Gateway cron store. The adapter rejects arbitrary probe jobs by design.
 #
 # Usage:
 #   bash scripts/openclaw-cron-write-scope-smoke.sh
@@ -21,16 +22,23 @@
 set -euo pipefail
 
 BASE_URL="${OPENCLAW_GATEWAY_ADAPTER_URL:-${OPENCLAW_ADAPTER_URL:-http://localhost:18104}}"
-JOB_NAME="openclaw-cron-write-scope-smoke-$$"
+SERVICE_TOKEN="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}"
+PERSONA_ID="pcs-$$"
+WORKFLOW_ID="pantheon.persona.first-evaluation"
+JOB_NAME="pantheon-pantheon-persona-first-evaluation-${PERSONA_ID}"
 CRON_ENDPOINT="${BASE_URL}/api/openclaw-adapter/gateway/cron"
+
+if [ -z "${SERVICE_TOKEN}" ]; then
+  echo "FAIL: PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN is required." >&2
+  exit 1
+fi
+
+cron_curl() {
+  command curl -H "X-Pantheon-Service-Token: ${SERVICE_TOKEN}" "$@"
+}
 
 echo "Adapter base URL: ${BASE_URL}"
 echo "Probe job name:   ${JOB_NAME}"
-
-# Gateway rejects schedule.at more than 10 years out; pick a fixed +5y offset
-# from now so this never fires (job stays enabled:false) without drifting
-# into the rejection window as calendar time passes.
-PROBE_AT="$(date -u -d "+5 years" +%Y-%m-%dT%H:%M:%SZ)"
 
 cleanup() {
   local job_id="${JOB_ID:-}"
@@ -42,7 +50,7 @@ cleanup() {
     echo ""
     echo "=== cleanup: JOB_ID unknown, looking up probe job by name ==="
     local lookup
-    lookup=$(curl -sS -m 60 -X POST "${CRON_ENDPOINT}" \
+    lookup=$(cron_curl -sS -m 60 -X POST "${CRON_ENDPOINT}" \
       -H "Content-Type: application/json" \
       -d '{"method":"cron.list","params":{"limit":200,"includeDisabled":true}}' 2>/dev/null || true)
     if [ -n "${lookup}" ]; then
@@ -53,7 +61,7 @@ cleanup() {
   if [ -n "${job_id}" ]; then
     echo ""
     echo "=== cleanup: cron.remove ${job_id} ==="
-    curl -sS -m 60 -X POST "${CRON_ENDPOINT}" \
+    cron_curl -sS -m 60 -X POST "${CRON_ENDPOINT}" \
       -H "Content-Type: application/json" \
       -d "$(jq -nc --arg id "$job_id" '{method:"cron.remove", params:{id:$id}}')" | jq . || true
   else
@@ -64,20 +72,32 @@ cleanup() {
 trap cleanup EXIT
 
 echo ""
-echo "=== 1/3 cron.add (a disabled, far-future one-shot probe job) ==="
-ADD_PAYLOAD=$(jq -nc --arg name "$JOB_NAME" --arg at "$PROBE_AT" '{
+echo "=== 1/3 cron.add (complete Persona-owned probe job) ==="
+EVENT_TEXT=$(jq -nc \
+  --arg persona_id "$PERSONA_ID" \
+  --arg workflow_id "$WORKFLOW_ID" \
+  '{
+    kind: "pantheon.workflow.dispatch",
+    persona_id: $persona_id,
+    workflow_id: $workflow_id,
+    request_id: ("persona-provisioning:" + $persona_id + ":" + $workflow_id),
+    policy_id: "oc002.cron.persona-first-evaluation",
+    upstream_entrypoint: "evaluation.persona.first"
+  }')
+ADD_PAYLOAD=$(jq -nc --arg name "$JOB_NAME" --arg event "$EVENT_TEXT" '{
   method: "cron.add",
   params: {
     name: $name,
-    enabled: false,
-    deleteAfterRun: true,
-    schedule: {kind: "at", at: $at},
+    enabled: true,
+    deleteAfterRun: false,
+    schedule: {kind: "cron", expr: "*/15 * * * *"},
     sessionTarget: "main",
     wakeMode: "next-heartbeat",
-    payload: {kind: "systemEvent", text: "{\"kind\":\"pantheon.cron_write_scope_smoke\"}"}
+    payload: {kind: "systemEvent", text: $event},
+    delivery: {mode: "none"}
   }
 }')
-ADD_RESPONSE=$(curl -sS -m 120 -w "\n%{http_code}" -X POST "${CRON_ENDPOINT}" \
+ADD_RESPONSE=$(cron_curl -sS -m 120 -w "\n%{http_code}" -X POST "${CRON_ENDPOINT}" \
   -H "Content-Type: application/json" -d "${ADD_PAYLOAD}")
 ADD_HTTP_STATUS=$(printf '%s\n' "${ADD_RESPONSE}" | tail -n1)
 ADD_BODY=$(printf '%s\n' "${ADD_RESPONSE}" | sed '$d')
@@ -104,7 +124,7 @@ echo "OK: cron.add -> id=${JOB_ID}"
 
 echo ""
 echo "=== 2/3 cron.list shows the new job (not dry_run) ==="
-LIST_BODY=$(curl -sS -m 60 -X POST "${CRON_ENDPOINT}" \
+LIST_BODY=$(cron_curl -sS -m 60 -X POST "${CRON_ENDPOINT}" \
   -H "Content-Type: application/json" \
   -d '{"method":"cron.list","params":{"limit":200,"includeDisabled":true}}')
 FOUND=$(echo "${LIST_BODY}" | jq -r --arg id "$JOB_ID" '[.data.jobs[]? | select(.id == $id)] | length')
