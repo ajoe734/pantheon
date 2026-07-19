@@ -80,6 +80,16 @@ from runtime_state import enqueue_event
 from task_archive import TaskResolver
 from watch_events import queue_delivery_event, run_scan, trim_seen_events
 
+# SUPERVISOR-REWRITE cutover modules (parallel package, pure — no supervisor
+# import, so this is not circular). These are the phase-1/phase-3 clean
+# reimplementations proven behaviour-equivalent to the incumbent by
+# rewrite/shadow.py before being wired in here. Each is gated by a settings
+# flag (see _use_rewrite_*), keeping the legacy path one flag away.
+from rewrite import concurrency as rewrite_concurrency
+from rewrite import provider_health as rewrite_provider_health
+from rewrite import task_machine as rewrite_task_machine
+from rewrite import worker_lifecycle as rewrite_worker_lifecycle
+
 
 SIDECAR_READY_PRIORITY_OFFSET = 10
 BLOCKED_OWNER_RESCUE_KEYWORDS = (
@@ -1099,6 +1109,28 @@ def quota_group_concurrency_limit(
     settings = settings or ready_dispatch_settings(config)
     raw = settings.get("max_concurrent_per_quota_group")
     group_id = agent_quota_group_id(config, agent_id)
+    # SUPERVISOR-REWRITE Phase 1b (account cap): the cap arithmetic is owned by
+    # rewrite.concurrency.account_limit (shadow-proven equal for every live
+    # agent). The 6-way account-group resolver stays here until its config
+    # collapse; we still resolve the incumbent identity keys and hand them to the
+    # single cap authority. Legacy path one flag away via use_rewrite_concurrency.
+    if _rewrite_flag_enabled(settings, "use_rewrite_concurrency"):
+        try:
+            identity_keys = [
+                *agent_quota_identity_ids(config, agent_id),
+                group_id,
+                agent_provider_id(config, agent_id),
+                normalize_agent_id(agent_id or ""),
+                display_name_for(config, normalize_agent_id(agent_id or "")),
+            ]
+            return rewrite_concurrency.account_limit(
+                group_id, settings=settings, identity_keys=identity_keys
+            )
+        except Exception as exc:  # never let the rewrite path break the account cap
+            console_log(
+                f"rewrite account-limit path failed ({type(exc).__name__}: {exc}); "
+                "falling back to incumbent quota_group_concurrency_limit",
+            )
     if isinstance(raw, dict):
         provider_id = agent_provider_id(config, agent_id)
         display_name = display_name_for(config, normalize_agent_id(agent_id or ""))
@@ -1159,9 +1191,44 @@ def dispatch_loop_agent_ids(config: dict[str, Any]) -> list[str]:
     ]
 
 
+def _rewrite_flag_enabled(settings: dict[str, Any] | None, key: str, default: bool = True) -> bool:
+    """Read a SUPERVISOR-REWRITE cutover flag from resolved dispatch settings.
+
+    Defaults to True: the clean rewrite path is the shipped path once it has been
+    shadow-proven behaviour-equivalent, with the incumbent one flag away (set the
+    key to false in ready_dispatcher settings to fall back).
+    """
+    if not isinstance(settings, dict):
+        return default
+    raw = settings.get(key, default)
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        return raw.strip().lower() not in {"false", "0", "no", "off", ""}
+    return bool(raw)
+
+
 def agent_dispatch_capacity(config: dict[str, Any], agent_id: str | None, settings: dict[str, Any] | None = None) -> int:
     normalized = normalize_agent_id(agent_id or "")
     settings = settings or ready_dispatch_settings(config)
+    # SUPERVISOR-REWRITE Phase 1b cutover: the clean concurrency model is a
+    # faithful, config-independent reimplementation of the resolution below
+    # (per-agent override → worker-slot count → global default), shadow-proven
+    # equal for every agent on the live config. Route through it by default; the
+    # incumbent body remains reachable via `use_rewrite_concurrency: false`.
+    if _rewrite_flag_enabled(settings, "use_rewrite_concurrency"):
+        try:
+            return rewrite_concurrency.max_parallel(
+                config,
+                normalized,
+                settings=settings,
+                display_name=display_name_for(config, normalized),
+            )
+        except Exception as exc:  # never let the rewrite path break capacity
+            console_log(
+                f"rewrite concurrency path failed ({type(exc).__name__}: {exc}); "
+                "falling back to incumbent agent_dispatch_capacity",
+            )
     default_capacity: int | None = None
     raw_default_capacity = settings.get("max_tasks_per_agent")
     if raw_default_capacity not in (None, ""):
@@ -2843,6 +2910,24 @@ def active_worker_refs_for_agent_id(
 def terminate_worker_pid(pid: int | None) -> bool:
     if not pid:
         return False
+    # SUPERVISOR-REWRITE Phase 4 (anti-pattern E): confirm-kill instead of
+    # SIGTERM-and-assume-dead. A worker that ignores SIGTERM used to be reported
+    # terminated while still alive (and still mutating state); now we escalate to
+    # SIGKILL and verify, returning True only when the process is confirmed gone.
+    # Legacy one flag away via PANTHEON_LEGACY_TERMINATE=1.
+    if str(os.environ.get("PANTHEON_LEGACY_TERMINATE") or "").strip().lower() not in {
+        "1", "true", "yes", "on",
+    }:
+        try:
+            return rewrite_worker_lifecycle.confirm_kill(
+                pid,
+                is_alive=pid_is_alive,
+                send_signal=os.kill,
+                sleep=time.sleep,
+                monotonic=time.monotonic,
+            )
+        except Exception:
+            pass  # fall back to the legacy single-signal path below
     try:
         os.kill(pid, signal.SIGTERM)
     except OSError:
@@ -5113,7 +5198,23 @@ def is_sticky_auth_dispatch_pause(entry: dict[str, Any] | None) -> bool:
     return is_sticky_auth_failure_reason(text)
 
 
+def _legacy_failure_response_enabled() -> bool:
+    """SUPERVISOR-REWRITE Phase 5 reversal flag — set PANTHEON_LEGACY_FAILURE_RESPONSE=1
+    to restore the incumbent inline pause ladder (legacy one flag away)."""
+    return str(os.environ.get("PANTHEON_LEGACY_FAILURE_RESPONSE") or "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
 def should_pause_dispatch_for_failure_kind(kind: str | None) -> bool:
+    # SUPERVISOR-REWRITE Phase 5: the account failure-response decision is owned by
+    # rewrite.provider_health.decide_failure_response; this pause predicate routes
+    # through it (shadow-proven equal across the whole failure-kind vocabulary).
+    if not _legacy_failure_response_enabled():
+        try:
+            return rewrite_provider_health.should_pause(kind)
+        except Exception:  # never let it break failure handling
+            pass
     return (
         is_terminal_quota_failure_kind(kind)
         or is_retryable_capacity_failure_kind(kind)
@@ -7056,7 +7157,33 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             else:
                 process_activity_advanced = False
         if alive and worker.get("status") in active_worker_statuses and worker.get("last_heartbeat_at"):
-            if not worker_heartbeat_is_stale(config, worker, now):
+            heartbeat_ok = not worker_heartbeat_is_stale(config, worker, now)
+            # SUPERVISOR-REWRITE Phase 4: optionally bind lease renewal to observed
+            # WORK progress (last process-tree activity / provider output), not just
+            # heartbeat freshness — so a hung-but-heartbeating runner stops renewing
+            # its lease and is reaped. Off by default (changes lease timing; the
+            # stall window wants fleet tuning): supervisor.lease_requires_work_progress.
+            progress_ok = True
+            if heartbeat_ok and config.get("supervisor", {}).get("lease_requires_work_progress", False):
+                runtime_settings = worker_runtime_settings(config)
+                stall_seconds = int(runtime_settings.get("heartbeat_stale_seconds", 300)) + int(
+                    runtime_settings.get("heartbeat_grace_seconds", 60)
+                )
+                progress_candidates = [
+                    dt
+                    for dt in (
+                        _parse_iso_utc(str(worker.get("last_process_activity_at") or "")),
+                        _parse_iso_utc(str(worker.get("last_event_at") or "")),
+                    )
+                    if dt is not None
+                ]
+                latest_progress = max(progress_candidates, default=None)
+                progress_ok = rewrite_worker_lifecycle.lease_progress_is_fresh(
+                    last_progress_epoch=(latest_progress.timestamp() if latest_progress else None),
+                    now_epoch=now.timestamp(),
+                    stall_seconds=stall_seconds,
+                )
+            if heartbeat_ok and progress_ok:
                 refresh_worker_lease(config, worker, now)
                 poll_counts["lease_refreshes"] += 1
                 if worker.get("queue_event_id"):
@@ -8680,7 +8807,12 @@ def release_completed_worker_for_claim(
 
 def underutilization_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings = dict(config.get("underutilization_dispatch", {}) or {})
-    settings.setdefault("enabled", True)
+    # SUPERVISOR-REWRITE Phase 7 (anti-pattern F): the sidecar make-work engine is
+    # OFF by default — utilization is handled by reprioritizing the real backlog
+    # (rewrite.utilization), never by synthesizing tasks. The code path is kept
+    # for reversibility (set underutilization_dispatch.enabled=true to restore)
+    # ahead of physical deletion once confirmed dormant on the fleet.
+    settings.setdefault("enabled", False)
     settings.setdefault("require_recent_chair_signal", True)
     settings.setdefault("threshold_ratio", 0.5)
     settings.setdefault("continuous_window_seconds", 900)
@@ -9670,6 +9802,43 @@ def dispatch_priority_for_task(
     owner_field = schema.get("assignee_field", "owner")
     reviewer_field = schema.get("reviewer_field", "reviewer")
     task_status = str(task.get("status") or "").lower()
+    # SUPERVISOR-REWRITE Phase 3b cutover: route the dispatch-eligibility ladder
+    # through the single task state machine. The incumbent honours configurable
+    # status *sets* (review_statuses/finalize_statuses) while the machine owns the
+    # canonical lifecycle names, so translate the configured status into its
+    # canonical lifecycle state first — this keeps the machine authoritative
+    # without losing config flexibility, and is exactly equivalent to the ladder
+    # below for any config (shadow-proven on the live board). Legacy path remains
+    # one flag away via `use_rewrite_dispatch_reason: false`.
+    if _rewrite_flag_enabled(settings, "use_rewrite_dispatch_reason"):
+        try:
+            if task_status in review_statuses:
+                canonical_status = "review"
+            elif task_status in finalize_statuses:
+                canonical_status = "review_approved"
+            elif task_status == "in_progress":
+                canonical_status = "in_progress"
+            elif task_status == "todo":
+                canonical_status = "todo"
+            else:
+                # Not dispatchable in the incumbent ladder; "" yields None from
+                # the machine, so a literal "review"/"review_approved" that the
+                # configured sets exclude is never mis-matched by canonical name.
+                canonical_status = ""
+            deps_ok = dependencies_satisfied(
+                task, {str(task.get("id") or ""): task}, dependency_done_statuses
+            )
+            return rewrite_task_machine.dispatch_priority(
+                canonical_status,
+                is_owner=task.get(owner_field) == agent_name,
+                is_reviewer=task.get(reviewer_field) == agent_name,
+                deps_satisfied=deps_ok,
+            )
+        except Exception as exc:  # never let the rewrite path break dispatch
+            console_log(
+                f"rewrite dispatch-reason path failed ({type(exc).__name__}: {exc}); "
+                "falling back to incumbent dispatch_priority_for_task",
+            )
     if task_status in review_statuses and task.get(reviewer_field) == agent_name:
         return 0
     if task_status in finalize_statuses and task.get(owner_field) == agent_name:

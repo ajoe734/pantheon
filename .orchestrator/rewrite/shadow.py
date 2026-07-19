@@ -26,7 +26,27 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import supervisor  # noqa: E402  (comparison oracle only)
 
 from rewrite import concurrency  # noqa: E402
+from rewrite import provider_health  # noqa: E402
 from rewrite import task_machine  # noqa: E402
+
+# Every failure kind classify_worker_failure emits, plus legacy/unknown spellings,
+# so the pause decision is compared across the whole vocabulary — not just what
+# the live board happens to contain right now.
+_FAILURE_KINDS = [
+    "auth", "tool_auth", "capacity", "capacity_retryable", "quota_terminal",
+    "terminal", "transient", "unknown_critical", "", "bogus_kind", None,
+]
+
+
+def compare_failure_pause() -> list[dict[str, Any]]:
+    """One row per failure kind: incumbent should_pause_dispatch_for_failure_kind
+    vs the clean provider_health.should_pause."""
+    rows: list[dict[str, Any]] = []
+    for kind in _FAILURE_KINDS:
+        old = supervisor.should_pause_dispatch_for_failure_kind(kind)
+        new = provider_health.should_pause(kind)
+        rows.append({"kind": repr(kind), "old": old, "new": new, "agree": old == new})
+    return rows
 
 
 def compare_capacity(config: dict[str, Any]) -> list[dict[str, Any]]:
@@ -40,6 +60,34 @@ def compare_capacity(config: dict[str, Any]) -> list[dict[str, Any]]:
         display = supervisor.display_name_for(config, norm)
         old = supervisor.agent_dispatch_capacity(config, norm, settings)
         new = concurrency.max_parallel(config, norm, settings=settings, display_name=display)
+        rows.append({"agent": norm, "old": old, "new": new, "agree": old == new})
+    return rows
+
+
+def compare_account_limit(config: dict[str, Any]) -> list[dict[str, Any]]:
+    """One row per agent: incumbent quota_group_concurrency_limit vs the clean
+    account_limit fed the incumbent-resolved identity keys (in the incumbent's
+    exact try order). Proves the cap arithmetic is faithful ahead of collapsing
+    the 6-way account-group resolver to a single key."""
+    settings = supervisor.ready_dispatch_settings(config)
+    rows: list[dict[str, Any]] = []
+    for agent_id in (config.get("agents", {}) or {}):
+        norm = supervisor.normalize_agent_id(agent_id)
+        if not norm:
+            continue
+        # Same key order the incumbent tries inside quota_group_concurrency_limit.
+        group_id = supervisor.agent_quota_group_id(config, norm)
+        provider_id = supervisor.agent_provider_id(config, norm)
+        display = supervisor.display_name_for(config, norm)
+        keys = [
+            *supervisor.agent_quota_identity_ids(config, norm),
+            group_id,
+            provider_id,
+            norm,
+            display,
+        ]
+        old = supervisor.quota_group_concurrency_limit(config, norm, settings)
+        new = concurrency.account_limit(group_id, settings=settings, identity_keys=keys)
         rows.append({"agent": norm, "old": old, "new": new, "agree": old == new})
     return rows
 
@@ -98,6 +146,22 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  {'OK      ' if r['agree'] else 'MISMATCH'} {r['agent']}: old={r['old']} new={r['new']}")
     print(f"\nmax_parallel shadow: {len(cap_rows)} agents, {len(cap_mismatch)} mismatch")
     if cap_mismatch:
+        exit_code = 1
+
+    acct_rows = compare_account_limit(config)
+    acct_mismatch = [r for r in acct_rows if not r["agree"]]
+    for r in acct_mismatch:
+        print(f"  MISMATCH account_limit {r['agent']}: old={r['old']} new={r['new']}")
+    print(f"account_limit shadow: {len(acct_rows)} agents, {len(acct_mismatch)} mismatch")
+    if acct_mismatch:
+        exit_code = 1
+
+    pause_rows = compare_failure_pause()
+    pause_mismatch = [r for r in pause_rows if not r["agree"]]
+    for r in pause_mismatch:
+        print(f"  MISMATCH failure_pause {r['kind']}: old={r['old']} new={r['new']}")
+    print(f"failure_pause shadow: {len(pause_rows)} kinds, {len(pause_mismatch)} mismatch")
+    if pause_mismatch:
         exit_code = 1
 
     if args.board:

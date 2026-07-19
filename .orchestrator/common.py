@@ -4357,6 +4357,63 @@ def read_activity_log_tail_bytes(
         return _tail_bytes_unlocked(log_path, max_lines)
 
 
+def _activity_write_is_resilient(config: dict[str, Any]) -> bool:
+    """SUPERVISOR-REWRITE Phase 2 (§3.2): the append hot path must never `raise`
+    on an integrity/recovery fault — that class of failure crash-looped the fleet
+    for ~4 hours. Integrity is now owned by the offline verifier
+    (rewrite/verify_activity_integrity.py); a write only needs to durably append
+    and let the cycle continue. Default on; set PANTHEON_ACTIVITY_LOG_STRICT=1 or
+    config.activity_log_strict_hot_path=true to restore fail-closed writes (e.g.
+    for tests that assert the incumbent raise)."""
+    if str(os.environ.get("PANTHEON_ACTIVITY_LOG_STRICT") or "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }:
+        return False
+    return not bool(config.get("activity_log_strict_hot_path", False))
+
+
+# SUPERVISOR-REWRITE Phase 2 (§3.2): only genuine *lineage-integrity drift* is
+# safe to append through — appending never corrupts already-broken lineage, and
+# the offline verifier owns the alert. Security faults (symlink / non-regular
+# leaf) and correctness guards (a rotation intent is mid-flight → "recovery is
+# pending") must STILL fail closed: appending there would write through a symlink
+# or invalidate an in-progress rotation's source digest. Discriminate by an
+# explicit allow-list; anything not recognised as drift re-raises unchanged.
+_ACTIVITY_LINEAGE_DRIFT_MARKERS = (
+    "lineage archive is missing",
+    "archives do not match lineage",
+    "conservation mismatch",
+    "conservation counts are inconsistent",
+    "basename digest mismatch",
+    "content-addressed boundary mismatch",
+    "boundary matches non-adjacent",
+)
+
+
+def _activity_fault_is_lineage_drift(exc: BaseException) -> bool:
+    if isinstance(exc, ActivityAuditInvariantError):
+        return True  # fail-closed reader integrity error = drift by construction
+    message = str(exc).lower()
+    return any(marker in message for marker in _ACTIVITY_LINEAGE_DRIFT_MARKERS)
+
+
+def _force_append_activity_log_unlocked(log_path: Path, entries: list[dict[str, Any]]) -> None:
+    """Append-only, no recovery, no lineage validation, no rotation — the §3.2
+    fallback used only when the validated path faulted. Guarantees the entry is
+    durably recorded; any lineage drift is surfaced later by the offline verifier."""
+    if not entries:
+        return
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    created = not log_path.exists()
+    with log_path.open("ab") as handle:
+        for entry in entries:
+            handle.write((json.dumps(entry, ensure_ascii=False) + "\n").encode("utf-8"))
+        handle.flush()
+        os.fsync(handle.fileno())
+    if created:
+        _fsync_directory(log_path.parent)
+
+
 def write_activity_log(config: dict[str, Any], entry: dict[str, Any]) -> None:
     payload = {
         "ts": utc_now(),
@@ -4364,13 +4421,34 @@ def write_activity_log(config: dict[str, Any], entry: dict[str, Any]) -> None:
         **entry,
     }
     log_path = config_path(config, "activity_log")
-    with activity_audit_lock_file(log_path, shared=False, nonblocking=False):
-        append_activity_log_entries_unlocked(
-            log_path,
-            [payload],
-            rotate_bytes=_activity_log_rotate_threshold(config),
-            keep_lines=0,
+    try:
+        with activity_audit_lock_file(log_path, shared=False, nonblocking=False):
+            append_activity_log_entries_unlocked(
+                log_path,
+                [payload],
+                rotate_bytes=_activity_log_rotate_threshold(config),
+                keep_lines=0,
+            )
+    except (ActivityAuditInvariantError, RuntimeError) as exc:
+        # Only lineage-integrity drift is made non-fatal; security/correctness
+        # faults keep their fail-closed contract even in resilient mode.
+        if not _activity_write_is_resilient(config) or not _activity_fault_is_lineage_drift(exc):
+            raise
+        # §3.2: warn (never raise), then guarantee the append lands so the cycle
+        # keeps dispatching/finalizing/archiving. Offline verifier owns integrity.
+        print(
+            "activity-log integrity/recovery fault on write "
+            f"({type(exc).__name__}: {str(exc)[:200]}); appending without recovery "
+            "and continuing (run rewrite/verify_activity_integrity.py to inspect)",
+            file=sys.stderr,
         )
+        try:
+            with activity_audit_lock_file(log_path, shared=False, nonblocking=False):
+                _force_append_activity_log_unlocked(log_path, [payload])
+        except (ActivityAuditInvariantError, RuntimeError, OSError):
+            # Last-resort append without the audit lock — losing an activity row
+            # is worse than a brief lock gap; still never raises into the cycle.
+            _force_append_activity_log_unlocked(log_path, [payload])
 
 
 def runtime_log_path(prefix: str, target: str) -> Path:
