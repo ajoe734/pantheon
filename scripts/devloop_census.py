@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from typing import Any
 
 
-DEFAULT_BASE_URL = "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io"
+DEFAULT_BASE_URL = "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io"
 DEFAULT_STUB_TOKEN = "op-dev:admin:mfa"
 
 

@@ -27,7 +27,7 @@ from typing import Any
 
 TASK_ID = "LOOP-PROD-PER-001"
 FIRST_EVALUATION_WORKFLOW_ID = "pantheon.persona.first-evaluation"
-DEFAULT_BASE_URL = "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io"
+DEFAULT_BASE_URL = "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io"
 DEFAULT_TENANT_ID = "pantheon-dev"
 
 

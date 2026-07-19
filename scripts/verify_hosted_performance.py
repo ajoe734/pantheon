@@ -29,7 +29,7 @@ def measure_call(base, path, token):
     return (end - start) * 1000.0, status
 
 def main():
-    base = os.environ.get("BFF_BASE", "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io")
+    base = os.environ.get("BFF_BASE", "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io")
     token = "lupin:admin:pantheon-dev"
 
     endpoints = [

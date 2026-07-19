@@ -34,11 +34,11 @@ def test_render_systemd_timer_runs_every_minute() -> None:
 
 
 def test_render_cron_line_is_idempotently_tagged() -> None:
-    repo = Path("/home/lupin/code/pantheon")
+    repo = Path("/home/lupin/pantheon")
 
     line = render_cron_line(repo)
 
-    assert line.startswith("* * * * * cd /home/lupin/code/pantheon")
+    assert line.startswith("* * * * * cd /home/lupin/pantheon")
     assert line.split("cd ", 1)[0].split() == ["*", "*", "*", "*", "*"]
     assert "scripts/run-supervisor-watchdog.sh --restart" in line
     assert ".orchestrator/logs/supervisor-watchdog-cron.log" in line

@@ -65,7 +65,7 @@ def test_sse_connection(base, token, last_event_id=None):
     return last_id, event_count
 
 def main():
-    base = os.environ.get("BFF_BASE", "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io")
+    base = os.environ.get("BFF_BASE", "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io")
     token = "lupin:admin:pantheon-dev"
 
     print("=============================================================")

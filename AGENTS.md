@@ -84,8 +84,14 @@ truth for Pantheon dev. Lovable URLs may remain historical evidence or an
 external reference, but current dev frontend delivery must be served by the
 Pantheon dev environment from an `execute-plans` commit. The intended dev host
 is Pantheon-owned, for example
-`https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io`, with the BFF target
-`https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io`.
+`https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io`, with the BFF target
+`https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io`.
+
+As of 2026-07-19 the prior GCP project `pantheon-benjamin-20260528` is
+suspended. The replacement dev VM is `pantheon-lupin-dev` in project
+`pantheon-lupin-dev-20260719`, external IP `35.201.204.12`, and the backend
+source checkout is `/home/lupin/pantheon`. Do not deploy dev to the suspended
+project, the old `35.201.239.38` host, or `/home/lupin/code/pantheon`.
 
 Historical verified dev deployment, 2026-06-08:
 

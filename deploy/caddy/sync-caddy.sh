@@ -13,9 +13,9 @@
 #
 # Usage:
 #   deploy/caddy/sync-caddy.sh <ssh-target> <bff-host> <template> [fe-host] [fe-root]
-#     ssh-target  SSH destination, e.g. lupin@35.201.239.38
+#     ssh-target  SSH destination, e.g. lupin@35.201.204.12
 #     bff-host    sslip.io hostname for the new IP,
-#                 e.g. pantheon-lupin-dev-bff.35.201.239.38.sslip.io
+#                 e.g. pantheon-lupin-dev-bff.35.201.204.12.sslip.io
 #     template    repo-relative template, e.g. deploy/caddy/dev.Caddyfile.tmpl
 #     fe-host     optional sslip.io hostname for the static dev frontend,
 #                 required when template contains __FE_HOST__
@@ -28,7 +28,7 @@
 # Idempotent: re-running with the same host is a no-op for Caddy (cert cached).
 set -euo pipefail
 
-SSH_TARGET="${1:?ssh-target required, e.g. lupin@35.201.239.38}"
+SSH_TARGET="${1:?ssh-target required, e.g. lupin@35.201.204.12}"
 BFF_HOST="${2:?bff-host required, e.g. pantheon-lupin-dev-bff.<ip>.sslip.io}"
 TEMPLATE="${3:?template path required, e.g. deploy/caddy/dev.Caddyfile.tmpl}"
 FE_HOST="${4:-}"
