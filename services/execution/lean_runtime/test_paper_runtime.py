@@ -1513,7 +1513,9 @@ class PaperRuntimeServiceTest(unittest.TestCase):
             in {
                 "signal_generation",
                 "trade_decision",
+                "risk_evaluation",
                 "order_submitted",
+                "order_accepted",
                 "paper_fill_simulated",
                 "position_snapshot",
             }
@@ -1523,7 +1525,9 @@ class PaperRuntimeServiceTest(unittest.TestCase):
             [
                 "signal_generation",
                 "trade_decision",
+                "risk_evaluation",
                 "order_submitted",
+                "order_accepted",
                 "paper_fill_simulated",
                 "position_snapshot",
             ],
@@ -1545,7 +1549,7 @@ class PaperRuntimeServiceTest(unittest.TestCase):
             self.assertEqual(list(validator.iter_errors(event)), [])
         self.assertEqual(
             [event["sequence_no"] for event in lifecycle],
-            [1, 2, 3, 4, 5],
+            [1, 2, 3, 4, 5, 6, 7],
         )
         self.assertEqual(
             lifecycle[0]["causal_parent_id"],
@@ -1555,7 +1559,7 @@ class PaperRuntimeServiceTest(unittest.TestCase):
             [event["causal_parent_id"] for event in lifecycle[1:]],
             [event["event_id"] for event in lifecycle[:-1]],
         )
-        self.assertEqual(len({event["event_id"] for event in lifecycle}), 5)
+        self.assertEqual(len({event["event_id"] for event in lifecycle}), 7)
         for event in lifecycle:
             self.assertEqual(str(uuid.UUID(event["event_id"])), event["event_id"])
             self.assertEqual(event["authority_refs"]["persona_id"], "persona-paper-ops")
@@ -1572,9 +1576,9 @@ class PaperRuntimeServiceTest(unittest.TestCase):
             {event["loop_run_id"] for event in lifecycle},
             {"lr-run-canonical-001"},
         )
-        self.assertEqual(lifecycle[2]["order_id"], lifecycle[3]["order_id"])
-        self.assertTrue(lifecycle[4]["metadata"]["ledger_committed"])
-        self.assertEqual(lifecycle[4]["position_qty"], 10.0)
+        self.assertEqual(lifecycle[3]["order_id"], lifecycle[5]["order_id"])
+        self.assertTrue(lifecycle[6]["metadata"]["ledger_committed"])
+        self.assertEqual(lifecycle[6]["position_qty"], 10.0)
 
     def test_multiple_committed_fills_get_unique_occurrence_ids_and_sequences(self):
         from services.execution.lean_runtime.signal_producer import build_decision_signals
@@ -1629,7 +1633,9 @@ class PaperRuntimeServiceTest(unittest.TestCase):
             in {
                 "signal_generation",
                 "trade_decision",
+                "risk_evaluation",
                 "order_submitted",
+                "order_accepted",
                 "paper_fill_simulated",
                 "position_snapshot",
             }
@@ -1639,20 +1645,32 @@ class PaperRuntimeServiceTest(unittest.TestCase):
             [
                 "signal_generation",
                 "trade_decision",
+                "risk_evaluation",
                 "order_submitted",
+                "order_accepted",
                 "paper_fill_simulated",
                 "position_snapshot",
+                "risk_evaluation",
                 "order_submitted",
+                "order_accepted",
                 "paper_fill_simulated",
                 "position_snapshot",
             ],
         )
         self.assertEqual(
             [event["metadata"]["sequence_no"] for event in lifecycle],
-            [1, 2, 3, 4, 5, 6, 7, 8],
+            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
         )
         ids = [event["event_id"] for event in lifecycle]
-        self.assertEqual(len(set(ids)), 8)
+        self.assertEqual(len(set(ids)), 12)
+        self.assertEqual(
+            {
+                event["metadata"]["risk_decision_id"]
+                for event in lifecycle
+                if event["event_type"] == "risk_evaluation"
+            },
+            {f"paper-risk-{signal['signal_id']}"},
+        )
         self.assertEqual(
             [event["metadata"]["causal_parent_id"] for event in lifecycle[1:]],
             ids[:-1],
@@ -1707,14 +1725,21 @@ class PaperRuntimeServiceTest(unittest.TestCase):
             in {
                 "signal_generation",
                 "trade_decision",
+                "risk_evaluation",
                 "order_submitted",
+                "order_accepted",
                 "paper_fill_simulated",
                 "position_snapshot",
             }
         ]
         self.assertEqual(
             [event["event_type"] for event in attempted_chain],
-            ["signal_generation", "trade_decision", "order_submitted"],
+            [
+                "signal_generation",
+                "trade_decision",
+                "risk_evaluation",
+                "order_submitted",
+            ],
         )
         self.assertNotIn(
             "paper_fill_simulated",
@@ -1732,14 +1757,19 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         pending = durable_state["pending"]
         self.assertEqual(
             [record["payload"]["event_type"] for record in pending],
-            ["order_submitted", "paper_fill_simulated", "position_snapshot"],
+            [
+                "order_submitted",
+                "order_accepted",
+                "paper_fill_simulated",
+                "position_snapshot",
+            ],
         )
         self.assertEqual(
             [record["sequence_no"] for record in pending],
-            [3, 4, 5],
+            [4, 5, 6, 7],
         )
         self.assertNotIn(signal["journey_id"], service._blocked_lifecycle_chains)
-        self.assertEqual(service.snapshot()["lifecycle_outbox"]["pending_count"], 3)
+        self.assertEqual(service.snapshot()["lifecycle_outbox"]["pending_count"], 4)
 
     def test_lifecycle_outbox_admits_entire_chain_before_failed_network_send(self):
         class FailBeforeSendTelemetry(_FakeTelemetryEmitter):
@@ -1776,14 +1806,16 @@ class PaperRuntimeServiceTest(unittest.TestCase):
             [
                 "signal_generation",
                 "trade_decision",
+                "risk_evaluation",
                 "order_submitted",
+                "order_accepted",
                 "paper_fill_simulated",
                 "position_snapshot",
             ],
         )
         self.assertEqual(
             [record["sequence_no"] for record in state["pending"]],
-            [1, 2, 3, 4, 5],
+            [1, 2, 3, 4, 5, 6, 7],
         )
         self.assertEqual(len(telemetry.attempts), 1)
         self.assertEqual(telemetry.attempts[0], state["pending"][0]["payload"])
@@ -1963,7 +1995,9 @@ class PaperRuntimeServiceTest(unittest.TestCase):
             if event.get("event_type") in {
                 "signal_generation",
                 "trade_decision",
+                "risk_evaluation",
                 "order_submitted",
+                "order_accepted",
                 "paper_fill_simulated",
                 "position_snapshot",
             }
@@ -1975,7 +2009,7 @@ class PaperRuntimeServiceTest(unittest.TestCase):
         )
         self.assertEqual(
             [event["metadata"]["sequence_no"] for event in replayed],
-            [1, 2, 3, 4, 5],
+            [1, 2, 3, 4, 5, 6, 7],
         )
         self.assertEqual(restarted.snapshot()["lifecycle_outbox"]["pending_count"], 0)
 
@@ -1988,7 +2022,7 @@ class PaperRuntimeServiceTest(unittest.TestCase):
             created_at=self._signal()["timestamp"],
         )
         self.assertIsNotNone(next_payload)
-        self.assertEqual(next_payload["metadata"]["sequence_no"], 6)
+        self.assertEqual(next_payload["metadata"]["sequence_no"], 8)
         self.assertEqual(
             next_payload["metadata"]["causal_parent_id"],
             exact_pending[-1]["event_id"],
@@ -2066,8 +2100,10 @@ class PaperRuntimeServiceTest(unittest.TestCase):
             in {
                 "signal_generation",
                 "trade_decision",
+                "risk_evaluation",
                 "paper_order_simulated",
                 "order_submitted",
+                "order_accepted",
                 "paper_fill_simulated",
                 "position_snapshot",
             }

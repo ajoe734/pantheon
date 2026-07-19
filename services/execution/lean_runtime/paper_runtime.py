@@ -69,7 +69,9 @@ _CANONICAL_LIFECYCLE_EVENT_TYPES = frozenset(
     {
         "signal_generation",
         "trade_decision",
+        "risk_evaluation",
         "order_submitted",
+        "order_accepted",
         "paper_order_simulated",
         "paper_fill_simulated",
         "order_rejection",
@@ -3027,6 +3029,30 @@ class PaperRuntimeService:
             and event.metadata.get("ledger_committed") is True
         )
         if committed_fill and canonical_lifecycle:
+            risk_event_id = str(
+                uuid.uuid5(
+                    _LIFECYCLE_UUID_NAMESPACE,
+                    f"{event.event_id}:risk_evaluation",
+                )
+            )
+            risk_metadata = dict(telemetry_metadata)
+            risk_scope = (
+                _clean_text(telemetry_metadata.get("signal_id")) or event.event_id
+            )
+            risk_metadata.setdefault("risk_decision_id", f"paper-risk-{risk_scope}")
+            risk_metadata.setdefault("risk_status", "succeeded")
+            self._emit_lifecycle_telemetry(
+                "risk_evaluation",
+                {
+                    "action": "paper_risk_accepted",
+                    "risk_quantity": abs(event.quantity),
+                    "risk_price": event.fill_price,
+                    "submitted_to_broker": False,
+                },
+                risk_metadata,
+                event_id=risk_event_id,
+                created_at=event.created_at,
+            )
             order_event_id = str(
                 uuid.uuid5(
                     _LIFECYCLE_UUID_NAMESPACE,
@@ -3044,6 +3070,29 @@ class PaperRuntimeService:
                 },
                 telemetry_metadata,
                 event_id=order_event_id,
+                created_at=event.created_at,
+            )
+            accepted_event_id = str(
+                uuid.uuid5(
+                    _LIFECYCLE_UUID_NAMESPACE,
+                    f"{event.event_id}:order_accepted",
+                )
+            )
+            accepted_metadata = dict(telemetry_metadata)
+            accepted_metadata.setdefault(
+                "broker_order_id", f"paper-accepted-{order_event_id}"
+            )
+            accepted_metadata["broker_submission_status"] = "simulated_accepted"
+            self._emit_lifecycle_telemetry(
+                "order_accepted",
+                {
+                    "action": "paper_order_accepted",
+                    "order_quantity": abs(event.quantity),
+                    "order_price": event.fill_price,
+                    "submitted_to_broker": False,
+                },
+                accepted_metadata,
+                event_id=accepted_event_id,
                 created_at=event.created_at,
             )
         if canonical_lifecycle and (

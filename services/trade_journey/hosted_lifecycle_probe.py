@@ -34,7 +34,9 @@ TASK_ID = "LOOP-PROD-TEL-002"
 REQUIRED_EVENT_TYPES = (
     "signal_generation",
     "trade_decision",
+    "risk_evaluation",
     "order_submitted",
+    "order_accepted",
     "paper_fill_simulated",
     "position_snapshot",
 )
@@ -43,7 +45,9 @@ QUERY_TYPES = (*REQUIRED_EVENT_TYPES, *RECONCILIATION_TYPES)
 EXPECTED_STAGES = {
     "signal_generation": "signal_generation",
     "trade_decision": "trade_decision",
+    "risk_evaluation": "risk_evaluation",
     "order_submitted": "order_submission",
+    "order_accepted": "broker_acknowledgement",
     "paper_fill_simulated": "fill_management",
     "position_snapshot": "ledger_booking",
     "reconciliation_completed": "reconciliation",
@@ -275,13 +279,19 @@ def _complete_candidates(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, An
         event_types = [item["event_type"] for item in selected]
         middle = event_types[2:-1]
         if (
-            len(selected) < 6
+            len(selected) < 8
             or event_types[:2] != ["signal_generation", "trade_decision"]
             or event_types[-1] not in RECONCILIATION_TYPES
-            or len(middle) % 3 != 0
+            or len(middle) % 5 != 0
             or middle
-            != ["order_submitted", "paper_fill_simulated", "position_snapshot"]
-            * (len(middle) // 3)
+            != [
+                "risk_evaluation",
+                "order_submitted",
+                "order_accepted",
+                "paper_fill_simulated",
+                "position_snapshot",
+            ]
+            * (len(middle) // 5)
         ):
             continue
         if [item["sequence_no"] for item in selected] != list(
@@ -309,12 +319,22 @@ def _complete_candidates(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, An
         if selected[1]["event_id"] != expected_decision_id:
             continue
         valid_derived_ids = True
-        for index in range(2, len(selected) - 1, 3):
-            order, fill, position = selected[index : index + 3]
-            if order["event_id"] != str(
+        for index in range(2, len(selected) - 1, 5):
+            risk, order, accepted, fill, position = selected[index : index + 5]
+            if risk["event_id"] != str(
+                uuid.uuid5(
+                    PAPER_LIFECYCLE_UUID_NAMESPACE,
+                    f"{fill['event_id']}:risk_evaluation",
+                )
+            ) or order["event_id"] != str(
                 uuid.uuid5(
                     PAPER_LIFECYCLE_UUID_NAMESPACE,
                     f"{fill['event_id']}:order_submitted",
+                )
+            ) or accepted["event_id"] != str(
+                uuid.uuid5(
+                    PAPER_LIFECYCLE_UUID_NAMESPACE,
+                    f"{fill['event_id']}:order_accepted",
                 )
             ) or position["event_id"] != str(
                 uuid.uuid5(

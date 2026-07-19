@@ -30,7 +30,9 @@ IDENTITY = {
 EVENT_TYPES = [
     "signal_generation",
     "trade_decision",
+    "risk_evaluation",
     "order_submitted",
+    "order_accepted",
     "paper_fill_simulated",
     "position_snapshot",
     "reconciliation_completed",
@@ -42,7 +44,7 @@ EVENTS = [
 CONTROLLER = {
     "deployment_sha": SHA,
     "generation": 12,
-    "checkpoint": 106,
+    "checkpoint": 108,
     "mode": "live",
     "accepted_live": True,
     "truth_level": "canonical_live",
@@ -60,7 +62,7 @@ def _source_artifact():
         "proof": {
             "source": {
                 "baseline_high_watermark": 100,
-                "source_high_watermark": 106,
+                "source_high_watermark": 108,
             },
             "identity": dict(IDENTITY),
             "events": list(EVENTS),
@@ -157,7 +159,7 @@ class FakeClient:
                     "environment": "paper",
                     "status": "completed",
                     "read_state": "formal",
-                    "event_count": 6,
+                    "event_count": 8,
                 },
                 "meta": {
                     "read_state": "formal",
@@ -193,7 +195,7 @@ def test_authenticated_public_bff_readback_correlates_both_surfaces(tmp_path):
 
     assert code == 0
     assert artifact["outcome"] == "passed"
-    assert artifact["public_bff"]["trade_journey"]["correlated_event_count"] == 6
+    assert artifact["public_bff"]["trade_journey"]["correlated_event_count"] == 8
     assert set(artifact["public_bff"]["auth"]["negative_statuses"].values()) == {401}
     assert artifact["public_bff"]["cross_surface"] == {
         "same_generation": True,
