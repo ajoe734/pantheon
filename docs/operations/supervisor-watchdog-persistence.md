@@ -68,6 +68,12 @@ heartbeat all become healthy. For user systemd it also enables and verifies
 login linger, so the timer starts after a reboot without requiring an
 interactive login.
 
+On a first deployment, an absent `.orchestrator/state.json` is an expected
+bootstrap condition: the watchdog may start the supervisor, which creates the
+canonical state under its singleton and runtime-state locks. This exception is
+exact. An empty file, invalid JSON, unreadable file, or invalid top-level schema
+still suppresses restart as `resource_pressure:state_read_failed`.
+
 `--method auto` prefers a user systemd timer and falls back to cron when user
 systemd is unavailable.
 

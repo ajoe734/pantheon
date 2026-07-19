@@ -508,7 +508,12 @@ def resource_snapshot(
 
 def resource_pressure_reasons(snapshot: dict[str, Any], settings: dict[str, Any], state_error: str | None = None) -> list[str]:
     reasons: list[str] = []
-    if state_error:
+    # A brand-new split-root dev VM has no runtime state until the supervisor's
+    # guarded bootstrap writes it. Treat only that exact absence as a valid
+    # first-start condition; empty, corrupt, unreadable, or schema-invalid
+    # state remains fail-closed. enter_watchdog_safe_mode writes a minimal
+    # durable envelope before start_supervisor launches the canonical bootstrap.
+    if state_error and state_error != "runtime_state_missing":
         reasons.append("state_read_failed")
     if snapshot.get("active_worker_scan_error"):
         reasons.append("active_worker_scan_failed")

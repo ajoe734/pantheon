@@ -170,6 +170,36 @@ class SupervisorWatchdogTests(unittest.TestCase):
         self.assertEqual(result["decision"], "observe_only")
         self.assertEqual(result["reason"], "supervisor_healthy")
 
+    def test_missing_runtime_state_allows_guarded_first_bootstrap(self) -> None:
+        log_path = self.root / "supervisor-bootstrap.log"
+
+        with (
+            mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=self.ok_resource()),
+            mock.patch.object(supervisor_watchdog, "start_supervisor", return_value=(456, log_path)) as start,
+        ):
+            result = supervisor_watchdog.run_watchdog(self.config, restart=True)
+
+        self.assertEqual(result["decision"], "restart_supervisor")
+        self.assertEqual(result["reason"], "missing_pid")
+        self.assertEqual(result["new_pid"], 456)
+        start.assert_called_once()
+        state = json.loads(self.state_file.read_text(encoding="utf-8"))
+        self.assertEqual(state["watchdog"]["last_decision"], "restart_supervisor")
+        self.assertEqual(state["watchdog"]["safe_mode_reason"], "missing_pid")
+
+    def test_corrupt_runtime_state_still_suppresses_restart(self) -> None:
+        self.state_file.write_text("not-json\n", encoding="utf-8")
+
+        with (
+            mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=self.ok_resource()),
+            mock.patch.object(supervisor_watchdog, "start_supervisor") as start,
+        ):
+            result = supervisor_watchdog.run_watchdog(self.config, restart=True)
+
+        self.assertEqual(result["decision"], "suppress_restart")
+        self.assertEqual(result["reason"], "resource_pressure:state_read_failed")
+        start.assert_not_called()
+
     def test_resource_pressure_suppresses_restart_and_opens_circuit(self) -> None:
         self.write_pid(123)
         self.write_state({"supervisor": {"pid": 123, "last_heartbeat_at": "2026-05-18T13:00:00Z", "lifecycle": "running"}})
