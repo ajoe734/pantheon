@@ -363,14 +363,16 @@ touches the hot path.
   the parallel-package build the discipline requires; the live cutover (state out
   of the git tree into the event log + projection) is the remaining step and needs
   the fleet to validate — it is the plan's Medium-High-risk item.
-- **Phase 7 — model built; sidecar switch-off verified (deletion pending).**
-  `rewrite/utilization.py` encodes the §3.8 principle as a pure decision
-  (`select_utilization_action` ⇒ reprioritize real backlog, never synthesize).
-  The live sidecar make-work engine is already switchable off today
-  (`underutilization_dispatch.enabled=false`), verified as a clean no-op in
-  `rewrite/test_utilization.py`. Remaining: delete the sidecar path, drop the
-  event-queue indirection, and fold discussion-planning into a task `kind` — all
-  behaviour-changing removals that need the fleet.
+- **Phase 7 — sidecar OFF by default (dormant); event-queue/discussion pending.**
+  `rewrite/utilization.py` encodes the §3.8 principle (`select_utilization_action`
+  ⇒ reprioritize real backlog, never synthesize). The sidecar make-work engine is
+  now **off by default** — `underutilization_settings` defaults `enabled=False` and
+  `config.json` sets it false — so the live cycle no longer manufactures tasks; the
+  code path is retained (set `underutilization_dispatch.enabled=true` to restore)
+  pending physical deletion once confirmed dormant on the fleet. Still pending
+  (both large, fleet-gated, test-contract-bound removals): drop the event-queue
+  indirection (`process_queue`/`reconcile_queue_records` — core dispatch plumbing)
+  and fold discussion-planning into a task `kind`.
 
 **Build discipline:** the new modules land in a parallel package and are
 exercised in shadow/dry-run against real state (read the live board, compute

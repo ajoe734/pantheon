@@ -8781,7 +8781,12 @@ def release_completed_worker_for_claim(
 
 def underutilization_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings = dict(config.get("underutilization_dispatch", {}) or {})
-    settings.setdefault("enabled", True)
+    # SUPERVISOR-REWRITE Phase 7 (anti-pattern F): the sidecar make-work engine is
+    # OFF by default — utilization is handled by reprioritizing the real backlog
+    # (rewrite.utilization), never by synthesizing tasks. The code path is kept
+    # for reversibility (set underutilization_dispatch.enabled=true to restore)
+    # ahead of physical deletion once confirmed dormant on the fleet.
+    settings.setdefault("enabled", False)
     settings.setdefault("require_recent_chair_signal", True)
     settings.setdefault("threshold_ratio", 0.5)
     settings.setdefault("continuous_window_seconds", 900)
