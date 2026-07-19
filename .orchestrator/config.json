@@ -852,7 +852,7 @@
     }
   },
   "underutilization_dispatch": {
-    "enabled": true,
+    "enabled": false,
     "threshold_ratio": 0.5,
     "continuous_window_seconds": 0,
     "cooldown_seconds": 0,
