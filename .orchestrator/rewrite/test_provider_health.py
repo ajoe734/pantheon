@@ -1,0 +1,83 @@
+from __future__ import annotations
+
+import os
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import provider_health
+from provider_health import AccountHealth, FailureResponse
+
+
+class ShouldPauseTests(unittest.TestCase):
+    def test_pause_kinds(self) -> None:
+        for kind in ("quota_terminal", "capacity", "capacity_retryable", "auth"):
+            self.assertTrue(provider_health.should_pause(kind), kind)
+
+    def test_non_pause_kinds(self) -> None:
+        for kind in ("terminal", "transient", "unknown_critical", "tool_auth", "", "bogus", None):
+            self.assertFalse(provider_health.should_pause(kind), kind)
+
+
+class DecideFailureResponseTests(unittest.TestCase):
+    def test_rotation_short_circuits_to_rotate(self) -> None:
+        # even a pause kind rotates when rotation absorbed it
+        self.assertEqual(
+            provider_health.decide_failure_response("quota_terminal", rotation_outcome="rotated"),
+            FailureResponse.ROTATE,
+        )
+
+    def test_pause_kinds_pause_without_rotation(self) -> None:
+        for kind in ("quota_terminal", "capacity_retryable", "auth"):
+            self.assertEqual(provider_health.decide_failure_response(kind), FailureResponse.PAUSE, kind)
+
+    def test_exhausted_rotation_still_pauses(self) -> None:
+        self.assertEqual(
+            provider_health.decide_failure_response("quota_terminal", rotation_outcome="exhausted"),
+            FailureResponse.PAUSE,
+        )
+
+    def test_transient_retries(self) -> None:
+        self.assertEqual(provider_health.decide_failure_response("transient"), FailureResponse.RETRY)
+
+    def test_terminal_reassigns(self) -> None:
+        for kind in ("terminal", "unknown_critical", "tool_auth", "bogus"):
+            self.assertEqual(provider_health.decide_failure_response(kind), FailureResponse.REASSIGN, kind)
+
+
+class ClassifyHealthTests(unittest.TestCase):
+    def test_auth_is_revoked(self) -> None:
+        self.assertEqual(provider_health.classify_health("auth"), AccountHealth.REVOKED)
+        self.assertEqual(provider_health.classify_health("tool_auth"), AccountHealth.REVOKED)
+
+    def test_quota_capacity_degraded(self) -> None:
+        for kind in ("quota_terminal", "capacity", "capacity_retryable"):
+            self.assertEqual(provider_health.classify_health(kind), AccountHealth.DEGRADED, kind)
+
+    def test_others_healthy(self) -> None:
+        for kind in ("terminal", "transient", "unknown_critical", "", None):
+            self.assertEqual(provider_health.classify_health(kind), AccountHealth.HEALTHY, kind)
+
+
+class IncumbentParityTests(unittest.TestCase):
+    """The cut-over predicate must equal the legacy ladder for every kind."""
+
+    def test_should_pause_matches_incumbent(self) -> None:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        import supervisor
+
+        kinds = ["auth", "tool_auth", "capacity", "capacity_retryable", "quota_terminal",
+                 "terminal", "transient", "unknown_critical", "", "bogus", None]
+        # legacy path (flag on) vs rewrite path (flag off, the default)
+        for kind in kinds:
+            os.environ["PANTHEON_LEGACY_FAILURE_RESPONSE"] = "1"
+            legacy = supervisor.should_pause_dispatch_for_failure_kind(kind)
+            os.environ.pop("PANTHEON_LEGACY_FAILURE_RESPONSE", None)
+            rewrite = supervisor.should_pause_dispatch_for_failure_kind(kind)
+            self.assertEqual(legacy, rewrite, msg=f"kind={kind!r}: legacy={legacy} rewrite={rewrite}")
+
+
+if __name__ == "__main__":
+    unittest.main()
