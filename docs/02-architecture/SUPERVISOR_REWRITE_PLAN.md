@@ -296,6 +296,89 @@ touches the hot path.
 | 6 | Move live state to event-log + projection, out of git | Medium-High | Ends git-wipe + `next`-overwrite |
 | 7 | Delete sidecar; drop event-queue indirection; discussion→task kind | Low-Medium | Stops make-work growth |
 
+**Cutover status (2026-07-19):**
+- **Phase 0 — done.** `_safe_phase` per-phase isolation landed (`14a41cfb`); a
+  raising phase (e.g. activity-scan on a missing archive) now degrades only
+  itself. (The `raise`→`warn` softening of §3.2 is folded into Phase 2.)
+- **Phase 1 — done (1a shadow + 1b cutover).** `rewrite/concurrency.py` covers
+  both concurrency gates, shadow-proven equal for every live agent:
+  `max_parallel` (per-agent cap) ← `agent_dispatch_capacity`, and `account_limit`
+  (account cap) ← `quota_group_concurrency_limit`. Both live functions route
+  through the module by default, legacy one flag away
+  (`ready_dispatcher.use_rewrite_concurrency=false`). The 6-way account-group
+  *resolver* (anti-pattern D) still stands; its collapse to a single `account`
+  key is the remaining config-migration step, tracked as Phase 1 follow-up.
+- **Phase 3 — done (3a shadow + 3b cutover).** `rewrite/task_machine.py`
+  (`dispatch_reason`/`dispatch_priority`) is shadow-proven equal to
+  `dispatch_priority_for_task` on the live board; the incumbent now routes
+  through it by default (configured status sets translated to canonical lifecycle
+  states first, so parity holds for custom sets too), legacy one flag away
+  (`ready_dispatcher.use_rewrite_dispatch_reason=false`).
+  Behaviour preservation is pinned by `rewrite/test_cutover.py` (rewrite-vs-legacy
+  parity across a config matrix).
+- **Phase 2 — done (integrity off the hot path).** Two parts, both landed:
+  (a) `rewrite/verify_activity_integrity.py` — the standalone offline verifier
+  §3.2 calls for: reuses the incumbent validator (`common.stream_logical_activity`,
+  faithful by construction), runs outside any cycle, **alerts via exit code
+  (0 ok / 2 integrity / 3 operational) instead of `raise`ing** (validated on the
+  live log, 37,270 rows). (b) `common.write_activity_log` no longer lets an
+  integrity fault abort the cycle: a genuine **lineage-integrity drift** fault
+  (missing archive, digest/conservation mismatch — the exact 4h-outage class)
+  degrades to a stderr warning + a guaranteed forced append, so
+  dispatch/finalize/archive keep running; the offline verifier owns the alert.
+  Security faults (symlink / non-regular leaf) and correctness guards
+  ("recovery is pending", mid-rotation intent) keep their fail-closed contract
+  via a tight drift allow-list. Escape hatch: `PANTHEON_ACTIVITY_LOG_STRICT=1` or
+  `config.activity_log_strict_hot_path=true` restores incumbent fail-closed
+  writes. Pinned by `rewrite/test_activity_resilient_write.py`; full
+  `test_common.py` audit suite still green.
+  Follow-up (optional hardening, not blocking): fully size-based atomic-rename
+  rotation to retire the lineage-build cost on healthy writes too.
+- **Phase 5 — done (decision cut over; probed-health model landed).**
+  `rewrite/provider_health.py` owns the account failure-response decision:
+  `decide_failure_response(kind, rotation_outcome) -> Rotate|Pause|Retry|Reassign`
+  and `classify_health(kind) -> healthy|degraded|revoked` (auth ⇒ revoked, a
+  first-class state, not a timed-out guess). `should_pause_dispatch_for_failure_kind`
+  now routes through `provider_health.should_pause`, shadow-proven equal across
+  the entire failure-kind vocabulary (11 kinds, 0 mismatch). Legacy ladder one
+  flag away via `PANTHEON_LEGACY_FAILURE_RESPONSE=1`. Follow-up: route the two
+  remaining copies of the pause/rotate/reassign branch (in poll_workers) through
+  the same decision, and add the owner-side pre-dispatch auth probe that promotes
+  `classify_health` from reactive to proactive.
+- **Phase 4 — correctness fixes cut over; lease→progress binding shipped (flag);
+  full decomposition pending.** `rewrite/worker_lifecycle.py`: (a) `confirm_kill`
+  (SIGTERM → wait → SIGKILL → verify) now backs `terminate_worker_pid`, ending
+  SIGTERM-and-assume-dead (a worker was marked `failed` while still alive and
+  mutating state); legacy one flag away via `PANTHEON_LEGACY_TERMINATE=1`.
+  (b) `has_work_progress`/`lease_progress_is_fresh` bind lease renewal to observed
+  WORK progress (process-tree activity / provider output), not bare heartbeat, so
+  a hung-but-heartbeating runner stops renewing and is reaped — the "hangs but
+  heartbeats" fix. Wired into `poll_workers` behind
+  `supervisor.lease_requires_work_progress` (default off — it shifts lease timing
+  and the stall window wants fleet tuning; the incumbent's process-activity stall
+  terminator already covers the common case). Pending: physically decompose the
+  751-line `poll_workers` into the enum+table driver, and add per-worker commit
+  observation so `has_work_progress`'s commit signal is populated live.
+- **Phase 6 — model built in isolation (storage cutover pending).**
+  `rewrite/state_projection.py` implements the plan's core §3.7 idea: an
+  append-only event vocabulary + a pure `project_board(events)` that folds it into
+  the board, with task transitions validated against the ONE task state machine
+  (`task_machine.TRANSITIONS`), and `next` *appended* (history retained) instead
+  of overwritten. Deterministic/replayable (prefix ⇒ point-in-time board). This is
+  the parallel-package build the discipline requires; the live cutover (state out
+  of the git tree into the event log + projection) is the remaining step and needs
+  the fleet to validate — it is the plan's Medium-High-risk item.
+- **Phase 7 — sidecar OFF by default (dormant); event-queue/discussion pending.**
+  `rewrite/utilization.py` encodes the §3.8 principle (`select_utilization_action`
+  ⇒ reprioritize real backlog, never synthesize). The sidecar make-work engine is
+  now **off by default** — `underutilization_settings` defaults `enabled=False` and
+  `config.json` sets it false — so the live cycle no longer manufactures tasks; the
+  code path is retained (set `underutilization_dispatch.enabled=true` to restore)
+  pending physical deletion once confirmed dormant on the fleet. Still pending
+  (both large, fleet-gated, test-contract-bound removals): drop the event-queue
+  indirection (`process_queue`/`reconcile_queue_records` — core dispatch plumbing)
+  and fold discussion-planning into a task `kind`.
+
 **Build discipline:** the new modules land in a parallel package and are
 exercised in shadow/dry-run against real state (read the live board, compute
 intents, diff against what the old supervisor did) **before** any phase is cut
