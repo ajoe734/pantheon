@@ -71,5 +71,62 @@ class MaxParallelTests(unittest.TestCase):
         self.assertEqual(concurrency.max_parallel(cfg, "claude", settings={"max_tasks_per_agent": 0}), 1)
 
 
+class AccountLimitTests(unittest.TestCase):
+    def test_no_cap_when_unset(self) -> None:
+        self.assertIsNone(concurrency.account_limit("grp", settings={}))
+
+    def test_no_cap_when_empty_string(self) -> None:
+        self.assertIsNone(
+            concurrency.account_limit("grp", settings={"max_concurrent_per_quota_group": ""})
+        )
+
+    def test_scalar_global_cap(self) -> None:
+        self.assertEqual(
+            concurrency.account_limit("grp", settings={"max_concurrent_per_quota_group": 3}), 3
+        )
+
+    def test_scalar_cap_floored_at_zero(self) -> None:
+        self.assertEqual(
+            concurrency.account_limit("grp", settings={"max_concurrent_per_quota_group": -5}), 0
+        )
+
+    def test_scalar_invalid_is_none(self) -> None:
+        self.assertIsNone(
+            concurrency.account_limit("grp", settings={"max_concurrent_per_quota_group": "abc"})
+        )
+
+    def test_dict_first_matching_key_wins(self) -> None:
+        settings = {"max_concurrent_per_quota_group": {"acct_b": 5, "acct_a": 2}}
+        self.assertEqual(
+            concurrency.account_limit("acct_a", settings=settings,
+                                      identity_keys=["acct_a", "acct_b"]),
+            2,
+        )
+
+    def test_dict_default_keys_use_account_id(self) -> None:
+        settings = {"max_concurrent_per_quota_group": {"acct_a": 4}}
+        self.assertEqual(concurrency.account_limit("acct_a", settings=settings), 4)
+
+    def test_dict_no_match_is_none(self) -> None:
+        settings = {"max_concurrent_per_quota_group": {"other": 4}}
+        self.assertIsNone(
+            concurrency.account_limit("acct_a", settings=settings, identity_keys=["acct_a"])
+        )
+
+    def test_dict_non_int_value_is_none(self) -> None:
+        settings = {"max_concurrent_per_quota_group": {"acct_a": "lots"}}
+        self.assertIsNone(
+            concurrency.account_limit("acct_a", settings=settings, identity_keys=["acct_a"])
+        )
+
+    def test_dict_skips_empty_keys(self) -> None:
+        settings = {"max_concurrent_per_quota_group": {"acct_a": 1}}
+        # empty/None keys are skipped; the real one still matches
+        self.assertEqual(
+            concurrency.account_limit("", settings=settings, identity_keys=["", None, "acct_a"]),
+            1,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -44,6 +44,34 @@ def compare_capacity(config: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
+def compare_account_limit(config: dict[str, Any]) -> list[dict[str, Any]]:
+    """One row per agent: incumbent quota_group_concurrency_limit vs the clean
+    account_limit fed the incumbent-resolved identity keys (in the incumbent's
+    exact try order). Proves the cap arithmetic is faithful ahead of collapsing
+    the 6-way account-group resolver to a single key."""
+    settings = supervisor.ready_dispatch_settings(config)
+    rows: list[dict[str, Any]] = []
+    for agent_id in (config.get("agents", {}) or {}):
+        norm = supervisor.normalize_agent_id(agent_id)
+        if not norm:
+            continue
+        # Same key order the incumbent tries inside quota_group_concurrency_limit.
+        group_id = supervisor.agent_quota_group_id(config, norm)
+        provider_id = supervisor.agent_provider_id(config, norm)
+        display = supervisor.display_name_for(config, norm)
+        keys = [
+            *supervisor.agent_quota_identity_ids(config, norm),
+            group_id,
+            provider_id,
+            norm,
+            display,
+        ]
+        old = supervisor.quota_group_concurrency_limit(config, norm, settings)
+        new = concurrency.account_limit(group_id, settings=settings, identity_keys=keys)
+        rows.append({"agent": norm, "old": old, "new": new, "agree": old == new})
+    return rows
+
+
 def compare_dispatch_reason(config: dict[str, Any], tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """One row per (task, candidate-agent): incumbent dispatch_priority_for_task
     vs the clean task_machine.dispatch_priority, on the real board.
@@ -98,6 +126,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  {'OK      ' if r['agree'] else 'MISMATCH'} {r['agent']}: old={r['old']} new={r['new']}")
     print(f"\nmax_parallel shadow: {len(cap_rows)} agents, {len(cap_mismatch)} mismatch")
     if cap_mismatch:
+        exit_code = 1
+
+    acct_rows = compare_account_limit(config)
+    acct_mismatch = [r for r in acct_rows if not r["agree"]]
+    for r in acct_mismatch:
+        print(f"  MISMATCH account_limit {r['agent']}: old={r['old']} new={r['new']}")
+    print(f"account_limit shadow: {len(acct_rows)} agents, {len(acct_mismatch)} mismatch")
+    if acct_mismatch:
         exit_code = 1
 
     if args.board:

@@ -300,10 +300,14 @@ touches the hot path.
 - **Phase 0 — done.** `_safe_phase` per-phase isolation landed (`14a41cfb`); a
   raising phase (e.g. activity-scan on a missing archive) now degrades only
   itself. (The `raise`→`warn` softening of §3.2 is folded into Phase 2.)
-- **Phase 1 — done (1a shadow + 1b cutover).** `rewrite/concurrency.py`
-  (`max_parallel`) is shadow-proven equal to `agent_dispatch_capacity` for every
-  live agent; `agent_dispatch_capacity` now routes through it by default, legacy
-  one flag away (`ready_dispatcher.use_rewrite_concurrency=false`).
+- **Phase 1 — done (1a shadow + 1b cutover).** `rewrite/concurrency.py` covers
+  both concurrency gates, shadow-proven equal for every live agent:
+  `max_parallel` (per-agent cap) ← `agent_dispatch_capacity`, and `account_limit`
+  (account cap) ← `quota_group_concurrency_limit`. Both live functions route
+  through the module by default, legacy one flag away
+  (`ready_dispatcher.use_rewrite_concurrency=false`). The 6-way account-group
+  *resolver* (anti-pattern D) still stands; its collapse to a single `account`
+  key is the remaining config-migration step, tracked as Phase 1 follow-up.
 - **Phase 3 — done (3a shadow + 3b cutover).** `rewrite/task_machine.py`
   (`dispatch_reason`/`dispatch_priority`) is shadow-proven equal to
   `dispatch_priority_for_task` on the live board; the incumbent now routes

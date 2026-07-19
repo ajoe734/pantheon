@@ -92,6 +92,53 @@ class CapacityCutoverParityTests(unittest.TestCase):
                 )
 
 
+# --- account cap (Phase 1b) config matrix ---------------------------------
+def _acct(config, agent, *, rewrite: bool):
+    settings = supervisor.ready_dispatch_settings(config)
+    settings["use_rewrite_concurrency"] = rewrite
+    return supervisor.quota_group_concurrency_limit(config, agent, settings)
+
+
+ACCOUNT_CONFIGS = [
+    {"agents": {"claude": {"provider": "anthropic"}},
+     "providers": {"anthropic": {}}},
+    {"agents": {"claude": {"provider": "anthropic"}},
+     "providers": {"anthropic": {}},
+     "ready_dispatcher": {"max_concurrent_per_quota_group": 2}},
+    {  # dict keyed by account_group shared across two providers
+        "agents": {"claude": {"provider": "anthropic"}, "claude2": {"provider": "anthropic2"}},
+        "providers": {"anthropic": {"account_group": "acct_shared"},
+                      "anthropic2": {"account_group": "acct_shared"}},
+        "ready_dispatcher": {"max_concurrent_per_quota_group": {"acct_shared": 3}},
+    },
+    {  # dict keyed by quota_group alias
+        "agents": {"codex": {"provider": "openai"}},
+        "providers": {"openai": {"quota_group": "oai_pool"}},
+        "ready_dispatcher": {"max_concurrent_per_quota_group": {"oai_pool": 1}},
+    },
+    {  # dict with no matching key -> None
+        "agents": {"gemini": {"provider": "google"}},
+        "providers": {"google": {}},
+        "ready_dispatcher": {"max_concurrent_per_quota_group": {"unrelated": 9}},
+    },
+]
+
+
+class AccountCapCutoverParityTests(unittest.TestCase):
+    def test_rewrite_equals_legacy_for_every_agent(self) -> None:
+        for i, cfg in enumerate(ACCOUNT_CONFIGS):
+            for agent in cfg.get("agents", {}):
+                norm = supervisor.normalize_agent_id(agent)
+                if not norm:
+                    continue
+                legacy = _acct(cfg, norm, rewrite=False)
+                new = _acct(cfg, norm, rewrite=True)
+                self.assertEqual(
+                    legacy, new,
+                    msg=f"config[{i}] agent={norm}: legacy={legacy} rewrite={new}",
+                )
+
+
 # --- dispatch priority (Phase 3b) config + task matrix --------------------
 CANONICAL_RD = {"review_statuses": ["review"], "finalize_statuses": ["review_approved"],
                 "dependency_done_statuses": ["done"]}
