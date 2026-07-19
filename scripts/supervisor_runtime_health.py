@@ -28,6 +28,43 @@ def load_json(path: Path, default: Any) -> Any:
         return default
 
 
+def load_latest_contention_probe(path: Path, *, max_bytes: int = 1024 * 1024) -> dict[str, Any] | None:
+    """Return the newest valid lock-contention probe from a bounded JSONL tail."""
+    if path.is_symlink():
+        return None
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            start = max(0, size - max_bytes)
+            handle.seek(start)
+            payload = handle.read(max_bytes)
+    except OSError:
+        return None
+
+    if start:
+        _, separator, payload = payload.partition(b"\n")
+        if not separator:
+            return None
+
+    for raw_line in reversed(payload.splitlines()):
+        try:
+            event = json.loads(raw_line.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(event, dict):
+            continue
+        if (
+            event.get("version") == 1
+            and event.get("decision") == "skip"
+            and event.get("reason") == "lock_contention"
+            and event.get("lock_held") is True
+            and parse_utc_timestamp(event.get("at")) is not None
+        ):
+            return event
+    return None
+
+
 def resolve_repo_path(repo_root: Path, value: str | None, default: str) -> Path:
     raw = Path(value or default)
     if not raw.is_absolute():
@@ -194,10 +231,35 @@ def evaluate_runtime_health(
         )
         watchdog_state = load_json(watchdog_state_path, default={})
         watchdog_updated = parse_utc_timestamp(watchdog_state.get("updated_at") if isinstance(watchdog_state, dict) else None)
-        watchdog_age = (now - watchdog_updated).total_seconds() if watchdog_updated is not None else None
+        contention_metrics_path = resolve_repo_path(
+            repo_root,
+            str(
+                watchdog_settings.get("contention_metrics_file")
+                or ".orchestrator/metrics/supervisor-watchdog-contention.jsonl"
+            ),
+            ".orchestrator/metrics/supervisor-watchdog-contention.jsonl",
+        )
+        contention_probe = load_latest_contention_probe(contention_metrics_path)
+        contention_updated = parse_utc_timestamp(contention_probe.get("at") if contention_probe else None)
+        probe_candidates = [
+            ("watchdog_state", watchdog_updated),
+            ("contention_metric", contention_updated),
+        ]
+        probe_source, probe_updated = max(
+            ((source, updated) for source, updated in probe_candidates if updated is not None),
+            key=lambda item: item[1],
+            default=(None, None),
+        )
+        watchdog_age = (now - probe_updated).total_seconds() if probe_updated is not None else None
         watchdog_report = {
             "state_file": str(watchdog_state_path),
             "updated_at": watchdog_updated.isoformat().replace("+00:00", "Z") if watchdog_updated else None,
+            "contention_metrics_file": str(contention_metrics_path),
+            "contention_updated_at": (
+                contention_updated.isoformat().replace("+00:00", "Z") if contention_updated else None
+            ),
+            "probe_source": probe_source,
+            "probe_updated_at": probe_updated.isoformat().replace("+00:00", "Z") if probe_updated else None,
             "age_seconds": watchdog_age,
             "max_age_seconds": max_watchdog_age,
         }
