@@ -10,7 +10,7 @@ from __future__ import annotations
 import json, os, subprocess, sys, time, re
 from pathlib import Path
 
-ROOT = Path(os.environ.get("PANTHEON_STATUS_ROOT", "/home/lupin/code/pantheon"))
+ROOT = Path(os.environ.get("PANTHEON_STATUS_ROOT", "/home/lupin/pantheon"))
 STATUS_FILE = ROOT / "ai-status.json"
 ARCHIVE_DIR = ROOT / "ai-task-archive" / "tasks"
 STATE_FILE = ROOT / ".orchestrator" / "auto-unblock-state.json"

@@ -31,7 +31,7 @@ def test_dev_management_ai_kernel_overlay_is_explicitly_dev_only() -> None:
     assert env["PANTHEON_ASSISTANT_KERNEL_ENABLED"] == "true"
     assert env["PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH"] == "/data/bff/assistant-control-mode.json"
     assert env["PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS"] == "300"
-    assert env["PANTHEON_STATUS_ROOT_HOST"] == "/home/lupin/code/pantheon"
+    assert env["PANTHEON_STATUS_ROOT_HOST"] == "/home/lupin/pantheon"
     assert env["PANTHEON_STATUS_ROOT_CONTAINER"] == "/workspace/status-root"
     assert env["PANTHEON_ASSISTANT_REPAIR_REPO_URL"] == "/workspace/status-root"
     assert env["PANTHEON_ASSISTANT_REPAIR_REMOTE_URL"] == "https://github.com/ajoe734/pantheon.git"
@@ -67,7 +67,7 @@ def test_enable_management_ai_dev_kernel_script_targets_only_operator_bff() -> N
 def test_nonprod_dev_deploy_exports_management_ai_kernel_overlay() -> None:
     script = NONPROD_DEPLOY.read_text(encoding="utf-8")
 
-    assert "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io" in script
+    assert "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io" in script
     assert 'DEV_ASSISTANT_KERNEL_ENABLED="${DEV_ASSISTANT_KERNEL_ENABLED:-true}"' in script
     assert (
         'DEV_ASSISTANT_CONTROL_MODE_STORE_PATH="${DEV_ASSISTANT_CONTROL_MODE_STORE_PATH:-/data/bff/assistant-control-mode.json}"'
@@ -149,7 +149,7 @@ def test_nonprod_dev_deploy_forces_self_hosted_fe_cors_origin() -> None:
     script = NONPROD_DEPLOY.read_text(encoding="utf-8")
     workflow = NONPROD_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
 
-    canonical_origin = "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io"
+    canonical_origin = "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io"
 
     assert f'DEV_BFF_CANONICAL_CORS_ORIGIN="${{DEV_BFF_CANONICAL_CORS_ORIGIN:-{canonical_origin}}}"' in script
     assert 'DEV_BFF_CORS_ORIGINS="$(append_csv_unique "$DEV_BFF_CORS_ORIGINS" "$DEV_BFF_CANONICAL_CORS_ORIGIN")"' in script
@@ -158,8 +158,9 @@ def test_nonprod_dev_deploy_forces_self_hosted_fe_cors_origin() -> None:
 
     assert "DEV_BFF_CANONICAL_CORS_ORIGIN:" in workflow
     assert canonical_origin in workflow
-    assert 'dev_origins="${DEV_BFF_CANONICAL_CORS_ORIGIN}"' in workflow
-    assert 'Checking dev BFF CORS origin: ${origin}' in workflow
+    assert 'origins="${DEV_BFF_CANONICAL_CORS_ORIGIN}"' in workflow
+    assert '-H "Origin: ${origin}"' in workflow
+    assert 'grep -qi "access-control-allow-origin: ${origin}"' in workflow
 
 
 def test_nonprod_dev_deploy_runs_openclaw_assistant_sentinel_smoke() -> None:
@@ -169,12 +170,11 @@ def test_nonprod_dev_deploy_runs_openclaw_assistant_sentinel_smoke() -> None:
     )
 
     assert "Dev OpenClaw assistant live smoke" in workflow
-    assert "env.TARGET_ENV == 'dev'" in workflow
     assert "env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root'" in workflow
     assert "gcloud compute ssh" in workflow
     assert "OPENCLAW_GATEWAY_ADAPTER_URL=http://127.0.0.1:18104 bash -s" in workflow
     assert "DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${{ secrets.DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN }}" in workflow
-    assert "X-Pantheon-Service-Token: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN}" in workflow
-    assert "cat scripts/openclaw-assistant-openclaw-live-smoke.sh" in workflow
+    assert r"X-Pantheon-Service-Token: \${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN}" in workflow
+    assert "openclaw-assistant-openclaw-live-smoke.sh" in workflow
     assert "OPENCLAW_LIVE" in smoke
     assert "sentinel '${SENTINEL}' not found" in smoke

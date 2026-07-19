@@ -1,25 +1,31 @@
 # Staging-Live Topology
 
-Status date: 2026-05-03
+Status date: 2026-07-19
 
 For the current VS Code / LLM agent workflow, also read:
 
-- [nonprod-development-workflow.md](/home/lupin/code/pantheon/docs/deployment/nonprod-development-workflow.md)
-- [bff-https-ingress.md](/home/lupin/code/pantheon/docs/deployment/bff-https-ingress.md)
+- [nonprod-development-workflow.md](nonprod-development-workflow.md)
+- [bff-https-ingress.md](bff-https-ingress.md)
 
 ## VM Inventory
 
-Current GCP project: `pantheon-benjamin-20260528`.
+Active dev GCP project: `pantheon-lupin-dev-20260719`.
+
+The prior shared project `pantheon-benjamin-20260528` is suspended. Its
+staging-live inventory below is retained as the last known topology, but those
+VMs and endpoints are not current reachable deployment targets. Staging-live
+requires a separately authorized project replacement; do not route dev back to
+the suspended project as a workaround.
 
 | VM | Zone | Public endpoint | Internal endpoint carried by repo vars | Role |
 | --- | --- | --- | --- | --- |
-| `pantheon-lupin-dev` | `asia-east1-b` | `35.201.239.38` | VM-local BFF `127.0.0.1:18001` | dev backend and Pantheon-owned FE |
-| `pantheon-lupin-staging-control` | `asia-east1-b` | `104.155.223.192` | VM-local BFF `127.0.0.1:38001` | staging VM1 control/BFF |
-| `pantheon-lupin-staging-exec` | `asia-east1-b` | no public BFF endpoint | runtime-manager `10.50.0.21:28081` | staging VM2 execution/broker |
+| `pantheon-lupin-dev` | `asia-east1-b` | `35.201.204.12` | VM-local BFF `127.0.0.1:18001` | active replacement dev backend and Pantheon-owned FE target |
+| `pantheon-lupin-staging-control` | `asia-east1-b` | `104.155.223.192` | VM-local BFF `127.0.0.1:38001` | historical staging VM1; suspended project |
+| `pantheon-lupin-staging-exec` | `asia-east1-b` | no public BFF endpoint | runtime-manager `10.50.0.21:28081` | historical staging VM2; suspended project |
 
-Machine type and full VM network inventory should be read from `gcloud compute
-instances list --project=pantheon-benjamin-20260528`; do not reuse pre-cutover
-`10.140.0.x` or old external IP values as current topology truth.
+Read active dev machine and network inventory from `gcloud compute instances
+list --project=pantheon-lupin-dev-20260719`. Do not reuse the suspended-project
+dev IP `35.201.239.38` as current topology truth.
 
 ## Current Pantheon Layout
 
@@ -27,12 +33,12 @@ Dev:
 
 - VM: `pantheon-lupin-dev`
 - compose project: `pantheon`
-- compose file: `/home/lupin/code/pantheon/docker-compose.yml`
+- compose file: `/home/lupin/pantheon/docker-compose.yml`
 - compose contract: default dev single-VM baseline; control plane,
   runtime-manager, telemetry, research services, BFF, and local dev signal store
   are co-located for non-prod iteration.
 - public BFF HTTPS URL:
-  `https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io`
+  `https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io`
 - BFF health: `http://127.0.0.1:18001/health` on the dev VM
 - live broker scope: disabled by default through `PANTHEON_LIVE_BROKER_ENABLED=false`
 
@@ -128,8 +134,9 @@ and asserts:
 
 ## Firewall and Ingress Status
 
-The current GCP firewall exposes only default SSH/RDP/ICMP/internal rules. BFF
-ports `18001` and `38001` are not publicly exposed.
+The replacement dev project exposes SSH plus public HTTP/HTTPS to the dev VM.
+The BFF container port `18001` remains VM-local and must be published through
+Caddy. A running VM or open firewall alone is not hosted-deployment proof.
 
 This is intentional until an HTTPS ingress is created. The next ingress step is
 one of:
@@ -144,18 +151,19 @@ List VM roles:
 
 ```bash
 gcloud compute instances list \
-  --project=pantheon-benjamin-20260528 \
+  --project=pantheon-lupin-dev-20260719 \
   --format='table(name,zone.basename(),machineType.basename(),networkInterfaces[0].networkIP,networkInterfaces[0].accessConfigs[0].natIP,labels.env,labels.role,status)'
 ```
 
 Dev BFF:
 
 ```bash
-gcloud compute ssh lupin@pantheon-lupin-dev --zone=asia-east1-b --project=pantheon-benjamin-20260528 -- \
-  'cd /home/lupin/code/pantheon && docker compose ps && curl -fsS http://127.0.0.1:18001/health'
+gcloud compute ssh lupin@pantheon-lupin-dev --zone=asia-east1-b --project=pantheon-lupin-dev-20260719 -- \
+  'cd /home/lupin/pantheon && docker compose ps && curl -fsS http://127.0.0.1:18001/health'
 ```
 
-Staging VM1 BFF and VM2 runtime reachability:
+Historical staging VM1 BFF and VM2 runtime reachability (unavailable while the
+project is suspended; retained only for replacement planning):
 
 ```bash
 gcloud compute ssh lupin@pantheon-lupin-staging-control --zone=asia-east1-b --project=pantheon-benjamin-20260528 -- \

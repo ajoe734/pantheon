@@ -178,8 +178,8 @@ jobs:
       - name: Authenticate to Google Cloud via Workload Identity Federation
         uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed
         with:
-          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
-          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT || vars.GCP_SERVICE_ACCOUNT }}
+          workload_identity_provider: ${{ vars.DEV_GCP_WIF_PROVIDER || 'projects/317269804408/locations/global/workloadIdentityPools/pantheon-github-pool/providers/pantheon-github-provider' }}
+          service_account: ${{ vars.DEV_GCP_DEPLOY_SERVICE_ACCOUNT || 'pantheon-cloud-build@pantheon-lupin-dev-20260719.iam.gserviceaccount.com' }}
 
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f
@@ -402,9 +402,9 @@ jobs:
           REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
           DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
-          DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR || '/home/lupin/code/pantheon' }}
-          DEV_BFF_CANONICAL_CORS_ORIGIN: ${{ vars.DEV_BFF_CANONICAL_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io' }}
-          DEV_BFF_CORS_ORIGINS: ${{ vars.DEV_BFF_CORS_ORIGINS || vars.DEV_BFF_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io' }}
+          DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR || '/home/lupin/pantheon' }}
+          DEV_BFF_CANONICAL_CORS_ORIGIN: ${{ vars.DEV_BFF_CANONICAL_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
+          DEV_BFF_CORS_ORIGINS: ${{ vars.DEV_BFF_CORS_ORIGINS || vars.DEV_BFF_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
           # Governed verifier/dev-login credentials for the strict auth cutover.
           # Must be provisioned as repo/environment secrets by a human; deploy_nonprod_vm.sh
           # refuses to deploy dev with DEV_BFF_AUTH_MODE=strict if these are empty.
@@ -465,7 +465,7 @@ jobs:
             --environment dev
             --component "${TARGET_COMPONENT}"
             --sha "${TARGET_SHA}"
-            --project-id "${{ vars.GCP_DEPLOY_PROJECT_ID || 'pantheon-benjamin-20260528' }}"
+            --project-id "${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-lupin-dev-20260719' }}"
           )
           [[ "${ALLOW_DIRTY}" == "true" ]] && args+=(--allow-dirty)
           PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
@@ -479,7 +479,7 @@ jobs:
           DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
           DEV_DEPLOY_WORKTREE: ${{ vars.DEV_DEPLOY_WORKTREE || '/home/lupin/pantheon-ci-deploy/dev-root' }}
-          GCP_DEPLOY_PROJECT_ID: ${{ vars.GCP_DEPLOY_PROJECT_ID || 'pantheon-benjamin-20260528' }}
+          GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-lupin-dev-20260719' }}
           DEPLOY_SHA: ${{ steps.target.outputs.sha }}
         run: |
           set -euo pipefail
@@ -527,8 +527,8 @@ jobs:
           DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
           DEV_DEPLOY_WORKTREE: ${{ vars.DEV_DEPLOY_WORKTREE || '/home/lupin/pantheon-ci-deploy/dev-root' }}
-          GCP_DEPLOY_PROJECT_ID: ${{ vars.GCP_DEPLOY_PROJECT_ID || 'pantheon-benjamin-20260528' }}
-          DEV_BFF_PUBLIC_URL: ${{ vars.DEV_BFF_PUBLIC_URL || 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io' }}
+          GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-lupin-dev-20260719' }}
+          DEV_BFF_PUBLIC_URL: ${{ vars.DEV_BFF_PUBLIC_URL || 'https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io' }}
           DEV_BFF_OIDC_CLIENT_ID: ${{ secrets.DEV_BFF_OIDC_CLIENT_ID }}
           DEV_BFF_OIDC_CLIENT_SECRET: ${{ secrets.DEV_BFF_OIDC_CLIENT_SECRET }}
           DEPLOY_SHA: ${{ steps.target.outputs.sha }}
@@ -624,7 +624,7 @@ jobs:
           REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
           DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
-          GCP_DEPLOY_PROJECT_ID: ${{ vars.GCP_DEPLOY_PROJECT_ID || 'pantheon-benjamin-20260528' }}
+          GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-lupin-dev-20260719' }}
           DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${{ secrets.DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
@@ -673,9 +673,9 @@ jobs:
           PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_IDENTITY_FILE: ${{ steps.lease.outputs.identity_file }}
           PANTHEON_DEV_ENVIRONMENT_LEASE_FAILURE_FILE: ${{ steps.lease.outputs.failure_file }}
           PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_LOG: ${{ steps.lease.outputs.heartbeat_log }}
-          DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io' }}
-          DEV_BFF_CANONICAL_CORS_ORIGIN: ${{ vars.DEV_BFF_CANONICAL_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io' }}
-          DEV_BFF_CORS_ORIGIN: ${{ vars.DEV_BFF_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io' }}
+          DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io' }}
+          DEV_BFF_CANONICAL_CORS_ORIGIN: ${{ vars.DEV_BFF_CANONICAL_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
+          DEV_BFF_CORS_ORIGIN: ${{ vars.DEV_BFF_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
           TARGET_SHA: ${{ steps.target.outputs.sha }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
@@ -742,9 +742,9 @@ jobs:
           REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
           DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
-          DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR || '/home/lupin/code/pantheon' }}
-          DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io' }}
-          GCP_DEPLOY_PROJECT_ID: ${{ vars.GCP_DEPLOY_PROJECT_ID || 'pantheon-benjamin-20260528' }}
+          DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR || '/home/lupin/pantheon' }}
+          DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io' }}
+          GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-lupin-dev-20260719' }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           lease_token="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"

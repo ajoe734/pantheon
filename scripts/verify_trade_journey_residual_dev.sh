@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd "${PANTHEON_DEV_REPO:-/home/lupin/code/pantheon}"
+cd "${PANTHEON_DEV_REPO:-/home/lupin/pantheon}"
 compose=(docker compose -p pantheon -f docker-compose.yml)
 service=operator-bff
 key="tj-residual-smoke-$(date -u +%Y%m%dT%H%M%SZ)"

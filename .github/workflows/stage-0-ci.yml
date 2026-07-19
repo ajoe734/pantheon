@@ -28,7 +28,7 @@ on:
       bff_base_url:
         description: "Target BFF base URL for live evidence"
         required: true
-        default: "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io"
+        default: "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io"
         type: string
       expected_sha:
         description: "Expected deployed BFF source commit SHA for task-scoped hosted probes"

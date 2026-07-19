@@ -3,7 +3,7 @@
 set -u
 
 CONTAINER="${PANTHEON_PAPER_RUNTIME_CONTAINER:-pantheon-pantheon-paper-runtime-1}"
-COMPOSE_DIR="${PANTHEON_COMPOSE_DIR:-/home/lupin/code/pantheon}"
+COMPOSE_DIR="${PANTHEON_COMPOSE_DIR:-/home/lupin/pantheon}"
 COMPOSE_SERVICE="${PANTHEON_PAPER_RUNTIME_SERVICE:-pantheon-paper-runtime}"
 
 ts() {

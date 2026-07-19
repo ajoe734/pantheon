@@ -15,7 +15,7 @@ import sys
 import os
 
 # Set up python path to import from the repository
-sys.path.insert(0, "/home/lupin/code/pantheon")
+sys.path.insert(0, "/home/lupin/pantheon")
 
 from services.registry.strategy_artifact import evaluate_strategy_action
 from services.execution.lean_runtime.pending_signal_store import validate_signal_payload_minimal

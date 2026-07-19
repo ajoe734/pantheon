@@ -100,7 +100,7 @@ python3 scripts/git/auto_integrator.py --execute --no-open-unblock
 Python integrator:
 
 ```bash
-PANTHEON_STATUS_ROOT=/home/lupin/code/pantheon \
+PANTHEON_STATUS_ROOT=/home/lupin/pantheon \
   bash scripts/run-auto-integrator.sh
 ```
 
@@ -112,7 +112,7 @@ Install the cron runner with:
 ```bash
 python3 scripts/auto_integrator_install.py \
   --repo /home/lupin/pantheon-ci-deploy/dev-root \
-  --status-root /home/lupin/code/pantheon
+  --status-root /home/lupin/pantheon
 ```
 
 The installed line is tagged `# pantheon-auto-integrator`, runs every five

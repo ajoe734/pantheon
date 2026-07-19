@@ -28,7 +28,7 @@ import tempfile
 import time
 from pathlib import Path
 
-ROOT = Path(os.environ.get("PANTHEON_STATUS_ROOT", "/home/lupin/code/pantheon"))
+ROOT = Path(os.environ.get("PANTHEON_STATUS_ROOT", "/home/lupin/pantheon"))
 ORCHESTRATOR_DIR = Path(__file__).resolve().parents[1] / ".orchestrator"
 if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))

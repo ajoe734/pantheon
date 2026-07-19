@@ -14,7 +14,7 @@ on:
       bff_base_url:
         description: "Target BFF base URL"
         required: true
-        default: "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io"
+        default: "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io"
         type: string
       approval_race_id:
         description: "Expendable approval id for the two-operator race proof"

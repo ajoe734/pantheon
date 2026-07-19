@@ -132,7 +132,7 @@ def test_cors_exposes_bff_client_response_headers(monkeypatch) -> None:
 
 
 def test_pack_d_http_exception_response_preserves_cors_for_allowed_origin(monkeypatch) -> None:
-    monkeypatch.setenv("PANTHEON_BFF_CORS_ORIGINS", "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io")
+    monkeypatch.setenv("PANTHEON_BFF_CORS_ORIGINS", "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
     monkeypatch.setenv("PANTHEON_ENV", "dev")
 
@@ -142,7 +142,7 @@ def test_pack_d_http_exception_response_preserves_cors_for_allowed_origin(monkey
             "method": "GET",
             "path": "/bff/agora/trading-room",
             "headers": [
-                (b"origin", b"https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io"),
+                (b"origin", b"https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io"),
             ],
         }
     )
@@ -163,7 +163,7 @@ def test_pack_d_http_exception_response_preserves_cors_for_allowed_origin(monkey
     assert response.status_code == 403
     assert (
         response.headers["access-control-allow-origin"]
-        == "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io"
+        == "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io"
     )
     assert response.headers["access-control-allow-credentials"] == "true"
     assert response.headers["access-control-expose-headers"] == ", ".join(bff_main._CORS_EXPOSE_HEADERS)
@@ -408,7 +408,7 @@ def test_self_hosted_dev_fe_origin_in_default_origins(monkeypatch) -> None:
 
     origins = bff_main._cors_origins_from_env()
 
-    assert "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io" in origins
+    assert "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io" in origins
 
 
 def test_self_hosted_dev_fe_origin_filtered_in_production_strict(monkeypatch) -> None:
@@ -420,7 +420,7 @@ def test_self_hosted_dev_fe_origin_filtered_in_production_strict(monkeypatch) ->
 
     origins = bff_main._cors_origins_from_env()
 
-    assert "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io" not in origins
+    assert "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io" not in origins
 
 
 def test_static_id_preview_survives_production_strict_filter(monkeypatch) -> None:
