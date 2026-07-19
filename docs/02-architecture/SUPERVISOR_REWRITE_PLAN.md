@@ -296,6 +296,25 @@ touches the hot path.
 | 6 | Move live state to event-log + projection, out of git | Medium-High | Ends git-wipe + `next`-overwrite |
 | 7 | Delete sidecar; drop event-queue indirection; discussion→task kind | Low-Medium | Stops make-work growth |
 
+**Cutover status (2026-07-19):**
+- **Phase 0 — done.** `_safe_phase` per-phase isolation landed (`14a41cfb`); a
+  raising phase (e.g. activity-scan on a missing archive) now degrades only
+  itself. (The `raise`→`warn` softening of §3.2 is folded into Phase 2.)
+- **Phase 1 — done (1a shadow + 1b cutover).** `rewrite/concurrency.py`
+  (`max_parallel`) is shadow-proven equal to `agent_dispatch_capacity` for every
+  live agent; `agent_dispatch_capacity` now routes through it by default, legacy
+  one flag away (`ready_dispatcher.use_rewrite_concurrency=false`).
+- **Phase 3 — done (3a shadow + 3b cutover).** `rewrite/task_machine.py`
+  (`dispatch_reason`/`dispatch_priority`) is shadow-proven equal to
+  `dispatch_priority_for_task` on the live board; the incumbent now routes
+  through it by default (configured status sets translated to canonical lifecycle
+  states first, so parity holds for custom sets too), legacy one flag away
+  (`ready_dispatcher.use_rewrite_dispatch_reason=false`).
+  Behaviour preservation is pinned by `rewrite/test_cutover.py` (rewrite-vs-legacy
+  parity across a config matrix).
+- **Phases 2, 4, 5, 6, 7 — pending.** Not yet started in code. Each remains a
+  parallel-package build + shadow + one-flag cutover per the discipline below.
+
 **Build discipline:** the new modules land in a parallel package and are
 exercised in shadow/dry-run against real state (read the live board, compute
 intents, diff against what the old supervisor did) **before** any phase is cut

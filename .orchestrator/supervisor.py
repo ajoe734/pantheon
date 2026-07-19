@@ -80,6 +80,14 @@ from runtime_state import enqueue_event
 from task_archive import TaskResolver
 from watch_events import queue_delivery_event, run_scan, trim_seen_events
 
+# SUPERVISOR-REWRITE cutover modules (parallel package, pure — no supervisor
+# import, so this is not circular). These are the phase-1/phase-3 clean
+# reimplementations proven behaviour-equivalent to the incumbent by
+# rewrite/shadow.py before being wired in here. Each is gated by a settings
+# flag (see _use_rewrite_*), keeping the legacy path one flag away.
+from rewrite import concurrency as rewrite_concurrency
+from rewrite import task_machine as rewrite_task_machine
+
 
 SIDECAR_READY_PRIORITY_OFFSET = 10
 BLOCKED_OWNER_RESCUE_KEYWORDS = (
@@ -1159,9 +1167,44 @@ def dispatch_loop_agent_ids(config: dict[str, Any]) -> list[str]:
     ]
 
 
+def _rewrite_flag_enabled(settings: dict[str, Any] | None, key: str, default: bool = True) -> bool:
+    """Read a SUPERVISOR-REWRITE cutover flag from resolved dispatch settings.
+
+    Defaults to True: the clean rewrite path is the shipped path once it has been
+    shadow-proven behaviour-equivalent, with the incumbent one flag away (set the
+    key to false in ready_dispatcher settings to fall back).
+    """
+    if not isinstance(settings, dict):
+        return default
+    raw = settings.get(key, default)
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        return raw.strip().lower() not in {"false", "0", "no", "off", ""}
+    return bool(raw)
+
+
 def agent_dispatch_capacity(config: dict[str, Any], agent_id: str | None, settings: dict[str, Any] | None = None) -> int:
     normalized = normalize_agent_id(agent_id or "")
     settings = settings or ready_dispatch_settings(config)
+    # SUPERVISOR-REWRITE Phase 1b cutover: the clean concurrency model is a
+    # faithful, config-independent reimplementation of the resolution below
+    # (per-agent override → worker-slot count → global default), shadow-proven
+    # equal for every agent on the live config. Route through it by default; the
+    # incumbent body remains reachable via `use_rewrite_concurrency: false`.
+    if _rewrite_flag_enabled(settings, "use_rewrite_concurrency"):
+        try:
+            return rewrite_concurrency.max_parallel(
+                config,
+                normalized,
+                settings=settings,
+                display_name=display_name_for(config, normalized),
+            )
+        except Exception as exc:  # never let the rewrite path break capacity
+            console_log(
+                f"rewrite concurrency path failed ({type(exc).__name__}: {exc}); "
+                "falling back to incumbent agent_dispatch_capacity",
+            )
     default_capacity: int | None = None
     raw_default_capacity = settings.get("max_tasks_per_agent")
     if raw_default_capacity not in (None, ""):
@@ -9670,6 +9713,43 @@ def dispatch_priority_for_task(
     owner_field = schema.get("assignee_field", "owner")
     reviewer_field = schema.get("reviewer_field", "reviewer")
     task_status = str(task.get("status") or "").lower()
+    # SUPERVISOR-REWRITE Phase 3b cutover: route the dispatch-eligibility ladder
+    # through the single task state machine. The incumbent honours configurable
+    # status *sets* (review_statuses/finalize_statuses) while the machine owns the
+    # canonical lifecycle names, so translate the configured status into its
+    # canonical lifecycle state first — this keeps the machine authoritative
+    # without losing config flexibility, and is exactly equivalent to the ladder
+    # below for any config (shadow-proven on the live board). Legacy path remains
+    # one flag away via `use_rewrite_dispatch_reason: false`.
+    if _rewrite_flag_enabled(settings, "use_rewrite_dispatch_reason"):
+        try:
+            if task_status in review_statuses:
+                canonical_status = "review"
+            elif task_status in finalize_statuses:
+                canonical_status = "review_approved"
+            elif task_status == "in_progress":
+                canonical_status = "in_progress"
+            elif task_status == "todo":
+                canonical_status = "todo"
+            else:
+                # Not dispatchable in the incumbent ladder; "" yields None from
+                # the machine, so a literal "review"/"review_approved" that the
+                # configured sets exclude is never mis-matched by canonical name.
+                canonical_status = ""
+            deps_ok = dependencies_satisfied(
+                task, {str(task.get("id") or ""): task}, dependency_done_statuses
+            )
+            return rewrite_task_machine.dispatch_priority(
+                canonical_status,
+                is_owner=task.get(owner_field) == agent_name,
+                is_reviewer=task.get(reviewer_field) == agent_name,
+                deps_satisfied=deps_ok,
+            )
+        except Exception as exc:  # never let the rewrite path break dispatch
+            console_log(
+                f"rewrite dispatch-reason path failed ({type(exc).__name__}: {exc}); "
+                "falling back to incumbent dispatch_priority_for_task",
+            )
     if task_status in review_statuses and task.get(reviewer_field) == agent_name:
         return 0
     if task_status in finalize_statuses and task.get(owner_field) == agent_name:
