@@ -17,6 +17,9 @@ DEV_REMOTE_DIR="${DEV_REMOTE_DIR:-/home/lupin/pantheon}"
 DEV_BFF_CANONICAL_CORS_ORIGIN="${DEV_BFF_CANONICAL_CORS_ORIGIN:-https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io}"
 DEV_BFF_CORS_ORIGINS="${DEV_BFF_CORS_ORIGINS:-${DEV_BFF_CANONICAL_CORS_ORIGIN},https://pantheon-ai-system-front-dev.lovable.app,https://pantheon-dev.lovable.app}"
 DEV_BFF_REQUIRED_CORS_ORIGINS="${DEV_BFF_REQUIRED_CORS_ORIGINS:-https://preview--pantheon-dev.lovable.app,https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com,https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app,https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com}"
+DEV_BFF_PUBLIC_HOST="${DEV_BFF_PUBLIC_HOST:-pantheon-lupin-dev-bff.35.201.204.12.sslip.io}"
+DEV_FE_PUBLIC_HOST="${DEV_FE_PUBLIC_HOST:-pantheon-lupin-dev-fe.35.201.204.12.sslip.io}"
+DEV_FE_STATIC_ROOT="${DEV_FE_STATIC_ROOT:-/var/www/pantheon-dev-fe}"
 # Strict by default: the dev deploy must not silently re-force stub/permissive
 # auth on every run. docker-compose.yml's own PANTHEON_BFF_AUTH_STUB/MODE
 # defaults are strict/false, but this script always passes an explicit value
@@ -161,6 +164,7 @@ Environment overrides:
   PANTHEON_DEPLOY_WORKTREE_ROOT
   GITHUB_TOKEN
   DEV_VM DEV_ZONE DEV_REMOTE_DIR
+  DEV_BFF_PUBLIC_HOST DEV_FE_PUBLIC_HOST DEV_FE_STATIC_ROOT
   DEV_BFF_CANONICAL_CORS_ORIGIN DEV_BFF_CORS_ORIGINS
   DEV_BFF_REQUIRED_CORS_ORIGINS DEV_BFF_AUTH_STUB DEV_BFF_AUTH_MODE
   DEV_BFF_JWT_SECRET DEV_BFF_JWT_ISSUER DEV_BFF_JWT_AUDIENCE
@@ -353,6 +357,9 @@ if [[ "$DRY_RUN" == "true" ]]; then
   info "allow_dirty=${ALLOW_DIRTY}"
   info "allow_example_env=${ALLOW_EXAMPLE_ENV}"
   info "dev_bff_cors_origins=${DEV_BFF_CORS_ORIGINS}"
+  info "dev_bff_public_host=${DEV_BFF_PUBLIC_HOST}"
+  info "dev_fe_public_host=${DEV_FE_PUBLIC_HOST}"
+  info "dev_fe_static_root=${DEV_FE_STATIC_ROOT}"
   info "dev_bff_auth_stub=${DEV_BFF_AUTH_STUB}"
   info "dev_bff_auth_mode=${DEV_BFF_AUTH_MODE}"
   info "dev_bff_jwt_secret_configured=$([[ -n "$DEV_BFF_JWT_SECRET" ]] && echo true || echo false)"
@@ -457,6 +464,9 @@ ssh_bash() {
   command_prefix+=" PANTHEON_ALLOW_DIRTY_DEPLOY=$(shell_quote "$ALLOW_DIRTY")"
   command_prefix+=" PANTHEON_ALLOW_EXAMPLE_ENV=$(shell_quote "$ALLOW_EXAMPLE_ENV")"
   command_prefix+=" PANTHEON_DEV_BFF_CORS_ORIGINS=$(shell_quote "$DEV_BFF_CORS_ORIGINS")"
+  command_prefix+=" PANTHEON_DEV_BFF_PUBLIC_HOST=$(shell_quote "$DEV_BFF_PUBLIC_HOST")"
+  command_prefix+=" PANTHEON_DEV_FE_PUBLIC_HOST=$(shell_quote "$DEV_FE_PUBLIC_HOST")"
+  command_prefix+=" PANTHEON_DEV_FE_STATIC_ROOT=$(shell_quote "$DEV_FE_STATIC_ROOT")"
   command_prefix+=" PANTHEON_DEV_BFF_AUTH_STUB=$(shell_quote "$DEV_BFF_AUTH_STUB")"
   command_prefix+=" PANTHEON_DEV_BFF_AUTH_MODE=$(shell_quote "$DEV_BFF_AUTH_MODE")"
   command_prefix+=" PANTHEON_DEV_BFF_JWT_SECRET=$(shell_quote "$DEV_BFF_JWT_SECRET")"
@@ -534,6 +544,48 @@ curl_with_retry() {
 
   curl -fsS "$url" >/dev/null
 }
+
+ensure_dev_caddy_ingress() (
+  if [[ "${PANTHEON_DEPLOY_ENV}" != "dev" ]]; then
+    return
+  fi
+
+  local bff_host="${PANTHEON_DEV_BFF_PUBLIC_HOST}"
+  local fe_host="${PANTHEON_DEV_FE_PUBLIC_HOST}"
+  local fe_root="${PANTHEON_DEV_FE_STATIC_ROOT}"
+  local template="deploy/caddy/dev.Caddyfile.tmpl"
+  local rendered
+
+  [[ "$bff_host" =~ ^[A-Za-z0-9.-]+$ ]] \
+    || error "invalid dev BFF public host: ${bff_host}"
+  [[ "$fe_host" =~ ^[A-Za-z0-9.-]+$ ]] \
+    || error "invalid dev FE public host: ${fe_host}"
+  [[ "$fe_root" =~ ^/[A-Za-z0-9._/-]+$ ]] \
+    || error "invalid dev FE static root: ${fe_root}"
+  [[ -f "$template" && ! -L "$template" ]] \
+    || error "versioned dev Caddy template is missing or unsafe: ${template}"
+
+  if ! command -v caddy >/dev/null 2>&1; then
+    info "installing Caddy for dev HTTPS ingress"
+    sudo -n apt-get update
+    sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y caddy
+  fi
+
+  rendered="$(mktemp)"
+  trap 'rm -f "$rendered"' EXIT
+  sed \
+    -e "s|__BFF_HOST__|${bff_host}|g" \
+    -e "s|__FE_HOST__|${fe_host}|g" \
+    -e "s|__FE_ROOT__|${fe_root}|g" \
+    "$template" >"$rendered"
+  sudo -n install -o root -g root -m 0644 "$rendered" /etc/caddy/Caddyfile
+  sudo -n caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null
+  sudo -n systemctl enable --now caddy
+  sudo -n systemctl reload caddy
+  curl_with_retry "https://${bff_host}/health" 12 5 \
+    || error "dev BFF HTTPS ingress did not become healthy: ${bff_host}"
+  info "dev Caddy HTTPS ingress verified: ${bff_host}"
+)
 
 assert_bff_source_sha() {
   local url="$1"
@@ -1350,6 +1402,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
       || { dump_dev_root_failure_diagnostics; exit 1; }
     assert_bff_auth_gate http://127.0.0.1:18001 \
       || { dump_dev_root_failure_diagnostics; exit 1; }
+    ensure_dev_caddy_ingress \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
     verify_dev_evolution_daily_sweep \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     # Prove the Trade Journey action ledger is genuinely durable on the dev
@@ -1430,6 +1484,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     assert_bff_source_sha http://127.0.0.1:18001/bff/version \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     assert_bff_auth_gate http://127.0.0.1:18001 \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
+    ensure_dev_caddy_ingress \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     ;;
 
