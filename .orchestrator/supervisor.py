@@ -7157,7 +7157,33 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             else:
                 process_activity_advanced = False
         if alive and worker.get("status") in active_worker_statuses and worker.get("last_heartbeat_at"):
-            if not worker_heartbeat_is_stale(config, worker, now):
+            heartbeat_ok = not worker_heartbeat_is_stale(config, worker, now)
+            # SUPERVISOR-REWRITE Phase 4: optionally bind lease renewal to observed
+            # WORK progress (last process-tree activity / provider output), not just
+            # heartbeat freshness — so a hung-but-heartbeating runner stops renewing
+            # its lease and is reaped. Off by default (changes lease timing; the
+            # stall window wants fleet tuning): supervisor.lease_requires_work_progress.
+            progress_ok = True
+            if heartbeat_ok and config.get("supervisor", {}).get("lease_requires_work_progress", False):
+                runtime_settings = worker_runtime_settings(config)
+                stall_seconds = int(runtime_settings.get("heartbeat_stale_seconds", 300)) + int(
+                    runtime_settings.get("heartbeat_grace_seconds", 60)
+                )
+                progress_candidates = [
+                    dt
+                    for dt in (
+                        _parse_iso_utc(str(worker.get("last_process_activity_at") or "")),
+                        _parse_iso_utc(str(worker.get("last_event_at") or "")),
+                    )
+                    if dt is not None
+                ]
+                latest_progress = max(progress_candidates, default=None)
+                progress_ok = rewrite_worker_lifecycle.lease_progress_is_fresh(
+                    last_progress_epoch=(latest_progress.timestamp() if latest_progress else None),
+                    now_epoch=now.timestamp(),
+                    stall_seconds=stall_seconds,
+                )
+            if heartbeat_ok and progress_ok:
                 refresh_worker_lease(config, worker, now)
                 poll_counts["lease_refreshes"] += 1
                 if worker.get("queue_event_id"):

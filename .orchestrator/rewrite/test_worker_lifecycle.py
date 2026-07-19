@@ -118,5 +118,21 @@ class HasWorkProgressTests(unittest.TestCase):
         self.assertTrue(wl.has_work_progress(None, {"commit_sha": "x"}))
 
 
+class LeaseProgressFreshTests(unittest.TestCase):
+    def test_no_signal_yet_is_fresh(self) -> None:
+        # a just-started worker with no progress signal is not starved
+        self.assertTrue(wl.lease_progress_is_fresh(last_progress_epoch=None, now_epoch=1000.0, stall_seconds=300))
+
+    def test_recent_progress_is_fresh(self) -> None:
+        self.assertTrue(wl.lease_progress_is_fresh(last_progress_epoch=900.0, now_epoch=1000.0, stall_seconds=300))
+
+    def test_stale_progress_is_not_fresh(self) -> None:
+        # hung-but-heartbeating: last real work was long ago -> lease must not renew
+        self.assertFalse(wl.lease_progress_is_fresh(last_progress_epoch=500.0, now_epoch=1000.0, stall_seconds=300))
+
+    def test_exactly_at_window_is_fresh(self) -> None:
+        self.assertTrue(wl.lease_progress_is_fresh(last_progress_epoch=700.0, now_epoch=1000.0, stall_seconds=300))
+
+
 if __name__ == "__main__":
     unittest.main()
