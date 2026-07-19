@@ -334,8 +334,19 @@ touches the hot path.
   `test_common.py` audit suite still green.
   Follow-up (optional hardening, not blocking): fully size-based atomic-rename
   rotation to retire the lineage-build cost on healthy writes too.
-- **Phases 4, 5, 6, 7 — pending.** Not yet started in code. Each remains a
-  parallel-package build + shadow + one-flag cutover per the discipline below.
+- **Phase 5 — done (decision cut over; probed-health model landed).**
+  `rewrite/provider_health.py` owns the account failure-response decision:
+  `decide_failure_response(kind, rotation_outcome) -> Rotate|Pause|Retry|Reassign`
+  and `classify_health(kind) -> healthy|degraded|revoked` (auth ⇒ revoked, a
+  first-class state, not a timed-out guess). `should_pause_dispatch_for_failure_kind`
+  now routes through `provider_health.should_pause`, shadow-proven equal across
+  the entire failure-kind vocabulary (11 kinds, 0 mismatch). Legacy ladder one
+  flag away via `PANTHEON_LEGACY_FAILURE_RESPONSE=1`. Follow-up: route the two
+  remaining copies of the pause/rotate/reassign branch (in poll_workers) through
+  the same decision, and add the owner-side pre-dispatch auth probe that promotes
+  `classify_health` from reactive to proactive.
+- **Phases 4, 6, 7 — pending.** Each remains a parallel-package build + shadow +
+  one-flag cutover per the discipline below.
 
 **Build discipline:** the new modules land in a parallel package and are
 exercised in shadow/dry-run against real state (read the live board, compute

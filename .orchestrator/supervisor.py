@@ -86,6 +86,7 @@ from watch_events import queue_delivery_event, run_scan, trim_seen_events
 # rewrite/shadow.py before being wired in here. Each is gated by a settings
 # flag (see _use_rewrite_*), keeping the legacy path one flag away.
 from rewrite import concurrency as rewrite_concurrency
+from rewrite import provider_health as rewrite_provider_health
 from rewrite import task_machine as rewrite_task_machine
 
 
@@ -5178,7 +5179,23 @@ def is_sticky_auth_dispatch_pause(entry: dict[str, Any] | None) -> bool:
     return is_sticky_auth_failure_reason(text)
 
 
+def _legacy_failure_response_enabled() -> bool:
+    """SUPERVISOR-REWRITE Phase 5 reversal flag — set PANTHEON_LEGACY_FAILURE_RESPONSE=1
+    to restore the incumbent inline pause ladder (legacy one flag away)."""
+    return str(os.environ.get("PANTHEON_LEGACY_FAILURE_RESPONSE") or "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
 def should_pause_dispatch_for_failure_kind(kind: str | None) -> bool:
+    # SUPERVISOR-REWRITE Phase 5: the account failure-response decision is owned by
+    # rewrite.provider_health.decide_failure_response; this pause predicate routes
+    # through it (shadow-proven equal across the whole failure-kind vocabulary).
+    if not _legacy_failure_response_enabled():
+        try:
+            return rewrite_provider_health.should_pause(kind)
+        except Exception:  # never let it break failure handling
+            pass
     return (
         is_terminal_quota_failure_kind(kind)
         or is_retryable_capacity_failure_kind(kind)
