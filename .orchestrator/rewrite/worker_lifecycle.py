@@ -99,3 +99,23 @@ def has_work_progress(previous: dict[str, Any] | None, current: dict[str, Any] |
     if curr_sha and curr_sha != prev_sha:
         return True
     return _as_int(curr.get("tool_calls_completed")) > _as_int(prev.get("tool_calls_completed"))
+
+
+def lease_progress_is_fresh(
+    *,
+    last_progress_epoch: float | None,
+    now_epoch: float,
+    stall_seconds: float,
+) -> bool:
+    """Whether observed work progress is recent enough to renew a lease.
+
+    `last_progress_epoch` is the most recent moment the worker showed *work*
+    (a new commit / tool-call / process-tree activity / provider output) — NOT its
+    last heartbeat. Binding lease renewal to this (instead of heartbeat freshness)
+    is what makes a hung-but-heartbeating runner's lease finally lapse. With no
+    progress signal yet (None) the lease is treated as fresh so a just-started
+    worker is never starved before it can produce its first signal.
+    """
+    if last_progress_epoch is None:
+        return True
+    return (now_epoch - last_progress_epoch) <= max(0.0, stall_seconds)

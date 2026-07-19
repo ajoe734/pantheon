@@ -345,15 +345,20 @@ touches the hot path.
   remaining copies of the pause/rotate/reassign branch (in poll_workers) through
   the same decision, and add the owner-side pre-dispatch auth probe that promotes
   `classify_health` from reactive to proactive.
-- **Phase 4 — partial (two correctness fixes cut over; full decomposition pending).**
-  `rewrite/worker_lifecycle.py`: (a) `confirm_kill` (SIGTERM → wait → SIGKILL →
-  verify) now backs `terminate_worker_pid`, ending SIGTERM-and-assume-dead
-  (a worker was marked `failed` while still alive and mutating state); legacy one
-  flag away via `PANTHEON_LEGACY_TERMINATE=1`. (b) `has_work_progress` (new
-  commit / more completed tool-calls — NOT heartbeat) is the observed-progress
-  primitive lease renewal should bind to, fixing "hangs but heartbeats". Pending:
-  decompose the 751-line `poll_workers` into the enum+table driver, and rebind
-  lease renewal to `has_work_progress`.
+- **Phase 4 — correctness fixes cut over; lease→progress binding shipped (flag);
+  full decomposition pending.** `rewrite/worker_lifecycle.py`: (a) `confirm_kill`
+  (SIGTERM → wait → SIGKILL → verify) now backs `terminate_worker_pid`, ending
+  SIGTERM-and-assume-dead (a worker was marked `failed` while still alive and
+  mutating state); legacy one flag away via `PANTHEON_LEGACY_TERMINATE=1`.
+  (b) `has_work_progress`/`lease_progress_is_fresh` bind lease renewal to observed
+  WORK progress (process-tree activity / provider output), not bare heartbeat, so
+  a hung-but-heartbeating runner stops renewing and is reaped — the "hangs but
+  heartbeats" fix. Wired into `poll_workers` behind
+  `supervisor.lease_requires_work_progress` (default off — it shifts lease timing
+  and the stall window wants fleet tuning; the incumbent's process-activity stall
+  terminator already covers the common case). Pending: physically decompose the
+  751-line `poll_workers` into the enum+table driver, and add per-worker commit
+  observation so `has_work_progress`'s commit signal is populated live.
 - **Phase 6 — model built in isolation (storage cutover pending).**
   `rewrite/state_projection.py` implements the plan's core §3.7 idea: an
   append-only event vocabulary + a pure `project_board(events)` that folds it into
