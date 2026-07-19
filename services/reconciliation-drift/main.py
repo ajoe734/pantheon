@@ -1284,9 +1284,15 @@ def _fetch_telemetry_runtime_summaries(telemetry_url: str) -> List[Dict[str, Any
 
 
 def _tick_evaluation_id(tick_id: str, binding_id: str) -> str:
-    safe_tick = tick_id.replace(":", "-").replace("+", "-").replace(" ", "-")[:32]
-    safe_binding = binding_id.replace("/", "-").replace(":", "-")[:24]
-    return f"rdeval-sched-{safe_tick}-{safe_binding}"
+    safe_tick = _safe_id_component(tick_id, fallback="tick", limit=32)
+    safe_binding = _safe_id_component(binding_id, fallback="binding", limit=24)
+    # Keep readable prefixes while binding uniqueness to the complete inputs;
+    # hosted tick IDs commonly share more than the first 32 characters.
+    identity_digest = uuid.uuid5(
+        uuid.NAMESPACE_URL,
+        f"pantheon:scheduled-reconciliation-evaluation:{tick_id}:{binding_id}",
+    ).hex[:16]
+    return f"rdeval-sched-{safe_tick}-{safe_binding}-{identity_digest}"
 
 
 def _trigger_evaluation_id(trigger_id: str, binding_id: str) -> str:

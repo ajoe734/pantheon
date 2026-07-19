@@ -686,6 +686,25 @@ def test_scheduled_reconcile_different_tick_ids_create_separate_records() -> Non
         assert len(listed.json()) == 2
 
 
+def test_scheduled_evaluation_id_preserves_long_tick_and_binding_identity() -> None:
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        shared_tick_prefix = "loop-prod-tel-002-run-rb-d4a79ff7e2e94f188f63e87a38b347a5-"
+        first_tick = shared_tick_prefix + "2026-07-19T16:34:08Z-1"
+        second_tick = shared_tick_prefix + "2026-07-19T18:21:11Z-1"
+        shared_binding_prefix = "rb-d4a79ff7e2e94f188f63e87a38b347a5-"
+        first_binding = shared_binding_prefix + "primary"
+        second_binding = shared_binding_prefix + "secondary"
+
+        assert first_tick[:32] == second_tick[:32]
+        assert first_binding[:24] == second_binding[:24]
+        first_id = svc._tick_evaluation_id(first_tick, first_binding)
+
+        assert first_id == svc._tick_evaluation_id(first_tick, first_binding)
+        assert first_id != svc._tick_evaluation_id(second_tick, first_binding)
+        assert first_id != svc._tick_evaluation_id(first_tick, second_binding)
+
+
 def _accepted_delivery() -> dict:
     return {
         "status": "accepted",

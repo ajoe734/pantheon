@@ -291,6 +291,26 @@ def test_out_of_order_aggregate_sequence_and_restart_converge(tmp_path):
     assert published_controller["accepted_live"] is True
 
 
+def test_restart_publishes_new_deployment_sha_without_new_events(tmp_path):
+    first = _projector(tmp_path)
+    first.project_records(
+        lifecycle_rows()[:1], mode="live", source_high_watermark=1
+    )
+    assert _current_json(tmp_path, "loop_runs.json")["controller"]["deployment_sha"] == "deadbeef"
+
+    restarted = LifecycleProjector(
+        state_path=tmp_path / "controller_state.json",
+        bundle_root=tmp_path,
+        deployment_sha="feedface",
+    )
+    restarted.record_poll(source_high_watermark=1, backlog=0, mode="live")
+
+    published_controller = _current_json(tmp_path, "loop_runs.json")["controller"]
+    assert published_controller["deployment_sha"] == "feedface"
+    assert published_controller["status"] == "ready"
+    assert published_controller["accepted_live"] is True
+
+
 def test_backfill_and_replay_never_advance_live_freshness(tmp_path):
     rows = lifecycle_rows()
     projector = _projector(tmp_path)

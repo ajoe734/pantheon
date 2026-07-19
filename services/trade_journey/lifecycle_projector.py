@@ -488,6 +488,7 @@ class LifecycleProjector:
         now = self.clock()
         controller = candidate.setdefault("controller", {})
         semantic_fields = (
+            "deployment_sha",
             "status",
             "mode",
             "truth_level",
