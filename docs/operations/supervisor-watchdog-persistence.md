@@ -33,6 +33,11 @@ pressure, restart budget, and circuit breaker state. If the supervisor is dead
 or stale and restart gates allow it, the watchdog writes safe mode into
 `.orchestrator/state.json` and starts the supervisor.
 
+The systemd service is a oneshot with `KillMode=process`. The watchdog main
+process exits after each probe, but a supervisor child started by a permitted
+restart must remain alive in its own session. The singleton flock and later
+watchdog ticks, not the oneshot cgroup teardown, govern that child.
+
 Do not treat tmux or dashboard uptime as supervisor health. The dashboard can
 remain up while the supervisor and auto workers are dead.
 
@@ -43,6 +48,36 @@ Preferred install:
 ```bash
 python3 scripts/supervisor_watchdog_install.py --method auto --start-now
 ```
+
+When the supervisor command checkout and canonical status checkout are
+different, pin the generated live config explicitly. Relative config paths are
+not safe for this split-root topology:
+
+```bash
+python3 scripts/provision_live_supervisor_config.py \
+  --repo-config /home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/config.json \
+  --live-config /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json \
+  --command-root /home/lupin/pantheon-ci-deploy/dev-root \
+  --status-root /home/lupin/pantheon
+python3 scripts/supervisor_watchdog_install.py \
+  --repo /home/lupin/pantheon-ci-deploy/dev-root \
+  --config /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json \
+  --method auto \
+  --start-now
+```
+
+The dev root deployment performs these commands automatically after the root
+stack validations pass. It fails the deployment unless the user-systemd timer
+(or cron fallback), watchdog probe, singleton supervisor, and canonical
+heartbeat all become healthy. For user systemd it also enables and verifies
+login linger, so the timer starts after a reboot without requiring an
+interactive login.
+
+On a first deployment, an absent `.orchestrator/state.json` is an expected
+bootstrap condition: the watchdog may start the supervisor, which creates the
+canonical state under its singleton and runtime-state locks. This exception is
+exact. An empty file, invalid JSON, unreadable file, or invalid top-level schema
+still suppresses restart as `resource_pressure:state_read_failed`.
 
 `--method auto` prefers a user systemd timer and falls back to cron when user
 systemd is unavailable.

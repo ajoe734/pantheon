@@ -1284,6 +1284,59 @@ assert int(payload.get("total_sweeps_run") or 0) >= 1
   return 1
 }
 
+provision_dev_supervisor_watchdog() {
+  local live_config="${PANTHEON_DEV_SUPERVISOR_CONFIG:-${HOME}/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json}"
+  local attempt
+  local linger_state=""
+
+  [[ "${PANTHEON_DEPLOY_ENV}" == "dev" ]] \
+    || error "supervisor watchdog provisioning is dev-only"
+  [[ -n "${PANTHEON_STATUS_ROOT_HOST:-}" ]] \
+    || error "supervisor watchdog provisioning requires PANTHEON_STATUS_ROOT_HOST"
+
+  info "provisioning split-root dev supervisor config and persistent watchdog"
+  python3 scripts/provision_live_supervisor_config.py \
+    --repo-config "$(pwd)/.orchestrator/config.json" \
+    --live-config "$live_config" \
+    --command-root "$(pwd)" \
+    --status-root "${PANTHEON_STATUS_ROOT_HOST}"
+  python3 scripts/check_config_drift.py \
+    --repo-config "$(pwd)/.orchestrator/config.json" \
+    --live-config "$live_config" \
+    --fix
+
+  if systemctl --user show-environment >/dev/null 2>&1; then
+    linger_state="$(loginctl show-user "${USER}" -p Linger --value)"
+    if [[ "$linger_state" != "yes" ]]; then
+      info "enabling systemd user linger for reboot-persistent watchdog"
+      sudo -n loginctl enable-linger "${USER}"
+      linger_state="$(loginctl show-user "${USER}" -p Linger --value)"
+    fi
+    [[ "$linger_state" == "yes" ]] \
+      || error "systemd user linger is not enabled for ${USER}"
+  fi
+  python3 scripts/supervisor_watchdog_install.py \
+    --repo "$(pwd)" \
+    --config "$live_config" \
+    --method auto \
+    --start-now
+
+  for attempt in $(seq 1 12); do
+    if python3 scripts/supervisor_runtime_health.py \
+      --repo "$(pwd)" \
+      --config-path "$live_config" \
+      --require-watchdog; then
+      info "persistent dev supervisor watchdog is healthy"
+      return 0
+    fi
+    sleep 5
+  done
+
+  systemctl --user status pantheon-supervisor-watchdog.timer --no-pager || true
+  systemctl --user status pantheon-supervisor-watchdog.service --no-pager || true
+  error "persistent dev supervisor watchdog did not become healthy"
+}
+
 docker_storage_diagnostics() {
   local label="$1"
 
@@ -1412,6 +1465,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     # receipt replay before the workflow's public smokes run.
     PANTHEON_DEV_REPO="$(pwd)" bash scripts/verify_trade_journey_residual_dev.sh \
       || { dump_dev_root_failure_diagnostics; exit 1; }
+    provision_dev_supervisor_watchdog
     ;;
 
   bff)
