@@ -1,6 +1,6 @@
 # Execute-Plans Dev Frontend Hosting
 
-Last updated: 2026-07-17
+Last updated: 2026-07-19
 
 This is the canonical frontend hosting rule for Pantheon dev.
 
@@ -45,8 +45,13 @@ through GitHub PRs, an `execute-plans` build, and Pantheon-owned HTTPS hosting.
 The dev frontend should be served by Pantheon-owned infrastructure from the
 recorded `execute-plans` commit. The intended host is:
 
-- FE: `https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io`
-- BFF: `https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io`
+- FE: `https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io`
+- BFF: `https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io`
+
+The prior project `pantheon-benjamin-20260528` and IP `35.201.239.38` are
+retired from active dev routing because the project is suspended. The
+replacement VM is `pantheon-lupin-dev` in project
+`pantheon-lupin-dev-20260719`; its backend checkout is `/home/lupin/pantheon`.
 
 If the FE hostname or VM IP changes, update this document and `AGENTS.md`
 before routing work to the new target.
@@ -104,7 +109,7 @@ Build the dev frontend with live BFF wiring:
 
 ```sh
 VITE_BFF_MODE=live
-VITE_BFF_BASE_URL=https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io
+VITE_BFF_BASE_URL=https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io
 VITE_BFF_FALLBACK=strict
 ```
 
@@ -202,7 +207,7 @@ Before browser smoke tests, the running dev BFF must allow the Pantheon-owned FE
 origin and use the same tenant scope as the FE dev gate:
 
 ```sh
-PANTHEON_BFF_CORS_ORIGINS=...,https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io
+PANTHEON_BFF_CORS_ORIGINS=...,https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io
 PANTHEON_BFF_TENANT_ID=tenant-dev
 PANTHEON_BFF_ALLOWED_TENANTS=tenant-dev,pantheon-dev
 ```

@@ -47,8 +47,8 @@ Options:
   --help                    Show this message.
 
 Examples:
-  bash scripts/gcp_nonprod_baseline.sh --project-id pantheon-benjamin-20260528
-  bash scripts/gcp_nonprod_baseline.sh --project-id pantheon-benjamin-20260528 --dry-run
+  bash scripts/gcp_nonprod_baseline.sh --project-id pantheon-lupin-dev-20260719
+  bash scripts/gcp_nonprod_baseline.sh --project-id pantheon-lupin-dev-20260719 --dry-run
 EOF
 }
 

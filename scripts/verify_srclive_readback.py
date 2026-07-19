@@ -17,7 +17,7 @@ import urllib.request
 from typing import Any
 
 
-DEFAULT_BFF_BASE = os.environ.get("BFF_BASE", "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io")
+DEFAULT_BFF_BASE = os.environ.get("BFF_BASE", "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io")
 DEFAULT_TOKEN = os.environ.get("BFF_TOKEN", "op-dev:admin:mfa")
 DEFAULT_SOURCE_INGEST_BASE = os.environ.get("SOURCE_INGEST_BASE", "")
 

@@ -710,7 +710,7 @@ class TestActivityAuditLogicalInventory(unittest.TestCase):
         "optional central read-only pinned-pair integration is disabled",
     )
     def test_optional_central_pinned_pair_read_only_integration(self):
-        central = Path("/home/lupin/code/pantheon/archive/logs")
+        central = Path("/home/lupin/pantheon/archive/logs")
         predecessor_source = (
             central / "ai-activity-log.jsonl-2026-05-24T1237Z.gz"
         )

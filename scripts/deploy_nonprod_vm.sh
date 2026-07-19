@@ -8,13 +8,13 @@
 
 set -euo pipefail
 
-PROJECT_ID="${PROJECT_ID:-pantheon-benjamin-20260528}"
+PROJECT_ID="${PROJECT_ID:-pantheon-lupin-dev-20260719}"
 REMOTE_USER="${REMOTE_USER:-lupin}"
 
 DEV_VM="${DEV_VM:-pantheon-lupin-dev}"
 DEV_ZONE="${DEV_ZONE:-asia-east1-b}"
-DEV_REMOTE_DIR="${DEV_REMOTE_DIR:-/home/lupin/code/pantheon}"
-DEV_BFF_CANONICAL_CORS_ORIGIN="${DEV_BFF_CANONICAL_CORS_ORIGIN:-https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io}"
+DEV_REMOTE_DIR="${DEV_REMOTE_DIR:-/home/lupin/pantheon}"
+DEV_BFF_CANONICAL_CORS_ORIGIN="${DEV_BFF_CANONICAL_CORS_ORIGIN:-https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io}"
 DEV_BFF_CORS_ORIGINS="${DEV_BFF_CORS_ORIGINS:-${DEV_BFF_CANONICAL_CORS_ORIGIN},https://pantheon-ai-system-front-dev.lovable.app,https://pantheon-dev.lovable.app}"
 DEV_BFF_REQUIRED_CORS_ORIGINS="${DEV_BFF_REQUIRED_CORS_ORIGINS:-https://preview--pantheon-dev.lovable.app,https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com,https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app,https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com}"
 # Strict by default: the dev deploy must not silently re-force stub/permissive
@@ -148,7 +148,7 @@ Options:
                          bff (dev only): rebuild only operator-bff; paper fleet
                          and all other services are left running untouched.
   --sha <commit>         Required unless GITHUB_SHA is set. Commit to deploy.
-  --project-id <id>      GCP project. Default: pantheon-benjamin-20260528.
+  --project-id <id>      GCP project. Default: pantheon-lupin-dev-20260719.
   --allow-dirty          Emergency only: stash dirty managed deploy worktree
                          changes before checkout.
   --allow-example-env    Allow staging to use env/*.env.example if real env files

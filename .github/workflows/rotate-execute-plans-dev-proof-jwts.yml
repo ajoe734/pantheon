@@ -25,7 +25,7 @@ jobs:
     environment: dev
     timeout-minutes: 10
     env:
-      DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io' }}
+      DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io' }}
       DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
       DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
       DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
@@ -40,7 +40,7 @@ jobs:
           set -euo pipefail
           umask 077
 
-          readonly expected_url="https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io"
+          readonly expected_url="https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io"
           readonly target_repo="ajoe734/execute-plans"
           if [[ "${DEV_BFF_URL%/}" != "${expected_url}" ]]; then
             echo "Refusing rotation: DEV_BFF_URL is not the allowlisted dev BFF." >&2

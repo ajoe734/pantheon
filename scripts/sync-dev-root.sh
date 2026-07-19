@@ -16,7 +16,7 @@ set -uo pipefail
 DEV_ROOT="${1:-/home/lupin/pantheon-ci-deploy/dev-root}"
 LIVE_CONFIG="${2:-/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json}"
 REF="${SYNC_REF:-origin/dev}"
-PID_FILE="${PANTHEON_SUPERVISOR_PID:-/home/lupin/code/pantheon/.orchestrator/supervisor.pid}"
+PID_FILE="${PANTHEON_SUPERVISOR_PID:-/home/lupin/pantheon/.orchestrator/supervisor.pid}"
 stamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 log() { echo "[sync-dev-root $(stamp)] $*"; }
 

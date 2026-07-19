@@ -33,9 +33,9 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 
 
 TASK_ID = "LOOP-PROD-MAI-001"
-DEFAULT_BFF_BASE_URL = "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io"
+DEFAULT_BFF_BASE_URL = "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io"
 DEFAULT_FE_DEPLOYMENT_URL = (
-    "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/deployment.json"
+    "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io/deployment.json"
 )
 FIXED_STUB_BEARER = "loop-prod-mai-fixed:operator:mfa:assistant.kernel.repair"
 REDACTED = "<redacted>"
@@ -3536,7 +3536,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--merge-target", default="dev")
     parser.add_argument(
         "--shared-checkout-path",
-        default=os.getenv("PANTHEON_STATUS_ROOT_HOST", "/home/lupin/code/pantheon"),
+        default=os.getenv("PANTHEON_STATUS_ROOT_HOST", "/home/lupin/pantheon"),
     )
     parser.add_argument("--status-root", type=Path, default=None)
     parser.add_argument("--allow-mutations", action="store_true")
