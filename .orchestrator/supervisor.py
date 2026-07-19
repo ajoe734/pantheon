@@ -1107,6 +1107,28 @@ def quota_group_concurrency_limit(
     settings = settings or ready_dispatch_settings(config)
     raw = settings.get("max_concurrent_per_quota_group")
     group_id = agent_quota_group_id(config, agent_id)
+    # SUPERVISOR-REWRITE Phase 1b (account cap): the cap arithmetic is owned by
+    # rewrite.concurrency.account_limit (shadow-proven equal for every live
+    # agent). The 6-way account-group resolver stays here until its config
+    # collapse; we still resolve the incumbent identity keys and hand them to the
+    # single cap authority. Legacy path one flag away via use_rewrite_concurrency.
+    if _rewrite_flag_enabled(settings, "use_rewrite_concurrency"):
+        try:
+            identity_keys = [
+                *agent_quota_identity_ids(config, agent_id),
+                group_id,
+                agent_provider_id(config, agent_id),
+                normalize_agent_id(agent_id or ""),
+                display_name_for(config, normalize_agent_id(agent_id or "")),
+            ]
+            return rewrite_concurrency.account_limit(
+                group_id, settings=settings, identity_keys=identity_keys
+            )
+        except Exception as exc:  # never let the rewrite path break the account cap
+            console_log(
+                f"rewrite account-limit path failed ({type(exc).__name__}: {exc}); "
+                "falling back to incumbent quota_group_concurrency_limit",
+            )
     if isinstance(raw, dict):
         provider_id = agent_provider_id(config, agent_id)
         display_name = display_name_for(config, normalize_agent_id(agent_id or ""))
