@@ -180,6 +180,7 @@ def test_all_dev_mutations_and_public_proofs_use_pinned_wrapper() -> None:
 
     for step_name in (
         "Deploy dev VM stack under lease",
+        "Ensure governed dev paper baseline under lease",
         "Dev OpenClaw assistant live smoke under lease",
         "Public dev BFF smoke and exact version proof under lease",
         "Dev Agora restart persistence smoke under lease",
@@ -192,6 +193,7 @@ def test_all_dev_mutations_and_public_proofs_use_pinned_wrapper() -> None:
 
     assert '${DEV_BFF_URL}/bff/version' in dev
     assert '[[ "${actual}" == "${TARGET_SHA}" ]]' in dev
+    assert "PAPER_BOOTSTRAP_OUTCOME: ${{ steps.paper_bootstrap.outcome }}" in dev
     assert '"${HEARTBEAT_OUTCOME}:${DEPLOY_OUTCOME}' in dev
     assert '[[ "${complete_success}" != "true" || -e "${LEASE_FAILURE_FILE}" ]]' in dev
     assert "lease quarantined until TTL" in dev

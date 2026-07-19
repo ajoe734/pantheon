@@ -471,6 +471,62 @@ jobs:
           PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
             exec "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" "${args[@]}"
 
+      - name: Ensure governed dev paper baseline under lease
+        id: paper_bootstrap
+        if: ${{ env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'root' }}
+        env:
+          PATH: ${{ steps.runtime.outputs.safe_path }}
+          BASH_ENV: ""
+          ENV: ""
+          PYTHONPATH: ""
+          PYTHONHOME: ""
+          PYTHONNOUSERSITE: "1"
+          PYTHONSAFEPATH: "1"
+          PYTHONSTARTUP: ""
+          PYTHONINSPECT: ""
+          CDPATH: ""
+          HOME: /home/runner
+          LD_PRELOAD: ""
+          LD_LIBRARY_PATH: ""
+          GIT_CONFIG_COUNT: "0"
+          GIT_CONFIG_NOSYSTEM: "1"
+          GIT_CONFIG_GLOBAL: /dev/null
+          GIT_CONFIG_SYSTEM: /dev/null
+          GIT_CONFIG_PARAMETERS: ""
+          GIT_SSH_COMMAND: ""
+          GIT_ASKPASS: ""
+          SSH_ASKPASS: ""
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE: ${{ steps.lease.outputs.state_file }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_PID_FILE: ${{ steps.lease.outputs.pid_file }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_IDENTITY_FILE: ${{ steps.lease.outputs.identity_file }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_FAILURE_FILE: ${{ steps.lease.outputs.failure_file }}
+          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_LOG: ${{ steps.lease.outputs.heartbeat_log }}
+          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
+          DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
+          DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
+          GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-lupin-dev-20260719' }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          lease_token="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"
+          unset PANTHEON_ENVIRONMENT_LEASE_TOKEN
+          controller="${GITHUB_WORKSPACE}/.lease-controller"
+          [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
+          printf '%s  %s\n' \
+            52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "${controller}/scripts/dev_environment_lease.py" \
+            6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
+            | sha256sum --check --strict
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
+            exec "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" \
+            bash -c '
+              set -euo pipefail
+              gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" \
+                --zone "${DEV_ZONE}" \
+                --project "${GCP_DEPLOY_PROJECT_ID}" \
+                --ssh-flag=-T \
+                --command "set -euo pipefail; docker exec pantheon-operator-bff-1 python /workspace/scripts/bootstrap_dev_paper_baseline.py --timeout-seconds 420 --poll-seconds 5"
+            '
+
       - name: Dev evolution dispatch hosted probe
         id: evolution-dispatch-probe
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_evolution_dispatch_probe && env.TARGET_COMPONENT == 'root' }}
@@ -818,6 +874,7 @@ jobs:
           LEASE_HEARTBEAT_LOG: ${{ steps.lease.outputs.heartbeat_log }}
           HEARTBEAT_OUTCOME: ${{ steps.heartbeat.outcome }}
           DEPLOY_OUTCOME: ${{ steps.deploy.outcome }}
+          PAPER_BOOTSTRAP_OUTCOME: ${{ steps.paper_bootstrap.outcome }}
           OPENCLAW_OUTCOME: ${{ steps.openclaw.outcome }}
           PUBLIC_SMOKE_OUTCOME: ${{ steps.public_smoke.outcome }}
           AGORA_OUTCOME: ${{ steps.agora.outcome }}
@@ -874,10 +931,10 @@ jobs:
           complete_success=false
           case "${TARGET_COMPONENT}" in
             auto|root)
-              [[ "${HEARTBEAT_OUTCOME}:${DEPLOY_OUTCOME}:${OPENCLAW_OUTCOME}:${PUBLIC_SMOKE_OUTCOME}:${AGORA_OUTCOME}" == "success:success:success:success:success" ]] && complete_success=true
+              [[ "${HEARTBEAT_OUTCOME}:${DEPLOY_OUTCOME}:${PAPER_BOOTSTRAP_OUTCOME}:${OPENCLAW_OUTCOME}:${PUBLIC_SMOKE_OUTCOME}:${AGORA_OUTCOME}" == "success:success:success:success:success:success" ]] && complete_success=true
               ;;
             bff)
-              [[ "${HEARTBEAT_OUTCOME}:${DEPLOY_OUTCOME}:${OPENCLAW_OUTCOME}:${PUBLIC_SMOKE_OUTCOME}:${AGORA_OUTCOME}" == "success:success:skipped:success:success" ]] && complete_success=true
+              [[ "${HEARTBEAT_OUTCOME}:${DEPLOY_OUTCOME}:${PAPER_BOOTSTRAP_OUTCOME}:${OPENCLAW_OUTCOME}:${PUBLIC_SMOKE_OUTCOME}:${AGORA_OUTCOME}" == "success:success:skipped:skipped:success:success" ]] && complete_success=true
               ;;
           esac
 
