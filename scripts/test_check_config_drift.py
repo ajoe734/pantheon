@@ -50,6 +50,39 @@ def test_coordination_disable_is_actionable_with_default_overrides() -> None:
     ]
 
 
+def test_progress_lease_policy_drift_is_actionable_by_default() -> None:
+    repo = {
+        "supervisor": {
+            "observe_worker_commit_progress": True,
+            "lease_requires_work_progress": True,
+        },
+        "worker_runtime": {
+            "worker_lease_seconds": 600,
+            "work_progress_stale_seconds": 360,
+        },
+    }
+    live = {
+        "supervisor": {
+            "observe_worker_commit_progress": False,
+            "lease_requires_work_progress": False,
+        },
+        "worker_runtime": {
+            "worker_lease_seconds": 1800,
+            "work_progress_stale_seconds": 900,
+        },
+    }
+
+    report = find_drift(repo, live)
+
+    assert report["intentional"] == []
+    assert {item["path"] for item in report["drift"]} == {
+        "supervisor.observe_worker_commit_progress",
+        "supervisor.lease_requires_work_progress",
+        "worker_runtime.worker_lease_seconds",
+        "worker_runtime.work_progress_stale_seconds",
+    }
+
+
 def test_find_drift_missing_flag_is_reported_not_drift() -> None:
     report = find_drift({}, {}, critical_flags=("ready_dispatcher.enabled",), overrides=frozenset())
     assert report["drift"] == []

@@ -38,6 +38,10 @@ CRITICAL_FLAGS: tuple[str, ...] = (
     "coordination.enabled",
     "github_bus.enabled",
     "watchdog.enabled",
+    "supervisor.observe_worker_commit_progress",
+    "supervisor.lease_requires_work_progress",
+    "worker_runtime.worker_lease_seconds",
+    "worker_runtime.work_progress_stale_seconds",
 )
 
 # Paths where live is ALLOWED to diverge from repo for legitimate

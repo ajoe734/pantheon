@@ -375,9 +375,13 @@ touches the hot path.
   The cutover defaults `supervisor.lease_requires_work_progress=true`, with an
   explicit rollback to `false`; fleet values are a 360-second work-progress
   freshness window and a 600-second worker lease, while queue leases remain 1,800
-  seconds. The supervisor snapshots HEAD before launch and observes subsequent
-  HEAD changes only inside the worker's isolated task worktree; a shared checkout
-  is deliberately never attributed to one worker. New commits populate
+  seconds. The split-root provisioner and config-drift guard treat those progress
+  observation, progress requirement, freshness-window, and worker-lease values as
+  repo-owned safety policy, so an older live overlay cannot silently preserve the
+  pre-cutover lease behavior. The supervisor snapshots HEAD before launch and
+  observes subsequent HEAD changes only inside the worker's isolated task
+  worktree; a shared checkout is deliberately never attributed to one worker. New
+  commits populate
   `work_progress_snapshot`,
   `last_commit_progress_at`, and the lease/stall `last_work_progress_at` signal
   (`supervisor.observe_worker_commit_progress=false` disables observation).

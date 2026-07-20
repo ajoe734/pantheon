@@ -74,7 +74,7 @@ def test_sync_updates_origin_dev_when_remote_fetch_config_tracks_only_master(tmp
     assert (dev_root / "version.txt").read_text(encoding="utf-8") == "two\n"
 
 
-def test_sync_reprovisions_stale_split_root_account_config(tmp_path: Path) -> None:
+def test_sync_reprovisions_stale_split_root_repo_owned_config(tmp_path: Path) -> None:
     remote = tmp_path / "remote.git"
     seed = tmp_path / "seed"
     dev_root = tmp_path / "dev-root"
@@ -115,6 +115,14 @@ def test_sync_reprovisions_stale_split_root_account_config(tmp_path: Path) -> No
                     "max_concurrent_per_account": {"shared": 1},
                 },
                 "providers": {"claude": {"account": "shared"}},
+                "supervisor": {
+                    "observe_worker_commit_progress": True,
+                    "lease_requires_work_progress": True,
+                },
+                "worker_runtime": {
+                    "worker_lease_seconds": 600,
+                    "work_progress_stale_seconds": 360,
+                },
                 "watchdog": {},
             }
         )
@@ -133,6 +141,14 @@ def test_sync_reprovisions_stale_split_root_account_config(tmp_path: Path) -> No
                     "max_concurrent_per_quota_group": {"claude": 1}
                 },
                 "providers": {"claude": {"account_group": "shared"}},
+                "supervisor": {
+                    "observe_worker_commit_progress": False,
+                    "lease_requires_work_progress": False,
+                },
+                "worker_runtime": {
+                    "worker_lease_seconds": 1800,
+                    "work_progress_stale_seconds": 900,
+                },
                 "watchdog": {},
             }
         )
@@ -158,6 +174,10 @@ def test_sync_reprovisions_stale_split_root_account_config(tmp_path: Path) -> No
     assert "max_concurrent_per_quota_group" not in rendered["ready_dispatcher"]
     assert rendered["providers"]["claude"]["account"] == "shared"
     assert "account_group" not in rendered["providers"]["claude"]
+    assert rendered["supervisor"]["observe_worker_commit_progress"] is True
+    assert rendered["supervisor"]["lease_requires_work_progress"] is True
+    assert rendered["worker_runtime"]["worker_lease_seconds"] == 600
+    assert rendered["worker_runtime"]["work_progress_stale_seconds"] == 360
 
 
 def test_sync_records_pid_bound_intent_before_stopping_live_supervisor(tmp_path: Path) -> None:
