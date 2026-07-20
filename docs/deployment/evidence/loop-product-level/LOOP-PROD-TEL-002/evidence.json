@@ -2,16 +2,16 @@
   "schema_version": "loop_product_evidence.v1",
   "task_id": "LOOP-PROD-TEL-002",
   "title": "Canonical loop-run and Trade Journey lifecycle projector",
-  "captured_at": "2026-07-16T01:31:06Z",
-  "outcome": "blocked",
+  "captured_at": "2026-07-20T02:37:31Z",
+  "outcome": "pending_independent_review",
   "terminal_success": false,
   "environment": "dev",
   "owner": "Codex2",
   "reviewer": "Claude",
   "review": {
-    "status": "not_requested_while_blocked",
+    "status": "pending_independent_review",
     "review_file": null,
-    "reason": "Independent approval is intentionally deferred because the strict dev/root deployment now passes credential admission but root stack health fails before hosted correlation evidence, and the deploy workflow is currently disabled."
+    "reason": "Exact-SHA hosted lifecycle and authenticated public-BFF readback now pass. Terminal success remains fail-closed until the designated independent reviewer records a verdict bound to this checksummed manifest and the verifier-fix PR."
   },
   "delivery": {
     "merge_target": "dev",
@@ -44,9 +44,10 @@
     "runtime_delivery_sha": "d9c4b46d2d28cbb3ba343639fe69f3ab439ee283",
     "latest_completed_strict_root_candidate_sha": "6915f1fe7a2cc9d97e8160af0e351a34cc8e4bd3",
     "latest_attempted_strict_root_candidate_sha": "55b2202bbf02f1ff58245728447b03320d9705a5",
-    "current_hosted_bff_sha": "a10f752b3ea4420f271535e255f2d4e7d3d498b2",
+    "current_hosted_bff_sha": "93c50da6d67560f7035025879af08dfc3197fb76",
+    "hosted_proof_deployment_sha": "93c50da6d67560f7035025879af08dfc3197fb76",
     "code_delivery_complete": true,
-    "target_deployment_complete": false
+    "target_deployment_complete": true
   },
   "implemented_boundary": {
     "committed_source": "Postgres telemetry_events ordered by monotonic ingested_seq",
@@ -91,6 +92,11 @@
     {
       "scope": "Static and deployment contract validation",
       "result": "docker compose config, py_compile, bash -n, workflow YAML parse, and git diff --check passed"
+    },
+    {
+      "scope": "Monotonic public-BFF readback verifier regression",
+      "command": "pytest -q services/trade_journey/test_hosted_bff_readback.py services/trade_journey/test_hosted_lifecycle_probe.py services/trade_journey/test_hosted_lifecycle_stimulus.py scripts/test_loop_prod_tel_002_hosted_workflow.py",
+      "result": "35 passed"
     }
   ],
   "deployment_attempt": {
@@ -118,94 +124,132 @@
     "public_bff_readback_executed": false,
     "workflow_state_at_capture": "disabled_manually"
   },
+  "hosted_verification": {
+    "observed_at": "2026-07-20T02:37:31Z",
+    "method": "The repository-governed hosted lifecycle script was invoked directly on the authorized Pantheon dev VM, followed by authenticated public-BFF readback. This did not deploy or change the serving SHA.",
+    "vm": "pantheon-lupin-dev",
+    "deployment_sha": "93c50da6d67560f7035025879af08dfc3197fb76",
+    "workflow_state_at_recheck": "active",
+    "paper_lifecycle": {
+      "artifact": "raw/20260720T022451Z-hosted-lifecycle-pass.json",
+      "sha256": "23fd1928b4cc0b52ccd66947d6556e1d49f993cb6c552b2474c0e19d0007cb02",
+      "baseline_high_watermark": 39833,
+      "source_high_watermark": 39855,
+      "event_count": 8,
+      "projection_generation": 1470,
+      "projection_checkpoint": 39855,
+      "status": "completed_with_variance",
+      "outcome": "passed"
+    },
+    "public_bff_readback": {
+      "artifact": "raw/20260720T023731Z-public-bff-readback-pass.json",
+      "sha256": "dd41abc91009acc1655cbce5959d20580e5dbada97ca5b4fb37e5667cbb4f059",
+      "base_url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
+      "projection_generation": 1498,
+      "controller_checkpoint": 40655,
+      "generation_advanced_since_source_proof": true,
+      "exact_event_ids": true,
+      "outcome": "passed"
+    },
+    "conclusion": "Exact-SHA canonical paper lifecycle and public readback passed; evidence is ready for independent review."
+  },
   "authoritative_readback": {
-    "expected_source_sha": "6915f1fe7a2cc9d97e8160af0e351a34cc8e4bd3",
+    "expected_source_sha": "93c50da6d67560f7035025879af08dfc3197fb76",
     "latest_attempted_dev_head_sha": "55b2202bbf02f1ff58245728447b03320d9705a5",
-    "observed_source_sha": "a10f752b3ea4420f271535e255f2d4e7d3d498b2",
-    "source_sha_matches": false,
+    "observed_source_sha": "93c50da6d67560f7035025879af08dfc3197fb76",
+    "source_sha_matches": true,
     "health_status": "ok",
     "config_posture": {
-      "auth_stub": true,
-      "auth_mode": "permissive",
-      "dev_login_enabled": false,
-      "mfa_required": false
+      "auth_stub": false,
+      "auth_mode": "strict",
+      "dev_login_enabled": true,
+      "mfa_required": "not_applicable_to_operator_readback"
     },
     "security_negative": {
       "unauthenticated_loop_runs_http_status": 401,
-      "unauthenticated_trade_journey_write_http_status": "not_rechecked_after_restore",
-      "fixed_bearer_me_http_status": "not_rechecked_after_restore",
-      "fixed_bearer_expected_status_for_strict": 401,
-      "strict_auth_conclusion": "fail_from_hosted_config_posture"
+      "arbitrary_bearer_loop_runs_http_status": 401,
+      "unauthenticated_trade_journey_http_status": 401,
+      "arbitrary_bearer_trade_journey_http_status": 401,
+      "strict_auth_conclusion": "pass"
     },
-    "canonical_lifecycle_correlation": "not_observed",
+    "canonical_lifecycle_correlation": "passed_with_8_exact_event_ids_across_one_loop_run_and_trade_journey",
+    "controller": {
+      "generation": 1498,
+      "checkpoint": 40655,
+      "mode": "live",
+      "accepted_live": true,
+      "truth_level": "canonical_live",
+      "status": "ready",
+      "backlog": 0
+    },
     "restoration_run": {
       "run_id": 29463957129,
       "profile": "dev/bff/permissive-stub",
       "requested_sha": "a10f752b3ea4420f271535e255f2d4e7d3d498b2",
-      "conclusion": "success_for_availability_only"
+      "conclusion": "historical_only_superseded_by_current_strict_readback"
     },
-    "conclusion": "blocked"
+    "conclusion": "pass_pending_independent_review"
   },
   "acceptance": [
     {
       "id": "AC-01",
       "requirement": "One real paper lifecycle produces one identity-consistent loop-run and multi-stage journey",
-      "status": "blocked",
-      "evidence": "Local integration and provenance tests pass; strict dev/root deployment reached VM compose but root stack health failed before the natural hosted proof could execute."
+      "status": "pass_hosted",
+      "evidence": "The natural paper producer path emitted one stable identity chain and eight lifecycle stages; the canonical loop-run and Trade Journey both read back the same journey and loop IDs."
     },
     {
       "id": "AC-02",
       "requirement": "Projection consumes append-only canonical events rather than incidents or manufactured fixtures",
-      "status": "blocked",
-      "evidence": "Committed-source and real-producer negative tests pass locally; no strict target readback exists because the hosted lifecycle probe never ran."
+      "status": "pass_hosted",
+      "evidence": "The proof advanced committed telemetry_events watermark 39833 to 39855 and bound producer provenance to execution.paper_runtime plus reconciliation-drift.scheduled; no telemetry payload was injected by the proof."
     },
     {
       "id": "AC-03",
       "requirement": "Restart, duplicate, out-of-order, backfill, and replay converge without duplicate stages",
-      "status": "pass_local_only",
+      "status": "pass",
       "evidence": "Focused projector, restart, duplicate, out-of-order, backfill, replay, and atomic-switch tests passed."
     },
     {
       "id": "AC-04",
       "requirement": "Manual or cron rebuild cannot satisfy live freshness or controller truth",
-      "status": "pass_local_only",
+      "status": "pass",
       "evidence": "Backfill/replay/degraded controller negative tests passed; BFF truth gates reject non-canonical controller state."
     },
     {
       "id": "AC-05",
       "requirement": "Branch, PR, checks, merge SHA, independent review, and residual risk owner/expiry",
-      "status": "blocked",
-      "evidence": "Code PRs merged with checks and blocker evidence is updated; independent review remains deferred until strict hosted evidence exists."
+      "status": "pending_independent_review",
+      "evidence": "Implementation PRs and checks are recorded, hosted evidence now passes, and residual risks retain owner/expiry. The verifier-fix PR, checks, merge SHA, and designated independent reviewer verdict remain pending."
     },
     {
       "id": "AC-06",
       "requirement": "Authoritative pre/post readback, not seed, stub, fixture, snapshot, or synthetic receipt",
-      "status": "fail_closed",
-      "evidence": "Observed hosted SHA is stale a10f752b3 and posture is permissive/stub after a BFF-only restore; no post-deploy proof was manufactured."
+      "status": "pass_hosted",
+      "evidence": "The read-only proof captured a pre-stimulus watermark and exact committed post-stimulus aggregate, then authenticated against the public BFF for the same loop and journey."
     },
     {
       "id": "AC-07",
       "requirement": "Duplicate safety, degraded/recovery behavior, rollback or compensation, and admitted-command RPO=0",
-      "status": "blocked",
-      "evidence": "Local durability/failure tests pass; strict root deploy mutated dev VM state and then failed compose health, after which public BFF availability was restored by a separate permissive-stub BFF-only run. Hosted recovery proof is absent."
+      "status": "pass_with_declared_boundary",
+      "evidence": "Local durability, duplicate, restart, replay, degraded, and atomic-switch tests pass; the hosted current controller is live with backlog 0. RPO=0 remains explicitly scoped to durable lifecycle-outbox admission, with cross-media atomicity retained as a residual risk."
     },
     {
       "id": "AC-08",
       "requirement": "Exact deployment identity and controller truth",
-      "status": "fail_closed",
-      "evidence": "Latest completed strict root candidate 6915f1fe differs from hosted a10f752b3, and latest dev-head strict attempts were cancelled. Natural hosted controller proof did not execute."
+      "status": "pass_hosted",
+      "evidence": "BFF version, loop-run, Trade Journey, and both controller summaries report deployment SHA 93c50da6d67560f7035025879af08dfc3197fb76; generation 1498, checkpoint 40655, backlog 0, live, ready, and canonical_live agree."
     },
     {
       "id": "AC-09",
       "requirement": "Preserve RBAC, MFA, environment, and no-live-capital boundaries",
-      "status": "fail_closed",
-      "evidence": "No live broker/capital action occurred, but the current hosted BFF advertises auth_stub=true and auth_mode=permissive, so strict auth is not proven."
+      "status": "pass_hosted",
+      "evidence": "Hosted posture is strict with auth_stub=false; unauthenticated and arbitrary-bearer reads fail 401 on both surfaces. The lifecycle environment is paper and no live broker or capital action was taken."
     },
     {
       "id": "AC-10",
       "requirement": "Redacted append-only checksummed evidence; missing or contradicted evidence fails closed",
-      "status": "pass_for_blocker_only",
-      "evidence": "This checksummed manifest records blocked truth and does not claim completion."
+      "status": "pass",
+      "evidence": "Historical blocker artifacts remain immutable, two new redacted raw artifacts are appended, and evidence.sha256 binds every recorded file. Terminal success remains false while review is pending."
     }
   ],
   "blockers": [
@@ -222,23 +266,35 @@
     },
     {
       "id": "BLOCKER-LOOP-PROD-TEL-002-DEV-ROOT-HEALTH",
-      "status": "open",
-      "severity": "blocking",
+      "status": "resolved",
+      "resolved_at": "2026-07-20T02:33:00Z",
+      "severity": "previously_blocking",
       "owner": "Pantheon dev root stack owners for policy-learning-svc and reconciliation-drift-svc",
-      "description": "Strict dev/root deployment run 29462890670 reached VM compose at 6915f1fe7a2cc9d97e8160af0e351a34cc8e4bd3, but root stack health failed before the LOOP-PROD-TEL-002 hosted lifecycle probe. The terminal failure cited pantheon-policy-learning-svc-1 unhealthy, while pantheon-reconciliation-drift-svc-1 was also unhealthy.",
-      "required_action": "Repair or verify the dev root stack health dependencies, then rerun Pantheon Nonprod Deploy for dev/root/strict at the intended current dev SHA with run_loop_prod_tel_002_probe=true.",
+      "description": "The earlier root-health failure is historical. At the hosted proof cut, policy-learning-svc, reconciliation-drift-svc, reconciliation-drift scheduler, loop-run projector scheduler, and BFF were healthy; the natural paper lifecycle completed successfully.",
+      "required_action": "Continue ordinary dev health monitoring; no TEL-002 evidence action remains for this historical blocker.",
       "prohibited_workaround": "Do not accept a local test run, a BFF-only deploy, a permissive-stub deploy, or a cancelled run as hosted product-level proof.",
-      "recheck_by": "2026-07-23T01:31:06Z"
+      "recheck_by": null
     },
     {
       "id": "BLOCKER-LOOP-PROD-TEL-002-NONPROD-WORKFLOW-DISABLED",
-      "status": "open",
-      "severity": "blocking",
+      "status": "resolved",
+      "resolved_at": "2026-07-20T02:38:00Z",
+      "severity": "previously_blocking",
       "owner": "Pantheon workflow operator",
-      "description": "After two strict dev/root attempts at newer dev head 55b2202bbf02f1ff58245728447b03320d9705a5 were cancelled, workflow 269991390 was observed in disabled_manually state, preventing this worker from dispatching another strict hosted proof run.",
-      "required_action": "Re-enable Pantheon Nonprod Deploy and permit a single dev/root/strict rerun with the LOOP-PROD-TEL-002 probe enabled once root stack health is acceptable.",
+      "description": "GitHub workflow 269991390 (Pantheon Nonprod Deploy) was rechecked through the GitHub API and is active.",
+      "required_action": "Keep the workflow active for later deployments; no TEL-002 rerun is required for the already captured exact-SHA proof.",
       "prohibited_workaround": "Do not mark the task done from the current stale hosted BFF or from cancelled workflow attempts.",
-      "recheck_by": "2026-07-23T01:31:06Z"
+      "recheck_by": null
+    },
+    {
+      "id": "BLOCKER-LOOP-PROD-TEL-002-INDEPENDENT-REVIEW",
+      "status": "open",
+      "severity": "blocking_terminal_closeout_only",
+      "owner": "Claude",
+      "description": "All owner-side local and hosted proof is ready, but no designated independent reviewer verdict is recorded for the new evidence cut or monotonic-generation verifier fix.",
+      "required_action": "Review the verifier-fix PR and this companion checksum, then record an explicit approve or changes-requested verdict with review_file bound to evidence.json.",
+      "prohibited_workaround": "The implementing owner must not self-approve or set terminal_success=true without an independent verdict.",
+      "recheck_by": "2026-07-27T02:37:31Z"
     }
   ],
   "residual_risks": [
@@ -273,6 +329,14 @@
     {
       "path": "raw/20260716T013106Z-hosted-readback-after-permissive-restore.json",
       "sha256": "790ddccf8db87a699707692783065ab49a73b267616d366e36f57c5a2fe7287f"
+    },
+    {
+      "path": "raw/20260720T022451Z-hosted-lifecycle-pass.json",
+      "sha256": "23fd1928b4cc0b52ccd66947d6556e1d49f993cb6c552b2474c0e19d0007cb02"
+    },
+    {
+      "path": "raw/20260720T023731Z-public-bff-readback-pass.json",
+      "sha256": "dd41abc91009acc1655cbce5959d20580e5dbada97ca5b4fb37e5667cbb4f059"
     }
   ],
   "record_log": [
@@ -305,6 +369,24 @@
       "actor": "Codex2",
       "event": "rerun_blocked_by_workflow_state",
       "message": "Two newer dev-head strict runs at 55b2202b were cancelled and Pantheon Nonprod Deploy was observed disabled_manually, so no further hosted proof rerun could be dispatched in this worker turn."
+    },
+    {
+      "recorded_at": "2026-07-20T02:24:51Z",
+      "actor": "Codex",
+      "event": "exact_sha_hosted_lifecycle_passed",
+      "message": "The governed hosted probe completed one natural paper lifecycle at deployed SHA 93c50da6, advanced committed source watermark 39833 to 39855, and correlated eight exact producer events into canonical live generation 1470."
+    },
+    {
+      "recorded_at": "2026-07-20T02:37:31Z",
+      "actor": "Codex",
+      "event": "authenticated_public_bff_readback_passed",
+      "message": "Strict public-BFF readback rejected four unauthenticated/arbitrary-bearer requests with 401 and returned the exact loop and journey at one canonical controller generation 1498/checkpoint 40655. Generation 1498 safely advanced beyond source-proof generation 1470."
+    },
+    {
+      "recorded_at": "2026-07-20T02:38:00Z",
+      "actor": "Codex",
+      "event": "evidence_ready_for_independent_review",
+      "message": "Historical root-health and disabled-workflow blockers were rechecked as resolved. Terminal success remains false pending the designated independent reviewer verdict and verifier-fix PR completion."
     }
   ],
   "redaction": {
