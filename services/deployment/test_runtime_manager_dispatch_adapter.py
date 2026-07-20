@@ -267,6 +267,67 @@ class TestNewDispatch:
         assert field in (result.error_message or "")
 
 
+def test_stage_promotion_dispatch_uses_promote_and_validates_child_readback():
+    saga = {
+        **_make_saga(),
+        "plan_id": "plan-canary-001",
+        "current_stage": "paper",
+        "target_stage": "canary",
+        "runtime_action": "replace_binding",
+    }
+    authority_report = {
+        **_authority_report(),
+        "plan_id": "plan-canary-001",
+        "target_stage": "canary",
+        "deployment_plan_current_stage": "paper",
+        "deployment_plan_binding_id": "rb-paper-001",
+    }
+    child = {
+        **_make_binding("rb-canary-001"),
+        "plan_id": "plan-canary-001",
+        "deployment_mode": "canary",
+        "execution_mode": "canary",
+        "metadata": {
+            "strategy_id": "strat-001",
+            "stage_promotion_parent_binding_id": "rb-paper-001",
+            "authoritative_promotion_attestation": {
+                "status": "passed",
+                "authority": "canonical_stage_promotion",
+                "source_stage": "paper",
+                "target_stage": "canary",
+                "deploy_authority": authority_report,
+            },
+        },
+    }
+    context = _make_deploy_context(
+        allowed_deployment_scope="canary",
+        current_binding_id="rb-paper-001",
+        human_gate_decision_id="hgd-canary-001",
+        environment="dev",
+        metadata={
+            "authoritative_promotion_base_attestation": authority_report
+        },
+    )
+    client = MagicMock()
+    client.promote.return_value = {
+        "operation": "stage_promotion",
+        "new_binding": child,
+    }
+    client.get.return_value = child
+
+    result = dispatch_to_runtime_manager(
+        saga=saga,
+        deploy_context=context,
+        client=client,
+    )
+
+    assert result.outcome == DispatchOutcome.SUCCESS, result.error_message
+    assert result.binding_id == "rb-canary-001"
+    client.promote.assert_called_once()
+    client.deploy.assert_not_called()
+    client.get.assert_called_once_with("rb-canary-001")
+
+
 # ---------------------------------------------------------------------------
 # Acceptance criterion 2: duplicate dispatch does not duplicate bindings
 # ---------------------------------------------------------------------------

@@ -24,6 +24,16 @@ class GovernanceRecordStore(Protocol):
 
     def list_all(self) -> list[Dict[str, Any]]: ...
 
+    def insert_if_absent(
+        self, record: Dict[str, Any]
+    ) -> tuple[bool, Dict[str, Any]]: ...
+
+    def compare_and_set(
+        self,
+        expected_record: Dict[str, Any],
+        record: Dict[str, Any],
+    ) -> tuple[bool, Dict[str, Any] | None]: ...
+
 
 def _copy_record(record: Dict[str, Any]) -> Dict[str, Any]:
     return json.loads(json.dumps(record))
@@ -66,6 +76,43 @@ class JsonGovernanceRecordStore:
     def list_all(self) -> list[Dict[str, Any]]:
         with self._lock:
             return [_copy_record(record) for record in self._records.values()]
+
+    def insert_if_absent(
+        self, record: Dict[str, Any]
+    ) -> tuple[bool, Dict[str, Any]]:
+        record_id = _record_id(record, self.id_fields)
+        with self._lock:
+            existing = self._records.get(record_id)
+            if existing is not None:
+                return False, _copy_record(existing)
+            self._records[record_id] = _copy_record(record)
+            try:
+                self._save()
+            except Exception:
+                self._records.pop(record_id, None)
+                raise
+            return True, _copy_record(record)
+
+    def compare_and_set(
+        self,
+        expected_record: Dict[str, Any],
+        record: Dict[str, Any],
+    ) -> tuple[bool, Dict[str, Any] | None]:
+        expected_id = _record_id(expected_record, self.id_fields)
+        record_id = _record_id(record, self.id_fields)
+        if expected_id != record_id:
+            raise ValueError("compare_and_set record identities must match")
+        with self._lock:
+            current = self._records.get(record_id)
+            if current != expected_record:
+                return False, _copy_record(current) if current is not None else None
+            self._records[record_id] = _copy_record(record)
+            try:
+                self._save()
+            except Exception:
+                self._records[record_id] = current
+                raise
+            return True, _copy_record(record)
 
     def _load(self) -> None:
         text = self.storage_path.read_text(encoding="utf-8").strip()
@@ -128,6 +175,27 @@ class PostgresGovernanceRecordStore:
 
     def list_all(self) -> list[Dict[str, Any]]:
         return [_copy_record(record) for record in self._records.list_all()]
+
+    def insert_if_absent(
+        self, record: Dict[str, Any]
+    ) -> tuple[bool, Dict[str, Any]]:
+        record_id = _record_id(record, self.id_fields)
+        inserted, canonical = self._records.insert_if_absent(record_id, record)
+        return inserted, _copy_record(canonical)
+
+    def compare_and_set(
+        self,
+        expected_record: Dict[str, Any],
+        record: Dict[str, Any],
+    ) -> tuple[bool, Dict[str, Any] | None]:
+        expected_id = _record_id(expected_record, self.id_fields)
+        record_id = _record_id(record, self.id_fields)
+        if expected_id != record_id:
+            raise ValueError("compare_and_set record identities must match")
+        updated, canonical = self._records.compare_and_set(
+            record_id, expected_record, record
+        )
+        return updated, _copy_record(canonical) if canonical is not None else None
 
 
 def build_governance_record_store(

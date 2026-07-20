@@ -110,6 +110,21 @@ class RuntimeManagerClient:
             )
         return self._local().replace(payload)
 
+    def promote(self, binding_id: str, request: Dict[str, Any]) -> Dict[str, Any]:
+        """Promote one binding exactly one stage through the governed cutover."""
+        payload = dict(request)
+        current_binding_id = payload.get("current_binding_id")
+        if current_binding_id and current_binding_id != binding_id:
+            raise RuntimeManagerClientError(
+                "current_binding_id conflicts with the promoted binding path"
+            )
+        payload["current_binding_id"] = binding_id
+        if self._use_http():
+            return self._request_json(
+                "POST", f"/api/runtime-bindings/{binding_id}/promote", payload
+            )
+        return self._local().promote_stage(payload)
+
     def get(self, binding_id: str) -> Optional[Dict[str, Any]]:
         if self._use_http():
             try:

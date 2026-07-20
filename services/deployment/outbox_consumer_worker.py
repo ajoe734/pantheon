@@ -566,6 +566,12 @@ def verify_binding_deploy_authorities(
         ),
         capital_base_url=os.getenv("PANTHEON_CAPITAL_API_URL", ""),
         timeout_seconds=timeout_seconds,
+        allowed_target_stages=(str(plan.get("target_stage") or ""),),
+        allowed_registry_deployment_stages=(
+            (str(plan.get("current_stage") or ""),)
+            if str(plan.get("target_stage") or "") in {"canary", "live"}
+            else ("none", "paper")
+        ),
     )
 
 
@@ -1992,6 +1998,26 @@ def run_poll(
                 # attestation slot persisted in RuntimeBinding metadata.
                 plan_metadata.pop("loader_checks_passed", None)
                 plan_metadata.pop("authoritative_loader_attestation", None)
+                is_stage_promotion = (
+                    (str(plan.get("current_stage") or ""), str(target_stage or ""))
+                    in {("paper", "canary"), ("canary", "live")}
+                    and str(plan.get("runtime_action") or "") == "replace_binding"
+                )
+                promotion_gate = (
+                    dict(plan_metadata.get("promotion_gate"))
+                    if isinstance(plan_metadata.get("promotion_gate"), Mapping)
+                    else {}
+                )
+                human_gate_decision_id = str(
+                    plan_metadata.get("human_gate_decision_id")
+                    or promotion_gate.get("human_gate_decision_id")
+                    or ""
+                ).strip()
+                authority_metadata_key = (
+                    "authoritative_promotion_base_attestation"
+                    if is_stage_promotion
+                    else "authoritative_loader_attestation"
+                )
                 deploy_context = {
                     "sponsor_persona_id": sponsor_persona_id,
                     "persona_capital_binding_id": compat.get("persona_binding_id"),
@@ -2000,13 +2026,20 @@ def run_poll(
                     "loader_checks_passed": True,
                     "plan_status": plan.get("status") or "approved",
                     "idempotency_key": event.get("idempotency_key") or event_id,
-                    "promotion_gate": plan_metadata.get("promotion_gate") or {},
+                    "promotion_gate": promotion_gate,
+                    "current_binding_id": plan.get("binding_id"),
+                    "human_gate_decision_id": human_gate_decision_id,
+                    "environment": str(
+                        plan_metadata.get("environment")
+                        or os.getenv("PANTHEON_ENVIRONMENT")
+                        or ""
+                    ).strip(),
                     "metadata": {
                         **plan_metadata,
                         "deployment_saga_id": saga_id,
                         "deployment_outbox_event_id": event_id,
                         "deployment_trace_id": saga.get("trace_id"),
-                        "authoritative_loader_attestation": authority_report,
+                        authority_metadata_key: authority_report,
                     },
                 }
 

@@ -63,6 +63,7 @@ _TERMINAL_KEYWORDS = (
 )
 
 _ACTIVE_BINDING_STATUS = "active"
+_PROMOTION_TRANSITIONS = {("paper", "canary"), ("canary", "live")}
 
 
 class DispatchOutcome:
@@ -161,7 +162,17 @@ def _build_deploy_request(
         "rollback_action_type": deploy_context.get("rollback_action_type"),
         "metadata": deploy_context.get("metadata") or {},
         "promotion_gate": deploy_context.get("promotion_gate") or {},
+        "current_binding_id": deploy_context.get("current_binding_id"),
+        "human_gate_decision_id": deploy_context.get("human_gate_decision_id"),
+        "environment": deploy_context.get("environment"),
     }
+
+
+def _is_stage_promotion(saga: Mapping[str, Any]) -> bool:
+    return (
+        str(saga.get("current_stage") or ""),
+        str(saga.get("target_stage") or ""),
+    ) in _PROMOTION_TRANSITIONS and saga.get("runtime_action") == "replace_binding"
 
 
 def validate_authoritative_readback(
@@ -172,6 +183,7 @@ def validate_authoritative_readback(
     expected_persona_capital_binding_id: str | None = None,
     expected_sponsor_persona_id: str | None = None,
     expected_authority_report: Mapping[str, Any] | None = None,
+    expected_source_binding_id: str | None = None,
     allow_plan_lifecycle_recovery: bool = False,
 ) -> Optional[str]:
     """Return a fail-closed mismatch description for a RuntimeBinding readback.
@@ -209,10 +221,38 @@ def validate_authoritative_readback(
             f"metadata.strategy_id expected {saga.get('strategy_id')!r}, "
             f"got {metadata.get('strategy_id')!r}"
         )
-    attestation = metadata.get("authoritative_loader_attestation")
+    is_promotion = _is_stage_promotion(saga)
+    attestation_key = (
+        "authoritative_promotion_attestation"
+        if is_promotion
+        else "authoritative_loader_attestation"
+    )
+    attestation = metadata.get(attestation_key)
     if not isinstance(attestation, Mapping):
-        mismatches.append("metadata.authoritative_loader_attestation is required")
+        mismatches.append(f"metadata.{attestation_key} is required")
         return "; ".join(mismatches)
+    if is_promotion:
+        promotion_expected = {
+            "status": "passed",
+            "authority": "canonical_stage_promotion",
+            "source_stage": saga.get("current_stage"),
+            "target_stage": saga.get("target_stage"),
+        }
+        mismatches.extend(
+            f"promotion attestation {field} expected {expected_value!r}, "
+            f"got {attestation.get(field)!r}"
+            for field, expected_value in promotion_expected.items()
+            if attestation.get(field) != expected_value
+        )
+        if metadata.get("stage_promotion_parent_binding_id") != expected_source_binding_id:
+            mismatches.append(
+                "metadata.stage_promotion_parent_binding_id does not match saga source_binding_id"
+            )
+        nested_authority = attestation.get("deploy_authority")
+        if not isinstance(nested_authority, Mapping):
+            mismatches.append("promotion attestation deploy_authority is required")
+            return "; ".join(mismatches)
+        attestation = nested_authority
     expected_attestation = {
         "status": "passed",
         "authority": "canonical_deployment_registry_governance_capital",
@@ -247,6 +287,8 @@ def validate_authoritative_readback(
         else ""
     )
     lifecycle_recovery = bool(
+        not is_promotion
+        and
         allow_plan_lifecycle_recovery
         and attested_plan_status == "approved"
         and expected_plan_status == "executing"
@@ -398,9 +440,14 @@ def dispatch_to_runtime_manager(
                 error_code="RUNTIME_MANAGER_CLIENT_INIT_ERROR",
             )
 
+    is_promotion = _is_stage_promotion(saga)
     deploy_metadata = deploy_context.get("metadata")
     expected_authority_report = (
-        deploy_metadata.get("authoritative_loader_attestation")
+        deploy_metadata.get(
+            "authoritative_promotion_base_attestation"
+            if is_promotion
+            else "authoritative_loader_attestation"
+        )
         if isinstance(deploy_metadata, Mapping)
         else None
     )
@@ -408,7 +455,7 @@ def dispatch_to_runtime_manager(
         return DispatchResult(
             outcome=DispatchOutcome.TERMINAL_ERROR,
             error_message=(
-                "canonical authoritative_loader_attestation is required before "
+                "canonical deploy authority attestation is required before "
                 "runtime-manager dispatch"
             ),
             error_code="DEPLOY_AUTHORITY_REPORT_REQUIRED",
@@ -456,6 +503,7 @@ def dispatch_to_runtime_manager(
             ),
             expected_sponsor_persona_id=deploy_context.get("sponsor_persona_id"),
             expected_authority_report=expected_authority_report,
+            expected_source_binding_id=deploy_context.get("current_binding_id"),
             allow_plan_lifecycle_recovery=True,
         )
         if mismatch:
@@ -474,10 +522,23 @@ def dispatch_to_runtime_manager(
             idempotent_replay=True,
         )
 
-    # --- New dispatch: call deploy() ---
+    # --- New dispatch: create paper or atomically promote one stage ---
     try:
         request = _build_deploy_request(saga=saga, deploy_context=deploy_context)
-        binding = client.deploy(request)
+        if is_promotion:
+            source_binding_id = str(
+                deploy_context.get("current_binding_id") or ""
+            ).strip()
+            if not source_binding_id:
+                raise RuntimeManagerClientError(
+                    "current_binding_id is required for stage promotion",
+                    status_code=422,
+                    error_code="PROMOTION_SOURCE_BINDING_REQUIRED",
+                )
+            promotion_result = client.promote(source_binding_id, request)
+            binding = promotion_result.get("new_binding")
+        else:
+            binding = client.deploy(request)
     except RuntimeManagerClientError as exc:
         outcome = _classify_client_error(exc)
         return DispatchResult(
@@ -542,6 +603,7 @@ def dispatch_to_runtime_manager(
         ),
         expected_sponsor_persona_id=deploy_context.get("sponsor_persona_id"),
         expected_authority_report=expected_authority_report,
+        expected_source_binding_id=deploy_context.get("current_binding_id"),
     )
     if mismatch:
         return DispatchResult(

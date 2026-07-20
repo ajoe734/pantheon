@@ -20,6 +20,11 @@ POST  /api/runtimes/<runtime_id>/replace
     Body: ReplaceRuntimeRequest fields (see service.py for field documentation).
     Returns: operation, old_binding, new_binding, cutover_at, position_lineage.
 
+POST  /api/runtime-bindings/<binding_id>/promote
+    Governed paper→canary or canary→live atomic cutover. Requires a verified
+    JWT MFA claim, four distinct actors across canonical approvals, and an
+    explicitly enabled target-stage execution switch.
+
 GET   /api/runtime-bindings
     List all RuntimeBindings, optionally filtered by pool_id or plan_id.
 
@@ -123,6 +128,11 @@ from deploy_authority import (
     DeployAuthorityUnavailableError,
     verify_deploy_authorities,
 )
+from promotion_authority import (
+    PromotionAuthorityError,
+    PromotionAuthorityUnavailableError,
+    verify_promotion_authorities,
+)
 
 # Import kill-switch error type for HTTP error mapping
 from kill_switch_controller import KillSwitchError  # noqa: E402
@@ -138,7 +148,11 @@ if _EXEC_RM_DIR not in sys.path:
 from runtime_binding import RuntimeBindingError  # noqa: E402
 
 # Make sibling repo modules importable when this file runs as main.
-from services.runtime_auth_inbound import require_authn  # noqa: E402
+from services.runtime_auth_inbound import (  # noqa: E402
+    get_auth_context,
+    has_claim_bound_mfa,
+    require_authn,
+)
 from services.foundation.health import register_flask_health_routes  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -232,6 +246,26 @@ def _canonicalize_deploy_body(
     metadata["authoritative_loader_attestation"] = authority_report
     canonical["metadata"] = metadata
     return canonical
+
+
+def _canonicalize_promotion_body(body: dict, *, requesting_actor_id: str) -> dict:
+    verified = verify_promotion_authorities(
+        body,
+        requesting_actor_id=requesting_actor_id,
+        deployment_base_url=os.getenv("PANTHEON_DEPLOYMENT_API_URL", ""),
+        registry_base_url=(
+            os.getenv("PANTHEON_REGISTRY_API_URL")
+            or os.getenv("PANTHEON_REGISTRY_SERVICE_URL", "")
+        ),
+        governance_base_url=os.getenv(
+            "PANTHEON_GOVERNANCE_APPROVAL_API_URL", ""
+        ),
+        capital_base_url=os.getenv("PANTHEON_CAPITAL_API_URL", ""),
+        timeout_seconds=float(
+            os.getenv("PANTHEON_DEPLOY_AUTHORITY_TIMEOUT_SECONDS", "5")
+        ),
+    )
+    return dict(verified["request"])
 
 
 # ---------------------------------------------------------------------------
@@ -403,6 +437,141 @@ def replace_runtime(runtime_id):
         return jsonify(result), 201
     except RuntimeManagerError as exc:
         return jsonify({"error": {"code": "PRECONDITION_FAILED", "message": str(exc)}}), 422
+    except RuntimeBindingError as exc:
+        code = 404 if "not found" in str(exc).lower() else 422
+        return jsonify({"error": {"code": "BINDING_ERROR", "message": str(exc)}}), code
+    except Exception as exc:
+        return jsonify({"error": {"code": "INTERNAL_ERROR", "message": str(exc)}}), 500
+
+
+@app.route("/api/runtime-bindings/<binding_id>/promote", methods=["POST"])
+@require_authn(roles=("operator", "admin"), mfa_required=True)
+def promote_runtime_binding(binding_id):
+    """Perform one MFA- and four-person-governed stage cutover."""
+    body = request.get_json(force=True) or {}
+    body_binding_id = body.get("current_binding_id")
+    if body_binding_id and body_binding_id != binding_id:
+        return (
+            jsonify({
+                "error": {
+                    "code": "PRECONDITION_FAILED",
+                    "message": (
+                        f"Body current_binding_id={body_binding_id!r} does not "
+                        f"match path binding_id={binding_id!r}."
+                    ),
+                }
+            }),
+            422,
+        )
+    body["current_binding_id"] = binding_id
+
+    required_fields = [
+        "plan_id",
+        "plan_status",
+        "target_stage",
+        "artifact_id",
+        "artifact_version",
+        "strategy_id",
+        "approval_decision_id",
+        "sponsor_persona_id",
+        "capital_pool_id",
+        "persona_capital_binding_id",
+        "persona_capital_binding_status",
+        "allowed_deployment_scope",
+        "human_gate_decision_id",
+        "environment",
+    ]
+    missing = [field for field in required_fields if not body.get(field)]
+    if missing:
+        return (
+            jsonify({
+                "error": {
+                    "code": "MISSING_FIELDS",
+                    "message": f"Missing required fields: {missing}",
+                }
+            }),
+            400,
+        )
+
+    ctx = get_auth_context()
+    if ctx is None or not has_claim_bound_mfa(ctx):
+        return (
+            jsonify({
+                "error": {
+                    "code": "CLAIM_BOUND_MFA_REQUIRED",
+                    "message": (
+                        "A verified JWT with claim-bound MFA is required for "
+                        "stage promotion."
+                    ),
+                }
+            }),
+            401,
+        )
+
+    target_stage = str(body.get("target_stage") or "").strip().lower()
+    enable_key = {
+        "canary": "PANTHEON_CANARY_EXECUTION_ENABLED",
+        "live": "PANTHEON_LIVE_BROKER_ENABLED",
+    }.get(target_stage)
+    if enable_key is None:
+        return (
+            jsonify({
+                "error": {
+                    "code": "PRECONDITION_FAILED",
+                    "message": "target_stage must be canary or live",
+                }
+            }),
+            422,
+        )
+    if os.getenv(enable_key, "false").strip().lower() != "true":
+        return (
+            jsonify({
+                "error": {
+                    "code": "STAGE_EXECUTION_DISABLED",
+                    "message": (
+                        f"{target_stage} execution remains fail-closed until "
+                        f"{enable_key}=true is explicitly configured."
+                    ),
+                }
+            }),
+            409,
+        )
+
+    try:
+        body = _canonicalize_promotion_body(
+            body, requesting_actor_id=ctx.actor_id
+        )
+    except PromotionAuthorityUnavailableError as exc:
+        return (
+            jsonify({
+                "error": {
+                    "code": "PROMOTION_AUTHORITY_UNAVAILABLE",
+                    "message": str(exc),
+                }
+            }),
+            503,
+        )
+    except (PromotionAuthorityError, DeployAuthorityError) as exc:
+        return (
+            jsonify({
+                "error": {
+                    "code": "PROMOTION_AUTHORITY_REJECTED",
+                    "message": str(exc),
+                }
+            }),
+            422,
+        )
+
+    try:
+        result = _get_service().promote_stage(body)
+        return jsonify(result), 201
+    except RuntimeManagerError as exc:
+        return (
+            jsonify({
+                "error": {"code": "PRECONDITION_FAILED", "message": str(exc)}
+            }),
+            422,
+        )
     except RuntimeBindingError as exc:
         code = 404 if "not found" in str(exc).lower() else 422
         return jsonify({"error": {"code": "BINDING_ERROR", "message": str(exc)}}), code

@@ -124,6 +124,44 @@ class AuthError(Exception):
         return ({"error": {"code": self.code, "message": self.message}}, self.status_code)
 
 
+def has_claim_bound_mfa(
+    ctx: AuthContext,
+    *,
+    env: Optional[Mapping[str, str]] = None,
+) -> bool:
+    """Return whether a verified JWT itself contains accepted MFA proof.
+
+    ``AuthContext.mfa_verified`` may also be satisfied by the legacy
+    ``X-MFA-Token`` header.  High-risk multi-person approval and stage-cutover
+    boundaries must distinguish that caller-supplied header from MFA asserted
+    by the verified identity token, so they use this stricter helper.
+    """
+
+    if ctx.token_kind != "jwt":
+        return False
+    mfa_claims = _split_csv(
+        _env(
+            env,
+            "PANTHEON_RUNTIME_MFA_CLAIMS",
+            ",".join(_DEFAULT_MFA_CLAIMS),
+        )
+    ) or list(_DEFAULT_MFA_CLAIMS)
+    mfa_values = frozenset(
+        value.lower()
+        for value in _split_csv(
+            _env(
+                env,
+                "PANTHEON_RUNTIME_MFA_VALUES",
+                ",".join(sorted(_DEFAULT_MFA_VALUES)),
+            )
+        )
+    ) or _DEFAULT_MFA_VALUES
+    return any(
+        _claim_indicates_mfa(_claim_path_value(ctx.claims, claim_path), mfa_values)
+        for claim_path in mfa_claims
+    )
+
+
 # --------------------------------------------------------------------------- #
 # JWT (HS256) verification — implemented against stdlib so the runtime-manager
 # requirements stay minimal. We accept only HS256; production deployments

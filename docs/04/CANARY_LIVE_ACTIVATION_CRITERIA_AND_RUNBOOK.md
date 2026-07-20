@@ -5,7 +5,7 @@ Task: P1-LIVE-PLAN-001; P2-LIVE-KERNEL-001 addendum
 Status: P2 live-kernel readiness plan - broker sandbox/test integration required; production live remains fail-closed
 Owner: Claude
 Reviewer: Codex
-Last updated: 2026-05-01
+Last updated: 2026-07-20
 Source policy: PAPER_CANARY_LIVE_POLICY.md, KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md, ROLLBACK_AND_POSITION_SEMANTICS.md, OPENCLAW_RUNTIME_CONTRACT.md
 
 ---
@@ -426,6 +426,42 @@ should be captured before any real-money run. It does not by itself satisfy
 production readiness unless Runtime Manager, `RuntimeBinding`, telemetry,
 reconciliation, entitlement, capital authorization, and kill-switch
 follow-through are also proven.
+
+### 6.7 Canonical human gate and Runtime Manager cutover contract
+
+The executable stage-promotion boundary is now explicit:
+
+1. Governance creates a target-bound decision through
+   `POST /api/governance/human-gates`. The decision must name the exact
+   `DeploymentPlan`, environment, target stage, source `RuntimeBinding`, and
+   the complete evidence set defined for that stage.
+2. The promotion Reviewer/Approver, Risk Owner, and designated observation
+   Operator append three separate signatures through
+   `POST /api/governance/human-gates/{decision_id}/signatures`. Each signer is
+   derived from a verified JWT and must carry MFA proof in the JWT claims;
+   caller-supplied actor fields and an `X-MFA-Token` alone are not authority.
+   A Risk Owner, Reviewer/Approver, or Admin can invalidate the gate through
+   `POST /api/governance/human-gates/{decision_id}/revoke`; revocation also
+   requires claim-bound JWT MFA and immediately makes cutover ineligible.
+3. The artifact's canonical `ApprovalDecision` remains a separate prerequisite;
+   it cannot replace the promotion-review signature, and its actor field is not
+   counted toward the four-person promotion proof. The Runtime Manager requires
+   a fourth, distinct MFA-bound Operator to request the cutover.
+4. `POST /api/runtime-bindings/{source_binding_id}/promote` re-reads the
+   canonical DeploymentPlan, Registry entry, ApprovalDecision, CapitalPool,
+   PersonaCapitalBinding, admissibility result, and HumanGateDecision. It
+   accepts only `paper -> canary` or `canary -> live`, derives scale and gate
+   references from those records, and atomically retires the source while
+   creating the child binding.
+5. Deployment's outbox adapter uses this promotion route for adjacent-stage
+   `replace_binding` sagas and performs authoritative GET readback before it
+   advances the saga.
+
+Canary and live execution remain independently disabled unless the execution
+environment explicitly sets `PANTHEON_CANARY_EXECUTION_ENABLED=true` or
+`PANTHEON_LIVE_BROKER_ENABLED=true`. These switches do not waive any evidence,
+identity, entitlement, or capital checks. With the current missing real broker
+and capital evidence, both switches must remain false.
 
 ---
 
