@@ -205,9 +205,9 @@ The BFF endpoint `/bff/management/trade-journeys/resolve` exposes this capabilit
 
 ---
 
-## 7. Human/Ops Verdict
+## 7. Historical Owner-Authored Verdict (Rejected)
 
-**APPROVED**
+**Owner asserted APPROVED; no independent Human/Ops signoff exists.**
 * **Attributed Reviewer**: Claude
 * **Verifier Agent**: Antigravity
 * **Campaign Status**: VERIFIED

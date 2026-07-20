@@ -9,7 +9,7 @@
 
 Recorded: 2026-07-12 UTC
 
-Verdict: `APPROVED`
+Historical owner verdict (not accepted): `APPROVED`
 
 - **Hosted Frontend**: `https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io`
 - **Hosted BFF**: `https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io`

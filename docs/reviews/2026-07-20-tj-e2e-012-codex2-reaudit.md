@@ -1,8 +1,11 @@
 # TJ-E2E-012 Hosted Acceptance Re-audit
 
-Date: 2026-07-20 UTC  
-Task owner in the live status root: Codex2  
-Reviewer in the live status root: Codex  
+Date: 2026-07-20 UTC
+
+Task owner in the live status root: Codex2
+
+Reviewer in the live status root: Codex
+
 Verdict: **BLOCKED — NOT APPROVED**
 
 This is a task-scoped correction record. It does not replace an independent
@@ -80,9 +83,11 @@ task SHA.
 6. **The governed status path is currently unusable by this worker.** The
    required command was invoked with `AI_NAME=Codex2` from
    `$PANTHEON_COMMAND_ROOT`, but the lease guard rejected it because the worker
-   lease identity is `codex2_1`. The task therefore remains `todo` in the live
-   status root even though this re-audit ran. No generated status file was
-   edited manually.
+   lease identity is `codex2_1`. A later governed blocker attempt was rejected
+   because the installed command runtime requires
+   `PANTHEON_TASK_STATE_STORE_MODE=authoritative` while this supervisor dispatch
+   supplies `shadow`. The task therefore remains `todo` in the live status root
+   even though this re-audit ran. No generated status file was edited manually.
 
 ## Required resolution
 
