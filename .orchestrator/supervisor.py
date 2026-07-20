@@ -7494,6 +7494,159 @@ def poll_worker_observation_stage(
     }
 
 
+def poll_worker_approval_stage(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: dict[str, Any],
+    *,
+    provider_report: dict[str, Any],
+    pending: list[dict[str, Any]],
+    resolved: list[dict[str, Any]],
+    alive: bool,
+) -> dict[str, bool]:
+    """Apply one worker's approval lifecycle and signal driver short-circuiting."""
+    changed = False
+    if pending:
+        if not alive and not worker_supports_approval_resume(config, worker):
+            worker["status"] = "failed"
+            worker["deferred_action"] = None
+            worker["deferred_tool_use"] = None
+            worker["last_event_at"] = utc_now()
+            worker["last_error"] = "Worker exited while waiting for approval."
+            for approval in pending:
+                approval_id = approval.get("approval_id")
+                if not approval_id:
+                    continue
+                try:
+                    resolve_approval(
+                        config,
+                        approval_id,
+                        decision="deny",
+                        note="Auto-denied because the worker exited before approval could be applied.",
+                        remember=False,
+                    )
+                except KeyError:
+                    pass
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_failed",
+                    "provider": worker.get("provider"),
+                    "task_id": worker.get("task_id"),
+                    "message": worker["last_error"],
+                    "worker_run_id": worker["run_id"],
+                },
+            )
+            finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
+            return {"changed": True, "stop": True}
+        approval = pending[0]
+        next_status = "waiting_approval" if pid_is_alive(worker.get("pid")) else "suspended_approval"
+        if worker.get("status") != next_status:
+            worker["status"] = next_status
+            worker["deferred_action"] = approval.get("approval_id")
+            worker["last_event_at"] = approval.get("created_at") or worker.get("last_event_at") or utc_now()
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_waiting_approval",
+                    "provider": worker.get("provider"),
+                    "task_id": worker.get("task_id"),
+                    "message": (
+                        f"Worker suspended for approval {approval.get('approval_id')}"
+                        if next_status == "suspended_approval"
+                        else f"Worker waiting on approval {approval.get('approval_id')}"
+                    ),
+                    "worker_run_id": worker["run_id"],
+                    "approval_id": approval.get("approval_id"),
+                },
+            )
+            if worker.get("queue_event_id"):
+                queue_status(state, worker["queue_event_id"])["status"] = "manual_pending"
+            changed = True
+        return {"changed": changed, "stop": True}
+
+    if worker.get("status") in {"waiting_approval", "suspended_approval"} and resolved:
+        latest = resolved[-1]
+        if latest.get("approval_id") != worker.get("last_approval_id"):
+            worker["last_approval_id"] = latest.get("approval_id")
+            if latest.get("decision") == "allow" and _provider_uses_claude_cli(config, worker.get("provider")):
+                resumed = resume_claude_worker(config, worker, provider_report, approval=latest)
+                write_activity_log(
+                    config,
+                    {
+                        "type": "worker_resumed",
+                        "provider": worker.get("provider"),
+                        "task_id": worker.get("task_id"),
+                        "message": f"Resumed worker after approval {latest.get('approval_id')}",
+                        "worker_run_id": worker["run_id"],
+                        "approval_id": latest.get("approval_id"),
+                        "command": resumed.get("command") if resumed else None,
+                        "log_path": resumed.get("log_path") if resumed else None,
+                        "allowed_tools": resumed.get("allowed_tools") if resumed else None,
+                    },
+                )
+                changed = True
+                if resumed:
+                    return {"changed": True, "stop": True}
+            if latest.get("decision") == "deny":
+                worker["status"] = "failed"
+                worker["last_event_at"] = utc_now()
+                write_activity_log(
+                    config,
+                    {
+                        "type": "worker_failed",
+                        "provider": worker.get("provider"),
+                        "task_id": worker.get("task_id"),
+                        "message": latest.get("note") or "Worker approval denied.",
+                        "worker_run_id": worker["run_id"],
+                        "approval_id": latest.get("approval_id"),
+                    },
+                )
+                finalize_queue_event_record(
+                    config,
+                    state,
+                    worker,
+                    "failed",
+                    latest.get("note") or "Worker approval denied.",
+                )
+                return {"changed": True, "stop": True}
+        # Preserve the incumbent dirty-state contract while a resolved worker
+        # is normalized below, even when this approval was seen on a prior tick.
+        changed = True
+
+    current_status = worker.get("status")
+    if current_status in {"waiting_approval", "suspended_approval"}:
+        worker["deferred_action"] = None
+        worker["deferred_tool_use"] = None
+        if not resolved:
+            worker["last_approval_id"] = None
+        if alive:
+            worker["status"] = "running"
+            worker["last_event_at"] = utc_now()
+        else:
+            worker["status"] = "failed"
+            worker["last_event_at"] = utc_now()
+            worker["last_error"] = (
+                "Approval state disappeared before the worker could resume."
+                if current_status == "waiting_approval"
+                else "Approval state disappeared before the suspended worker could resume."
+            )
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_failed",
+                    "provider": worker.get("provider"),
+                    "task_id": worker.get("task_id"),
+                    "message": worker["last_error"],
+                    "worker_run_id": worker["run_id"],
+                },
+            )
+            finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
+        changed = True
+
+    return {"changed": changed, "stop": False}
+
+
 def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report: dict[str, Any] | None = None) -> bool:
     changed = False
     approval_state = load_approval_state(config)
@@ -7696,139 +7849,18 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             )
             changed = True
             continue
-        pending = pending_by_run.get(worker["run_id"], [])
-        resolved = resolved_by_run.get(worker["run_id"], [])
-        if pending:
-            if not alive and not worker_supports_approval_resume(config, worker):
-                worker["status"] = "failed"
-                worker["deferred_action"] = None
-                worker["deferred_tool_use"] = None
-                worker["last_event_at"] = utc_now()
-                worker["last_error"] = "Worker exited while waiting for approval."
-                for approval in pending:
-                    approval_id = approval.get("approval_id")
-                    if not approval_id:
-                        continue
-                    try:
-                        resolve_approval(
-                            config,
-                            approval_id,
-                            decision="deny",
-                            note="Auto-denied because the worker exited before approval could be applied.",
-                            remember=False,
-                        )
-                    except KeyError:
-                        pass
-                write_activity_log(
-                    config,
-                    {
-                        "type": "worker_failed",
-                        "provider": worker.get("provider"),
-                        "task_id": worker.get("task_id"),
-                        "message": worker["last_error"],
-                        "worker_run_id": worker["run_id"],
-                    },
-                )
-                finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
-                changed = True
-                continue
-            approval = pending[0]
-            next_status = "waiting_approval" if pid_is_alive(worker.get("pid")) else "suspended_approval"
-            if worker.get("status") != next_status:
-                worker["status"] = next_status
-                worker["deferred_action"] = approval.get("approval_id")
-                worker["last_event_at"] = approval.get("created_at") or worker.get("last_event_at") or utc_now()
-                write_activity_log(
-                    config,
-                    {
-                        "type": "worker_waiting_approval",
-                        "provider": worker.get("provider"),
-                        "task_id": worker.get("task_id"),
-                        "message": (
-                            f"Worker suspended for approval {approval.get('approval_id')}"
-                            if next_status == "suspended_approval"
-                            else f"Worker waiting on approval {approval.get('approval_id')}"
-                        ),
-                        "worker_run_id": worker["run_id"],
-                        "approval_id": approval.get("approval_id"),
-                    },
-                )
-                if worker.get("queue_event_id"):
-                    queue_status(state, worker["queue_event_id"])["status"] = "manual_pending"
-                changed = True
+        approval = poll_worker_approval_stage(
+            config,
+            state,
+            worker,
+            provider_report=provider_report,
+            pending=pending_by_run.get(worker["run_id"], []),
+            resolved=resolved_by_run.get(worker["run_id"], []),
+            alive=alive,
+        )
+        changed = bool(approval["changed"]) or changed
+        if approval["stop"]:
             continue
-
-        if worker.get("status") in {"waiting_approval", "suspended_approval"} and resolved:
-            latest = resolved[-1]
-            if latest.get("approval_id") != worker.get("last_approval_id"):
-                worker["last_approval_id"] = latest.get("approval_id")
-                if latest.get("decision") == "allow" and _provider_uses_claude_cli(config, worker.get("provider")):
-                    resumed = resume_claude_worker(config, worker, provider_report, approval=latest)
-                    write_activity_log(
-                        config,
-                        {
-                            "type": "worker_resumed",
-                            "provider": worker.get("provider"),
-                            "task_id": worker.get("task_id"),
-                            "message": f"Resumed worker after approval {latest.get('approval_id')}",
-                            "worker_run_id": worker["run_id"],
-                            "approval_id": latest.get("approval_id"),
-                            "command": resumed.get("command") if resumed else None,
-                            "log_path": resumed.get("log_path") if resumed else None,
-                            "allowed_tools": resumed.get("allowed_tools") if resumed else None,
-                        },
-                    )
-                    changed = True
-                    if resumed:
-                        continue
-                if latest.get("decision") == "deny":
-                    worker["status"] = "failed"
-                    worker["last_event_at"] = utc_now()
-                    write_activity_log(
-                        config,
-                        {
-                            "type": "worker_failed",
-                            "provider": worker.get("provider"),
-                            "task_id": worker.get("task_id"),
-                            "message": latest.get("note") or "Worker approval denied.",
-                            "worker_run_id": worker["run_id"],
-                            "approval_id": latest.get("approval_id"),
-                        },
-                    )
-                    finalize_queue_event_record(config, state, worker, "failed", latest.get("note") or "Worker approval denied.")
-                    changed = True
-                    continue
-            changed = True
-
-        current_status = worker.get("status")
-        if current_status in {"waiting_approval", "suspended_approval"} and not pending:
-            worker["deferred_action"] = None
-            worker["deferred_tool_use"] = None
-            if not resolved:
-                worker["last_approval_id"] = None
-            if alive:
-                worker["status"] = "running"
-                worker["last_event_at"] = utc_now()
-            else:
-                worker["status"] = "failed"
-                worker["last_event_at"] = utc_now()
-                worker["last_error"] = (
-                    "Approval state disappeared before the worker could resume."
-                    if current_status == "waiting_approval"
-                    else "Approval state disappeared before the suspended worker could resume."
-                )
-                write_activity_log(
-                    config,
-                    {
-                        "type": "worker_failed",
-                        "provider": worker.get("provider"),
-                        "task_id": worker.get("task_id"),
-                        "message": worker["last_error"],
-                        "worker_run_id": worker["run_id"],
-                    },
-                )
-                finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
-            changed = True
 
         if alive:
             if worker.get("status") == "stalled" and (last_event_advanced or process_activity_advanced):
