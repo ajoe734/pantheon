@@ -4400,6 +4400,64 @@ class DispatchStatusSyncTests(unittest.TestCase):
         run_mock.assert_not_called()
 
 
+class TaskStateShadowCatchupTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+        self.status_file = self.root / "ai-status.json"
+        self.event_log = self.root / "runtime" / "task-state-events.jsonl"
+        self.config = {
+            "paths": {"status_file": str(self.status_file)},
+            "task_state_store": {
+                "mode": "shadow",
+                "event_log": str(self.event_log),
+            },
+        }
+        self.runtime_state = {"supervisor": {}}
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def write_status(self, status: str) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "tasks": [{"id": "STATE-CATCHUP-001", "status": status}]
+        }
+        self.status_file.write_text(json.dumps(payload), encoding="utf-8")
+        return payload
+
+    def test_catches_up_direct_writes_and_is_idempotent_at_parity(self) -> None:
+        first = self.write_status("todo")
+
+        self.assertTrue(supervisor.sync_task_state_shadow(self.config, self.runtime_state))
+        events = supervisor.rewrite_task_state_store.load_events(self.event_log)
+        self.assertEqual([event["state"] for event in events], [first])
+        self.assertTrue(self.runtime_state["supervisor"]["task_state_shadow"]["ok"])
+
+        self.assertFalse(supervisor.sync_task_state_shadow(self.config, self.runtime_state))
+        self.assertEqual(len(supervisor.rewrite_task_state_store.load_events(self.event_log)), 1)
+
+        second = self.write_status("in_progress")
+        self.assertTrue(supervisor.sync_task_state_shadow(self.config, self.runtime_state))
+        events = supervisor.rewrite_task_state_store.load_events(self.event_log)
+        self.assertEqual([event["state"] for event in events], [first, second])
+        shadow = self.runtime_state["supervisor"]["task_state_shadow"]
+        self.assertTrue(shadow["ok"])
+        self.assertTrue(shadow["caught_up"])
+        self.assertEqual(shadow["event_count"], 2)
+
+    def test_corrupt_journal_is_reported_without_touching_canonical_state(self) -> None:
+        expected = self.write_status("todo")
+        self.event_log.parent.mkdir(parents=True)
+        self.event_log.write_text("{broken\n", encoding="utf-8")
+
+        self.assertFalse(supervisor.sync_task_state_shadow(self.config, self.runtime_state))
+
+        self.assertEqual(json.loads(self.status_file.read_text(encoding="utf-8")), expected)
+        shadow = self.runtime_state["supervisor"]["task_state_shadow"]
+        self.assertFalse(shadow["ok"])
+        self.assertIn("invalid task-state event", shadow["last_error"])
+
+
 class RunOnceSupervisorStateTests(unittest.TestCase):
     def test_discussion_planning_needs_materialization_for_accepted_approved_session(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

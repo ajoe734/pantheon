@@ -412,9 +412,14 @@ touches the hot path.
   owner-only, hash-chained full-state commit to a Git-external journal. The
   split-root provisioner pins the live journal under the runtime-config directory,
   outside both command and status repositories; a shadow failure warns but cannot
-  fail the incumbent write. `scripts/verify_task_state_store.py` replays and
-  validates the chain and compares its latest projection digest with the canonical
-  board. This full-snapshot journal is a migration bridge, not yet the final
+  fail the incumbent write. Every successful supervisor cycle also compares the
+  journal projection with the canonical board under the canonical task-state lock
+  and appends a catch-up commit when a legacy or operator-side writer did not carry
+  the live shadow environment. The result is exposed as
+  `supervisor.task_state_shadow` in runtime health state.
+  `scripts/verify_task_state_store.py` replays and validates the chain and compares
+  its latest projection digest with the canonical board. This full-snapshot journal
+  is a migration bridge, not yet the final
   task-level event vocabulary or source of truth. Live parity must be observed
   before reads move off `ai-status.json`; that authoritative read cutover remains
   the plan's Medium-High-risk item.
