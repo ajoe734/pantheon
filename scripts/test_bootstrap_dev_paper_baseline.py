@@ -36,6 +36,11 @@ def _run(**overrides):
     return bootstrap.ensure_paper_baseline(**params)
 
 
+def test_baseline_reservation_version_tracks_operator_a_semantics() -> None:
+    assert bootstrap.DEFAULT_NAME == "Pantheon Dev Paper Baseline 3"
+    assert bootstrap.DEFAULT_IDEMPOTENCY_KEY == "dev-paper-bootstrap-20260720-operator-a-v3"
+
+
 def test_login_credentials_prefer_dedicated_mfa_operator() -> None:
     with patch.dict(os.environ, DEV_ENV, clear=True):
         assert bootstrap._login_credential_pair() == (
