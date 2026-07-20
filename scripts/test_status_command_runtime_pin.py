@@ -56,6 +56,10 @@ class StatusCommandRuntimePinTests(unittest.TestCase):
             target = destination / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
+        config_path = destination / ".orchestrator" / "config.json"
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        config["task_state_store"]["mode"] = "shadow"
+        config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
 
     def _iso(self, delta_seconds: int = 3600) -> str:
         return (
@@ -291,6 +295,60 @@ class StatusCommandRuntimePinTests(unittest.TestCase):
         self.assertEqual(payload["delivery_root"], str(worktree))
         self.assertEqual(payload["status_root"], str(status_root))
         self.assertEqual(payload["wrapper_root"], str(command_root))
+
+    def test_authoritative_wrapper_requires_absolute_journal_binding(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="status-command-authoritative-") as tmpdir:
+            root = Path(tmpdir)
+            status_root = root / "status-root"
+            command_root = root / "command-root"
+            worktree = root / "task-worktree"
+            self._init_repo(status_root)
+            self._init_repo(command_root)
+            self._init_repo(worktree)
+            config_path = command_root / ".orchestrator" / "config.json"
+            config_path.parent.mkdir(parents=True)
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "task_state_store": {
+                            "mode": "authoritative",
+                            "event_log": ".orchestrator/task-state-events.jsonl",
+                        }
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            command_sha = self._write_stub_command(command_root)
+            env = self._base_env(
+                status_root=status_root,
+                worktree=worktree,
+                command_root=command_root,
+                command_sha=command_sha,
+            )
+
+            rejected = subprocess.run(
+                ["bash", str(command_root / "scripts" / "ai-status.sh"), "show", "TASK-1"],
+                cwd=worktree,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            env["PANTHEON_TASK_STATE_STORE_MODE"] = "authoritative"
+            env["PANTHEON_TASK_STATE_EVENT_LOG"] = str(root / "runtime" / "events.jsonl")
+            accepted = subprocess.run(
+                ["bash", str(command_root / "scripts" / "ai-status.sh"), "show", "TASK-1"],
+                cwd=worktree,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn("PANTHEON_TASK_STATE_STORE_MODE=authoritative", rejected.stderr)
+        self.assertEqual(accepted.returncode, 0, accepted.stderr + accepted.stdout)
 
     def test_wrapper_rejects_invalid_command_root_before_local_execution(self) -> None:
         with tempfile.TemporaryDirectory(prefix="status-command-pin-invalid-") as tmpdir:

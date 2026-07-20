@@ -12,6 +12,18 @@ fail_closed() {
   exit 2
 }
 
+REPO_TASK_STATE_MODE=""
+if [[ -f "$ROOT_DIR/.orchestrator/config.json" ]]; then
+  REPO_TASK_STATE_MODE="$(python3 -c 'import json,sys; print(str((json.load(open(sys.argv[1])).get("task_state_store") or {}).get("mode") or "").strip().lower())' "$ROOT_DIR/.orchestrator/config.json")"
+fi
+
+if [[ "$REPO_TASK_STATE_MODE" == "authoritative" ]]; then
+  [[ "${PANTHEON_TASK_STATE_STORE_MODE:-}" == "authoritative" ]] \
+    || fail_closed "PANTHEON_TASK_STATE_STORE_MODE=authoritative is required by the installed command runtime"
+  [[ "${PANTHEON_TASK_STATE_EVENT_LOG:-}" = /* ]] \
+    || fail_closed "PANTHEON_TASK_STATE_EVENT_LOG must be an absolute path in authoritative mode"
+fi
+
 first_symlink_component() {
   local path="$1"
   local rest part current

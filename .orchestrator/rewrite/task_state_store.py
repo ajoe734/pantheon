@@ -1,10 +1,10 @@
 """Durable append-only task-state journal for Supervisor Rewrite Phase 6.
 
-The first cutover stage is intentionally shadow-only: ``ai-status.json`` remains
-the incumbent write target while every committed state is also appended here.
-Each event carries the complete state, a state digest, and a previous-event hash
-so chain corruption and projection divergence are detectable before the journal
-becomes authoritative.
+The migration began in shadow mode and now supports authoritative reads and
+writes. Each event carries the complete state, a state digest, and a
+previous-event hash. In authoritative mode the journal is committed before the
+derived ``ai-status.json`` projection, so a crash cannot promote an unjournaled
+board mutation and projection drift is repaired in the journal-to-file direction.
 """
 from __future__ import annotations
 

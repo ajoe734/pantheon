@@ -716,7 +716,7 @@ def task_state_store_runtime_env(config: Mapping[str, Any]) -> dict[str, str]:
     if not isinstance(store, Mapping):
         return {}
     mode = str(store.get("mode") or "").strip().lower()
-    if mode != "shadow":
+    if mode not in {"shadow", "authoritative"}:
         return {}
     raw_event_log = str(store.get("event_log") or "").strip()
     if not raw_event_log:
@@ -4587,7 +4587,62 @@ def snapshot_task(task: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any
 
 
 def load_status(config: dict[str, Any]) -> dict[str, Any]:
+    runtime_env = task_state_store_runtime_env(config)
+    store = config.get("task_state_store")
+    configured_mode = (
+        str(store.get("mode") or "").strip().lower()
+        if isinstance(store, Mapping)
+        else ""
+    )
+    if (
+        configured_mode == "authoritative"
+        and runtime_env.get(TASK_STATE_STORE_MODE_ENV) != "authoritative"
+    ):
+        raise RuntimeError(
+            "authoritative task-state store requires a provisioned absolute event_log"
+        )
+    if configured_mode == "authoritative":
+        from rewrite import task_state_store
+
+        event_log = runtime_env[TASK_STATE_EVENT_LOG_ENV]
+        events = task_state_store.load_events(event_log)
+        if not events:
+            raise RuntimeError(
+                "authoritative task-state journal is empty; refusing ai-status.json fallback"
+            )
+        state = task_state_store.project_latest_state(events)
+        if not isinstance(state, dict) or not state:
+            raise RuntimeError("authoritative task-state projection is not a non-empty object")
+        return state
     return load_nonempty_json(config_path(config, "status_file"), label="status", default={}) or {}
+
+
+def write_status(config: dict[str, Any], payload: dict[str, Any], *, source: str) -> None:
+    """Persist canonical task state, journaling before derived-file projection."""
+
+    runtime_env = task_state_store_runtime_env(config)
+    store = config.get("task_state_store")
+    configured_mode = (
+        str(store.get("mode") or "").strip().lower()
+        if isinstance(store, Mapping)
+        else ""
+    )
+    if (
+        configured_mode == "authoritative"
+        and runtime_env.get(TASK_STATE_STORE_MODE_ENV) != "authoritative"
+    ):
+        raise RuntimeError(
+            "authoritative task-state store requires a provisioned absolute event_log"
+        )
+    if configured_mode == "authoritative":
+        from rewrite import task_state_store
+
+        task_state_store.append_state_commit(
+            runtime_env[TASK_STATE_EVENT_LOG_ENV],
+            payload,
+            source=source,
+        )
+    write_json(config_path(config, "status_file"), payload)
 
 
 def planning_shared_files(planning_state: dict[str, Any] | None = None) -> list[Path]:

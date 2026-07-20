@@ -224,6 +224,34 @@ def test_task_state_store_rejects_symlink_event_log(tmp_path: Path) -> None:
         )
 
 
+def test_task_state_store_accepts_authoritative_mode_outside_git_roots(tmp_path: Path) -> None:
+    command_root = tmp_path / "dev-root"
+    status_root = tmp_path / "status-root"
+    runtime = tmp_path / "runtime"
+    command_root.mkdir()
+    status_root.mkdir()
+    runtime.mkdir()
+    rendered: dict[str, object] = {}
+
+    apply_task_state_store(
+        {
+            "task_state_store": {
+                "mode": "authoritative",
+                "event_log": ".orchestrator/task-state-events.jsonl",
+            }
+        },
+        rendered,
+        command_root=command_root,
+        status_root=status_root,
+        live_config_path=runtime / "live.json",
+    )
+
+    assert rendered["task_state_store"] == {
+        "mode": "authoritative",
+        "event_log": str(runtime / "task-state-events.jsonl"),
+    }
+
+
 def test_canonical_watchdog_runtime_paths_preserves_paths_inside_status_root(
     tmp_path: Path,
 ) -> None:
