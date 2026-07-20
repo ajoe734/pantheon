@@ -79,8 +79,21 @@ _DEFAULT_STALLED_THRESHOLDS = {
 # observe under its own journey_id (this set); pre-signal absence is
 # structural, not a data-quality gap in this journey's execution truth.
 _OBSERVABLE_STAGES = frozenset(STAGES[STAGES.index("signal_generation"):])
-_LIVE_CAPITAL_FIELDS = ("quantity", "price")
-_LIVE_CAPITAL_VISIBLE_ROLES = {"operator", "approver", "admin", "reviewer"}
+_LIVE_SENSITIVE_FIELDS = frozenset(
+    {
+        "account_id",
+        "capital_account_id",
+        "order_id",
+        "client_order_id",
+        "broker_order_id",
+        "quantity",
+        "price",
+    }
+)
+_LIVE_SENSITIVE_IDENTIFIER_TYPES = frozenset(
+    {"order_id", "client_order_id", "broker_order_id"}
+)
+_LIVE_SENSITIVE_VISIBLE_ROLES = {"operator", "approver", "admin", "reviewer"}
 
 ReadState = Literal["formal", "partial", "degraded", "unavailable"]
 
@@ -351,19 +364,74 @@ def _tenant_allowed(identity: Any, tenant_id: str) -> bool:
     return tenant_id in scoped
 
 
-def _mask_live_capital(row: Dict[str, Any], identity: Any, environment: str) -> Dict[str, Any]:
+def _can_view_live_sensitive(identity: Any, environment: str) -> bool:
     if environment != "live":
-        return row
+        return True
     roles = set(getattr(identity, "roles", None) or [])
-    if roles & _LIVE_CAPITAL_VISIBLE_ROLES:
-        return row
-    masked = dict(row)
-    changed = False
-    for key in _LIVE_CAPITAL_FIELDS:
-        if masked.get(key) is not None:
-            masked[key] = "***"
-            changed = True
-    masked["live_capital_masked"] = changed
+    return bool(roles & _LIVE_SENSITIVE_VISIBLE_ROLES)
+
+
+def _mask_live_sensitive(value: Any, identity: Any, environment: str) -> Any:
+    """Recursively hide live account, order, and capital values from viewers."""
+    if _can_view_live_sensitive(identity, environment):
+        return value
+
+    def redact(item: Any) -> Any:
+        if item in (None, ""):
+            return item
+        if isinstance(item, list):
+            return ["***"] if item else []
+        if isinstance(item, tuple):
+            return ("***",) if item else ()
+        return "***"
+
+    def mask(item: Any) -> Any:
+        if isinstance(item, Mapping):
+            return {
+                key: redact(child) if key in _LIVE_SENSITIVE_FIELDS else mask(child)
+                for key, child in item.items()
+            }
+        if isinstance(item, list):
+            return [mask(child) for child in item]
+        if isinstance(item, tuple):
+            return tuple(mask(child) for child in item)
+        return item
+
+    masked = mask(value)
+    if isinstance(masked, dict):
+        masked["live_capital_masked"] = True
+    return masked
+
+
+def _mask_live_graph(data: Dict[str, Any], identity: Any, environment: str) -> Dict[str, Any]:
+    """Remove order nodes and their edges when live identifiers are not visible."""
+    if _can_view_live_sensitive(identity, environment):
+        return data
+    sensitive_node_types = {
+        "account",
+        "account_id",
+        "capital_account_id",
+        "order",
+        *_LIVE_SENSITIVE_IDENTIFIER_TYPES,
+    }
+    hidden_ids = {
+        str(node.get("id"))
+        for node in data.get("nodes", [])
+        if isinstance(node, Mapping) and node.get("type") in sensitive_node_types
+    }
+    masked = dict(data)
+    masked["nodes"] = [
+        node
+        for node in data.get("nodes", [])
+        if not isinstance(node, Mapping) or str(node.get("id")) not in hidden_ids
+    ]
+    masked["edges"] = [
+        edge
+        for edge in data.get("edges", [])
+        if not isinstance(edge, Mapping)
+        or (str(edge.get("from")) not in hidden_ids and str(edge.get("to")) not in hidden_ids)
+    ]
+    masked["live_capital_masked"] = True
     return masked
 
 
@@ -1013,9 +1081,12 @@ def create_trade_journeys_router(
                 snapshot_at, 200, entity_id="trade-journey-attention", store=store
             )
         now = _parse_iso(snapshot_at) or datetime.now(timezone.utc)
-        items = [item for projection in materializer.projections
-                 if projection.tenant_id == tenant_id and projection.environment == environment
-                 if (item := _attention_item(projection, now=now)) is not None]
+        items = [
+            _mask_live_sensitive(item, identity, projection.environment)
+            for projection in materializer.projections
+            if projection.tenant_id == tenant_id and projection.environment == environment
+            if (item := _attention_item(projection, now=now)) is not None
+        ]
         items.sort(key=lambda item: ({"critical": 0, "high": 1, "medium": 2}[item["severity"]], -item["age_seconds"]))
         return {"data": {"id": "trade-journey-attention", "tenant_id": tenant_id,
                          "environment": environment, "items": items},
@@ -1053,6 +1124,12 @@ def create_trade_journeys_router(
             return _unavailable_envelope(snapshot_at, entity_id="trade-journey-resolve", store=store)
 
         types_to_try = (identifier_type,) if identifier_type else _RESOLVABLE_IDENTIFIER_TYPES
+        if not _can_view_live_sensitive(identity, environment):
+            types_to_try = tuple(
+                id_type
+                for id_type in types_to_try
+                if id_type not in _LIVE_SENSITIVE_IDENTIFIER_TYPES
+            )
         candidates: List[Dict[str, Any]] = []
         all_ids: set = set()
         for id_type in types_to_try:
@@ -1218,7 +1295,10 @@ def create_trade_journeys_router(
         date_from_norm = _normalize_bound(date_from)
         date_to_norm = _normalize_bound(date_to)
         scoped = [p for p in materializer.projections if p.tenant_id == tenant_id and p.environment == environment]
-        rows = [(p, _list_row(p, now=now)) for p in scoped]
+        rows = [
+            (p, _mask_live_sensitive(_list_row(p, now=now), identity, p.environment))
+            for p in scoped
+        ]
         filtered = [
             (p, row)
             for p, row in rows
@@ -1247,7 +1327,7 @@ def create_trade_journeys_router(
         start = _decode_page_token(page_token)
         page = filtered[start : start + page_size]
         next_page_token = str(start + page_size) if start + page_size < total else None
-        items = [_mask_live_capital(row, identity, p.environment) for p, row in page]
+        items = [row for _, row in page]
 
         read_states = {row.get("read_state") for _, row in filtered}
         if not read_states or read_states == {"formal"}:
@@ -1300,7 +1380,7 @@ def create_trade_journeys_router(
             return _err(404, "RESOURCE_NOT_FOUND", "Trade journey not found")
 
         now = _parse_iso(snapshot_at) or datetime.now(timezone.utc)
-        detail = _mask_live_capital(_detail(projection, now=now), identity, projection.environment)
+        detail = _mask_live_sensitive(_detail(projection, now=now), identity, projection.environment)
         meta = _meta(
             snapshot_at, detail.get("read_state", "formal"), materializer, store=store
         )
@@ -1344,7 +1424,10 @@ def create_trade_journeys_router(
         if projection is None:
             return _err(404, "RESOURCE_NOT_FOUND", "Trade journey not found")
 
-        events = [_timeline_event(event) for event in projection.timeline]
+        events = [
+            _mask_live_sensitive(_timeline_event(event), identity, projection.environment)
+            for event in projection.timeline
+        ]
         total = len(events)
         start = _decode_page_token(page_token)
         page = events[start : start + page_size]
@@ -1394,7 +1477,7 @@ def create_trade_journeys_router(
         if projection is None:
             return _err(404, "RESOURCE_NOT_FOUND", "Trade journey not found")
 
-        data = _graph(projection)
+        data = _mask_live_graph(_graph(projection), identity, projection.environment)
         read_state = _read_state(projection.snapshot, projection.diagnostics)
         meta = _meta(snapshot_at, read_state, materializer, store=store)
         return {"data": data, "meta": meta}
@@ -1491,7 +1574,7 @@ def create_trade_journeys_router(
             meta = _meta(snapshot_at, "formal", materializer, store=store)
             return {"data": data, "meta": meta}
 
-        detail = _mask_live_capital(_detail(projection, now=now), identity, projection.environment)
+        detail = _mask_live_sensitive(_detail(projection, now=now), identity, projection.environment)
         detail["as_of"] = as_of
         detail["exists_at_as_of"] = True
         meta = _meta(
