@@ -210,7 +210,7 @@ class SupervisorQuotaGuardrailTests(unittest.TestCase):
         self.assertEqual(state["workers"]["run-2"]["reassigned_to"], "Codex")
         self.assertNotIn("TASK-001:qwen", state["provider_guardrails"]["task_failure_streaks"])
 
-    def test_dispatch_ready_tasks_skips_paused_provider(self) -> None:
+    def test_dispatch_ready_tasks_reassigns_paused_provider(self) -> None:
         state = runtime_state.default_state()
         state["provider_guardrails"]["dispatch_pauses"] = {
             "qwen": {
@@ -222,11 +222,27 @@ class SupervisorQuotaGuardrailTests(unittest.TestCase):
         }
         status = {"tasks": [self._task(owner="Qwen", reviewer="Claude", status="todo")], "handoffs": []}
 
-        with mock.patch.object(supervisor, "load_status", return_value=status), \
-            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event:
-            supervisor.dispatch_ready_tasks(self.config, state)
+        def persist_reassignment(_config: dict, **kwargs: object) -> bool:
+            self.assertEqual(kwargs["task_id"], "TASK-001")
+            self.assertEqual(kwargs["new_owner"], "Codex")
+            status["tasks"][0]["owner"] = str(kwargs["new_owner"])
+            status["tasks"][0]["reviewer"] = str(kwargs["new_reviewer"])
+            return True
 
-        queue_delivery_event.assert_not_called()
+        with mock.patch.object(supervisor, "load_status", return_value=status), \
+            mock.patch.object(
+                supervisor,
+                "persist_task_reassignment",
+                side_effect=persist_reassignment,
+            ) as persist_task_reassignment, \
+            mock.patch.object(supervisor, "write_activity_log"), \
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event:
+            changed = supervisor.dispatch_ready_tasks(self.config, state)
+
+        self.assertTrue(changed)
+        persist_task_reassignment.assert_called_once()
+        queue_delivery_event.assert_called_once()
+        self.assertEqual(queue_delivery_event.call_args.args[1]["target_agent"], "Codex")
 
 
 class SupervisorRuntimeStateTests(unittest.TestCase):
