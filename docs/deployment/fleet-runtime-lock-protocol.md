@@ -245,6 +245,18 @@ status commit leaves the outbox; a crash during append is idempotently
 repaired; and a crash after append but before clear observes the existing
 payload and does not duplicate it.
 
+The installed status command exposes `ai-status.sh recover` for this bounded
+recovery only. It takes the canonical task-state lock exclusively and without
+waiting, replays an already-durable archive/activity outbox, verifies readback,
+clears the outbox, and refreshes derived status views. It cannot create a task
+transition or a new audit event, does not impersonate an operator, and does not
+require a worker lease. The exact installed command SHA and canonical status
+root bindings are still mandatory. An empty outbox is a no-op; lock contention
+returns `status_task_lock_busy`, and contract or audit failures return
+`status_recovery_integrity` without admitting another transaction. Supervisor
+direct status writes must finish their staged transaction through `recover`,
+not through the lease-governed `sync` mutation command.
+
 ### Terminal task archive outbox
 
 A terminal transition retains the exact terminal task, handoffs, and blockers
