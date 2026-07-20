@@ -534,6 +534,7 @@ def test_bff_dev_login_distinct_identities_have_distinct_subjects_and_roles(monk
     _strict_auth_env(monkeypatch)
     monkeypatch.setenv("PANTHEON_ENV", "dev")
     monkeypatch.setenv("PANTHEON_DEPLOYMENT_STAGE", "dev")
+    monkeypatch.setenv("PANTHEON_BFF_MFA_REQUIRED", "true")
     monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_ID", "viewer-client")
     monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET", "viewer-secret")
     monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_APPROVER_CLIENT_ID", "approver-client")
@@ -544,6 +545,8 @@ def test_bff_dev_login_distinct_identities_have_distinct_subjects_and_roles(monk
     monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET", "operator-a-secret")
     monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID", "operator-b-client")
     monkeypatch.setenv("PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET", "operator-b-secret")
+    for identity in ("VIEWER", "APPROVER", "RISK_OWNER", "OPERATOR_A", "OPERATOR_B"):
+        monkeypatch.setenv(f"PANTHEON_BFF_DEV_LOGIN_{identity}_MFA_VERIFIED", "true")
 
     client = TestClient(bff_main.app)
 
@@ -582,6 +585,9 @@ def test_bff_dev_login_distinct_identities_have_distinct_subjects_and_roles(monk
     # risk_owner is not in the generic read-role set (_READ_ROLES), so /bff/me
     # correctly 403s for it; assert its claims directly off the issued JWT.
     risk_owner_claims = _jwt_claims(risk_owner["access_token"])
+
+    for payload in (viewer, approver, risk_owner, operator_a, operator_b):
+        assert _jwt_claims(payload["access_token"])["mfa_verified"] is True
 
     assert set(viewer_data["roles"]) == {"viewer"}
     assert set(approver_data["roles"]) == {"approver"}
