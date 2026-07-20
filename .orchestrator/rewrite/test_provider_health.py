@@ -60,6 +60,19 @@ class ClassifyHealthTests(unittest.TestCase):
         for kind in ("terminal", "transient", "unknown_critical", "", None):
             self.assertEqual(provider_health.classify_health(kind), AccountHealth.HEALTHY, kind)
 
+    def test_authoritative_probe_promotes_health_before_dispatch(self) -> None:
+        self.assertEqual(provider_health.classify_probe(True), AccountHealth.HEALTHY)
+        self.assertEqual(provider_health.classify_probe(False), AccountHealth.REVOKED)
+        self.assertEqual(
+            provider_health.classify_probe(False, status="quota_reached"),
+            AccountHealth.DEGRADED,
+        )
+        self.assertEqual(
+            provider_health.classify_probe(False, status="probe_timeout"),
+            AccountHealth.DEGRADED,
+        )
+        self.assertIsNone(provider_health.classify_probe(None))
+
 
 class IncumbentParityTests(unittest.TestCase):
     """The cut-over predicate must equal the legacy ladder for every kind."""
@@ -77,6 +90,26 @@ class IncumbentParityTests(unittest.TestCase):
             os.environ.pop("PANTHEON_LEGACY_FAILURE_RESPONSE", None)
             rewrite = supervisor.should_pause_dispatch_for_failure_kind(kind)
             self.assertEqual(legacy, rewrite, msg=f"kind={kind!r}: legacy={legacy} rewrite={rewrite}")
+
+    def test_full_decision_routes_through_single_authority(self) -> None:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        import supervisor
+
+        cases = (
+            ("quota_terminal", "rotated", FailureResponse.ROTATE),
+            ("quota_terminal", "exhausted", FailureResponse.PAUSE),
+            ("auth", "ineligible", FailureResponse.PAUSE),
+            ("transient", "ineligible", FailureResponse.RETRY),
+            ("terminal", "ineligible", FailureResponse.REASSIGN),
+        )
+        for kind, rotation_outcome, expected in cases:
+            self.assertEqual(
+                supervisor.decide_provider_failure_response(
+                    kind,
+                    rotation_outcome=rotation_outcome,
+                ).value,
+                expected.value,
+            )
 
 
 if __name__ == "__main__":

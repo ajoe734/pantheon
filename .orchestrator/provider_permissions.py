@@ -548,7 +548,14 @@ def codex_auth_ready(
     return probe.get("ready") is True
 
 
-def _claude_auth_probe(config: dict[str, Any], provider_id: str, binary: str | None, env: dict[str, str]) -> dict[str, Any]:
+def _claude_auth_probe(
+    config: dict[str, Any],
+    provider_id: str,
+    binary: str | None,
+    env: dict[str, str],
+    *,
+    force: bool = False,
+) -> dict[str, Any]:
     metadata = {
         "credentials": str(claude_credentials_path(env)),
         "credentials_exists": claude_credentials_path(env).exists(),
@@ -566,7 +573,7 @@ def _claude_auth_probe(config: dict[str, Any], provider_id: str, binary: str | N
             metadata=metadata,
         )
     previous = _previous_provider_auth_probe(config, provider_id)
-    if previous and not _auth_probe_due(config, provider_id, previous):
+    if previous and not force and not _auth_probe_due(config, provider_id, previous):
         return _reuse_auth_probe(provider_id, "claude", previous, method="claude_auth_status_refresh")
     status_payload = _claude_auth_status_payload(config, provider_id, binary, env)
     account_identity = _claude_account_identity(status_payload)
@@ -705,7 +712,13 @@ def _antigravity_probe_ready(returncode: int, stdout: str, combined: str) -> tup
     return True, None, "ready"
 
 
-def _antigravity_auth_probe(config: dict[str, Any], provider_id: str, binary: str | None) -> dict[str, Any]:
+def _antigravity_auth_probe(
+    config: dict[str, Any],
+    provider_id: str,
+    binary: str | None,
+    *,
+    force: bool = False,
+) -> dict[str, Any]:
     env = _antigravity_runtime_env(config, provider_id)
     metadata = _antigravity_auth_metadata(config, provider_id, env)
     if not binary:
@@ -731,7 +744,7 @@ def _antigravity_auth_probe(config: dict[str, Any], provider_id: str, binary: st
 
     previous = _previous_provider_auth_probe(config, provider_id)
     method = "agy_prompt_api_key" if metadata.get("gemini_api_key_present") else "agy_prompt_oauth"
-    if previous and not _auth_probe_due(config, provider_id, previous):
+    if previous and not force and not _auth_probe_due(config, provider_id, previous):
         return _reuse_auth_probe(provider_id, "antigravity", previous, method=method)
 
     provider_settings = (config.get("providers", {}).get(provider_id, {}) or {}).get("antigravity", {}) or {}
@@ -882,6 +895,79 @@ def _copilot_auth_ready(gh_binary: str | None) -> bool:
 def _configured_provider_binary(config: dict[str, Any], provider: str, section: str, default: str) -> str | None:
     provider_settings = (config.get("providers", {}).get(provider, {}) or {}).get(section, {})
     return command_exists(provider_settings.get("cli") or default)
+
+
+def probe_provider_auth(
+    config: dict[str, Any],
+    provider_id: str,
+    *,
+    force: bool = True,
+) -> dict[str, Any]:
+    """Probe one concrete provider immediately before dispatch.
+
+    The periodic capability report is useful fleet telemetry, but its cached
+    Claude/Antigravity probes are not an authoritative launch gate.  This
+    targeted entry point probes only the account about to own a worker and can
+    force a fresh check without rebuilding every provider capability.
+
+    Providers without a live CLI challenge still return a normalized material
+    check.  An unknown delivery mode returns ``ready=None`` so new adapters are
+    not accidentally disabled merely because this module does not know them.
+    """
+    provider_key = str(provider_id or "").strip()
+    provider = (config.get("providers", {}).get(provider_key, {}) or {})
+    delivery_mode = str(provider.get("delivery_mode") or provider_key).strip().lower()
+
+    if delivery_mode == "codex":
+        binary = _configured_provider_binary(config, provider_key, "codex", "codex")
+        return _codex_auth_probe(config, provider_key, binary, force=force)
+    if delivery_mode == "claude_cli":
+        binary = _configured_provider_binary(config, provider_key, "runtime", "claude")
+        return _claude_auth_probe(
+            config,
+            provider_key,
+            binary,
+            _provider_runtime_env(config, provider_key),
+            force=force,
+        )
+    if delivery_mode == "antigravity":
+        binary = _configured_provider_binary(config, provider_key, "antigravity", "agy")
+        return _antigravity_auth_probe(config, provider_key, binary, force=force)
+    if delivery_mode == "gemini":
+        settings = _gemini_settings(config, provider_key)
+        oauth_creds_path = _gemini_oauth_creds_path(config, provider_key)
+        env = _gemini_runtime_env(config, provider_key)
+        ready = _gemini_auth_ready(settings, oauth_creds_path=oauth_creds_path, env=env)
+        return _auth_probe_record(
+            provider_key,
+            "gemini",
+            ready=ready,
+            method="gemini_auth_material",
+            error=None if ready else "Gemini CLI authentication material is not ready.",
+            status="ready" if ready else "auth_material_missing",
+        )
+    if delivery_mode in {"copilot", "copilot_local"}:
+        gh_binary = command_exists(provider.get("cloud", {}).get("cli") or "gh")
+        ready = _copilot_auth_ready(gh_binary)
+        return _auth_probe_record(
+            provider_key,
+            "copilot",
+            ready=ready,
+            method="copilot_auth_material",
+            error=None if ready else "Copilot/GitHub authentication material is not ready.",
+            status="ready" if ready else "auth_material_missing",
+        )
+    return {
+        "provider": provider_key,
+        "kind": delivery_mode or "unknown",
+        "ready": None,
+        "status": "unsupported_probe",
+        "method": "unsupported",
+        "error": None,
+        "checked_at": utc_now(),
+        "last_auth_probe_at": utc_now(),
+        "source": "live",
+    }
 
 
 def _custom_agents_info() -> dict[str, Any]:
