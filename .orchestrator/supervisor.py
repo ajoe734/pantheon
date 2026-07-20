@@ -4950,6 +4950,14 @@ def worker_runtime_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings.setdefault("queue_lease_seconds", supervisor_settings.get("queue_lease_seconds", 1800))
     settings.setdefault("heartbeat_stale_seconds", supervisor_settings.get("heartbeat_stale_seconds", 300))
     settings.setdefault("heartbeat_grace_seconds", supervisor_settings.get("heartbeat_grace_seconds", 60))
+    settings.setdefault(
+        "work_progress_stale_seconds",
+        supervisor_settings.get(
+            "work_progress_stale_seconds",
+            int(settings.get("heartbeat_stale_seconds", 300))
+            + int(settings.get("heartbeat_grace_seconds", 60)),
+        ),
+    )
     settings.setdefault("runner_heartbeat_interval_seconds", 15)
     return settings
 
@@ -5118,12 +5126,65 @@ def worker_heartbeat_is_stale(config: dict[str, Any], worker: dict[str, Any], no
     return (now_dt - heartbeat_dt.astimezone(timezone.utc)).total_seconds() > max(60, stale_after)
 
 
+def worker_lease_requires_work_progress(config: dict[str, Any]) -> bool:
+    supervisor_settings = config.get("supervisor", {}) if isinstance(config.get("supervisor"), dict) else {}
+    return bool(supervisor_settings.get("lease_requires_work_progress", True))
+
+
+def worker_lease_progress_is_fresh(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    now: datetime | None = None,
+) -> bool:
+    settings = worker_runtime_settings(config)
+    now_dt = now or datetime.now(timezone.utc)
+    progress_candidates = [
+        dt
+        for dt in (
+            _parse_iso_utc(
+                str(
+                    worker.get("last_work_progress_at")
+                    or worker.get("last_process_activity_at")
+                    or ""
+                )
+            ),
+            _parse_iso_utc(str(worker.get("last_event_at") or "")),
+        )
+        if dt is not None
+    ]
+    latest_progress = max(progress_candidates, default=None)
+    return rewrite_worker_lifecycle.lease_progress_is_fresh(
+        last_progress_epoch=(latest_progress.timestamp() if latest_progress else None),
+        now_epoch=now_dt.timestamp(),
+        stall_seconds=float(settings.get("work_progress_stale_seconds", 360)),
+    )
+
+
+def worker_lease_can_renew(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    now: datetime | None = None,
+) -> bool:
+    now_dt = now or datetime.now(timezone.utc)
+    if worker_heartbeat_is_stale(config, worker, now_dt):
+        return False
+    return not worker_lease_requires_work_progress(config) or worker_lease_progress_is_fresh(
+        config,
+        worker,
+        now_dt,
+    )
+
+
 def worker_lease_is_expired(config: dict[str, Any], worker: dict[str, Any], now: datetime | None = None) -> bool:
     lease_expires_at = _parse_iso_utc(str(worker.get("lease_expires_at") or ""))
     if lease_expires_at is None:
         return False
     now_dt = now or datetime.now(timezone.utc)
-    return now_dt > lease_expires_at.astimezone(timezone.utc) and worker_heartbeat_is_stale(config, worker, now_dt)
+    return now_dt > lease_expires_at.astimezone(timezone.utc) and not worker_lease_can_renew(
+        config,
+        worker,
+        now_dt,
+    )
 
 
 _QUOTA_RETRY_AT_PATTERN = re.compile(
@@ -7426,41 +7487,18 @@ def poll_worker_observation_stage(
         else:
             process_activity_advanced = False
 
-    if alive and worker.get("status") in active_worker_statuses and worker.get("last_heartbeat_at"):
-        heartbeat_ok = not worker_heartbeat_is_stale(config, worker, now)
-        progress_ok = True
-        if heartbeat_ok and config.get("supervisor", {}).get("lease_requires_work_progress", False):
-            runtime_settings = worker_runtime_settings(config)
-            stall_seconds = int(runtime_settings.get("heartbeat_stale_seconds", 300)) + int(
-                runtime_settings.get("heartbeat_grace_seconds", 60)
-            )
-            progress_candidates = [
-                dt
-                for dt in (
-                    _parse_iso_utc(
-                        str(
-                            worker.get("last_work_progress_at")
-                            or worker.get("last_process_activity_at")
-                            or ""
-                        )
-                    ),
-                    _parse_iso_utc(str(worker.get("last_event_at") or "")),
-                )
-                if dt is not None
-            ]
-            latest_progress = max(progress_candidates, default=None)
-            progress_ok = rewrite_worker_lifecycle.lease_progress_is_fresh(
-                last_progress_epoch=(latest_progress.timestamp() if latest_progress else None),
-                now_epoch=now.timestamp(),
-                stall_seconds=stall_seconds,
-            )
-        if heartbeat_ok and progress_ok:
-            refresh_worker_lease(config, worker, now)
-            poll_counts["lease_refreshes"] += 1
-            if worker.get("queue_event_id"):
-                record = queue_status(state, worker["queue_event_id"])
-                record["lease_owner"] = worker.get("run_id")
-                record["lease_expires_at"] = queue_lease_expiry(config, now)
+    if (
+        alive
+        and worker.get("status") in active_worker_statuses
+        and worker.get("last_heartbeat_at")
+        and worker_lease_can_renew(config, worker, now)
+    ):
+        refresh_worker_lease(config, worker, now)
+        poll_counts["lease_refreshes"] += 1
+        if worker.get("queue_event_id"):
+            record = queue_status(state, worker["queue_event_id"])
+            record["lease_owner"] = worker.get("run_id")
+            record["lease_expires_at"] = queue_lease_expiry(config, now)
 
     stop = False
     if alive and worker.get("status") in active_worker_statuses and worker_lease_is_expired(config, worker, now):
@@ -7469,7 +7507,12 @@ def poll_worker_observation_stage(
         worker["last_event_at"] = utc_now()
         worker["last_error"] = (
             pause_dispatch_for_reaped_worker(config, state, worker)
-            or "Worker lease expired after heartbeat became stale."
+            or (
+                "Worker lease expired after observed work progress became stale."
+                if worker_lease_requires_work_progress(config)
+                and not worker_lease_progress_is_fresh(config, worker, now)
+                else "Worker lease expired after heartbeat became stale."
+            )
         )
         write_activity_log(
             config,
@@ -9051,7 +9094,12 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
         alive = pid_is_alive(worker.get("pid"))
         missing_process = worker.get("status") in {"running", "stalled"} and not alive
         expired_lease = alive and worker_lease_is_expired(config, worker, now)
-        if alive and not expired_lease and worker.get("last_heartbeat_at") and not worker_heartbeat_is_stale(config, worker, now):
+        if (
+            alive
+            and not expired_lease
+            and worker.get("last_heartbeat_at")
+            and worker_lease_can_renew(config, worker, now)
+        ):
             refresh_worker_lease(config, worker, now)
             counts["lease_refreshes"] += 1
             if worker.get("queue_event_id"):

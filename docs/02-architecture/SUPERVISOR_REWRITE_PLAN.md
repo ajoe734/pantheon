@@ -360,8 +360,8 @@ touches the hot path.
   `PANTHEON_LEGACY_FAILURE_RESPONSE=1`; parity and targeted-probe behavior are
   pinned by `rewrite/test_provider_health.py`, `test_provider_permissions.py`,
   and `test_supervisor.py`.
-- **Phase 4 — correctness fixes cut over; lease→progress binding + per-worker
-  commit observation shipped (flag); physical decomposition complete.**
+- **Phase 4 — complete: correctness fixes, progress-bound leases, and physical
+  decomposition are cut over.**
   `rewrite/worker_lifecycle.py`: (a) `confirm_kill`
   (SIGTERM → wait → SIGKILL → verify) now backs `terminate_worker_pid`, ending
   SIGTERM-and-assume-dead (a worker was marked `failed` while still alive and
@@ -369,13 +369,16 @@ touches the hot path.
   (b) `has_work_progress`/`lease_progress_is_fresh` bind lease renewal to observed
   WORK progress (process-tree activity / provider output), not bare heartbeat, so
   a hung-but-heartbeating runner stops renewing and is reaped — the "hangs but
-  heartbeats" fix. Wired into `poll_workers` behind
-  `supervisor.lease_requires_work_progress` (default off — it shifts lease timing
-  and the stall window wants fleet tuning; the incumbent's process-activity stall
-  terminator already covers the common case). The supervisor now snapshots HEAD
-  before launch and observes subsequent HEAD changes only inside the worker's
-  isolated task worktree; a shared checkout is deliberately never attributed to
-  one worker. New commits populate `work_progress_snapshot`,
+  heartbeats" fix. Polling and boot reconciliation now share the same renewal
+  predicate: a lease is renewable only while heartbeat and observed work progress
+  are fresh, and an elapsed lease is expired when either required signal is stale.
+  The cutover defaults `supervisor.lease_requires_work_progress=true`, with an
+  explicit rollback to `false`; fleet values are a 360-second work-progress
+  freshness window and a 600-second worker lease, while queue leases remain 1,800
+  seconds. The supervisor snapshots HEAD before launch and observes subsequent
+  HEAD changes only inside the worker's isolated task worktree; a shared checkout
+  is deliberately never attributed to one worker. New commits populate
+  `work_progress_snapshot`,
   `last_commit_progress_at`, and the lease/stall `last_work_progress_at` signal
   (`supervisor.observe_worker_commit_progress=false` disables observation).
   Physical decomposition is complete: `poll_worker_orphan_stage` owns missing-
@@ -392,8 +395,7 @@ touches the hot path.
   table-classifies special control workers and task terminal/redispatch outcomes.
   `poll_workers` is now a 128-line ordered stage driver (down from 751 lines).
   Each stage returns an explicit driver short-circuit outcome, with parity pinned
-  by the incumbent poll recovery suite plus direct stage boundary tests. Pending:
-  fleet-tune/enable `lease_requires_work_progress` by default.
+  by the incumbent poll recovery suite plus direct stage boundary tests.
 - **Phase 6 — model built in isolation (storage cutover pending).**
   `rewrite/state_projection.py` implements the plan's core §3.7 idea: an
   append-only event vocabulary + a pure `project_board(events)` that folds it into
