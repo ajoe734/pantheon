@@ -382,11 +382,13 @@ touches the hot path.
   marker/log ingestion, commit/process observation, lease renewal, and expired-
   lease termination; `poll_worker_approval_stage` owns pending, resolved, resume,
   deny, and disappeared-approval transitions; `poll_worker_stall_stage` owns all
-  live-worker recovery, deferred-stall, stalled, and confirm-kill transitions.
-  Each returns an explicit driver short-circuit outcome, with parity pinned by
-  the incumbent poll recovery suite plus direct stage boundary tests. Pending:
-  extract assignment/preemption, failure, and completion stages until
-  `poll_workers` is the enum+table driver, then fleet-tune/enable
+  live-worker recovery, deferred-stall, stalled, and confirm-kill transitions;
+  `poll_worker_failure_stage` owns exited-runner evidence, classification,
+  rotate/pause/retry/reassign, and terminal failure effects through Phase 5's
+  single decision authority. Each returns an explicit driver short-circuit
+  outcome, with parity pinned by the incumbent poll recovery suite plus direct
+  stage boundary tests. Pending: extract assignment/preemption and completion
+  stages until `poll_workers` is the enum+table driver, then fleet-tune/enable
   `lease_requires_work_progress` by default.
 - **Phase 6 — model built in isolation (storage cutover pending).**
   `rewrite/state_projection.py` implements the plan's core §3.7 idea: an

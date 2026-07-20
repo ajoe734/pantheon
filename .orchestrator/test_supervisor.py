@@ -7711,6 +7711,146 @@ class PollWorkersRecoveryTests(unittest.TestCase):
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_failed")
         finalize_queue_event_record.assert_called_once()
 
+    def test_failure_stage_falls_through_when_runner_succeeded(self) -> None:
+        with mock.patch.object(supervisor, "worker_runner_succeeded", return_value=True):
+            outcome = supervisor.poll_worker_failure_stage(
+                {},
+                {},
+                {"run_id": "run-success", "status": "running"},
+                provider_report={},
+            )
+
+        self.assertEqual(outcome, {"changed": False, "stop": False})
+
+    def test_failure_stage_schedules_retry_after_model_rotation(self) -> None:
+        worker = {
+            "run_id": "run-rotate",
+            "task_id": "TASK-FAILURE",
+            "provider": "codex",
+            "status": "running",
+            "retry_count": 0,
+        }
+        with (
+            mock.patch.object(supervisor, "worker_runner_succeeded", return_value=False),
+            mock.patch.object(supervisor, "detect_worker_failure", return_value="rate limit"),
+            mock.patch.object(
+                supervisor,
+                "classify_worker_failure",
+                return_value={"kind": "capacity", "label": "capacity", "transient": True},
+            ),
+            mock.patch.object(supervisor, "summarize_failure_reason", return_value={"summary": "capacity exhausted"}),
+            mock.patch.object(supervisor, "write_failure_evidence", return_value="raw-ref"),
+            mock.patch.object(supervisor, "record_task_failure_streak", return_value=1),
+            mock.patch.object(supervisor, "worker_retry_settings", return_value={"max_attempts": 5}),
+            mock.patch.object(supervisor, "maybe_rotate_provider_model", return_value="rotated"),
+            mock.patch.object(
+                supervisor,
+                "decide_provider_failure_response",
+                return_value=supervisor.rewrite_provider_health.FailureResponse.ROTATE,
+            ),
+            mock.patch.object(supervisor, "clear_task_failure_streaks_for_task") as clear_streak,
+            mock.patch.object(supervisor, "schedule_worker_retry") as schedule_retry,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            outcome = supervisor.poll_worker_failure_stage(
+                {},
+                {},
+                worker,
+                provider_report={},
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        clear_streak.assert_called_once_with({}, "TASK-FAILURE")
+        schedule_retry.assert_called_once_with({}, worker, "capacity exhausted")
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_retry_scheduled")
+
+    def test_failure_stage_pauses_and_fails_terminal_quota_worker(self) -> None:
+        worker = {
+            "run_id": "run-quota",
+            "task_id": "TASK-FAILURE",
+            "provider": "codex",
+            "status": "running",
+        }
+        with (
+            mock.patch.object(supervisor, "worker_runner_succeeded", return_value=False),
+            mock.patch.object(supervisor, "detect_worker_failure", return_value="quota exhausted"),
+            mock.patch.object(
+                supervisor,
+                "classify_worker_failure",
+                return_value={"kind": "quota_terminal", "label": "quota", "transient": False},
+            ),
+            mock.patch.object(supervisor, "summarize_failure_reason", return_value={"summary": "quota summary"}),
+            mock.patch.object(supervisor, "write_failure_evidence", return_value="raw-ref"),
+            mock.patch.object(supervisor, "record_task_failure_streak", return_value=2),
+            mock.patch.object(supervisor, "worker_retry_settings", return_value={"max_attempts": 0}),
+            mock.patch.object(
+                supervisor,
+                "decide_provider_failure_response",
+                return_value=supervisor.rewrite_provider_health.FailureResponse.PAUSE,
+            ),
+            mock.patch.object(supervisor, "mark_provider_dispatch_paused") as mark_paused,
+            mock.patch.object(supervisor, "is_terminal_quota_failure_kind", return_value=True),
+            mock.patch.object(supervisor, "maybe_reassign_task_after_worker_failure", return_value=None),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            mock.patch.object(supervisor, "finalize_queue_event_record") as finalize_queue_event_record,
+        ):
+            outcome = supervisor.poll_worker_failure_stage(
+                {},
+                {},
+                worker,
+                provider_report={},
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        self.assertEqual(worker["status"], "failed")
+        self.assertEqual(worker["last_error"], "quota summary")
+        mark_paused.assert_called_once()
+        self.assertEqual(write_activity_log.call_args.args[1]["raw_ref"], "raw-ref")
+        self.assertEqual(finalize_queue_event_record.call_args.args[-1], "quota exhausted")
+
+    def test_failure_stage_stops_after_retry_handler_accepts_failure(self) -> None:
+        worker = {
+            "run_id": "run-retry",
+            "task_id": "TASK-FAILURE",
+            "provider": "codex",
+            "status": "running",
+        }
+        with (
+            mock.patch.object(supervisor, "worker_runner_succeeded", return_value=False),
+            mock.patch.object(supervisor, "detect_worker_failure", return_value="transient error"),
+            mock.patch.object(
+                supervisor,
+                "classify_worker_failure",
+                return_value={"kind": "transient", "label": "transient", "transient": True},
+            ),
+            mock.patch.object(supervisor, "summarize_failure_reason", return_value={"summary": "retry me"}),
+            mock.patch.object(supervisor, "write_failure_evidence", return_value="raw-ref"),
+            mock.patch.object(supervisor, "record_task_failure_streak", return_value=1),
+            mock.patch.object(supervisor, "worker_retry_settings", return_value={"max_attempts": 5}),
+            mock.patch.object(supervisor, "maybe_rotate_provider_model", return_value="unchanged"),
+            mock.patch.object(
+                supervisor,
+                "decide_provider_failure_response",
+                return_value=supervisor.rewrite_provider_health.FailureResponse.RETRY,
+            ),
+            mock.patch.object(supervisor, "maybe_trigger_retry_or_fallback", return_value=(True, True)) as retry,
+        ):
+            outcome = supervisor.poll_worker_failure_stage(
+                {},
+                {},
+                worker,
+                provider_report={"providers": {}},
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        retry.assert_called_once_with(
+            {},
+            {},
+            {"providers": {}},
+            worker,
+            "transient error",
+        )
+
     def test_observation_stage_refreshes_fresh_worker_lease(self) -> None:
         now = datetime.now(timezone.utc)
         worker = {
