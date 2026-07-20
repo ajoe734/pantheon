@@ -41,6 +41,11 @@ on:
         required: true
         default: "ambiguous-scenario-9"
         type: string
+      seed_scenarios:
+        description: "Dev only: materialize the deterministic source scenarios before acceptance"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -74,6 +79,10 @@ jobs:
     steps:
       - name: Checkout dispatched revision
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Materialize explicitly authorized dev-only source scenarios
+        if: ${{ inputs.seed_scenarios }}
+        run: python3 scripts/seed_tj_e2e_012_hosted_scenarios.py
 
       - name: Verify exact hosted pair and all twelve source scenarios
         run: python3 scripts/verify_hosted_scenarios.py

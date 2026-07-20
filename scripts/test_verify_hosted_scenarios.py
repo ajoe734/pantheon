@@ -173,10 +173,12 @@ def test_registered_stage_zero_workflow_bridges_hosted_acceptance_on_dev() -> No
     assert "inputs.mode == 'tj-e2e-012-hosted-acceptance'" in workflow
     assert "inputs.expected_sha" in workflow
     assert "inputs.expected_fe_sha" in workflow
+    assert "inputs.seed_scenarios" in workflow
     assert "inputs.environment != 'dev'" in workflow
     assert "secrets.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET" in workflow
     assert "secrets.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET" in workflow
     assert "python3 scripts/verify_hosted_scenarios.py" in workflow
+    assert "python3 scripts/seed_tj_e2e_012_hosted_scenarios.py" in workflow
     assert "tj-e2e-012-hosted-acceptance-${{ github.run_id }}-${{ github.run_attempt }}" in workflow
 
 

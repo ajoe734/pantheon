@@ -17,9 +17,10 @@ STAGES = (
 )
 TERMINAL_STATUSES = {"completed", "completed_with_variance", "failed", "cancelled", "expired"}
 IDENTIFIER_FIELDS = (
-    "research_journey_id", "strategy_lifecycle_id", "signal_id", "decision_id",
+    "research_journey_id", "strategy_lifecycle_id", "persona_id", "strategy_id",
+    "signal_id", "decision_id",
     "risk_decision_id", "client_order_id", "order_id", "broker_order_id",
-    "broker_trade_id", "ledger_entry_id", "reconciliation_id",
+    "fill_id", "broker_trade_id", "ledger_entry_id", "reconciliation_id",
 )
 CLOCK_DRIFT_THRESHOLD_SECONDS = float(os.getenv("PANTHEON_TRADE_JOURNEY_CLOCK_DRIFT_SECONDS", "5"))
 
