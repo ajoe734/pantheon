@@ -7647,6 +7647,112 @@ def poll_worker_approval_stage(
     return {"changed": changed, "stop": False}
 
 
+def poll_worker_stall_stage(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: dict[str, Any],
+    *,
+    alive: bool,
+    last_event_advanced: bool,
+    process_activity_advanced: bool,
+    now: datetime,
+    stall_after: float,
+) -> dict[str, bool]:
+    """Handle recovery/stall transitions for a live worker as one stage."""
+    if not alive:
+        return {"changed": False, "stop": False}
+
+    changed = False
+    if worker.get("status") == "stalled" and (last_event_advanced or process_activity_advanced):
+        worker["status"] = "running"
+        worker["last_event_at"] = worker.get("last_event_at") or utc_now()
+        write_activity_log(
+            config,
+            {
+                "type": "worker_recovered",
+                "provider": worker.get("provider"),
+                "task_id": worker.get("task_id"),
+                "message": "Worker produced output or measurable process activity after being marked stalled; status restored to running.",
+                "worker_run_id": worker["run_id"],
+            },
+        )
+        console_log(
+            f"worker recovered: task={worker.get('task_id')} provider={worker.get('provider')} run={worker.get('run_id')}",
+            quiet=SUPERVISOR_LOG_QUIET,
+        )
+        return {"changed": True, "stop": True}
+
+    last_event_dt = _parse_iso_utc(str(worker.get("last_event_at") or ""))
+    last_work_progress_dt = _parse_iso_utc(
+        str(
+            worker.get("last_work_progress_at")
+            or worker.get("last_process_activity_at")
+            or ""
+        )
+    )
+    activity_timestamps = [
+        value
+        for value in (last_event_dt, last_work_progress_dt)
+        if value is not None
+    ]
+    if process_activity_advanced and last_event_dt and (now - last_event_dt).total_seconds() >= stall_after:
+        last_notice_dt = _parse_iso_utc(str(worker.get("last_stall_deferred_at") or ""))
+        if last_notice_dt is None or (now - last_notice_dt).total_seconds() >= stall_after:
+            worker["last_stall_deferred_at"] = _isoformat_utc(now)
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_stall_deferred",
+                    "provider": worker.get("provider"),
+                    "task_id": worker.get("task_id"),
+                    "message": "No provider output, but fresh heartbeat and measurable process-tree activity were observed; stall action deferred.",
+                    "worker_run_id": worker["run_id"],
+                    "process_commands": (worker.get("process_activity_snapshot") or {}).get("commands", []),
+                },
+            )
+            changed = True
+    if activity_timestamps:
+        stalled_for_seconds = (now - max(activity_timestamps)).total_seconds()
+        if worker.get("status") == "stalled" and stalled_for_seconds >= stall_after * 2:
+            terminate_worker_pid(worker.get("pid"))
+            worker["status"] = "failed"
+            worker["last_event_at"] = utc_now()
+            worker["last_error"] = (
+                "Worker had no output or measurable process activity for "
+                f"{int(stalled_for_seconds)} seconds and was terminated for redispatch."
+            )
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_failed",
+                    "provider": worker.get("provider"),
+                    "task_id": worker.get("task_id"),
+                    "message": worker["last_error"],
+                    "worker_run_id": worker["run_id"],
+                },
+            )
+            finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
+            console_log(
+                f"worker terminated after extended stall: task={worker.get('task_id')} provider={worker.get('provider')} run={worker.get('run_id')}",
+                quiet=SUPERVISOR_LOG_QUIET,
+            )
+            return {"changed": True, "stop": True}
+        if stalled_for_seconds >= stall_after and worker.get("status") != "stalled":
+            worker["status"] = "stalled"
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_stalled",
+                    "provider": worker.get("provider"),
+                    "task_id": worker.get("task_id"),
+                    "message": f"Worker appears stalled after {int(stall_after)} seconds without output or measurable process-tree activity.",
+                    "worker_run_id": worker["run_id"],
+                },
+            )
+            changed = True
+    return {"changed": changed, "stop": True}
+
+
 def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report: dict[str, Any] | None = None) -> bool:
     changed = False
     approval_state = load_approval_state(config)
@@ -7862,90 +7968,18 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
         if approval["stop"]:
             continue
 
-        if alive:
-            if worker.get("status") == "stalled" and (last_event_advanced or process_activity_advanced):
-                worker["status"] = "running"
-                worker["last_event_at"] = worker.get("last_event_at") or utc_now()
-                write_activity_log(
-                    config,
-                    {
-                        "type": "worker_recovered",
-                        "provider": worker.get("provider"),
-                        "task_id": worker.get("task_id"),
-                        "message": "Worker produced output or measurable process activity after being marked stalled; status restored to running.",
-                        "worker_run_id": worker["run_id"],
-                    },
-                )
-                console_log(
-                    f"worker recovered: task={worker.get('task_id')} provider={worker.get('provider')} run={worker.get('run_id')}",
-                    quiet=SUPERVISOR_LOG_QUIET,
-                )
-                changed = True
-                continue
-            last_event = worker.get("last_event_at")
-            last_event_dt = _parse_iso_utc(str(last_event or ""))
-            last_work_progress_dt = _parse_iso_utc(
-                str(
-                    worker.get("last_work_progress_at")
-                    or worker.get("last_process_activity_at")
-                    or ""
-                )
-            )
-            activity_timestamps = [value for value in (last_event_dt, last_work_progress_dt) if value is not None]
-            if process_activity_advanced and last_event_dt and (now - last_event_dt).total_seconds() >= stall_after:
-                last_notice_dt = _parse_iso_utc(str(worker.get("last_stall_deferred_at") or ""))
-                if last_notice_dt is None or (now - last_notice_dt).total_seconds() >= stall_after:
-                    worker["last_stall_deferred_at"] = _isoformat_utc(now)
-                    write_activity_log(
-                        config,
-                        {
-                            "type": "worker_stall_deferred",
-                            "provider": worker.get("provider"),
-                            "task_id": worker.get("task_id"),
-                            "message": "No provider output, but fresh heartbeat and measurable process-tree activity were observed; stall action deferred.",
-                            "worker_run_id": worker["run_id"],
-                            "process_commands": (worker.get("process_activity_snapshot") or {}).get("commands", []),
-                        },
-                    )
-                    changed = True
-            if activity_timestamps:
-                last_activity_dt = max(activity_timestamps)
-                stalled_for_seconds = (now - last_activity_dt).total_seconds()
-                if worker.get("status") == "stalled" and stalled_for_seconds >= stall_after * 2:
-                    terminate_worker_pid(worker.get("pid"))
-                    worker["status"] = "failed"
-                    worker["last_event_at"] = utc_now()
-                    worker["last_error"] = f"Worker had no output or measurable process activity for {int(stalled_for_seconds)} seconds and was terminated for redispatch."
-                    write_activity_log(
-                        config,
-                        {
-                            "type": "worker_failed",
-                            "provider": worker.get("provider"),
-                            "task_id": worker.get("task_id"),
-                            "message": worker["last_error"],
-                            "worker_run_id": worker["run_id"],
-                        },
-                    )
-                    finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
-                    console_log(
-                        f"worker terminated after extended stall: task={worker.get('task_id')} provider={worker.get('provider')} run={worker.get('run_id')}",
-                        quiet=SUPERVISOR_LOG_QUIET,
-                    )
-                    changed = True
-                    continue
-                if stalled_for_seconds >= stall_after and worker.get("status") != "stalled":
-                    worker["status"] = "stalled"
-                    write_activity_log(
-                        config,
-                        {
-                            "type": "worker_stalled",
-                            "provider": worker.get("provider"),
-                            "task_id": worker.get("task_id"),
-                            "message": f"Worker appears stalled after {int(stall_after)} seconds without output or measurable process-tree activity.",
-                            "worker_run_id": worker["run_id"],
-                        },
-                    )
-                    changed = True
+        stall = poll_worker_stall_stage(
+            config,
+            state,
+            worker,
+            alive=alive,
+            last_event_advanced=last_event_advanced,
+            process_activity_advanced=process_activity_advanced,
+            now=now,
+            stall_after=stall_after,
+        )
+        changed = bool(stall["changed"]) or changed
+        if stall["stop"]:
             continue
 
         failure_reason = None if worker_runner_succeeded(worker) else detect_worker_failure(worker)
