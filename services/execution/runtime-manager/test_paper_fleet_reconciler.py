@@ -343,6 +343,8 @@ class TestPaperPerformanceComposeWiring(unittest.TestCase):
 
         static_runtime = services["pantheon-paper-runtime"]
         static_env = static_runtime["environment"]
+        self.assertEqual(static_runtime["profiles"], ["static-paper-runtime"])
+        self.assertNotIn("profiles", fleet)
         self.assertEqual(
             static_env["PANTHEON_SOURCE_INGEST_URL"],
             "http://source-ingest:8097",

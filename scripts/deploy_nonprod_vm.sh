@@ -1373,6 +1373,54 @@ dump_dev_root_failure_diagnostics() {
   docker compose -p pantheon -f docker-compose.yml logs --no-color --tail=120 source-ingest-scheduler || true
 }
 
+retire_legacy_static_paper_runtime() {
+  case ",${PANTHEON_DEV_COMPOSE_PROFILES:-}," in
+    *,static-paper-runtime,*)
+      info "static paper runtime profile explicitly enabled; leaving compatibility worker active"
+      return 0
+      ;;
+  esac
+
+  info "retiring legacy unbound static paper runtime; fleet reconciler is authoritative"
+  COMPOSE_PROFILES=static-paper-runtime \
+    docker compose -p pantheon -f docker-compose.yml rm -f -s pantheon-paper-runtime
+}
+
+verify_dev_paper_fleet() {
+  local attempt
+  local status=""
+
+  for attempt in $(seq 1 30); do
+    status="$(curl -fsS http://127.0.0.1:18011/readyz 2>/dev/null || true)"
+    if python3 -c '
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+workers = list(payload.get("workers") or [])
+assert payload.get("ready") is True
+assert payload.get("live") is True
+assert payload.get("last_error") in (None, "")
+assert payload.get("monitoring_last_error") in (None, "")
+assert int(payload.get("cycle_count") or 0) >= 1
+assert int(payload.get("worker_count") or 0) == int(payload.get("running_count") or 0)
+assert all(worker.get("status") == "running" for worker in workers)
+assert all(worker.get("heartbeat_status") == "active" for worker in workers)
+' "$status" 2>/dev/null; then
+      info "paper fleet reconciler is ready and all desired workers are active"
+      printf '%s\n' "$status"
+      return 0
+    fi
+    sleep 2
+  done
+
+  info "paper fleet reconciler did not converge"
+  docker compose -p pantheon -f docker-compose.yml ps -a paper-fleet-reconciler || true
+  docker compose -p pantheon -f docker-compose.yml logs --no-color --tail=240 paper-fleet-reconciler || true
+  printf '%s\n' "$status"
+  return 1
+}
+
 verify_dev_evolution_daily_sweep() {
   local compose=(docker compose -p pantheon -f docker-compose.yml)
   local attempt
@@ -1497,10 +1545,12 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
   root)
     snapshot_remote_state pantheon docker-compose.yml
     prepare_deploy_worktree
-    # Dev deploys activate every documented compose profile. Each profile is
-    # either a long-running daemon, an init container, or a one-shot smoke
-    # whose Dockerfile + smoke script have been verified to build and pass
+    # Dev deploys activate every default-safe compose profile. Each selected
+    # profile is either a long-running daemon, an init container, or a one-shot
+    # smoke whose Dockerfile + smoke script have been verified to build and pass
     # locally with stub backends (no real-money / no real-broker side effects).
+    # The legacy static-paper-runtime profile is intentionally excluded because
+    # paper-fleet-reconciler owns binding-scoped workers in the root stack.
     #
     # Profile inventory (alphabetical):
     #   activation-ready-smoke       oss-activation-ready-smoke-matrix
@@ -1588,6 +1638,10 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_STATUS_ROOT_HOST="${PANTHEON_STATUS_ROOT_HOST}" \
     PANTHEON_STATUS_ROOT_CONTAINER="${PANTHEON_STATUS_ROOT_CONTAINER}" \
       docker compose -p pantheon -f docker-compose.yml up -d --build \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
+    retire_legacy_static_paper_runtime \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
+    verify_dev_paper_fleet \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     curl_with_retry http://127.0.0.1:18001/health \
       || { dump_dev_root_failure_diagnostics; exit 1; }
