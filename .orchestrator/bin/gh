@@ -1,9 +1,30 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-gh_bin="$(ls -d "$HOME"/.local/share/pantheon-orchestrator-tools/gh-*/bin/gh 2>/dev/null | sort -V | tail -n1)"
+# `ls` exits non-zero when the vendored tools directory is absent. Without the
+# `|| true` the `set -euo pipefail` above aborts the script right here, so the
+# wrapper exits 2 with EMPTY stdout/stderr and the not-found message below is
+# dead code. github_bus.run_gh then reports GitHubBusError("") on every call,
+# which is how a missing tools directory turned into thousands of blank
+# `github_coordination_issue_failed` activity entries.
+gh_bin="$(ls -d "$HOME"/.local/share/pantheon-orchestrator-tools/gh-*/bin/gh 2>/dev/null | sort -V | tail -n1 || true)"
+
 if [[ -z "${gh_bin}" ]]; then
-  echo "GitHub CLI binary not found under ~/.local/share/pantheon-orchestrator-tools." >&2
+  # Fall back to a gh on PATH, skipping this wrapper so we never re-exec
+  # ourselves when .orchestrator/bin is on PATH.
+  self="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+  while IFS= read -r candidate; do
+    [[ -n "${candidate}" ]] || continue
+    resolved="$(readlink -f "${candidate}" 2>/dev/null || echo "${candidate}")"
+    [[ "${resolved}" == "${self}" ]] && continue
+    [[ -x "${resolved}" ]] || continue
+    gh_bin="${resolved}"
+    break
+  done < <(type -aP gh 2>/dev/null || true)
+fi
+
+if [[ -z "${gh_bin}" ]]; then
+  echo "GitHub CLI binary not found under ~/.local/share/pantheon-orchestrator-tools or on PATH." >&2
   exit 1
 fi
 

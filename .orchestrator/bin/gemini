@@ -2,8 +2,10 @@
 set -euo pipefail
 
 host_home="${PANTHEON_HOST_HOME:-/home/lupin}"
-node_bin="$(ls -d "$host_home"/.vscode-server/cli/servers/Stable-*/server/node 2>/dev/null | sort -V | tail -n1)"
-gemini_js="$(ls -d "$host_home"/.local/share/pantheon-orchestrator-tools/gemini-cli-*/package/bundle/gemini.js 2>/dev/null | sort -V | tail -n1)"
+# `|| true` keeps `set -euo pipefail` from aborting on an `ls` failure, which
+# would exit 2 with no output and make the not-found messages below dead code.
+node_bin="$(ls -d "$host_home"/.vscode-server/cli/servers/Stable-*/server/node 2>/dev/null | sort -V | tail -n1 || true)"
+gemini_js="$(ls -d "$host_home"/.local/share/pantheon-orchestrator-tools/gemini-cli-*/package/bundle/gemini.js 2>/dev/null | sort -V | tail -n1 || true)"
 
 if [[ -z "${node_bin}" ]]; then
   echo "VS Code server node binary not found." >&2
