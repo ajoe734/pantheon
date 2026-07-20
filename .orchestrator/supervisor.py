@@ -7753,6 +7753,183 @@ def poll_worker_stall_stage(
     return {"changed": changed, "stop": True}
 
 
+def poll_worker_failure_stage(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: dict[str, Any],
+    *,
+    provider_report: dict[str, Any],
+) -> dict[str, bool]:
+    """Classify and apply one exited worker's provider failure response."""
+    failure_reason = None if worker_runner_succeeded(worker) else detect_worker_failure(worker)
+    if not failure_reason or worker.get("status") == "failed":
+        return {"changed": False, "stop": False}
+
+    failure = classify_worker_failure(config, worker, failure_reason)
+    failure_summary = summarize_failure_reason(
+        failure_reason,
+        str(worker.get("provider") or worker.get("agent_id") or ""),
+    )
+    summarized_reason = failure_summary.get("summary") or failure_reason
+    failure_kind = str(failure.get("kind") or "")
+    raw_ref = write_failure_evidence(
+        config,
+        worker=worker,
+        reason=failure_reason,
+        failure_kind=failure_kind,
+    )
+    failure_count = record_task_failure_streak(
+        state,
+        worker,
+        failure_reason,
+        failure_kind=failure_kind,
+    )
+    console_log(
+        f"worker failure: provider={worker.get('provider')} task={worker.get('task_id')} kind={failure.get('label')} transient={'yes' if failure.get('transient') else 'no'} reason={failure_reason}",
+        quiet=SUPERVISOR_LOG_QUIET,
+    )
+    rotation_provider = str(worker.get("provider") or worker.get("agent_id") or "")
+    rotation_retry = worker_retry_settings(config, rotation_provider)
+    rotation_budget_left = int(worker.get("retry_count", 0)) < int(rotation_retry.get("max_attempts", 5))
+    rotation_outcome = (
+        maybe_rotate_provider_model(config, state, rotation_provider, failure_kind, failure_reason)
+        if rotation_budget_left
+        else "exhausted"
+    )
+    failure_response = decide_provider_failure_response(
+        failure_kind,
+        rotation_outcome=rotation_outcome,
+    )
+    if failure_response is rewrite_provider_health.FailureResponse.ROTATE:
+        clear_task_failure_streaks_for_task(state, str(worker.get("task_id") or ""))
+        schedule_worker_retry(config, worker, summarized_reason)
+        write_activity_log(
+            config,
+            {
+                "type": "worker_retry_scheduled",
+                "provider": worker.get("provider"),
+                "task_id": worker.get("task_id"),
+                "message": (
+                    f"Model rotation triggered for {rotation_provider} "
+                    f"({failure.get('label')}); re-dispatching on the alternate model "
+                    f"at {worker.get('next_retry_at')}: {summarized_reason}"
+                ),
+                "worker_run_id": worker["run_id"],
+                "next_retry_at": worker.get("next_retry_at"),
+                "raw_ref": raw_ref,
+            },
+        )
+        return {"changed": True, "stop": True}
+
+    if failure_response is rewrite_provider_health.FailureResponse.PAUSE:
+        mark_provider_dispatch_paused(
+            config,
+            state,
+            str(worker.get("provider") or worker.get("agent_id") or ""),
+            failure_reason,
+            task_id=str(worker.get("task_id") or ""),
+            worker_run_id=str(worker.get("run_id") or ""),
+            failure_kind=failure_kind,
+            pause_kind=failure_kind,
+            raw_ref=raw_ref,
+        )
+    if (
+        failure_response is rewrite_provider_health.FailureResponse.PAUSE
+        and is_terminal_quota_failure_kind(failure_kind)
+    ):
+        reassigned_to = maybe_reassign_task_after_worker_failure(
+            config,
+            state,
+            worker,
+            summarized_reason,
+            terminal=True,
+            force=True,
+            failure_count=failure_count,
+        )
+        if reassigned_to:
+            worker["status"] = "reassigned"
+            worker["reassigned_to"] = reassigned_to
+            worker["last_error"] = summarized_reason
+            worker["last_error_raw_ref"] = raw_ref
+            worker["last_event_at"] = utc_now()
+            finalize_queue_event_record(config, state, worker, "completed")
+            return {"changed": True, "stop": True}
+        worker["status"] = "failed"
+        worker["last_error"] = summarized_reason
+        worker["last_error_raw_ref"] = raw_ref
+        worker["last_event_at"] = utc_now()
+        write_activity_log(
+            config,
+            {
+                "type": "worker_failed",
+                "provider": worker.get("provider"),
+                "task_id": worker.get("task_id"),
+                "message": summarized_reason,
+                "worker_run_id": worker["run_id"],
+                "pr_url": worker.get("pr_url"),
+                "session_url": worker.get("session_url"),
+                "raw_ref": raw_ref,
+            },
+        )
+        # Preserve the incumbent raw failure reason on this terminal quota path.
+        finalize_queue_event_record(config, state, worker, "failed", failure_reason)
+        return {"changed": True, "stop": True}
+
+    if (
+        failure_response is rewrite_provider_health.FailureResponse.RETRY
+        or (
+            failure_response is rewrite_provider_health.FailureResponse.PAUSE
+            and is_retryable_capacity_failure_kind(failure_kind)
+        )
+    ):
+        handled, retry_changed = maybe_trigger_retry_or_fallback(
+            config,
+            state,
+            provider_report,
+            worker,
+            failure_reason,
+        )
+        if handled:
+            return {"changed": bool(retry_changed), "stop": True}
+
+    reassigned_to = maybe_reassign_task_after_worker_failure(
+        config,
+        state,
+        worker,
+        summarized_reason,
+        terminal=True,
+        failure_count=failure_count,
+    )
+    if reassigned_to:
+        worker["status"] = "reassigned"
+        worker["reassigned_to"] = reassigned_to
+        worker["last_error"] = summarized_reason
+        worker["last_error_raw_ref"] = raw_ref
+        worker["last_event_at"] = utc_now()
+        finalize_queue_event_record(config, state, worker, "completed")
+        return {"changed": True, "stop": True}
+
+    worker["status"] = "failed"
+    worker["last_error"] = summarized_reason
+    worker["last_error_raw_ref"] = raw_ref
+    worker["last_event_at"] = utc_now()
+    write_activity_log(
+        config,
+        {
+            "type": "worker_failed",
+            "provider": worker.get("provider"),
+            "task_id": worker.get("task_id"),
+            "message": summarized_reason,
+            "worker_run_id": worker["run_id"],
+            "pr_url": worker.get("pr_url"),
+            "session_url": worker.get("session_url"),
+            "raw_ref": raw_ref,
+        },
+    )
+    finalize_queue_event_record(config, state, worker, "failed", summarized_reason)
+    return {"changed": True, "stop": True}
+
+
 def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report: dict[str, Any] | None = None) -> bool:
     changed = False
     approval_state = load_approval_state(config)
@@ -7982,161 +8159,14 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
         if stall["stop"]:
             continue
 
-        failure_reason = None if worker_runner_succeeded(worker) else detect_worker_failure(worker)
-        if failure_reason and worker.get("status") != "failed":
-            failure = classify_worker_failure(config, worker, failure_reason)
-            failure_summary = summarize_failure_reason(failure_reason, str(worker.get("provider") or worker.get("agent_id") or ""))
-            raw_ref = write_failure_evidence(
-                config,
-                worker=worker,
-                reason=failure_reason,
-                failure_kind=str(failure.get("kind") or ""),
-            )
-            failure_count = record_task_failure_streak(
-                state,
-                worker,
-                failure_reason,
-                failure_kind=str(failure.get("kind") or ""),
-            )
-            console_log(
-                f"worker failure: provider={worker.get('provider')} task={worker.get('task_id')} kind={failure.get('label')} transient={'yes' if failure.get('transient') else 'no'} reason={failure_reason}",
-                quiet=SUPERVISOR_LOG_QUIET,
-            )
-            failure_kind = str(failure.get("kind") or "")
-            rotation_provider = str(worker.get("provider") or worker.get("agent_id") or "")
-            rotation_retry = worker_retry_settings(config, rotation_provider)
-            rotation_budget_left = int(worker.get("retry_count", 0)) < int(rotation_retry.get("max_attempts", 5))
-            rotation_outcome = (
-                maybe_rotate_provider_model(config, state, rotation_provider, failure_kind, failure_reason)
-                if rotation_budget_left
-                else "exhausted"
-            )
-            failure_response = decide_provider_failure_response(
-                failure_kind,
-                rotation_outcome=rotation_outcome,
-            )
-            if failure_response is rewrite_provider_health.FailureResponse.ROTATE:
-                clear_task_failure_streaks_for_task(state, str(worker.get("task_id") or ""))
-                schedule_worker_retry(config, worker, failure_summary.get("summary") or failure_reason)
-                write_activity_log(
-                    config,
-                    {
-                        "type": "worker_retry_scheduled",
-                        "provider": worker.get("provider"),
-                        "task_id": worker.get("task_id"),
-                        "message": (
-                            f"Model rotation triggered for {rotation_provider} "
-                            f"({failure.get('label')}); re-dispatching on the alternate model "
-                            f"at {worker.get('next_retry_at')}: {failure_summary.get('summary') or failure_reason}"
-                        ),
-                        "worker_run_id": worker["run_id"],
-                        "next_retry_at": worker.get("next_retry_at"),
-                        "raw_ref": raw_ref,
-                    },
-                )
-                changed = True
-                continue
-            if failure_response is rewrite_provider_health.FailureResponse.PAUSE:
-                mark_provider_dispatch_paused(
-                    config,
-                    state,
-                    str(worker.get("provider") or worker.get("agent_id") or ""),
-                    failure_reason,
-                    task_id=str(worker.get("task_id") or ""),
-                    worker_run_id=str(worker.get("run_id") or ""),
-                    failure_kind=str(failure.get("kind") or ""),
-                    pause_kind=failure_kind,
-                    raw_ref=raw_ref,
-                )
-            if (
-                failure_response is rewrite_provider_health.FailureResponse.PAUSE
-                and is_terminal_quota_failure_kind(failure_kind)
-            ):
-                reassigned_to = maybe_reassign_task_after_worker_failure(
-                    config,
-                    state,
-                    worker,
-                    failure_summary.get("summary") or failure_reason,
-                    terminal=True,
-                    force=True,
-                    failure_count=failure_count,
-                )
-                if reassigned_to:
-                    worker["status"] = "reassigned"
-                    worker["reassigned_to"] = reassigned_to
-                    worker["last_error"] = failure_summary.get("summary") or failure_reason
-                    worker["last_error_raw_ref"] = raw_ref
-                    worker["last_event_at"] = utc_now()
-                    finalize_queue_event_record(config, state, worker, "completed")
-                    changed = True
-                    continue
-                worker["status"] = "failed"
-                worker["last_error"] = failure_summary.get("summary") or failure_reason
-                worker["last_error_raw_ref"] = raw_ref
-                worker["last_event_at"] = utc_now()
-                write_activity_log(
-                    config,
-                    {
-                        "type": "worker_failed",
-                        "provider": worker.get("provider"),
-                        "task_id": worker.get("task_id"),
-                        "message": failure_summary.get("summary") or failure_reason,
-                        "worker_run_id": worker["run_id"],
-                        "pr_url": worker.get("pr_url"),
-                        "session_url": worker.get("session_url"),
-                        "raw_ref": raw_ref,
-                    },
-                )
-                finalize_queue_event_record(config, state, worker, "failed", failure_reason)
-                changed = True
-                continue
-            if (
-                failure_response is rewrite_provider_health.FailureResponse.RETRY
-                or (
-                    failure_response is rewrite_provider_health.FailureResponse.PAUSE
-                    and is_retryable_capacity_failure_kind(failure_kind)
-                )
-            ):
-                handled, retry_changed = maybe_trigger_retry_or_fallback(config, state, provider_report, worker, failure_reason)
-                if handled:
-                    changed = changed or retry_changed
-                    continue
-            reassigned_to = maybe_reassign_task_after_worker_failure(
-                config,
-                state,
-                worker,
-                failure_summary.get("summary") or failure_reason,
-                terminal=True,
-                failure_count=failure_count,
-            )
-            if reassigned_to:
-                worker["status"] = "reassigned"
-                worker["reassigned_to"] = reassigned_to
-                worker["last_error"] = failure_summary.get("summary") or failure_reason
-                worker["last_error_raw_ref"] = raw_ref
-                worker["last_event_at"] = utc_now()
-                finalize_queue_event_record(config, state, worker, "completed")
-                changed = True
-                continue
-            worker["status"] = "failed"
-            worker["last_error"] = failure_summary.get("summary") or failure_reason
-            worker["last_error_raw_ref"] = raw_ref
-            worker["last_event_at"] = utc_now()
-            write_activity_log(
-                config,
-                {
-                    "type": "worker_failed",
-                    "provider": worker.get("provider"),
-                    "task_id": worker.get("task_id"),
-                    "message": failure_summary.get("summary") or failure_reason,
-                    "worker_run_id": worker["run_id"],
-                    "pr_url": worker.get("pr_url"),
-                    "session_url": worker.get("session_url"),
-                    "raw_ref": raw_ref,
-                },
-            )
-            finalize_queue_event_record(config, state, worker, "failed", failure_summary.get("summary") or failure_reason)
-            changed = True
+        failure = poll_worker_failure_stage(
+            config,
+            state,
+            worker,
+            provider_report=provider_report,
+        )
+        changed = bool(failure["changed"]) or changed
+        if failure["stop"]:
             continue
 
         if worker.get("status") not in {"completed", "failed", "manual_pending"}:
