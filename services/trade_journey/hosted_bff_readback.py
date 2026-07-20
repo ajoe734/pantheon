@@ -116,11 +116,30 @@ def _canonical_controller(
     controller: Mapping[str, Any],
     *,
     expected_sha: str,
-    generation: Any,
+    surface_generation: Any,
+    minimum_generation: Any,
     checkpoint: int,
 ) -> dict[str, Any]:
     _require(controller.get("deployment_sha") == expected_sha, "bff_sha_mismatch", "BFF controller deployment SHA mismatched")
-    _require(controller.get("generation") == generation, "bff_generation_mismatch", "BFF controller generation mismatched")
+    try:
+        observed_generation = int(surface_generation)
+        admitted_generation = int(minimum_generation)
+        controller_generation = int(controller.get("generation"))
+    except (TypeError, ValueError) as exc:
+        raise ReadbackError(
+            "bff_generation_mismatch",
+            "BFF controller generation was invalid",
+        ) from exc
+    _require(
+        observed_generation >= admitted_generation,
+        "bff_generation_mismatch",
+        "BFF surface generation lagged hosted proof",
+    )
+    _require(
+        controller_generation == observed_generation,
+        "bff_generation_mismatch",
+        "BFF controller generation mismatched its surface",
+    )
     _require(int(controller.get("checkpoint") or 0) >= checkpoint, "bff_checkpoint_mismatch", "BFF controller checkpoint lagged hosted proof")
     _require(controller.get("backlog") == 0, "bff_controller_not_live", "BFF controller backlog was nonzero")
     expected = {
@@ -225,9 +244,21 @@ def verify_readback(
     _require(loop.get("source") == "canonical_telemetry_lifecycle_projector" and loop.get("accepted_live") is True and loop.get("projection_mode") == "live", "bff_loop_truth_invalid", "loop-run record was not canonical live truth")
     _require(loop.get("status") == projection.get("loop_status") and loop.get("deployment_sha") == expected_sha, "bff_loop_truth_invalid", "loop-run terminal truth mismatched hosted proof")
     _require(loop_surface.get("status") == "ok" and loop_surface.get("source") == "service_store" and loop_surface.get("truth_status") == "formal", "bff_loop_surface_invalid", "loop-run BFF surface was not formal service-store truth")
-    _require(loop_surface.get("projection_schema_version") == "pantheon.loop-run-projection.v1" and loop_surface.get("projection_generation") == generation, "bff_loop_surface_invalid", "loop-run projection metadata mismatched")
+    loop_generation = loop_surface.get("projection_generation")
+    _require(
+        loop_surface.get("projection_schema_version")
+        == "pantheon.loop-run-projection.v1",
+        "bff_loop_surface_invalid",
+        "loop-run projection metadata mismatched",
+    )
     loop_controller = _object(loop_surface.get("controller"), "bff_loop_surface_invalid", "loop-run controller was missing")
-    loop_controller_summary = _canonical_controller(loop_controller, expected_sha=expected_sha, generation=generation, checkpoint=checkpoint)
+    loop_controller_summary = _canonical_controller(
+        loop_controller,
+        expected_sha=expected_sha,
+        surface_generation=loop_generation,
+        minimum_generation=generation,
+        checkpoint=checkpoint,
+    )
 
     journey_result = client.request("GET", journey_url, headers=auth)
     journey_payload = _object(journey_result.payload, "bff_journey_read_invalid", "Trade Journey response was invalid")
@@ -237,10 +268,17 @@ def verify_readback(
     _require(journey_result.status == 200 and journey.get("journey_id") == journey_id, "bff_journey_read_invalid", "Trade Journey detail request failed")
     _require(journey.get("tenant_id") == tenant_id and journey.get("environment") == "paper" and journey.get("status") == projection.get("loop_status"), "bff_journey_identity_mismatch", "Trade Journey identity or status mismatched")
     _require(journey.get("read_state") == "formal" and journey_meta.get("read_state") == "formal" and int(journey.get("event_count") or 0) >= len(proof.get("events") or []), "bff_journey_truth_invalid", "Trade Journey was not formal complete truth")
-    _require(freshness.get("projector_owned") is True and freshness.get("projection_schema_version") == "pantheon.trade-journey-projection.v1" and freshness.get("generation") == generation, "bff_journey_surface_invalid", "Trade Journey projection metadata mismatched")
+    journey_generation = freshness.get("generation")
+    _require(freshness.get("projector_owned") is True and freshness.get("projection_schema_version") == "pantheon.trade-journey-projection.v1", "bff_journey_surface_invalid", "Trade Journey projection metadata mismatched")
     _require(freshness.get("rebuild_status") == "complete" and freshness.get("accepted_live") is True and freshness.get("projection_mode") == "live" and freshness.get("truth_level") == "canonical_live", "bff_journey_surface_invalid", "Trade Journey surface was not canonical live truth")
     journey_controller = _object(freshness.get("controller"), "bff_journey_surface_invalid", "Trade Journey controller was missing")
-    journey_controller_summary = _canonical_controller(journey_controller, expected_sha=expected_sha, generation=generation, checkpoint=checkpoint)
+    journey_controller_summary = _canonical_controller(
+        journey_controller,
+        expected_sha=expected_sha,
+        surface_generation=journey_generation,
+        minimum_generation=generation,
+        checkpoint=checkpoint,
+    )
     _require(loop_controller_summary == journey_controller_summary, "bff_cross_surface_mismatch", "BFF surfaces did not serve one atomic controller generation")
 
     evidence_result = client.request("GET", evidence_url, headers=auth)
@@ -288,7 +326,8 @@ def verify_readback(
                 "journey_id": journey_id,
                 "status": loop.get("status"),
                 "source": loop.get("source"),
-                "projection_generation": generation,
+                "source_projection_generation": generation,
+                "projection_generation": loop_generation,
                 "controller": loop_controller_summary,
             },
             "trade_journey": {
@@ -301,13 +340,17 @@ def verify_readback(
                 "read_state": journey.get("read_state"),
                 "event_count": journey.get("event_count"),
                 "correlated_event_count": correlated,
-                "projection_generation": generation,
+                "source_projection_generation": generation,
+                "projection_generation": journey_generation,
                 "controller": journey_controller_summary,
             },
             "cross_surface": {
                 "same_generation": True,
                 "same_controller": True,
                 "exact_event_ids": True,
+                "generation_advanced_since_source_proof": (
+                    int(loop_generation) > int(generation)
+                ),
             },
         },
         "redaction": {

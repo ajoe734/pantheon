@@ -1,0 +1,85 @@
+{
+  "expected_deployment_sha": "93c50da6d67560f7035025879af08dfc3197fb76",
+  "observed_at": "2026-07-20T02:37:31Z",
+  "outcome": "passed",
+  "public_bff": {
+    "auth": {
+      "expires_in": 900,
+      "identity": "operator",
+      "negative_statuses": {
+        "journey_arbitrary_bearer": 401,
+        "journey_unauthorized": 401,
+        "loop_arbitrary_bearer": 401,
+        "loop_unauthorized": 401
+      },
+      "token_type": "bearer"
+    },
+    "base_url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
+    "cross_surface": {
+      "exact_event_ids": true,
+      "generation_advanced_since_source_proof": true,
+      "same_controller": true,
+      "same_generation": true
+    },
+    "loop_run": {
+      "controller": {
+        "accepted_live": true,
+        "backlog": 0,
+        "checkpoint": 40655,
+        "deployment_sha": "93c50da6d67560f7035025879af08dfc3197fb76",
+        "generation": 1498,
+        "mode": "live",
+        "status": "ready",
+        "truth_level": "canonical_live"
+      },
+      "http_status": 200,
+      "journey_id": "tj_87e1e3ea-e8d3-42e8-a5b2-26f8b021a651",
+      "loop_run_id": "lr-run-rb-d4a79ff7e2e94f188f63e87a38b347a5-2026-07-20T02:24:39Z-1",
+      "projection_generation": 1498,
+      "source": "canonical_telemetry_lifecycle_projector",
+      "source_projection_generation": 1470,
+      "status": "completed_with_variance"
+    },
+    "trade_journey": {
+      "controller": {
+        "accepted_live": true,
+        "backlog": 0,
+        "checkpoint": 40655,
+        "deployment_sha": "93c50da6d67560f7035025879af08dfc3197fb76",
+        "generation": 1498,
+        "mode": "live",
+        "status": "ready",
+        "truth_level": "canonical_live"
+      },
+      "correlated_event_count": 8,
+      "environment": "paper",
+      "event_count": 8,
+      "evidence_http_status": 200,
+      "http_status": 200,
+      "journey_id": "tj_87e1e3ea-e8d3-42e8-a5b2-26f8b021a651",
+      "projection_generation": 1498,
+      "read_state": "formal",
+      "source_projection_generation": 1470,
+      "status": "completed_with_variance",
+      "tenant_id": "tenant-dev"
+    },
+    "version": {
+      "config_posture": {
+        "auth_mode": "strict",
+        "auth_stub": false,
+        "dev_login_enabled": true
+      },
+      "environment": "dev",
+      "http_status": 200,
+      "source_commit_sha": "93c50da6d67560f7035025879af08dfc3197fb76"
+    }
+  },
+  "redaction": {
+    "access_token_included": false,
+    "credentials_included": false,
+    "response_payloads_included": false
+  },
+  "schema_version": "pantheon.loop-prod-tel-002-bff-readback.v1",
+  "source_artifact_sha256": "23fd1928b4cc0b52ccd66947d6556e1d49f993cb6c552b2474c0e19d0007cb02",
+  "task_id": "LOOP-PROD-TEL-002"
+}

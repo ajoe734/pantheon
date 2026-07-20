@@ -178,6 +178,19 @@ class FakeClient:
         )
 
 
+class MismatchedControllerClient(FakeClient):
+    def request(self, method, url, *, headers=None, payload=None):
+        result = super().request(method, url, headers=headers, payload=payload)
+        if (
+            "/bff/v5/loop-runs/" in url
+            and (headers or {}).get("Authorization") == "Bearer token-value"
+        ):
+            result.payload["meta"]["surfaces"]["loop_run_detail"]["controller"][
+                "generation"
+            ] = self.generation + 1
+        return result
+
+
 def test_authenticated_public_bff_readback_correlates_both_surfaces(tmp_path):
     source = tmp_path / "source.json"
     output = tmp_path / "readback.json"
@@ -201,6 +214,7 @@ def test_authenticated_public_bff_readback_correlates_both_surfaces(tmp_path):
         "same_generation": True,
         "same_controller": True,
         "exact_event_ids": True,
+        "generation_advanced_since_source_proof": False,
     }
     raw = output.read_text(encoding="utf-8")
     assert "token-value" not in raw
@@ -223,6 +237,54 @@ def test_readback_generation_mismatch_fails_with_redacted_artifact(tmp_path):
     )
 
     assert code == 1
-    assert artifact["failure"]["code"] == "bff_loop_surface_invalid"
+    assert artifact["failure"]["code"] == "bff_generation_mismatch"
     assert "token-value" not in output.read_text(encoding="utf-8")
     assert all(field in IDENTITY for field in STABLE_IDENTITY_FIELDS)
+
+
+def test_readback_accepts_monotonic_generation_advance_with_exact_events(tmp_path):
+    source = tmp_path / "source.json"
+    output = tmp_path / "readback.json"
+    source.write_text(json.dumps(_source_artifact()), encoding="utf-8")
+
+    code, artifact = readback.execute_readback(
+        source_path=source,
+        output=output,
+        expected_sha=SHA,
+        base_url=BASE_URL,
+        client_id="client-id",
+        client_secret="client-secret",
+        client=FakeClient(generation=13),
+    )
+
+    assert code == 0
+    assert artifact["outcome"] == "passed"
+    assert artifact["public_bff"]["loop_run"]["source_projection_generation"] == 12
+    assert artifact["public_bff"]["loop_run"]["projection_generation"] == 13
+    assert artifact["public_bff"]["trade_journey"]["projection_generation"] == 13
+    assert artifact["public_bff"]["cross_surface"] == {
+        "same_generation": True,
+        "same_controller": True,
+        "exact_event_ids": True,
+        "generation_advanced_since_source_proof": True,
+    }
+
+
+def test_readback_rejects_surface_controller_generation_mismatch(tmp_path):
+    source = tmp_path / "source.json"
+    output = tmp_path / "readback.json"
+    source.write_text(json.dumps(_source_artifact()), encoding="utf-8")
+
+    code, artifact = readback.execute_readback(
+        source_path=source,
+        output=output,
+        expected_sha=SHA,
+        base_url=BASE_URL,
+        client_id="client-id",
+        client_secret="client-secret",
+        client=MismatchedControllerClient(generation=13),
+    )
+
+    assert code == 1
+    assert artifact["failure"]["code"] == "bff_generation_mismatch"
+    assert "token-value" not in output.read_text(encoding="utf-8")
