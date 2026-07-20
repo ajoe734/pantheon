@@ -802,11 +802,39 @@ def test_tj_e2e_005_tenant_allowed_helper_scopes_by_claim() -> None:
     assert tj._tenant_allowed(unscoped_viewer, "tenant-anything") is True
 
 
-def test_tj_e2e_005_live_capital_is_masked_for_non_operator_roles() -> None:
+def test_tj_e2e_005_live_sensitive_values_and_identifier_probes_are_masked_for_viewers() -> None:
     def scenario():
-        events = [_event("e1", "tj_1", "signal_generation", "succeeded", 1, price=101.5, environment="live", tenant="tenant-a")]
+        events = [
+            _event(
+                "e1",
+                "tj_1",
+                "signal_generation",
+                "succeeded",
+                1,
+                price=101.5,
+                account_id="acct-secret",
+                capital_account_id="capital-secret",
+                order_id="ord-secret",
+                client_order_id="client-secret",
+                broker_order_id="broker-secret",
+                graph_edges=[{"from": "tj_1", "to": "ord-secret", "type": "submitted"}],
+                environment="live",
+                tenant="tenant-a",
+            )
+        ]
         client, _ = _client_with(events)
         viewer_headers = {"Authorization": "Bearer op-tj-005-live-viewer:viewer"}
+
+        list_resp = client.get(
+            "/bff/management/trade-journeys?tenant_id=tenant-a&environment=live",
+            headers=viewer_headers,
+        )
+        assert list_resp.status_code == 200, list_resp.text
+        list_row = list_resp.json()["data"]["items"][0]
+        for field in ("order_id", "client_order_id", "broker_order_id", "quantity", "price"):
+            assert list_row[field] == "***"
+        assert list_row["live_capital_masked"] is True
+
         resp = client.get(
             "/bff/management/trade-journeys/tj_1?tenant_id=tenant-a&environment=live",
             headers=viewer_headers,
@@ -815,7 +843,42 @@ def test_tj_e2e_005_live_capital_is_masked_for_non_operator_roles() -> None:
         data = resp.json()["data"]
         assert data["quantity"] == "***"
         assert data["price"] == "***"
+        assert data["order_id"] == "***"
+        assert data["client_order_id"] == "***"
+        assert data["broker_order_id"] == "***"
+        assert data["identifiers"]["order_id"] == ["***"]
+        stage_event = data["stage_events"]["signal_generation"]
+        assert stage_event["account_id"] == "***"
+        assert stage_event["capital_account_id"] == "***"
         assert data["live_capital_masked"] is True
+
+        for query in (
+            "q=ord-secret",
+            "order_id=ord-secret",
+            "broker_order_id=broker-secret",
+        ):
+            search_resp = client.get(
+                f"/bff/management/trade-journeys?tenant_id=tenant-a&environment=live&{query}",
+                headers=viewer_headers,
+            )
+            assert search_resp.status_code == 200, search_resp.text
+            assert search_resp.json()["data"]["items"] == []
+
+        viewer_resolve = client.get(
+            "/bff/management/trade-journeys/resolve"
+            "?q=ord-secret&identifier_type=order_id&tenant_id=tenant-a&environment=live",
+            headers=viewer_headers,
+        )
+        assert viewer_resolve.status_code == 200, viewer_resolve.text
+        assert viewer_resolve.json()["data"]["candidates"] == []
+        assert viewer_resolve.json()["data"]["journey_ids"] == []
+
+        graph_resp = client.get(
+            "/bff/management/trade-journeys/tj_1/graph?tenant_id=tenant-a&environment=live",
+            headers=viewer_headers,
+        )
+        assert graph_resp.status_code == 200, graph_resp.text
+        assert "ord-secret" not in json.dumps(graph_resp.json()["data"])
 
         operator_resp = client.get(
             "/bff/management/trade-journeys/tj_1?tenant_id=tenant-a&environment=live",
@@ -824,6 +887,16 @@ def test_tj_e2e_005_live_capital_is_masked_for_non_operator_roles() -> None:
         operator_data = operator_resp.json()["data"]
         assert operator_data["quantity"] == 10
         assert operator_data["price"] == 101.5
+        assert operator_data["order_id"] == "ord-secret"
+        assert operator_data["stage_events"]["signal_generation"]["account_id"] == "acct-secret"
+
+        operator_resolve = client.get(
+            "/bff/management/trade-journeys/resolve"
+            "?q=ord-secret&identifier_type=order_id&tenant_id=tenant-a&environment=live",
+            headers=OPERATOR_HEADERS,
+        )
+        assert operator_resolve.status_code == 200, operator_resolve.text
+        assert operator_resolve.json()["data"]["journey_ids"] == ["tj_1"]
 
     _run(scenario)
 
