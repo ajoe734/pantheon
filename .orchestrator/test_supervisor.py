@@ -9579,6 +9579,97 @@ class WorkerOsDuplicateGuardTests(unittest.TestCase):
         self.assertEqual(reason, "codex2 authentication is not ready")
         scan.assert_not_called()
 
+    def test_pre_dispatch_probe_revokes_selected_owner_before_launch(self) -> None:
+        config = {
+            "agents": {"codex2": {"provider": "codex2"}},
+            "providers": {"codex2": {"delivery_mode": "codex"}},
+            "ready_dispatcher": {"worker_os_duplicate_guard": False},
+        }
+        provider_report = {
+            "providers": {
+                "codex2": {
+                    "auth_ready": True,
+                    "local_cli_worker_supported": True,
+                    "supports_auto_approve": True,
+                }
+            }
+        }
+        probe = {
+            "provider": "codex2",
+            "ready": False,
+            "status": "refresh_token_revoked",
+            "method": "codex_exec_oauth",
+            "error": "refresh token revoked",
+            "checked_at": "2026-07-20T00:00:00Z",
+        }
+        with mock.patch.object(supervisor, "probe_provider_auth", return_value=probe) as auth_probe:
+            health = supervisor.refresh_provider_auth_before_dispatch(
+                config,
+                provider_report,
+                "codex2",
+            )
+
+        self.assertEqual(health, supervisor.rewrite_provider_health.AccountHealth.REVOKED)
+        capability = provider_report["providers"]["codex2"]
+        self.assertFalse(capability["auth_ready"])
+        self.assertFalse(capability["local_cli_worker_supported"])
+        self.assertEqual(capability["account_health"], "revoked")
+        auth_probe.assert_called_once_with(config, "codex2", force=True)
+
+        recovered_probe = {
+            **probe,
+            "ready": True,
+            "status": "ready",
+            "error": None,
+        }
+        with mock.patch.object(supervisor, "probe_provider_auth", return_value=recovered_probe):
+            recovered = supervisor.refresh_provider_auth_before_dispatch(
+                config,
+                provider_report,
+                "codex2",
+            )
+        self.assertEqual(recovered, supervisor.rewrite_provider_health.AccountHealth.HEALTHY)
+        self.assertTrue(capability["auth_ready"])
+        self.assertTrue(capability["local_cli_worker_supported"])
+        self.assertEqual(capability["account_health"], "healthy")
+
+    def test_pre_dispatch_probe_preserves_hyphenated_provider_profile_key(self) -> None:
+        config = {
+            "agents": {"codex1_1": {"provider": "codex1-1"}},
+            "providers": {"codex1-1": {"delivery_mode": "codex"}},
+        }
+        provider_report = {"providers": {"codex1-1": {"auth_ready": True}}}
+        probe = {
+            "provider": "codex1-1",
+            "ready": True,
+            "status": "ready",
+            "method": "codex_exec_oauth",
+        }
+        with mock.patch.object(supervisor, "probe_provider_auth", return_value=probe) as auth_probe:
+            health = supervisor.refresh_provider_auth_before_dispatch(
+                config,
+                provider_report,
+                "codex1_1",
+            )
+
+        self.assertEqual(health, supervisor.rewrite_provider_health.AccountHealth.HEALTHY)
+        auth_probe.assert_called_once_with(config, "codex1-1", force=True)
+
+        provider_report["providers"]["codex1-1"].update(
+            {
+                "auth_ready": False,
+                "local_cli_worker_supported": False,
+            }
+        )
+        with mock.patch.object(supervisor, "agent_dispatch_paused", return_value=False):
+            reason = supervisor.agent_auto_dispatch_block_reason(
+                config,
+                {},
+                "codex1_1",
+                provider_report,
+            )
+        self.assertEqual(reason, "codex1_1 local CLI worker is not ready")
+
     def test_block_reason_allows_slotted_logical_agent_with_free_slot(self) -> None:
         config = {
             "agents": {

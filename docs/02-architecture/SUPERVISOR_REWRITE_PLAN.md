@@ -342,17 +342,24 @@ touches the hot path.
   `test_common.py` audit suite still green.
   Follow-up (optional hardening, not blocking): fully size-based atomic-rename
   rotation to retire the lineage-build cost on healthy writes too.
-- **Phase 5 — done (decision cut over; probed-health model landed).**
+- **Phase 5 — done (single decision authority + proactive auth gate).**
   `rewrite/provider_health.py` owns the account failure-response decision:
   `decide_failure_response(kind, rotation_outcome) -> Rotate|Pause|Retry|Reassign`
   and `classify_health(kind) -> healthy|degraded|revoked` (auth ⇒ revoked, a
-  first-class state, not a timed-out guess). `should_pause_dispatch_for_failure_kind`
-  now routes through `provider_health.should_pause`, shadow-proven equal across
-  the entire failure-kind vocabulary (11 kinds, 0 mismatch). Legacy ladder one
-  flag away via `PANTHEON_LEGACY_FAILURE_RESPONSE=1`. Follow-up: route the two
-  remaining copies of the pause/rotate/reassign branch (in poll_workers) through
-  the same decision, and add the owner-side pre-dispatch auth probe that promotes
-  `classify_health` from reactive to proactive.
+  first-class state, not a timed-out guess). All three live failure sites
+  (`process_queue`, `poll_workers`, and boot reconciliation) now route their
+  rotate/pause/retry/reassign action through that authority; retry budgets and
+  persistence remain caller-owned effects. Immediately before `process_queue`
+  launches a worker, `provider_permissions.probe_provider_auth` force-probes the
+  exact selected Codex/Claude/Antigravity account (or performs the adapter's
+  normalized auth-material check), writes `healthy|revoked` into the in-cycle
+  capability report, and lets the existing dispatch gate stop a revoked account
+  before it burns a task. Partial/failed capability scans do not invent support
+  and therefore do not create a fleet-wide false outage. Decision and proactive
+  probe cutovers are both one flag away via
+  `PANTHEON_LEGACY_FAILURE_RESPONSE=1`; parity and targeted-probe behavior are
+  pinned by `rewrite/test_provider_health.py`, `test_provider_permissions.py`,
+  and `test_supervisor.py`.
 - **Phase 4 — correctness fixes cut over; lease→progress binding shipped (flag);
   full decomposition pending.** `rewrite/worker_lifecycle.py`: (a) `confirm_kill`
   (SIGTERM → wait → SIGKILL → verify) now backs `terminate_worker_pid`, ending

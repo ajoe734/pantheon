@@ -730,6 +730,26 @@ EOF
         claude_auth_ready.assert_called_once()
         self.assertTrue(claude_auth_ready.call_args.kwargs["refresh_if_needed"])
 
+    def test_targeted_pre_dispatch_probe_forces_selected_provider(self) -> None:
+        config = {
+            "providers": {
+                "claude2": {
+                    "delivery_mode": "claude_cli",
+                    "runtime": {"cli": "claude"},
+                }
+            }
+        }
+        expected = {"provider": "claude2", "ready": False, "status": "auth_not_ready"}
+        with (
+            mock.patch.object(provider_permissions, "command_exists", return_value="/usr/bin/claude"),
+            mock.patch.object(provider_permissions, "_claude_auth_probe", return_value=expected) as probe,
+        ):
+            result = provider_permissions.probe_provider_auth(config, "claude2", force=True)
+
+        self.assertEqual(result, expected)
+        probe.assert_called_once()
+        self.assertTrue(probe.call_args.kwargs["force"])
+
     def test_codex_auth_probe_runs_exec_with_provider_home(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir) / "codex2"

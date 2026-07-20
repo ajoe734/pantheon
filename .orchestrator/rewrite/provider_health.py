@@ -90,3 +90,24 @@ def classify_health(kind: object) -> AccountHealth:
     if kind_n in {"quota_terminal", "capacity", "capacity_retryable"}:
         return AccountHealth.DEGRADED
     return AccountHealth.HEALTHY
+
+
+def classify_probe(ready: object, *, status: object = None) -> AccountHealth | None:
+    """Map an authoritative pre-dispatch auth probe to account health.
+
+    ``None`` means the adapter has no supported probe and must not be treated as
+    revoked.  A quota/capacity/timeout/tooling failure is degraded; an explicit
+    credential failure is revoked immediately, before a worker is launched and
+    forced to discover the dead credential from its log.
+    """
+    if ready is True:
+        return AccountHealth.HEALTHY
+    if ready is False:
+        status_n = _norm(status)
+        if any(
+            marker in status_n
+            for marker in ("quota", "capacity", "rate", "timeout", "probe_error", "cli_missing", "exit_")
+        ):
+            return AccountHealth.DEGRADED
+        return AccountHealth.REVOKED
+    return None

@@ -73,7 +73,11 @@ from dispatch_policy import (
     ready_dispatch_settings,
 )
 from github_bus import sync_github_bus
-from provider_permissions import provider_capabilities as build_provider_capabilities, write_provider_capabilities
+from provider_permissions import (
+    probe_provider_auth,
+    provider_capabilities as build_provider_capabilities,
+    write_provider_capabilities,
+)
 from rebase_helper import continue_or_skip_empty
 from runtime_state import load_approval_state, load_event_queue, load_runtime_state, prune_worker_records, queue_event_record, replace_event_queue, runtime_state_lock, save_runtime_state
 from runtime_state import enqueue_event
@@ -1075,6 +1079,29 @@ def agent_provider_id(config: dict[str, Any], agent_id: str | None) -> str:
         return ""
     agent = (config.get("agents", {}) or {}).get(normalized, {}) or {}
     return normalize_agent_id(str(agent.get("provider") or normalized))
+
+
+def agent_provider_key(config: dict[str, Any], agent_id: str | None) -> str:
+    """Return the exact configured provider key for an agent.
+
+    Account/concurrency identities intentionally normalize punctuation, while
+    provider configuration and capability reports retain keys such as
+    ``codex1-1``.  Auth probes must use the latter or slotted providers silently
+    miss their own runtime profile.
+    """
+    normalized_agent = normalize_agent_id(agent_id or "")
+    if not normalized_agent:
+        return ""
+    agent = (config.get("agents", {}) or {}).get(normalized_agent, {}) or {}
+    raw_provider = str(agent.get("provider") or normalized_agent).strip()
+    providers = config.get("providers", {}) or {}
+    if raw_provider in providers:
+        return raw_provider
+    normalized_provider = normalize_agent_id(raw_provider)
+    for configured_provider in providers:
+        if normalize_agent_id(str(configured_provider)) == normalized_provider:
+            return str(configured_provider)
+    return raw_provider
 
 
 def agent_quota_group_id(config: dict[str, Any], agent_id: str | None) -> str:
@@ -2560,6 +2587,7 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
             changed = True
             continue
         request_agent_id = str(getattr(request, "agent_id", event.get("target_agent")) or "")
+        refresh_provider_auth_before_dispatch(config, provider_report, request_agent_id)
         auto_block_reason = agent_auto_dispatch_block_reason(config, state, request_agent_id, provider_report)
         if auto_block_reason:
             if auto_dispatch_block_is_temporary_capacity(auto_block_reason):
@@ -2607,6 +2635,34 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
             record["last_wait_reason"] = f"All worker slots for {request_agent_id} are busy or dispatch-paused."
             changed = True
             continue
+        if dispatch_agent_id != request_agent_id:
+            refresh_provider_auth_before_dispatch(config, provider_report, dispatch_agent_id)
+            alternate_block_reason = agent_auto_dispatch_block_reason(
+                config,
+                state,
+                dispatch_agent_id,
+                provider_report,
+            )
+            if alternate_block_reason:
+                record["status"] = "failed"
+                record["processed_at"] = utc_now()
+                record["error"] = (
+                    f"Auto dispatch unavailable for selected slot {dispatch_agent_id}: "
+                    f"{alternate_block_reason}"
+                )
+                write_activity_log(
+                    config,
+                    {
+                        "type": "wake_skipped",
+                        "task_id": event.get("task_id"),
+                        "target_agent": event.get("target_display_name") or event.get("target_agent"),
+                        "provider": agent_provider_id(config, dispatch_agent_id),
+                        "message": record["error"],
+                        "queue_event_id": event_id,
+                    },
+                )
+                changed = True
+                continue
         if dispatch_agent_id != request_agent_id:
             request = build_request(config, event, agent_id_override=dispatch_agent_id)
         workspace_ok, workspace_message = prepare_worker_workspace(
@@ -2677,7 +2733,11 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
             rotation_outcome = maybe_rotate_provider_model(
                 config, state, request.provider, failure_kind, failure_reason
             )
-            if rotation_outcome == "rotated":
+            failure_response = decide_provider_failure_response(
+                failure_kind,
+                rotation_outcome=rotation_outcome,
+            )
+            if failure_response is rewrite_provider_health.FailureResponse.ROTATE:
                 clear_task_failure_streaks_for_task(state, str(request.task_id or ""))
                 schedule_queue_event_retry(
                     config,
@@ -2704,7 +2764,7 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
                 )
                 changed = True
                 continue
-            if should_pause_dispatch_for_failure_kind(failure_kind):
+            if failure_response is rewrite_provider_health.FailureResponse.PAUSE:
                 mark_provider_dispatch_paused(
                     config,
                     state,
@@ -2715,7 +2775,10 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
                     pause_kind=failure_kind,
                     raw_ref=raw_ref,
                 )
-            if is_retryable_capacity_failure_kind(failure_kind):
+            if (
+                failure_response is rewrite_provider_health.FailureResponse.RETRY
+                or is_retryable_capacity_failure_kind(failure_kind)
+            ):
                 retry = worker_retry_settings(config, request.provider)
                 retry_count = int(record.get("retry_count", 0))
                 max_attempts = int(retry.get("max_attempts", 5))
@@ -5259,20 +5322,43 @@ def _legacy_failure_response_enabled() -> bool:
     }
 
 
+def decide_provider_failure_response(
+    kind: str | None,
+    *,
+    rotation_outcome: str | None = None,
+) -> rewrite_provider_health.FailureResponse:
+    """Single Phase-5 authority for provider failure actions.
+
+    The legacy calculation remains one environment flag away for emergency
+    reversal, but callers no longer rebuild the rotate/pause/retry/reassign
+    ladder themselves.
+    """
+    if not _legacy_failure_response_enabled():
+        try:
+            return rewrite_provider_health.decide_failure_response(
+                kind,
+                rotation_outcome=rotation_outcome,
+            )
+        except Exception:  # never let the rewrite module break failure handling
+            pass
+    if str(rotation_outcome or "").strip().lower() == "rotated":
+        return rewrite_provider_health.FailureResponse.ROTATE
+    if (
+        is_terminal_quota_failure_kind(kind)
+        or is_retryable_capacity_failure_kind(kind)
+        or is_auth_failure_kind(kind)
+    ):
+        return rewrite_provider_health.FailureResponse.PAUSE
+    if str(kind or "").strip().lower() == "transient":
+        return rewrite_provider_health.FailureResponse.RETRY
+    return rewrite_provider_health.FailureResponse.REASSIGN
+
+
 def should_pause_dispatch_for_failure_kind(kind: str | None) -> bool:
     # SUPERVISOR-REWRITE Phase 5: the account failure-response decision is owned by
     # rewrite.provider_health.decide_failure_response; this pause predicate routes
     # through it (shadow-proven equal across the whole failure-kind vocabulary).
-    if not _legacy_failure_response_enabled():
-        try:
-            return rewrite_provider_health.should_pause(kind)
-        except Exception:  # never let it break failure handling
-            pass
-    return (
-        is_terminal_quota_failure_kind(kind)
-        or is_retryable_capacity_failure_kind(kind)
-        or is_auth_failure_kind(kind)
-    )
+    return decide_provider_failure_response(kind) is rewrite_provider_health.FailureResponse.PAUSE
 
 
 def maybe_rotate_provider_model(
@@ -6017,6 +6103,65 @@ def agent_provider_auth_blocked(
     return capability.get("auth_ready") is False
 
 
+def refresh_provider_auth_before_dispatch(
+    config: dict[str, Any],
+    provider_report: dict[str, Any],
+    agent_id: str | None,
+) -> rewrite_provider_health.AccountHealth | None:
+    """Force the selected owner's auth probe and refresh the in-cycle report.
+
+    Capability scans happen near the start of a supervisor tick, but cached
+    probes can make a revoked account look live until after it burns a worker.
+    The launch path calls this targeted probe for the exact provider selected
+    for delivery.  Updating the shared in-cycle report makes the existing
+    dispatch/reassignment gates consume the same authoritative result.
+    """
+    if _legacy_failure_response_enabled():
+        return None
+    provider_key = agent_provider_key(config, agent_id)
+    if not provider_key:
+        return None
+    existing_providers = provider_report.get("providers")
+    if not isinstance(existing_providers, dict) or provider_key not in existing_providers:
+        # A failed/partial capability scan must not turn an unsupported probe
+        # into a fleet-wide dispatch outage.  The periodic report is the
+        # declaration that this provider supports the owner-side gate.
+        return None
+    try:
+        probe = probe_provider_auth(config, provider_key, force=True)
+    except Exception as exc:  # probe failure is explicit not-ready, never a launch bypass
+        probe = {
+            "provider": provider_key,
+            "ready": False,
+            "status": "probe_error",
+            "method": "pre_dispatch",
+            "error": f"{type(exc).__name__}: {exc}",
+            "checked_at": utc_now(),
+            "last_auth_probe_at": utc_now(),
+            "source": "live",
+        }
+    health = rewrite_provider_health.classify_probe(
+        probe.get("ready"),
+        status=probe.get("status"),
+    )
+    if health is None:
+        return None
+    capability = existing_providers[provider_key]
+    capability["auth_ready"] = probe.get("ready") is True
+    capability["auth_error"] = probe.get("error")
+    capability["auth_method"] = probe.get("method")
+    capability["last_auth_probe_at"] = probe.get("last_auth_probe_at") or probe.get("checked_at")
+    capability["auth_probe"] = probe
+    capability["account_health"] = health.value
+    if health is rewrite_provider_health.AccountHealth.HEALTHY:
+        capability["local_cli_worker_supported"] = True
+        capability["supports_auto_approve"] = True
+    else:
+        capability["local_cli_worker_supported"] = False
+        capability["supports_auto_approve"] = False
+    return health
+
+
 def agent_is_known(config: dict[str, Any], agent_name: str | None) -> bool:
     """True if the name maps to an agent in the roster (display name or id).
 
@@ -6128,11 +6273,15 @@ def agent_auto_dispatch_block_reason(
         return None
 
     agent = (config.get("agents", {}) or {}).get(normalized_agent)
-    provider_id = normalize_agent_id(
-        str((agent or {}).get("provider") or normalized_agent)
-    )
+    provider_key = agent_provider_key(config, normalized_agent)
+    provider_id = normalize_agent_id(provider_key or normalized_agent)
     agent_capability = ((provider_report.get("agent_adapters") or {}).get(normalized_agent) or {})
-    provider_capability = ((provider_report.get("providers") or {}).get(provider_id) or {})
+    provider_capabilities = provider_report.get("providers") or {}
+    provider_capability = (
+        provider_capabilities.get(provider_key)
+        or provider_capabilities.get(provider_id)
+        or {}
+    )
 
     if agent_capability:
         if not agent_capability.get("supported", True):
@@ -7647,7 +7796,11 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 if rotation_budget_left
                 else "exhausted"
             )
-            if rotation_outcome == "rotated":
+            failure_response = decide_provider_failure_response(
+                failure_kind,
+                rotation_outcome=rotation_outcome,
+            )
+            if failure_response is rewrite_provider_health.FailureResponse.ROTATE:
                 clear_task_failure_streaks_for_task(state, str(worker.get("task_id") or ""))
                 schedule_worker_retry(config, worker, failure_summary.get("summary") or failure_reason)
                 write_activity_log(
@@ -7668,7 +7821,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 )
                 changed = True
                 continue
-            if should_pause_dispatch_for_failure_kind(failure_kind):
+            if failure_response is rewrite_provider_health.FailureResponse.PAUSE:
                 mark_provider_dispatch_paused(
                     config,
                     state,
@@ -7680,7 +7833,10 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                     pause_kind=failure_kind,
                     raw_ref=raw_ref,
                 )
-            if is_terminal_quota_failure_kind(failure_kind):
+            if (
+                failure_response is rewrite_provider_health.FailureResponse.PAUSE
+                and is_terminal_quota_failure_kind(failure_kind)
+            ):
                 reassigned_to = maybe_reassign_task_after_worker_failure(
                     config,
                     state,
@@ -7719,7 +7875,13 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 finalize_queue_event_record(config, state, worker, "failed", failure_reason)
                 changed = True
                 continue
-            if is_transient_worker_failure(config, worker, failure_reason):
+            if (
+                failure_response is rewrite_provider_health.FailureResponse.RETRY
+                or (
+                    failure_response is rewrite_provider_health.FailureResponse.PAUSE
+                    and is_retryable_capacity_failure_kind(failure_kind)
+                )
+            ):
                 handled, retry_changed = maybe_trigger_retry_or_fallback(config, state, provider_report, worker, failure_reason)
                 if handled:
                     changed = changed or retry_changed
@@ -8672,7 +8834,8 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                 failure_kind=str(failure.get("kind") or ""),
             )
             failure_kind = str(failure.get("kind") or "")
-            if should_pause_dispatch_for_failure_kind(failure_kind):
+            failure_response = decide_provider_failure_response(failure_kind)
+            if failure_response is rewrite_provider_health.FailureResponse.PAUSE:
                 mark_provider_dispatch_paused(
                     config,
                     state,
@@ -8684,7 +8847,10 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                     pause_kind=failure_kind,
                     raw_ref=raw_ref,
                 )
-            if is_terminal_quota_failure_kind(failure_kind):
+            if (
+                failure_response is rewrite_provider_health.FailureResponse.PAUSE
+                and is_terminal_quota_failure_kind(failure_kind)
+            ):
                 reassigned_to = maybe_reassign_task_after_worker_failure(
                     config,
                     state,
@@ -8705,6 +8871,37 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                         counts["expired_lease_workers_failed"] += 1
                     else:
                         counts["missing_process_workers_failed"] += 1
+                    changed = True
+                    continue
+            if failure_response is rewrite_provider_health.FailureResponse.RETRY:
+                retry = worker_retry_settings(
+                    config,
+                    str(worker.get("provider") or worker.get("agent_id") or ""),
+                )
+                if int(worker.get("retry_count", 0)) < int(retry.get("max_attempts", 5)):
+                    schedule_worker_retry(
+                        config,
+                        worker,
+                        failure_summary.get("summary") or detected_reason,
+                    )
+                    worker["last_error_raw_ref"] = raw_ref
+                    write_activity_log(
+                        config,
+                        {
+                            "type": "worker_retry_scheduled",
+                            "provider": worker.get("provider"),
+                            "task_id": worker.get("task_id"),
+                            "message": (
+                                "Transient worker failure found during boot reconciliation; "
+                                f"retry {worker.get('retry_count')} scheduled at "
+                                f"{worker.get('next_retry_at')}: "
+                                f"{failure_summary.get('summary') or detected_reason}"
+                            ),
+                            "worker_run_id": worker.get("run_id"),
+                            "next_retry_at": worker.get("next_retry_at"),
+                            "raw_ref": raw_ref,
+                        },
+                    )
                     changed = True
                     continue
             reason = failure_summary.get("summary") or detected_reason
