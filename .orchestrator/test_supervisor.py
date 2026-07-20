@@ -7448,6 +7448,164 @@ class ChairReviewDispatchTests(unittest.TestCase):
 
 
 class PollWorkersRecoveryTests(unittest.TestCase):
+    def test_commit_progress_ignores_shared_workspace(self) -> None:
+        with mock.patch.object(supervisor.subprocess, "run") as run:
+            sha = supervisor.isolated_workspace_commit_sha(
+                "shared_root",
+                "/home/lupin/pantheon",
+            )
+
+        self.assertIsNone(sha)
+        run.assert_not_called()
+
+    def test_commit_progress_reads_real_isolated_worktree_head(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir) / "worker"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-q", str(repo)], check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(repo),
+                    "-c",
+                    "user.name=Test",
+                    "-c",
+                    "user.email=test@example.com",
+                    "commit",
+                    "--allow-empty",
+                    "-qm",
+                    "baseline",
+                ],
+                check=True,
+            )
+            expected = subprocess.run(
+                ["git", "-C", str(repo), "rev-parse", "HEAD"],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+
+            observed = supervisor.isolated_workspace_commit_sha(
+                "isolated_worktree",
+                repo,
+            )
+
+        self.assertEqual(observed, expected)
+
+    def test_commit_progress_records_new_isolated_head(self) -> None:
+        now = datetime(2026, 7, 20, 5, 20, tzinfo=timezone.utc)
+        worker = {
+            "workspace_mode": "isolated_worktree",
+            "workspace_path": "/tmp/task-worktree",
+            "work_progress_snapshot": {"commit_sha": "a" * 40},
+            "commit_progress_count": 0,
+        }
+        with mock.patch.object(
+            supervisor,
+            "isolated_workspace_commit_sha",
+            return_value="b" * 40,
+        ):
+            state_changed, progress_advanced = supervisor.update_worker_commit_progress(
+                worker,
+                now,
+            )
+
+        self.assertTrue(state_changed)
+        self.assertTrue(progress_advanced)
+        self.assertEqual(worker["work_progress_snapshot"]["commit_sha"], "b" * 40)
+        self.assertEqual(worker["last_commit_progress_at"], "2026-07-20T05:20:00Z")
+        self.assertEqual(worker["last_work_progress_at"], "2026-07-20T05:20:00Z")
+        self.assertEqual(worker["commit_progress_count"], 1)
+
+    def test_first_observation_is_baseline_not_manufactured_progress(self) -> None:
+        worker = {
+            "workspace_mode": "isolated_worktree",
+            "workspace_path": "/tmp/old-worker-worktree",
+        }
+        with mock.patch.object(
+            supervisor,
+            "isolated_workspace_commit_sha",
+            return_value="c" * 40,
+        ):
+            state_changed, progress_advanced = supervisor.update_worker_commit_progress(
+                worker,
+                datetime.now(timezone.utc),
+            )
+
+        self.assertTrue(state_changed)
+        self.assertFalse(progress_advanced)
+        self.assertNotIn("last_commit_progress_at", worker)
+
+    def test_poll_workers_wires_commit_progress_into_stall_signal(self) -> None:
+        now = datetime.now(timezone.utc)
+        old_event = (now - timedelta(seconds=301)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        fresh_heartbeat = now.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "supervisor": {
+                "stall_after_seconds": 300,
+                "adaptive_stall_detection": False,
+                "observe_worker_commit_progress": True,
+            },
+            "worker_runtime": {"heartbeat_stale_seconds": 300, "worker_lease_seconds": 1800},
+            "ready_dispatcher": {"active_worker_statuses": ["running", "stalled"]},
+            "providers": {},
+            "agents": {"codex": {"id": "codex", "display_name": "Codex"}},
+        }
+        worker = {
+            "run_id": "run-commit",
+            "task_id": "TEST-COMMIT-001",
+            "provider": "codex",
+            "agent_id": "codex",
+            "status": "running",
+            "queue_event_id": "evt-commit",
+            "pid": 1234,
+            "last_event_at": old_event,
+            "last_heartbeat_at": fresh_heartbeat,
+            "workspace_mode": "isolated_worktree",
+            "workspace_path": "/tmp/task-worktree",
+            "work_progress_snapshot": {"commit_sha": "a" * 40},
+        }
+        state = {
+            "queue": {"events": {"evt-commit": {"status": "started"}}},
+            "workers": {"run-commit": worker},
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "TEST-COMMIT-001",
+                    "status": "in_progress",
+                    "owner": "Codex",
+                    "reviewer": "Claude",
+                }
+            ]
+        }
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}),
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "update_from_log", side_effect=lambda *_args, **_kwargs: None),
+            mock.patch.object(supervisor, "isolated_workspace_commit_sha", return_value="b" * 40),
+            mock.patch.object(supervisor, "terminate_worker_pid") as terminate_worker_pid,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.poll_workers(config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(worker["status"], "running")
+        self.assertEqual(worker["work_progress_snapshot"]["commit_sha"], "b" * 40)
+        self.assertEqual(worker["commit_progress_count"], 1)
+        self.assertIsNotNone(worker.get("last_work_progress_at"))
+        terminate_worker_pid.assert_not_called()
+
     def test_process_activity_snapshot_walks_descendants(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             proc_root = Path(tmpdir)

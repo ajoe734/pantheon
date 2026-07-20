@@ -2265,6 +2265,74 @@ def _git_dirty_entries(cwd: Path | None = None) -> list[dict[str, str]]:
     return entries
 
 
+def isolated_workspace_commit_sha(
+    workspace_mode: str | None,
+    workspace_path: str | Path | None,
+) -> str | None:
+    """Read HEAD for a worker-owned worktree, never a shared checkout.
+
+    A commit in a shared root cannot be attributed to one worker, so it must not
+    renew that worker's lease. Isolated task worktrees provide the ownership
+    boundary required for a real per-worker progress signal.
+    """
+    if str(workspace_mode or "").strip() != "isolated_worktree" or not workspace_path:
+        return None
+    try:
+        path = Path(workspace_path).expanduser().resolve()
+        result = subprocess.run(
+            ["git", "-C", str(path), "rev-parse", "--verify", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    sha = str(result.stdout or "").strip().lower()
+    return sha if re.fullmatch(r"[0-9a-f]{40,64}", sha) else None
+
+
+def worker_commit_progress_snapshot(worker: dict[str, Any]) -> dict[str, Any]:
+    sha = isolated_workspace_commit_sha(
+        worker.get("workspace_mode"),
+        worker.get("workspace_path"),
+    )
+    return {"commit_sha": sha} if sha else {}
+
+
+def update_worker_commit_progress(
+    worker: dict[str, Any],
+    now: datetime,
+) -> tuple[bool, bool]:
+    """Observe an isolated worker's HEAD and record newly committed work.
+
+    Returns ``(state_changed, progress_advanced)``. Merely learning a baseline
+    snapshot changes state but does not manufacture progress for workers that
+    predate this field.
+    """
+    current = worker_commit_progress_snapshot(worker)
+    if not current:
+        return False, False
+    previous_raw = worker.get("work_progress_snapshot")
+    previous = previous_raw if isinstance(previous_raw, dict) else {}
+    if current == previous:
+        return False, False
+    baseline_missing = not previous
+    advanced = (
+        not baseline_missing
+        and rewrite_worker_lifecycle.has_work_progress(previous, current)
+    )
+    worker["work_progress_snapshot"] = current
+    if advanced:
+        observed_at = _isoformat_utc(now)
+        worker["last_commit_progress_at"] = observed_at
+        worker["last_work_progress_at"] = observed_at
+        worker["commit_progress_count"] = int(worker.get("commit_progress_count", 0)) + 1
+    return True, advanced
+
+
 def _path_matches_any_glob(path: str, patterns: list[Any]) -> bool:
     normalized = path.replace("\\", "/")
     basename = Path(normalized).name
@@ -2352,6 +2420,12 @@ def start_worker_for_request(
     agent = agent_config_for(config, request.agent_id)
     adapter_name = delivery_mode_override or agent.get("adapter", "file_inbox")
     adapter = build_adapter(adapter_name, config=config, provider_capabilities=provider_report)
+    initial_work_progress_snapshot = worker_commit_progress_snapshot(
+        {
+            "workspace_mode": request.metadata.get("workspace_mode"),
+            "workspace_path": request.metadata.get("workspace_path"),
+        }
+    )
     issued_command_env = status_command_runtime_env(config)
     issued_command_runtime = status_command_runtime_record_from_env(issued_command_env)
     request.metadata["status_command_runtime"] = issued_command_runtime
@@ -2422,6 +2496,10 @@ def start_worker_for_request(
         "workspace_mode": request.metadata.get("workspace_mode"),
         "workspace_path": request.metadata.get("workspace_path"),
         "workspace_branch": request.metadata.get("workspace_branch"),
+        "work_progress_snapshot": initial_work_progress_snapshot,
+        "last_commit_progress_at": None,
+        "last_work_progress_at": None,
+        "commit_progress_count": 0,
         "status_root": request.metadata.get("status_root"),
         "status_command_runtime": issued_command_runtime,
         "pid": result.pid,
@@ -7311,6 +7389,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
     changed = retry_due_workers(config, state, provider_report, now) or changed
     poll_counts = {
         "marker_updates": 0,
+        "commit_progress_updates": 0,
         "lease_refreshes": 0,
         "expired_lease_workers_failed": 0,
     }
@@ -7343,6 +7422,19 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             changed = True
         update_from_log(config, worker)
         alive = pid_is_alive(worker.get("pid"))
+        if (
+            alive
+            and worker.get("status") in active_worker_statuses
+            and config.get("supervisor", {}).get("observe_worker_commit_progress", True)
+        ):
+            commit_state_changed, commit_progress_advanced = update_worker_commit_progress(
+                worker,
+                now,
+            )
+            if commit_state_changed:
+                changed = True
+            if commit_progress_advanced:
+                poll_counts["commit_progress_updates"] += 1
         process_activity_advanced = False
         if alive and config.get("supervisor", {}).get("adaptive_stall_detection", True):
             previous_process_activity = worker.get("process_activity_snapshot")
@@ -7356,7 +7448,9 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 changed = True
             heartbeat_fresh = bool(worker.get("last_heartbeat_at")) and not worker_heartbeat_is_stale(config, worker, now)
             if process_activity_advanced and heartbeat_fresh:
-                worker["last_process_activity_at"] = _isoformat_utc(now)
+                progress_at = _isoformat_utc(now)
+                worker["last_process_activity_at"] = progress_at
+                worker["last_work_progress_at"] = progress_at
                 changed = True
             else:
                 process_activity_advanced = False
@@ -7376,7 +7470,13 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 progress_candidates = [
                     dt
                     for dt in (
-                        _parse_iso_utc(str(worker.get("last_process_activity_at") or "")),
+                        _parse_iso_utc(
+                            str(
+                                worker.get("last_work_progress_at")
+                                or worker.get("last_process_activity_at")
+                                or ""
+                            )
+                        ),
                         _parse_iso_utc(str(worker.get("last_event_at") or "")),
                     )
                     if dt is not None
@@ -7709,8 +7809,14 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 continue
             last_event = worker.get("last_event_at")
             last_event_dt = _parse_iso_utc(str(last_event or ""))
-            last_process_activity_dt = _parse_iso_utc(str(worker.get("last_process_activity_at") or ""))
-            activity_timestamps = [value for value in (last_event_dt, last_process_activity_dt) if value is not None]
+            last_work_progress_dt = _parse_iso_utc(
+                str(
+                    worker.get("last_work_progress_at")
+                    or worker.get("last_process_activity_at")
+                    or ""
+                )
+            )
+            activity_timestamps = [value for value in (last_event_dt, last_work_progress_dt) if value is not None]
             if process_activity_advanced and last_event_dt and (now - last_event_dt).total_seconds() >= stall_after:
                 last_notice_dt = _parse_iso_utc(str(worker.get("last_stall_deferred_at") or ""))
                 if last_notice_dt is None or (now - last_notice_dt).total_seconds() >= stall_after:
