@@ -53,6 +53,7 @@ from common import (
     snapshot_task,
     spawn_background_process,
     status_command_runtime_env,
+    task_state_store_runtime_env,
     summarize_failure_reason,
     utc_now,
     write_failure_evidence,
@@ -92,6 +93,7 @@ from watch_events import queue_delivery_event, run_scan, trim_seen_events
 from rewrite import concurrency as rewrite_concurrency
 from rewrite import provider_health as rewrite_provider_health
 from rewrite import task_machine as rewrite_task_machine
+from rewrite import task_state_store as rewrite_task_state_store
 from rewrite import worker_lifecycle as rewrite_worker_lifecycle
 
 
@@ -11662,6 +11664,81 @@ def run_once(
         )
 
 
+def sync_task_state_shadow(config: dict[str, Any], state: dict[str, Any]) -> bool:
+    """Catch the durable shadow journal up to the locked canonical board.
+
+    Governed ``ai-status`` commands append their own shadow commit, but legacy
+    and operator-side writers can still update the canonical file without the
+    live command environment. A successful supervisor cycle closes that gap
+    while ``ai-status.json`` remains authoritative.
+    """
+
+    runtime_env = task_state_store_runtime_env(config)
+    raw_event_log = str(runtime_env.get("PANTHEON_TASK_STATE_EVENT_LOG") or "").strip()
+    if not raw_event_log:
+        return False
+
+    checked_at = utc_now()
+    event_log = Path(raw_event_log)
+    status_file = config_path(config, "status_file", "ai-status.json")
+    supervisor_state = state.setdefault("supervisor", {})
+    previous = supervisor_state.get("task_state_shadow")
+    previous = previous if isinstance(previous, dict) else {}
+
+    try:
+        with canonical_task_state_lock_file(status_file, shared=True):
+            canonical_state = load_json(status_file, default={})
+            if not isinstance(canonical_state, dict):
+                raise RuntimeError("canonical task state must be a JSON object")
+            before = rewrite_task_state_store.verify_projection(event_log, canonical_state)
+            caught_up = not before["ok"]
+            if caught_up:
+                rewrite_task_state_store.append_state_commit(
+                    event_log,
+                    canonical_state,
+                    source="supervisor-shadow-catchup",
+                )
+            report = rewrite_task_state_store.verify_projection(event_log, canonical_state)
+            if not report["ok"]:
+                raise RuntimeError("task-state shadow projection remains divergent after catch-up")
+
+        supervisor_state["task_state_shadow"] = {
+            "mode": "shadow",
+            "ok": True,
+            "event_log": str(event_log),
+            "last_checked_at": checked_at,
+            "last_success_at": checked_at,
+            "last_error": None,
+            "caught_up": caught_up,
+            **report,
+        }
+        return caught_up
+    except Exception as exc:  # shadow observability must not break the incumbent loop
+        failure = {
+            "mode": "shadow",
+            "ok": False,
+            "event_log": str(event_log),
+            "last_checked_at": checked_at,
+            "last_error": f"{type(exc).__name__}: {exc}",
+            "caught_up": False,
+        }
+        for key in (
+            "event_count",
+            "last_event_id",
+            "projected_state_sha256",
+            "expected_state_sha256",
+            "last_success_at",
+        ):
+            if key in previous:
+                failure[key] = previous[key]
+        supervisor_state["task_state_shadow"] = failure
+        console_log(
+            f"task-state shadow catch-up failed: {failure['last_error']}",
+            quiet=SUPERVISOR_LOG_QUIET,
+        )
+        return False
+
+
 def _safe_phase(name: str, fn, *args, quiet: bool = False, **kwargs):
     """Run one supervisor cycle phase in isolation.
 
@@ -11776,6 +11853,7 @@ def _run_once_locked(
         changed = _safe_phase("prune_orphan_worktrees", prune_orphan_worktrees, config, state, quiet=quiet) or changed
         changed = _safe_phase("prune_chair_review_worktrees", prune_chair_review_worktrees, config, state, quiet=quiet) or changed
         changed = _safe_phase("maybe_auto_commit_archive", maybe_auto_commit_archive, config, state, quiet=quiet) or changed
+        changed = _safe_phase("sync_task_state_shadow", sync_task_state_shadow, config, state, quiet=quiet) or changed
 
         loop_finished_at = utc_now()
         stamp_supervisor_runtime_state(

@@ -288,6 +288,7 @@ def evaluate_runtime_health(
             "max_heartbeat_age_seconds": max_heartbeat_age,
             "lifecycle": supervisor.get("lifecycle"),
             "last_loop_error": supervisor.get("last_loop_error"),
+            "task_state_shadow": supervisor.get("task_state_shadow"),
         },
         "watchdog": watchdog_report,
         "checks": checks,
