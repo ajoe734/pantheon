@@ -525,11 +525,12 @@ def _find_worker_worktree_lease(
 def normalize_logical_actor(name: str | None) -> str:
     if not name:
         return ""
-    import re
-    trimmed = str(name).strip().lower()
-    base = re.sub(r'\d+$', '', trimmed)
-    base = base.split("-")[0]
-    return base.strip()
+    trimmed = str(name).strip()
+    slot_id = trimmed.lower().replace("-", "_")
+    slot_match = re.fullmatch(r"codex([12])_[1-4]", slot_id)
+    if slot_match:
+        return "codex" if slot_match.group(1) == "1" else "codex2"
+    return canonical_agent_name(trimmed).casefold()
 
 
 def validate_active_status_command_lease(command: str, args: list[str]) -> None:
@@ -576,13 +577,13 @@ def validate_active_status_command_lease(command: str, args: list[str]) -> None:
         raise RuntimeError(f"active status command lease not found for ORCH_RUN_ID={run_id}")
 
     # Bind lease to normalized logical actor
-    worker_agent_id = str(worker.get("agent_id") or worker.get("provider") or "").strip()
-    if worker_agent_id:
+    worker_actor = normalize_worker_actor(dict(worker))
+    if worker_actor:
         normalized_actor = normalize_logical_actor(actor)
-        normalized_worker_agent = normalize_logical_actor(worker_agent_id)
+        normalized_worker_agent = normalize_logical_actor(worker_actor)
         if normalized_actor != normalized_worker_agent:
             raise RuntimeError(
-                f"status command lease AI identity mismatch: actor {actor} (normalized: {normalized_actor}) != worker agent {worker_agent_id} (normalized: {normalized_worker_agent})"
+                f"status command lease AI identity mismatch: actor {actor} (normalized: {normalized_actor}) != worker actor {worker_actor} (normalized: {normalized_worker_agent})"
             )
 
     status = str(worker.get("status") or "").strip()
