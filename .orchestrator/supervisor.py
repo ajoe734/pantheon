@@ -7930,6 +7930,139 @@ def poll_worker_failure_stage(
     return {"changed": True, "stop": True}
 
 
+def poll_worker_completion_stage(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: dict[str, Any],
+    *,
+    task_map: dict[str, dict[str, Any]],
+    redispatch_statuses: set[str],
+) -> dict[str, bool]:
+    """Classify a cleanly exited worker and apply its terminal transition."""
+    if worker.get("status") in {"completed", "failed", "manual_pending"}:
+        return {"changed": False, "stop": True}
+
+    completion_message = None
+    for predicate, message in (
+        (worker_is_discussion_planning, "Discussion planning worker exited."),
+        (worker_is_coordination_dispatch, "Coordination worker exited after completing its handoff step."),
+        (worker_is_chair_review, "Chair review worker exited; supervisor will validate the review artifacts."),
+    ):
+        if predicate(worker):
+            completion_message = message
+            break
+    if completion_message is not None:
+        worker["status"] = "completed"
+        worker["last_event_at"] = utc_now()
+        clear_task_failure_streak(state, worker=worker)
+        write_activity_log(
+            config,
+            {
+                "type": "worker_completed",
+                "provider": worker.get("provider"),
+                "task_id": worker.get("task_id"),
+                "message": completion_message,
+                "worker_run_id": worker["run_id"],
+                "pr_url": worker.get("pr_url"),
+                "session_url": worker.get("session_url"),
+            },
+        )
+        finalize_queue_event_record(config, state, worker, "completed")
+        return {"changed": True, "stop": True}
+
+    task_status = str(task_map.get(worker.get("task_id"), {}).get("status") or "").lower()
+    terminal_statuses = {
+        str(value).lower()
+        for value in ready_dispatch_settings(config).get(
+            "worker_terminal_statuses",
+            ["done", "review_approved"],
+        )
+    }
+    if task_status in redispatch_statuses:
+        failure_count = record_task_failure_streak(
+            state,
+            worker,
+            GENERIC_WORKER_EXIT_REASON,
+            failure_kind="generic_exit",
+        )
+        generic_threshold = max(
+            1,
+            int(provider_guardrail_settings(config).get("generic_exit_reassign_after", 2)),
+        )
+        reassigned_to = None
+        if failure_count >= generic_threshold:
+            reassigned_to = maybe_reassign_task_after_worker_failure(
+                config,
+                state,
+                worker,
+                GENERIC_WORKER_EXIT_REASON,
+                terminal=True,
+                force=True,
+                failure_count=failure_count,
+            )
+        if reassigned_to:
+            worker["status"] = "reassigned"
+            worker["reassigned_to"] = reassigned_to
+            worker["last_error"] = GENERIC_WORKER_EXIT_REASON
+            worker["last_event_at"] = utc_now()
+            finalize_queue_event_record(config, state, worker, "completed")
+            return {"changed": True, "stop": True}
+        worker["status"] = "failed"
+        worker["last_event_at"] = utc_now()
+        worker["last_error"] = GENERIC_WORKER_EXIT_REASON
+        write_activity_log(
+            config,
+            {
+                "type": "worker_failed",
+                "provider": worker.get("provider"),
+                "task_id": worker.get("task_id"),
+                "message": worker["last_error"],
+                "worker_run_id": worker["run_id"],
+                "pr_url": worker.get("pr_url"),
+                "session_url": worker.get("session_url"),
+            },
+        )
+        finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
+        return {"changed": True, "stop": True}
+
+    if task_status in terminal_statuses:
+        worker["status"] = "completed"
+        worker["last_event_at"] = utc_now()
+        clear_task_failure_streak(state, worker=worker)
+        write_activity_log(
+            config,
+            {
+                "type": "worker_completed",
+                "provider": worker.get("provider"),
+                "task_id": worker.get("task_id"),
+                "message": "Background worker process exited.",
+                "worker_run_id": worker["run_id"],
+                "pr_url": worker.get("pr_url"),
+                "session_url": worker.get("session_url"),
+            },
+        )
+        finalize_queue_event_record(config, state, worker, "completed")
+        return {"changed": True, "stop": True}
+
+    worker["status"] = "failed"
+    worker["last_event_at"] = utc_now()
+    worker["last_error"] = GENERIC_WORKER_EXIT_REASON
+    write_activity_log(
+        config,
+        {
+            "type": "worker_failed",
+            "provider": worker.get("provider"),
+            "task_id": worker.get("task_id"),
+            "message": worker["last_error"],
+            "worker_run_id": worker["run_id"],
+            "pr_url": worker.get("pr_url"),
+            "session_url": worker.get("session_url"),
+        },
+    )
+    finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
+    return {"changed": True, "stop": True}
+
+
 def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report: dict[str, Any] | None = None) -> bool:
     changed = False
     approval_state = load_approval_state(config)
@@ -8169,147 +8302,14 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
         if failure["stop"]:
             continue
 
-        if worker.get("status") not in {"completed", "failed", "manual_pending"}:
-            if worker_is_discussion_planning(worker):
-                worker["status"] = "completed"
-                worker["last_event_at"] = utc_now()
-                clear_task_failure_streak(state, worker=worker)
-                write_activity_log(
-                    config,
-                    {
-                        "type": "worker_completed",
-                        "provider": worker.get("provider"),
-                        "task_id": worker.get("task_id"),
-                        "message": "Discussion planning worker exited.",
-                        "worker_run_id": worker["run_id"],
-                        "pr_url": worker.get("pr_url"),
-                        "session_url": worker.get("session_url"),
-                    },
-                )
-                finalize_queue_event_record(config, state, worker, "completed")
-                changed = True
-                continue
-            if worker_is_coordination_dispatch(worker):
-                worker["status"] = "completed"
-                worker["last_event_at"] = utc_now()
-                clear_task_failure_streak(state, worker=worker)
-                write_activity_log(
-                    config,
-                    {
-                        "type": "worker_completed",
-                        "provider": worker.get("provider"),
-                        "task_id": worker.get("task_id"),
-                        "message": "Coordination worker exited after completing its handoff step.",
-                        "worker_run_id": worker["run_id"],
-                        "pr_url": worker.get("pr_url"),
-                        "session_url": worker.get("session_url"),
-                    },
-                )
-                finalize_queue_event_record(config, state, worker, "completed")
-                changed = True
-                continue
-            if worker_is_chair_review(worker):
-                worker["status"] = "completed"
-                worker["last_event_at"] = utc_now()
-                clear_task_failure_streak(state, worker=worker)
-                write_activity_log(
-                    config,
-                    {
-                        "type": "worker_completed",
-                        "provider": worker.get("provider"),
-                        "task_id": worker.get("task_id"),
-                        "message": "Chair review worker exited; supervisor will validate the review artifacts.",
-                        "worker_run_id": worker["run_id"],
-                        "pr_url": worker.get("pr_url"),
-                        "session_url": worker.get("session_url"),
-                    },
-                )
-                finalize_queue_event_record(config, state, worker, "completed")
-                changed = True
-                continue
-            task_status = str(task_map.get(worker.get("task_id"), {}).get("status") or "").lower()
-            terminal_statuses = {
-                str(value).lower()
-                for value in ready_dispatch_settings(config).get("worker_terminal_statuses", ["done", "review_approved"])
-            }
-            if task_status in redispatch_statuses:
-                failure_count = record_task_failure_streak(
-                    state,
-                    worker,
-                    GENERIC_WORKER_EXIT_REASON,
-                    failure_kind="generic_exit",
-                )
-                generic_threshold = max(1, int(provider_guardrail_settings(config).get("generic_exit_reassign_after", 2)))
-                reassigned_to = None
-                if failure_count >= generic_threshold:
-                    reassigned_to = maybe_reassign_task_after_worker_failure(
-                        config,
-                        state,
-                        worker,
-                        GENERIC_WORKER_EXIT_REASON,
-                        terminal=True,
-                        force=True,
-                        failure_count=failure_count,
-                    )
-                if reassigned_to:
-                    worker["status"] = "reassigned"
-                    worker["reassigned_to"] = reassigned_to
-                    worker["last_error"] = GENERIC_WORKER_EXIT_REASON
-                    worker["last_event_at"] = utc_now()
-                    finalize_queue_event_record(config, state, worker, "completed")
-                    changed = True
-                    continue
-                worker["status"] = "failed"
-                worker["last_event_at"] = utc_now()
-                worker["last_error"] = GENERIC_WORKER_EXIT_REASON
-                write_activity_log(
-                    config,
-                    {
-                        "type": "worker_failed",
-                        "provider": worker.get("provider"),
-                        "task_id": worker.get("task_id"),
-                        "message": worker["last_error"],
-                        "worker_run_id": worker["run_id"],
-                        "pr_url": worker.get("pr_url"),
-                        "session_url": worker.get("session_url"),
-                    },
-                )
-                finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
-            elif task_status in terminal_statuses:
-                worker["status"] = "completed"
-                worker["last_event_at"] = utc_now()
-                clear_task_failure_streak(state, worker=worker)
-                write_activity_log(
-                    config,
-                    {
-                        "type": "worker_completed",
-                        "provider": worker.get("provider"),
-                        "task_id": worker.get("task_id"),
-                        "message": "Background worker process exited.",
-                        "worker_run_id": worker["run_id"],
-                        "pr_url": worker.get("pr_url"),
-                        "session_url": worker.get("session_url"),
-                    },
-                )
-                finalize_queue_event_record(config, state, worker, "completed")
-            else:
-                worker["status"] = "failed"
-                worker["last_event_at"] = utc_now()
-                worker["last_error"] = GENERIC_WORKER_EXIT_REASON
-                write_activity_log(
-                    config,
-                    {
-                        "type": "worker_failed",
-                        "provider": worker.get("provider"),
-                        "task_id": worker.get("task_id"),
-                        "message": worker["last_error"],
-                        "worker_run_id": worker["run_id"],
-                        "pr_url": worker.get("pr_url"),
-                        "session_url": worker.get("session_url"),
-                    },
-                )
-                finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
-            changed = True
+        completion = poll_worker_completion_stage(
+            config,
+            state,
+            worker,
+            task_map=task_map,
+            redispatch_statuses=redispatch_statuses,
+        )
+        changed = bool(completion["changed"]) or changed
     changed = cleanup_inactive_worker_worktrees(config, state) or changed
     record_worker_runtime_measurement(
         config,

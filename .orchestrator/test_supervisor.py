@@ -7851,6 +7851,152 @@ class PollWorkersRecoveryTests(unittest.TestCase):
             "transient error",
         )
 
+    def test_completion_stage_keeps_existing_terminal_worker_unchanged(self) -> None:
+        worker = {"run_id": "run-terminal", "status": "failed"}
+
+        outcome = supervisor.poll_worker_completion_stage(
+            {},
+            {},
+            worker,
+            task_map={},
+            redispatch_statuses={"todo"},
+        )
+
+        self.assertEqual(outcome, {"changed": False, "stop": True})
+        self.assertEqual(worker["status"], "failed")
+
+    def test_completion_stage_completes_chair_worker(self) -> None:
+        worker = {
+            "run_id": "run-chair",
+            "task_id": None,
+            "provider": "codex",
+            "status": "running",
+        }
+        with (
+            mock.patch.object(supervisor, "worker_is_discussion_planning", return_value=False),
+            mock.patch.object(supervisor, "worker_is_coordination_dispatch", return_value=False),
+            mock.patch.object(supervisor, "worker_is_chair_review", return_value=True),
+            mock.patch.object(supervisor, "clear_task_failure_streak") as clear_streak,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            mock.patch.object(supervisor, "finalize_queue_event_record") as finalize_queue_event_record,
+        ):
+            outcome = supervisor.poll_worker_completion_stage(
+                {},
+                {},
+                worker,
+                task_map={},
+                redispatch_statuses={"todo"},
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        self.assertEqual(worker["status"], "completed")
+        clear_streak.assert_called_once()
+        self.assertIn("Chair review worker exited", write_activity_log.call_args.args[1]["message"])
+        finalize_queue_event_record.assert_called_once_with({}, {}, worker, "completed")
+
+    def test_completion_stage_completes_worker_when_task_is_terminal(self) -> None:
+        worker = {
+            "run_id": "run-done",
+            "task_id": "TASK-DONE",
+            "provider": "codex",
+            "status": "running",
+        }
+        config = {"ready_dispatcher": {"worker_terminal_statuses": ["done"]}}
+        with (
+            mock.patch.object(supervisor, "worker_is_discussion_planning", return_value=False),
+            mock.patch.object(supervisor, "worker_is_coordination_dispatch", return_value=False),
+            mock.patch.object(supervisor, "worker_is_chair_review", return_value=False),
+            mock.patch.object(supervisor, "clear_task_failure_streak") as clear_streak,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            mock.patch.object(supervisor, "finalize_queue_event_record") as finalize_queue_event_record,
+        ):
+            outcome = supervisor.poll_worker_completion_stage(
+                config,
+                {},
+                worker,
+                task_map={"TASK-DONE": {"status": "done"}},
+                redispatch_statuses={"todo"},
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        self.assertEqual(worker["status"], "completed")
+        clear_streak.assert_called_once()
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_completed")
+        finalize_queue_event_record.assert_called_once()
+
+    def test_completion_stage_fails_generic_exit_below_reassign_threshold(self) -> None:
+        worker = {
+            "run_id": "run-generic-exit",
+            "task_id": "TASK-TODO",
+            "provider": "codex",
+            "status": "running",
+        }
+        with (
+            mock.patch.object(supervisor, "worker_is_discussion_planning", return_value=False),
+            mock.patch.object(supervisor, "worker_is_coordination_dispatch", return_value=False),
+            mock.patch.object(supervisor, "worker_is_chair_review", return_value=False),
+            mock.patch.object(supervisor, "record_task_failure_streak", return_value=1),
+            mock.patch.object(
+                supervisor,
+                "provider_guardrail_settings",
+                return_value={"generic_exit_reassign_after": 2},
+            ),
+            mock.patch.object(supervisor, "maybe_reassign_task_after_worker_failure") as reassign,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            mock.patch.object(supervisor, "finalize_queue_event_record") as finalize_queue_event_record,
+        ):
+            outcome = supervisor.poll_worker_completion_stage(
+                {},
+                {},
+                worker,
+                task_map={"TASK-TODO": {"status": "todo"}},
+                redispatch_statuses={"todo"},
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        self.assertEqual(worker["status"], "failed")
+        reassign.assert_not_called()
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_failed")
+        finalize_queue_event_record.assert_called_once()
+
+    def test_completion_stage_reassigns_repeated_generic_exit(self) -> None:
+        worker = {
+            "run_id": "run-generic-reassign",
+            "task_id": "TASK-TODO",
+            "provider": "codex",
+            "status": "running",
+        }
+        with (
+            mock.patch.object(supervisor, "worker_is_discussion_planning", return_value=False),
+            mock.patch.object(supervisor, "worker_is_coordination_dispatch", return_value=False),
+            mock.patch.object(supervisor, "worker_is_chair_review", return_value=False),
+            mock.patch.object(supervisor, "record_task_failure_streak", return_value=2),
+            mock.patch.object(
+                supervisor,
+                "provider_guardrail_settings",
+                return_value={"generic_exit_reassign_after": 2},
+            ),
+            mock.patch.object(
+                supervisor,
+                "maybe_reassign_task_after_worker_failure",
+                return_value="claude",
+            ) as reassign,
+            mock.patch.object(supervisor, "finalize_queue_event_record") as finalize_queue_event_record,
+        ):
+            outcome = supervisor.poll_worker_completion_stage(
+                {},
+                {},
+                worker,
+                task_map={"TASK-TODO": {"status": "todo"}},
+                redispatch_statuses={"todo"},
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        self.assertEqual(worker["status"], "reassigned")
+        self.assertEqual(worker["reassigned_to"], "claude")
+        reassign.assert_called_once()
+        finalize_queue_event_record.assert_called_once_with({}, {}, worker, "completed")
+
     def test_observation_stage_refreshes_fresh_worker_lease(self) -> None:
         now = datetime.now(timezone.utc)
         worker = {

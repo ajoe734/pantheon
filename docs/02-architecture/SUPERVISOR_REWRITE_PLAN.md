@@ -385,11 +385,12 @@ touches the hot path.
   live-worker recovery, deferred-stall, stalled, and confirm-kill transitions;
   `poll_worker_failure_stage` owns exited-runner evidence, classification,
   rotate/pause/retry/reassign, and terminal failure effects through Phase 5's
-  single decision authority. Each returns an explicit driver short-circuit
-  outcome, with parity pinned by the incumbent poll recovery suite plus direct
-  stage boundary tests. Pending: extract assignment/preemption and completion
-  stages until `poll_workers` is the enum+table driver, then fleet-tune/enable
-  `lease_requires_work_progress` by default.
+  single decision authority; `poll_worker_completion_stage` table-classifies
+  special control workers and task terminal/redispatch outcomes. Each returns an
+  explicit driver short-circuit outcome, with parity pinned by the incumbent
+  poll recovery suite plus direct stage boundary tests. Pending: extract the
+  assignment/preemption block so `poll_workers` becomes the stage driver, then
+  fleet-tune/enable `lease_requires_work_progress` by default.
 - **Phase 6 — model built in isolation (storage cutover pending).**
   `rewrite/state_projection.py` implements the plan's core §3.7 idea: an
   append-only event vocabulary + a pure `project_board(events)` that folds it into
