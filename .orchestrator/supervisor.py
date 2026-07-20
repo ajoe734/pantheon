@@ -7504,7 +7504,9 @@ def poll_worker_observation_stage(
     if alive and worker.get("status") in active_worker_statuses and worker_lease_is_expired(config, worker, now):
         terminate_worker_pid(worker.get("pid"))
         worker["status"] = "failed"
-        worker["last_event_at"] = utc_now()
+        # Classify the expired signal before recording this failure event:
+        # last_event_at is a fallback work-progress timestamp, so advancing it
+        # first would relabel stale progress as a stale heartbeat.
         worker["last_error"] = (
             pause_dispatch_for_reaped_worker(config, state, worker)
             or (
@@ -7514,6 +7516,7 @@ def poll_worker_observation_stage(
                 else "Worker lease expired after heartbeat became stale."
             )
         )
+        worker["last_event_at"] = utc_now()
         write_activity_log(
             config,
             {
