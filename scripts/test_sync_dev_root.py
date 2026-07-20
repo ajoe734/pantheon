@@ -158,3 +158,69 @@ def test_sync_reprovisions_stale_split_root_account_config(tmp_path: Path) -> No
     assert "max_concurrent_per_quota_group" not in rendered["ready_dispatcher"]
     assert rendered["providers"]["claude"]["account"] == "shared"
     assert "account_group" not in rendered["providers"]["claude"]
+
+
+def test_sync_records_pid_bound_intent_before_stopping_live_supervisor(tmp_path: Path) -> None:
+    remote = tmp_path / "remote.git"
+    seed = tmp_path / "seed"
+    dev_root = tmp_path / "dev-root"
+    pid_file = tmp_path / "supervisor.pid"
+    live_config = tmp_path / "live.json"
+    intent_args_file = tmp_path / "intent-args.json"
+    remote.mkdir()
+    seed.mkdir()
+    _git(remote, "init", "--bare")
+    _git(seed, "init", "-b", "dev")
+    _git(seed, "config", "user.email", "test@example.invalid")
+    _git(seed, "config", "user.name", "Pantheon Test")
+    (seed / "version.txt").write_text("one\n", encoding="utf-8")
+    _git(seed, "add", "version.txt")
+    _git(seed, "commit", "-m", "first")
+    _git(seed, "remote", "add", "origin", str(remote))
+    _git(seed, "push", "-u", "origin", "dev")
+    _git(tmp_path, "clone", "--branch", "dev", str(remote), str(dev_root))
+
+    (seed / "version.txt").write_text("two\n", encoding="utf-8")
+    (seed / ".orchestrator").mkdir()
+    (seed / ".orchestrator" / "supervisor_watchdog.py").write_text(
+        "import json, os, sys\n"
+        "from pathlib import Path\n"
+        "Path(os.environ['SYNC_INTENT_ARGS_FILE']).write_text(json.dumps(sys.argv[1:]))\n",
+        encoding="utf-8",
+    )
+    _git(seed, "add", "version.txt", ".orchestrator/supervisor_watchdog.py")
+    _git(seed, "commit", "-m", "second")
+    target_sha = _git(seed, "rev-parse", "HEAD")
+    _git(seed, "push", "origin", "dev")
+
+    process = subprocess.Popen(["sleep", "60"])
+    pid_file.write_text(f"{process.pid}\n", encoding="utf-8")
+    env = os.environ.copy()
+    env["PANTHEON_SUPERVISOR_PID"] = str(pid_file)
+    env["SYNC_INTENT_ARGS_FILE"] = str(intent_args_file)
+    try:
+        result = subprocess.run(
+            ["bash", str(SYNC_SCRIPT), str(dev_root), str(live_config)],
+            cwd=REPO_ROOT,
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        process.wait(timeout=5)
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            process.wait(timeout=5)
+
+    recorded_args = json.loads(intent_args_file.read_text(encoding="utf-8"))
+    assert "recorded intentional supervisor restart" in result.stdout
+    assert recorded_args == [
+        "--config",
+        str(live_config),
+        "--record-intent-pid",
+        str(process.pid),
+        "--record-intent-target",
+        target_sha,
+    ]
+    assert process.returncode == -15

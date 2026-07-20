@@ -41,6 +41,25 @@ watchdog ticks, not the oneshot cgroup teardown, govern that child.
 Do not treat tmux or dashboard uptime as supervisor health. The dashboard can
 remain up while the supervisor and auto workers are dead.
 
+## Intentional Deployment Restarts
+
+`scripts/sync-dev-root.sh` records a short-lived restart intent before it sends
+`SIGTERM` to a live supervisor after a code or config update. The intent is
+bound to both the old supervisor PID and the full target commit SHA. If the
+intent cannot be written durably, sync fails closed and leaves the running
+supervisor untouched.
+
+On the next unhealthy probe, a valid intent lets the watchdog bypass an open
+crash-loop circuit and the ordinary restart budget. Resource-pressure gates
+still take precedence. A successful handoff consumes the intent, closes the
+old crash circuit with an audit reason, and records the event in
+`intentional_restart_attempts`; it does not add a crash-budget attempt. Stale,
+malformed, or PID-mismatched intents do not authorize a restart.
+
+The default intent file is next to the canonical runtime state at
+`supervisor-restart-intent.json`, not in the deploy checkout. Its default TTL is
+300 seconds.
+
 ## Install
 
 Preferred install:

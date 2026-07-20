@@ -156,6 +156,173 @@ class SupervisorWatchdogTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "readback mismatch"):
                 supervisor_watchdog.save_watchdog_state(self.config, {"restart_attempts": []})
 
+    def test_intentional_restart_record_is_fresh_and_pid_bound(self) -> None:
+        now = datetime(2026, 7, 20, 5, 30, tzinfo=timezone.utc)
+        target_sha = "a" * 40
+
+        recorded = supervisor_watchdog.record_intentional_restart(
+            self.config,
+            old_pid=123,
+            target_sha=target_sha,
+            now=now,
+        )
+
+        self.assertEqual(recorded["old_pid"], 123)
+        self.assertEqual(recorded["target_sha"], target_sha)
+        self.assertEqual(
+            supervisor_watchdog.load_valid_intentional_restart(
+                self.config,
+                now=now,
+                candidate_pids={123},
+            ),
+            recorded,
+        )
+        self.assertIsNone(
+            supervisor_watchdog.load_valid_intentional_restart(
+                self.config,
+                now=now,
+                candidate_pids={999},
+            )
+        )
+        self.assertIsNone(
+            supervisor_watchdog.load_valid_intentional_restart(
+                self.config,
+                now=now + supervisor_watchdog.timedelta(seconds=301),
+                candidate_pids={123},
+            )
+        )
+
+    def test_intentional_restart_bypasses_crash_budget_and_closes_circuit(self) -> None:
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        self.write_pid(123)
+        self.write_state(
+            {
+                "supervisor": {
+                    "pid": 123,
+                    "last_heartbeat_at": "2026-05-18T13:00:00Z",
+                    "lifecycle": "running",
+                }
+            }
+        )
+        attempts = [
+            {
+                "at": supervisor_watchdog.isoformat_utc(now - supervisor_watchdog.timedelta(seconds=offset)),
+                "reason": "pid_not_alive",
+            }
+            for offset in (30, 60)
+        ]
+        (self.root / "watchdog-state.json").write_text(
+            json.dumps(
+                {
+                    "restart_attempts": attempts,
+                    "circuit": {
+                        "open": True,
+                        "reason": "restart_budget_window_exhausted",
+                        "opened_at": supervisor_watchdog.isoformat_utc(now - supervisor_watchdog.timedelta(seconds=20)),
+                        "until": supervisor_watchdog.isoformat_utc(now + supervisor_watchdog.timedelta(seconds=1700)),
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        supervisor_watchdog.record_intentional_restart(
+            self.config,
+            old_pid=123,
+            target_sha="b" * 40,
+            now=now,
+        )
+        log_path = self.root / "intentional-restart.log"
+
+        with (
+            mock.patch.object(supervisor_watchdog, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=self.ok_resource()),
+            mock.patch.object(supervisor_watchdog, "start_supervisor", return_value=(999, log_path)),
+        ):
+            result = supervisor_watchdog.run_watchdog(self.config, restart=True)
+
+        self.assertEqual(result["decision"], "restart_supervisor")
+        self.assertEqual(result["reason"], "intentional_deploy_restart")
+        self.assertTrue(result["intentional_restart"])
+        watchdog_state = json.loads((self.root / "watchdog-state.json").read_text(encoding="utf-8"))
+        self.assertEqual(watchdog_state["restart_attempts"], attempts)
+        self.assertFalse(watchdog_state["circuit"]["open"])
+        self.assertEqual(watchdog_state["circuit"]["previous_reason"], "restart_budget_window_exhausted")
+        self.assertEqual(watchdog_state["intentional_restart_attempts"][0]["new_pid"], 999)
+        self.assertEqual(watchdog_state["intentional_restart_attempts"][0]["target_sha"], "b" * 40)
+        self.assertFalse(supervisor_watchdog.intentional_restart_path(self.config).exists())
+
+    def test_resource_pressure_still_blocks_intentional_restart(self) -> None:
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        self.write_pid(123)
+        self.write_state(
+            {
+                "supervisor": {
+                    "pid": 123,
+                    "last_heartbeat_at": "2026-05-18T13:00:00Z",
+                    "lifecycle": "running",
+                }
+            }
+        )
+        supervisor_watchdog.record_intentional_restart(
+            self.config,
+            old_pid=123,
+            target_sha="c" * 40,
+            now=now,
+        )
+        pressure = self.ok_resource()
+        pressure["disk_free_gb"] = 0.5
+
+        with (
+            mock.patch.object(supervisor_watchdog, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=pressure),
+            mock.patch.object(supervisor_watchdog, "start_supervisor") as start,
+        ):
+            result = supervisor_watchdog.run_watchdog(self.config, restart=True)
+
+        self.assertEqual(result["decision"], "suppress_restart")
+        self.assertIn("resource_pressure", result["reason"])
+        self.assertFalse(result["intentional_restart"])
+        start.assert_not_called()
+        self.assertTrue(supervisor_watchdog.intentional_restart_path(self.config).exists())
+
+    def test_intentional_deploy_classification_does_not_consume_crash_budget(self) -> None:
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        attempts = [
+            {
+                "at": supervisor_watchdog.isoformat_utc(now - supervisor_watchdog.timedelta(seconds=10)),
+                "reason": "pid_not_alive",
+                "classification": "intentional_deploy",
+            },
+            {
+                "at": supervisor_watchdog.isoformat_utc(now - supervisor_watchdog.timedelta(seconds=20)),
+                "reason": "pid_not_alive",
+            },
+        ]
+
+        counts = supervisor_watchdog.restart_attempt_counts(attempts, now, self.config["watchdog"])
+
+        self.assertEqual(counts, {"window": 1, "hour": 1})
+
+    def test_intentional_deploy_classification_does_not_trigger_backoff(self) -> None:
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        settings = dict(self.config["watchdog"])
+        settings["backoff_schedule_seconds"] = [300]
+        watchdog_state = {
+            "restart_attempts": [
+                {
+                    "at": supervisor_watchdog.isoformat_utc(now - supervisor_watchdog.timedelta(seconds=10)),
+                    "reason": "pid_not_alive",
+                    "classification": "intentional_deploy",
+                }
+            ],
+            "circuit": {"open": False, "reason": None, "opened_at": None, "until": None},
+        }
+
+        reason = supervisor_watchdog.budget_suppression_reason(watchdog_state, now, settings)
+
+        self.assertIsNone(reason)
+
     def test_healthy_supervisor_observes_only(self) -> None:
         now = datetime.now(timezone.utc)
         self.write_pid(123)
