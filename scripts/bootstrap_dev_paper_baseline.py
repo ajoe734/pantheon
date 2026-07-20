@@ -21,8 +21,8 @@ from typing import Any
 
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8001"
-DEFAULT_NAME = "Pantheon Dev Paper Baseline 2"
-DEFAULT_IDEMPOTENCY_KEY = "dev-paper-bootstrap-20260719-v2"
+DEFAULT_NAME = "Pantheon Dev Paper Baseline 3"
+DEFAULT_IDEMPOTENCY_KEY = "dev-paper-bootstrap-20260720-operator-a-v3"
 
 
 class BootstrapError(RuntimeError):
