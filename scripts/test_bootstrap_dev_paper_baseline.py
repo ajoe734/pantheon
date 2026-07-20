@@ -13,6 +13,7 @@ DEV_ENV = {
     "PANTHEON_BFF_AUTH_MODE": "strict",
     "PANTHEON_BFF_AUTH_STUB": "false",
     "PANTHEON_LIVE_BROKER_ENABLED": "false",
+    "PANTHEON_CANARY_EXECUTION_ENABLED": "false",
     "PANTHEON_BFF_OIDC_CLIENT_ID": "operator-id",
     "PANTHEON_BFF_OIDC_CLIENT_SECRET": "operator-secret",
 }
@@ -99,6 +100,10 @@ def test_replays_one_idempotent_request_until_authoritative_readback() -> None:
         ({"PANTHEON_BFF_AUTH_STUB": "true"}, "strict BFF auth"),
         ({"PANTHEON_BFF_AUTH_MODE": "permissive"}, "strict BFF auth"),
         ({"PANTHEON_LIVE_BROKER_ENABLED": "true"}, "live broker enabled"),
+        (
+            {"PANTHEON_CANARY_EXECUTION_ENABLED": "true"},
+            "canary execution enabled",
+        ),
     ],
 )
 def test_refuses_to_leave_strict_dev_paper_boundary(env_update, message) -> None:

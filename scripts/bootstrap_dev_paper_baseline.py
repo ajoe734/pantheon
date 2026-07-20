@@ -44,6 +44,10 @@ def assert_dev_paper_boundary() -> None:
         )
     if _bool_env("PANTHEON_LIVE_BROKER_ENABLED"):
         raise BootstrapError("dev paper bootstrap refuses to run with live broker enabled")
+    if _bool_env("PANTHEON_CANARY_EXECUTION_ENABLED"):
+        raise BootstrapError(
+            "dev paper bootstrap refuses to run with canary execution enabled"
+        )
 
 
 def _credential(name: str, *fallbacks: str) -> str:

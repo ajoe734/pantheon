@@ -20,6 +20,10 @@ Routes
   POST   /api/governance/approvals/{decision_id}/review     accept review
   POST   /api/governance/approvals/{decision_id}/decide     record outcome
   POST   /api/governance/approvals/{decision_id}/revoke     revoke decided decision
+  POST   /api/governance/human-gates                        create promotion gate
+  GET    /api/governance/human-gates/{decision_id}          read promotion gate
+  POST   /api/governance/human-gates/{decision_id}/signatures append MFA-bound signature
+  POST   /api/governance/human-gates/{decision_id}/revoke     revoke promotion gate
   GET    /api/governance/freeze-orders                      list freeze orders
   GET    /api/governance/freeze-orders/{freeze_order_id}    get freeze order
   GET    /api/governance/rollbacks                          list rollback records
@@ -42,7 +46,17 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, Header, HTTPException, Query, Body, Response
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
-from services.runtime_auth_inbound import AuthContext, AuthError, validate_request_auth
+from services.runtime_auth_inbound import (
+    AuthContext,
+    AuthError,
+    has_claim_bound_mfa,
+    validate_request_auth,
+)
+from services.governance.human_gate.decision_model import HumanGateDecisionError
+from services.governance.promotion_readiness.signoff_api import (
+    SignoffAPI,
+    SignoffApiError,
+)
 
 # ---------------------------------------------------------------------------
 # Platform objects — resolve relative to repo layout
@@ -81,6 +95,7 @@ try:
     from .authz import evaluate_authz_request
     from .pg_store import build_approval_decision_store, build_governance_audit_store
     from .record_store import GovernanceRecordStore, build_governance_record_store
+    from .human_gate_store import GovernanceHumanGateDecisionStore
     from .write_authority import is_authorized_to_decide, matrix_as_list
 except ImportError:
     from models import (  # type: ignore
@@ -97,6 +112,7 @@ except ImportError:
     from authz import evaluate_authz_request  # type: ignore
     from pg_store import build_approval_decision_store, build_governance_audit_store  # type: ignore
     from record_store import GovernanceRecordStore, build_governance_record_store  # type: ignore
+    from human_gate_store import GovernanceHumanGateDecisionStore  # type: ignore
     from write_authority import is_authorized_to_decide, matrix_as_list  # type: ignore
 
 logging.basicConfig(level=logging.INFO)
@@ -113,6 +129,7 @@ AUDIT_LOG_PATH = os.path.join(DATA_DIR, "audit.jsonl")
 STORE_PATH     = os.path.join(DATA_DIR, "approval_decisions.json")
 FREEZE_ORDER_STORE_PATH = os.path.join(DATA_DIR, "freeze_orders.json")
 ROLLBACK_STORE_PATH = os.path.join(DATA_DIR, "rollbacks.json")
+HUMAN_GATE_STORE_PATH = os.path.join(DATA_DIR, "human_gate_decisions.json")
 
 STORE_BACKEND = os.getenv("GOVERNANCE_STORE_BACKEND", "json").strip().lower() or "json"
 PERSISTENCE_POSTURE = require_persistence_posture("governance")
@@ -127,6 +144,17 @@ rollback_store: GovernanceRecordStore = build_governance_record_store(
     ROLLBACK_STORE_PATH,
     table=os.getenv("GOVERNANCE_ROLLBACK_STORE_TABLE", "governance.rollbacks"),
     id_fields=("rollback_id", "id"),
+)
+human_gate_record_store: GovernanceRecordStore = build_governance_record_store(
+    HUMAN_GATE_STORE_PATH,
+    table=os.getenv(
+        "GOVERNANCE_HUMAN_GATE_STORE_TABLE",
+        "governance.human_gate_decisions",
+    ),
+    id_fields=("decision_id",),
+)
+human_gate_api = SignoffAPI(
+    store=GovernanceHumanGateDecisionStore(human_gate_record_store)
 )
 
 # ---------------------------------------------------------------------------
@@ -150,12 +178,14 @@ register_fastapi_health_routes(
         "approval_count": len(store.list_all()),
         "freeze_order_count": len(freeze_order_store.list_all()),
         "rollback_count": len(rollback_store.list_all()),
+        "human_gate_count": len(human_gate_record_store.list_all()),
     },
     details=lambda: {
         "data_dir": DATA_DIR,
         "store_path": STORE_PATH,
         "freeze_order_store_path": FREEZE_ORDER_STORE_PATH,
         "rollback_store_path": ROLLBACK_STORE_PATH,
+        "human_gate_store_path": HUMAN_GATE_STORE_PATH,
         "store_backend": STORE_BACKEND,
         "persistence_posture": PERSISTENCE_POSTURE.to_dict(),
     },
@@ -302,6 +332,7 @@ def _utc_now() -> str:
 
 _freeze_order_lock = threading.Lock()
 _rollback_lock = threading.Lock()
+_human_gate_lock = threading.Lock()
 
 # Any authenticated caller holding one of these roles may write a freeze
 # order / rollback record at all (create or transition). Statuses that carry
@@ -329,6 +360,60 @@ _GOVERNANCE_AUTHORITY_ROLES = frozenset(
 _FREEZE_CREATE_AUTHORITY_ROLES = _GOVERNANCE_AUTHORITY_ROLES | {"operator"}
 _FREEZE_AUTHORITY_STATUSES = frozenset({"approved", "rejected", "active"})
 _ROLLBACK_AUTHORITY_STATUSES = frozenset({"approved", "rejected"})
+_PROMOTION_HUMAN_GATE_ROLES = frozenset(
+    {"approver", "risk_owner", "operator"}
+)
+_PROMOTION_HUMAN_GATE_EVIDENCE = {
+    "canary": frozenset(
+        {
+            "promotion_readiness_packet",
+            "paper_observation",
+            "paper_performance",
+            "reconciliation",
+            "incident_clearance",
+            "rollback_target",
+            "broker_sandbox_smoke",
+            "broker_entitlement",
+            "capital_authorization",
+            "kill_switch_drill",
+        }
+    ),
+    "live": frozenset(
+        {
+            "promotion_readiness_packet",
+            "canary_observation",
+            "canary_performance",
+            "execution_quality",
+            "reconciliation",
+            "incident_clearance",
+            "rollback_target",
+            "broker_sandbox_smoke",
+            "broker_entitlement",
+            "capital_authorization",
+            "kill_switch_drill",
+        }
+    ),
+}
+
+
+def _governance_auth_env() -> Dict[str, str]:
+    return {
+        "PANTHEON_RUNTIME_AUTH_MODE": os.getenv("PANTHEON_GOVERNANCE_AUTH_MODE") or os.getenv("PANTHEON_BFF_AUTH_MODE") or os.getenv("PANTHEON_RUNTIME_AUTH_MODE") or "permissive",
+        "PANTHEON_RUNTIME_JWT_SECRET": os.getenv("PANTHEON_GOVERNANCE_JWT_SECRET") or os.getenv("PANTHEON_BFF_JWT_SECRET") or os.getenv("PANTHEON_RUNTIME_JWT_SECRET", ""),
+        "PANTHEON_RUNTIME_JWT_ISSUER": os.getenv("PANTHEON_GOVERNANCE_JWT_ISSUER") or os.getenv("PANTHEON_BFF_JWT_ISSUER") or os.getenv("PANTHEON_RUNTIME_JWT_ISSUER", ""),
+        "PANTHEON_RUNTIME_JWT_AUDIENCE": os.getenv("PANTHEON_GOVERNANCE_JWT_AUDIENCE") or os.getenv("PANTHEON_BFF_JWT_AUDIENCE") or os.getenv("PANTHEON_RUNTIME_JWT_AUDIENCE", ""),
+        "PANTHEON_RUNTIME_DEFAULT_ROLE": os.getenv("PANTHEON_GOVERNANCE_DEFAULT_ROLE") or os.getenv("PANTHEON_BFF_DEFAULT_ROLE") or os.getenv("PANTHEON_RUNTIME_DEFAULT_ROLE", "operator"),
+        "PANTHEON_RUNTIME_MFA_REQUIRED": os.getenv("PANTHEON_GOVERNANCE_MFA_REQUIRED") or os.getenv("PANTHEON_BFF_MFA_REQUIRED") or os.getenv("PANTHEON_RUNTIME_MFA_REQUIRED", "false"),
+        "PANTHEON_RUNTIME_JWKS_URI": os.getenv("PANTHEON_GOVERNANCE_JWKS_URI") or os.getenv("PANTHEON_BFF_JWKS_URI") or os.getenv("PANTHEON_RUNTIME_JWKS_URI", ""),
+        "PANTHEON_RUNTIME_OIDC_DISCOVERY_URL": os.getenv("PANTHEON_GOVERNANCE_OIDC_DISCOVERY_URL") or os.getenv("PANTHEON_BFF_OIDC_DISCOVERY_URL") or os.getenv("PANTHEON_RUNTIME_OIDC_DISCOVERY_URL", ""),
+        "PANTHEON_RUNTIME_OIDC_ISSUER": os.getenv("PANTHEON_GOVERNANCE_OIDC_ISSUER") or os.getenv("PANTHEON_BFF_OIDC_ISSUER") or os.getenv("PANTHEON_RUNTIME_OIDC_ISSUER", ""),
+        "PANTHEON_RUNTIME_OIDC_AUDIENCE": os.getenv("PANTHEON_GOVERNANCE_OIDC_AUDIENCE") or os.getenv("PANTHEON_BFF_OIDC_AUDIENCE") or os.getenv("PANTHEON_RUNTIME_OIDC_AUDIENCE", ""),
+        "PANTHEON_RUNTIME_ROLE_CLAIMS": os.getenv("PANTHEON_GOVERNANCE_ROLE_CLAIMS") or os.getenv("PANTHEON_BFF_ROLE_CLAIMS") or os.getenv("PANTHEON_RUNTIME_ROLE_CLAIMS", ""),
+        "PANTHEON_RUNTIME_ROLE_MAP": os.getenv("PANTHEON_GOVERNANCE_ROLE_MAP") or os.getenv("PANTHEON_BFF_ROLE_MAP") or os.getenv("PANTHEON_RUNTIME_ROLE_MAP", ""),
+        "PANTHEON_RUNTIME_ROLE_MAP_MODE": os.getenv("PANTHEON_GOVERNANCE_ROLE_MAP_MODE") or os.getenv("PANTHEON_BFF_ROLE_MAP_MODE") or os.getenv("PANTHEON_RUNTIME_ROLE_MAP_MODE", ""),
+        "PANTHEON_RUNTIME_MFA_CLAIMS": os.getenv("PANTHEON_GOVERNANCE_MFA_CLAIMS") or os.getenv("PANTHEON_BFF_MFA_CLAIMS") or os.getenv("PANTHEON_RUNTIME_MFA_CLAIMS", ""),
+        "PANTHEON_RUNTIME_MFA_VALUES": os.getenv("PANTHEON_GOVERNANCE_MFA_VALUES") or os.getenv("PANTHEON_BFF_MFA_VALUES") or os.getenv("PANTHEON_RUNTIME_MFA_VALUES", ""),
+    }
 
 
 def _authenticate_governance_write(
@@ -342,24 +427,7 @@ def _authenticate_governance_write(
     freeze order with ``status: "active"``) and get a 201. Require a valid
     bearer token here and derive identity/roles from it instead.
     """
-    gov_env = {
-        "PANTHEON_RUNTIME_AUTH_MODE": os.getenv("PANTHEON_GOVERNANCE_AUTH_MODE") or os.getenv("PANTHEON_BFF_AUTH_MODE") or os.getenv("PANTHEON_RUNTIME_AUTH_MODE") or "permissive",
-        "PANTHEON_RUNTIME_JWT_SECRET": os.getenv("PANTHEON_GOVERNANCE_JWT_SECRET") or os.getenv("PANTHEON_BFF_JWT_SECRET") or os.getenv("PANTHEON_RUNTIME_JWT_SECRET", ""),
-        "PANTHEON_RUNTIME_JWT_ISSUER": os.getenv("PANTHEON_GOVERNANCE_JWT_ISSUER") or os.getenv("PANTHEON_BFF_JWT_ISSUER") or os.getenv("PANTHEON_RUNTIME_JWT_ISSUER", ""),
-        "PANTHEON_RUNTIME_JWT_AUDIENCE": os.getenv("PANTHEON_GOVERNANCE_JWT_AUDIENCE") or os.getenv("PANTHEON_BFF_JWT_AUDIENCE") or os.getenv("PANTHEON_RUNTIME_JWT_AUDIENCE", ""),
-        "PANTHEON_RUNTIME_DEFAULT_ROLE": os.getenv("PANTHEON_GOVERNANCE_DEFAULT_ROLE") or os.getenv("PANTHEON_BFF_DEFAULT_ROLE") or os.getenv("PANTHEON_RUNTIME_DEFAULT_ROLE", "operator"),
-        "PANTHEON_RUNTIME_MFA_REQUIRED": os.getenv("PANTHEON_GOVERNANCE_MFA_REQUIRED") or os.getenv("PANTHEON_BFF_MFA_REQUIRED") or os.getenv("PANTHEON_RUNTIME_MFA_REQUIRED", "false"),
-        # OIDC/JWKS optional path — active only when JWKS_URI is set.
-        "PANTHEON_RUNTIME_JWKS_URI": os.getenv("PANTHEON_GOVERNANCE_JWKS_URI") or os.getenv("PANTHEON_BFF_JWKS_URI") or os.getenv("PANTHEON_RUNTIME_JWKS_URI", ""),
-        "PANTHEON_RUNTIME_OIDC_DISCOVERY_URL": os.getenv("PANTHEON_GOVERNANCE_OIDC_DISCOVERY_URL") or os.getenv("PANTHEON_BFF_OIDC_DISCOVERY_URL") or os.getenv("PANTHEON_RUNTIME_OIDC_DISCOVERY_URL", ""),
-        "PANTHEON_RUNTIME_OIDC_ISSUER": os.getenv("PANTHEON_GOVERNANCE_OIDC_ISSUER") or os.getenv("PANTHEON_BFF_OIDC_ISSUER") or os.getenv("PANTHEON_RUNTIME_OIDC_ISSUER", ""),
-        "PANTHEON_RUNTIME_OIDC_AUDIENCE": os.getenv("PANTHEON_GOVERNANCE_OIDC_AUDIENCE") or os.getenv("PANTHEON_BFF_OIDC_AUDIENCE") or os.getenv("PANTHEON_RUNTIME_OIDC_AUDIENCE", ""),
-        "PANTHEON_RUNTIME_ROLE_CLAIMS": os.getenv("PANTHEON_GOVERNANCE_ROLE_CLAIMS") or os.getenv("PANTHEON_BFF_ROLE_CLAIMS") or os.getenv("PANTHEON_RUNTIME_ROLE_CLAIMS", ""),
-        "PANTHEON_RUNTIME_ROLE_MAP": os.getenv("PANTHEON_GOVERNANCE_ROLE_MAP") or os.getenv("PANTHEON_BFF_ROLE_MAP") or os.getenv("PANTHEON_RUNTIME_ROLE_MAP", ""),
-        "PANTHEON_RUNTIME_ROLE_MAP_MODE": os.getenv("PANTHEON_GOVERNANCE_ROLE_MAP_MODE") or os.getenv("PANTHEON_BFF_ROLE_MAP_MODE") or os.getenv("PANTHEON_RUNTIME_ROLE_MAP_MODE", ""),
-        "PANTHEON_RUNTIME_MFA_CLAIMS": os.getenv("PANTHEON_GOVERNANCE_MFA_CLAIMS") or os.getenv("PANTHEON_BFF_MFA_CLAIMS") or os.getenv("PANTHEON_RUNTIME_MFA_CLAIMS", ""),
-        "PANTHEON_RUNTIME_MFA_VALUES": os.getenv("PANTHEON_GOVERNANCE_MFA_VALUES") or os.getenv("PANTHEON_BFF_MFA_VALUES") or os.getenv("PANTHEON_RUNTIME_MFA_VALUES", ""),
-    }
+    gov_env = _governance_auth_env()
     mfa_required = gov_env["PANTHEON_RUNTIME_MFA_REQUIRED"].lower() == "true"
     try:
         return validate_request_auth(
@@ -413,6 +481,315 @@ def _resolve_trusted_actor(
             declared_actor = sorted(ctx.roles)[0] if ctx.roles else None
     body[actor_field] = declared_actor
     body[identity_field] = ctx.actor_id
+
+
+def _emit_human_gate_event(
+    event_type: str,
+    decision: Dict[str, Any],
+    *,
+    actor_id: str,
+    actor_role: str,
+) -> None:
+    try:
+        audit_store.append_event(
+            event_type=event_type,
+            decision_id=str(decision["decision_id"]),
+            actor_id=actor_id,
+            actor_role=actor_role,
+            target_type=str(decision["target_type"]),
+            target_id=str(decision["target_id"]),
+            detail={
+                "target_environment": decision["target_environment"],
+                "target_stage": decision.get("target_stage"),
+                "source_binding_id": decision.get("source_binding_id"),
+                "status": decision["status"],
+                "evidence_hash": decision["evidence_hash"],
+            },
+        )
+    except Exception as exc:
+        log.warning("Human-gate audit write failed: %s", exc)
+
+
+# ---------------------------------------------------------------------------
+# Routes — target-bound promotion human gates
+# ---------------------------------------------------------------------------
+
+@app.post(
+    "/api/governance/human-gates",
+    response_model=Dict[str, Any],
+    status_code=201,
+    summary="Create a target-bound runtime promotion human gate",
+)
+def create_human_gate(
+    body: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+) -> Dict[str, Any]:
+    ctx = _authenticate_governance_write(authorization, x_mfa_token)
+    target_type = str(body.get("target_type") or "").strip()
+    if target_type != "runtime_binding_promotion":
+        raise HTTPException(
+            status_code=422,
+            detail="target_type must be 'runtime_binding_promotion'",
+        )
+
+    metadata = dict(body.get("metadata") or {}) if isinstance(body.get("metadata"), dict) else {}
+    unsupported_metadata = sorted(
+        set(metadata).difference({"target_stage", "source_binding_id"})
+    )
+    if unsupported_metadata:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "unsupported human-gate metadata fields: "
+                + ", ".join(unsupported_metadata)
+            ),
+        )
+    target_stage = str(metadata.get("target_stage") or "").strip().lower()
+    required_evidence = _PROMOTION_HUMAN_GATE_EVIDENCE.get(target_stage)
+    if required_evidence is None:
+        raise HTTPException(
+            status_code=422,
+            detail="metadata.target_stage must be 'canary' or 'live'",
+        )
+    if not str(metadata.get("source_binding_id") or "").strip():
+        raise HTTPException(
+            status_code=422,
+            detail="metadata.source_binding_id is required",
+        )
+
+    requested_roles = body.get("required_roles")
+    if requested_roles is not None and (
+        not isinstance(requested_roles, list)
+        or frozenset(str(role) for role in requested_roles) != _PROMOTION_HUMAN_GATE_ROLES
+        or len(requested_roles) != len(_PROMOTION_HUMAN_GATE_ROLES)
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="required_roles must contain exactly approver, risk_owner, and operator",
+        )
+
+    can_proceed_input = body.get("can_proceed_input")
+    if not isinstance(can_proceed_input, dict):
+        raise HTTPException(status_code=422, detail="can_proceed_input must be an object")
+    declared_evidence_items = can_proceed_input.get("required_evidence", [])
+    declared_evidence = frozenset(
+        str(key) for key in declared_evidence_items
+    ) if isinstance(declared_evidence_items, list) else frozenset()
+    if (
+        not isinstance(declared_evidence_items, list)
+        or declared_evidence != required_evidence
+        or len(declared_evidence_items) != len(required_evidence)
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"can_proceed_input.required_evidence for {target_stage} must contain exactly "
+                + ", ".join(sorted(required_evidence))
+            ),
+        )
+
+    reviewed_evidence = body.get("evidence_reviewed")
+    reviewed_keys = (
+        [str(item.get("key") or "") for item in reviewed_evidence]
+        if isinstance(reviewed_evidence, list)
+        and all(isinstance(item, dict) for item in reviewed_evidence)
+        else []
+    )
+    if (
+        frozenset(reviewed_keys) != required_evidence
+        or len(reviewed_keys) != len(required_evidence)
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"evidence_reviewed for {target_stage} must contain exactly "
+                + ", ".join(sorted(required_evidence))
+            ),
+        )
+
+    decision_id = str(body.get("decision_id") or f"hgd-{uuid.uuid4().hex[:12]}").strip()
+    metadata["target_stage"] = target_stage
+    metadata["created_by_actor_id"] = ctx.actor_id
+    payload = {
+        "decision_id": decision_id,
+        "target_type": target_type,
+        "target_id": body.get("target_id"),
+        "target_environment": body.get("target_environment"),
+        "required_roles": sorted(_PROMOTION_HUMAN_GATE_ROLES),
+        "evidence_reviewed": body.get("evidence_reviewed"),
+        "can_proceed_input": can_proceed_input,
+    }
+    payload.update(metadata)
+    try:
+        with _human_gate_lock:
+            created = human_gate_api.create_decision(payload).to_dict()
+    except SignoffApiError as exc:
+        code = 409 if "already exists" in str(exc) else 422
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
+    except HumanGateDecisionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    acting_role = next(
+        (role for role in ("admin", "approver", "risk_owner", "operator") if role in ctx.roles),
+        sorted(ctx.roles)[0],
+    )
+    _emit_human_gate_event(
+        "human_gate_created",
+        created,
+        actor_id=ctx.actor_id,
+        actor_role=acting_role,
+    )
+    return created
+
+
+@app.get(
+    "/api/governance/human-gates/{decision_id}",
+    response_model=Dict[str, Any],
+    summary="Read a canonical promotion human gate",
+)
+def get_human_gate(decision_id: str) -> Dict[str, Any]:
+    try:
+        return human_gate_api.read_decision(decision_id).to_dict()
+    except SignoffApiError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post(
+    "/api/governance/human-gates/{decision_id}/signatures",
+    response_model=Dict[str, Any],
+    summary="Append an MFA-bound human-gate signature",
+)
+def sign_human_gate(
+    decision_id: str,
+    body: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+) -> Dict[str, Any]:
+    ctx = _authenticate_governance_write(authorization, x_mfa_token)
+    if not has_claim_bound_mfa(ctx, env=_governance_auth_env()):
+        raise HTTPException(
+            status_code=401,
+            detail="A verified JWT with claim-bound MFA is required to sign a human gate",
+        )
+
+    requested_role = str(body.get("role") or "").strip()
+    eligible_roles = _PROMOTION_HUMAN_GATE_ROLES.intersection(ctx.roles)
+    if not requested_role and len(eligible_roles) == 1:
+        requested_role = next(iter(eligible_roles))
+    if requested_role not in eligible_roles:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Authenticated role set {sorted(ctx.roles)} cannot sign required role "
+                f"{requested_role!r}"
+            ),
+        )
+
+    meaning = str(body.get("meaning") or "approved").strip().lower()
+    if meaning not in {"approved", "rejected"}:
+        raise HTTPException(
+            status_code=422,
+            detail="human-gate signature meaning must be approved or rejected",
+        )
+    if body.get("conditions"):
+        raise HTTPException(
+            status_code=422,
+            detail="conditional signatures are not admitted for runtime promotion",
+        )
+
+    try:
+        with _human_gate_lock:
+            current = human_gate_api.read_decision(decision_id)
+            if any(signature.actor_id == ctx.actor_id for signature in current.signatures):
+                raise HTTPException(
+                    status_code=409,
+                    detail="one authenticated actor may sign only one role on a human gate",
+                )
+            signature_payload = {
+                "role": requested_role,
+                "actor_id": ctx.actor_id,
+                "meaning": meaning,
+                "authn_token_kind": ctx.token_kind,
+                "mfa_proof": "jwt_claim",
+            }
+            if body.get("signature_id"):
+                signature_payload["signature_id"] = body["signature_id"]
+            if body.get("source_ref"):
+                signature_payload["source_ref"] = body["source_ref"]
+            signed = human_gate_api.append_signature(
+                decision_id, signature_payload
+            ).to_dict()
+    except HTTPException:
+        raise
+    except SignoffApiError as exc:
+        code = 404 if "not found" in str(exc) else 409
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
+    except HumanGateDecisionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    _emit_human_gate_event(
+        "human_gate_signed",
+        signed,
+        actor_id=ctx.actor_id,
+        actor_role=requested_role,
+    )
+    return signed
+
+
+@app.post(
+    "/api/governance/human-gates/{decision_id}/revoke",
+    response_model=Dict[str, Any],
+    summary="Revoke a promotion human gate",
+)
+def revoke_human_gate(
+    decision_id: str,
+    body: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+) -> Dict[str, Any]:
+    ctx = _authenticate_governance_write(authorization, x_mfa_token)
+    revoke_roles = frozenset({"approver", "risk_owner", "admin"})
+    eligible_roles = revoke_roles.intersection(ctx.roles)
+    if not eligible_roles:
+        raise HTTPException(
+            status_code=403,
+            detail="human-gate revocation requires approver, risk_owner, or admin",
+        )
+    if not has_claim_bound_mfa(ctx, env=_governance_auth_env()):
+        raise HTTPException(
+            status_code=401,
+            detail="A verified JWT with claim-bound MFA is required to revoke a human gate",
+        )
+    reason = str(body.get("reason") or "").strip()
+    if not reason:
+        raise HTTPException(status_code=422, detail="reason is required")
+    acting_role = next(
+        role for role in ("admin", "risk_owner", "approver") if role in eligible_roles
+    )
+    try:
+        with _human_gate_lock:
+            revoked = human_gate_api.revoke_decision(
+                decision_id,
+                reason=reason,
+                metadata={
+                    "revoked_by_actor_id": ctx.actor_id,
+                    "revoked_by_role": acting_role,
+                    "revocation_mfa_proof": "jwt_claim",
+                },
+            ).to_dict()
+    except SignoffApiError as exc:
+        code = 404 if "not found" in str(exc) else 409
+        raise HTTPException(status_code=code, detail=str(exc)) from exc
+    except HumanGateDecisionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    _emit_human_gate_event(
+        "human_gate_revoked",
+        revoked,
+        actor_id=ctx.actor_id,
+        actor_role=acting_role,
+    )
+    return revoked
 
 
 @app.post(

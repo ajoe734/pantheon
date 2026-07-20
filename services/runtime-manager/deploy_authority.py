@@ -137,6 +137,8 @@ def verify_deploy_authorities(
     fetch_json: FetchJson | None = None,
     now: datetime | None = None,
     allowed_plan_statuses: Collection[str] = ("approved", "executing"),
+    allowed_target_stages: Collection[str] = ("paper",),
+    allowed_registry_deployment_stages: Collection[str] = ("none", "paper"),
 ) -> dict[str, Any]:
     """Return a target-bound loader/approval report or fail closed.
 
@@ -146,10 +148,18 @@ def verify_deploy_authorities(
     """
 
     target_stage = _required_text(request, "target_stage", "deploy request")
-    if target_stage != "paper":
+    admitted_target_stages = frozenset(
+        str(stage) for stage in allowed_target_stages
+    )
+    if target_stage not in admitted_target_stages:
+        if admitted_target_stages == frozenset({"paper"}):
+            raise DeployAuthorityError(
+                "new RuntimeBinding admission supports paper only; canary/live "
+                "requires an authoritative target-bound MFA/two-person promotion verifier"
+            )
         raise DeployAuthorityError(
-            "new RuntimeBinding admission supports paper only; canary/live "
-            "requires an authoritative target-bound MFA/two-person promotion verifier"
+            f"target_stage must be one of {sorted(admitted_target_stages)!r}; "
+            f"got {target_stage!r}"
         )
 
     plan_status = _required_text(request, "plan_status", "deploy request")
@@ -282,9 +292,13 @@ def verify_deploy_authorities(
         if entry.get(field) != expected
     ]
     deployment_stage = str(registry_payload.get("deployment_stage") or "").strip()
-    if deployment_stage not in {"none", "paper"}:
+    admitted_registry_stages = frozenset(
+        str(stage) for stage in allowed_registry_deployment_stages
+    )
+    if deployment_stage not in admitted_registry_stages:
         registry_mismatches.append(
-            f"deployment_stage expected 'none' or 'paper', got {deployment_stage!r}"
+            "deployment_stage expected one of "
+            f"{sorted(admitted_registry_stages)!r}, got {deployment_stage!r}"
         )
     if registry_mismatches:
         raise DeployAuthorityError(
@@ -451,6 +465,16 @@ def verify_deploy_authorities(
         "deployment_plan_current_stage": plan_current_stage,
         "deployment_plan_binding_id": plan.get("binding_id"),
         "deployment_plan_runtime_lifecycle": dict(plan_runtime_lifecycle),
+        "deployment_plan_transition_type": plan.get("transition_type"),
+        "deployment_plan_runtime_action": plan.get("runtime_action"),
+        "deployment_plan_scale": (
+            dict(plan["scale"]) if isinstance(plan.get("scale"), Mapping) else None
+        ),
+        "deployment_plan_rollback": (
+            dict(plan["rollback"])
+            if isinstance(plan.get("rollback"), Mapping)
+            else None
+        ),
         "deployment_plan_sha256": _canonical_digest(plan),
         "deployment_plan_authority_sha256": _canonical_digest(
             _deployment_plan_authority_view(plan)

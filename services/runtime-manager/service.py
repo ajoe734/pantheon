@@ -1209,6 +1209,194 @@ class RuntimeManagerService:
             "position_lineage": position_lineage,
         }
 
+    def promote_stage(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """Atomically promote one governed binding to the next execution stage."""
+        with self._control_lock:
+            with self._replace_lock:
+                return self._promote_stage_once(request)
+
+    def _promote_stage_once(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        current_binding_id = str(request.get("current_binding_id") or "").strip()
+        if not current_binding_id:
+            raise RuntimeManagerError(
+                "current_binding_id is required for stage promotion."
+            )
+        old_binding = self._store.require(current_binding_id)
+        target_stage = str(request.get("target_stage") or "").strip()
+        expected_target = {
+            DeploymentMode.PAPER.value: DeploymentMode.CANARY.value,
+            DeploymentMode.CANARY.value: DeploymentMode.LIVE.value,
+        }.get(old_binding.deployment_mode)
+        if expected_target is None or target_stage != expected_target:
+            raise RuntimeManagerError(
+                "Stage promotion must advance exactly one step: paper -> canary "
+                "or canary -> live; source is "
+                f"{old_binding.deployment_mode!r} and target is {target_stage!r}."
+            )
+
+        runtime_id = str(request.get("runtime_id") or old_binding.runtime_id).strip()
+        if runtime_id != old_binding.runtime_id:
+            raise RuntimeManagerError(
+                "Stage promotion must preserve the source runtime_id."
+            )
+        capital_pool_id = str(request.get("capital_pool_id") or "").strip()
+        if capital_pool_id != old_binding.capital_pool_id:
+            raise RuntimeManagerError(
+                "Stage promotion must preserve the source capital_pool_id."
+            )
+        persona_binding_id = str(
+            request.get("persona_capital_binding_id") or ""
+        ).strip()
+        if persona_binding_id != old_binding.persona_capital_binding_id:
+            raise RuntimeManagerError(
+                "Stage promotion must preserve the source PersonaCapitalBinding."
+            )
+        artifact_pair = (
+            str(request.get("artifact_id") or "").strip(),
+            str(request.get("artifact_version") or "").strip(),
+        )
+        if artifact_pair != (
+            old_binding.artifact_id,
+            old_binding.artifact_version,
+        ):
+            raise RuntimeManagerError(
+                "Stage promotion must preserve the source artifact; use forward "
+                "same-stage replacement for an artifact change."
+            )
+
+        source_attestation_key = (
+            "authoritative_loader_attestation"
+            if old_binding.deployment_mode == DeploymentMode.PAPER.value
+            else "authoritative_promotion_attestation"
+        )
+        source_attestation = old_binding.metadata.get(source_attestation_key)
+        if not isinstance(source_attestation, Mapping) or source_attestation.get(
+            "status"
+        ) != "passed":
+            raise RuntimeManagerError(
+                "Stage promotion source lacks its canonical admission attestation."
+            )
+        if (
+            old_binding.deployment_mode == DeploymentMode.CANARY.value
+            and source_attestation.get("target_stage") != DeploymentMode.CANARY.value
+        ):
+            raise RuntimeManagerError(
+                "Canary source promotion attestation does not prove canary admission."
+            )
+
+        replay_candidates = [
+            binding
+            for binding in self._store.find_by_pool(old_binding.capital_pool_id)
+            if binding.binding_id != current_binding_id
+            and binding.plan_id == str(request.get("plan_id") or "")
+            and binding.runtime_id == runtime_id
+            and binding.deployment_mode == target_stage
+            and binding.execution_mode == target_stage
+            and binding.persona_capital_binding_id == persona_binding_id
+            and (binding.artifact_id, binding.artifact_version) == artifact_pair
+            and binding.status
+            in {
+                RuntimeBindingStatus.ACTIVE.value,
+                RuntimeBindingStatus.PAUSED.value,
+            }
+            and binding.metadata.get("stage_promotion_parent_binding_id")
+            == current_binding_id
+        ]
+        if len(replay_candidates) > 1:
+            raise RuntimeManagerError(
+                "Stage promotion recovery found multiple matching child bindings; "
+                "manual reconciliation is required."
+            )
+        if replay_candidates:
+            child = replay_candidates[0]
+            if old_binding.status == RuntimeBindingStatus.RETIRED.value:
+                retired_old = old_binding
+                cutover_at = old_binding.retired_at or child.effective_at
+            elif old_binding.status == RuntimeBindingStatus.ACTIVE.value:
+                cutover_at = utc_now()
+                retired_old = self._store.retire(
+                    current_binding_id, retired_at=cutover_at
+                )
+            else:
+                raise RuntimeManagerError(
+                    "Stage promotion replay source must be active or retired."
+                )
+            return self._stage_promotion_result(
+                old_binding=retired_old,
+                new_binding=child,
+                cutover_at=cutover_at,
+                replayed=True,
+            )
+
+        if old_binding.status != RuntimeBindingStatus.ACTIVE.value:
+            raise RuntimeManagerError(
+                f"Stage promotion requires active source binding; got "
+                f"{old_binding.status!r}."
+            )
+
+        deploy_request = dict(request)
+        deploy_request["runtime_id"] = runtime_id
+        metadata = (
+            dict(request.get("metadata") or {})
+            if isinstance(request.get("metadata"), dict)
+            else {}
+        )
+        metadata["stage_promotion_parent_binding_id"] = current_binding_id
+        metadata["stage_promotion_source_stage"] = old_binding.deployment_mode
+        metadata["stage_promotion_target_stage"] = target_stage
+        deploy_request["metadata"] = metadata
+        deploy_request.pop("rollback_parent", None)
+        deploy_request.pop("rollback_action_type", None)
+
+        new_binding = self._deploy_once(
+            deploy_request,
+            _allow_cutover_bypass=True,
+            _allow_non_paper_deploy=True,
+            _defer_store=True,
+        )
+        cutover_at = utc_now()
+        retired_old, new_binding = self._store.cutover(
+            current_binding_id,
+            new_binding,
+            retired_at=cutover_at,
+            single_runtime_enforced=self._single_runtime_enforced,
+        )
+        return self._stage_promotion_result(
+            old_binding=retired_old,
+            new_binding=new_binding,
+            cutover_at=cutover_at,
+            replayed=False,
+        )
+
+    @staticmethod
+    def _stage_promotion_result(
+        *,
+        old_binding: RuntimeBinding,
+        new_binding: RuntimeBinding,
+        cutover_at: str,
+        replayed: bool,
+    ) -> Dict[str, Any]:
+        return {
+            "operation": "stage_promotion",
+            "replayed": replayed,
+            "source_stage": old_binding.deployment_mode,
+            "target_stage": new_binding.deployment_mode,
+            "old_binding": old_binding.to_dict(),
+            "new_binding": new_binding.to_dict(),
+            "cutover_at": cutover_at,
+            "position_lineage": {
+                "opened_by_artifact_id": old_binding.artifact_id,
+                "prev_binding_id": old_binding.binding_id,
+                "new_binding_id": new_binding.binding_id,
+                "current_managed_by_binding_id": new_binding.binding_id,
+                "cutover_at": cutover_at,
+                "note": (
+                    "Governed stage promotion preserved runtime, artifact, capital "
+                    "pool, and PersonaCapitalBinding identity."
+                ),
+            },
+        }
+
     def _prove_paper_rollback_target(
         self,
         request: Dict[str, Any],
