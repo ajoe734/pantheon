@@ -1213,16 +1213,16 @@ def test_overlay_upgrades_credential_unavailable_when_health_ok(monkeypatch):
     assert out_dss["provider_statuses"]["polygon"] == "read_ok"
 
 
-def test_source_health_truth_overlay_maps_yahoo_and_preserves_fred_key_gate(monkeypatch):
+def test_source_health_truth_overlay_maps_stooq_and_preserves_fred_key_gate(monkeypatch):
     dss = {
         "state": "partial_readback",
         "provider_statuses": {
-            "yahoo": "read_unavailable",
+            "stooq": "read_unavailable",
             "fred": "credential_unavailable",
         },
     }
     sources = [
-        {"provider_key": "yahoo", "status": "read_unavailable"},
+        {"provider_key": "stooq", "status": "read_unavailable"},
         {
             "provider_key": "fred",
             "status": "credential_unavailable",
@@ -1234,16 +1234,16 @@ def test_source_health_truth_overlay_maps_yahoo_and_preserves_fred_key_gate(monk
         bff_main,
         "_source_ingest_truth_by_connector",
         lambda: {
-            "us-yahoo-daily-ohlcv": {
+            "us-stooq-daily-ohlcv": {
                 "health": {
-                    "source_id": "us-yahoo-daily-ohlcv",
+                    "source_id": "us-stooq-daily-ohlcv",
                     "status": "ok",
                     "last_success_at": "2026-06-28T01:00:00Z",
                     "row_count_last_run": 3,
-                    "metadata": {"provider": "Yahoo Finance"},
+                    "metadata": {"provider": "Stooq"},
                 },
                 "connector": {
-                    "connector_id": "us-yahoo-daily-ohlcv",
+                    "connector_id": "us-stooq-daily-ohlcv",
                     "status": "enabled",
                     "schedule": {"configured": True, "enabled": True, "interval_seconds": 86400},
                     "freshness": {"status": "fresh", "last_success_at": "2026-06-28T01:00:00Z"},
@@ -1270,11 +1270,11 @@ def test_source_health_truth_overlay_maps_yahoo_and_preserves_fred_key_gate(monk
     out_dss, out_sources, _bindings = bff_main._overlay_source_health_truth(dss, sources)
 
     by_provider = {s["provider_key"]: s for s in out_sources}
-    assert by_provider["yahoo"]["status"] == "read_ok"
-    assert by_provider["yahoo"]["connectorId"] == "us-yahoo-daily-ohlcv"
+    assert by_provider["stooq"]["status"] == "read_ok"
+    assert by_provider["stooq"]["connectorId"] == "us-stooq-daily-ohlcv"
     assert by_provider["fred"]["status"] == "credential_unavailable"
     assert by_provider["fred"]["secret_ref"] == "env://FRED_API_KEY"
-    assert out_dss["provider_statuses"]["yahoo"] == "read_ok"
+    assert out_dss["provider_statuses"]["stooq"] == "read_ok"
     assert out_dss["provider_statuses"]["fred"] == "credential_unavailable"
 
 

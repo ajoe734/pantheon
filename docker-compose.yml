@@ -148,6 +148,10 @@ services:
       SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS: ${SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS:-60}
       SOURCE_INGEST_FRONTIER_RUNNING_TIMEOUT_SECONDS: ${SOURCE_INGEST_FRONTIER_RUNNING_TIMEOUT_SECONDS:-300}
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      # Third-party fetches are denied outside production. Set to `allowlist`
+      # with PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS for a scoped live pull.
+      PANTHEON_EXTERNAL_EGRESS: ${PANTHEON_EXTERNAL_EGRESS:-deny}
+      PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS: ${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}
       PANTHEON_SOURCE_SEARCH_POSTURE: ${PANTHEON_SOURCE_SEARCH_POSTURE:-dev}
       PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
       PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
@@ -196,6 +200,10 @@ services:
       dockerfile: services/source_ingestion/Dockerfile
     command: ["python", "-m", "services.source_ingestion.controller_worker"]
     restart: unless-stopped
+    # Opt-in only. An always-on 60s tick drives every connector against its
+    # third-party provider, which reads as continuous crawling from one cloud
+    # egress IP. Enable the profile deliberately for a bounded ingest run.
+    profiles: ["source-ingest-scheduler"]
     environment:
       SOURCE_INGEST_API_URL: http://source-ingest:8097
       SOURCE_INGEST_DESIRED_STATE_PATH: /workspace/services/source_ingestion/default_desired_state.json
@@ -501,6 +509,10 @@ services:
       RESEARCH_ORCHESTRATOR_MAX_ACTIVE_RUNS: ${RESEARCH_ORCHESTRATOR_MAX_ACTIVE_RUNS:-8}
       RESEARCH_ORCHESTRATOR_ENABLE_PRODUCTION_ADAPTERS: "false"
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      # Third-party fetches are denied outside production. Set to `allowlist`
+      # with PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS for a scoped live pull.
+      PANTHEON_EXTERNAL_EGRESS: ${PANTHEON_EXTERNAL_EGRESS:-deny}
+      PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS: ${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}
       PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
       PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
       PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}

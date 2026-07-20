@@ -13,6 +13,8 @@ from datetime import datetime, timedelta, timezone
 from io import StringIO
 from typing import Any, Mapping, Sequence
 
+from services.external_egress import guard_external_url
+
 from .base import (
     AuthPolicy,
     AuthType,
@@ -187,7 +189,7 @@ def _date_from_finra(value: Any) -> str:
 
 def _request_json(url: str, *, user_agent: str, timeout_seconds: float = 20.0) -> Mapping[str, Any]:
     request = urllib.request.Request(
-        url,
+        guard_external_url(url, caller="source_ingest.us_public"),
         headers={
             "Accept": "application/json",
             "User-Agent": user_agent,
@@ -206,7 +208,10 @@ def _request_text(
     user_agent: str = "pantheon-source-ingest/0.1",
     timeout_seconds: float = 20.0,
 ) -> str:
-    request = urllib.request.Request(url, headers={"Accept": "text/csv,text/plain,*/*", "User-Agent": user_agent})
+    request = urllib.request.Request(
+        guard_external_url(url, caller="source_ingest.us_public"),
+        headers={"Accept": "text/csv,text/plain,*/*", "User-Agent": user_agent},
+    )
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
         return response.read().decode("utf-8", errors="replace")
 

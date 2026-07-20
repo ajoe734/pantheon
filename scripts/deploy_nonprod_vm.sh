@@ -1389,7 +1389,12 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     #   source-search-bounded        source-search-bounded-smoke
     #
     # Operators can narrow scope via PANTHEON_DEV_COMPOSE_PROFILES.
-    PANTHEON_DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-activation-ready-smoke,dormant-smoke,openclaw,openclaw-activation-ready-e2e,search-index-scheduler,smoke,source-ingest-scheduler,source-search-bounded}"
+    #
+    # source-ingest-scheduler is deliberately NOT in the default set. It ticks
+    # every 60s against third-party providers (Yahoo, CoinGecko, TWSE/TPEx,
+    # MOPS, FinMind, SEC/FRED/FINRA, stooq); left always-on it is continuous
+    # crawling from one cloud egress IP. Add it explicitly for a bounded run.
+    PANTHEON_DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-activation-ready-smoke,dormant-smoke,openclaw,openclaw-activation-ready-e2e,search-index-scheduler,smoke,source-search-bounded}"
     ensure_dev_management_ai_bucket
     ensure_dev_management_ai_postgres_role
     prune_dev_management_ai_telemetry_for_disk

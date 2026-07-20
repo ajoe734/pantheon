@@ -16,6 +16,8 @@ from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from services.external_egress import guard_external_url
+
 
 @dataclass
 class OpenAlexMetadata:
@@ -84,7 +86,7 @@ class OpenAlexClient:
         params["mailto"] = self.email
         url = f"{self.BASE_URL}/{endpoint}?{urlencode(params)}"
         
-        request = Request(url, headers={
+        request = Request(guard_external_url(url, caller="research.openalex_client"), headers={
             "User-Agent": "PantheonGrokResearch/1.0 (research-bot@pantheon-system.local)"
         })
         

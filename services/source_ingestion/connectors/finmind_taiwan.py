@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
 from urllib.parse import urlencode
 
+from services.external_egress import guard_external_url
+
 from .base import (
     AuthPolicy,
     AuthType,
@@ -892,7 +894,7 @@ class FinMindLiveFetcher:
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         """HTTP GET against FinMind API. Token is sent only as Authorization header."""
         request = urllib.request.Request(
-            url,
+            guard_external_url(url, caller="source_ingest.finmind_taiwan"),
             headers={
                 "Accept": "application/json",
                 "Authorization": f"Bearer {token}",

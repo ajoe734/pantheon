@@ -20,6 +20,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from services.external_egress import guard_external_url
+
 from .base import (
     AuthPolicy,
     AuthType,
@@ -111,7 +113,7 @@ def _request_json(
     timeout_seconds: float = 20.0,
 ) -> Any:
     req = urllib.request.Request(
-        url,
+        guard_external_url(url, caller="source_ingest.us_paid_broker"),
         headers={
             "Accept": "application/json",
             "User-Agent": "pantheon-source-ingest/0.1",

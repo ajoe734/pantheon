@@ -30,7 +30,6 @@ from .connectors.us_public import (
     SecEdgarFilingAdapter,
     StooqDailyOhlcvAdapter,
 )
-from .connectors.us_yahoo import YahooUsEquityDailyAdapter
 from .connectors.us_paid_broker import (
     AlphaVantageUsEquityDailyAdapter,
     IbkrBrokerReadbackAdapter,
@@ -463,44 +462,6 @@ def _finra_short_sale(
     )
 
 
-def _yahoo_us_daily(
-    adapter: YahooUsEquityDailyAdapter,
-    request: Mapping[str, Any],
-    trace_id: str,
-) -> tuple[SourceRecord, ...]:
-    symbols = _string_list(request.get("symbols") or request.get("symbol")) or [
-        str(symbol).upper() for symbol in adapter.default_symbols
-    ]
-    records: list[SourceRecord] = []
-    if request.get("payload") not in (None, ""):
-        if len(symbols) != 1:
-            raise SourceEvidenceError("Yahoo chart fixture payload requests must target exactly one symbol")
-        symbol = symbols[0]
-        return adapter.records_from_chart_payload(
-            symbol,
-            _mapping(_require(request.get("payload"), "payload")),
-            source_url=request.get("source_url"),
-            trace_id=trace_id,
-        )
-    payloads = _mapping(request.get("payloads")) if request.get("payloads") not in (None, "") else {}
-    range_value = str(request.get("range") or request.get("range_value") or adapter.range_value)
-    interval = str(request.get("interval") or adapter.interval)
-    for symbol in symbols:
-        symbol_value = str(symbol).strip().upper()
-        payload = payloads.get(symbol_value)
-        if payload is None:
-            payload = adapter.fetch_chart(symbol_value, range_value=range_value, interval=interval)
-        records.extend(
-            adapter.records_from_chart_payload(
-                symbol_value,
-                _mapping(payload),
-                source_url=adapter.daily_url(symbol_value, range_value=range_value, interval=interval),
-                trace_id=trace_id,
-            )
-        )
-    return tuple(records)
-
-
 def _stooq_daily(adapter: StooqDailyOhlcvAdapter, request: Mapping[str, Any], trace_id: str) -> tuple[SourceRecord, ...]:
     symbol = str(_require(request.get("symbol"), "symbol"))
     csv_text = request.get("csv_text") or request.get("payload")
@@ -751,12 +712,6 @@ ALLOWED_PROVIDER_ADAPTERS: dict[str, ProviderAdapterSpec] = {
         adapter_cls=StooqDailyOhlcvAdapter,
         handler=_stooq_daily,
         config_keys=("max_records", "connector_status", "disabled_reason"),
-    ),
-    "YahooUsEquityDailyAdapter.records_from_chart_payload": ProviderAdapterSpec(
-        token="YahooUsEquityDailyAdapter.records_from_chart_payload",
-        adapter_cls=YahooUsEquityDailyAdapter,
-        handler=_yahoo_us_daily,
-        config_keys=("max_records", "default_symbols", "range_value", "interval", "timeout_seconds", "user_agent"),
     ),
     "CoinGeckoSpotMarketAdapter.records_from_payload": ProviderAdapterSpec(
         token="CoinGeckoSpotMarketAdapter.records_from_payload",
