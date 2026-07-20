@@ -361,7 +361,7 @@ touches the hot path.
   pinned by `rewrite/test_provider_health.py`, `test_provider_permissions.py`,
   and `test_supervisor.py`.
 - **Phase 4 — correctness fixes cut over; lease→progress binding + per-worker
-  commit observation shipped (flag); full decomposition pending.**
+  commit observation shipped (flag); physical decomposition complete.**
   `rewrite/worker_lifecycle.py`: (a) `confirm_kill`
   (SIGTERM → wait → SIGKILL → verify) now backs `terminate_worker_pid`, ending
   SIGTERM-and-assume-dead (a worker was marked `failed` while still alive and
@@ -378,18 +378,21 @@ touches the hot path.
   one worker. New commits populate `work_progress_snapshot`,
   `last_commit_progress_at`, and the lease/stall `last_work_progress_at` signal
   (`supervisor.observe_worker_commit_progress=false` disables observation).
-  Physical decomposition has started: `poll_worker_observation_stage` owns
+  Physical decomposition is complete: `poll_worker_orphan_stage` owns missing-
+  queue-event reaping; `poll_worker_observation_stage` owns
   marker/log ingestion, commit/process observation, lease renewal, and expired-
-  lease termination; `poll_worker_approval_stage` owns pending, resolved, resume,
-  deny, and disappeared-approval transitions; `poll_worker_stall_stage` owns all
-  live-worker recovery, deferred-stall, stalled, and confirm-kill transitions;
-  `poll_worker_failure_stage` owns exited-runner evidence, classification,
-  rotate/pause/retry/reassign, and terminal failure effects through Phase 5's
-  single decision authority; `poll_worker_completion_stage` table-classifies
-  special control workers and task terminal/redispatch outcomes. Each returns an
-  explicit driver short-circuit outcome, with parity pinned by the incumbent
-  poll recovery suite plus direct stage boundary tests. Pending: extract the
-  assignment/preemption block so `poll_workers` becomes the stage driver, then
+  lease termination; `poll_worker_assignment_stage` owns control-worker cleanup,
+  manual-inbox redelivery, assignment changes, priority preemption, and stale-
+  assignment reaping; `poll_worker_approval_stage` owns pending, resolved,
+  resume, deny, and disappeared-approval transitions; `poll_worker_stall_stage`
+  owns all live-worker recovery, deferred-stall, stalled, and confirm-kill
+  transitions; `poll_worker_failure_stage` owns exited-runner evidence,
+  classification, rotate/pause/retry/reassign, and terminal failure effects
+  through Phase 5's single decision authority; `poll_worker_completion_stage`
+  table-classifies special control workers and task terminal/redispatch outcomes.
+  `poll_workers` is now a 128-line ordered stage driver (down from 751 lines).
+  Each stage returns an explicit driver short-circuit outcome, with parity pinned
+  by the incumbent poll recovery suite plus direct stage boundary tests. Pending:
   fleet-tune/enable `lease_requires_work_progress` by default.
 - **Phase 6 — model built in isolation (storage cutover pending).**
   `rewrite/state_projection.py` implements the plan's core §3.7 idea: an

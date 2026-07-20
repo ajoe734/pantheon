@@ -8063,6 +8063,195 @@ def poll_worker_completion_stage(
     return {"changed": True, "stop": True}
 
 
+def poll_worker_orphan_stage(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: dict[str, Any],
+    *,
+    run_id: str,
+    valid_queue_event_ids: set[str],
+    task_map: dict[str, dict[str, Any]],
+) -> dict[str, bool]:
+    """Reap a dead worker whose queue record disappeared before observation."""
+    queue_event_id = worker.get("queue_event_id")
+    orphan_statuses = {"running", "waiting_approval", "retry_backoff", "manual_pending", "stalled"}
+    if (
+        not queue_event_id
+        or queue_event_id in valid_queue_event_ids
+        or worker.get("status") not in orphan_statuses
+        or pid_is_alive(worker.get("pid"))
+    ):
+        return {"changed": False, "stop": False}
+
+    task_status = str(task_map.get(worker.get("task_id"), {}).get("status") or "").lower()
+    state.setdefault("workers", {}).pop(run_id, None)
+    write_activity_log(
+        config,
+        {
+            "type": "worker_reaped",
+            "provider": worker.get("provider"),
+            "task_id": worker.get("task_id"),
+            "message": (
+                "Dropped orphaned worker after its queue event disappeared; open tasks will be redispatched."
+                if task_status in {"todo", "in_progress", "review", "blocked"}
+                else "Dropped orphaned worker after its queue event disappeared."
+            ),
+            "worker_run_id": worker.get("run_id"),
+        },
+    )
+    return {"changed": True, "stop": True}
+
+
+def poll_worker_assignment_stage(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: dict[str, Any],
+    *,
+    run_id: str,
+    provider_report: dict[str, Any],
+    task_map: dict[str, dict[str, Any]],
+    active_worker_statuses: set[str],
+    alive: bool,
+) -> dict[str, bool]:
+    """Apply control completion, redelivery, ownership, and preemption rules."""
+    if (
+        alive
+        and worker.get("status") in active_worker_statuses
+        and chair_review_worker_artifacts_applied(state, worker)
+    ):
+        terminate_worker_pid(worker.get("pid"))
+        worker["status"] = "completed"
+        worker["last_event_at"] = utc_now()
+        clear_task_failure_streak(state, worker=worker)
+        write_activity_log(
+            config,
+            {
+                "type": "worker_completed",
+                "provider": worker.get("provider"),
+                "task_id": worker.get("task_id"),
+                "message": "Chair review artifacts were accepted; terminated lingering control runner.",
+                "worker_run_id": worker["run_id"],
+                "pr_url": worker.get("pr_url"),
+                "session_url": worker.get("session_url"),
+            },
+        )
+        finalize_queue_event_record(config, state, worker, "completed")
+        return {"changed": True, "stop": True}
+
+    if manual_pending_inbox_can_auto_redeliver(config, state, provider_report, worker):
+        changed = requeue_stale_manual_pending_worker(
+            config,
+            state,
+            worker,
+            reason=(
+                "Cleared stale file_inbox/manual_pending worker after provider auto-delivery became available; "
+                "queue event returned to queued for redispatch."
+            ),
+        )
+        return {"changed": bool(changed), "stop": True}
+
+    if worker.get("queue_event_id") and not worker_matches_current_assignment(config, worker, task_map):
+        if worker.get("status") == "superseded":
+            return {"changed": False, "stop": True}
+        if alive:
+            terminate_worker_pid(worker.get("pid"))
+        worker["status"] = "superseded"
+        worker["last_event_at"] = utc_now()
+        worker["last_error"] = "Worker superseded after task responsibility moved to another agent."
+        finalize_queue_event_record(
+            config,
+            state,
+            worker,
+            "completed",
+            worker["last_error"],
+        )
+        write_activity_log(
+            config,
+            {
+                "type": "worker_superseded",
+                "provider": worker.get("provider"),
+                "task_id": worker.get("task_id"),
+                "message": worker["last_error"],
+                "worker_run_id": worker.get("run_id"),
+            },
+        )
+        console_log(
+            f"worker superseded: task={worker.get('task_id')} provider={worker.get('provider')} run={worker.get('run_id')}",
+            quiet=SUPERVISOR_LOG_QUIET,
+        )
+        return {"changed": True, "stop": True}
+
+    if (
+        worker.get("queue_event_id")
+        and worker.get("status") in active_worker_statuses
+        and higher_priority_ready_task_exists(config, worker, task_map, state)
+    ):
+        if alive:
+            terminate_worker_pid(worker.get("pid"))
+        worker["status"] = "superseded"
+        worker["last_event_at"] = utc_now()
+        worker["last_error"] = "Worker superseded to prioritize higher-priority review/finalize work."
+        finalize_queue_event_record(
+            config,
+            state,
+            worker,
+            "completed",
+            worker["last_error"],
+        )
+        sync_preempted_task_status(config, worker)
+        write_activity_log(
+            config,
+            {
+                "type": "worker_superseded",
+                "provider": worker.get("provider"),
+                "task_id": worker.get("task_id"),
+                "message": worker["last_error"],
+                "worker_run_id": worker.get("run_id"),
+            },
+        )
+        console_log(
+            f"worker superseded for priority escalation: task={worker.get('task_id')} provider={worker.get('provider')} run={worker.get('run_id')}",
+            quiet=SUPERVISOR_LOG_QUIET,
+        )
+        return {"changed": True, "stop": True}
+
+    stale_assignment_statuses = {
+        "fallback",
+        "manual_pending",
+        "retry_backoff",
+        "stalled",
+        "waiting_approval",
+        "suspended_approval",
+    }
+    if (
+        not alive
+        and worker.get("queue_event_id")
+        and worker.get("status") in stale_assignment_statuses
+        and not worker_matches_current_assignment(config, worker, task_map)
+    ):
+        state.setdefault("workers", {}).pop(run_id, None)
+        finalize_queue_event_record(
+            config,
+            state,
+            worker,
+            "completed",
+            "Dropped stale worker after task ownership/review assignment moved to another agent.",
+        )
+        write_activity_log(
+            config,
+            {
+                "type": "worker_reaped",
+                "provider": worker.get("provider"),
+                "task_id": worker.get("task_id"),
+                "message": "Dropped stale worker after task responsibility moved to another agent.",
+                "worker_run_id": worker.get("run_id"),
+            },
+        )
+        return {"changed": True, "stop": True}
+
+    return {"changed": False, "stop": False}
+
+
 def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report: dict[str, Any] | None = None) -> bool:
     changed = False
     approval_state = load_approval_state(config)
@@ -8095,26 +8284,17 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
     workers = state.setdefault("workers", {})
     for run_id, worker in list(workers.items()):
         previous_last_event_at = worker.get("last_event_at")
-        if worker.get("queue_event_id") and worker.get("queue_event_id") not in valid_queue_event_ids:
-            if worker.get("status") in {"running", "waiting_approval", "retry_backoff", "manual_pending", "stalled"} and not pid_is_alive(worker.get("pid")):
-                task_status = str(task_map.get(worker.get("task_id"), {}).get("status") or "").lower()
-                workers.pop(run_id, None)
-                write_activity_log(
-                    config,
-                    {
-                        "type": "worker_reaped",
-                        "provider": worker.get("provider"),
-                        "task_id": worker.get("task_id"),
-                        "message": (
-                            "Dropped orphaned worker after its queue event disappeared; open tasks will be redispatched."
-                            if task_status in {"todo", "in_progress", "review", "blocked"}
-                            else "Dropped orphaned worker after its queue event disappeared."
-                        ),
-                        "worker_run_id": worker.get("run_id"),
-                    },
-                )
-                changed = True
-                continue
+        orphan = poll_worker_orphan_stage(
+            config,
+            state,
+            worker,
+            run_id=run_id,
+            valid_queue_event_ids=valid_queue_event_ids,
+            task_map=task_map,
+        )
+        changed = bool(orphan["changed"]) or changed
+        if orphan["stop"]:
+            continue
         observation = poll_worker_observation_stage(
             config,
             state,
@@ -8128,143 +8308,24 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
         process_activity_advanced = bool(observation["process_activity_advanced"])
         if observation["stop"]:
             continue
-        if (
-            alive
-            and worker.get("status") in active_worker_statuses
-            and chair_review_worker_artifacts_applied(state, worker)
-        ):
-            terminate_worker_pid(worker.get("pid"))
-            worker["status"] = "completed"
-            worker["last_event_at"] = utc_now()
-            clear_task_failure_streak(state, worker=worker)
-            write_activity_log(
-                config,
-                {
-                    "type": "worker_completed",
-                    "provider": worker.get("provider"),
-                    "task_id": worker.get("task_id"),
-                    "message": "Chair review artifacts were accepted; terminated lingering control runner.",
-                    "worker_run_id": worker["run_id"],
-                    "pr_url": worker.get("pr_url"),
-                    "session_url": worker.get("session_url"),
-                },
-            )
-            finalize_queue_event_record(config, state, worker, "completed")
-            changed = True
+        assignment = poll_worker_assignment_stage(
+            config,
+            state,
+            worker,
+            run_id=run_id,
+            provider_report=provider_report,
+            task_map=task_map,
+            active_worker_statuses=active_worker_statuses,
+            alive=alive,
+        )
+        changed = bool(assignment["changed"]) or changed
+        if assignment["stop"]:
             continue
         last_event_advanced = bool(
             previous_last_event_at
             and worker.get("last_event_at")
             and worker.get("last_event_at") > previous_last_event_at
         )
-        if manual_pending_inbox_can_auto_redeliver(config, state, provider_report, worker):
-            changed = (
-                requeue_stale_manual_pending_worker(
-                    config,
-                    state,
-                    worker,
-                    reason=(
-                        "Cleared stale file_inbox/manual_pending worker after provider auto-delivery became available; "
-                        "queue event returned to queued for redispatch."
-                    ),
-                )
-                or changed
-            )
-            continue
-        if (
-            worker.get("queue_event_id")
-            and not worker_matches_current_assignment(config, worker, task_map)
-        ):
-            if worker.get("status") == "superseded":
-                continue
-            if alive:
-                terminate_worker_pid(worker.get("pid"))
-            worker["status"] = "superseded"
-            worker["last_event_at"] = utc_now()
-            worker["last_error"] = "Worker superseded after task responsibility moved to another agent."
-            finalize_queue_event_record(
-                config,
-                state,
-                worker,
-                "completed",
-                worker["last_error"],
-            )
-            write_activity_log(
-                config,
-                {
-                    "type": "worker_superseded",
-                    "provider": worker.get("provider"),
-                    "task_id": worker.get("task_id"),
-                    "message": worker["last_error"],
-                    "worker_run_id": worker.get("run_id"),
-                },
-            )
-            console_log(
-                f"worker superseded: task={worker.get('task_id')} provider={worker.get('provider')} run={worker.get('run_id')}",
-                quiet=SUPERVISOR_LOG_QUIET,
-            )
-            changed = True
-            continue
-        if (
-            worker.get("queue_event_id")
-            and worker.get("status") in active_worker_statuses
-            and higher_priority_ready_task_exists(config, worker, task_map, state)
-        ):
-            if alive:
-                terminate_worker_pid(worker.get("pid"))
-            worker["status"] = "superseded"
-            worker["last_event_at"] = utc_now()
-            worker["last_error"] = "Worker superseded to prioritize higher-priority review/finalize work."
-            finalize_queue_event_record(
-                config,
-                state,
-                worker,
-                "completed",
-                worker["last_error"],
-            )
-            sync_preempted_task_status(config, worker)
-            write_activity_log(
-                config,
-                {
-                    "type": "worker_superseded",
-                    "provider": worker.get("provider"),
-                    "task_id": worker.get("task_id"),
-                    "message": worker["last_error"],
-                    "worker_run_id": worker.get("run_id"),
-                },
-            )
-            console_log(
-                f"worker superseded for priority escalation: task={worker.get('task_id')} provider={worker.get('provider')} run={worker.get('run_id')}",
-                quiet=SUPERVISOR_LOG_QUIET,
-            )
-            changed = True
-            continue
-        if (
-            not alive
-            and worker.get("queue_event_id")
-            and worker.get("status") in {"fallback", "manual_pending", "retry_backoff", "stalled", "waiting_approval", "suspended_approval"}
-            and not worker_matches_current_assignment(config, worker, task_map)
-        ):
-            workers.pop(run_id, None)
-            finalize_queue_event_record(
-                config,
-                state,
-                worker,
-                "completed",
-                "Dropped stale worker after task ownership/review assignment moved to another agent.",
-            )
-            write_activity_log(
-                config,
-                {
-                    "type": "worker_reaped",
-                    "provider": worker.get("provider"),
-                    "task_id": worker.get("task_id"),
-                    "message": "Dropped stale worker after task responsibility moved to another agent.",
-                    "worker_run_id": worker.get("run_id"),
-                },
-            )
-            changed = True
-            continue
         approval = poll_worker_approval_stage(
             config,
             state,
