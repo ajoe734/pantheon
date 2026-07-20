@@ -12,8 +12,10 @@ Cutover status (SUPERVISOR_REWRITE_PLAN.md §4 migration table):
                                  ready_dispatcher.use_rewrite_concurrency=false.
   * concurrency.account_limit  — Phase 1b (account cap): LIVE. supervisor.
                                  quota_group_concurrency_limit routes its cap
-                                 lookup through it (the 6-way account-group
-                                 resolver stays until its config collapse); same
+                                 lookup through it. Live config uses one explicit
+                                 provider.account key; concurrency cap lookups
+                                 no longer fan out across identity aliases;
+                                 old aliases remain read-compatible only. Same
                                  use_rewrite_concurrency flag.
   * task_machine.dispatch_*    — Phase 3b: LIVE. supervisor.dispatch_priority_for_task
                                  routes through it by default (configured status

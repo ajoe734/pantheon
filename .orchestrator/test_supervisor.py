@@ -139,17 +139,19 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(report["providers"]["copilot"]["auth_ready"], True)
         build_provider_capabilities.assert_not_called()
 
-    def test_codex_quota_groups_allow_four_concurrent_slots(self) -> None:
+    def test_codex_accounts_allow_four_concurrent_slots(self) -> None:
         config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
 
         ready_dispatcher = config["ready_dispatcher"]
-        quota_caps = config["ready_dispatcher"]["max_concurrent_per_quota_group"]
+        account_caps = config["ready_dispatcher"]["max_concurrent_per_account"]
 
         self.assertNotIn("max_tasks_per_agent", ready_dispatcher)
         self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Codex"], 4)
         self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Codex2"], 4)
-        self.assertEqual(quota_caps["codex1"], 4)
-        self.assertEqual(quota_caps["codex2"], 4)
+        self.assertEqual(account_caps["codex1"], 4)
+        self.assertEqual(account_caps["codex2"], 4)
+        self.assertEqual(config["providers"]["codex"]["account"], "codex1")
+        self.assertEqual(config["providers"]["codex2"]["account"], "codex2")
         self.assertGreaterEqual(len(config["agents"]["codex"]["worker_slots"]), 4)
         self.assertGreaterEqual(len(config["agents"]["codex2"]["worker_slots"]), 4)
         self.assertEqual(supervisor.agent_dispatch_capacity(config, "codex"), 4)
@@ -163,10 +165,10 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(ready_dispatcher["disabled_agents"], ["Claude", "Claude2", "Antigravity", "Antigravity2", "Copilot"])
         self.assertEqual(ready_dispatcher["target_workload"]["Claude"], 0)
         self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Claude"], 0)
-        self.assertEqual(ready_dispatcher["max_concurrent_per_quota_group"]["claude"], 0)
+        self.assertEqual(ready_dispatcher["max_concurrent_per_account"]["claude_account_shared_max_1"], 0)
         self.assertEqual(ready_dispatcher["target_workload"]["Copilot"], 0)
         self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Copilot"], 0)
-        self.assertEqual(ready_dispatcher["max_concurrent_per_quota_group"]["copilot"], 0)
+        self.assertEqual(ready_dispatcher["max_concurrent_per_account"]["copilot"], 0)
 
     def test_claude2_lane_is_disabled_with_zero_capacity(self) -> None:
         config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
@@ -175,7 +177,7 @@ class RuntimeConfigTests(unittest.TestCase):
 
         self.assertEqual(ready_dispatcher["target_workload"]["Claude2"], 0)
         self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Claude2"], 0)
-        self.assertEqual(ready_dispatcher["max_concurrent_per_quota_group"]["claude2"], 0)
+        self.assertEqual(ready_dispatcher["max_concurrent_per_account"]["claude_account_shared_max_1"], 0)
 
     def test_antigravity_lanes_are_disabled_with_zero_capacity(self) -> None:
         config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
@@ -190,8 +192,48 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(ready_dispatcher["target_workload"]["Antigravity2"], 0)
         self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Antigravity"], 0)
         self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Antigravity2"], 0)
-        self.assertEqual(ready_dispatcher["max_concurrent_per_quota_group"]["antigravity"], 0)
-        self.assertEqual(ready_dispatcher["max_concurrent_per_quota_group"]["antigravity2"], 0)
+        self.assertEqual(ready_dispatcher["max_concurrent_per_account"]["antigravity"], 0)
+        self.assertEqual(ready_dispatcher["max_concurrent_per_account"]["antigravity2"], 0)
+
+    def test_live_provider_account_schema_is_strict_and_complete(self) -> None:
+        config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
+
+        supervisor.validate_provider_accounts(config)
+
+        self.assertTrue(config["ready_dispatcher"]["require_explicit_provider_accounts"])
+        self.assertFalse(config["ready_dispatcher"]["allow_legacy_provider_account_aliases"])
+        for provider, provider_cfg in config["providers"].items():
+            self.assertTrue(provider_cfg.get("account"), provider)
+            self.assertFalse(
+                any(provider_cfg.get(key) for key in ("account_group", "quota_group", "dispatch_group")),
+                provider,
+            )
+
+    def test_strict_provider_account_schema_rejects_missing_and_legacy_keys(self) -> None:
+        config = {
+            "ready_dispatcher": {
+                "require_explicit_provider_accounts": True,
+                "allow_legacy_provider_account_aliases": False,
+            },
+            "providers": {
+                "missing": {"delivery_mode": "codex"},
+                "legacy": {"account": "legacy", "quota_group": "legacy"},
+            },
+        }
+
+        with self.assertRaisesRegex(ValueError, "providers.missing.account is required"):
+            supervisor.validate_provider_accounts(config)
+
+        legacy_cap_config = {
+            "ready_dispatcher": {
+                "require_explicit_provider_accounts": True,
+                "allow_legacy_provider_account_aliases": False,
+                "max_concurrent_per_quota_group": {"legacy": 1},
+            },
+            "providers": {"legacy": {"account": "legacy"}},
+        }
+        with self.assertRaisesRegex(ValueError, "max_concurrent_per_quota_group is deprecated"):
+            supervisor.validate_provider_accounts(legacy_cap_config)
 
 
 class DetectWorkerFailureTests(unittest.TestCase):
@@ -10070,6 +10112,42 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
 
         self.assertIsNotNone(reason)
         self.assertIn("quota group codex1", reason or "")
+
+    def test_explicit_account_cap_uses_one_identity_and_counts_legacy_worker_field(self) -> None:
+        config = {
+            "ready_dispatcher": {"max_concurrent_per_account": {"shared": 1}},
+            "agents": {
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+                "claude2": {"id": "claude2", "display_name": "Claude2", "provider": "claude2"},
+            },
+            "providers": {
+                "claude": {"account": "shared"},
+                "claude2": {"account": "shared"},
+            },
+        }
+        state = {
+            "workers": {
+                "run-1": {
+                    "status": "running",
+                    "agent_id": "claude",
+                    "provider": "claude",
+                    "quota_group": "shared",
+                }
+            }
+        }
+
+        self.assertEqual(supervisor.provider_dispatch_identity_ids(config, "claude"), ["shared"])
+        self.assertEqual(supervisor.agent_quota_identity_ids(config, "claude2"), ["shared"])
+        self.assertEqual(
+            supervisor.active_quota_group_counts(config, state, {"running"}),
+            {"shared": 1},
+        )
+        reason = supervisor.agent_auto_dispatch_block_reason(
+            config, state, "claude2", provider_report={}
+        )
+
+        self.assertIsNotNone(reason)
+        self.assertIn("account shared", reason or "")
 
     def test_account_group_uses_legacy_quota_cap_and_counts_legacy_workers(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

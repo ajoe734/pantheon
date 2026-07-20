@@ -937,6 +937,41 @@ def provider_config_for(config: dict[str, Any], provider: str | None) -> dict[st
     return {}
 
 
+def validate_provider_accounts(config: dict[str, Any]) -> None:
+    """Enforce the single-account provider schema when strict migration is on."""
+    settings = ready_dispatch_settings(config)
+    require_explicit = bool(settings.get("require_explicit_provider_accounts", False))
+    allow_legacy_aliases = bool(settings.get("allow_legacy_provider_account_aliases", True))
+    if not require_explicit and allow_legacy_aliases:
+        return
+
+    errors: list[str] = []
+    if not allow_legacy_aliases and "max_concurrent_per_quota_group" in settings:
+        errors.append(
+            "ready_dispatcher.max_concurrent_per_quota_group is deprecated; "
+            "use max_concurrent_per_account"
+        )
+    for provider, provider_cfg in (config.get("providers", {}) or {}).items():
+        if not isinstance(provider_cfg, dict):
+            errors.append(f"providers.{provider} must be an object")
+            continue
+        account = normalize_agent_id(str(provider_cfg.get("account") or ""))
+        if require_explicit and not account:
+            errors.append(f"providers.{provider}.account is required")
+        if not allow_legacy_aliases:
+            aliases = [
+                key
+                for key in ("account_group", "quota_group", "dispatch_group")
+                if str(provider_cfg.get(key) or "").strip()
+            ]
+            if aliases:
+                errors.append(
+                    f"providers.{provider} uses deprecated account aliases: {', '.join(aliases)}"
+                )
+    if errors:
+        raise ValueError("invalid provider account configuration: " + "; ".join(errors))
+
+
 def _provider_lookup_variants(value: str | None) -> list[str]:
     raw = str(value or "").strip()
     if not raw:
@@ -994,6 +1029,9 @@ def provider_dispatch_group_id(config: dict[str, Any], provider: str | None) -> 
     if not provider_id:
         return ""
     provider_cfg = provider_config_for(config, provider)
+    account = normalize_agent_id(str(provider_cfg.get("account") or ""))
+    if account:
+        return account
     group = (
         provider_cfg.get("account_group")
         or _provider_config_alias_account_group(config, provider_cfg)
@@ -1009,6 +1047,9 @@ def provider_dispatch_identity_ids(config: dict[str, Any], provider: str | None)
     if not provider_id:
         return []
     provider_cfg = provider_config_for(config, provider)
+    account = normalize_agent_id(str(provider_cfg.get("account") or ""))
+    if account:
+        return [account]
     primary_group = provider_dispatch_group_id(config, provider)
     ids: list[str] = [primary_group, provider_id]
     for key in ("account_group", "quota_group", "dispatch_group"):
@@ -1043,6 +1084,10 @@ def agent_quota_group_id(config: dict[str, Any], agent_id: str | None) -> str:
 
 def agent_quota_identity_ids(config: dict[str, Any], agent_id: str | None) -> list[str]:
     provider_id = agent_provider_id(config, agent_id)
+    provider_cfg = provider_config_for(config, provider_id or agent_id)
+    account = normalize_agent_id(str(provider_cfg.get("account") or ""))
+    if account:
+        return [account]
     ids = [agent_quota_group_id(config, agent_id)]
     ids.extend(provider_dispatch_identity_ids(config, provider_id or agent_id))
     ids.append(provider_id)
@@ -1059,7 +1104,7 @@ def active_quota_group_counts(
     for worker in state.get("workers", {}).values():
         if worker.get("status") not in active_statuses:
             continue
-        group_id = normalize_agent_id(str(worker.get("quota_group") or ""))
+        group_id = normalize_agent_id(str(worker.get("account") or worker.get("quota_group") or ""))
         if not group_id:
             group_id = provider_dispatch_group_id(config, str(worker.get("provider") or worker.get("agent_id") or ""))
         group_ids = [group_id]
@@ -1107,13 +1152,16 @@ def quota_group_concurrency_limit(
     settings: dict[str, Any] | None = None,
 ) -> int | None:
     settings = settings or ready_dispatch_settings(config)
-    raw = settings.get("max_concurrent_per_quota_group")
+    target_shape = "max_concurrent_per_account" in settings
+    raw = (
+        settings.get("max_concurrent_per_account")
+        if target_shape
+        else settings.get("max_concurrent_per_quota_group")
+    )
     group_id = agent_quota_group_id(config, agent_id)
-    # SUPERVISOR-REWRITE Phase 1b (account cap): the cap arithmetic is owned by
-    # rewrite.concurrency.account_limit (shadow-proven equal for every live
-    # agent). The 6-way account-group resolver stays here until its config
-    # collapse; we still resolve the incumbent identity keys and hand them to the
-    # single cap authority. Legacy path one flag away via use_rewrite_concurrency.
+    # SUPERVISOR-REWRITE Phase 1: explicit-account configs use one storage and
+    # lookup key. Old account/quota/dispatch-group configs retain their incumbent
+    # identity fan-out only through this compatibility path.
     if _rewrite_flag_enabled(settings, "use_rewrite_concurrency"):
         try:
             identity_keys = [
@@ -1134,13 +1182,17 @@ def quota_group_concurrency_limit(
     if isinstance(raw, dict):
         provider_id = agent_provider_id(config, agent_id)
         display_name = display_name_for(config, normalize_agent_id(agent_id or ""))
-        keys = [
-            *agent_quota_identity_ids(config, agent_id),
-            group_id,
-            provider_id,
-            normalize_agent_id(agent_id or ""),
-            display_name,
-        ]
+        keys = (
+            [group_id]
+            if target_shape
+            else [
+                *agent_quota_identity_ids(config, agent_id),
+                group_id,
+                provider_id,
+                normalize_agent_id(agent_id or ""),
+                display_name,
+            ]
+        )
         for key in dict.fromkeys(key for key in keys if key):
             if key in raw:
                 try:
@@ -2321,6 +2373,7 @@ def start_worker_for_request(
         "logical_agent_id": logical_agent_id,
         "dispatch_slot_id": dispatch_slot_id or None,
         "dispatch_slot": request.metadata.get("dispatch_slot"),
+        "account": provider_dispatch_group_id(config, request.provider),
         "quota_group": provider_dispatch_group_id(config, request.provider),
         "task_id": request.task_id,
         "session_id": result.session_id,
@@ -6066,8 +6119,9 @@ def agent_auto_dispatch_block_reason(
         active_quota_counts = active_quota_group_counts(config, state, active_statuses)
         active_count = active_quota_counts.get(quota_group, 0)
         if active_count >= quota_limit:
+            cap_scope = "account" if "max_concurrent_per_account" in settings else "quota group"
             return (
-                f"quota group {quota_group} already has {active_count}/{quota_limit} "
+                f"{cap_scope} {quota_group} already has {active_count}/{quota_limit} "
                 "active worker(s)"
             )
     if not provider_report:
@@ -6142,6 +6196,7 @@ def auto_dispatch_block_is_temporary_capacity(reason: str | None) -> bool:
     return any(
         marker in normalized
         for marker in (
+            "account ",
             "quota group",
             "already has live worker",
             "all dispatch slots",
@@ -11293,6 +11348,7 @@ def main() -> int:
     args = parse_args()
     SUPERVISOR_LOG_QUIET = args.quiet
     config = load_config(args.config)
+    validate_provider_accounts(config)
     check_status_root_consistency(config, allow_isolated=args.allow_isolated_status_root)
     if args.clear_provider_pause:
         with runtime_state_lock(config, shared=False, nonblocking=False):

@@ -3179,7 +3179,12 @@ class PortableStateRenderingTests(unittest.TestCase):
             "provider_guardrails": {"dispatch_pauses": {}},
         }
         approval_state = {"pending": [], "history": []}
-        config = {"ready_dispatcher": {"max_tasks_per_agent_by_agent": {"Codex": 2}}}
+        config = {
+            "ready_dispatcher": {
+                "max_tasks_per_agent_by_agent": {"Codex": 2},
+                "max_concurrent_per_account": {"codex1": 4},
+            }
+        }
 
         with (
             mock.patch.object(ai_status, "load_config", return_value=config),
@@ -3193,6 +3198,8 @@ class PortableStateRenderingTests(unittest.TestCase):
         self.assertEqual(bundle["execution_summary"]["dependency_ready"], 1)
         self.assertEqual(bundle["dispatch_policy"]["max_tasks_per_agent"], None)
         self.assertEqual(bundle["dispatch_policy"]["max_tasks_per_agent_by_agent"], {"Codex": 2})
+        self.assertEqual(bundle["dispatch_policy"]["max_concurrent_per_account"], {"codex1": 4})
+        self.assertEqual(bundle["dispatch_policy"]["max_concurrent_per_quota_group"], {"codex1": 4})
 
     def test_build_dashboard_bundle_includes_coordination_summary(self) -> None:
         state = {
