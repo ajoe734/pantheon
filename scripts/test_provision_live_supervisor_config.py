@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from provision_live_supervisor_config import (
+    apply_provider_account_schema,
     build_live_config,
     canonical_status_paths,
     ensure_approval_queue_marker,
@@ -15,6 +16,51 @@ from provision_live_supervisor_config import (
     validate_approval_queue_marker,
     write_json_atomic,
 )
+
+
+def test_apply_provider_account_schema_removes_stale_live_aliases() -> None:
+    repo = {
+        "ready_dispatcher": {
+            "require_explicit_provider_accounts": True,
+            "allow_legacy_provider_account_aliases": False,
+            "max_concurrent_per_account": {"shared": 1},
+        },
+        "providers": {
+            "claude": {"account": "shared"},
+            "claude2": {"account": "shared"},
+        },
+    }
+    rendered = {
+        "ready_dispatcher": {
+            "max_concurrent_per_quota_group": {"claude": 1},
+        },
+        "providers": {
+            "claude": {"account_group": "shared"},
+            "claude2": {"quota_group": "claude2"},
+        },
+    }
+
+    apply_provider_account_schema(repo, rendered)
+
+    assert rendered["ready_dispatcher"] == repo["ready_dispatcher"]
+    assert rendered["providers"] == {
+        "claude": {"account": "shared"},
+        "claude2": {"account": "shared"},
+    }
+
+
+def test_apply_provider_account_schema_rejects_unknown_provider_without_account() -> None:
+    repo = {
+        "ready_dispatcher": {"require_explicit_provider_accounts": True},
+        "providers": {"codex": {"account": "codex1"}},
+    }
+    rendered = {
+        "ready_dispatcher": {},
+        "providers": {"codex": {}, "unexpected": {}},
+    }
+
+    with pytest.raises(ValueError, match="unexpected"):
+        apply_provider_account_schema(repo, rendered)
 
 
 def test_build_live_config_pins_status_paths_and_supervisor_command(tmp_path: Path) -> None:

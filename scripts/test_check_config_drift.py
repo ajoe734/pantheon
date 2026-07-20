@@ -56,6 +56,24 @@ def test_find_drift_missing_flag_is_reported_not_drift() -> None:
     assert report["missing"][0]["path"] == "ready_dispatcher.enabled"
 
 
+def test_find_drift_repo_owned_flag_missing_from_live_is_actionable() -> None:
+    report = find_drift(
+        {"ready_dispatcher": {"max_concurrent_per_account": {"codex1": 4}}},
+        {"ready_dispatcher": {}},
+        critical_flags=("ready_dispatcher.max_concurrent_per_account",),
+        overrides=frozenset(),
+    )
+
+    assert report["missing"] == []
+    assert report["drift"] == [
+        {
+            "path": "ready_dispatcher.max_concurrent_per_account",
+            "repo": {"codex1": 4},
+            "live": None,
+        }
+    ]
+
+
 def test_find_drift_equal_values_are_clean() -> None:
     repo = {"chair_review": {"enabled": True}}
     live = {"chair_review": {"enabled": True}}
@@ -96,6 +114,30 @@ def test_main_fix_aligns_drift(tmp_path: Path) -> None:
     rc = main(["--repo-config", str(repo), "--live-config", str(live), "--fix"])
     assert rc == 0
     assert json.loads(live.read_text())["chair_review"]["enabled"] is True
+
+
+def test_main_fix_adds_repo_owned_flag_missing_from_live(tmp_path: Path) -> None:
+    repo = tmp_path / "repo.json"
+    live = tmp_path / "live.json"
+    repo.write_text(
+        json.dumps({"ready_dispatcher": {"max_concurrent_per_account": {"codex1": 4}}})
+    )
+    live.write_text(json.dumps({"ready_dispatcher": {}}))
+
+    rc = main(
+        [
+            "--repo-config",
+            str(repo),
+            "--live-config",
+            str(live),
+            "--fix",
+        ]
+    )
+
+    assert rc == 0
+    assert json.loads(live.read_text())["ready_dispatcher"][
+        "max_concurrent_per_account"
+    ] == {"codex1": 4}
 
 
 def test_main_behind_fails_only_when_threshold_exceeded(tmp_path: Path, monkeypatch) -> None:

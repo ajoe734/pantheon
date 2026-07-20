@@ -312,7 +312,10 @@ touches the hot path.
   validation prevents missing accounts or reintroduction of `account_group`,
   `quota_group`, `dispatch_group`, or `max_concurrent_per_quota_group`; old
   configs and worker `quota_group` records remain read-compatible through the
-  isolated compatibility shim.
+  isolated compatibility shim. The dev-root sync path re-provisions the
+  split-root live config from the repo schema on every sync, prunes stale
+  aliases from the live overlay, and restarts the supervisor when config alone
+  changes.
 - **Phase 3 — done (3a shadow + 3b cutover).** `rewrite/task_machine.py`
   (`dispatch_reason`/`dispatch_priority`) is shadow-proven equal to
   `dispatch_priority_for_task` on the live board; the incumbent now routes
