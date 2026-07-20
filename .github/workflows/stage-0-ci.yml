@@ -17,6 +17,7 @@ on:
           - stage0
           - live-evidence
           - loop-prod-per-001-hosted-probe
+          - tj-e2e-012-hosted-acceptance
       environment:
         description: "GitHub environment for live-evidence secrets"
         required: true
@@ -32,6 +33,11 @@ on:
         type: string
       expected_sha:
         description: "Expected deployed BFF source commit SHA for task-scoped hosted probes"
+        required: false
+        default: ""
+        type: string
+      expected_fe_sha:
+        description: "Expected deployed execute-plans commit SHA for TJ-E2E-012"
         required: false
         default: ""
         type: string
@@ -327,3 +333,47 @@ jobs:
           name: loop-prod-per-001-hosted-probe
           path: .artifacts/LOOP-PROD-PER-001/hosted-probe.json
           if-no-files-found: error
+
+  tj-e2e-012-hosted-acceptance:
+    name: TJ-E2E-012 twelve-scenario hosted evidence
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'tj-e2e-012-hosted-acceptance' }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 20
+    env:
+      BFF_BASE: ${{ inputs.bff_base_url }}
+      TJ_E2E_FE_DEPLOYMENT_URL: ${{ format('{0}/deployment.json', vars.DEV_FE_URL || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io') }}
+      TJ_E2E_ALLOWED_BFF_ORIGIN: ${{ vars.DEV_BFF_URL || 'https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io' }}
+      TJ_E2E_ALLOWED_FE_ORIGIN: ${{ vars.DEV_FE_URL || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
+      TJ_E2E_EXPECTED_BFF_SHA: ${{ inputs.expected_sha }}
+      TJ_E2E_EXPECTED_FE_SHA: ${{ inputs.expected_fe_sha }}
+      TJ_E2E_TENANT_ID: tenant-dev
+      TJ_E2E_FORBIDDEN_TENANT_ID: tenant-forbidden-proof
+      TJ_E2E_REPLAY_AS_OF: "2026-07-12T12:01:30Z"
+      TJ_E2E_AMBIGUITY_IDENTIFIER: ambiguous-scenario-9
+      TJ_E2E_OPERATOR_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID || 'pantheon-dev-operator-a-v1' }}
+      TJ_E2E_OPERATOR_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET }}
+      TJ_E2E_VIEWER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1' }}
+      TJ_E2E_VIEWER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET }}
+      TJ_E2E_EVIDENCE_DIR: .artifacts/TJ-E2E-012/${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Reject non-dev acceptance dispatch
+        if: ${{ inputs.environment != 'dev' }}
+        run: |
+          echo "TJ-E2E-012 hosted acceptance may only use the dev environment." >&2
+          exit 1
+
+      - name: Checkout dispatched revision
+        uses: actions/checkout@v6
+
+      - name: Verify exact hosted pair and all twelve source scenarios
+        run: python3 scripts/verify_hosted_scenarios.py
+
+      - name: Upload immutable redacted acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tj-e2e-012-hosted-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .artifacts/TJ-E2E-012/${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 30
