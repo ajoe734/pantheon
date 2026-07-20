@@ -25,6 +25,7 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 _ADAPTER_DIR = str(Path(__file__).resolve().parent)
 if _ADAPTER_DIR not in sys.path:
@@ -391,7 +392,12 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
 
         prompt = "Reply with exactly: OPENCLAW_LIVE"
         provider = self._make_provider(run_func=fake_run)
-        provider.invoke(prompt, operator_id="op-1")
+        with patch.dict(
+            os.environ,
+            {"PANTHEON_OPENCLAW_GATEWAY_STATE_DIR": "/home/node/.openclaw"},
+            clear=False,
+        ):
+            provider.invoke(prompt, operator_id="op-1")
         self.assertTrue(captured, "subprocess.run was never called")
         cmd = captured[0]
         self.assertIn("agent", cmd)
@@ -412,6 +418,8 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         env = captured_env[0]
         self.assertEqual(env.get("OPENCLAW_GATEWAY_URL"), "ws://openclaw-gateway:18789")
         self.assertEqual(env.get("OPENCLAW_GATEWAY_TOKEN"), "test-token")
+        self.assertEqual(env.get("OPENCLAW_STATE_DIR"), "/home/node/.openclaw")
+        self.assertEqual(env.get("HOME"), "/home/node")
 
     def test_invoke_oversized_prompt_fails_loudly(self) -> None:
         """A prompt beyond the argv byte budget raises OPENCLAW_PROMPT_TOO_LARGE

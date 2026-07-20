@@ -31,6 +31,7 @@ import urllib.error
 import urllib.request
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
 from assistant_provider_usage import provider_usage_snapshot
@@ -53,6 +54,29 @@ _MAX_ARGV_PROMPT_BYTES = 96 * 1024
 # Canonical docker-compose service name — used when no URL is configured.
 _DEFAULT_GATEWAY_WS_URL = "ws://openclaw-gateway:18789"
 _AGENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+
+
+def _openclaw_cli_state_env(environment: Dict[str, str]) -> Dict[str, str]:
+    """Bind agent invocations to the same state tree used by reconciliation.
+
+    The adapter runs as root, while governed agent reconciliation deliberately
+    writes the gateway-owned registry below ``/home/node/.openclaw``.  The
+    OpenClaw ``agent`` CLI resolves a requested agent from its local state
+    before invoking the remote gateway, so leaving its default HOME in place
+    makes a freshly reconciled Persona agent appear unknown.
+    """
+
+    resolved = dict(environment)
+    state_dir = str(
+        resolved.get("PANTHEON_OPENCLAW_GATEWAY_STATE_DIR")
+        or resolved.get("OPENCLAW_STATE_DIR")
+        or ""
+    ).strip()
+    if state_dir:
+        state_path = Path(state_dir).expanduser().resolve()
+        resolved["OPENCLAW_STATE_DIR"] = str(state_path)
+        resolved["HOME"] = str(state_path.parent)
+    return resolved
 
 
 def delegates_kernel_mode_to_codex(mode: str) -> bool:
@@ -287,12 +311,12 @@ class AssistantOpenClawProvider:
         # reads, so we don't depend on how compose spells OPENCLAW_GATEWAY_URL.
         # OPENCLAW_ALLOW_INSECURE_PRIVATE_WS (set in compose) is inherited from
         # os.environ and permits plaintext ws:// on the trusted docker network.
-        run_env = {
+        run_env = _openclaw_cli_state_env({
             **os.environ,
             "NO_COLOR": "1",
             "OPENCLAW_GATEWAY_URL": effective_url,
             "OPENCLAW_GATEWAY_TOKEN": self._token,
-        }
+        })
         try:
             proc = self._run(
                 cmd,
