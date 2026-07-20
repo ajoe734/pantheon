@@ -2,12 +2,14 @@
 set -euo pipefail
 
 BFF_BASE_URL="${BFF_BASE_URL:-https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io}"
-BFF_AUTH_TOKEN="${BFF_AUTH_TOKEN:-pantheon-dev-browser:admin:mfa:assistant.kernel.debug,assistant.kernel.repair}"
+BFF_AUTH_TOKEN="${BFF_AUTH_TOKEN:-}"
+BFF_CLIENT_ID="${MAI_BFF_CLIENT_ID:-${BFF_CLIENT_ID:-${DEV_BFF_OIDC_CLIENT_ID:-}}}"
+BFF_CLIENT_SECRET="${MAI_BFF_CLIENT_SECRET:-${BFF_CLIENT_SECRET:-${DEV_BFF_OIDC_CLIENT_SECRET:-}}}"
 CONTROL_PASSPHRASE="${PANTHEON_ASSISTANT_CONTROL_PASSPHRASE:-${CONTROL_MODE_PASSPHRASE:-}}"
 SESSION_ID="${SESSION_ID:-mgmt-ai-openclaw-repair-smoke-$(date -u +%Y%m%dT%H%M%SZ)}"
 TASK_ID="${TASK_ID:-MGMT-AI-OPENCLAW-REPAIR-SMOKE-$(date -u +%Y%m%dT%H%M%SZ)}"
 REPAIR_REPO_KEY="${REPAIR_REPO_KEY:-execute-plans}"
-REPAIR_MERGE_TARGET="${REPAIR_MERGE_TARGET:-dev}"
+REPAIR_MERGE_TARGET="${REPAIR_MERGE_TARGET:-main}"
 REPAIR_SCOPE="${REPAIR_SCOPE:-tmp/management-ai-openclaw-smoke}"
 TASK_OWNER="${TASK_OWNER:-Codex}"
 TASK_REVIEWER="${TASK_REVIEWER:-Claude}"
@@ -19,6 +21,11 @@ if [ -z "${CONTROL_PASSPHRASE}" ]; then
   exit 2
 fi
 
+if [ -z "${BFF_AUTH_TOKEN}" ] && { [ -z "${BFF_CLIENT_ID}" ] || [ -z "${BFF_CLIENT_SECRET}" ]; }; then
+  echo "ERROR: set BFF_AUTH_TOKEN or MAI_BFF_CLIENT_ID/MAI_BFF_CLIENT_SECRET for strict dev auth." >&2
+  exit 2
+fi
+
 if ! command -v jq >/dev/null 2>&1; then
   echo "ERROR: jq is required." >&2
   exit 2
@@ -27,6 +34,7 @@ fi
 request_tmp="$(mktemp)"
 response_tmp="$(mktemp)"
 status_tmp="$(mktemp)"
+chmod 600 "${request_tmp}" "${response_tmp}" "${status_tmp}"
 activated="false"
 
 deactivate_control_mode() {
@@ -35,6 +43,7 @@ deactivate_control_mode() {
     curl -sS -o /dev/null --max-time 30 \
       -X POST \
       -H "Authorization: Bearer ${BFF_AUTH_TOKEN}" \
+      -H "Idempotency-Key: mgmt-ai-openclaw-repair-deactivate-${TASK_ID}" \
       -H "Content-Type: application/json" \
       --data @"${request_tmp}" \
       "${BFF_BASE_URL}/bff/assistant/control-mode/deactivate" || true
@@ -89,8 +98,32 @@ echo "task_id=${TASK_ID}"
 echo "repo_key=${REPAIR_REPO_KEY}"
 echo "merge_target=${REPAIR_MERGE_TARGET}"
 echo "scope=${REPAIR_SCOPE}"
-echo "auth_token=configured"
 echo "passphrase=configured"
+
+if [ -z "${BFF_AUTH_TOKEN}" ]; then
+  jq -n \
+    --arg client_id "${BFF_CLIENT_ID}" \
+    --arg client_secret "${BFF_CLIENT_SECRET}" \
+    '{grant_type: "client_credentials", client_id: $client_id, client_secret: $client_secret}' \
+    >"${request_tmp}"
+  login_code="$(
+    curl -sS -o "${response_tmp}" -w '%{http_code}' --max-time 30 \
+      -X POST \
+      -H "Content-Type: application/json" \
+      --data @"${request_tmp}" \
+      "${BFF_BASE_URL}/bff/auth/dev-login"
+  )"
+  if [ "${login_code}" != "200" ]; then
+    echo "ERROR: strict dev-login returned HTTP ${login_code}" >&2
+    jq '{error:.error, meta:.meta}' "${response_tmp}" >&2 || true
+    exit 1
+  fi
+  BFF_AUTH_TOKEN="$(jq -er '.access_token' "${response_tmp}")"
+  unset BFF_CLIENT_SECRET
+  echo "auth=dev-login"
+else
+  echo "auth=provided-token"
+fi
 
 health_code="$(curl_json GET /health "" 30)"
 if [ "${health_code}" != "200" ]; then
@@ -126,7 +159,7 @@ jq -n \
     idleTtlSeconds: 300,
     managementSessionId: $session
   }' >"${request_tmp}"
-activate_code="$(curl_json POST /bff/assistant/control-mode/activate "${request_tmp}" 90)"
+activate_code="$(curl_json POST /bff/assistant/control-mode/activate "${request_tmp}" 90 "mgmt-ai-openclaw-repair-activate-${TASK_ID}")"
 if [ "${activate_code}" != "202" ]; then
   echo "ERROR: control-mode activation returned HTTP ${activate_code}" >&2
   jq '{error:.error, meta:.meta}' "${response_tmp}" >&2 || cat "${response_tmp}" >&2
@@ -149,7 +182,7 @@ jq -n \
     mergeTarget: \$merge,
     reason: \$reason
   }" >"${request_tmp}"
-prepare_code="$(curl_json POST /bff/assistant/repair-worktrees/prepare "${request_tmp}" 180)"
+prepare_code="$(curl_json POST /bff/assistant/repair-worktrees/prepare "${request_tmp}" 180 "mgmt-ai-openclaw-repair-prepare-${TASK_ID}")"
 if [ "${prepare_code}" != "201" ]; then
   echo "ERROR: repair worktree prepare returned HTTP ${prepare_code}" >&2
   jq '{error:.error, meta:.meta}' "${response_tmp}" >&2 || cat "${response_tmp}" >&2
@@ -257,7 +290,7 @@ jq -n \
       repairSentinel: $sentinel
     }
   }' >"${request_tmp}"
-generate_code="$(curl_json POST /bff/assistant/dev-docs/generate "${request_tmp}" 120)"
+generate_code="$(curl_json POST /bff/assistant/dev-docs/generate "${request_tmp}" 120 "mgmt-ai-openclaw-repair-dev-docs-${TASK_ID}")"
 if [ "${generate_code}" != "201" ]; then
   echo "ERROR: dev-docs generate returned HTTP ${generate_code}" >&2
   jq '{error:.error, meta:.meta}' "${response_tmp}" >&2 || cat "${response_tmp}" >&2

@@ -30,6 +30,7 @@ def test_dev_management_ai_kernel_overlay_is_explicitly_dev_only() -> None:
     assert env["PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED"] == "true"
     assert env["PANTHEON_ASSISTANT_KERNEL_ENABLED"] == "true"
     assert env["PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH"] == "/data/bff/assistant-control-mode.json"
+    assert env["PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH"] == ""
     assert env["PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS"] == "300"
     assert env["PANTHEON_STATUS_ROOT_HOST"] == "/home/lupin/pantheon"
     assert env["PANTHEON_STATUS_ROOT_CONTAINER"] == "/workspace/status-root"
@@ -41,6 +42,10 @@ def test_dev_management_ai_kernel_overlay_is_explicitly_dev_only() -> None:
         "assistant.kernel.debug",
         "assistant.kernel.repair",
     }
+    assert env["PANTHEON_BFF_MFA_REQUIRED"] == "true"
+    assert env["PANTHEON_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED"] == "false"
+    for identity in ("APPROVER", "RISK_OWNER", "OPERATOR_A", "OPERATOR_B"):
+        assert env[f"PANTHEON_BFF_DEV_LOGIN_{identity}_MFA_VERIFIED"] == "true"
 
     prod_env = _read_env_file(PROD_CONTROL_ENV)
     assert prod_env["PANTHEON_ENV"] == "staging-live"
@@ -66,6 +71,7 @@ def test_enable_management_ai_dev_kernel_script_targets_only_operator_bff() -> N
 
 def test_nonprod_dev_deploy_exports_management_ai_kernel_overlay() -> None:
     script = NONPROD_DEPLOY.read_text(encoding="utf-8")
+    workflow = NONPROD_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
 
     assert "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io" in script
     assert 'DEV_ASSISTANT_KERNEL_ENABLED="${DEV_ASSISTANT_KERNEL_ENABLED:-true}"' in script
@@ -73,7 +79,13 @@ def test_nonprod_dev_deploy_exports_management_ai_kernel_overlay() -> None:
         'DEV_ASSISTANT_CONTROL_MODE_STORE_PATH="${DEV_ASSISTANT_CONTROL_MODE_STORE_PATH:-/data/bff/assistant-control-mode.json}"'
         in script
     )
+    assert 'DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH="${DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH:-}"' in script
     assert 'DEV_ASSISTANT_CONTROL_IDLE_TTL_SECONDS="${DEV_ASSISTANT_CONTROL_IDLE_TTL_SECONDS:-300}"' in script
+    assert 'DEV_BFF_MFA_REQUIRED="${DEV_BFF_MFA_REQUIRED:-true}"' in script
+    assert (
+        'DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED="${DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED:-false}"'
+        in script
+    )
     assert 'DEV_ASSISTANT_REPAIR_REPO_URL="${DEV_ASSISTANT_REPAIR_REPO_URL:-/workspace/status-root}"' in script
     assert (
         'DEV_ASSISTANT_REPAIR_REMOTE_URL="${DEV_ASSISTANT_REPAIR_REMOTE_URL:-https://github.com/ajoe734/pantheon.git}"'
@@ -103,6 +115,10 @@ def test_nonprod_dev_deploy_exports_management_ai_kernel_overlay() -> None:
         in script
     )
     assert (
+        'PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH="${PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH:-$DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH}"'
+        in script
+    )
+    assert (
         'PANTHEON_ASSISTANT_REPAIR_REPO_URL="${PANTHEON_ASSISTANT_REPAIR_REPO_URL:-$DEV_ASSISTANT_REPAIR_REPO_URL}"'
         in script
     )
@@ -128,6 +144,7 @@ def test_nonprod_dev_deploy_exports_management_ai_kernel_overlay() -> None:
     )
     assert 'PANTHEON_STATUS_ROOT_HOST="${PANTHEON_STATUS_ROOT_HOST:-${DEV_STATUS_ROOT_HOST:-$DEV_REMOTE_DIR}}"' in script
     assert 'command_prefix+=" PANTHEON_ASSISTANT_KERNEL_ENABLED=' in script
+    assert 'command_prefix+=" PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH=' in script
     assert 'command_prefix+=" PANTHEON_ASSISTANT_REPAIR_REPO_URL=' in script
     assert 'command_prefix+=" PANTHEON_ASSISTANT_REPAIR_REMOTE_URL=' in script
     assert 'command_prefix+=" PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS=' in script
@@ -136,6 +153,7 @@ def test_nonprod_dev_deploy_exports_management_ai_kernel_overlay() -> None:
     assert 'command_prefix+=" PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED=' in script
     assert 'command_prefix+=" PANTHEON_STATUS_ROOT_HOST=' in script
     assert 'PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED}" \\' in script
+    assert 'PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH="${PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH}" \\' in script
     assert 'PANTHEON_ASSISTANT_REPAIR_REPO_URL="${PANTHEON_ASSISTANT_REPAIR_REPO_URL}" \\' in script
     assert 'PANTHEON_ASSISTANT_REPAIR_REMOTE_URL="${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL}" \\' in script
     assert 'PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS="${PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS}" \\' in script
@@ -143,6 +161,14 @@ def test_nonprod_dev_deploy_exports_management_ai_kernel_overlay() -> None:
     assert 'PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN}" \\' in script
     assert 'PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED}" \\' in script
     assert 'PANTHEON_STATUS_ROOT_HOST="${PANTHEON_STATUS_ROOT_HOST}" \\' in script
+
+    assert "DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH: ${{ secrets.DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH }}" in workflow
+    assert "DEV_BFF_MFA_REQUIRED: ${{ vars.DEV_BFF_MFA_REQUIRED || 'true' }}" in workflow
+    assert (
+        "DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED: "
+        "${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED || 'false' }}"
+        in workflow
+    )
 
 
 def test_nonprod_dev_deploy_forces_self_hosted_fe_cors_origin() -> None:

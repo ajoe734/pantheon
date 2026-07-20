@@ -150,6 +150,13 @@ jobs:
           DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET }}
           DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID || 'pantheon-dev-operator-b-v1' }}
           DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET }}
+          DEV_BFF_MFA_REQUIRED: ${{ vars.DEV_BFF_MFA_REQUIRED || 'true' }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED || 'false' }}
+          DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED: ${{ vars.DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED || 'true' }}
+          DEV_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED: ${{ vars.DEV_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED || 'true' }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED || 'true' }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED || 'true' }}
+          DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH: ${{ secrets.DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH }}
           DEV_BFF_ROLE_CLAIMS: ${{ vars.DEV_BFF_ROLE_CLAIMS || 'app_metadata.roles,roles' }}
           DEV_BFF_ROLE_MAP: ${{ vars.DEV_BFF_ROLE_MAP || 'pantheon-operator=operator;pantheon-viewer=viewer;pantheon-reviewer=reviewer;pantheon-approver=approver;pantheon-admin=admin' }}
           DEV_BFF_ROLE_MAP_MODE: ${{ vars.DEV_BFF_ROLE_MAP_MODE || 'strict' }}
@@ -157,7 +164,7 @@ jobs:
         run: |
           case "${DEV_AUTH_PROFILE}" in
             strict)
-              if [[ -z "${DEV_BFF_JWT_SECRET}" || -z "${DEV_BFF_OIDC_CLIENT_ID}" || -z "${DEV_BFF_OIDC_CLIENT_SECRET}" ]]; then
+              if [[ -z "${DEV_BFF_JWT_SECRET}" || -z "${DEV_BFF_OIDC_CLIENT_ID}" || -z "${DEV_BFF_OIDC_CLIENT_SECRET}" || -z "${DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH}" ]]; then
                 echo "::error::Dev BFF deploy credentials are not provisioned; refusing to run any target ref before strict auth can be verified."
                 exit 1
               fi
@@ -447,6 +454,13 @@ jobs:
           DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET }}
           DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID || 'pantheon-dev-operator-b-v1' }}
           DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET }}
+          DEV_BFF_MFA_REQUIRED: ${{ vars.DEV_BFF_MFA_REQUIRED || 'true' }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED || 'false' }}
+          DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED: ${{ vars.DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED || 'true' }}
+          DEV_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED: ${{ vars.DEV_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED || 'true' }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED || 'true' }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED || 'true' }}
+          DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH: ${{ secrets.DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH }}
           DEV_BFF_ROLE_CLAIMS: ${{ vars.DEV_BFF_ROLE_CLAIMS || 'app_metadata.roles,roles' }}
           DEV_BFF_ROLE_MAP: ${{ vars.DEV_BFF_ROLE_MAP || 'pantheon-operator=operator;pantheon-viewer=viewer;pantheon-reviewer=reviewer;pantheon-approver=approver;pantheon-admin=admin' }}
           DEV_BFF_ROLE_MAP_MODE: ${{ vars.DEV_BFF_ROLE_MAP_MODE || 'strict' }}
