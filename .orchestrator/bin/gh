@@ -1,9 +1,33 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-gh_bin="$(ls -d "$HOME"/.local/share/pantheon-orchestrator-tools/gh-*/bin/gh 2>/dev/null | sort -V | tail -n1)"
+# Use NUL delimiters so even a malformed-but-existing vendor directory whose
+# name contains a newline cannot be split into a nonexistent executable path.
+gh_bin=""
+while IFS= read -r -d '' candidate; do
+  [[ -x "${candidate}" ]] || continue
+  gh_bin="${candidate}"
+done < <(
+  printf '%s\0' "$HOME"/.local/share/pantheon-orchestrator-tools/gh-*/bin/gh \
+    | sort -z -V
+)
+
 if [[ -z "${gh_bin}" ]]; then
-  echo "GitHub CLI binary not found under ~/.local/share/pantheon-orchestrator-tools." >&2
+  # Fall back to a gh on PATH, skipping this wrapper so we never re-exec
+  # ourselves when .orchestrator/bin is on PATH.
+  self="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+  while IFS= read -r candidate; do
+    [[ -n "${candidate}" ]] || continue
+    resolved="$(readlink -f "${candidate}" 2>/dev/null || echo "${candidate}")"
+    [[ "${resolved}" == "${self}" ]] && continue
+    [[ -x "${resolved}" ]] || continue
+    gh_bin="${resolved}"
+    break
+  done < <(type -aP gh 2>/dev/null || true)
+fi
+
+if [[ -z "${gh_bin}" ]]; then
+  echo "GitHub CLI binary not found under ~/.local/share/pantheon-orchestrator-tools or on PATH." >&2
   exit 1
 fi
 
