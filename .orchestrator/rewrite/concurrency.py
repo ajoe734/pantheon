@@ -113,27 +113,28 @@ def account_limit(
     settings: dict[str, Any],
     identity_keys: list[str] | None = None,
 ) -> int | None:
-    """The account/quota-group concurrency cap — the middle gate of the plan's
+    """The account concurrency cap — the middle gate of the plan's
     three (global cap → **account cap** → per-agent cap).
 
-    Reproduces the incumbent `quota_group_concurrency_limit` exactly:
-    `max_concurrent_per_quota_group` is either a scalar (one global account cap)
-    or a dict keyed by account identity. For the dict form the first matching key
-    wins, so the caller supplies `identity_keys` in the incumbent's try order; a
-    non-int value under a matched key yields None (no cap), matching the incumbent.
-
-    This function owns only the *cap lookup*; resolving which account an agent
-    belongs to (the incumbent's 6-way `account_group/quota_group/dispatch_group`
-    + capability resolver — anti-pattern D) is deliberately left to the caller,
-    because the plan's target shape is a single `account` key that removes the
-    fan-out entirely. Shadow validation injects the incumbent-resolved keys so the
-    cap arithmetic is proven equal before the resolver collapse is undertaken.
+    The target `max_concurrent_per_account` setting is keyed only by the explicit
+    provider `account`; aliases never participate. `max_concurrent_per_quota_group`
+    remains a read-only compatibility surface for old configs and keeps the old
+    identity-key lookup order supplied by the caller.
 
     Returns the cap as an int (>= 0), or None when no cap applies.
     """
-    raw = settings.get("max_concurrent_per_quota_group")
+    target_shape = "max_concurrent_per_account" in settings
+    raw = (
+        settings.get("max_concurrent_per_account")
+        if target_shape
+        else settings.get("max_concurrent_per_quota_group")
+    )
     if isinstance(raw, dict):
-        keys = identity_keys if identity_keys is not None else ([account_id] if account_id else [])
+        keys = (
+            [account_id]
+            if target_shape
+            else identity_keys if identity_keys is not None else ([account_id] if account_id else [])
+        )
         for key in dict.fromkeys(k for k in keys if k):
             if key in raw:
                 try:

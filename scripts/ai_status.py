@@ -1501,6 +1501,12 @@ def build_dispatch_policy_summary(config: dict[str, Any]) -> dict[str, Any]:
     claim_idle_work = bool_config_setting(helper_claim, "claim_idle_work", False)
     helper_claim_enabled = bool_config_setting(helper_claim, "enabled", True)
     worker_self_claim_enabled = bool_config_setting(worker_self_claim, "enabled", False)
+    account_cap_key = (
+        "max_concurrent_per_account"
+        if "max_concurrent_per_account" in ready_dispatcher
+        else "max_concurrent_per_quota_group"
+    )
+    account_caps = int_mapping_config_setting(ready_dispatcher, account_cap_key)
     return {
         "mode": "worker_self_claim" if worker_self_claim_enabled else ("idle_worker_claim" if helper_claim_enabled and claim_idle_work else "supervisor_owned_dispatch"),
         "worker_self_claim_enabled": worker_self_claim_enabled,
@@ -1513,7 +1519,9 @@ def build_dispatch_policy_summary(config: dict[str, Any]) -> dict[str, Any]:
         "max_dispatches_per_tick": int_config_setting(ready_dispatcher, "max_dispatches_per_tick", 4),
         "max_tasks_per_agent": optional_int_config_setting(ready_dispatcher, "max_tasks_per_agent"),
         "max_tasks_per_agent_by_agent": int_mapping_config_setting(ready_dispatcher, "max_tasks_per_agent_by_agent"),
-        "max_concurrent_per_quota_group": int_mapping_config_setting(ready_dispatcher, "max_concurrent_per_quota_group"),
+        "max_concurrent_per_account": account_caps,
+        # Deprecated dashboard compatibility alias; source configs use account.
+        "max_concurrent_per_quota_group": account_caps,
         "sidecar_only_agents": ready_dispatcher.get("sidecar_only_agents") or [],
         "disabled_agents": ready_dispatcher.get("disabled_agents") or [],
     }

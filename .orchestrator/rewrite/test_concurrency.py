@@ -127,6 +127,22 @@ class AccountLimitTests(unittest.TestCase):
             1,
         )
 
+    def test_explicit_account_cap_ignores_legacy_identity_aliases(self) -> None:
+        settings = {"max_concurrent_per_account": {"acct_a": 2, "legacy_alias": 9}}
+        self.assertEqual(
+            concurrency.account_limit(
+                "acct_a", settings=settings, identity_keys=["legacy_alias", "acct_a"]
+            ),
+            2,
+        )
+
+    def test_explicit_account_setting_wins_over_legacy_setting(self) -> None:
+        settings = {
+            "max_concurrent_per_account": {"acct_a": 2},
+            "max_concurrent_per_quota_group": {"acct_a": 7},
+        }
+        self.assertEqual(concurrency.account_limit("acct_a", settings=settings), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

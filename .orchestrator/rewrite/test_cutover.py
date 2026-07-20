@@ -121,6 +121,20 @@ ACCOUNT_CONFIGS = [
         "providers": {"google": {}},
         "ready_dispatcher": {"max_concurrent_per_quota_group": {"unrelated": 9}},
     },
+    {  # target shape: two providers share one explicit account
+        "agents": {"claude": {"provider": "anthropic"}, "claude2": {"provider": "anthropic2"}},
+        "providers": {"anthropic": {"account": "acct_shared"},
+                      "anthropic2": {"account": "acct_shared"}},
+        "ready_dispatcher": {"max_concurrent_per_account": {"acct_shared": 3}},
+    },
+    {  # target key wins if a transitional config still carries the legacy map
+        "agents": {"codex": {"provider": "openai"}},
+        "providers": {"openai": {"account": "oai_pool"}},
+        "ready_dispatcher": {
+            "max_concurrent_per_account": {"oai_pool": 2},
+            "max_concurrent_per_quota_group": {"oai_pool": 9},
+        },
+    },
 ]
 
 
