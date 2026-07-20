@@ -400,15 +400,24 @@ touches the hot path.
   `poll_workers` is now a 128-line ordered stage driver (down from 751 lines).
   Each stage returns an explicit driver short-circuit outcome, with parity pinned
   by the incumbent poll recovery suite plus direct stage boundary tests.
-- **Phase 6 — model built in isolation (storage cutover pending).**
+- **Phase 6 — durable shadow journal shipped; authoritative read cutover pending.**
   `rewrite/state_projection.py` implements the plan's core §3.7 idea: an
   append-only event vocabulary + a pure `project_board(events)` that folds it into
   the board, with task transitions validated against the ONE task state machine
   (`task_machine.TRANSITIONS`), and `next` *appended* (history retained) instead
   of overwritten. Deterministic/replayable (prefix ⇒ point-in-time board). This is
-  the parallel-package build the discipline requires; the live cutover (state out
-  of the git tree into the event log + projection) is the remaining step and needs
-  the fleet to validate — it is the plan's Medium-High-risk item.
+  the parallel-package build the discipline requires. The first storage migration
+  step is now implemented by `rewrite/task_state_store.py`: after the incumbent
+  `ai-status.json` atomic write and readback succeed, shadow mode appends an
+  owner-only, hash-chained full-state commit to a Git-external journal. The
+  split-root provisioner pins the live journal under the runtime-config directory,
+  outside both command and status repositories; a shadow failure warns but cannot
+  fail the incumbent write. `scripts/verify_task_state_store.py` replays and
+  validates the chain and compares its latest projection digest with the canonical
+  board. This full-snapshot journal is a migration bridge, not yet the final
+  task-level event vocabulary or source of truth. Live parity must be observed
+  before reads move off `ai-status.json`; that authoritative read cutover remains
+  the plan's Medium-High-risk item.
 - **Phase 7 — sidecar OFF by default (dormant); event-queue/discussion pending.**
   `rewrite/utilization.py` encodes the §3.8 principle (`select_utilization_action`
   ⇒ reprioritize real backlog, never synthesize). The sidecar make-work engine is

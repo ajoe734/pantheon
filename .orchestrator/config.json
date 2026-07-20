@@ -13,6 +13,10 @@
     "provider_capabilities": ".orchestrator/provider_capabilities.json",
     "claude_mcp_config": ".orchestrator/claude-approval-broker.mcp.json"
   },
+  "task_state_store": {
+    "mode": "shadow",
+    "event_log": ".orchestrator/task-state-events.jsonl"
+  },
   "coordination": {
     "enabled": true
   },

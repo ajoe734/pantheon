@@ -28,6 +28,8 @@ from typing import Any, Mapping, Generator, Callable, Iterable, Final
 
 ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATOR_DIR = ROOT / ".orchestrator"
+TASK_STATE_STORE_MODE_ENV = "PANTHEON_TASK_STATE_STORE_MODE"
+TASK_STATE_EVENT_LOG_ENV = "PANTHEON_TASK_STATE_EVENT_LOG"
 TASK_BRIEFS_DIR = ORCHESTRATOR_DIR / "task-briefs"
 EVIDENCE_DIR = ORCHESTRATOR_DIR / "evidence"
 CLOSEOUT_SPEC_PATH = ORCHESTRATOR_DIR / "skills" / "task-closeout-finalization.md"
@@ -709,35 +711,62 @@ def _status_command_runtime_env_from_record(record: Mapping[str, Any]) -> dict[s
     }
 
 
+def task_state_store_runtime_env(config: Mapping[str, Any]) -> dict[str, str]:
+    store = config.get("task_state_store")
+    if not isinstance(store, Mapping):
+        return {}
+    mode = str(store.get("mode") or "").strip().lower()
+    if mode != "shadow":
+        return {}
+    raw_event_log = str(store.get("event_log") or "").strip()
+    if not raw_event_log:
+        return {}
+    event_log = Path(os.path.expanduser(raw_event_log))
+    # The repo config contains a relative deployment template. Only a live,
+    # provisioned absolute runtime path is safe to expose to status commands.
+    if not event_log.is_absolute():
+        return {}
+    event_log = _assert_no_symlink_components(
+        event_log,
+        source="task-state event log",
+    )
+    return {
+        TASK_STATE_STORE_MODE_ENV: mode,
+        TASK_STATE_EVENT_LOG_ENV: str(event_log),
+    }
+
+
 def status_command_runtime_env(
     config: dict[str, Any],
     metadata: Mapping[str, Any] | None = None,
 ) -> dict[str, str]:
+    env: dict[str, str] | None = None
     if isinstance(metadata, Mapping):
         issued = metadata.get("status_command_runtime")
         if isinstance(issued, Mapping):
-            issued_env = _status_command_runtime_env_from_record(issued)
-            if issued_env is not None:
-                return issued_env
+            env = _status_command_runtime_env_from_record(issued)
 
-    expected_remote = status_command_expected_remote(config)
-    base_ref = status_command_base_ref(config)
-    metadata = validate_status_command_runtime(
-        ROOT.resolve(),
-        expected_remote=expected_remote,
-        base_ref=base_ref,
-        require_merged=False,
-    )
-    return {
-        STATUS_COMMAND_ROOT_ENV: metadata["root"],
-        STATUS_COMMAND_SHA_ENV: metadata["source_sha"],
-        STATUS_COMMAND_REMOTE_ENV: metadata["remote"],
-        STATUS_COMMAND_BASE_REF_ENV: base_ref,
-        LEGACY_STATUS_COMMAND_ROOT_ENV: metadata["root"],
-        LEGACY_STATUS_COMMAND_SHA_ENV: metadata["source_sha"],
-        LEGACY_STATUS_COMMAND_REMOTE_ENV: metadata["remote"],
-        LEGACY_STATUS_COMMAND_BASE_REF_ENV: base_ref,
-    }
+    if env is None:
+        expected_remote = status_command_expected_remote(config)
+        base_ref = status_command_base_ref(config)
+        runtime_metadata = validate_status_command_runtime(
+            ROOT.resolve(),
+            expected_remote=expected_remote,
+            base_ref=base_ref,
+            require_merged=False,
+        )
+        env = {
+            STATUS_COMMAND_ROOT_ENV: runtime_metadata["root"],
+            STATUS_COMMAND_SHA_ENV: runtime_metadata["source_sha"],
+            STATUS_COMMAND_REMOTE_ENV: runtime_metadata["remote"],
+            STATUS_COMMAND_BASE_REF_ENV: base_ref,
+            LEGACY_STATUS_COMMAND_ROOT_ENV: runtime_metadata["root"],
+            LEGACY_STATUS_COMMAND_SHA_ENV: runtime_metadata["source_sha"],
+            LEGACY_STATUS_COMMAND_REMOTE_ENV: runtime_metadata["remote"],
+            LEGACY_STATUS_COMMAND_BASE_REF_ENV: base_ref,
+        }
+    env.update(task_state_store_runtime_env(config))
+    return env
 
 
 def delivery_runtime_env(config: dict[str, Any], metadata: dict[str, Any] | None = None) -> dict[str, str]:

@@ -35,6 +35,7 @@ REPO_OWNED_SUPERVISOR_LEASE_POLICY = {
         "work_progress_stale_seconds",
     ),
 }
+TASK_STATE_STORE_DEFAULT_FILENAME = "task-state-events.jsonl"
 
 
 def load_json_object(path: Path) -> dict[str, Any]:
@@ -191,6 +192,59 @@ def apply_supervisor_lease_policy(
                 rendered_section[key] = copy.deepcopy(repo_section[key])
 
 
+def apply_task_state_store(
+    repo_config: dict[str, Any],
+    rendered: dict[str, Any],
+    *,
+    command_root: Path,
+    status_root: Path,
+    live_config_path: Path,
+) -> None:
+    """Pin the shadow journal to the git-external live runtime directory."""
+    repo_store = repo_config.get("task_state_store")
+    if repo_store is None:
+        return
+    if not isinstance(repo_store, dict):
+        raise ValueError("task_state_store config must be a JSON object")
+    mode = str(repo_store.get("mode") or "").strip().lower()
+    if mode not in {"off", "shadow"}:
+        raise ValueError("task_state_store.mode must be 'off' or 'shadow'")
+    raw_event_log = str(
+        repo_store.get("event_log") or TASK_STATE_STORE_DEFAULT_FILENAME
+    ).strip()
+    filename = Path(os.path.expanduser(raw_event_log)).name
+    if filename in {"", ".", ".."}:
+        raise ValueError("task_state_store.event_log must name a file")
+
+    runtime_parent = live_config_path.expanduser().absolute().parent
+    parent_symlink = first_symlink_component(runtime_parent)
+    if parent_symlink is not None:
+        raise ValueError(
+            f"task-state store runtime parent contains a symlink component: {parent_symlink}"
+        )
+    event_log_candidate = runtime_parent / filename
+    event_symlink = first_symlink_component(event_log_candidate)
+    if event_symlink is not None:
+        raise ValueError(f"task-state event log contains a symlink component: {event_symlink}")
+    event_log = event_log_candidate.resolve()
+    if event_log == live_config_path.expanduser().resolve():
+        raise ValueError("task-state event log cannot replace the live supervisor config")
+    if event_log.exists() and not event_log.is_file():
+        raise ValueError(f"task-state event log must be a regular file: {event_log}")
+    for label, root in (("command", command_root), ("status", status_root)):
+        resolved_root = root.expanduser().resolve()
+        if event_log == resolved_root or resolved_root in event_log.parents:
+            raise ValueError(
+                f"task-state event log must remain outside the {label} git root: {event_log}"
+            )
+
+    rendered_store = rendered.setdefault("task_state_store", {})
+    if not isinstance(rendered_store, dict):
+        raise ValueError("task_state_store config must be a JSON object")
+    rendered_store["mode"] = mode
+    rendered_store["event_log"] = str(event_log)
+
+
 def build_live_config(
     repo_config: dict[str, Any],
     *,
@@ -203,6 +257,13 @@ def build_live_config(
     rendered = deep_merge(repo_config, existing_live_config or {})
     apply_provider_account_schema(repo_config, rendered)
     apply_supervisor_lease_policy(repo_config, rendered)
+    apply_task_state_store(
+        repo_config,
+        rendered,
+        command_root=command_root,
+        status_root=status_root,
+        live_config_path=live_config_path,
+    )
     rendered["paths"] = canonical_status_paths(repo_config, status_root)
 
     watchdog = rendered.setdefault("watchdog", {})

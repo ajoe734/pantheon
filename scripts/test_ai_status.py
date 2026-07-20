@@ -7,6 +7,7 @@ import json
 import multiprocessing
 import os
 import shutil
+import stat
 import subprocess
 import tempfile
 import time
@@ -21,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ai_status
 import task_archive
 from canonical_writer_guard import assert_isolated_legacy_write_target
+from rewrite.task_state_store import load_events, verify_projection
 
 
 def _setup_test_isolation(test_case):
@@ -202,6 +204,61 @@ class StrictActivityTailParsingTests(unittest.TestCase):
             ai_status.LOG_FILE = original_log_file
 
 
+class TaskStateShadowTests(unittest.TestCase):
+    def setUp(self) -> None:
+        _setup_test_isolation(self)
+
+    def tearDown(self) -> None:
+        _teardown_test_isolation(self)
+
+    def test_save_state_appends_owner_only_shadow_commit(self) -> None:
+        journal = self._test_root / "runtime" / "task-state-events.jsonl"
+        state = {"sprint": "shadow", "tasks": [{"id": "STATE-001", "status": "todo"}]}
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                ai_status.TASK_STATE_STORE_MODE_ENV: "shadow",
+                ai_status.TASK_STATE_EVENT_LOG_ENV: str(journal),
+                "ORCH_RUN_ID": "run-shadow-001",
+            },
+            clear=False,
+        ):
+            ai_status.save_state(state)
+
+        events = load_events(journal)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["source"], "run-shadow-001")
+        self.assertEqual(events[0]["state"], state)
+        self.assertTrue(verify_projection(journal, state)["ok"])
+        self.assertEqual(stat.S_IMODE(journal.stat().st_mode), 0o600)
+
+    def test_shadow_failure_warns_after_incumbent_write_succeeds(self) -> None:
+        real_parent = self._test_root / "real-runtime"
+        real_parent.mkdir()
+        linked_parent = self._test_root / "linked-runtime"
+        linked_parent.symlink_to(real_parent, target_is_directory=True)
+        state = {"sprint": "shadow", "tasks": [{"id": "STATE-002", "status": "todo"}]}
+        stderr = io.StringIO()
+
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    ai_status.TASK_STATE_STORE_MODE_ENV: "shadow",
+                    ai_status.TASK_STATE_EVENT_LOG_ENV: str(linked_parent / "events.jsonl"),
+                },
+                clear=False,
+            ),
+            mock.patch.object(ai_status.sys, "stderr", stderr),
+        ):
+            ai_status.save_state(state)
+
+        self.assertEqual(json.loads(self._test_status_file.read_text(encoding="utf-8")), state)
+        self.assertIn("task-state shadow append failed", stderr.getvalue())
+        self.assertFalse((real_parent / "events.jsonl").exists())
+
+
 class StatusRootRoutingTests(unittest.TestCase):
     def _init_repo(self, path: Path) -> None:
         path.mkdir(parents=True, exist_ok=True)
@@ -246,6 +303,8 @@ class StatusRootRoutingTests(unittest.TestCase):
             ".orchestrator/runtime_state.py",
             ".orchestrator/task_archive.py",
             ".orchestrator/multi_repo_registry.py",
+            ".orchestrator/rewrite/__init__.py",
+            ".orchestrator/rewrite/task_state_store.py",
             ".orchestrator/config.json",
         ):
             source = repo_root / rel

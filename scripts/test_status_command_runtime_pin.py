@@ -48,6 +48,8 @@ class StatusCommandRuntimePinTests(unittest.TestCase):
             ".orchestrator/runtime_state.py",
             ".orchestrator/task_archive.py",
             ".orchestrator/multi_repo_registry.py",
+            ".orchestrator/rewrite/__init__.py",
+            ".orchestrator/rewrite/task_state_store.py",
             ".orchestrator/config.json",
         ):
             source = REPO_ROOT / rel

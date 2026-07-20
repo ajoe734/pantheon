@@ -42,6 +42,7 @@ CRITICAL_FLAGS: tuple[str, ...] = (
     "supervisor.lease_requires_work_progress",
     "worker_runtime.worker_lease_seconds",
     "worker_runtime.work_progress_stale_seconds",
+    "task_state_store.mode",
 )
 
 # Paths where live is ALLOWED to diverge from repo for legitimate

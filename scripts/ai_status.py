@@ -31,6 +31,8 @@ STATUS_COMMAND_ROOT_ENV = "PANTHEON_COMMAND_ROOT"
 STATUS_COMMAND_SHA_ENV = "PANTHEON_COMMAND_RUNTIME_SHA"
 STATUS_COMMAND_REMOTE_ENV = "PANTHEON_COMMAND_REMOTE"
 STATUS_COMMAND_BASE_REF_ENV = "PANTHEON_COMMAND_BASE_REF"
+TASK_STATE_STORE_MODE_ENV = "PANTHEON_TASK_STATE_STORE_MODE"
+TASK_STATE_EVENT_LOG_ENV = "PANTHEON_TASK_STATE_EVENT_LOG"
 LEGACY_STATUS_COMMAND_ROOT_ENV = "PANTHEON_STATUS_COMMAND_ROOT"
 LEGACY_STATUS_COMMAND_SHA_ENV = "PANTHEON_STATUS_COMMAND_SHA"
 LEGACY_STATUS_COMMAND_REMOTE_ENV = "PANTHEON_STATUS_COMMAND_REMOTE"
@@ -87,6 +89,7 @@ from runtime_state import (
     load_runtime_state_snapshot,
     runtime_state_lock,
 )
+from rewrite.task_state_store import append_state_commit
 from common import (
     ActivityAuditInvariantError,
     DuplicateActivityJSONKeyError,
@@ -1639,6 +1642,28 @@ def save_state(state: dict[str, Any]) -> None:
     _fsync_directory(STATUS_FILE.parent)
     if STATUS_FILE.read_text(encoding="utf-8") != serialized:
         raise RuntimeError("canonical task-state readback mismatch")
+    _append_task_state_shadow(state)
+
+
+def _append_task_state_shadow(state: dict[str, Any]) -> None:
+    if str(os.environ.get(TASK_STATE_STORE_MODE_ENV) or "").strip().lower() != "shadow":
+        return
+    raw_path = str(os.environ.get(TASK_STATE_EVENT_LOG_ENV) or "").strip()
+    try:
+        if not raw_path:
+            raise ValueError(f"{TASK_STATE_EVENT_LOG_ENV} is required in shadow mode")
+        event_path = Path(os.path.expanduser(raw_path))
+        if not event_path.is_absolute():
+            raise ValueError(f"{TASK_STATE_EVENT_LOG_ENV} must be an absolute path")
+        source = (
+            str(os.environ.get("ORCH_RUN_ID") or "").strip()
+            or str(os.environ.get("AI_NAME") or "").strip()
+            or "ai-status"
+        )
+        append_state_commit(event_path, state, source=source)
+    except Exception as exc:
+        # Shadow mode cannot make the incumbent canonical write unavailable.
+        print(f"Warning: task-state shadow append failed: {exc}", file=sys.stderr)
 
 
 def _fsync_directory(path: Path) -> None:
