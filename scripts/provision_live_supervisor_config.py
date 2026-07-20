@@ -129,6 +129,68 @@ def write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
         temporary_path.unlink(missing_ok=True)
 
 
+def validate_approval_queue_marker(path: Path) -> dict[str, Any]:
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(f"approval queue marker must be a regular non-symlink file: {path}")
+    payload = load_json_object(path)
+    if payload.get("version") != 2:
+        raise ValueError(f"approval queue marker must use version 2: {path}")
+    if not isinstance(payload.get("pending"), list):
+        raise ValueError(f"approval queue marker pending must be a list: {path}")
+    if not isinstance(payload.get("history"), list):
+        raise ValueError(f"approval queue marker history must be a list: {path}")
+    if any(not isinstance(item, dict) for item in payload["pending"]):
+        raise ValueError(f"approval queue marker pending items must be objects: {path}")
+    if any(not isinstance(item, dict) for item in payload["history"]):
+        raise ValueError(f"approval queue marker history items must be objects: {path}")
+    return payload
+
+
+def ensure_approval_queue_marker(path: Path) -> bool:
+    """Create the split-root worker marker once without replacing live approvals."""
+
+    path = path.expanduser().absolute()
+    parent_symlink = first_symlink_component(path.parent)
+    if parent_symlink is not None:
+        raise ValueError(f"approval queue marker parent contains a symlink component: {parent_symlink}")
+    if not path.parent.is_dir():
+        raise ValueError(f"approval queue marker parent is not a directory: {path.parent}")
+
+    if path.exists() or path.is_symlink():
+        validate_approval_queue_marker(path)
+        return False
+
+    payload = {
+        "version": 2,
+        "updated_at": None,
+        "pending": [],
+        "history": [],
+    }
+    fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary_path = Path(temporary_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            os.fchmod(handle.fileno(), stat.S_IRUSR | stat.S_IWUSR)
+            json.dump(payload, handle, indent=2, ensure_ascii=False)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.link(temporary_path, path)
+        except FileExistsError:
+            # Another bootstrap may have won the race. Preserve and validate it.
+            validate_approval_queue_marker(path)
+            return False
+        directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+        return True
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
 def validated_root(path: Path, *, label: str, required: tuple[str, ...]) -> Path:
     expanded = path.expanduser().absolute()
     symlink = first_symlink_component(expanded)
@@ -200,6 +262,11 @@ def main(argv: list[str] | None = None) -> int:
             live_config_path=live_config_path,
             python_executable=python_executable,
         )
+        approval_queue_value = rendered["paths"].get("approval_queue")
+        if not isinstance(approval_queue_value, str) or not approval_queue_value.strip():
+            raise ValueError("repo config must define paths.approval_queue for split-root workers")
+        approval_queue_path = Path(approval_queue_value)
+        approval_queue_created = ensure_approval_queue_marker(approval_queue_path)
         write_json_atomic(live_config_path, rendered)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"live supervisor config provisioning failed: {exc}", file=sys.stderr)
@@ -209,6 +276,8 @@ def main(argv: list[str] | None = None) -> int:
         "command_root": str(command_root),
         "status_root": str(status_root),
         "live_config": str(live_config_path),
+        "approval_queue": str(approval_queue_path),
+        "approval_queue_created": approval_queue_created,
         "supervisor_command": rendered["watchdog"]["supervisor_command"],
     }
     if args.json:
