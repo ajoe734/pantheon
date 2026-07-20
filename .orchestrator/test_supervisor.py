@@ -7448,6 +7448,176 @@ class ChairReviewDispatchTests(unittest.TestCase):
 
 
 class PollWorkersRecoveryTests(unittest.TestCase):
+    def test_approval_stage_auto_denies_pending_request_after_worker_exit(self) -> None:
+        worker = {
+            "run_id": "run-dead-approval",
+            "task_id": "TASK-APPROVAL",
+            "provider": "codex",
+            "status": "waiting_approval",
+            "pid": 1234,
+            "deferred_action": "approval-1",
+            "deferred_tool_use": {"name": "Bash"},
+        }
+        pending = [{"approval_id": "approval-1"}, {"approval_id": None}]
+        with (
+            mock.patch.object(supervisor, "worker_supports_approval_resume", return_value=False),
+            mock.patch.object(supervisor, "resolve_approval") as resolve_approval,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            mock.patch.object(supervisor, "finalize_queue_event_record") as finalize_queue_event_record,
+        ):
+            outcome = supervisor.poll_worker_approval_stage(
+                {},
+                {},
+                worker,
+                provider_report={},
+                pending=pending,
+                resolved=[],
+                alive=False,
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        self.assertEqual(worker["status"], "failed")
+        self.assertIsNone(worker["deferred_action"])
+        self.assertIsNone(worker["deferred_tool_use"])
+        resolve_approval.assert_called_once_with(
+            {},
+            "approval-1",
+            decision="deny",
+            note="Auto-denied because the worker exited before approval could be applied.",
+            remember=False,
+        )
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_failed")
+        finalize_queue_event_record.assert_called_once()
+
+    def test_approval_stage_marks_live_pending_worker_and_queue_manual(self) -> None:
+        worker = {
+            "run_id": "run-live-approval",
+            "task_id": "TASK-APPROVAL",
+            "provider": "claude",
+            "status": "running",
+            "pid": 1234,
+            "queue_event_id": "evt-approval",
+        }
+        state = {"queue": {"events": {"evt-approval": {"status": "started"}}}}
+        pending = [{"approval_id": "approval-2", "created_at": "2026-07-20T06:00:00Z"}]
+        with (
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            outcome = supervisor.poll_worker_approval_stage(
+                {},
+                state,
+                worker,
+                provider_report={},
+                pending=pending,
+                resolved=[],
+                alive=True,
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        self.assertEqual(worker["status"], "waiting_approval")
+        self.assertEqual(worker["deferred_action"], "approval-2")
+        self.assertEqual(state["queue"]["events"]["evt-approval"]["status"], "manual_pending")
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_waiting_approval")
+
+    def test_approval_stage_resumes_allowed_claude_worker(self) -> None:
+        worker = {
+            "run_id": "run-resume",
+            "task_id": "TASK-APPROVAL",
+            "provider": "claude",
+            "status": "suspended_approval",
+        }
+        resolved = [{"approval_id": "approval-3", "decision": "allow"}]
+        resumed = {
+            "command": ["claude", "--resume", "session-1"],
+            "log_path": "/tmp/resume.log",
+            "allowed_tools": ["Bash"],
+        }
+        with (
+            mock.patch.object(supervisor, "_provider_uses_claude_cli", return_value=True),
+            mock.patch.object(supervisor, "resume_claude_worker", return_value=resumed) as resume_claude_worker,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            outcome = supervisor.poll_worker_approval_stage(
+                {},
+                {},
+                worker,
+                provider_report={"providers": {}},
+                pending=[],
+                resolved=resolved,
+                alive=False,
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        self.assertEqual(worker["last_approval_id"], "approval-3")
+        resume_claude_worker.assert_called_once_with(
+            {},
+            worker,
+            {"providers": {}},
+            approval=resolved[0],
+        )
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_resumed")
+
+    def test_approval_stage_fails_denied_worker(self) -> None:
+        worker = {
+            "run_id": "run-denied",
+            "task_id": "TASK-APPROVAL",
+            "provider": "codex",
+            "status": "waiting_approval",
+        }
+        resolved = [{"approval_id": "approval-4", "decision": "deny", "note": "operator denied"}]
+        with (
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            mock.patch.object(supervisor, "finalize_queue_event_record") as finalize_queue_event_record,
+        ):
+            outcome = supervisor.poll_worker_approval_stage(
+                {},
+                {},
+                worker,
+                provider_report={},
+                pending=[],
+                resolved=resolved,
+                alive=True,
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        self.assertEqual(worker["status"], "failed")
+        self.assertEqual(write_activity_log.call_args.args[1]["message"], "operator denied")
+        finalize_queue_event_record.assert_called_once_with(
+            {},
+            {},
+            worker,
+            "failed",
+            "operator denied",
+        )
+
+    def test_approval_stage_restores_live_worker_when_approval_state_disappears(self) -> None:
+        worker = {
+            "run_id": "run-restored",
+            "task_id": "TASK-APPROVAL",
+            "provider": "codex",
+            "status": "waiting_approval",
+            "deferred_action": "approval-missing",
+            "deferred_tool_use": {"name": "Bash"},
+            "last_approval_id": "approval-old",
+        }
+
+        outcome = supervisor.poll_worker_approval_stage(
+            {},
+            {},
+            worker,
+            provider_report={},
+            pending=[],
+            resolved=[],
+            alive=True,
+        )
+
+        self.assertEqual(outcome, {"changed": True, "stop": False})
+        self.assertEqual(worker["status"], "running")
+        self.assertIsNone(worker["deferred_action"])
+        self.assertIsNone(worker["deferred_tool_use"])
+        self.assertIsNone(worker["last_approval_id"])
+
     def test_observation_stage_refreshes_fresh_worker_lease(self) -> None:
         now = datetime.now(timezone.utc)
         worker = {
