@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from services.trade_journey.materializer import IDENTIFIER_FIELDS, JourneyMaterializer
+from services.trade_journey.lifecycle_projector import LifecycleProjector
+from services.telemetry.ingest_svc import TelemetryIngestService
 
 
 SCRIPT = Path(__file__).with_name("seed_tj_e2e_012_hosted_scenarios.py")
@@ -126,44 +128,143 @@ def test_seed_and_materializer_cover_every_hosted_resolve_identifier() -> None:
     ) == ["tj-scenario-9", "tj-scenario-9-ambiguity-peer"]
 
 
-def test_seed_source_keeps_tls_verification_and_never_logs_credentials() -> None:
+def _binding() -> dict:
+    return {
+        "binding_id": "10000000-0000-4000-8000-000000000001",
+        "runtime_id": "runtime-tj-e2e-012",
+        "capital_pool_id": "pool-tj-e2e-012",
+        "artifact_id": "artifact-tj-e2e-012",
+        "artifact_version": "1.2.3",
+        "plan_id": "plan-tj-e2e-012",
+        "persona_capital_binding_id": "pcb-tj-e2e-012",
+        "effective_at": "2026-07-20T00:00:00Z",
+        "deployment_mode": "paper",
+        "status": "active",
+    }
+
+
+def test_seed_wraps_source_events_in_deterministic_binding_valid_telemetry() -> None:
+    fixtures = seed.build_telemetry_fixtures(_binding())
+    repeated = seed.build_telemetry_fixtures(_binding())
+
+    assert fixtures == repeated
+    assert len(fixtures) == len(seed.build_scenarios())
+    assert {event["event_type"] for event in fixtures} == {seed.FIXTURE_EVENT_TYPE}
+    assert {event["binding_id"] for event in fixtures} == {_binding()["binding_id"]}
+    assert {event["metadata"]["fixture_scope"] for event in fixtures} == {"dev-only"}
+    assert {event["correlation_envelope"]["tenant_id"] for event in fixtures} == {
+        seed.TENANT_ID
+    }
+
+
+def test_fixture_ingest_is_default_closed_and_dev_gate_still_runs_evidence_validation(
+    monkeypatch,
+) -> None:
+    fixture = seed.build_telemetry_fixtures(_binding())[0]
+    service = TelemetryIngestService(schema={})
+
+    monkeypatch.delenv("PANTHEON_TJ_E2E_FIXTURE_INGEST_ENABLED", raising=False)
+    accepted, reason, _ = service._validate_evidence_contract(fixture)
+    assert accepted is False
+    assert "disabled" in str(reason)
+
+    monkeypatch.setenv("PANTHEON_TJ_E2E_FIXTURE_INGEST_ENABLED", "true")
+    accepted, reason, _ = service._validate_evidence_contract(fixture)
+    assert accepted is True
+    assert reason is None
+
+
+def test_canonical_fixture_projector_rebuilds_all_scenarios(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    fixtures = seed.build_telemetry_fixtures(_binding())
+    rows = [
+        {
+            "ingested_seq": position,
+            "ingested_at": f"2026-07-20T00:05:{position:02d}Z",
+            "event_id": fixture["event_id"],
+            "event_type": fixture["event_type"],
+            "created_at": fixture["created_at"],
+            "payload": fixture,
+        }
+        for position, fixture in enumerate(fixtures, start=1)
+    ]
+    monkeypatch.setenv("PANTHEON_TJ_E2E_FIXTURE_INGEST_ENABLED", "true")
+    projector = LifecycleProjector(
+        state_path=tmp_path / "controller_state.json",
+        bundle_root=tmp_path,
+        deployment_sha="a" * 40,
+    )
+    result = projector.project_records(
+        rows,
+        mode="live",
+        source_high_watermark=len(rows),
+    )
+
+    assert result.accepted == len(rows)
+    assert result.quarantined == 0
+    projected = json.loads(
+        (tmp_path / "current" / "trade_journey_events.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    materializer = JourneyMaterializer()
+    materializer.rebuild(projected["events"])
+    for number in range(1, 13):
+        _projection(materializer, number, "live" if number == 10 else "paper")
+    assert set(_projection(materializer, 2).snapshot["stages"]) == {"promotion_decision"}
+    assert _projection(materializer, 5).timeline[-1]["fill_id"] == "fill-scenario-5"
+    assert _projection(materializer, 11).timeline[-1]["source_unavailable"] is True
+
+
+def test_seed_source_is_loopback_only_and_never_uses_or_logs_credentials() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
 
-    assert "ssl.create_default_context()" in source
     assert "CERT_NONE" not in source
     assert "check_hostname = False" not in source
-    assert '"client_secret": _required_env' in source
+    assert "ALLOWED_TELEMETRY_ORIGINS" in source
+    assert "http://127.0.0.1:18083" in source
+    assert "client_secret" not in source
     assert "print(token" not in source
     assert "print(login" not in source
 
 
-def test_main_authenticates_and_posts_batch_without_printing_secrets(monkeypatch, capsys) -> None:
+def test_main_posts_canonical_loopback_batch_without_printing_payloads(monkeypatch, capsys) -> None:
     for name, value in {
-        "BFF_BASE": "https://bff.example.test",
-        "TJ_E2E_ALLOWED_BFF_ORIGIN": "https://bff.example.test",
+        "TJ_E2E_TELEMETRY_BASE": "http://127.0.0.1:18083",
+        "TJ_E2E_RUNTIME_MANAGER_BASE": "http://127.0.0.1:18081",
+        "TJ_E2E_SEED_BFF_BASE": "http://127.0.0.1:18001",
+        "TJ_E2E_EXPECTED_BFF_SHA": "a" * 40,
         "GITHUB_REPOSITORY": "ajoe734/pantheon",
         "TJ_E2E_TENANT_ID": seed.TENANT_ID,
-        "TJ_E2E_OPERATOR_CLIENT_ID": "operator-a-client",
-        "TJ_E2E_OPERATOR_CLIENT_SECRET": "operator-a-secret",
     }.items():
         monkeypatch.setenv(name, value)
 
     calls = []
 
+    def fake_read(url, *, token=None, timeout=30.0):
+        calls.append({"url": url, "token": token, "timeout": timeout})
+        if url.endswith("/bff/version"):
+            return 200, {"source_commit_sha": "a" * 40}
+        return 200, {"bindings": [_binding()]}
+
     def fake_request(url, *, body, token=None, timeout=30.0):
         calls.append({"url": url, "body": body, "token": token, "timeout": timeout})
-        if url.endswith("/bff/auth/dev-login"):
-            return 200, {"access_token": "short-lived-token", "meta": {"identity": "operator_a"}}
-        return 200, {"status": "ok", "count": len(body)}
+        return 202, {"ingested": len(body["events"]), "rejected": 0}
 
+    monkeypatch.setattr(seed, "_read_json", fake_read)
     monkeypatch.setattr(seed, "_request_json", fake_request)
+    monkeypatch.setattr(seed.time, "sleep", lambda _seconds: None)
 
     assert seed.main() == 0
     stdout = capsys.readouterr().out
     summary = json.loads(stdout)
     assert summary["result"] == "seeded"
     assert summary["journey_count"] == 13
-    assert "operator-a-secret" not in stdout
-    assert "short-lived-token" not in stdout
-    assert calls[1]["token"] == "short-lived-token"
-    assert calls[1]["body"] == seed.build_scenarios()
+    assert summary["telemetry_event_count"] == len(seed.build_scenarios())
+    assert "fixture_payload" not in stdout
+    write = calls[-1]
+    assert write["url"].endswith("/api/telemetry/ingest/batch")
+    assert write["token"] is None
+    assert write["body"]["events"] == seed.build_telemetry_fixtures(_binding())

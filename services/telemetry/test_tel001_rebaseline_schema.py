@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import types
 import unittest
 import uuid
@@ -154,6 +155,31 @@ def _event(event_type: str) -> dict[str, Any]:
         event["position_qty"] = 10.0
         event["quantity"] = 10.0
         event["price"] = 101.25
+    if event_type == "trade_journey_fixture":
+        event["metadata"].update(
+            fixture_schema_version="pantheon.trade-journey-fixture.v1",
+            fixture_source="tj_e2e_012_hosted_seed_v3",
+            fixture_scope="dev-only",
+            fixture_stage="trade_decision",
+            fixture_stage_status="succeeded",
+            fixture_occurred_at="2026-05-16T00:10:00Z",
+            fixture_recorded_at="2026-05-16T00:10:01Z",
+            fixture_payload={},
+        )
+        event["correlation_envelope"] = {
+            "schema_version": "trade-journey-envelope/1",
+            "tenant_id": "tenant-dev",
+            "environment": "paper",
+            "journey_id": "tj-tel001-fixture",
+            "correlation_id": str(uuid.uuid5(uuid.NAMESPACE_URL, "tel001-fixture-correlation")),
+            "trace_id": str(uuid.uuid5(uuid.NAMESPACE_URL, "tel001-fixture-trace")),
+            "event_id": event["event_id"],
+            "causation_event_id": event["event_id"],
+            "producer": "tel001-schema-test",
+            "event_time": event["created_at"],
+            "received_at": event["created_at"],
+            "producer_revision": 1,
+        }
     return event
 
 
@@ -285,7 +311,15 @@ class TelemetryEventRebaselineSchemaTest(unittest.TestCase):
             await svc.stop(graceful=True)
             return stats, rejected
 
-        stats, rejected = asyncio.run(scenario())
+        previous_fixture_gate = os.environ.get("PANTHEON_TJ_E2E_FIXTURE_INGEST_ENABLED")
+        os.environ["PANTHEON_TJ_E2E_FIXTURE_INGEST_ENABLED"] = "true"
+        try:
+            stats, rejected = asyncio.run(scenario())
+        finally:
+            if previous_fixture_gate is None:
+                os.environ.pop("PANTHEON_TJ_E2E_FIXTURE_INGEST_ENABLED", None)
+            else:
+                os.environ["PANTHEON_TJ_E2E_FIXTURE_INGEST_ENABLED"] = previous_fixture_gate
 
         self.assertEqual(rejected, [])
         self.assertEqual(stats["total_rejected"], 0)

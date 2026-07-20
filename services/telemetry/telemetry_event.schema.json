@@ -33,6 +33,7 @@
         "drawdown_snapshot",
         "slippage_observation",
         "fill_observation",
+        "trade_journey_fixture",
         "signal_generation",
         "trade_decision",
         "risk_evaluation",
