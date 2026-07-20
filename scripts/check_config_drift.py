@@ -32,6 +32,9 @@ CRITICAL_FLAGS: tuple[str, ...] = (
     "chair_review.enabled",
     "worker_reassignment.enabled",
     "ready_dispatcher.enabled",
+    "ready_dispatcher.require_explicit_provider_accounts",
+    "ready_dispatcher.allow_legacy_provider_account_aliases",
+    "ready_dispatcher.max_concurrent_per_account",
     "coordination.enabled",
     "github_bus.enabled",
     "watchdog.enabled",
@@ -77,16 +80,21 @@ def find_drift(
 
     drift: non-allowlisted critical flag where repo != live (actionable).
     intentional: allowlisted flag where repo != live (informational).
-    missing: flag absent from one or both configs (informational).
+    missing: flag absent from the repo config (informational). A repo-owned flag
+    missing from live is actionable drift so --fix can provision it.
     """
     drift, intentional, missing = [], [], []
     for path in critical_flags:
         repo_val = get_dotted(repo_cfg, path)
         live_val = get_dotted(live_cfg, path)
-        if repo_val is _SENTINEL or live_val is _SENTINEL:
+        if repo_val is _SENTINEL:
             missing.append({"path": path,
-                            "repo": None if repo_val is _SENTINEL else repo_val,
+                            "repo": None,
                             "live": None if live_val is _SENTINEL else live_val})
+            continue
+        if live_val is _SENTINEL:
+            record = {"path": path, "repo": repo_val, "live": None}
+            (intentional if path in overrides else drift).append(record)
             continue
         if repo_val == live_val:
             continue

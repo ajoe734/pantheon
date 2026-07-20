@@ -19,6 +19,9 @@ from pathlib import Path
 from typing import Any
 
 
+LEGACY_PROVIDER_ACCOUNT_KEYS = ("account_group", "quota_group", "dispatch_group")
+
+
 def load_json_object(path: Path) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
@@ -81,6 +84,55 @@ def canonical_status_paths(repo_config: dict[str, Any], status_root: Path) -> di
     return rendered
 
 
+def apply_provider_account_schema(
+    repo_config: dict[str, Any], rendered: dict[str, Any]
+) -> None:
+    """Make repo-owned account identity fields win over stale live overlays."""
+    repo_ready = repo_config.get("ready_dispatcher")
+    if repo_ready is None:
+        return
+    rendered_ready = rendered.setdefault("ready_dispatcher", {})
+    if not isinstance(repo_ready, dict) or not isinstance(rendered_ready, dict):
+        raise ValueError("ready_dispatcher config must be a JSON object")
+
+    for key in (
+        "require_explicit_provider_accounts",
+        "allow_legacy_provider_account_aliases",
+        "max_concurrent_per_account",
+    ):
+        if key in repo_ready:
+            rendered_ready[key] = copy.deepcopy(repo_ready[key])
+
+    allow_legacy = bool(rendered_ready.get("allow_legacy_provider_account_aliases", True))
+    if not allow_legacy:
+        rendered_ready.pop("max_concurrent_per_quota_group", None)
+
+    repo_providers = repo_config.get("providers") or {}
+    rendered_providers = rendered.get("providers") or {}
+    if not isinstance(repo_providers, dict) or not isinstance(rendered_providers, dict):
+        raise ValueError("providers config must be a JSON object")
+
+    missing_accounts: list[str] = []
+    require_explicit = bool(rendered_ready.get("require_explicit_provider_accounts", False))
+    for provider, provider_cfg in rendered_providers.items():
+        if not isinstance(provider_cfg, dict):
+            raise ValueError(f"providers.{provider} must be a JSON object")
+        repo_provider_cfg = repo_providers.get(provider)
+        if isinstance(repo_provider_cfg, dict) and repo_provider_cfg.get("account"):
+            provider_cfg["account"] = copy.deepcopy(repo_provider_cfg["account"])
+        if not allow_legacy:
+            for key in LEGACY_PROVIDER_ACCOUNT_KEYS:
+                provider_cfg.pop(key, None)
+        if require_explicit and not str(provider_cfg.get("account") or "").strip():
+            missing_accounts.append(str(provider))
+
+    if missing_accounts:
+        raise ValueError(
+            "strict provider account migration left providers without account: "
+            + ", ".join(sorted(missing_accounts))
+        )
+
+
 def build_live_config(
     repo_config: dict[str, Any],
     *,
@@ -91,6 +143,7 @@ def build_live_config(
     python_executable: Path,
 ) -> dict[str, Any]:
     rendered = deep_merge(repo_config, existing_live_config or {})
+    apply_provider_account_schema(repo_config, rendered)
     rendered["paths"] = canonical_status_paths(repo_config, status_root)
 
     watchdog = rendered.setdefault("watchdog", {})
