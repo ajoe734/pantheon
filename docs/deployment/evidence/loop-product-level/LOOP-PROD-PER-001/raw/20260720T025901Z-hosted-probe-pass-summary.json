@@ -1,0 +1,167 @@
+{
+  "schema_version": "pantheon.loop-prod-per-001-hosted-summary.v1",
+  "task_id": "LOOP-PROD-PER-001",
+  "captured_at": "2026-07-20T02:59:01Z",
+  "outcome": "passed",
+  "source": {
+    "workflow": "Pantheon Stage 0 CI",
+    "workflow_run_id": 29713573136,
+    "workflow_run_url": "https://github.com/ajoe734/pantheon/actions/runs/29713573136",
+    "workflow_head_sha": "600b6e25957d739299d39db3802d9b98f97e0141",
+    "job_id": 88261837809,
+    "job_name": "LOOP-PROD-PER-001 hosted probe",
+    "job_conclusion": "success",
+    "job_started_at": "2026-07-20T02:57:37Z",
+    "job_completed_at": "2026-07-20T02:59:00Z",
+    "artifact_name": "loop-prod-per-001-hosted-probe",
+    "source_artifact_sha256": "2a0e28b88adfcf9d2f2ec46f9134921e249f3c98b253677d4eec211eb4f9673a"
+  },
+  "target": {
+    "base_url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
+    "expected_source_commit_sha": "93c50da6d67560f7035025879af08dfc3197fb76",
+    "observed_source_commit_sha": "93c50da6d67560f7035025879af08dfc3197fb76",
+    "deployment_release": "release/v2026.07.19.3",
+    "deployment_pull_request": 3893,
+    "tenant_id": "pantheon-dev",
+    "environment": "dev",
+    "capital_mode": "paper"
+  },
+  "identity": {
+    "persona_id": "persona-c4bbeada41a6bdf5e2e3",
+    "deployment_plan_id": "plan-persona-paper-df5a46d76ff2e59248ef",
+    "strategy_artifact_id": "artifact-persona-paper-df5a46d76ff2e59248ef",
+    "runtime_binding_id": "rb-c1646761eeb84ac9915eff3569d239f7",
+    "runtime_id": "rt-59974662",
+    "persona_capital_binding_id": "pcb-persona-paper-df5a46d76ff2e59248ef",
+    "capital_pool_id": "pool-persona-paper-df5a46d76ff2e59248ef",
+    "first_evaluation_job_id": "9f9cfa19-803f-4dc2-9f6b-cc09127ac328",
+    "first_evaluation_workflow_id": "pantheon.persona.first-evaluation"
+  },
+  "checks": [
+    {
+      "name": "jwt.minted_in_memory",
+      "status": "pass"
+    },
+    {
+      "name": "deployment_identity.exact_sha",
+      "status": "pass"
+    },
+    {
+      "name": "auth_posture.strict_no_stub",
+      "status": "pass",
+      "details": {
+        "auth_mode": "strict",
+        "auth_stub": false,
+        "dev_login_enabled": true
+      }
+    },
+    {
+      "name": "readyz.dependencies_ok",
+      "status": "pass",
+      "details": {
+        "deployment": "ok",
+        "governance": "ok",
+        "runtime_manager": "ok"
+      }
+    },
+    {
+      "name": "security.create_requires_auth",
+      "status": "pass",
+      "details": {
+        "http_status": 401
+      }
+    },
+    {
+      "name": "security.create_rejects_cross_tenant",
+      "status": "pass",
+      "details": {
+        "http_status": 403
+      }
+    },
+    {
+      "name": "security.create_rejects_live_capital",
+      "status": "pass",
+      "details": {
+        "http_status": 422
+      }
+    },
+    {
+      "name": "persona.create_initial_state_provisioning",
+      "status": "pass",
+      "details": {
+        "http_status": 201,
+        "state": "provisioning",
+        "runtime_binding_id": null,
+        "runtime_id": null
+      }
+    },
+    {
+      "name": "persona.duplicate_retry_converges",
+      "status": "pass",
+      "details": {
+        "http_status": 201,
+        "same_persona_id": true
+      }
+    },
+    {
+      "name": "persona.reconcile_terminal_paper_running",
+      "status": "pass",
+      "details": {
+        "lifecycle_state": "paper_running",
+        "degraded_dependencies": [],
+        "runtime_binding_status": "active",
+        "paper_worker_status": "running",
+        "first_evaluation_registered": true
+      }
+    },
+    {
+      "name": "runtime_binding.authoritative_readback",
+      "status": "pass",
+      "details": {
+        "http_status": 200,
+        "deployment_mode": "paper"
+      }
+    },
+    {
+      "name": "runtime_status.authoritative_readback",
+      "status": "pass",
+      "details": {
+        "http_status": 200
+      }
+    },
+    {
+      "name": "deployment_plan.uses_strategy_artifact",
+      "status": "pass",
+      "details": {
+        "http_status": 200,
+        "artifact_identity_consistent": true
+      }
+    },
+    {
+      "name": "first_evaluation_schedule.readback_gated_final_state",
+      "status": "pass",
+      "details": {
+        "workflow_id": "pantheon.persona.first-evaluation",
+        "registered": true,
+        "capabilities_http_status": 200,
+        "evaluations_http_status": 200,
+        "runtime_profile_http_status": 200
+      }
+    }
+  ],
+  "summary": {
+    "check_count": 14,
+    "passed_check_count": 14,
+    "initial_state": "provisioning",
+    "terminal_state": "paper_running",
+    "duplicate_converged": true,
+    "exact_deployment_identity": true,
+    "authoritative_first_evaluation_readback": true
+  },
+  "redaction": {
+    "secret_values_included": false,
+    "jwt_included": false,
+    "request_or_response_payloads_included": false,
+    "capital_values_included": false
+  }
+}
