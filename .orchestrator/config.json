@@ -883,10 +883,8 @@
     ],
     "sidecar_only_agents": [],
     "disabled_agents": [
-      "Claude",
-      "Claude2",
-      "Antigravity",
-      "Antigravity2",
+      "Gemini",
+      "Gemini2",
       "Copilot"
     ],
     "dependency_done_statuses": [
