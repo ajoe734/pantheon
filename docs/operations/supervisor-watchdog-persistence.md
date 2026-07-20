@@ -85,6 +85,12 @@ python3 scripts/supervisor_watchdog_install.py \
   --start-now
 ```
 
+Provisioning converts the watchdog state, normal metrics, and contention
+metrics paths to absolute paths beneath the canonical status root. This keeps
+the watchdog writer and `supervisor_runtime_health.py` reader on the same files;
+relative watchdog paths would otherwise resolve beneath the immutable command
+checkout and make a healthy persistent loop appear unmonitored.
+
 The dev root deployment performs these commands automatically after the root
 stack validations pass. It fails the deployment unless the user-systemd timer
 (or cron fallback), watchdog probe, singleton supervisor, and canonical
