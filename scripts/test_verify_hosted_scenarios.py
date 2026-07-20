@@ -166,6 +166,20 @@ def test_workflow_uses_dev_environment_credentials_and_uploads_evidence() -> Non
     assert "actions/upload-artifact@v4" in workflow
 
 
+def test_registered_stage_zero_workflow_bridges_hosted_acceptance_on_dev() -> None:
+    workflow = (SCRIPT.parents[1] / ".github/workflows/stage-0-ci.yml").read_text(encoding="utf-8")
+
+    assert "- tj-e2e-012-hosted-acceptance" in workflow
+    assert "inputs.mode == 'tj-e2e-012-hosted-acceptance'" in workflow
+    assert "inputs.expected_sha" in workflow
+    assert "inputs.expected_fe_sha" in workflow
+    assert "inputs.environment != 'dev'" in workflow
+    assert "secrets.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET" in workflow
+    assert "secrets.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET" in workflow
+    assert "python3 scripts/verify_hosted_scenarios.py" in workflow
+    assert "tj-e2e-012-hosted-acceptance-${{ github.run_id }}-${{ github.run_attempt }}" in workflow
+
+
 def test_config_rejects_a_non_allowlisted_credential_destination(monkeypatch, tmp_path: Path) -> None:
     values = {
         "BFF_BASE": "https://attacker.example.test",
