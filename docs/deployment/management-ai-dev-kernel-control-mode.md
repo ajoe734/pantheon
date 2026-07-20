@@ -199,10 +199,14 @@ Optional overrides:
 
 ```env
 BFF_BASE_URL=https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io
-BFF_AUTH_TOKEN=pantheon-dev-browser:admin:mfa:assistant.kernel.debug,assistant.kernel.repair
+# Prefer a dedicated MFA-positive operator identity in strict dev:
+MAI_BFF_CLIENT_ID=<dedicated-operator-client-id>
+MAI_BFF_CLIENT_SECRET=<dedicated-operator-client-secret>
+# Or inject an already-issued short-lived token:
+BFF_AUTH_TOKEN=<short-lived-operator-token>
 SESSION_ID=mgmt-ai-openclaw-repair-smoke-manual
 REPAIR_REPO_KEY=execute-plans
-REPAIR_MERGE_TARGET=dev
+REPAIR_MERGE_TARGET=main
 REPAIR_SCOPE=tmp/management-ai-openclaw-smoke
 TASK_OWNER=Codex
 TASK_REVIEWER=Claude
@@ -211,6 +215,8 @@ POLL_SECONDS=360
 
 The smoke verifies:
 
+- strict dev credentials are exchanged through `/bff/auth/dev-login` when a
+  short-lived bearer token was not supplied;
 - all Management AI/assistant POST requests include stable `Idempotency-Key`
   headers;
 - control mode activates as `kernel_repair`;

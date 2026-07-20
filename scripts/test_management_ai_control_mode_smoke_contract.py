@@ -59,6 +59,7 @@ def test_openclaw_repair_smoke_hits_write_and_bridge_endpoints() -> None:
     source = REPAIR_SCRIPT.read_text(encoding="utf-8")
 
     assert "/bff/assistant/control-mode/activate" in source
+    assert "/bff/auth/dev-login" in source
     assert "/bff/assistant/repair-worktrees/prepare" in source
     assert "/bff/management/nl/ask" in source
     assert "/bff/assistant/dev-docs/generate" in source
@@ -74,6 +75,12 @@ def test_openclaw_repair_smoke_hits_write_and_bridge_endpoints() -> None:
     assert "pantheon-openclaw-gateway-adapter-1" in source
     assert "receipt_status" in source
     assert "processed" in source
+    assert 'BFF_AUTH_TOKEN="${BFF_AUTH_TOKEN:-}"' in source
+    assert "MAI_BFF_CLIENT_ID" in source
+    assert "MAI_BFF_CLIENT_SECRET" in source
+    assert 'REPAIR_MERGE_TARGET="${REPAIR_MERGE_TARGET:-main}"' in source
+    for phase in ("activate", "prepare", "dev-docs", "deactivate"):
+        assert f"mgmt-ai-openclaw-repair-{phase}-${{TASK_ID}}" in source
 
 
 def test_runbook_documents_positive_openclaw_repair_smoke() -> None:
