@@ -7618,6 +7618,99 @@ class PollWorkersRecoveryTests(unittest.TestCase):
         self.assertIsNone(worker["deferred_tool_use"])
         self.assertIsNone(worker["last_approval_id"])
 
+    def test_stall_stage_defers_dead_worker_to_failure_and_completion_stages(self) -> None:
+        outcome = supervisor.poll_worker_stall_stage(
+            {},
+            {},
+            {"run_id": "run-dead"},
+            alive=False,
+            last_event_advanced=False,
+            process_activity_advanced=False,
+            now=datetime.now(timezone.utc),
+            stall_after=300,
+        )
+
+        self.assertEqual(outcome, {"changed": False, "stop": False})
+
+    def test_stall_stage_restores_worker_after_observed_progress(self) -> None:
+        worker = {
+            "run_id": "run-recovered",
+            "task_id": "TASK-STALL",
+            "provider": "codex",
+            "status": "stalled",
+            "last_event_at": "2026-07-20T06:00:00Z",
+        }
+        with mock.patch.object(supervisor, "write_activity_log") as write_activity_log:
+            outcome = supervisor.poll_worker_stall_stage(
+                {},
+                {},
+                worker,
+                alive=True,
+                last_event_advanced=True,
+                process_activity_advanced=False,
+                now=datetime(2026, 7, 20, 6, 5, tzinfo=timezone.utc),
+                stall_after=300,
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        self.assertEqual(worker["status"], "running")
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_recovered")
+
+    def test_stall_stage_marks_silent_live_worker_stalled(self) -> None:
+        worker = {
+            "run_id": "run-silent",
+            "task_id": "TASK-STALL",
+            "provider": "codex",
+            "status": "running",
+            "last_event_at": "2026-07-20T06:00:00Z",
+        }
+        with mock.patch.object(supervisor, "write_activity_log") as write_activity_log:
+            outcome = supervisor.poll_worker_stall_stage(
+                {},
+                {},
+                worker,
+                alive=True,
+                last_event_advanced=False,
+                process_activity_advanced=False,
+                now=datetime(2026, 7, 20, 6, 5, 1, tzinfo=timezone.utc),
+                stall_after=300,
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        self.assertEqual(worker["status"], "stalled")
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_stalled")
+
+    def test_stall_stage_terminates_worker_after_extended_stall(self) -> None:
+        worker = {
+            "run_id": "run-extended-stall",
+            "task_id": "TASK-STALL",
+            "provider": "codex",
+            "status": "stalled",
+            "pid": 1234,
+            "last_event_at": "2026-07-20T06:00:00Z",
+        }
+        with (
+            mock.patch.object(supervisor, "terminate_worker_pid") as terminate_worker_pid,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            mock.patch.object(supervisor, "finalize_queue_event_record") as finalize_queue_event_record,
+        ):
+            outcome = supervisor.poll_worker_stall_stage(
+                {},
+                {},
+                worker,
+                alive=True,
+                last_event_advanced=False,
+                process_activity_advanced=False,
+                now=datetime(2026, 7, 20, 6, 10, 1, tzinfo=timezone.utc),
+                stall_after=300,
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        self.assertEqual(worker["status"], "failed")
+        terminate_worker_pid.assert_called_once_with(1234)
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_failed")
+        finalize_queue_event_record.assert_called_once()
+
     def test_observation_stage_refreshes_fresh_worker_lease(self) -> None:
         now = datetime.now(timezone.utc)
         worker = {

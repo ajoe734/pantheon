@@ -381,11 +381,13 @@ touches the hot path.
   Physical decomposition has started: `poll_worker_observation_stage` owns
   marker/log ingestion, commit/process observation, lease renewal, and expired-
   lease termination; `poll_worker_approval_stage` owns pending, resolved, resume,
-  deny, and disappeared-approval transitions. Both return explicit driver short-
-  circuit outcomes, with parity pinned by the incumbent poll recovery suite plus
-  direct stage boundary tests. Pending: extract assignment/preemption, stall,
-  failure, and completion stages until `poll_workers` is the enum+table driver,
-  then fleet-tune/enable `lease_requires_work_progress` by default.
+  deny, and disappeared-approval transitions; `poll_worker_stall_stage` owns all
+  live-worker recovery, deferred-stall, stalled, and confirm-kill transitions.
+  Each returns an explicit driver short-circuit outcome, with parity pinned by
+  the incumbent poll recovery suite plus direct stage boundary tests. Pending:
+  extract assignment/preemption, failure, and completion stages until
+  `poll_workers` is the enum+table driver, then fleet-tune/enable
+  `lease_requires_work_progress` by default.
 - **Phase 6 — model built in isolation (storage cutover pending).**
   `rewrite/state_projection.py` implements the plan's core §3.7 idea: an
   append-only event vocabulary + a pure `project_board(events)` that folds it into
