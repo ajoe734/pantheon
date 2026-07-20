@@ -73,6 +73,13 @@ heartbeat all become healthy. For user systemd it also enables and verifies
 login linger, so the timer starts after a reboot without requiring an
 interactive login.
 
+Before the watchdog starts, split-root config provisioning also creates the
+ignored canonical `.orchestrator/approval-queue.json` marker when it is absent.
+Creation is exclusive and owner-only; an existing valid v2 queue is validated
+and preserved byte-for-byte so pending or historical approvals are never reset.
+This marker is part of the isolated worker's coordination-root contract, not a
+Git-tracked deployment artifact.
+
 On a first deployment, an absent `.orchestrator/state.json` is an expected
 bootstrap condition: the watchdog may start the supervisor, which creates the
 canonical state under its singleton and runtime-state locks. This exception is
