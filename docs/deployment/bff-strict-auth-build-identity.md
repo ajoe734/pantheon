@@ -46,8 +46,12 @@ sufficient, and requested four changes, all implemented in this round:
    these from `secrets.DEV_BFF_JWT_SECRET`/`secrets.DEV_BFF_OIDC_CLIENT_ID`/
    `secrets.DEV_BFF_OIDC_CLIENT_SECRET` — **a human must provision these three
    repository/environment secrets in GitHub before the next dev deploy will
-   succeed** (see `residual_risks` in `evidence.json`; this is a real
-   operational consequence of the fix, not just documentation). Post-deploy,
+   succeed**. Strict dev deployment also requires dedicated client secrets
+   for `viewer`, `approver`, `risk_owner`, `operator_a`, and `operator_b`;
+   their non-secret client IDs have stable dev defaults. This prevents a
+   deployment that is nominally strict but cannot produce distinct governed
+   subjects for approval, two-person signing, apply, or containment evidence.
+   Post-deploy,
    `assert_bff_auth_gate` (new function, called after `assert_bff_source_sha`
    in both the `root` and `bff` deploy paths) asserts: (a) `/bff/version`
    reports `auth_stub:false, auth_mode:strict`; (b) an authenticated
@@ -61,16 +65,16 @@ The corrected defaults and gates take effect on the next dev deploy; none of
 the hosted/live claims below have been re-observed against the running dev
 BFF as of this writing (see `residual_risks` in `evidence.json`).
 
-Two acceptance gaps remain open and are recorded as residual risks rather
-than closed:
-- **dev-login credential provisioning**: as described in point 3 above, a
-  human must add `DEV_BFF_JWT_SECRET`/`DEV_BFF_OIDC_CLIENT_ID`/
-  `DEV_BFF_OIDC_CLIENT_SECRET` (and, to exercise the other five identities,
-  their own dedicated `PANTHEON_BFF_DEV_LOGIN_<IDENTITY>_CLIENT_ID/SECRET`
-  pairs) as GitHub secrets. Until then, dev deploys with the default strict
-  mode will fail at the new preflight gate rather than silently shipping
-  broken auth — a deliberate trade: previously the deploy always "succeeded"
-  with every protected route unusable.
+Two acceptance gaps were recorded by the original cutover. Credential
+provisioning is now an enforced deployment input rather than an optional
+follow-up:
+- **dev-login credential provisioning**: add `DEV_BFF_JWT_SECRET`,
+  `DEV_BFF_OIDC_CLIENT_ID`, and `DEV_BFF_OIDC_CLIENT_SECRET`, plus
+  `DEV_BFF_DEV_LOGIN_{VIEWER,APPROVER,RISK_OWNER,OPERATOR_A,OPERATOR_B}_CLIENT_SECRET`
+  as GitHub secrets. The corresponding dedicated client IDs may use the stable
+  workflow defaults or repository variables with matching names. The workflow
+  and deploy script fail before GCP/SSH activity when any required pair is
+  absent; no credential value is rendered by dry-run diagnostics.
 - **image digest**: `/bff/version`'s `image_digest` field has no source in
   this repo (see below) and always reports `unknown`.
 

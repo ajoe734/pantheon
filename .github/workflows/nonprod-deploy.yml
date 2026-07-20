@@ -140,6 +140,16 @@ jobs:
           DEV_BFF_OIDC_AUDIENCE: ${{ vars.DEV_BFF_OIDC_AUDIENCE || 'authenticated' }}
           DEV_BFF_OIDC_CLIENT_ID: ${{ secrets.DEV_BFF_OIDC_CLIENT_ID }}
           DEV_BFF_OIDC_CLIENT_SECRET: ${{ secrets.DEV_BFF_OIDC_CLIENT_SECRET }}
+          DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1' }}
+          DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET }}
+          DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID || 'pantheon-dev-approver-v1' }}
+          DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET }}
+          DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID || 'pantheon-dev-risk-owner-v1' }}
+          DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID || 'pantheon-dev-operator-a-v1' }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID || 'pantheon-dev-operator-b-v1' }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET }}
           DEV_BFF_ROLE_CLAIMS: ${{ vars.DEV_BFF_ROLE_CLAIMS || 'app_metadata.roles,roles' }}
           DEV_BFF_ROLE_MAP: ${{ vars.DEV_BFF_ROLE_MAP || 'pantheon-operator=operator;pantheon-viewer=viewer;pantheon-reviewer=reviewer;pantheon-approver=approver;pantheon-admin=admin' }}
           DEV_BFF_ROLE_MAP_MODE: ${{ vars.DEV_BFF_ROLE_MAP_MODE || 'strict' }}
@@ -151,6 +161,14 @@ jobs:
                 echo "::error::Dev BFF deploy credentials are not provisioned; refusing to run any target ref before strict auth can be verified."
                 exit 1
               fi
+              for identity in VIEWER APPROVER RISK_OWNER OPERATOR_A OPERATOR_B; do
+                id_var="DEV_BFF_DEV_LOGIN_${identity}_CLIENT_ID"
+                secret_var="DEV_BFF_DEV_LOGIN_${identity}_CLIENT_SECRET"
+                if [[ -z "${!id_var}" || -z "${!secret_var}" ]]; then
+                  echo "::error::Dedicated ${identity,,} dev-login credentials are not provisioned; refusing a strict deploy without distinct governed proof actors."
+                  exit 1
+                fi
+              done
 
               deploy_script="scripts/deploy_nonprod_vm.sh"
               required_markers=(
@@ -419,6 +437,16 @@ jobs:
           DEV_BFF_OIDC_AUDIENCE: ${{ vars.DEV_BFF_OIDC_AUDIENCE || 'authenticated' }}
           DEV_BFF_OIDC_CLIENT_ID: ${{ secrets.DEV_BFF_OIDC_CLIENT_ID }}
           DEV_BFF_OIDC_CLIENT_SECRET: ${{ secrets.DEV_BFF_OIDC_CLIENT_SECRET }}
+          DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1' }}
+          DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET }}
+          DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID || 'pantheon-dev-approver-v1' }}
+          DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET }}
+          DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID || 'pantheon-dev-risk-owner-v1' }}
+          DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID || 'pantheon-dev-operator-a-v1' }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID || 'pantheon-dev-operator-b-v1' }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET }}
           DEV_BFF_ROLE_CLAIMS: ${{ vars.DEV_BFF_ROLE_CLAIMS || 'app_metadata.roles,roles' }}
           DEV_BFF_ROLE_MAP: ${{ vars.DEV_BFF_ROLE_MAP || 'pantheon-operator=operator;pantheon-viewer=viewer;pantheon-reviewer=reviewer;pantheon-approver=approver;pantheon-admin=admin' }}
           DEV_BFF_ROLE_MAP_MODE: ${{ vars.DEV_BFF_ROLE_MAP_MODE || 'strict' }}

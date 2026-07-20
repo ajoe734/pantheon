@@ -43,6 +43,20 @@ DEV_BFF_OIDC_ISSUER="${DEV_BFF_OIDC_ISSUER:-}"
 DEV_BFF_OIDC_AUDIENCE="${DEV_BFF_OIDC_AUDIENCE:-}"
 DEV_BFF_OIDC_CLIENT_ID="${DEV_BFF_OIDC_CLIENT_ID:-}"
 DEV_BFF_OIDC_CLIENT_SECRET="${DEV_BFF_OIDC_CLIENT_SECRET:-}"
+# Dedicated server-bound identities used by governed dev proofs. Client IDs
+# are public identifiers with stable dev defaults; every secret must be
+# supplied independently by the deploy environment. Keeping these pairs
+# separate is what gives approval/apply evidence distinct immutable subjects.
+DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID="${DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID:-pantheon-dev-viewer-v1}"
+DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET="${DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET:-}"
+DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID="${DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID:-pantheon-dev-approver-v1}"
+DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET="${DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET:-}"
+DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID="${DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID:-pantheon-dev-risk-owner-v1}"
+DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET="${DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET:-}"
+DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID="${DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID:-pantheon-dev-operator-a-v1}"
+DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET="${DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET:-}"
+DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID="${DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID:-pantheon-dev-operator-b-v1}"
+DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET="${DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET:-}"
 DEV_BFF_ROLE_CLAIMS="${DEV_BFF_ROLE_CLAIMS:-roles,role}"
 DEV_BFF_ROLE_MAP="${DEV_BFF_ROLE_MAP:-}"
 DEV_BFF_ROLE_MAP_MODE="${DEV_BFF_ROLE_MAP_MODE:-passthrough}"
@@ -171,6 +185,11 @@ Environment overrides:
   DEV_BFF_JWKS_URI DEV_BFF_OIDC_DISCOVERY_URL
   DEV_BFF_OIDC_ISSUER DEV_BFF_OIDC_AUDIENCE
   DEV_BFF_OIDC_CLIENT_ID DEV_BFF_OIDC_CLIENT_SECRET
+  DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET
+  DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET
+  DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET
+  DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET
+  DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET
   DEV_BFF_ROLE_CLAIMS DEV_BFF_ROLE_MAP DEV_BFF_ROLE_MAP_MODE DEV_BFF_DEFAULT_ROLE
   DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED
   DEV_BFF_TENANT_ID DEV_BFF_ALLOWED_TENANTS
@@ -368,6 +387,11 @@ if [[ "$DRY_RUN" == "true" ]]; then
   info "dev_bff_jwks_configured=$([[ -n "$DEV_BFF_JWKS_URI" || -n "$DEV_BFF_OIDC_DISCOVERY_URL" ]] && echo true || echo false)"
   info "dev_bff_external_oidc_contract_configured=$([[ -n "$DEV_BFF_OIDC_ISSUER" && -n "$DEV_BFF_OIDC_AUDIENCE" ]] && echo true || echo false)"
   info "dev_bff_oidc_client_configured=$([[ -n "$DEV_BFF_OIDC_CLIENT_ID" && -n "$DEV_BFF_OIDC_CLIENT_SECRET" ]] && echo true || echo false)"
+  for identity in VIEWER APPROVER RISK_OWNER OPERATOR_A OPERATOR_B; do
+    id_var="DEV_BFF_DEV_LOGIN_${identity}_CLIENT_ID"
+    secret_var="DEV_BFF_DEV_LOGIN_${identity}_CLIENT_SECRET"
+    info "dev_bff_dev_login_${identity,,}_configured=$([[ -n "${!id_var}" && -n "${!secret_var}" ]] && echo true || echo false)"
+  done
   info "dev_bff_role_claims_configured=$([[ -n "$DEV_BFF_ROLE_CLAIMS" ]] && echo true || echo false)"
   info "dev_bff_role_map_configured=$([[ -n "$DEV_BFF_ROLE_MAP" ]] && echo true || echo false)"
   info "dev_bff_role_map_mode=${DEV_BFF_ROLE_MAP_MODE}"
@@ -406,6 +430,13 @@ if [[ "$DEPLOY_ENV" == "dev" && "$DEV_BFF_AUTH_MODE" == "strict" && "$DEV_BFF_AU
   if [[ -z "$DEV_BFF_JWT_SECRET" || -z "$DEV_BFF_OIDC_CLIENT_ID" || -z "$DEV_BFF_OIDC_CLIENT_SECRET" ]]; then
     error "strict auth cutover requested (DEV_BFF_AUTH_MODE=strict, DEV_BFF_AUTH_STUB=${DEV_BFF_AUTH_STUB}) but no governed verifier/dev-login credentials are configured (DEV_BFF_JWT_SECRET, DEV_BFF_OIDC_CLIENT_ID, DEV_BFF_OIDC_CLIENT_SECRET); refusing to deploy a BFF where every protected route would be unusable"
   fi
+  for identity in VIEWER APPROVER RISK_OWNER OPERATOR_A OPERATOR_B; do
+    id_var="DEV_BFF_DEV_LOGIN_${identity}_CLIENT_ID"
+    secret_var="DEV_BFF_DEV_LOGIN_${identity}_CLIENT_SECRET"
+    if [[ -z "${!id_var}" || -z "${!secret_var}" ]]; then
+      error "strict auth cutover requires dedicated ${identity,,} dev-login credentials (${id_var}, ${secret_var}); refusing to deploy without distinct governed proof actors"
+    fi
+  done
 fi
 
 if [[ "$DEPLOY_ENV" == "dev" ]]; then
@@ -478,6 +509,16 @@ ssh_bash() {
   command_prefix+=" PANTHEON_DEV_BFF_OIDC_AUDIENCE=$(shell_quote "$DEV_BFF_OIDC_AUDIENCE")"
   command_prefix+=" PANTHEON_DEV_BFF_OIDC_CLIENT_ID=$(shell_quote "$DEV_BFF_OIDC_CLIENT_ID")"
   command_prefix+=" PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET=$(shell_quote "$DEV_BFF_OIDC_CLIENT_SECRET")"
+  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID=$(shell_quote "$DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID")"
+  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET=$(shell_quote "$DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET")"
+  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID=$(shell_quote "$DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID")"
+  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET=$(shell_quote "$DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET")"
+  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID=$(shell_quote "$DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID")"
+  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET=$(shell_quote "$DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET")"
+  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID=$(shell_quote "$DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID")"
+  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET=$(shell_quote "$DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET")"
+  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID=$(shell_quote "$DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID")"
+  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET=$(shell_quote "$DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET")"
   command_prefix+=" PANTHEON_DEV_BFF_ROLE_CLAIMS=$(shell_quote "$DEV_BFF_ROLE_CLAIMS")"
   command_prefix+=" PANTHEON_DEV_BFF_ROLE_MAP=$(shell_quote "$DEV_BFF_ROLE_MAP")"
   command_prefix+=" PANTHEON_DEV_BFF_ROLE_MAP_MODE=$(shell_quote "$DEV_BFF_ROLE_MAP_MODE")"
@@ -600,6 +641,38 @@ assert_bff_source_sha() {
   info "BFF source SHA verified: ${actual}"
 }
 
+assert_dedicated_dev_login_identity() {
+  local base_url="$1"
+  local expected_identity="$2"
+  local expected_role="$3"
+  local client_id="$4"
+  local client_secret="$5"
+  local login_body
+  local login_payload
+
+  login_body="$(python3 -c 'import json,sys; print(json.dumps({"grant_type":"client_credentials","client_id":sys.argv[1],"client_secret":sys.argv[2]}))' \
+    "$client_id" "$client_secret")"
+  login_payload="$(curl -fsS -X POST "${base_url}/bff/auth/dev-login" \
+    -H 'Content-Type: application/json' -d "$login_body")" \
+    || return 1
+  python3 -c '
+import base64
+import json
+import sys
+
+expected_identity, expected_role, raw = sys.argv[1:]
+payload = json.loads(raw)
+assert (payload.get("meta") or {}).get("identity") == expected_identity, payload.get("meta")
+token = payload["access_token"]
+encoded = token.split(".")[1]
+claims = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
+assert set(claims.get("roles") or []) == {expected_role}, claims.get("roles")
+subject = str(claims.get("sub") or "")
+assert subject, "issued token is missing sub"
+print(subject)
+' "$expected_identity" "$expected_role" "$login_payload"
+}
+
 assert_bff_auth_gate() {
   local base_url="$1"
 
@@ -668,6 +741,34 @@ assert auth.get("verifierReady") is True, auth
 ' "${PANTHEON_DEPLOY_SHA}" "${readiness_payload}" \
     || error "strict browser readiness contract is not satisfied"
   info "authenticated dev-login and strict browser readiness round trip succeeded"
+
+  info "asserting five dedicated dev-login identities and distinct subjects"
+  local identity
+  local identity_upper
+  local id_var
+  local secret_var
+  local expected_role
+  local subject
+  local dedicated_subjects=()
+  for identity in viewer approver risk_owner operator_a operator_b; do
+    identity_upper="${identity^^}"
+    id_var="PANTHEON_DEV_BFF_DEV_LOGIN_${identity_upper}_CLIENT_ID"
+    secret_var="PANTHEON_DEV_BFF_DEV_LOGIN_${identity_upper}_CLIENT_SECRET"
+    expected_role="$identity"
+    [[ "$identity" == operator_a || "$identity" == operator_b ]] && expected_role="operator"
+    subject="$(assert_dedicated_dev_login_identity \
+      "$base_url" "$identity" "$expected_role" "${!id_var}" "${!secret_var}")" \
+      || error "dedicated ${identity} dev-login round trip or server-bound claims check failed"
+    dedicated_subjects+=("$subject")
+  done
+  python3 -c '
+import sys
+subjects = sys.argv[1:]
+assert len(subjects) == 5, subjects
+assert len(set(subjects)) == len(subjects), subjects
+' "${dedicated_subjects[@]}" \
+    || error "dedicated dev-login identities did not issue five distinct subjects"
+  info "dedicated dev-login identities issued five valid distinct subjects"
 
   info "asserting a fixed/arbitrary bearer is rejected (fail-closed negative gate)"
   local fixed_bearer_status
@@ -1427,6 +1528,16 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_BFF_OIDC_AUDIENCE="${PANTHEON_DEV_BFF_OIDC_AUDIENCE}" \
     PANTHEON_BFF_OIDC_CLIENT_ID="${PANTHEON_DEV_BFF_OIDC_CLIENT_ID}" \
     PANTHEON_BFF_OIDC_CLIENT_SECRET="${PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET}" \
+    PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID}" \
+    PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET}" \
+    PANTHEON_BFF_DEV_LOGIN_APPROVER_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID}" \
+    PANTHEON_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET}" \
+    PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID}" \
+    PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET}" \
+    PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID}" \
+    PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET}" \
+    PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID}" \
+    PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET}" \
     PANTHEON_BFF_ROLE_CLAIMS="${PANTHEON_DEV_BFF_ROLE_CLAIMS}" \
     PANTHEON_BFF_ROLE_MAP="${PANTHEON_DEV_BFF_ROLE_MAP}" \
     PANTHEON_BFF_ROLE_MAP_MODE="${PANTHEON_DEV_BFF_ROLE_MAP_MODE}" \
@@ -1506,6 +1617,16 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_BFF_OIDC_AUDIENCE="${PANTHEON_DEV_BFF_OIDC_AUDIENCE}" \
     PANTHEON_BFF_OIDC_CLIENT_ID="${PANTHEON_DEV_BFF_OIDC_CLIENT_ID}" \
     PANTHEON_BFF_OIDC_CLIENT_SECRET="${PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET}" \
+    PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID}" \
+    PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET}" \
+    PANTHEON_BFF_DEV_LOGIN_APPROVER_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID}" \
+    PANTHEON_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET}" \
+    PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID}" \
+    PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET}" \
+    PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID}" \
+    PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET}" \
+    PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID}" \
+    PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET}" \
     PANTHEON_BFF_ROLE_CLAIMS="${PANTHEON_DEV_BFF_ROLE_CLAIMS}" \
     PANTHEON_BFF_ROLE_MAP="${PANTHEON_DEV_BFF_ROLE_MAP}" \
     PANTHEON_BFF_ROLE_MAP_MODE="${PANTHEON_DEV_BFF_ROLE_MAP_MODE}" \
