@@ -7448,6 +7448,95 @@ class ChairReviewDispatchTests(unittest.TestCase):
 
 
 class PollWorkersRecoveryTests(unittest.TestCase):
+    def test_observation_stage_refreshes_fresh_worker_lease(self) -> None:
+        now = datetime.now(timezone.utc)
+        worker = {
+            "run_id": "run-lease",
+            "status": "running",
+            "pid": 1234,
+            "last_heartbeat_at": now.isoformat(),
+            "queue_event_id": "evt-lease",
+        }
+        state = {"queue": {"events": {"evt-lease": {"status": "started"}}}}
+        counts = {
+            "marker_updates": 0,
+            "commit_progress_updates": 0,
+            "lease_refreshes": 0,
+            "expired_lease_workers_failed": 0,
+        }
+        with (
+            mock.patch.object(supervisor, "update_worker_runtime_markers", return_value=False),
+            mock.patch.object(supervisor, "update_from_log"),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "update_worker_commit_progress", return_value=(False, False)),
+            mock.patch.object(supervisor, "worker_process_activity_snapshot", return_value={}),
+            mock.patch.object(supervisor, "worker_heartbeat_is_stale", return_value=False),
+            mock.patch.object(supervisor, "refresh_worker_lease") as refresh_worker_lease,
+            mock.patch.object(supervisor, "worker_lease_is_expired", return_value=False),
+            mock.patch.object(supervisor, "queue_lease_expiry", return_value="2026-07-20T06:00:00Z"),
+        ):
+            outcome = supervisor.poll_worker_observation_stage(
+                {"supervisor": {"adaptive_stall_detection": False}},
+                state,
+                worker,
+                now=now,
+                active_worker_statuses={"running"},
+                poll_counts=counts,
+            )
+
+        self.assertFalse(outcome["stop"])
+        self.assertTrue(outcome["alive"])
+        self.assertEqual(counts["lease_refreshes"], 1)
+        self.assertEqual(state["queue"]["events"]["evt-lease"]["lease_owner"], "run-lease")
+        refresh_worker_lease.assert_called_once_with(
+            {"supervisor": {"adaptive_stall_detection": False}},
+            worker,
+            now,
+        )
+
+    def test_observation_stage_stops_after_expired_lease(self) -> None:
+        now = datetime.now(timezone.utc)
+        config = {"supervisor": {"adaptive_stall_detection": False}}
+        worker = {
+            "run_id": "run-expired",
+            "task_id": "TASK-EXPIRED",
+            "provider": "codex",
+            "status": "running",
+            "pid": 1234,
+        }
+        counts = {
+            "marker_updates": 0,
+            "commit_progress_updates": 0,
+            "lease_refreshes": 0,
+            "expired_lease_workers_failed": 0,
+        }
+        with (
+            mock.patch.object(supervisor, "update_worker_runtime_markers", return_value=False),
+            mock.patch.object(supervisor, "update_from_log"),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "update_worker_commit_progress", return_value=(False, False)),
+            mock.patch.object(supervisor, "worker_lease_is_expired", return_value=True),
+            mock.patch.object(supervisor, "terminate_worker_pid") as terminate_worker_pid,
+            mock.patch.object(supervisor, "pause_dispatch_for_reaped_worker", return_value=None),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "finalize_queue_event_record") as finalize_queue_event_record,
+        ):
+            outcome = supervisor.poll_worker_observation_stage(
+                config,
+                {},
+                worker,
+                now=now,
+                active_worker_statuses={"running"},
+                poll_counts=counts,
+            )
+
+        self.assertTrue(outcome["changed"])
+        self.assertTrue(outcome["stop"])
+        self.assertEqual(worker["status"], "failed")
+        self.assertEqual(counts["expired_lease_workers_failed"], 1)
+        terminate_worker_pid.assert_called_once_with(1234)
+        finalize_queue_event_record.assert_called_once()
+
     def test_commit_progress_ignores_shared_workspace(self) -> None:
         with mock.patch.object(supervisor.subprocess, "run") as run:
             sha = supervisor.isolated_workspace_commit_sha(
