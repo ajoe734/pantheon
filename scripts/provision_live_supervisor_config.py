@@ -20,6 +20,11 @@ from typing import Any
 
 
 LEGACY_PROVIDER_ACCOUNT_KEYS = ("account_group", "quota_group", "dispatch_group")
+WATCHDOG_RUNTIME_PATH_DEFAULTS = {
+    "state_file": ".orchestrator/watchdog-state.json",
+    "metrics_file": ".orchestrator/metrics/supervisor-watchdog.jsonl",
+    "contention_metrics_file": ".orchestrator/metrics/supervisor-watchdog-contention.jsonl",
+}
 
 
 def load_json_object(path: Path) -> dict[str, Any]:
@@ -81,6 +86,33 @@ def canonical_status_paths(repo_config: dict[str, Any], status_root: Path) -> di
             "live supervisor status_file must resolve to the canonical status root: "
             f"expected {expected_status_file}, got {rendered.get('status_file')!r}"
         )
+    return rendered
+
+
+def canonical_watchdog_runtime_paths(
+    watchdog: dict[str, Any],
+    status_root: Path,
+) -> dict[str, str]:
+    """Pin watchdog-owned state to the canonical split-root checkout."""
+    rendered: dict[str, str] = {}
+    for key, default in WATCHDOG_RUNTIME_PATH_DEFAULTS.items():
+        raw_value = watchdog.get(key) or default
+        if not isinstance(raw_value, str) or not raw_value.strip():
+            raise ValueError(f"watchdog path {key!r} must be a non-empty string")
+        source = Path(os.path.expanduser(raw_value))
+        candidate = source if source.is_absolute() else status_root / source
+        candidate = candidate.absolute()
+        symlink = first_symlink_component(candidate)
+        if symlink is not None:
+            raise ValueError(f"watchdog path {key!r} contains a symlink component: {symlink}")
+        candidate = candidate.resolve()
+        try:
+            candidate.relative_to(status_root)
+        except ValueError as exc:
+            raise ValueError(
+                f"watchdog path {key!r} escapes canonical status root: {candidate}"
+            ) from exc
+        rendered[key] = str(candidate)
     return rendered
 
 
@@ -149,6 +181,7 @@ def build_live_config(
     watchdog = rendered.setdefault("watchdog", {})
     if not isinstance(watchdog, dict):
         raise ValueError("watchdog config must be a JSON object")
+    watchdog.update(canonical_watchdog_runtime_paths(watchdog, status_root))
     watchdog["supervisor_command"] = [
         str(python_executable),
         "-u",

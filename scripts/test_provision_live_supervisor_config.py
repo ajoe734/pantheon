@@ -11,6 +11,7 @@ from provision_live_supervisor_config import (
     apply_provider_account_schema,
     build_live_config,
     canonical_status_paths,
+    canonical_watchdog_runtime_paths,
     ensure_approval_queue_marker,
     main,
     validate_approval_queue_marker,
@@ -107,6 +108,57 @@ def test_build_live_config_pins_status_paths_and_supervisor_command(tmp_path: Pa
         str(live_config),
         "--verbose",
     ]
+    assert rendered["watchdog"]["state_file"] == str(
+        status_root / ".orchestrator" / "watchdog-state.json"
+    )
+    assert rendered["watchdog"]["metrics_file"] == str(
+        status_root / ".orchestrator" / "metrics" / "supervisor-watchdog.jsonl"
+    )
+    assert rendered["watchdog"]["contention_metrics_file"] == str(
+        status_root
+        / ".orchestrator"
+        / "metrics"
+        / "supervisor-watchdog-contention.jsonl"
+    )
+
+
+def test_canonical_watchdog_runtime_paths_preserves_paths_inside_status_root(
+    tmp_path: Path,
+) -> None:
+    status_root = tmp_path / "canonical-root"
+    status_root.mkdir()
+    custom_state = status_root / ".orchestrator" / "custom-watchdog.json"
+
+    rendered = canonical_watchdog_runtime_paths(
+        {"state_file": str(custom_state)},
+        status_root,
+    )
+
+    assert rendered == {
+        "state_file": str(custom_state),
+        "metrics_file": str(
+            status_root / ".orchestrator" / "metrics" / "supervisor-watchdog.jsonl"
+        ),
+        "contention_metrics_file": str(
+            status_root
+            / ".orchestrator"
+            / "metrics"
+            / "supervisor-watchdog-contention.jsonl"
+        ),
+    }
+
+
+def test_canonical_watchdog_runtime_paths_rejects_split_root_escape(
+    tmp_path: Path,
+) -> None:
+    status_root = tmp_path / "canonical-root"
+    status_root.mkdir()
+
+    with pytest.raises(ValueError, match="escapes canonical status root"):
+        canonical_watchdog_runtime_paths(
+            {"state_file": str(tmp_path / "dev-root" / "watchdog-state.json")},
+            status_root,
+        )
 
 
 def test_canonical_status_paths_rejects_noncanonical_status_file(tmp_path: Path) -> None:
