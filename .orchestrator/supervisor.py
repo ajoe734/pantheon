@@ -6167,12 +6167,12 @@ def sync_status_pipeline(config: dict[str, Any]) -> bool:
             config,
             {
                 "type": "task_reassignment_sync_failed",
-                "message": f"Status sync script not found at {script}.",
+                "message": f"Status recovery script not found at {script}.",
             },
         )
         return False
     result = subprocess.run(
-        [sys.executable, str(script), "sync"],
+        [sys.executable, str(script), "recover"],
         cwd=str(config_path(config, "status_file").parent),
         capture_output=True,
         text=True,
@@ -6184,7 +6184,7 @@ def sync_status_pipeline(config: dict[str, Any]) -> bool:
         config,
         {
             "type": "task_reassignment_sync_failed",
-            "message": f"Status sync failed after reassignment: {result.stderr.strip() or result.stdout.strip() or 'unknown error'}",
+            "message": f"Status recovery failed after supervisor write: {result.stderr.strip() or result.stdout.strip() or 'unknown error'}",
         },
     )
     return False

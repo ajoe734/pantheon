@@ -4339,7 +4339,7 @@ class DispatchStatusSyncTests(unittest.TestCase):
 
         self.assertTrue(changed)
         command = run_mock.call_args.args[0]
-        self.assertEqual(command[:3], [sys.executable, str(self.root / "scripts" / "ai_status.py"), "sync"])
+        self.assertEqual(command[:3], [sys.executable, str(self.root / "scripts" / "ai_status.py"), "recover"])
         self.assertEqual(run_mock.call_args.kwargs["cwd"], str(self.root))
         self.assertEqual(run_mock.call_args.kwargs["env"]["PANTHEON_STATUS_ROOT"], str(self.root))
 

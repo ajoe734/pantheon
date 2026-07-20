@@ -5,13 +5,13 @@
   "direct_canonical_writes_forbidden": true,
   "writers": {
     ".orchestrator/runtime_state.py": "f076ba30170ec2160eaec6c6439122945f39b87efa8ffcaa4c1199659069518c",
-    ".orchestrator/supervisor.py": "0476b6e047a0f7aea782ed746c012461d1b17af62fa7c6473df21e7e8d83584e",
-    ".orchestrator/common.py": "bee35b85013b9be3b29db20ff66082bee415bc36b90acc20646bfc31021b9d8d",
-    ".orchestrator/approval_queue.py": "62cd04c2e05bd735d7d8bc84db4247c6f99c91f1870079ac16d4f2b76607b73f",
+    ".orchestrator/supervisor.py": "ee95bdb6507a86d4cd4553536dbd417ecb75eda690ed9ab8ac8f66f8b7d850d6",
+    ".orchestrator/common.py": "75265090bcf6f2c476d30ead15ba1bbbd10f3a62020fbf29fdae2d70e6dbf50d",
+    ".orchestrator/approval_queue.py": "08d0ebf738fe022b5eaa9b79cd626d4859772cce8e09ef4efd63b8a5d7006c3e",
     ".orchestrator/adapters/file_inbox.py": "c5d6949c13d41b528b7b6033e4caa1b7acb54ab2454ce8cd38f34a8c772f4e49",
     ".orchestrator/watch_events.py": "9a8f38a903191f02b4ccea6bf68cb419e8a0fdc4cfd523354cf1b09f1d8cc5af",
-    ".orchestrator/supervisor_watchdog.py": "943f3691ec9d5bbf49a41e2eab2fadcae9e59e5c7da4c8f558b4e64c8df9896f",
-    "scripts/ai_status.py": "02165280fd037dd5be8bcdd58cd0b3a6ef7e50898387601ce887e7bb904137af",
-    "scripts/dispatch_loop_product_level_remediation_2026-07-13.py": "65d5d60cdc7e0571acfda010d0ab9674b323a338840fe39f9cd888d206f1dae7"
+    ".orchestrator/supervisor_watchdog.py": "1f8b1d2099c35ca8123c940e6429d81ac69fea1be55e8b11006e334ff1e6d176",
+    "scripts/ai_status.py": "434016289d8f0e82cde045e46ba07c788e9abaefcba01e95a761d96e80b20cfd",
+    "scripts/dispatch_loop_product_level_remediation_2026-07-13.py": "06500bbb85cbe81c42efc616abc184bdc638c068c90474b782c09d9c07086dd1"
   }
 }

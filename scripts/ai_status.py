@@ -4688,6 +4688,12 @@ def sync_all(state: dict[str, Any]) -> None:
     buffered = getattr(_ACTIVITY_TRANSACTION_LOCAL, "events", None)
     events = list(buffered) if isinstance(buffered, list) else []
     commit_state_with_activity_outbox(state, events)
+    refresh_derived_status_views(state)
+
+
+def refresh_derived_status_views(state: dict[str, Any]) -> None:
+    """Refresh projections after canonical state and audit are durable."""
+
     logs = load_logs()
     write_current_work(state, logs)
     write_dashboard_bundle(state)
@@ -5472,6 +5478,70 @@ def main(argv: list[str]) -> int:
         "sync": command_sync,
         "wave": command_wave,
     }
+
+    if command == "recover":
+        if args:
+            raise SystemExit("Usage: recover")
+        try:
+            with canonical_task_state_lock(shared=False, nonblocking=True):
+                state = load_state()
+                pending_planes = [
+                    key
+                    for key in (
+                        STATUS_ARCHIVE_OUTBOX_KEY,
+                        STATUS_ACTIVITY_OUTBOX_KEY,
+                    )
+                    if state.get(key) not in (None, {}, [])
+                ]
+                try:
+                    archive_recovered = recover_status_archive_outbox(state)
+                    activity_recovered = recover_status_activity_outbox(state)
+                    if archive_recovered or activity_recovered:
+                        refresh_derived_status_views(state)
+                except ActivityAuditInvariantError:
+                    raise
+                except RuntimeError as exc:
+                    raise ActivityAuditInvariantError(
+                        "canonical status recovery failed integrity checks",
+                        invariant="status_recovery_integrity",
+                        evidence={
+                            "command": command,
+                            "pending_planes": pending_planes,
+                            "error": str(exc),
+                        },
+                    ) from exc
+        except BlockingIOError:
+            _emit_fail_closed(
+                ActivityAuditInvariantError(
+                    "canonical task-state lock is busy",
+                    invariant="status_task_lock_busy",
+                    evidence={
+                        "command": command,
+                        "lock_path": str(canonical_task_state_lock_path(STATUS_FILE)),
+                    },
+                )
+            )
+            return 75
+        except ActivityAuditInvariantError as exc:
+            _emit_fail_closed(exc)
+            return 2
+        print(
+            json.dumps(
+                {
+                    "status": (
+                        "recovered"
+                        if archive_recovered or activity_recovered
+                        else "no_pending_recovery"
+                    ),
+                    "archive_outbox_recovered": archive_recovered,
+                    "activity_outbox_recovered": activity_recovered,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            )
+        )
+        return 0
 
     if command in read_only_commands:
         # Read-only commands must never join the writer convoy or mutate

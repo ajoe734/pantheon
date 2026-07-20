@@ -1523,6 +1523,107 @@ class ArchiveWorkflowTests(unittest.TestCase):
         archive_recovery.assert_not_called()
         activity_recovery.assert_not_called()
 
+    def test_recover_main_replays_pending_outboxes_without_worker_lease(self) -> None:
+        class NullLock:
+            def __enter__(self):
+                return None
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        pending_state = dict(self.state)
+        pending_state[ai_status.STATUS_ACTIVITY_OUTBOX_KEY] = {
+            "schema_version": 1,
+            "transaction_id": "pending",
+            "events": [{"event_id": "pending-event"}],
+        }
+        logs = [{"event_id": "pending-event"}]
+
+        with (
+            mock.patch.object(ai_status, "validate_status_root_binding"),
+            mock.patch.object(ai_status, "validate_status_command_runtime_binding"),
+            mock.patch.object(ai_status, "canonical_task_state_lock", return_value=NullLock()) as lock_mock,
+            mock.patch.object(ai_status, "load_state", return_value=pending_state),
+            mock.patch.object(ai_status, "recover_status_archive_outbox", return_value=False) as archive_recovery,
+            mock.patch.object(ai_status, "recover_status_activity_outbox", return_value=True) as activity_recovery,
+            mock.patch.object(ai_status, "load_logs", return_value=logs),
+            mock.patch.object(ai_status, "write_current_work") as current_work,
+            mock.patch.object(ai_status, "write_dashboard_bundle") as dashboard,
+            mock.patch.object(ai_status, "sync_docs_site") as docs_site,
+            mock.patch.object(ai_status, "validate_active_status_command_lease") as lease_validation,
+            mock.patch("sys.stdout", new_callable=io.StringIO) as stdout,
+        ):
+            rc = ai_status.main(["ai_status.py", "recover"])
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            json.loads(stdout.getvalue()),
+            {
+                "status": "recovered",
+                "archive_outbox_recovered": False,
+                "activity_outbox_recovered": True,
+            },
+        )
+        lock_mock.assert_called_once_with(shared=False, nonblocking=True)
+        archive_recovery.assert_called_once_with(pending_state)
+        activity_recovery.assert_called_once_with(pending_state)
+        current_work.assert_called_once_with(pending_state, logs)
+        dashboard.assert_called_once_with(pending_state)
+        docs_site.assert_called_once_with(pending_state)
+        lease_validation.assert_not_called()
+
+    def test_recover_main_is_noop_without_pending_outbox(self) -> None:
+        class NullLock:
+            def __enter__(self):
+                return None
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        with (
+            mock.patch.object(ai_status, "validate_status_root_binding"),
+            mock.patch.object(ai_status, "validate_status_command_runtime_binding"),
+            mock.patch.object(ai_status, "canonical_task_state_lock", return_value=NullLock()),
+            mock.patch.object(ai_status, "load_state", return_value=self.state),
+            mock.patch.object(ai_status, "recover_status_archive_outbox", return_value=False),
+            mock.patch.object(ai_status, "recover_status_activity_outbox", return_value=False),
+            mock.patch.object(ai_status, "refresh_derived_status_views") as refresh_views,
+            mock.patch.object(ai_status, "validate_active_status_command_lease") as lease_validation,
+            mock.patch("sys.stdout", new_callable=io.StringIO) as stdout,
+        ):
+            rc = ai_status.main(["ai_status.py", "recover"])
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            json.loads(stdout.getvalue()),
+            {
+                "status": "no_pending_recovery",
+                "archive_outbox_recovered": False,
+                "activity_outbox_recovered": False,
+            },
+        )
+        refresh_views.assert_not_called()
+        lease_validation.assert_not_called()
+
+    def test_recover_main_fails_closed_when_task_lock_is_busy(self) -> None:
+        with (
+            mock.patch.object(ai_status, "validate_status_root_binding"),
+            mock.patch.object(ai_status, "validate_status_command_runtime_binding"),
+            mock.patch.object(
+                ai_status,
+                "canonical_task_state_lock",
+                side_effect=BlockingIOError,
+            ),
+            mock.patch("sys.stderr", new_callable=io.StringIO) as stderr,
+        ):
+            rc = ai_status.main(["ai_status.py", "recover"])
+
+        self.assertEqual(rc, 75)
+        self.assertEqual(
+            json.loads(stderr.getvalue())["diagnostic"]["invariant"],
+            "status_task_lock_busy",
+        )
+
     def test_real_show_is_bounded_and_does_not_mutate_pending_outbox(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             status_root = Path(tmpdir)
