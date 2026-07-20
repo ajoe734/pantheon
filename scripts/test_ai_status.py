@@ -1059,6 +1059,184 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(archive_task["status"], "done")
         self.assertEqual(archive_task["terminal_outcome"], "completed")
 
+    def test_reconcile_merged_done_requires_human_ops(self) -> None:
+        self.state["tasks"][0]["status"] = "blocked"
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
+            with self.assertRaisesRegex(SystemExit, "Only Human/Ops"):
+                ai_status.command_reconcile_merged_done(
+                    self.state,
+                    ["REG-002", "Merged delivery reconciled"],
+                )
+
+    def test_reconcile_merged_done_archives_verified_delivery(self) -> None:
+        self.state["tasks"][0]["status"] = "blocked"
+        self.state["tasks"][0]["waiting_for"] = "Claude"
+        self.state["blockers"] = [
+            {
+                "task_id": "REG-002",
+                "owner": "Codex",
+                "waiting_for": "Claude",
+                "message": "stale blocker",
+                "status": "open",
+                "created_at": "2026-04-06T15:00:00Z",
+            }
+        ]
+        delivery = {
+            "reconciled_from_merged_evidence": True,
+            "commit": "a" * 40,
+        }
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False),
+            mock.patch.object(ai_status, "validate_merged_done_evidence", return_value=delivery),
+            mock.patch.object(ai_status, "archived_task_snapshot", return_value=None),
+        ):
+            ai_status.command_reconcile_merged_done(
+                self.state,
+                ["REG-002", "Merged delivery reconciled"],
+            )
+
+        task = ai_status.get_task(self.state, "REG-002")
+        self.assertIsNotNone(task)
+        self.assertEqual(task["status"], "done")
+        self.assertEqual(task["terminal_outcome"], "completed")
+        self.assertNotIn("waiting_for", task)
+        self.assertEqual(task["delivery"]["commit"], "a" * 40)
+        self.assertEqual(self.state["blockers"][0]["status"], "resolved")
+        archive_task = self.state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY]["snapshots"][0]["task"]
+        self.assertEqual(archive_task["status"], "done")
+
+    def _init_repo(self, root: Path, *, remote: str, files: dict[str, str]) -> str:
+        root.mkdir(parents=True)
+        subprocess.run(["git", "init", "-b", "dev"], cwd=root, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=root, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=root, check=True)
+        subprocess.run(["git", "remote", "add", "origin", remote], cwd=root, check=True)
+        for relative, content in files.items():
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=root, check=True)
+        subprocess.run(["git", "commit", "-m", "test merged evidence"], cwd=root, check=True, capture_output=True)
+        sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        subprocess.run(
+            ["git", "update-ref", "refs/remotes/origin/dev", sha],
+            cwd=root,
+            check=True,
+        )
+        return sha
+
+    def test_validates_review_identity_and_both_dev_merges(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="merged-done-evidence-") as temp_dir:
+            base = Path(temp_dir)
+            delivery_root = base / "execute-plans"
+            delivery_sha = self._init_repo(
+                delivery_root,
+                remote="https://github.com/ajoe734/execute-plans.git",
+                files={"src/delivery.ts": "export const delivered = true;\n"},
+            )
+            evidence_root = base / "pantheon"
+            evidence_file = ".orchestrator/task-briefs/reg_002.md"
+            evidence_text = (
+                "# Task Brief: REG-002\n\n"
+                "- Status: review_approved\n"
+                "- Owner: Codex\n"
+                "- Reviewer: Claude\n\n"
+                "Delivery repository: ajoe734/execute-plans\n"
+                f"Delivery commit: {delivery_sha}\n"
+            )
+            evidence_sha = self._init_repo(
+                evidence_root,
+                remote="https://github.com/ajoe734/pantheon.git",
+                files={evidence_file: evidence_text},
+            )
+            task = {
+                "id": "REG-002",
+                "owner": "Codex",
+                "reviewer": "Claude",
+                "artifacts": ["execute-plans:src/delivery.ts"],
+            }
+            config = {
+                "coordination": {
+                    "enabled": True,
+                    "repositories": {
+                        "execute_plans": {
+                            "repo": "ajoe734/execute-plans",
+                            "local_path": str(delivery_root),
+                        }
+                    },
+                }
+            }
+            env = {
+                "RECONCILE_EVIDENCE_FILE": evidence_file,
+                "RECONCILE_EVIDENCE_COMMIT": evidence_sha,
+                "RECONCILE_DELIVERY_REPOSITORY": "ajoe734/execute-plans",
+                "RECONCILE_DELIVERY_ROOT": str(delivery_root),
+                "RECONCILE_DELIVERY_COMMIT": delivery_sha,
+            }
+            with (
+                mock.patch.object(ai_status, "ROOT", evidence_root),
+                mock.patch.object(ai_status, "load_config", return_value=config),
+                mock.patch.dict(os.environ, env, clear=False),
+            ):
+                result = ai_status.validate_merged_done_evidence(task)
+
+            self.assertTrue(result["reconciled_from_merged_evidence"])
+            self.assertEqual(result["commit"], delivery_sha)
+            self.assertEqual(result["review_evidence"]["commit"], evidence_sha)
+            self.assertEqual(result["review_evidence"]["reviewer"], "Claude")
+
+    def test_rejects_review_identity_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="merged-done-reviewer-") as temp_dir:
+            base = Path(temp_dir)
+            delivery_root = base / "execute-plans"
+            delivery_sha = self._init_repo(
+                delivery_root,
+                remote="https://github.com/ajoe734/execute-plans.git",
+                files={"src/delivery.ts": "export const delivered = true;\n"},
+            )
+            evidence_root = base / "pantheon"
+            evidence_file = ".orchestrator/task-briefs/reg_002.md"
+            evidence_sha = self._init_repo(
+                evidence_root,
+                remote="https://github.com/ajoe734/pantheon.git",
+                files={
+                    evidence_file: (
+                        "# Task Brief: REG-002\n\n"
+                        "- Status: review_approved\n"
+                        "- Owner: Codex\n"
+                        "- Reviewer: Gemini\n\n"
+                        "Delivery repository: ajoe734/execute-plans\n"
+                        f"Delivery commit: {delivery_sha}\n"
+                    )
+                },
+            )
+            env = {
+                "RECONCILE_EVIDENCE_FILE": evidence_file,
+                "RECONCILE_EVIDENCE_COMMIT": evidence_sha,
+                "RECONCILE_DELIVERY_REPOSITORY": "ajoe734/execute-plans",
+                "RECONCILE_DELIVERY_ROOT": str(delivery_root),
+                "RECONCILE_DELIVERY_COMMIT": delivery_sha,
+            }
+            with (
+                mock.patch.object(ai_status, "ROOT", evidence_root),
+                mock.patch.dict(os.environ, env, clear=False),
+            ):
+                with self.assertRaisesRegex(SystemExit, "reviewer metadata"):
+                    ai_status.validate_merged_done_evidence(
+                        {
+                            "id": "REG-002",
+                            "owner": "Codex",
+                            "reviewer": "Claude",
+                            "artifacts": ["execute-plans:src/delivery.ts"],
+                        }
+                    )
+
     def test_handoff_must_go_from_owner_to_reviewer(self) -> None:
         with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
             with self.assertRaises(SystemExit):

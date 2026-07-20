@@ -220,6 +220,42 @@ def repository_artifact_prefixes(config: dict[str, Any], repo_id: str) -> list[s
     return sorted(prefixes, key=len, reverse=True)
 
 
+def repository_artifact_colon_prefixes(config: dict[str, Any], repo_id: str) -> list[str]:
+    """Return legacy ``repo:path`` aliases used by durable task packets.
+
+    The registry's canonical spelling is ``repo/path``, but a large body of
+    task metadata was emitted with a colon separator.  Treat the colon as a
+    repository delimiter only when its left side exactly matches a registered
+    repository alias; ordinary paths containing colons remain untouched.
+    """
+
+    repo = resolve_repository(config, repo_id)
+    candidates: list[str] = [
+        repo_id,
+        str(repo.get("display_name") or ""),
+        str(repo.get("repo") or "").rsplit("/", 1)[-1],
+        Path(str(repo.get("local_path") or "")).name,
+    ]
+    raw_prefixes = repo.get("artifact_prefixes")
+    if isinstance(raw_prefixes, str):
+        candidates.append(raw_prefixes)
+    elif isinstance(raw_prefixes, list):
+        candidates.extend(str(item) for item in raw_prefixes)
+
+    prefixes: list[str] = []
+    seen: set[str] = set()
+    for raw in candidates:
+        alias = _normalized_artifact_path(raw).strip("/")
+        if not alias or "/" in alias or alias in {".", ".."}:
+            continue
+        prefix = f"{alias}:"
+        if prefix in seen:
+            continue
+        seen.add(prefix)
+        prefixes.append(prefix)
+    return sorted(prefixes, key=len, reverse=True)
+
+
 def _path_repository_id(config: dict[str, Any], value: Path) -> str | None:
     try:
         resolved = value.resolve(strict=False)
@@ -259,6 +295,9 @@ def artifact_repository_id(config: dict[str, Any], artifact_path: str | Path | N
         for prefix in repository_artifact_prefixes(config, repo_id):
             if candidate == prefix[:-1] or candidate.startswith(prefix):
                 return repo_id
+        for prefix in repository_artifact_colon_prefixes(config, repo_id):
+            if candidate == prefix or candidate.startswith(prefix):
+                return repo_id
     return "pantheon"
 
 
@@ -284,6 +323,11 @@ def repository_relative_artifact_path(
 
     for prefix in repository_artifact_prefixes(config, target_repo_id):
         if candidate == prefix[:-1]:
+            return Path()
+        if candidate.startswith(prefix):
+            return Path(candidate[len(prefix) :])
+    for prefix in repository_artifact_colon_prefixes(config, target_repo_id):
+        if candidate == prefix:
             return Path()
         if candidate.startswith(prefix):
             return Path(candidate[len(prefix) :])

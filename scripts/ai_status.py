@@ -402,6 +402,7 @@ TASK_ID_COMMAND_ARG_INDEX: dict[str, int] = {
     "blocker": 0,
     "done": 0,
     "restore_approved": 0,
+    "reconcile_merged_done": 0,
     "supersede": 0,
     "approve": 0,
 }
@@ -5225,6 +5226,244 @@ def command_restore_approved(state: dict[str, Any], args: list[str]) -> None:
     )
 
 
+def _required_reconcile_env(name: str) -> str:
+    value = str(os.environ.get(name) or "").strip()
+    if not value:
+        raise SystemExit(f"{name} is required for reconcile_merged_done")
+    return value
+
+
+def _validated_git_root(raw_root: str, *, label: str) -> Path:
+    candidate = Path(os.path.expanduser(raw_root))
+    if not candidate.is_absolute():
+        raise SystemExit(f"{label} must be an absolute path")
+    symlink_component = _first_symlink_component(candidate)
+    if symlink_component is not None:
+        raise SystemExit(f"{label} cannot include a symlink component: {symlink_component}")
+    root = candidate.resolve()
+    if not root.is_dir() or _git_toplevel(root) != root:
+        raise SystemExit(f"{label} must be a git repository root: {root}")
+    return root
+
+
+def _merged_commit(
+    repository_root: Path,
+    raw_commit: str,
+    target_ref: str,
+    *,
+    label: str,
+) -> tuple[str, str]:
+    commit = run_git_command(
+        ["rev-parse", "--verify", f"{raw_commit}^{{commit}}"],
+        cwd=repository_root,
+        failure_message=f"Cannot reconcile task: {label} commit is unavailable.",
+    )
+    target_sha = run_git_command(
+        ["rev-parse", "--verify", target_ref],
+        cwd=repository_root,
+        failure_message=f"Cannot reconcile task: {label} target ref {target_ref} is unavailable.",
+    )
+    if not git_command_succeeds(
+        ["merge-base", "--is-ancestor", commit, target_ref],
+        cwd=repository_root,
+    ):
+        raise SystemExit(
+            f"Cannot reconcile task: {label} commit {commit} is not merged into {target_ref}."
+        )
+    return commit, target_sha
+
+
+def validate_merged_done_evidence(task: dict[str, Any]) -> dict[str, Any]:
+    """Validate immutable, dev-merged review and delivery evidence.
+
+    This recovery path is intentionally stricter than the normal owner closeout:
+    it is only for an already-delivered task whose canonical row lost the
+    review-approved transition.  Both the review artifact and the delivered
+    commit must already be reachable from their respective dev refs.
+    """
+
+    task_id = str(task.get("id") or "").strip()
+    owner = canonical_agent_name(task.get("owner"))
+    reviewer = canonical_agent_name(task.get("reviewer"))
+    if not task_id or not owner or not reviewer or owner == reviewer:
+        raise SystemExit("Cannot reconcile task: task owner/reviewer metadata is invalid.")
+
+    raw_evidence_file = _required_reconcile_env("RECONCILE_EVIDENCE_FILE")
+    evidence_rel = Path(raw_evidence_file)
+    if evidence_rel.is_absolute() or ".." in evidence_rel.parts:
+        raise SystemExit("RECONCILE_EVIDENCE_FILE must be a repository-relative path without '..'.")
+    evidence_path = ROOT / evidence_rel
+    symlink_component = _first_symlink_component(evidence_path)
+    if symlink_component is not None:
+        raise SystemExit(
+            f"RECONCILE_EVIDENCE_FILE cannot include a symlink component: {symlink_component}"
+        )
+    evidence_path = evidence_path.resolve()
+    try:
+        evidence_path.relative_to(ROOT.resolve())
+    except ValueError as exc:
+        raise SystemExit("RECONCILE_EVIDENCE_FILE escapes the command repository.") from exc
+    if not evidence_path.is_file():
+        raise SystemExit(f"RECONCILE_EVIDENCE_FILE is not a regular file: {evidence_path}")
+    evidence_posix = evidence_rel.as_posix()
+    if not git_command_succeeds(
+        ["ls-files", "--error-unmatch", "--", evidence_posix],
+        cwd=ROOT,
+    ):
+        raise SystemExit("Cannot reconcile task: evidence file is not tracked by Pantheon git.")
+
+    evidence_target_ref = str(
+        os.environ.get("RECONCILE_EVIDENCE_TARGET_REF") or "origin/dev"
+    ).strip()
+    evidence_commit, evidence_target_sha = _merged_commit(
+        ROOT,
+        _required_reconcile_env("RECONCILE_EVIDENCE_COMMIT"),
+        evidence_target_ref,
+        label="evidence",
+    )
+    evidence_at_commit = run_git_command(
+        ["show", f"{evidence_commit}:{evidence_posix}"],
+        cwd=ROOT,
+        failure_message=(
+            "Cannot reconcile task: evidence file is absent from the supplied evidence commit."
+        ),
+    )
+    evidence_text = evidence_path.read_text(encoding="utf-8")
+    if evidence_text.rstrip("\n") != evidence_at_commit.rstrip("\n"):
+        raise SystemExit(
+            "Cannot reconcile task: working evidence file differs from the supplied merged commit."
+        )
+
+    required_lines = {
+        "task": rf"^# Task Brief:\s*{re.escape(task_id)}\s*$",
+        "status": r"^- Status:\s*review_approved\s*$",
+        "owner": rf"^- Owner:\s*{re.escape(owner)}\s*$",
+        "reviewer": rf"^- Reviewer:\s*{re.escape(reviewer)}\s*$",
+    }
+    missing = [
+        label
+        for label, pattern in required_lines.items()
+        if re.search(pattern, evidence_text, flags=re.MULTILINE) is None
+    ]
+    if missing:
+        raise SystemExit(
+            "Cannot reconcile task: merged evidence does not bind the canonical "
+            f"{', '.join(missing)} metadata."
+        )
+
+    config = load_config()
+    repository_id = task_primary_repository_id(config, task)
+    repository_slug_value = repository_slug(config, repository_id)
+    if repository_id is None or not repository_slug_value:
+        raise SystemExit("Cannot reconcile task: a single delivery repository is required.")
+    requested_slug = _normalize_github_repo_slug(
+        _required_reconcile_env("RECONCILE_DELIVERY_REPOSITORY")
+    )
+    expected_slug = _normalize_github_repo_slug(repository_slug_value)
+    if requested_slug != expected_slug:
+        raise SystemExit(
+            "Cannot reconcile task: delivery repository does not match task artifacts "
+            f"({requested_slug} != {expected_slug})."
+        )
+    delivery_root = _validated_git_root(
+        _required_reconcile_env("RECONCILE_DELIVERY_ROOT"),
+        label="RECONCILE_DELIVERY_ROOT",
+    )
+    actual_slug = _normalize_github_repo_slug(
+        run_git_command(
+            ["remote", "get-url", "origin"],
+            cwd=delivery_root,
+            failure_message="Cannot reconcile task: delivery origin remote is unavailable.",
+        )
+    )
+    if actual_slug != expected_slug:
+        raise SystemExit(
+            "Cannot reconcile task: delivery checkout origin does not match task artifacts "
+            f"({actual_slug} != {expected_slug})."
+        )
+    delivery_target_ref = str(
+        os.environ.get("RECONCILE_DELIVERY_TARGET_REF") or "origin/dev"
+    ).strip()
+    delivery_commit, delivery_target_sha = _merged_commit(
+        delivery_root,
+        _required_reconcile_env("RECONCILE_DELIVERY_COMMIT"),
+        delivery_target_ref,
+        label="delivery",
+    )
+    if expected_slug not in evidence_text or delivery_commit not in evidence_text:
+        raise SystemExit(
+            "Cannot reconcile task: merged review evidence does not cite the verified "
+            "delivery repository and full commit."
+        )
+
+    return {
+        "recorded_at": iso_now(),
+        "reconciled_from_merged_evidence": True,
+        "repository_id": repository_id,
+        "repository_slug": expected_slug,
+        "repository_path": str(delivery_root),
+        "commit": delivery_commit,
+        "merge_target_ref": delivery_target_ref,
+        "merge_target_sha": delivery_target_sha,
+        "head_merged_to_target": True,
+        "review_evidence": {
+            "file": evidence_posix,
+            "commit": evidence_commit,
+            "merge_target_ref": evidence_target_ref,
+            "merge_target_sha": evidence_target_sha,
+            "owner": owner,
+            "reviewer": reviewer,
+            "status": "review_approved",
+        },
+    }
+
+
+def command_reconcile_merged_done(state: dict[str, Any], args: list[str]) -> None:
+    if len(args) < 2:
+        raise SystemExit("Usage: reconcile_merged_done <task-id> <message>")
+    task_id, message = args[0], args[1]
+    actor = current_actor()
+    ensure_agent(actor)
+    if actor != "Human/Ops":
+        raise SystemExit("Only Human/Ops can reconcile an already-merged task to done")
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown task: {task_id}")
+    if str(task.get("status") or "") not in {
+        "todo",
+        "in_progress",
+        "blocked",
+        "review",
+        "review_approved",
+    }:
+        raise SystemExit(
+            f"{task_id} cannot be reconciled from status {task.get('status') or 'missing'}"
+        )
+
+    delivery = validate_merged_done_evidence(task)
+    timestamp = iso_now()
+    delivery["recorded_at"] = timestamp
+    task["status"] = "done"
+    task["terminal_outcome"] = "completed"
+    task["last_update"] = timestamp
+    task["next"] = message
+    task["delivery"] = delivery
+    task.pop("waiting_for", None)
+    mark_blockers_resolved(state, task_id)
+    mark_handoffs_done(state, task_id)
+    archive_terminal_task_from_state(state, task, archived_at=timestamp)
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": actor,
+            "type": "reconcile_merged_done",
+            "task_id": task_id,
+            "message": message,
+            "delivery": delivery,
+        }
+    )
+
+
 def command_done(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: done <task-id> <message>")
@@ -5505,6 +5744,7 @@ def main(argv: list[str]) -> int:
         "blocker": command_blocker,
         "done": command_done,
         "restore_approved": command_restore_approved,
+        "reconcile_merged_done": command_reconcile_merged_done,
         "supersede": command_supersede,
         "approve": command_approve,
         "archive_migrate": command_archive_migrate,

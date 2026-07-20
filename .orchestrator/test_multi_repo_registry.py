@@ -29,6 +29,24 @@ class MultiRepoRegistryTests(unittest.TestCase):
             multi_repo_registry.resolve_path("../execute-plans") / "e2e" / "dummy.spec.ts",
         )
 
+    def test_execute_plans_colon_artifact_prefix_routes_to_sibling_repo(self) -> None:
+        artifact = "execute-plans:e2e/dummy.spec.ts"
+
+        self.assertEqual(multi_repo_registry.artifact_repository_id({}, artifact), "execute_plans")
+        self.assertEqual(
+            multi_repo_registry.repository_relative_artifact_path({}, artifact),
+            Path("e2e/dummy.spec.ts"),
+        )
+        self.assertEqual(
+            multi_repo_registry.artifact_local_path({}, artifact),
+            multi_repo_registry.resolve_path("../execute-plans") / "e2e" / "dummy.spec.ts",
+        )
+
+    def test_unregistered_colon_path_remains_a_pantheon_artifact(self) -> None:
+        artifact = "services/control-plane:bff/main.py"
+
+        self.assertEqual(multi_repo_registry.artifact_repository_id({}, artifact), "pantheon")
+
     def test_task_primary_repository_prefers_single_non_pantheon_artifact_repo(self) -> None:
         task = {
             "id": "FE-INT-GATE-DUMMY",

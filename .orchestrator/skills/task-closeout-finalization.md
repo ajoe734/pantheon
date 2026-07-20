@@ -177,6 +177,42 @@ was created. This is an exception, not the default.
 
 Do not edit these generated state files by hand during closeout.
 
+## Operator Recovery For Already-Merged Work
+
+If the canonical task row lost its approval state but an immutable task brief
+already records the independent `review_approved` decision and the delivery is
+already merged, `Human/Ops` may use `reconcile_merged_done`. This is a recovery
+path, not a substitute for normal review or owner closeout.
+
+The command fails closed unless all of the following are true:
+
+- the actor is `Human/Ops`;
+- the evidence file is tracked, byte-identical to the supplied Pantheon commit,
+  and that commit is an ancestor of Pantheon `origin/dev`;
+- the evidence binds the exact task id, owner, reviewer, and
+  `review_approved` status from the canonical row;
+- the task resolves to one delivery repository;
+- the supplied delivery checkout has the expected GitHub origin, and the full
+  delivery commit is an ancestor of its `origin/dev`;
+- the merged evidence file cites that repository and full delivery commit.
+
+Example:
+
+```bash
+AI_NAME=Human/Ops \
+RECONCILE_EVIDENCE_FILE=.orchestrator/task-briefs/<task>.md \
+RECONCILE_EVIDENCE_COMMIT=<pantheon-merged-evidence-commit> \
+RECONCILE_DELIVERY_REPOSITORY=<owner/repo> \
+RECONCILE_DELIVERY_ROOT=</absolute/clean/repo/root> \
+RECONCILE_DELIVERY_COMMIT=<full-delivery-commit> \
+./scripts/ai-status.sh reconcile_merged_done <task-id> "<recovery reason>"
+```
+
+The command records both merge targets and commits in delivery metadata,
+resolves stale blockers/handoffs, and archives the task through the same
+canonical transaction as `done`. Never use it with a draft, unmerged review
+file, inferred reviewer identity, or a commit that is not already on `dev`.
+
 ## Push and Merge Policy
 
 Closeout is not complete until the finished work has merged into the
