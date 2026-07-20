@@ -1,7 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-copilot_bin="$(ls -d "$HOME"/.local/share/pantheon-orchestrator-tools/copilot-linux-x64-*/package/copilot 2>/dev/null | sort -V | tail -n1)"
+# Use NUL delimiters so malformed vendor directory names cannot be split into
+# an invalid executable path. The unmatched glob is harmless because it is not
+# executable and is skipped.
+copilot_bin=""
+while IFS= read -r -d '' candidate; do
+  [[ -x "${candidate}" ]] || continue
+  copilot_bin="${candidate}"
+done < <(
+  printf '%s\0' "$HOME"/.local/share/pantheon-orchestrator-tools/copilot-linux-x64-*/package/copilot \
+    | sort -z -V
+)
 if [[ -z "${copilot_bin}" ]]; then
   echo "Copilot CLI binary not found under ~/.local/share/pantheon-orchestrator-tools." >&2
   exit 1
