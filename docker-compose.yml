@@ -1881,6 +1881,12 @@ services:
       start_period: 5s
 
   pantheon-paper-runtime:
+    # Compatibility-only static worker. The default root stack is driven by
+    # paper-fleet-reconciler, which starts exactly one binding-scoped worker
+    # for each active paper RuntimeBinding. Starting this unbound fallback in
+    # parallel leaves a permanently unhealthy rt-devloop-l0-001 container and
+    # produces misleading RuntimeBinding-required errors.
+    profiles: ["static-paper-runtime"]
     build:
       context: .
       dockerfile: services/execution/lean_runtime/Dockerfile

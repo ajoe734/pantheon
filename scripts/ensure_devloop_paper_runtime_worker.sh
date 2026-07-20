@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
-# Ensure the dev paper-runtime worker is running (robust against Docker restart-policy quirks).
+# Ensure the authoritative dev paper fleet reconciler is running.
+#
+# The reconciler owns one binding-scoped paper worker per active RuntimeBinding.
+# The old static pantheon-paper-runtime service is compatibility-only and must
+# not be silently recreated by this helper.
 set -u
 
-CONTAINER="${PANTHEON_PAPER_RUNTIME_CONTAINER:-pantheon-pantheon-paper-runtime-1}"
+CONTAINER="${PANTHEON_PAPER_FLEET_RECONCILER_CONTAINER:-${PANTHEON_PAPER_RUNTIME_CONTAINER:-pantheon-paper-fleet-reconciler-1}}"
 COMPOSE_DIR="${PANTHEON_COMPOSE_DIR:-/home/lupin/pantheon}"
-COMPOSE_SERVICE="${PANTHEON_PAPER_RUNTIME_SERVICE:-pantheon-paper-runtime}"
+COMPOSE_SERVICE="${PANTHEON_PAPER_FLEET_RECONCILER_SERVICE:-${PANTHEON_PAPER_RUNTIME_SERVICE:-paper-fleet-reconciler}}"
 
 ts() {
   date -u +%FT%TZ
