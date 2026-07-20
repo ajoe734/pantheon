@@ -312,6 +312,23 @@ class TaskStateShadowTests(unittest.TestCase):
         self.assertEqual(json.loads(self._test_status_file.read_text(encoding="utf-8")), original)
 
 
+class LogicalActorNormalizationTests(unittest.TestCase):
+    def test_distinct_logical_lanes_do_not_collapse_numeric_suffixes(self) -> None:
+        self.assertEqual(ai_status.normalize_logical_actor("Codex"), "codex")
+        self.assertEqual(ai_status.normalize_logical_actor("Codex2"), "codex2")
+        self.assertEqual(ai_status.normalize_logical_actor("Claude"), "claude")
+        self.assertEqual(ai_status.normalize_logical_actor("Claude2"), "claude2")
+        self.assertNotEqual(
+            ai_status.normalize_logical_actor("Codex"),
+            ai_status.normalize_logical_actor("Codex2"),
+        )
+
+    def test_codex_dispatch_slots_map_to_their_logical_actor(self) -> None:
+        self.assertEqual(ai_status.normalize_logical_actor("codex1_4"), "codex")
+        self.assertEqual(ai_status.normalize_logical_actor("codex2_1"), "codex2")
+        self.assertEqual(ai_status.normalize_logical_actor("codex2-3"), "codex2")
+
+
 class StatusRootRoutingTests(unittest.TestCase):
     def _init_repo(self, path: Path) -> None:
         path.mkdir(parents=True, exist_ok=True)
@@ -515,7 +532,8 @@ class StatusRootRoutingTests(unittest.TestCase):
                             "codex-test-run": {
                                 "run_id": "codex-test-run",
                                 "provider": "codex",
-                                "agent_id": "codex2",
+                                "logical_agent_id": "codex2",
+                                "agent_id": "codex2_1",
                                 "task_id": "CENTRAL-ROOT-001",
                                 "status": "running",
                                 "lease_acquired_at": "2026-07-17T00:00:00Z",
@@ -599,6 +617,14 @@ class StatusRootRoutingTests(unittest.TestCase):
             )
             self.assertNotEqual(mismatched_result.returncode, 0)
             self.assertIn("status command lease AI identity mismatch", mismatched_result.stderr)
+
+            wrong_lane_result = run_status(
+                ["progress", "CENTRAL-ROOT-001", "wrong logical lane"],
+                actor="Codex",
+                extra_env={"ORCH_RUN_ID": "codex-test-run"},
+            )
+            self.assertNotEqual(wrong_lane_result.returncode, 0)
+            self.assertIn("status command lease AI identity mismatch", wrong_lane_result.stderr)
 
             show = subprocess.run(
                 ["bash", str(worktree / "scripts" / "ai-status.sh"), "show", "CENTRAL-ROOT-001"],
