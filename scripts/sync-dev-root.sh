@@ -11,8 +11,9 @@
 #     land while environment overrides and canonical status paths are preserved;
 #   - run check_config_drift.py --fix to realign non-allowlisted live config
 #     toggles (e.g. a hand-disabled chair_review) and report dev-root lag;
-#   - if code or live config changed, SIGTERM the supervisor so the watchdog
-#     cron relaunches it on the new code/config (flock guarantees one instance).
+#   - if code or live config changed, durably declare a PID-bound intentional
+#     restart before SIGTERM so the watchdog relaunches without charging the
+#     crash-loop budget (flock guarantees one instance).
 set -uo pipefail
 
 DEV_ROOT="${1:-/home/lupin/pantheon-ci-deploy/dev-root}"
@@ -83,6 +84,15 @@ fi
 if [[ "$updated" -eq 1 || "$config_updated" -eq 1 ]]; then
   pid="$(cat "$PID_FILE" 2>/dev/null || true)"
   if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+    target_sha="$(git rev-parse HEAD)"
+    if ! python3 "$DEV_ROOT/.orchestrator/supervisor_watchdog.py" \
+      --config "$LIVE_CONFIG" \
+      --record-intent-pid "$pid" \
+      --record-intent-target "$target_sha" >/dev/null; then
+      log "FATAL: failed to record intentional supervisor restart; leaving pid=$pid running"
+      exit 1
+    fi
+    log "recorded intentional supervisor restart pid=$pid target=${target_sha:0:10}"
     log "restarting supervisor pid=$pid to load new code (watchdog cron will relaunch)"
     kill -TERM "$pid" 2>/dev/null || true
   fi

@@ -6,6 +6,7 @@ import errno
 import fcntl
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -77,6 +78,7 @@ def watchdog_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings.setdefault("max_active_workers", 12)
     settings.setdefault("supervisor_command", ["python3", "-u", ".orchestrator/supervisor.py", "--verbose"])
     settings.setdefault("contention_deadline_seconds", 2.0)
+    settings.setdefault("intentional_restart_ttl_seconds", 300)
     return settings
 
 
@@ -129,6 +131,15 @@ def watchdog_state_path(config: dict[str, Any], settings: dict[str, Any] | None 
 def watchdog_metrics_path(config: dict[str, Any], settings: dict[str, Any] | None = None) -> Path:
     settings = settings or watchdog_settings(config)
     return resolve_repo_path(settings.get("metrics_file"), ".orchestrator/metrics/supervisor-watchdog.jsonl")
+
+
+def intentional_restart_path(config: dict[str, Any], settings: dict[str, Any] | None = None) -> Path:
+    settings = settings or watchdog_settings(config)
+    configured = settings.get("intentional_restart_file")
+    if configured:
+        raw = Path(str(configured))
+        return raw if raw.is_absolute() else config_path(config, "state_file").parent / raw
+    return config_path(config, "state_file").parent / "supervisor-restart-intent.json"
 
 
 def _assert_regular_watchdog_leaf(path: Path, descriptor: int, *, label: str) -> None:
@@ -192,6 +203,96 @@ def _write_watchdog_json_locked(path: Path, payload: dict[str, Any], *, label: s
     durable_write_bytes(path, serialized)
     if _read_watchdog_bytes(path, label=label) != serialized:
         raise RuntimeError(f"{label} readback mismatch: {path}")
+
+
+def record_intentional_restart(
+    config: dict[str, Any],
+    *,
+    old_pid: int,
+    target_sha: str,
+    now: datetime | None = None,
+    settings: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Durably declare a planned supervisor stop before deployment sends TERM."""
+    settings = settings or watchdog_settings(config)
+    now = (now or datetime.now(timezone.utc)).replace(microsecond=0)
+    target = str(target_sha or "").strip().lower()
+    if old_pid <= 0:
+        raise ValueError("intentional restart old_pid must be positive")
+    if not re.fullmatch(r"[0-9a-f]{40,64}", target):
+        raise ValueError("intentional restart target_sha must be a full git SHA")
+    ttl_seconds = max(30, int(settings.get("intentional_restart_ttl_seconds", 300)))
+    intent = {
+        "version": 1,
+        "kind": "intentional_deploy_restart",
+        "created_at": isoformat_utc(now),
+        "expires_at": isoformat_utc(now + timedelta(seconds=ttl_seconds)),
+        "old_pid": old_pid,
+        "target_sha": target,
+    }
+    # Serialize the handoff declaration with watchdog decisions. The deploy
+    # command waits for an in-flight probe instead of racing it, and only sends
+    # TERM after the durable record is visible.
+    with runtime_state_lock(config, shared=False, nonblocking=False):
+        _write_watchdog_json_locked(
+            intentional_restart_path(config, settings),
+            intent,
+            label="intentional restart",
+        )
+    return intent
+
+
+def load_valid_intentional_restart(
+    config: dict[str, Any],
+    *,
+    now: datetime,
+    candidate_pids: set[int],
+    settings: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Return a fresh, PID-bound deploy restart intent; stale/mismatched means none."""
+    settings = settings or watchdog_settings(config)
+    raw_bytes = _read_watchdog_bytes(
+        intentional_restart_path(config, settings),
+        label="intentional restart",
+    )
+    if not raw_bytes or not raw_bytes.strip():
+        return None
+    try:
+        intent = json.loads(raw_bytes)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(intent, dict) or intent.get("kind") != "intentional_deploy_restart":
+        return None
+    created_at = parse_utc_timestamp(str(intent.get("created_at") or ""))
+    expires_at = parse_utc_timestamp(str(intent.get("expires_at") or ""))
+    try:
+        old_pid = int(intent.get("old_pid"))
+    except (TypeError, ValueError):
+        return None
+    target_sha = str(intent.get("target_sha") or "").strip().lower()
+    if (
+        created_at is None
+        or expires_at is None
+        or created_at > now + timedelta(seconds=30)
+        or now > expires_at
+        or old_pid not in candidate_pids
+        or not re.fullmatch(r"[0-9a-f]{40,64}", target_sha)
+    ):
+        return None
+    return intent
+
+
+def consume_intentional_restart(
+    config: dict[str, Any],
+    settings: dict[str, Any] | None = None,
+) -> None:
+    path = intentional_restart_path(config, settings)
+    if path.is_symlink():
+        raise RuntimeError(f"intentional restart data leaf cannot be a symlink: {path}")
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
 
 
 def _append_watchdog_jsonl_locked(path: Path, payload: dict[str, Any], *, label: str) -> None:
@@ -548,6 +649,11 @@ def restart_attempt_counts(attempts: list[dict[str, Any]], now: datetime, settin
     in_window = 0
     in_hour = 0
     for attempt in attempts:
+        # Planned deploy restarts are operational handoffs, not crash-loop
+        # evidence. Keep the historical row for audit while excluding it from
+        # the protection budget.
+        if attempt.get("classification") == "intentional_deploy":
+            continue
         at = parse_utc_timestamp(str(attempt.get("at") or ""))
         if at is None:
             continue
@@ -588,13 +694,18 @@ def budget_suppression_reason(watchdog_state: dict[str, Any], now: datetime, set
         circuit["closed_at"] = isoformat_utc(now)
 
     attempts = watchdog_state.setdefault("restart_attempts", [])
-    counts = restart_attempt_counts(attempts, now, settings)
+    budget_attempts = [
+        attempt
+        for attempt in attempts
+        if attempt.get("classification") != "intentional_deploy"
+    ]
+    counts = restart_attempt_counts(budget_attempts, now, settings)
     if counts["window"] >= int(settings.get("max_restarts_per_window")):
         return "restart_budget_window_exhausted"
     if counts["hour"] >= int(settings.get("max_restarts_per_hour")):
         return "restart_budget_hour_exhausted"
-    if attempts:
-        last_at = parse_utc_timestamp(str(attempts[-1].get("at") or ""))
+    if budget_attempts:
+        last_at = parse_utc_timestamp(str(budget_attempts[-1].get("at") or ""))
         if last_at is not None:
             schedule = [int(value) for value in settings.get("backoff_schedule_seconds", [])]
             if schedule:
@@ -844,6 +955,20 @@ def _run_watchdog_locked(config: dict[str, Any], *, restart: bool = False, dry_r
     attempts = trim_restart_attempts(watchdog_state.setdefault("restart_attempts", []), now)
     watchdog_state["restart_attempts"] = attempts
     pid = read_pid_file(supervisor_pid_path(config))
+    candidate_pids = {pid} if pid is not None and pid > 0 else set()
+    runtime_supervisor = runtime_state.get("supervisor", {}) if isinstance(runtime_state.get("supervisor"), dict) else {}
+    try:
+        runtime_pid = int(runtime_supervisor.get("pid"))
+    except (TypeError, ValueError):
+        runtime_pid = 0
+    if runtime_pid > 0:
+        candidate_pids.add(runtime_pid)
+    intentional_restart = load_valid_intentional_restart(
+        config,
+        now=now,
+        candidate_pids=candidate_pids,
+        settings=settings,
+    )
     lock_held = supervisor_lock_held(config)
     # The flock is the authoritative liveness signal; the pid file is a best-effort
     # hint that is absent during clean-restart seams. Folding lock_held into `alive`
@@ -879,7 +1004,10 @@ def _run_watchdog_locked(config: dict[str, Any], *, restart: bool = False, dry_r
         decision = "observe_only"
         reason = "supervisor_healthy"
     else:
-        budget_reason = budget_suppression_reason(watchdog_state, now, settings)
+        # A short-lived deploy intent is bound to the exact process the sync
+        # script stopped. Resource pressure still wins, but crash budgets and
+        # an already-open crash circuit must not block this planned handoff.
+        budget_reason = None if intentional_restart is not None else budget_suppression_reason(watchdog_state, now, settings)
         if budget_reason:
             decision = "suppress_restart"
             reason = budget_reason
@@ -890,22 +1018,49 @@ def _run_watchdog_locked(config: dict[str, Any], *, restart: bool = False, dry_r
             reason = f"unhealthy:{health.get('reason')}"
         elif dry_run:
             decision = "restart_supervisor"
-            reason = f"dry_run:{health.get('reason')}"
+            dry_run_reason = "intentional_deploy_restart" if intentional_restart is not None else health.get("reason")
+            reason = f"dry_run:{dry_run_reason}"
         else:
             decision = "restart_supervisor"
-            reason = str(health.get("reason") or "unhealthy")
+            intentional = intentional_restart is not None
+            reason = "intentional_deploy_restart" if intentional else str(health.get("reason") or "unhealthy")
             enter_watchdog_safe_mode(config, runtime_state, now, settings, reason)
             new_pid, log_path = start_supervisor(config, settings, now)
-            attempts.append(
-                {
-                    "at": isoformat_utc(now),
-                    "reason": reason,
-                    "old_pid": pid,
-                    "new_pid": new_pid,
-                    "log_path": str(log_path),
+            if intentional:
+                circuit = watchdog_state.setdefault("circuit", {})
+                previous_circuit_reason = circuit.get("reason") if circuit.get("open") else None
+                watchdog_state["circuit"] = {
+                    "open": False,
+                    "reason": None,
+                    "opened_at": circuit.get("opened_at"),
+                    "until": None,
+                    "closed_at": isoformat_utc(now),
+                    "closed_reason": "intentional_deploy_restart",
+                    "previous_reason": previous_circuit_reason,
                 }
-            )
-            watchdog_state["restart_attempts"] = attempts
+                intentional_attempts = watchdog_state.setdefault("intentional_restart_attempts", [])
+                intentional_attempts.append(
+                    {
+                        "at": isoformat_utc(now),
+                        "reason": reason,
+                        "old_pid": intentional_restart["old_pid"],
+                        "new_pid": new_pid,
+                        "target_sha": intentional_restart["target_sha"],
+                        "log_path": str(log_path),
+                    }
+                )
+                consume_intentional_restart(config, settings)
+            else:
+                attempts.append(
+                    {
+                        "at": isoformat_utc(now),
+                        "reason": reason,
+                        "old_pid": pid,
+                        "new_pid": new_pid,
+                        "log_path": str(log_path),
+                    }
+                )
+                watchdog_state["restart_attempts"] = attempts
 
     result = summarize_decision(
         decision=decision,
@@ -918,6 +1073,7 @@ def _run_watchdog_locked(config: dict[str, Any], *, restart: bool = False, dry_r
         log_path=log_path,
     )
     result["lock_held"] = lock_held
+    result["intentional_restart"] = bool(intentional_restart is not None and new_pid is not None)
     watchdog_state["last_decision"] = result
     save_watchdog_state(config, watchdog_state, settings)
     append_watchdog_metric(
@@ -949,6 +1105,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", default=".orchestrator/config.json")
     parser.add_argument("--restart", action="store_true", help="Restart unhealthy supervisor when resource and budget gates allow it.")
     parser.add_argument("--dry-run", action="store_true", help="Report the restart decision without launching a process.")
+    parser.add_argument("--record-intent-pid", type=int, help="Record a planned deploy restart for this live supervisor PID.")
+    parser.add_argument("--record-intent-target", help="Full target git SHA for a planned deploy restart.")
     parser.add_argument("--json", action="store_true", help="Print machine-readable result.")
     return parser.parse_args()
 
@@ -956,6 +1114,22 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     config = load_config(args.config)
+    if (args.record_intent_pid is None) != (args.record_intent_target is None):
+        raise SystemExit("--record-intent-pid and --record-intent-target must be provided together")
+    if args.record_intent_pid is not None:
+        result = record_intentional_restart(
+            config,
+            old_pid=args.record_intent_pid,
+            target_sha=args.record_intent_target,
+        )
+        if args.json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        else:
+            print(
+                "recorded intentional deploy restart "
+                f"pid={result['old_pid']} target={result['target_sha']} expires_at={result['expires_at']}"
+            )
+        return 0
     result = run_watchdog(config, restart=args.restart, dry_run=args.dry_run)
     if args.json:
         import json
