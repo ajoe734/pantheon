@@ -2,7 +2,7 @@
   "schema_version": "loop_product_evidence.v1",
   "task_id": "LOOP-PROD-TEL-002",
   "title": "Canonical loop-run and Trade Journey lifecycle projector",
-  "captured_at": "2026-07-20T02:37:31Z",
+  "captured_at": "2026-07-20T02:48:39Z",
   "outcome": "pending_independent_review",
   "terminal_success": false,
   "environment": "dev",
@@ -11,7 +11,7 @@
   "review": {
     "status": "pending_independent_review",
     "review_file": null,
-    "reason": "Exact-SHA hosted lifecycle and authenticated public-BFF readback now pass. Terminal success remains fail-closed until the designated independent reviewer records a verdict bound to this checksummed manifest and the verifier-fix PR."
+    "reason": "Exact-SHA hosted lifecycle and authenticated public-BFF readback pass, and verifier PR #3898 is merged with all visible checks green. Terminal success remains fail-closed until the designated independent reviewer records a verdict bound to this checksummed manifest and merge commit 7ec6407169629df25b8e6dee762b1917320a024f."
   },
   "delivery": {
     "merge_target": "dev",
@@ -38,6 +38,14 @@
         "head_sha": "c2d2f57ac420b1f9e17c5e8c60cd7562b6414e08",
         "merge_sha": "d9c4b46d2d28cbb3ba343639fe69f3ab439ee283",
         "merged_at": "2026-07-15T14:13:38Z",
+        "required_checks": "passed"
+      },
+      {
+        "number": 3898,
+        "url": "https://github.com/ajoe734/pantheon/pull/3898",
+        "head_sha": "022431ddae7dd9746a4775405a21878a3bd59fc4",
+        "merge_sha": "7ec6407169629df25b8e6dee762b1917320a024f",
+        "merged_at": "2026-07-20T02:48:39Z",
         "required_checks": "passed"
       }
     ],
@@ -219,7 +227,7 @@
       "id": "AC-05",
       "requirement": "Branch, PR, checks, merge SHA, independent review, and residual risk owner/expiry",
       "status": "pending_independent_review",
-      "evidence": "Implementation PRs and checks are recorded, hosted evidence now passes, and residual risks retain owner/expiry. The verifier-fix PR, checks, merge SHA, and designated independent reviewer verdict remain pending."
+      "evidence": "Implementation and verifier PRs, green checks, and merge SHAs are recorded; hosted evidence passes and residual risks retain owner/expiry. Only the designated independent reviewer verdict remains pending."
     },
     {
       "id": "AC-06",
@@ -387,6 +395,12 @@
       "actor": "Codex",
       "event": "evidence_ready_for_independent_review",
       "message": "Historical root-health and disabled-workflow blockers were rechecked as resolved. Terminal success remains false pending the designated independent reviewer verdict and verifier-fix PR completion."
+    },
+    {
+      "recorded_at": "2026-07-20T02:48:39Z",
+      "actor": "Codex",
+      "event": "monotonic_readback_verifier_merged",
+      "message": "PR #3898 merged as 7ec6407169629df25b8e6dee762b1917320a024f after all visible Commit trailers, Runtime mirror guard, Forward to orchestrator, and Smoke acceptance checks passed. Terminal success remains false pending the designated independent reviewer verdict."
     }
   ],
   "redaction": {
