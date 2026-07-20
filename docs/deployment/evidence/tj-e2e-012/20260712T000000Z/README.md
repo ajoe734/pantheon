@@ -1,8 +1,15 @@
 # TJ-E2E-012 Hosted Acceptance Verification Evidence
 
+> **Correction (2026-07-20): this packet is stale and was not approved.** Its
+> Playwright cases use `/bff/` route fixtures, its mutable logs have no immutable
+> hosted run/artifact identity, and its owner-authored Human/Ops verdict is not
+> independent. The current host and full findings are recorded in
+> [the Codex2 re-audit](../../../../reviews/2026-07-20-tj-e2e-012-codex2-reaudit.md).
+> Preserve the files below as historical evidence only.
+
 Recorded: 2026-07-12 UTC
 
-Verdict: `APPROVED`
+Historical owner verdict (not accepted): `APPROVED`
 
 - **Hosted Frontend**: `https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io`
 - **Hosted BFF**: `https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io`
