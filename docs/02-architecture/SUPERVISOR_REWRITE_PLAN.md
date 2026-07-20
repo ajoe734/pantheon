@@ -360,8 +360,9 @@ touches the hot path.
   `PANTHEON_LEGACY_FAILURE_RESPONSE=1`; parity and targeted-probe behavior are
   pinned by `rewrite/test_provider_health.py`, `test_provider_permissions.py`,
   and `test_supervisor.py`.
-- **Phase 4 — correctness fixes cut over; lease→progress binding shipped (flag);
-  full decomposition pending.** `rewrite/worker_lifecycle.py`: (a) `confirm_kill`
+- **Phase 4 — correctness fixes cut over; lease→progress binding + per-worker
+  commit observation shipped (flag); full decomposition pending.**
+  `rewrite/worker_lifecycle.py`: (a) `confirm_kill`
   (SIGTERM → wait → SIGKILL → verify) now backs `terminate_worker_pid`, ending
   SIGTERM-and-assume-dead (a worker was marked `failed` while still alive and
   mutating state); legacy one flag away via `PANTHEON_LEGACY_TERMINATE=1`.
@@ -371,9 +372,14 @@ touches the hot path.
   heartbeats" fix. Wired into `poll_workers` behind
   `supervisor.lease_requires_work_progress` (default off — it shifts lease timing
   and the stall window wants fleet tuning; the incumbent's process-activity stall
-  terminator already covers the common case). Pending: physically decompose the
-  751-line `poll_workers` into the enum+table driver, and add per-worker commit
-  observation so `has_work_progress`'s commit signal is populated live.
+  terminator already covers the common case). The supervisor now snapshots HEAD
+  before launch and observes subsequent HEAD changes only inside the worker's
+  isolated task worktree; a shared checkout is deliberately never attributed to
+  one worker. New commits populate `work_progress_snapshot`,
+  `last_commit_progress_at`, and the lease/stall `last_work_progress_at` signal
+  (`supervisor.observe_worker_commit_progress=false` disables observation).
+  Pending: physically decompose the 751-line `poll_workers` into the enum+table
+  driver and fleet-tune/enable `lease_requires_work_progress` by default.
 - **Phase 6 — model built in isolation (storage cutover pending).**
   `rewrite/state_projection.py` implements the plan's core §3.7 idea: an
   append-only event vocabulary + a pure `project_board(events)` that folds it into
