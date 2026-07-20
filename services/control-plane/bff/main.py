@@ -62661,9 +62661,9 @@ _SOURCE_PROVIDER_CONNECTOR_CANDIDATES: Dict[str, Tuple[str, ...]] = {
     "twse": ("tw-twse-tpex-official-market",),
     "tpex": ("tw-twse-tpex-official-market",),
     "mops": ("tw-mops-official-disclosures",),
-    # US research sources (SRCLIVE-005)
-    "yahoo": ("us-yahoo-daily-ohlcv",),
-    "stooq": ("us-yahoo-daily-ohlcv", "us-stooq-daily-ohlcv"),
+    # US research sources (SRCLIVE-005). The Yahoo chart connector was removed:
+    # its terms forbid programmatic access, so no ingest path may resolve to it.
+    "stooq": ("us-stooq-daily-ohlcv",),
     "sec_edgar": ("us-sec-edgar-filings",),
     "finra": ("us-finra-short-sale",),
     "fred": ("us-fred-macro",),

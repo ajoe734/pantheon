@@ -186,7 +186,8 @@ def test_active_universe_fanout_routes_crypto_symbols_to_coingecko() -> None:
     assert job["metadata"]["symbol_id_mapping"]["BTC"] == "bitcoin"
 
 
-def test_active_universe_fanout_routes_us_symbols_to_yahoo_daily_ohlcv() -> None:
+def test_active_universe_fanout_never_routes_us_symbols_to_yahoo() -> None:
+    """The Yahoo chart connector was removed; no fanout may schedule it."""
     fanout = build_active_universe_job_fanout(
         [
             {"symbol": "AAPL", "market": "US", "tier": "core_universe"},
@@ -196,11 +197,9 @@ def test_active_universe_fanout_routes_us_symbols_to_yahoo_daily_ohlcv() -> None
         run_date="2026-06-10",
     )
 
-    job = next(job for job in fanout["jobs"] if job["connector_id"] == "us-yahoo-daily-ohlcv")
-
-    assert job["dataset"] == "us_price_daily"
-    assert job["symbols"] == ["AAPL", "MSFT", "IBM"]
-    assert job["metadata"]["replaces_connector_id"] == "us-stooq-daily-ohlcv"
+    connector_ids = {job["connector_id"] for job in fanout["jobs"]}
+    assert "us-yahoo-daily-ohlcv" not in connector_ids
+    assert "us-sec-edgar-filings" in connector_ids
 
 
 def test_universe_transition_records_required_tier_change_fields() -> None:

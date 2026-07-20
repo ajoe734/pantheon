@@ -42,6 +42,7 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
     assert source_ingest_env["PANTHEON_S3_ENDPOINT"] == "${PANTHEON_S3_ENDPOINT:-http://minio:9000}"
     assert source_ingest_env["PANTHEON_ARTIFACT_BUCKET"] == "${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}"
     assert source_ingest_env["SOURCE_INGEST_EVIDENCE_BACKEND"] == "${SOURCE_INGEST_EVIDENCE_BACKEND:-postgres}"
+    assert source_ingest_env["PANTHEON_EXTERNAL_EGRESS"] == "${PANTHEON_EXTERNAL_EGRESS:-deny}"
     assert "source-ingest-data:/data/source-ingest" in source_ingest["volumes"]
     assert "${SOURCE_INGEST_PORT:-18097}:8097" in source_ingest["ports"]
     healthcheck = " ".join(source_ingest["healthcheck"]["test"])
@@ -55,7 +56,8 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
 
     controller = services["source-ingest-scheduler"]
     controller_env = _env_map(controller)
-    assert "profiles" not in controller
+    # Opt-in only: an always-on tick crawls third-party providers continuously.
+    assert controller["profiles"] == ["source-ingest-scheduler"]
     assert controller["command"] == ["python", "-m", "services.source_ingestion.controller_worker"]
     assert controller_env["SOURCE_INGEST_API_URL"] == "http://source-ingest:8097"
     assert controller_env["SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL"] == "reconciled_live_proof"
