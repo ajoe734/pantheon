@@ -67,6 +67,18 @@ python3 scripts/git/worker_commit.py \
 AI_NAME=<Owner> ./scripts/ai-status.sh done "$TASK" "<checkpoint message>"
 ```
 
+On an authoritative Phase-6 deployment, Supervisor-issued commands receive the
+journal binding automatically. A direct Human/Ops invocation must export the
+same absolute, git-external binding from the provisioned live config first:
+
+```bash
+export PANTHEON_TASK_STATE_STORE_MODE=authoritative
+export PANTHEON_TASK_STATE_EVENT_LOG="$(jq -r '.task_state_store.event_log' "$LIVE_CONFIG")"
+```
+
+The wrapper rejects the command if either value is missing; do not point it at
+the relative repository template.
+
 ### Background Worker Restrictions
 
 Auto workers run without a human-attended terminal. Forbidden:

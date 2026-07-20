@@ -200,15 +200,15 @@ def apply_task_state_store(
     status_root: Path,
     live_config_path: Path,
 ) -> None:
-    """Pin the shadow journal to the git-external live runtime directory."""
+    """Pin the task-state journal to the git-external live runtime directory."""
     repo_store = repo_config.get("task_state_store")
     if repo_store is None:
         return
     if not isinstance(repo_store, dict):
         raise ValueError("task_state_store config must be a JSON object")
     mode = str(repo_store.get("mode") or "").strip().lower()
-    if mode not in {"off", "shadow"}:
-        raise ValueError("task_state_store.mode must be 'off' or 'shadow'")
+    if mode not in {"off", "shadow", "authoritative"}:
+        raise ValueError("task_state_store.mode must be 'off', 'shadow', or 'authoritative'")
     raw_event_log = str(
         repo_store.get("event_log") or TASK_STATE_STORE_DEFAULT_FILENAME
     ).strip()

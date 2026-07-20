@@ -258,6 +258,59 @@ class TaskStateShadowTests(unittest.TestCase):
         self.assertIn("task-state shadow append failed", stderr.getvalue())
         self.assertFalse((real_parent / "events.jsonl").exists())
 
+    def test_authoritative_load_ignores_divergent_file_and_save_advances_journal(self) -> None:
+        journal = self._test_root / "runtime" / "task-state-events.jsonl"
+        first = {"sprint": "authoritative", "tasks": [{"id": "STATE-003", "status": "todo"}]}
+        second = {
+            "sprint": "authoritative",
+            "tasks": [{"id": "STATE-003", "status": "in_progress"}],
+        }
+        ai_status.append_state_commit(journal, first, source="migration")
+        self._test_status_file.write_text(
+            json.dumps({"tasks": [{"id": "ROGUE", "status": "done"}]}) + "\n",
+            encoding="utf-8",
+        )
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                ai_status.TASK_STATE_STORE_MODE_ENV: "authoritative",
+                ai_status.TASK_STATE_EVENT_LOG_ENV: str(journal),
+                "AI_NAME": "Human/Ops",
+            },
+            clear=False,
+        ):
+            loaded_task = ai_status.load_state()["tasks"][0]
+            self.assertEqual(
+                {"id": loaded_task["id"], "status": loaded_task["status"]},
+                first["tasks"][0],
+            )
+            ai_status.save_state(second)
+
+        self.assertEqual(load_events(journal)[-1]["state"], second)
+        self.assertEqual(json.loads(self._test_status_file.read_text(encoding="utf-8")), second)
+
+    def test_authoritative_append_failure_preserves_existing_projection(self) -> None:
+        real_parent = self._test_root / "real-authoritative-runtime"
+        real_parent.mkdir()
+        linked_parent = self._test_root / "linked-authoritative-runtime"
+        linked_parent.symlink_to(real_parent, target_is_directory=True)
+        original = {"tasks": [{"id": "STATE-004", "status": "todo"}]}
+        self._test_status_file.write_text(json.dumps(original) + "\n", encoding="utf-8")
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                ai_status.TASK_STATE_STORE_MODE_ENV: "authoritative",
+                ai_status.TASK_STATE_EVENT_LOG_ENV: str(linked_parent / "events.jsonl"),
+            },
+            clear=False,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "symlink"):
+                ai_status.save_state({"tasks": [{"id": "STATE-004", "status": "done"}]})
+
+        self.assertEqual(json.loads(self._test_status_file.read_text(encoding="utf-8")), original)
+
 
 class StatusRootRoutingTests(unittest.TestCase):
     def _init_repo(self, path: Path) -> None:
@@ -311,6 +364,10 @@ class StatusRootRoutingTests(unittest.TestCase):
             target = destination / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
+        config_path = destination / ".orchestrator" / "config.json"
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        config["task_state_store"]["mode"] = "shadow"
+        config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
 
     def _commit_all(self, repo: Path, message: str = "install status tooling") -> str:
         subprocess.run(["git", "add", "."], cwd=repo, check=True)
@@ -1941,6 +1998,8 @@ class ArchiveWorkflowTests(unittest.TestCase):
                 json.dumps(state, indent=2) + "\n",
                 encoding="utf-8",
             )
+            event_log = status_root / "runtime" / "task-state-events.jsonl"
+            ai_status.append_state_commit(event_log, state, source="test-fixture")
             before = status_file.read_bytes()
             env = os.environ.copy()
             for name in (
@@ -1955,6 +2014,8 @@ class ArchiveWorkflowTests(unittest.TestCase):
                 {
                     "AI_NAME": "Codex",
                     "PANTHEON_STATUS_ROOT": str(status_root),
+                    ai_status.TASK_STATE_STORE_MODE_ENV: "authoritative",
+                    ai_status.TASK_STATE_EVENT_LOG_ENV: str(event_log),
                 }
             )
 
@@ -1999,6 +2060,8 @@ class ArchiveWorkflowTests(unittest.TestCase):
                 json.dumps(self.state, indent=2) + "\n",
                 encoding="utf-8",
             )
+            event_log = status_root / "runtime" / "task-state-events.jsonl"
+            ai_status.append_state_commit(event_log, self.state, source="test-fixture")
             before = status_file.read_bytes()
             entered = context.Event()
             release = context.Event()
@@ -2021,6 +2084,8 @@ class ArchiveWorkflowTests(unittest.TestCase):
                 {
                     "AI_NAME": "Codex",
                     "PANTHEON_STATUS_ROOT": str(status_root),
+                    ai_status.TASK_STATE_STORE_MODE_ENV: "authoritative",
+                    ai_status.TASK_STATE_EVENT_LOG_ENV: str(event_log),
                 }
             )
             try:

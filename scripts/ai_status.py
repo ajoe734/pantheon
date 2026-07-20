@@ -89,7 +89,7 @@ from runtime_state import (
     load_runtime_state_snapshot,
     runtime_state_lock,
 )
-from rewrite.task_state_store import append_state_commit
+from rewrite.task_state_store import append_state_commit, load_events, project_latest_state
 from common import (
     ActivityAuditInvariantError,
     DuplicateActivityJSONKeyError,
@@ -1326,6 +1326,20 @@ def default_state() -> dict[str, Any]:
 
 
 def load_state() -> dict[str, Any]:
+    store_mode = str(os.environ.get(TASK_STATE_STORE_MODE_ENV) or "").strip().lower()
+    if store_mode == "authoritative":
+        event_path = _task_state_event_path(store_mode)
+        events = load_events(event_path)
+        if not events:
+            raise SystemExit(
+                "Authoritative task-state journal is empty; refusing ai-status.json fallback."
+            )
+        state = project_latest_state(events)
+        if not isinstance(state, dict) or not state:
+            raise SystemExit("Authoritative task-state projection is not a non-empty object.")
+        sync_canonical_document_metadata(state)
+        normalize_state_agents(state)
+        return state
     try:
         payload = read_regular_file_bytes(
             STATUS_FILE,
@@ -1633,6 +1647,15 @@ def recent_helper_claims(limit: int = 8, max_scan_lines: int = 5000) -> list[dic
 
 
 def save_state(state: dict[str, Any]) -> None:
+    store_mode = str(os.environ.get(TASK_STATE_STORE_MODE_ENV) or "").strip().lower()
+    if store_mode == "authoritative":
+        event_path = _task_state_event_path(store_mode)
+        source = (
+            str(os.environ.get("ORCH_RUN_ID") or "").strip()
+            or str(os.environ.get("AI_NAME") or "").strip()
+            or "ai-status"
+        )
+        append_state_commit(event_path, state, source=source)
     serialized = json.dumps(state, indent=2, ensure_ascii=False) + "\n"
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=STATUS_FILE.parent, delete=False) as handle:
         handle.write(serialized)
@@ -1643,19 +1666,25 @@ def save_state(state: dict[str, Any]) -> None:
     _fsync_directory(STATUS_FILE.parent)
     if STATUS_FILE.read_text(encoding="utf-8") != serialized:
         raise RuntimeError("canonical task-state readback mismatch")
-    _append_task_state_shadow(state)
+    if store_mode == "shadow":
+        _append_task_state_shadow(state)
+
+
+def _task_state_event_path(mode: str) -> Path:
+    raw_path = str(os.environ.get(TASK_STATE_EVENT_LOG_ENV) or "").strip()
+    if not raw_path:
+        raise SystemExit(f"{TASK_STATE_EVENT_LOG_ENV} is required in {mode} mode")
+    event_path = Path(os.path.expanduser(raw_path))
+    if not event_path.is_absolute():
+        raise SystemExit(f"{TASK_STATE_EVENT_LOG_ENV} must be an absolute path")
+    return event_path
 
 
 def _append_task_state_shadow(state: dict[str, Any]) -> None:
     if str(os.environ.get(TASK_STATE_STORE_MODE_ENV) or "").strip().lower() != "shadow":
         return
-    raw_path = str(os.environ.get(TASK_STATE_EVENT_LOG_ENV) or "").strip()
     try:
-        if not raw_path:
-            raise ValueError(f"{TASK_STATE_EVENT_LOG_ENV} is required in shadow mode")
-        event_path = Path(os.path.expanduser(raw_path))
-        if not event_path.is_absolute():
-            raise ValueError(f"{TASK_STATE_EVENT_LOG_ENV} must be an absolute path")
+        event_path = _task_state_event_path("shadow")
         source = (
             str(os.environ.get("ORCH_RUN_ID") or "").strip()
             or str(os.environ.get("AI_NAME") or "").strip()
