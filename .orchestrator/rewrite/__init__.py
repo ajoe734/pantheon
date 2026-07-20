@@ -25,9 +25,10 @@ Cutover status (SUPERVISOR_REWRITE_PLAN.md §4 migration table):
   * shadow.py                  — the pre-cutover equivalence oracle (imports the
                                  incumbent supervisor only for comparison, never
                                  imported BY it, so the live import stays acyclic).
-  * task_state_store.py        — Phase 6 shadow storage bridge: owner-only,
-                                 hash-chained full-state journal plus replay/parity
-                                 verification. ai-status.json remains authoritative.
+  * task_state_store.py        — Phase 6 LIVE: owner-only, hash-chained full-state
+                                 journal with authoritative reads/writes and
+                                 replay/parity verification. ai-status.json is a
+                                 repairable derived projection.
 
 Post-cutover, shadow.py compares the live functions against the rewrite modules
 and therefore agrees trivially; the standing behaviour-preservation guarantee is

@@ -58,6 +58,7 @@ from common import (
     utc_now,
     write_failure_evidence,
     write_json,
+    write_status,
     write_activity_log,
     worker_runtime_paths,
 )
@@ -6682,7 +6683,7 @@ def _prepare_preempted_task_status_locked(
         "message": message,
     }
     status["status_activity_outbox"] = _status_activity_outbox([event])
-    write_json(config_path(config, "status_file"), status)
+    write_status(config, status, source="supervisor-preempt")
     return event
 
 
@@ -6781,7 +6782,7 @@ def _persist_task_reassignment_locked(
         "message": message,
     }
     status["status_activity_outbox"] = _status_activity_outbox([event])
-    write_json(status_path, status)
+    write_status(config, status, source="supervisor-reassignment")
     return True
 
 
@@ -11006,15 +11007,18 @@ def run_once(
 
 
 def sync_task_state_shadow(config: dict[str, Any], state: dict[str, Any]) -> bool:
-    """Catch the durable shadow journal up to the locked canonical board.
+    """Reconcile the durable task journal with its derived board projection.
 
     Governed ``ai-status`` commands append their own shadow commit, but legacy
     and operator-side writers can still update the canonical file without the
     live command environment. A successful supervisor cycle closes that gap
-    while ``ai-status.json`` remains authoritative.
+    while ``ai-status.json`` remains authoritative. After cutover the direction
+    reverses: the journal is authoritative and a divergent JSON board is
+    repaired from its latest validated event, never imported into the journal.
     """
 
     runtime_env = task_state_store_runtime_env(config)
+    mode = str(runtime_env.get("PANTHEON_TASK_STATE_STORE_MODE") or "").strip()
     raw_event_log = str(runtime_env.get("PANTHEON_TASK_STATE_EVENT_LOG") or "").strip()
     if not raw_event_log:
         return False
@@ -11027,24 +11031,43 @@ def sync_task_state_shadow(config: dict[str, Any], state: dict[str, Any]) -> boo
     previous = previous if isinstance(previous, dict) else {}
 
     try:
-        with canonical_task_state_lock_file(status_file, shared=True):
-            canonical_state = load_json(status_file, default={})
-            if not isinstance(canonical_state, dict):
-                raise RuntimeError("canonical task state must be a JSON object")
-            before = rewrite_task_state_store.verify_projection(event_log, canonical_state)
-            caught_up = not before["ok"]
-            if caught_up:
-                rewrite_task_state_store.append_state_commit(
+        with canonical_task_state_lock_file(status_file, shared=(mode == "shadow")):
+            file_state = load_json(status_file, default={})
+            if not isinstance(file_state, dict):
+                raise RuntimeError("task state projection must be a JSON object")
+            if mode == "authoritative":
+                events = rewrite_task_state_store.load_events(event_log)
+                if not events:
+                    raise RuntimeError("authoritative task-state journal is empty")
+                canonical_state = rewrite_task_state_store.project_latest_state(events)
+                caught_up = (
+                    rewrite_task_state_store.sha256_json(file_state)
+                    != rewrite_task_state_store.sha256_json(canonical_state)
+                )
+                if caught_up:
+                    write_json(status_file, canonical_state)
+                report = rewrite_task_state_store.verify_projection(
                     event_log,
                     canonical_state,
-                    source="supervisor-shadow-catchup",
                 )
-            report = rewrite_task_state_store.verify_projection(event_log, canonical_state)
+            else:
+                canonical_state = file_state
+                before = rewrite_task_state_store.verify_projection(event_log, canonical_state)
+                caught_up = not before["ok"]
+                if caught_up:
+                    rewrite_task_state_store.append_state_commit(
+                        event_log,
+                        canonical_state,
+                        source="supervisor-shadow-catchup",
+                    )
+                report = rewrite_task_state_store.verify_projection(event_log, canonical_state)
             if not report["ok"]:
-                raise RuntimeError("task-state shadow projection remains divergent after catch-up")
+                raise RuntimeError(
+                    f"task-state {mode} projection remains divergent after reconciliation"
+                )
 
         supervisor_state["task_state_shadow"] = {
-            "mode": "shadow",
+            "mode": mode,
             "ok": True,
             "event_log": str(event_log),
             "last_checked_at": checked_at,
@@ -11054,9 +11077,9 @@ def sync_task_state_shadow(config: dict[str, Any], state: dict[str, Any]) -> boo
             **report,
         }
         return caught_up
-    except Exception as exc:  # shadow observability must not break the incumbent loop
+    except Exception as exc:  # per-phase isolation keeps the incumbent loop observable
         failure = {
-            "mode": "shadow",
+            "mode": mode,
             "ok": False,
             "event_log": str(event_log),
             "last_checked_at": checked_at,
@@ -11074,7 +11097,7 @@ def sync_task_state_shadow(config: dict[str, Any], state: dict[str, Any]) -> boo
                 failure[key] = previous[key]
         supervisor_state["task_state_shadow"] = failure
         console_log(
-            f"task-state shadow catch-up failed: {failure['last_error']}",
+            f"task-state {mode} reconciliation failed: {failure['last_error']}",
             quiet=SUPERVISOR_LOG_QUIET,
         )
         return False

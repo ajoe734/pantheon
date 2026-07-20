@@ -400,29 +400,35 @@ touches the hot path.
   `poll_workers` is now a 128-line ordered stage driver (down from 751 lines).
   Each stage returns an explicit driver short-circuit outcome, with parity pinned
   by the incumbent poll recovery suite plus direct stage boundary tests.
-- **Phase 6 — durable shadow journal shipped; authoritative read cutover pending.**
+- **Phase 6 — authoritative task-state journal cut over.**
   `rewrite/state_projection.py` implements the plan's core §3.7 idea: an
   append-only event vocabulary + a pure `project_board(events)` that folds it into
   the board, with task transitions validated against the ONE task state machine
   (`task_machine.TRANSITIONS`), and `next` *appended* (history retained) instead
   of overwritten. Deterministic/replayable (prefix ⇒ point-in-time board). This is
   the parallel-package build the discipline requires. The first storage migration
-  step is now implemented by `rewrite/task_state_store.py`: after the incumbent
-  `ai-status.json` atomic write and readback succeed, shadow mode appends an
-  owner-only, hash-chained full-state commit to a Git-external journal. The
+  step is implemented by `rewrite/task_state_store.py`: shadow mode first appended
+  an owner-only, hash-chained full-state commit to a Git-external journal after
+  the incumbent `ai-status.json` write. The
   split-root provisioner pins the live journal under the runtime-config directory,
   outside both command and status repositories; a shadow failure warns but cannot
-  fail the incumbent write. Every successful supervisor cycle also compares the
+  fail the incumbent write. Every successful Supervisor cycle also compares the
   journal projection with the canonical board under the canonical task-state lock
   and appends a catch-up commit when a legacy or operator-side writer did not carry
   the live shadow environment. The result is exposed as
-  `supervisor.task_state_shadow` in runtime health state.
+  `supervisor.task_state_shadow` in runtime health state. After sustained live
+  digest parity, the configured mode moved to `authoritative`: status commands
+  and the Supervisor read the latest validated journal projection; mutations
+  append and fsync the hash-chained journal before refreshing `ai-status.json`;
+  and the Supervisor repairs a divergent JSON projection from the journal
+  without importing that drift back into canonical history. The installed shell
+  wrapper fails closed unless authoritative mode has an absolute, git-external
+  event-log binding. Supervisor-issued status commands receive that binding from
+  the provisioned live config automatically.
   `scripts/verify_task_state_store.py` replays and validates the chain and compares
-  its latest projection digest with the canonical board. This full-snapshot journal
-  is a migration bridge, not yet the final
-  task-level event vocabulary or source of truth. Live parity must be observed
-  before reads move off `ai-status.json`; that authoritative read cutover remains
-  the plan's Medium-High-risk item.
+  its latest projection digest with the derived board. This full-snapshot journal
+  is now the source of truth. The final task-level event vocabulary remains a
+  later compaction/evolution step rather than a prerequisite for safe cutover.
 - **Phase 7 — sidecar synthesis engine DELETED; event-queue/discussion pending.**
   `rewrite/utilization.py` encodes the §3.8 principle (`select_utilization_action`
   ⇒ reprioritize real backlog, never synthesize). The sidecar make-work engine is

@@ -4425,6 +4425,39 @@ class TaskStateShadowCatchupTests(unittest.TestCase):
         self.assertFalse(shadow["ok"])
         self.assertIn("invalid task-state event", shadow["last_error"])
 
+    def test_authoritative_mode_repairs_file_from_journal_without_importing_drift(self) -> None:
+        canonical = self.write_status("todo")
+        supervisor.rewrite_task_state_store.append_state_commit(
+            self.event_log,
+            canonical,
+            source="migration",
+        )
+        self.write_status("done")
+        self.config["task_state_store"]["mode"] = "authoritative"
+
+        self.assertTrue(supervisor.sync_task_state_shadow(self.config, self.runtime_state))
+
+        self.assertEqual(json.loads(self.status_file.read_text(encoding="utf-8")), canonical)
+        events = supervisor.rewrite_task_state_store.load_events(self.event_log)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["state"], canonical)
+        store_state = self.runtime_state["supervisor"]["task_state_shadow"]
+        self.assertEqual(store_state["mode"], "authoritative")
+        self.assertTrue(store_state["ok"])
+        self.assertTrue(store_state["caught_up"])
+
+    def test_authoritative_mode_reports_empty_journal_without_touching_file(self) -> None:
+        expected = self.write_status("todo")
+        self.config["task_state_store"]["mode"] = "authoritative"
+
+        self.assertFalse(supervisor.sync_task_state_shadow(self.config, self.runtime_state))
+
+        self.assertEqual(json.loads(self.status_file.read_text(encoding="utf-8")), expected)
+        store_state = self.runtime_state["supervisor"]["task_state_shadow"]
+        self.assertEqual(store_state["mode"], "authoritative")
+        self.assertFalse(store_state["ok"])
+        self.assertIn("journal is empty", store_state["last_error"])
+
 
 class RunOnceSupervisorStateTests(unittest.TestCase):
     def test_discussion_planning_needs_materialization_for_accepted_approved_session(self) -> None:
@@ -9780,7 +9813,7 @@ class WorkerPreemptionSyncTests(unittest.TestCase):
 
         with (
             mock.patch.object(supervisor, "load_status", return_value=status),
-            mock.patch.object(supervisor, "write_json") as write_json,
+            mock.patch.object(supervisor, "write_status") as write_status,
             mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
             mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
             mock.patch.object(supervisor, "utc_now", return_value="2026-04-15T16:09:52Z"),
@@ -9792,7 +9825,7 @@ class WorkerPreemptionSyncTests(unittest.TestCase):
         self.assertEqual(task["status"], "todo")
         self.assertEqual(task["last_update"], "2026-04-15T16:09:52Z")
         self.assertIn("returned to todo until a fresh run restarts it", task["next"])
-        write_json.assert_called_once()
+        write_status.assert_called_once_with(config, status, source="supervisor-preempt")
         self.assertEqual(
             status["status_activity_outbox"]["events"][0]["type"],
             "task_preempted_synced",
@@ -9825,7 +9858,7 @@ class WorkerPreemptionSyncTests(unittest.TestCase):
 
         with (
             mock.patch.object(supervisor, "load_status", return_value=status),
-            mock.patch.object(supervisor, "write_json") as write_json,
+            mock.patch.object(supervisor, "write_status") as write_status,
             mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
             mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
             mock.patch.object(supervisor, "utc_now", return_value="2026-04-15T16:09:52Z"),
@@ -9837,7 +9870,7 @@ class WorkerPreemptionSyncTests(unittest.TestCase):
         self.assertEqual(task["status"], "review_approved")
         self.assertEqual(task["last_update"], "2026-04-15T16:09:52Z")
         self.assertIn("task remains review_approved", task["next"])
-        write_json.assert_called_once()
+        write_status.assert_called_once_with(config, status, source="supervisor-preempt")
         self.assertEqual(
             status["status_activity_outbox"]["events"][0]["type"],
             "task_preempted_synced",
