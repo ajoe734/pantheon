@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
 
+from services.external_egress import guard_external_url
 from services.source_ingestion.source_health import SourceHealth
 
 from .base import (
@@ -388,7 +389,7 @@ class TaiwanOfficialMarketDatasetAdapter(SourceConnectorProvider):
         if not url:
             raise ValueError(f"Taiwan official endpoint is not fetchable: dataset={dataset} venue={venue}")
         request = urllib.request.Request(
-            url,
+            guard_external_url(url, caller="source_ingest.taiwan_official"),
             headers={
                 "Accept": "application/json",
                 "User-Agent": "pantheon-source-ingest/0.1",

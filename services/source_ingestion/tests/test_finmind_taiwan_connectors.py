@@ -26,6 +26,17 @@ from services.source_ingestion.connectors.finmind_taiwan import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _allow_guarded_urls(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exercise the FinMind endpoints through the egress guard.
+
+    Every request in this module goes to a mocked ``urlopen``, so nothing
+    leaves the process; the guard would otherwise deny the real FinMind host
+    the way it does in dev.
+    """
+    monkeypatch.setenv("PANTHEON_EXTERNAL_EGRESS", "allow")
+
+
 BROKER_DAILY_REPORT_PAYLOAD = {
     "msg": "success",
     "status": 200,

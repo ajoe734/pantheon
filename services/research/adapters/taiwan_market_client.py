@@ -15,6 +15,8 @@ from typing import Any, Mapping, Optional, Sequence
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from services.external_egress import guard_external_url
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -527,7 +529,7 @@ class TaiwanMarketClient:
             "User-Agent": "pantheon-research-adapter/0.1",
             **dict(headers or {}),
         }
-        request = Request(url, headers=request_headers)
+        request = Request(guard_external_url(url, caller="research.taiwan_market_client"), headers=request_headers)
         self._last_request_time = time.time()
         with urlopen(request, timeout=15) as response:
             return json.loads(response.read().decode("utf-8"))
@@ -549,7 +551,12 @@ class TaiwanMarketClient:
             time.sleep(self.rate_limit_delay - elapsed)
 
         request_headers = {"Content-Type": "application/json", **dict(headers or {})}
-        request = Request(url, data=body, method="POST", headers=request_headers)
+        request = Request(
+            guard_external_url(url, caller="research.taiwan_market_client"),
+            data=body,
+            method="POST",
+            headers=request_headers,
+        )
         self._last_request_time = time.time()
         with urlopen(request, timeout=15) as response:
             return json.loads(response.read().decode("utf-8"))

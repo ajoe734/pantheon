@@ -11,13 +11,11 @@ from services.source_ingestion.connectors import (
     FRED_CONNECTOR_ID,
     SEC_EDGAR_CONNECTOR_ID,
     STOOQ_DAILY_OHLCV_CONNECTOR_ID,
-    YAHOO_US_DAILY_OHLCV_CONNECTOR_ID,
     FinraShortSaleAdapter,
     FredMacroSeriesAdapter,
     SecEdgarFilingAdapter,
     SourceEvidenceError,
     StooqDailyOhlcvAdapter,
-    YahooUsEquityDailyAdapter,
 )
 
 
@@ -83,34 +81,6 @@ STOOQ_DAILY = """Date,Open,High,Low,Close,Volume
 2026-06-09,201.0,203.5,200.0,202.1,52000000
 2026-06-10,202.1,205.0,201.2,204.8,61000000
 """
-
-YAHOO_CHART = {
-    "chart": {
-        "result": [
-            {
-                "meta": {
-                    "symbol": "AAPL",
-                    "currency": "USD",
-                    "exchangeTimezoneName": "America/New_York",
-                },
-                "timestamp": [int(datetime(2026, 6, 10, tzinfo=timezone.utc).timestamp())],
-                "indicators": {
-                    "quote": [
-                        {
-                            "open": [202.1],
-                            "high": [205.0],
-                            "low": [201.2],
-                            "close": [204.8],
-                            "volume": [61000000],
-                        }
-                    ],
-                    "adjclose": [{"adjclose": [204.6]}],
-                },
-            }
-        ],
-        "error": None,
-    }
-}
 
 
 def _completed_result(*, connector_id: str, normalized_count: int = 1):
@@ -224,17 +194,12 @@ def test_stooq_daily_ohlcv_adapter_is_disabled_until_runtime_endpoint_verified()
     assert health.metadata["disabled_reason"] == "stooq_endpoint_unverified_2026-06-11"
 
 
-def test_yahoo_us_daily_ohlcv_adapter_normalizes_chart_payload() -> None:
-    adapter = YahooUsEquityDailyAdapter(max_records=5, default_symbols=("AAPL",))
-    connector = adapter.connector()
-    records = adapter.records_from_chart_payload("AAPL", YAHOO_CHART, trace_id="trace-yahoo")
+def test_yahoo_us_daily_ohlcv_connector_is_removed() -> None:
+    """Yahoo Finance forbids programmatic access; no adapter may reintroduce it."""
+    from services.source_ingestion import connectors, provider_adapters
 
-    assert connector.connector_id == YAHOO_US_DAILY_OHLCV_CONNECTOR_ID
-    assert connector.metadata["replaces_connector_id"] == STOOQ_DAILY_OHLCV_CONNECTOR_ID
-    assert records[0].metadata["dataset"] == "us_price_daily"
-    assert records[0].metadata["normalized_row"]["provider"] == "Yahoo Finance"
-    assert records[0].metadata["normalized_row"]["close"] == 204.8
-    assert records[0].metadata["normalized_row"]["adjusted_close"] == 204.6
+    assert not hasattr(connectors, "YahooUsEquityDailyAdapter")
+    assert "YahooUsEquityDailyAdapter.records_from_chart_payload" not in provider_adapters.ALLOWED_PROVIDER_ADAPTERS
 
 
 def test_provider_owned_dispatch_allowlists_us_public_adapters(tmp_path) -> None:
@@ -264,34 +229,6 @@ def test_provider_owned_dispatch_allowlists_us_public_adapters(tmp_path) -> None
     assert batch.records[0].metadata["provider_owned_adapter"] == (
         "FredMacroSeriesAdapter.records_from_observations_payload"
     )
-
-
-def test_provider_owned_dispatch_fetches_yahoo_when_payload_absent(
-    tmp_path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    store = JsonlConfiguredConnectorStore(tmp_path / "connectors.jsonl")
-    adapter = YahooUsEquityDailyAdapter(max_records=5, default_symbols=("AAPL",))
-    store.upsert_config(adapter.connector(), adapter.fetch_config())
-
-    def fake_fetch_chart(self, symbol: str, *, range_value: str | None = None, interval: str | None = None):
-        assert symbol == "AAPL"
-        assert range_value == "1mo"
-        assert interval == "1d"
-        return YAHOO_CHART
-
-    monkeypatch.setattr(YahooUsEquityDailyAdapter, "fetch_chart", fake_fetch_chart)
-    batch = ConfiguredConnectorFetcher(store).fetch_batch(
-        YAHOO_US_DAILY_OHLCV_CONNECTOR_ID,
-        None,
-        trace_id="trace-yahoo-live-driver",
-    )
-
-    assert len(batch.records) == 1
-    assert batch.records[0].metadata["provider_owned_adapter"] == (
-        "YahooUsEquityDailyAdapter.records_from_chart_payload"
-    )
-    assert batch.records[0].metadata["normalized_row"]["symbol"] == "AAPL"
 
 
 def test_provider_owned_dispatch_fetches_sec_when_payload_absent(

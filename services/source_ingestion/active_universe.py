@@ -447,23 +447,6 @@ DEFAULT_SOURCE_UPDATE_RULES: tuple[SourceUpdateRule, ...] = (
         },
     ),
     SourceUpdateRule(
-        connector_id="us-yahoo-daily-ohlcv",
-        dataset="us_price_daily",
-        eligible_tiers=(UniverseTier.CORE, UniverseTier.CANDIDATE, UniverseTier.ARCHIVE),
-        cadence="daily_after_close",
-        market="US",
-        priority=95,
-        max_symbols_per_run=200,
-        reason="Yahoo Finance chart API is the keyless US daily OHLCV source after Stooq proved blocked by the runtime anti-bot wall",
-        metadata={
-            "detail_level": "daily_ohlcv_public_chart_api",
-            "source_role": "keyless_public_market_reference",
-            "storage_targets": ["raw/yahoo/chart", "normalized/us_price_daily", "features/us_returns"],
-            "replaces_connector_id": "us-stooq-daily-ohlcv",
-            "archive_behavior": "daily_price_only",
-        },
-    ),
-    SourceUpdateRule(
         connector_id="crypto-coingecko-spot",
         dataset="crypto_spot_ohlc_and_price",
         eligible_tiers=(UniverseTier.CORE, UniverseTier.CANDIDATE, UniverseTier.ARCHIVE),

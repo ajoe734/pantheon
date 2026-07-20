@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from services.external_egress import guard_external_url
+
 from .connectors import SourceConnector, SourceEvidenceError, SourceRecord
 from .external_sources import validate_external_source_connector, validate_external_source_record
 from .provider_adapters import execute_provider_owned_adapter, validate_provider_adapter_token
@@ -464,7 +466,7 @@ class ConfiguredConnectorFetcher:
                 raw = handle.read(max_bytes + 1)
         else:
             request = urllib.request.Request(
-                url,
+                guard_external_url(url, caller="source_ingest.configured_feed"),
                 headers={"Accept": "application/json", "User-Agent": "pantheon-source-ingest/0.1"},
             )
             with urllib.request.urlopen(request, timeout=float(fetch["timeout_seconds"])) as response:
@@ -551,7 +553,7 @@ def _assert_robots_allowed(url: str, allowed_prefixes: list[str], timeout_second
         raise SourceEvidenceError("robots.txt URL is outside allowed_url_prefixes")
     try:
         request = urllib.request.Request(
-            robots_url,
+            guard_external_url(robots_url, caller="source_ingest.configured_robots"),
             headers={"Accept": "text/plain", "User-Agent": "pantheon-source-ingest/0.1"},
         )
         with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
