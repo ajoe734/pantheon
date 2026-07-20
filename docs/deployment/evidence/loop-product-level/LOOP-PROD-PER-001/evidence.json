@@ -312,6 +312,16 @@
         "merged_at": "2026-07-18T17:47:13Z",
         "merge_sha": "060b2eb999c6ccbb3ce50153c747127c0deafc33",
         "title": "LOOP-PROD-PER-001: anchor reconcile replay"
+      },
+      {
+        "number": 3900,
+        "url": "https://github.com/ajoe734/pantheon/pull/3900",
+        "head_sha": "2c25ca41e58b48b5db6562df55bf8d63c7d26713",
+        "base": "dev",
+        "merged_at": "2026-07-20T03:12:18Z",
+        "merge_sha": "0d64fc8f3a47e910862f46ddad02d27183ea6199",
+        "title": "LOOP-PROD-PER-001: anchor current hosted proof",
+        "required_checks": "passed"
       }
     ],
     "downstream_deployment_merge": {
@@ -328,7 +338,7 @@
       "status": "not_visible_in_pr_metadata",
       "checked_at": "2026-07-20T03:01:00Z",
       "reviewer": "Claude",
-      "note": "GitHub review records and reviewDecision are empty for implementation PR #3872 and latest prior evidence PR #3876. Current product proof is ready, but no independent reviewer verdict is claimed."
+      "note": "GitHub review records and reviewDecision are empty for implementation PR #3872, prior evidence PR #3876, and current evidence PR #3900. Current product proof is ready, but no independent reviewer verdict is claimed."
     },
     "current_deployment_merge": {
       "pull_request": 3872,
@@ -697,10 +707,10 @@
       "id": "AC5",
       "statement": "archive branch, PR, checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
       "status": "repo_delivery_ready_for_review_status_task_absent",
-      "delivery": "pass_through_pr_3872_and_current_evidence_commit",
+      "delivery": "pass_through_current_evidence_pr_3900",
       "independent_review": "pending_claude_review",
       "reviewer": "Claude",
-      "evidence": "implementation PR #3872 merged with checks and current hosted probe run 29713573136 passed; no independent Claude verdict is recorded. Governed status handoff is separately blocked because the canonical status root reports Unknown task: LOOP-PROD-PER-001 and must not be hand-edited."
+      "evidence": "implementation PR #3872 and current evidence PR #3900 merged with green checks; hosted probe run 29713573136 passed. No independent Claude verdict is recorded. Governed status handoff is separately blocked because the canonical status root reports Unknown task: LOOP-PROD-PER-001 and must not be hand-edited."
     },
     {
       "id": "AC6",
@@ -1036,6 +1046,15 @@
       "reviewer": "Claude",
       "ref": "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/evidence.json",
       "reason": "Current product proof is complete and checksummed. Terminal task closure remains fail-closed until an independent verdict is recorded and the Supervisor/status lane resolves the absent canonical task through governed protocol."
+    },
+    {
+      "sequence": 22,
+      "recorded_at": "2026-07-20T03:12:18Z",
+      "kind": "current_evidence_delivery",
+      "status": "pass",
+      "actor": "Codex",
+      "ref": "PR #3900 / merge 0d64fc8f3a47e910862f46ddad02d27183ea6199",
+      "reason": "The current exact-SHA hosted summary and corrected status blocker merged after all visible Commit trailers, Runtime mirror guard, Forward to orchestrator, and Smoke acceptance checks passed. Independent review and governed status-task reconciliation remain pending."
     }
   ]
 }
