@@ -7997,6 +7997,163 @@ class PollWorkersRecoveryTests(unittest.TestCase):
         reassign.assert_called_once()
         finalize_queue_event_record.assert_called_once_with({}, {}, worker, "completed")
 
+    def test_orphan_stage_reaps_dead_worker_after_queue_event_disappears(self) -> None:
+        worker = {
+            "run_id": "run-orphan",
+            "task_id": "TASK-ORPHAN",
+            "provider": "codex",
+            "status": "running",
+            "queue_event_id": "evt-missing",
+            "pid": 1234,
+        }
+        state = {"workers": {"run-orphan": worker}}
+        with (
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            outcome = supervisor.poll_worker_orphan_stage(
+                {},
+                state,
+                worker,
+                run_id="run-orphan",
+                valid_queue_event_ids=set(),
+                task_map={"TASK-ORPHAN": {"status": "todo"}},
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        self.assertNotIn("run-orphan", state["workers"])
+        self.assertIn("redispatched", write_activity_log.call_args.args[1]["message"])
+
+    def test_assignment_stage_completes_lingering_chair_worker(self) -> None:
+        worker = {
+            "run_id": "run-chair-live",
+            "task_id": None,
+            "provider": "codex",
+            "status": "running",
+            "pid": 1234,
+        }
+        with (
+            mock.patch.object(supervisor, "chair_review_worker_artifacts_applied", return_value=True),
+            mock.patch.object(supervisor, "terminate_worker_pid") as terminate_worker_pid,
+            mock.patch.object(supervisor, "clear_task_failure_streak") as clear_streak,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            mock.patch.object(supervisor, "finalize_queue_event_record") as finalize_queue_event_record,
+        ):
+            outcome = supervisor.poll_worker_assignment_stage(
+                {},
+                {},
+                worker,
+                run_id="run-chair-live",
+                provider_report={},
+                task_map={},
+                active_worker_statuses={"running"},
+                alive=True,
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        self.assertEqual(worker["status"], "completed")
+        terminate_worker_pid.assert_called_once_with(1234)
+        clear_streak.assert_called_once()
+        self.assertIn("artifacts were accepted", write_activity_log.call_args.args[1]["message"])
+        finalize_queue_event_record.assert_called_once()
+
+    def test_assignment_stage_requeues_stale_manual_inbox(self) -> None:
+        worker = {
+            "run_id": "run-manual",
+            "task_id": "TASK-MANUAL",
+            "provider": "claude",
+            "status": "manual_pending",
+        }
+        with (
+            mock.patch.object(supervisor, "chair_review_worker_artifacts_applied", return_value=False),
+            mock.patch.object(supervisor, "manual_pending_inbox_can_auto_redeliver", return_value=True),
+            mock.patch.object(supervisor, "requeue_stale_manual_pending_worker", return_value=True) as requeue,
+        ):
+            outcome = supervisor.poll_worker_assignment_stage(
+                {},
+                {},
+                worker,
+                run_id="run-manual",
+                provider_report={"agent_adapters": {}},
+                task_map={},
+                active_worker_statuses={"running"},
+                alive=False,
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        requeue.assert_called_once()
+
+    def test_assignment_stage_supersedes_worker_after_owner_moves(self) -> None:
+        worker = {
+            "run_id": "run-moved",
+            "task_id": "TASK-MOVED",
+            "provider": "codex",
+            "status": "running",
+            "queue_event_id": "evt-moved",
+            "pid": 1234,
+        }
+        with (
+            mock.patch.object(supervisor, "chair_review_worker_artifacts_applied", return_value=False),
+            mock.patch.object(supervisor, "manual_pending_inbox_can_auto_redeliver", return_value=False),
+            mock.patch.object(supervisor, "worker_matches_current_assignment", return_value=False),
+            mock.patch.object(supervisor, "terminate_worker_pid") as terminate_worker_pid,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            mock.patch.object(supervisor, "finalize_queue_event_record") as finalize_queue_event_record,
+        ):
+            outcome = supervisor.poll_worker_assignment_stage(
+                {},
+                {},
+                worker,
+                run_id="run-moved",
+                provider_report={},
+                task_map={"TASK-MOVED": {"owner": "Claude"}},
+                active_worker_statuses={"running"},
+                alive=True,
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        self.assertEqual(worker["status"], "superseded")
+        terminate_worker_pid.assert_called_once_with(1234)
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_superseded")
+        finalize_queue_event_record.assert_called_once()
+
+    def test_assignment_stage_preempts_for_higher_priority_ready_task(self) -> None:
+        worker = {
+            "run_id": "run-preempted",
+            "task_id": "TASK-LOW",
+            "provider": "codex",
+            "status": "running",
+            "queue_event_id": "evt-low",
+            "pid": 1234,
+        }
+        with (
+            mock.patch.object(supervisor, "chair_review_worker_artifacts_applied", return_value=False),
+            mock.patch.object(supervisor, "manual_pending_inbox_can_auto_redeliver", return_value=False),
+            mock.patch.object(supervisor, "worker_matches_current_assignment", return_value=True),
+            mock.patch.object(supervisor, "higher_priority_ready_task_exists", return_value=True),
+            mock.patch.object(supervisor, "terminate_worker_pid") as terminate_worker_pid,
+            mock.patch.object(supervisor, "sync_preempted_task_status") as sync_preempted,
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "finalize_queue_event_record") as finalize_queue_event_record,
+        ):
+            outcome = supervisor.poll_worker_assignment_stage(
+                {},
+                {},
+                worker,
+                run_id="run-preempted",
+                provider_report={},
+                task_map={"TASK-LOW": {"status": "in_progress"}},
+                active_worker_statuses={"running"},
+                alive=True,
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        self.assertEqual(worker["status"], "superseded")
+        self.assertIn("higher-priority", worker["last_error"])
+        terminate_worker_pid.assert_called_once_with(1234)
+        sync_preempted.assert_called_once_with({}, worker)
+        finalize_queue_event_record.assert_called_once()
+
     def test_observation_stage_refreshes_fresh_worker_lease(self) -> None:
         now = datetime.now(timezone.utc)
         worker = {
