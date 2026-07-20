@@ -796,11 +796,20 @@ def test_tj_e2e_005_skipped_observable_stage_is_partial_not_degraded() -> None:
 
 def test_tj_e2e_005_tenant_allowed_helper_scopes_by_claim() -> None:
     scoped_viewer = _StubIdentity(["viewer"], {"tenant_ids": ["tenant-a"]})
+    dev_login_viewer = _StubIdentity(
+        ["viewer"],
+        {"tenant_id": "tenant-a", "allowed_tenants": ["tenant-a"]},
+    )
+    primary_tenant_viewer = _StubIdentity(["viewer"], {"tenant_id": "tenant-a"})
     admin = _StubIdentity(["admin"], {})
     unscoped_viewer = _StubIdentity(["viewer"], {})
 
     assert tj._tenant_allowed(scoped_viewer, "tenant-a") is True
     assert tj._tenant_allowed(scoped_viewer, "tenant-b") is False
+    assert tj._tenant_allowed(dev_login_viewer, "tenant-a") is True
+    assert tj._tenant_allowed(dev_login_viewer, "tenant-b") is False
+    assert tj._tenant_allowed(primary_tenant_viewer, "tenant-a") is True
+    assert tj._tenant_allowed(primary_tenant_viewer, "tenant-b") is False
     assert tj._tenant_allowed(admin, "tenant-z") is True
     assert tj._tenant_allowed(unscoped_viewer, "tenant-anything") is True
 

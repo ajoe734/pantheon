@@ -356,7 +356,18 @@ def _tenant_allowed(identity: Any, tenant_id: str) -> bool:
     if "admin" in roles:
         return True
     claims = getattr(identity, "claims", None) or {}
-    scoped = claims.get("tenant_ids") or claims.get("tenantIds")
+    # Product OIDC and the server-bound dev-login exchange use the canonical
+    # ``allowed_tenants``/``tenant_id`` claim family.  Keep accepting the
+    # legacy ``tenant_ids`` aliases, but never treat a real dev-login token as
+    # unscoped merely because it does not carry that legacy spelling.
+    scoped = (
+        claims.get("allowed_tenants")
+        or claims.get("allowedTenants")
+        or claims.get("tenant_ids")
+        or claims.get("tenantIds")
+        or claims.get("tenant_id")
+        or claims.get("tenantId")
+    )
     if isinstance(scoped, str):
         scoped = [item.strip() for item in scoped.split(",") if item.strip()]
     if not scoped:
