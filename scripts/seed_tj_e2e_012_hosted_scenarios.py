@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Materialize the deterministic TJ-E2E-012 source scenarios on dev.
+"""Materialize deterministic TJ-E2E-012 fixtures through canonical telemetry.
 
-The script is intentionally write-capable and must only be called from an
-explicitly authorized dev workflow step.  It authenticates as the dedicated
-operator-A identity, posts canonical events through the BFF event-ingestion
-contract, and prints only non-sensitive counts.  Event ids and timestamps are
-fixed so reruns are idempotent and replay evidence stays reproducible.
+The script is intentionally write-capable and must only run on the Pantheon
+dev VM from the explicitly authorized hosted-acceptance workflow.  It resolves
+one real active paper RuntimeBinding, publishes a dev-only fixture batch to the
+loopback telemetry ingest service, and prints only non-sensitive counts.  The
+telemetry service and lifecycle projector independently reject this fixture
+type unless their dev-only gate is enabled.
 """
 
 from __future__ import annotations
@@ -13,18 +14,41 @@ from __future__ import annotations
 import json
 import os
 import re
-import ssl
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from collections import Counter
+from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
 
 
 SEED_SOURCE = "tj_e2e_012_hosted_seed_v3"
+FIXTURE_EVENT_TYPE = "trade_journey_fixture"
+FIXTURE_SCHEMA_VERSION = "pantheon.trade-journey-fixture.v1"
 TENANT_ID = "tenant-dev"
 AMBIGUITY_IDENTIFIER = "ambiguous-scenario-9"
+ALLOWED_TELEMETRY_ORIGINS = frozenset(
+    {"http://127.0.0.1:18083", "http://localhost:18083"}
+)
+ALLOWED_RUNTIME_MANAGER_ORIGINS = frozenset(
+    {"http://127.0.0.1:18081", "http://localhost:18081"}
+)
+ALLOWED_BFF_ORIGINS = frozenset(
+    {"http://127.0.0.1:18001", "http://localhost:18001"}
+)
+REQUIRED_BINDING_FIELDS = (
+    "binding_id",
+    "runtime_id",
+    "capital_pool_id",
+    "artifact_id",
+    "artifact_version",
+    "plan_id",
+    "persona_capital_binding_id",
+    "effective_at",
+)
 OBSERVABLE_STAGES = (
     "signal_generation",
     "trade_decision",
@@ -339,6 +363,41 @@ def _required_env(name: str) -> str:
     return value
 
 
+def _origin(value: str) -> str:
+    parts = urllib.parse.urlsplit(value.rstrip("/"))
+    return f"{parts.scheme}://{parts.netloc}"
+
+
+def _require_loopback_origin(name: str, allowed: frozenset[str]) -> str:
+    value = _required_env(name).rstrip("/")
+    if _origin(value) not in allowed:
+        raise SeedError(f"{name} is outside the dev VM loopback allowlist")
+    return value
+
+
+def _read_json(
+    url: str,
+    *,
+    token: str | None = None,
+    timeout: float = 30.0,
+) -> tuple[int, Any]:
+    headers = {"Accept": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(url, headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            payload = response.read().decode("utf-8")
+            return int(response.status), json.loads(payload) if payload else None
+    except urllib.error.HTTPError as exc:
+        payload = exc.read().decode("utf-8", errors="replace")
+        try:
+            parsed: Any = json.loads(payload) if payload else None
+        except json.JSONDecodeError:
+            parsed = {"error": "non-json response"}
+        return int(exc.code), parsed
+
+
 def _request_json(
     url: str,
     *,
@@ -356,7 +415,7 @@ def _request_json(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout, context=ssl.create_default_context()) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             payload = response.read().decode("utf-8")
             return int(response.status), json.loads(payload) if payload else None
     except urllib.error.HTTPError as exc:
@@ -368,53 +427,215 @@ def _request_json(
         return int(exc.code), parsed
 
 
+def _parse_time(value: Any) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError) as exc:
+        raise SeedError("active RuntimeBinding has an invalid effective_at") from exc
+    if parsed.tzinfo is None:
+        raise SeedError("active RuntimeBinding effective_at must be timezone-aware")
+    return parsed.astimezone(timezone.utc)
+
+
+def _active_paper_binding(runtime_manager_base: str) -> dict[str, Any]:
+    status, payload = _read_json(
+        f"{runtime_manager_base}/api/runtime-fleet/desired-state?stage=paper",
+        token=os.getenv("TJ_E2E_RUNTIME_MANAGER_TOKEN", "runtime-control-internal"),
+    )
+    bindings = payload.get("bindings") if isinstance(payload, Mapping) else None
+    if status != 200 or not isinstance(bindings, list):
+        raise SeedError(f"runtime-manager desired-state failed with HTTP {status}")
+    for raw in bindings:
+        if not isinstance(raw, Mapping):
+            continue
+        binding = dict(raw)
+        metadata = binding.get("metadata") if isinstance(binding.get("metadata"), Mapping) else {}
+        stage = str(
+            binding.get("deployment_mode")
+            or binding.get("deployment_stage")
+            or binding.get("environment")
+            or metadata.get("environment")
+            or ""
+        ).lower()
+        if str(binding.get("status") or "").lower() != "active" or stage != "paper":
+            continue
+        if all(binding.get(field) not in (None, "") for field in REQUIRED_BINDING_FIELDS):
+            return binding
+    raise SeedError("no identity-complete active paper RuntimeBinding is available")
+
+
+def _uuid_for(binding_id: str, value: str) -> str:
+    namespace = uuid.uuid5(uuid.NAMESPACE_URL, f"pantheon://{SEED_SOURCE}/{binding_id}")
+    return str(uuid.uuid5(namespace, value))
+
+
+def build_telemetry_fixtures(
+    binding: Mapping[str, Any],
+    events: list[Mapping[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Wrap source scenarios in binding-valid canonical telemetry envelopes."""
+
+    missing = [field for field in REQUIRED_BINDING_FIELDS if binding.get(field) in (None, "")]
+    if missing:
+        raise SeedError("RuntimeBinding missing: " + ", ".join(missing))
+    binding_id = str(binding["binding_id"])
+    effective_at = _parse_time(binding["effective_at"])
+    source_events = list(events or build_scenarios())
+    previous_by_journey: dict[str, str] = {}
+    fixtures: list[dict[str, Any]] = []
+    for position, source in enumerate(source_events, start=1):
+        journey_id = str(source["journey_id"])
+        source_event_id = str(source["event_id"])
+        event_id = _uuid_for(binding_id, source_event_id)
+        correlation_id = _uuid_for(binding_id, f"{journey_id}:correlation")
+        trace_id = _uuid_for(binding_id, f"{journey_id}:trace")
+        created_at = (effective_at + timedelta(seconds=position)).isoformat().replace(
+            "+00:00", "Z"
+        )
+        environment = str(source.get("environment") or "paper")
+        fixture_payload = {
+            key: value
+            for key, value in source.items()
+            if key
+            not in {
+                "event_id",
+                "journey_id",
+                "tenant_id",
+                "environment",
+                "occurred_at",
+                "recorded_at",
+                "source",
+                "sequence_no",
+                "stage",
+                "stage_status",
+                "schema_version",
+            }
+        }
+        strategy_id = str(
+            fixture_payload.get("strategy_id")
+            or binding.get("strategy_id")
+            or f"strategy-{journey_id}"
+        )
+        persona_id = str(
+            fixture_payload.get("persona_id")
+            or binding.get("persona_id")
+            or f"persona-{journey_id}"
+        )
+        envelope = {
+            "schema_version": "trade-journey-envelope/1",
+            "tenant_id": TENANT_ID,
+            "environment": environment,
+            "journey_id": journey_id,
+            "correlation_id": correlation_id,
+            "trace_id": trace_id,
+            "event_id": event_id,
+            "causation_event_id": previous_by_journey.get(journey_id, event_id),
+            "producer": "pantheon.tj-e2e-012.dev-fixture",
+            "event_time": str(source["occurred_at"]),
+            "received_at": str(source.get("recorded_at") or source["occurred_at"]),
+            "producer_revision": int(source["sequence_no"]),
+        }
+        for key in ("research_journey_id", "strategy_lifecycle_id"):
+            if fixture_payload.get(key) not in (None, ""):
+                envelope[key] = str(fixture_payload[key])
+        fixture = {
+            "event_id": event_id,
+            "event_type": FIXTURE_EVENT_TYPE,
+            "created_at": created_at,
+            "execution_mode": "paper",
+            "environment": "paper",
+            "deployment_stage": "paper",
+            "binding_id": binding_id,
+            "runtime_id": str(binding["runtime_id"]),
+            "capital_pool_id": str(binding["capital_pool_id"]),
+            "artifact_id": str(binding["artifact_id"]),
+            "artifact_version": str(binding["artifact_version"]),
+            "plan_id": str(binding["plan_id"]),
+            "persona_capital_binding_id": str(binding["persona_capital_binding_id"]),
+            "run_id": f"run-{journey_id}",
+            "signal_id": f"signal-{journey_id}",
+            "loop_run_id": f"lr-{journey_id}",
+            "trace_id": trace_id,
+            "sequence_no": int(source["sequence_no"]),
+            "source_mode": "live",
+            "authority_refs": {
+                "write_owner": "tj-e2e-012-dev-fixture",
+                "authority_source": "runtime_binding",
+                "runtime_role": "hosted_acceptance_fixture",
+                "runtime_mode": "paper",
+                "persona_id": persona_id,
+                "trace_id": trace_id,
+            },
+            "target": {
+                "strategy_id": strategy_id,
+                "artifact_version": str(binding["artifact_version"]),
+                "promotion_state": "paper",
+            },
+            "metrics": {"action": str(source["stage"])},
+            "metadata": {
+                "fixture_schema_version": FIXTURE_SCHEMA_VERSION,
+                "fixture_source": SEED_SOURCE,
+                "fixture_scope": "dev-only",
+                "fixture_stage": str(source["stage"]),
+                "fixture_stage_status": str(source["stage_status"]),
+                "fixture_occurred_at": str(source["occurred_at"]),
+                "fixture_recorded_at": str(source.get("recorded_at") or source["occurred_at"]),
+                "fixture_payload": fixture_payload,
+                "persona_id": persona_id,
+                "strategy_id": strategy_id,
+                "run_id": f"run-{journey_id}",
+                "signal_id": f"signal-{journey_id}",
+                "sequence_no": int(source["sequence_no"]),
+            },
+            "correlation_envelope": envelope,
+        }
+        fixtures.append(fixture)
+        previous_by_journey[journey_id] = event_id
+    return fixtures
+
+
 def main() -> int:
     try:
-        base = _required_env("BFF_BASE").rstrip("/")
-        allowed = _required_env("TJ_E2E_ALLOWED_BFF_ORIGIN").rstrip("/")
-        base_parts = urllib.parse.urlsplit(base)
-        allowed_parts = urllib.parse.urlsplit(allowed)
-        if (
-            base_parts.scheme != "https"
-            or (base_parts.scheme, base_parts.netloc) != (allowed_parts.scheme, allowed_parts.netloc)
-        ):
-            raise SeedError("BFF_BASE is outside the allowlisted HTTPS origin")
+        telemetry_base = _require_loopback_origin(
+            "TJ_E2E_TELEMETRY_BASE", ALLOWED_TELEMETRY_ORIGINS
+        )
+        runtime_manager_base = _require_loopback_origin(
+            "TJ_E2E_RUNTIME_MANAGER_BASE", ALLOWED_RUNTIME_MANAGER_ORIGINS
+        )
+        bff_base = _require_loopback_origin("TJ_E2E_SEED_BFF_BASE", ALLOWED_BFF_ORIGINS)
         if os.getenv("GITHUB_REPOSITORY", "") != "ajoe734/pantheon":
-            raise SeedError("hosted seed credentials may only run in ajoe734/pantheon")
+            raise SeedError("hosted seed may only run in ajoe734/pantheon")
         if os.getenv("TJ_E2E_TENANT_ID", TENANT_ID) != TENANT_ID:
             raise SeedError("hosted seed is restricted to tenant-dev")
+        expected_sha = _required_env("TJ_E2E_EXPECTED_BFF_SHA")
+        if re.fullmatch(r"[0-9a-f]{40}", expected_sha) is None:
+            raise SeedError("TJ_E2E_EXPECTED_BFF_SHA must be a lowercase 40-character SHA")
+        version_status, version = _read_json(f"{bff_base}/bff/version")
+        observed_sha = version.get("source_commit_sha") if isinstance(version, Mapping) else None
+        if version_status != 200 or observed_sha != expected_sha:
+            raise SeedError("loopback BFF does not match the requested acceptance SHA")
 
-        login_status, login = _request_json(
-            f"{base}/bff/auth/dev-login",
-            body={
-                "grant_type": "client_credentials",
-                "client_id": _required_env("TJ_E2E_OPERATOR_CLIENT_ID"),
-                "client_secret": _required_env("TJ_E2E_OPERATOR_CLIENT_SECRET"),
-            },
-        )
-        token = login.get("access_token") if isinstance(login, Mapping) else None
-        meta = login.get("meta") if isinstance(login, Mapping) else None
-        if login_status != 200 or not isinstance(token, str) or not token:
-            raise SeedError(f"operator-A dev-login failed with HTTP {login_status}")
-        if not isinstance(meta, Mapping) or meta.get("identity") != "operator_a":
-            raise SeedError("dev-login did not issue the dedicated operator-A identity")
-
+        binding = _active_paper_binding(runtime_manager_base)
         events = build_scenarios()
-        if len({event["event_id"] for event in events}) != len(events):
-            raise SeedError("generated event ids are not unique")
+        fixtures = build_telemetry_fixtures(binding, events)
+        if len({event["event_id"] for event in fixtures}) != len(fixtures):
+            raise SeedError("generated telemetry event ids are not unique")
         write_status, write = _request_json(
-            f"{base}/bff/management/trade-journeys/events",
-            body=events,
-            token=token,
+            f"{telemetry_base}/api/telemetry/ingest/batch",
+            body={"events": fixtures},
         )
-        if write_status != 200:
-            code = None
-            if isinstance(write, Mapping):
-                error = write.get("error")
-                code = error.get("code") if isinstance(error, Mapping) else None
-            raise SeedError(f"canonical event publish failed with HTTP {write_status} ({code or 'unknown'})")
-        if not isinstance(write, Mapping) or write.get("status") != "ok" or write.get("count") != len(events):
-            raise SeedError("canonical event publish returned an unexpected acknowledgement")
+        if (
+            write_status != 202
+            or not isinstance(write, Mapping)
+            or write.get("ingested") != len(fixtures)
+            or write.get("rejected") != 0
+        ):
+            raise SeedError(f"canonical telemetry publish failed with HTTP {write_status}")
+
+        # The ingest acknowledgement means the batch is accepted into the
+        # durable writer.  Give the writer/projector one bounded interval;
+        # the public verifier independently retries and proves readback.
+        time.sleep(2)
 
         environments = Counter(event["environment"] for event in events)
         journeys = {event["journey_id"] for event in events}
@@ -425,6 +646,7 @@ def main() -> int:
                     "source": SEED_SOURCE,
                     "tenant_id": TENANT_ID,
                     "event_count": len(events),
+                    "telemetry_event_count": len(fixtures),
                     "journey_count": len(journeys),
                     "environment_counts": dict(sorted(environments.items())),
                 },

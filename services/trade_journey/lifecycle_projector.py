@@ -47,6 +47,7 @@ DEFAULT_CHANNEL = "pantheon_lifecycle_events"
 
 LIFECYCLE_EVENT_TYPES = frozenset(
     {
+        "trade_journey_fixture",
         "signal_generation",
         "trade_decision",
         "risk_evaluation",
@@ -69,6 +70,76 @@ LIFECYCLE_EVENT_TYPES = frozenset(
     }
 )
 LIFECYCLE_EVENT_TYPE_QUERY = tuple(sorted(LIFECYCLE_EVENT_TYPES))
+
+FIXTURE_EVENT_TYPE = "trade_journey_fixture"
+FIXTURE_SCHEMA_VERSION = "pantheon.trade-journey-fixture.v1"
+FIXTURE_SOURCE = "tj_e2e_012_hosted_seed_v3"
+FIXTURE_TENANT_ID = "tenant-dev"
+FIXTURE_STAGES = frozenset(
+    {
+        "signal_generation",
+        "trade_decision",
+        "promotion_decision",
+        "risk_evaluation",
+        "order_submission",
+        "broker_acknowledgement",
+        "fill_management",
+        "ledger_booking",
+        "reconciliation",
+    }
+)
+FIXTURE_PASSTHROUGH_FIELDS = frozenset(
+    {
+        "account_id",
+        "artifact_version",
+        "binding_version",
+        "broker_order_id",
+        "broker_trade_id",
+        "capital_account_id",
+        "causation_id",
+        "client_order_id",
+        "decision_id",
+        "due_at",
+        "event_type",
+        "evidence_refs",
+        "failing_check",
+        "fill_id",
+        "filled_quantity",
+        "graph_edges",
+        "human_inbox_ref",
+        "incident_id",
+        "input_refs",
+        "next_action",
+        "order_id",
+        "order_state",
+        "owner_role",
+        "parent_order_id",
+        "persona_id",
+        "persona_version",
+        "policy_refs",
+        "policy_version",
+        "price",
+        "quantity",
+        "reason_code",
+        "recorded_at",
+        "replaced_order_id",
+        "remaining_quantity",
+        "remediation_ref",
+        "research_journey_id",
+        "return_url",
+        "signal_id",
+        "source_ref",
+        "source_status",
+        "source_unavailable",
+        "strategy_id",
+        "strategy_lifecycle_id",
+        "strategy_version",
+        "summary",
+        "unavailable_sources",
+        "unfilled_quantity",
+        "variance",
+    }
+)
 
 STABLE_IDENTITY_FIELDS = (
     "tenant_id",
@@ -366,6 +437,7 @@ class LifecycleProjector:
                     previous["accepted_live"] = True
                 continue
             try:
+                self._validate_fixture_event(event)
                 identity = self._identity(event)
                 source_sequence = self._sequence_no(event)
                 self._admit_identity(candidate, identity)
@@ -563,6 +635,32 @@ class LifecycleProjector:
         self.state = candidate
 
     @staticmethod
+    def _validate_fixture_event(event: Mapping[str, Any]) -> None:
+        if event.get("event_type") != FIXTURE_EVENT_TYPE:
+            return
+        if os.getenv("PANTHEON_TJ_E2E_FIXTURE_INGEST_ENABLED", "").lower() != "true":
+            raise InvalidLifecycleEvent("dev fixture projection is disabled")
+        metadata = event.get("metadata")
+        envelope = event.get("correlation_envelope")
+        if not isinstance(metadata, Mapping) or not isinstance(envelope, Mapping):
+            raise InvalidLifecycleEvent("dev fixture metadata and correlation envelope are required")
+        if (
+            metadata.get("fixture_schema_version") != FIXTURE_SCHEMA_VERSION
+            or metadata.get("fixture_source") != FIXTURE_SOURCE
+            or metadata.get("fixture_scope") != "dev-only"
+            or envelope.get("tenant_id") != FIXTURE_TENANT_ID
+        ):
+            raise InvalidLifecycleEvent("dev fixture scope is invalid")
+        if metadata.get("fixture_stage") not in FIXTURE_STAGES:
+            raise InvalidLifecycleEvent("dev fixture stage is invalid")
+        if not str(metadata.get("fixture_stage_status") or "").strip():
+            raise InvalidLifecycleEvent("dev fixture stage status is required")
+        _parse_iso(metadata.get("fixture_occurred_at"))
+        _parse_iso(metadata.get("fixture_recorded_at"))
+        if not isinstance(metadata.get("fixture_payload"), Mapping):
+            raise InvalidLifecycleEvent("dev fixture payload must be an object")
+
+    @staticmethod
     def _source_event(row: Mapping[str, Any]) -> dict[str, Any]:
         payload = row.get("payload")
         event = dict(payload) if isinstance(payload, Mapping) else dict(row)
@@ -700,16 +798,32 @@ class LifecycleProjector:
         identity = entry["identity"]
         specs = cls._stage_specs(source)
         metadata = source.get("metadata") if isinstance(source.get("metadata"), Mapping) else {}
+        fixture_payload = (
+            metadata.get("fixture_payload")
+            if source.get("event_type") == FIXTURE_EVENT_TYPE
+            and isinstance(metadata.get("fixture_payload"), Mapping)
+            else {}
+        )
+        occurred_at = (
+            metadata.get("fixture_occurred_at")
+            if source.get("event_type") == FIXTURE_EVENT_TYPE
+            else source["created_at"]
+        )
+        recorded_at = (
+            metadata.get("fixture_recorded_at")
+            if source.get("event_type") == FIXTURE_EVENT_TYPE
+            else entry.get("ingested_at") or source["created_at"]
+        )
         result: list[dict[str, Any]] = []
         for ordinal, (stage, status) in enumerate(specs, start=1):
             event = {
                 "event_id": f"{source['event_id']}:{stage}",
-                "event_type": source["event_type"],
+                "event_type": fixture_payload.get("event_type") or source["event_type"],
                 "journey_id": identity["journey_id"],
                 "tenant_id": identity["tenant_id"],
                 "environment": identity["environment"],
-                "occurred_at": source["created_at"],
-                "recorded_at": entry.get("ingested_at") or source["created_at"],
+                "occurred_at": occurred_at,
+                "recorded_at": recorded_at,
                 "source": f"canonical_telemetry_{entry['source_mode']}",
                 "source_mode": entry["source_mode"],
                 "accepted_live": bool(entry.get("accepted_live")),
@@ -732,6 +846,11 @@ class LifecycleProjector:
                 value = _first(source.get(field), metadata.get(field))
                 if value is not None:
                     event[field] = value
+            if source.get("event_type") == FIXTURE_EVENT_TYPE:
+                for field in FIXTURE_PASSTHROUGH_FIELDS:
+                    value = fixture_payload.get(field)
+                    if value not in (None, "", [], {}):
+                        event[field] = value
             metrics = source.get("metrics") if isinstance(source.get("metrics"), Mapping) else {}
             if "quantity" not in event:
                 quantity = _first(metrics.get("fill_quantity"), source.get("position_qty"))
@@ -746,6 +865,13 @@ class LifecycleProjector:
     def _stage_specs(event: Mapping[str, Any]) -> list[tuple[str, str]]:
         event_type = str(event["event_type"])
         metadata = event.get("metadata") if isinstance(event.get("metadata"), Mapping) else {}
+        if event_type == FIXTURE_EVENT_TYPE:
+            return [
+                (
+                    str(metadata.get("fixture_stage")),
+                    str(metadata.get("fixture_stage_status")),
+                )
+            ]
         if event_type == "signal_generation":
             return [("signal_generation", "succeeded")]
         if event_type == "trade_decision":

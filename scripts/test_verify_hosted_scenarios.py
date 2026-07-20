@@ -220,6 +220,7 @@ def test_run_collects_every_scenario_failure_in_one_evidence_run(tmp_path: Path)
     verifier = verifier_module.HostedVerifier(config, recorder)
     verifier.verify_deployment = lambda: None
     verifier.authenticate = lambda: None
+    verifier.wait_for_seed_projection = lambda: None
 
     called = []
 

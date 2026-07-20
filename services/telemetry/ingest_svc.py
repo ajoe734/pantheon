@@ -50,6 +50,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import logging
+import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -92,6 +93,10 @@ except ImportError:
 log = logging.getLogger(__name__)
 
 TELEMETRY_COMMIT_NOTIFY_CHANNEL = "pantheon_lifecycle_events"
+TRADE_JOURNEY_FIXTURE_EVENT_TYPE = "trade_journey_fixture"
+TRADE_JOURNEY_FIXTURE_SCHEMA_VERSION = "pantheon.trade-journey-fixture.v1"
+TRADE_JOURNEY_FIXTURE_SOURCE = "tj_e2e_012_hosted_seed_v3"
+TRADE_JOURNEY_FIXTURE_TENANT = "tenant-dev"
 
 
 class ConflictingTelemetryEventError(ValueError):
@@ -534,6 +539,27 @@ class TelemetryIngestService:
         event_type = event.get("event_type")
         if event_type in TRADE_JOURNAL_EVENT_TYPES:
             return True, None, None
+        if event_type == TRADE_JOURNEY_FIXTURE_EVENT_TYPE:
+            metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+            envelope = (
+                event.get("correlation_envelope")
+                if isinstance(event.get("correlation_envelope"), dict)
+                else {}
+            )
+            fixture_enabled = (
+                os.getenv("PANTHEON_TJ_E2E_FIXTURE_INGEST_ENABLED", "").lower()
+                == "true"
+            )
+            if not fixture_enabled:
+                return False, "Trade Journey dev fixture ingest is disabled", None
+            if (
+                metadata.get("fixture_schema_version")
+                != TRADE_JOURNEY_FIXTURE_SCHEMA_VERSION
+                or metadata.get("fixture_source") != TRADE_JOURNEY_FIXTURE_SOURCE
+                or metadata.get("fixture_scope") != "dev-only"
+                or envelope.get("tenant_id") != TRADE_JOURNEY_FIXTURE_TENANT
+            ):
+                return False, "Trade Journey dev fixture scope is invalid", None
 
         # E-1: Minimal binding identity (field presence)
         binding_id = event.get("binding_id")

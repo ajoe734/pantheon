@@ -49,6 +49,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 concurrency:
   group: tj-e2e-012-hosted-acceptance-dev
@@ -80,9 +81,68 @@ jobs:
       - name: Checkout dispatched revision
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
+      - name: Authenticate to Google Cloud for dev VM loopback seed
+        if: ${{ inputs.seed_scenarios }}
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed
+        with:
+          workload_identity_provider: ${{ vars.DEV_GCP_WIF_PROVIDER || 'projects/317269804408/locations/global/workloadIdentityPools/pantheon-github-pool/providers/pantheon-github-provider' }}
+          service_account: ${{ vars.DEV_GCP_DEPLOY_SERVICE_ACCOUNT || 'pantheon-cloud-build@pantheon-lupin-dev-20260719.iam.gserviceaccount.com' }}
+
+      - name: Set up Cloud SDK for dev VM loopback seed
+        if: ${{ inputs.seed_scenarios }}
+        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f
+
       - name: Materialize explicitly authorized dev-only source scenarios
         if: ${{ inputs.seed_scenarios }}
-        run: python3 scripts/seed_tj_e2e_012_hosted_scenarios.py
+        env:
+          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
+          DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
+          DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
+          DEV_DEPLOY_WORKTREE: ${{ vars.DEV_DEPLOY_WORKTREE || '/home/lupin/pantheon-ci-deploy/dev-root' }}
+          GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-lupin-dev-20260719' }}
+        run: |
+          set -euo pipefail
+          [[ "${TJ_E2E_EXPECTED_BFF_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          mkdir -p "${TJ_E2E_EVIDENCE_DIR}"
+          seed_evidence="${TJ_E2E_EVIDENCE_DIR}/canonical-seed.json"
+          printf -v worktree_q '%q' "${DEV_DEPLOY_WORKTREE}"
+          printf -v expected_sha_q '%q' "${TJ_E2E_EXPECTED_BFF_SHA}"
+          set +e
+          seed_output="$(gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" \
+            --zone "${DEV_ZONE}" \
+            --project "${GCP_DEPLOY_PROJECT_ID}" \
+            --ssh-flag=-T \
+            --command "set -euo pipefail; cd ${worktree_q}; test \"\$(git rev-parse HEAD)\" = ${expected_sha_q}; GITHUB_REPOSITORY=ajoe734/pantheon TJ_E2E_TENANT_ID=tenant-dev TJ_E2E_EXPECTED_BFF_SHA=${expected_sha_q} TJ_E2E_TELEMETRY_BASE=http://127.0.0.1:18083 TJ_E2E_RUNTIME_MANAGER_BASE=http://127.0.0.1:18081 TJ_E2E_SEED_BFF_BASE=http://127.0.0.1:18001 python3 scripts/seed_tj_e2e_012_hosted_scenarios.py")"
+          seed_status=$?
+          set -e
+          python3 - "${seed_evidence}" "${seed_status}" "${seed_output}" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          path = Path(sys.argv[1])
+          status = int(sys.argv[2])
+          lines = [line for line in sys.argv[3].splitlines() if line.strip()]
+          parsed = None
+          if lines:
+              try:
+                  parsed = json.loads(lines[-1])
+              except json.JSONDecodeError:
+                  parsed = None
+          payload = {
+              "schema_version": "pantheon.tj-e2e-012.canonical-seed-evidence.v1",
+              "result": "passed" if status == 0 and isinstance(parsed, dict) else "failed",
+              "transport": "gcp-wif-ssh-dev-vm-loopback",
+              "expected_bff_sha": os.environ["TJ_E2E_EXPECTED_BFF_SHA"],
+              "seed": parsed if isinstance(parsed, dict) else None,
+          }
+          path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+          if [[ "${seed_status}" -ne 0 ]]; then
+            echo "Canonical dev telemetry seed failed; redacted evidence was recorded." >&2
+            exit "${seed_status}"
+          fi
 
       - name: Verify exact hosted pair and all twelve source scenarios
         run: python3 scripts/verify_hosted_scenarios.py

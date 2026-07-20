@@ -18,6 +18,7 @@ import os
 import re
 import ssl
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -122,6 +123,7 @@ class Config:
     replay_as_of: str
     ambiguity_identifier: str
     timeout_seconds: float = 20.0
+    projection_wait_seconds: float = 60.0
 
     @property
     def run_url(self) -> str:
@@ -196,6 +198,9 @@ class Config:
             replay_as_of=_required_env("TJ_E2E_REPLAY_AS_OF"),
             ambiguity_identifier=_required_env("TJ_E2E_AMBIGUITY_IDENTIFIER"),
             timeout_seconds=float(os.getenv("TJ_E2E_HTTP_TIMEOUT_SECONDS", "20")),
+            projection_wait_seconds=float(
+                os.getenv("TJ_E2E_PROJECTION_WAIT_SECONDS", "60")
+            ),
         )
 
 
@@ -604,6 +609,34 @@ class HostedVerifier:
             "operator and viewer dev-login exchanges returned the same token",
         )
 
+    def wait_for_seed_projection(self) -> None:
+        path = _query(
+            "/bff/management/trade-journeys/tj-scenario-1",
+            tenant_id=self.config.tenant_id,
+            environment="paper",
+        )
+        deadline = time.monotonic() + max(0.0, self.config.projection_wait_seconds)
+        attempt = 0
+        response: Mapping[str, Any] = {}
+        while True:
+            attempt += 1
+            response = self._bff_call(
+                f"projection-ready-{attempt:02d}",
+                path,
+                token=self.operator_token,
+            )
+            if response.get("status") == 200:
+                break
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(min(2.0, max(0.0, deadline - time.monotonic())))
+        self.recorder.require(
+            "deployment.seed_projection_ready",
+            response.get("status") == 200,
+            "canonical telemetry fixtures were not visible through the hosted projector before timeout",
+            details={"attempts": attempt, "status": response.get("status")},
+        )
+
     def _bundle(self, number: int, journey_id: str, *, environment: str = "paper") -> ScenarioBundle:
         params = {"tenant_id": self.config.tenant_id, "environment": environment}
         detail_response = self._bff_call(
@@ -976,6 +1009,7 @@ class HostedVerifier:
     def run(self) -> None:
         self.verify_deployment()
         self.authenticate()
+        self.wait_for_seed_projection()
         failures: list[dict[str, Any]] = []
         scenario_checks = (
             self.verify_scenario_1,
