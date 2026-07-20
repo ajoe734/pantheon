@@ -48,6 +48,10 @@ def test_dev_compose_enables_codex_assistant_provider_for_bff() -> None:
         == "${PANTHEON_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED:-false}"
     )
     assert (
+        env["PANTHEON_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED"]
+        == "${PANTHEON_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED:-false}"
+    )
+    assert (
         env["PANTHEON_MANAGEMENT_AI_STORE_PATH"]
         == "${PANTHEON_MANAGEMENT_AI_STORE_PATH:-/data/bff/management-ai-conversations.json}"
     )

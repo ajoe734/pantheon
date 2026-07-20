@@ -61,6 +61,7 @@ DEV_BFF_MFA_REQUIRED="${DEV_BFF_MFA_REQUIRED:-true}"
 # Keep the legacy/generic operator credential as the explicit no-MFA negative
 # fixture. Governed actors use dedicated credentials and MFA-positive tokens.
 DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED="${DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED:-false}"
+DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED="${DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED:-true}"
 DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED="${DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED:-true}"
 DEV_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED="${DEV_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED:-true}"
 DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED="${DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED:-true}"
@@ -200,6 +201,7 @@ Environment overrides:
   DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET
   DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET
   DEV_BFF_MFA_REQUIRED DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED
+  DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED
   DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED DEV_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED
   DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED DEV_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED
   DEV_BFF_ROLE_CLAIMS DEV_BFF_ROLE_MAP DEV_BFF_ROLE_MAP_MODE DEV_BFF_DEFAULT_ROLE
@@ -537,6 +539,7 @@ ssh_bash() {
   command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET=$(shell_quote "$DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET")"
   command_prefix+=" PANTHEON_DEV_BFF_MFA_REQUIRED=$(shell_quote "$DEV_BFF_MFA_REQUIRED")"
   command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED=$(shell_quote "$DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED")"
+  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED=$(shell_quote "$DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED")"
   command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED=$(shell_quote "$DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED")"
   command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED=$(shell_quote "$DEV_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED")"
   command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED=$(shell_quote "$DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED")"
@@ -690,6 +693,7 @@ token = payload["access_token"]
 encoded = token.split(".")[1]
 claims = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
 assert set(claims.get("roles") or []) == {expected_role}, claims.get("roles")
+assert claims.get("mfa_verified") is True, "issued token is missing MFA verification"
 subject = str(claims.get("sub") or "")
 assert subject, "issued token is missing sub"
 print(subject)
@@ -722,15 +726,15 @@ assert auth_stub is False, f"auth_stub={auth_stub!r}, expected False"
 assert auth_mode == "strict", f"auth_mode={auth_mode!r}, expected strict"
 ' "$version_payload" || error "hosted BFF auth posture is not strict: ${version_payload}"
 
-  if [[ -z "${PANTHEON_DEV_BFF_OIDC_CLIENT_ID}" || -z "${PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET}" ]]; then
-    error "strict auth cutover requires dev-login verifier credentials on the deploy runner; none were provided"
+  if [[ -z "${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID}" || -z "${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET}" ]]; then
+    error "strict auth cutover requires dedicated operator A dev-login credentials on the deploy runner; none were provided"
   fi
 
   info "asserting authenticated dev-login round trip succeeds"
   local login_payload
   local login_body
   login_body="$(python3 -c 'import json,sys; print(json.dumps({"grant_type":"client_credentials","client_id":sys.argv[1],"client_secret":sys.argv[2]}))' \
-    "${PANTHEON_DEV_BFF_OIDC_CLIENT_ID}" "${PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET}")"
+    "${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID}" "${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET}")"
   login_payload="$(curl -fsS -X POST "${base_url}/bff/auth/dev-login" \
     -H 'Content-Type: application/json' \
     -d "${login_body}")" \
@@ -1619,6 +1623,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET}" \
     PANTHEON_BFF_MFA_REQUIRED="${PANTHEON_DEV_BFF_MFA_REQUIRED}" \
     PANTHEON_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED}" \
+    PANTHEON_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED}" \
     PANTHEON_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED}" \
     PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED}" \
     PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED}" \
@@ -1720,6 +1725,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET}" \
     PANTHEON_BFF_MFA_REQUIRED="${PANTHEON_DEV_BFF_MFA_REQUIRED}" \
     PANTHEON_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED}" \
+    PANTHEON_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED}" \
     PANTHEON_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED}" \
     PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED}" \
     PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED}" \

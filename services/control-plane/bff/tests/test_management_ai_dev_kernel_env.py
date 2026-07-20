@@ -44,7 +44,7 @@ def test_dev_management_ai_kernel_overlay_is_explicitly_dev_only() -> None:
     }
     assert env["PANTHEON_BFF_MFA_REQUIRED"] == "true"
     assert env["PANTHEON_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED"] == "false"
-    for identity in ("APPROVER", "RISK_OWNER", "OPERATOR_A", "OPERATOR_B"):
+    for identity in ("VIEWER", "APPROVER", "RISK_OWNER", "OPERATOR_A", "OPERATOR_B"):
         assert env[f"PANTHEON_BFF_DEV_LOGIN_{identity}_MFA_VERIFIED"] == "true"
 
     prod_env = _read_env_file(PROD_CONTROL_ENV)
@@ -86,6 +86,7 @@ def test_nonprod_dev_deploy_exports_management_ai_kernel_overlay() -> None:
         'DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED="${DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED:-false}"'
         in script
     )
+    assert 'DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED="${DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED:-true}"' in script
     assert 'DEV_ASSISTANT_REPAIR_REPO_URL="${DEV_ASSISTANT_REPAIR_REPO_URL:-/workspace/status-root}"' in script
     assert (
         'DEV_ASSISTANT_REPAIR_REMOTE_URL="${DEV_ASSISTANT_REPAIR_REMOTE_URL:-https://github.com/ajoe734/pantheon.git}"'
@@ -167,6 +168,11 @@ def test_nonprod_dev_deploy_exports_management_ai_kernel_overlay() -> None:
     assert (
         "DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED: "
         "${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED || 'false' }}"
+        in workflow
+    )
+    assert (
+        "DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED: "
+        "${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED || 'true' }}"
         in workflow
     )
 

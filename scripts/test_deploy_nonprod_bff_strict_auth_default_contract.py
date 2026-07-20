@@ -319,7 +319,26 @@ def test_auth_gate_checks_all_dedicated_identities_and_distinct_subjects() -> No
     assert "assert_dedicated_dev_login_identity" in script
     assert "for identity in viewer approver risk_owner operator_a operator_b" in script
     assert 'assert set(claims.get("roles") or []) == {expected_role}' in script
+    assert 'assert claims.get("mfa_verified") is True' in script
     assert "len(set(subjects)) == len(subjects)" in script
+    assert (
+        '"${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID}" '
+        '"${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET}"'
+        in script
+    )
+    assert (
+        '"${PANTHEON_DEV_BFF_OIDC_CLIENT_ID}" '
+        '"${PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET}"'
+        not in script[script.index("assert_bff_auth_gate()") : script.index("snapshot_remote_state()")]
+    )
+    assert 'DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED="${DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED:-true}"' in script
+    assert "PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED=" in script
+    assert 'PANTHEON_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED}"' in script
+    assert (
+        "DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED: "
+        "${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED || 'true' }}"
+        in workflow
+    )
 
     for identity in ("VIEWER", "APPROVER", "RISK_OWNER", "OPERATOR_A", "OPERATOR_B"):
         client_id = f"DEV_BFF_DEV_LOGIN_{identity}_CLIENT_ID"
