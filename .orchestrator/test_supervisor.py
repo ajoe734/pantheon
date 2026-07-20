@@ -8154,6 +8154,60 @@ class PollWorkersRecoveryTests(unittest.TestCase):
         sync_preempted.assert_called_once_with({}, worker)
         finalize_queue_event_record.assert_called_once()
 
+    def test_progress_bound_lease_expires_with_fresh_heartbeat(self) -> None:
+        now = datetime(2026, 7, 20, 7, 0, tzinfo=timezone.utc)
+        config = {
+            "supervisor": {"lease_requires_work_progress": True},
+            "worker_runtime": {"work_progress_stale_seconds": 360},
+        }
+        worker = {
+            "last_heartbeat_at": now.isoformat(),
+            "last_event_at": (now - timedelta(seconds=700)).isoformat(),
+            "lease_expires_at": (now - timedelta(seconds=1)).isoformat(),
+        }
+
+        self.assertFalse(supervisor.worker_heartbeat_is_stale(config, worker, now))
+        self.assertFalse(supervisor.worker_lease_can_renew(config, worker, now))
+        self.assertTrue(supervisor.worker_lease_is_expired(config, worker, now))
+
+    def test_progress_bound_lease_renews_after_recent_work_progress(self) -> None:
+        now = datetime(2026, 7, 20, 7, 0, tzinfo=timezone.utc)
+        config = {
+            "supervisor": {"lease_requires_work_progress": True},
+            "worker_runtime": {"work_progress_stale_seconds": 360},
+        }
+        worker = {
+            "last_heartbeat_at": now.isoformat(),
+            "last_event_at": (now - timedelta(seconds=700)).isoformat(),
+            "last_work_progress_at": (now - timedelta(seconds=60)).isoformat(),
+            "lease_expires_at": (now - timedelta(seconds=1)).isoformat(),
+        }
+
+        self.assertTrue(supervisor.worker_lease_can_renew(config, worker, now))
+        self.assertFalse(supervisor.worker_lease_is_expired(config, worker, now))
+
+    def test_legacy_lease_mode_still_requires_stale_heartbeat_to_expire(self) -> None:
+        now = datetime(2026, 7, 20, 7, 0, tzinfo=timezone.utc)
+        config = {
+            "supervisor": {"lease_requires_work_progress": False},
+            "worker_runtime": {
+                "heartbeat_stale_seconds": 300,
+                "heartbeat_grace_seconds": 60,
+            },
+        }
+        worker = {
+            "last_heartbeat_at": now.isoformat(),
+            "last_event_at": (now - timedelta(seconds=700)).isoformat(),
+            "lease_expires_at": (now - timedelta(seconds=1)).isoformat(),
+        }
+
+        self.assertFalse(supervisor.worker_lease_is_expired(config, worker, now))
+        worker["last_heartbeat_at"] = (now - timedelta(seconds=361)).isoformat()
+        self.assertTrue(supervisor.worker_lease_is_expired(config, worker, now))
+
+    def test_progress_bound_lease_is_the_default(self) -> None:
+        self.assertTrue(supervisor.worker_lease_requires_work_progress({}))
+
     def test_observation_stage_refreshes_fresh_worker_lease(self) -> None:
         now = datetime.now(timezone.utc)
         worker = {
@@ -8199,6 +8253,61 @@ class PollWorkersRecoveryTests(unittest.TestCase):
             worker,
             now,
         )
+
+    def test_observation_stage_expires_stale_progress_with_fresh_heartbeat(self) -> None:
+        now = datetime(2026, 7, 20, 7, 0, tzinfo=timezone.utc)
+        config = {
+            "supervisor": {
+                "adaptive_stall_detection": False,
+                "observe_worker_commit_progress": False,
+                "lease_requires_work_progress": True,
+            },
+            "worker_runtime": {"work_progress_stale_seconds": 360},
+        }
+        worker = {
+            "run_id": "run-progress-expired",
+            "task_id": "TASK-PROGRESS-EXPIRED",
+            "provider": "codex",
+            "status": "running",
+            "pid": 1234,
+            "last_heartbeat_at": now.isoformat(),
+            "last_event_at": (now - timedelta(seconds=700)).isoformat(),
+            "lease_expires_at": (now - timedelta(seconds=1)).isoformat(),
+        }
+        counts = {
+            "marker_updates": 0,
+            "commit_progress_updates": 0,
+            "lease_refreshes": 0,
+            "expired_lease_workers_failed": 0,
+        }
+        with (
+            mock.patch.object(supervisor, "update_worker_runtime_markers", return_value=False),
+            mock.patch.object(supervisor, "update_from_log"),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "refresh_worker_lease") as refresh_worker_lease,
+            mock.patch.object(supervisor, "terminate_worker_pid") as terminate_worker_pid,
+            mock.patch.object(supervisor, "pause_dispatch_for_reaped_worker", return_value=None),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "finalize_queue_event_record") as finalize_queue_event_record,
+        ):
+            outcome = supervisor.poll_worker_observation_stage(
+                config,
+                {},
+                worker,
+                now=now,
+                active_worker_statuses={"running"},
+                poll_counts=counts,
+            )
+
+        self.assertTrue(outcome["changed"])
+        self.assertTrue(outcome["stop"])
+        self.assertEqual(worker["status"], "failed")
+        self.assertIn("work progress became stale", worker["last_error"])
+        self.assertEqual(counts["lease_refreshes"], 0)
+        self.assertEqual(counts["expired_lease_workers_failed"], 1)
+        refresh_worker_lease.assert_not_called()
+        terminate_worker_pid.assert_called_once_with(1234)
+        finalize_queue_event_record.assert_called_once()
 
     def test_observation_stage_stops_after_expired_lease(self) -> None:
         now = datetime.now(timezone.utc)
@@ -10899,6 +11008,49 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
             self.assertEqual(metrics["totals"]["missing_process_workers_failed"], 1)
             self.assertEqual(
                 metrics["last_measurements"]["boot_reconciliation"]["counts"]["missing_process_workers_failed"],
+                1,
+            )
+
+    def test_reconcile_runtime_expires_stale_progress_despite_fresh_heartbeat(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = self._config(root)
+            config["supervisor"] = {"lease_requires_work_progress": True}
+            config["worker_runtime"] = {"work_progress_stale_seconds": 360}
+            (root / "ai-status.json").write_text(json.dumps({"tasks": []}), encoding="utf-8")
+            now = datetime.now(timezone.utc)
+            worker = {
+                "run_id": "codex-run-progress-expired",
+                "status": "running",
+                "provider": "codex",
+                "agent_id": "codex",
+                "task_id": "OPS-LEASE-PROGRESS",
+                "pid": 1234,
+                "last_heartbeat_at": now.isoformat(),
+                "last_event_at": (now - timedelta(seconds=700)).isoformat(),
+                "lease_expires_at": (now - timedelta(seconds=1)).isoformat(),
+            }
+            state = {"queue": {"events": {}}, "workers": {worker["run_id"]: worker}}
+
+            with (
+                mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+                mock.patch.object(supervisor, "update_worker_runtime_markers", return_value=False),
+                mock.patch.object(supervisor, "refresh_worker_lease") as refresh_worker_lease,
+                mock.patch.object(supervisor, "terminate_worker_pid") as terminate_worker_pid,
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                changed = supervisor.reconcile_runtime_on_boot(config, state)
+
+            self.assertTrue(changed)
+            self.assertEqual(worker["status"], "failed")
+            self.assertEqual(
+                worker["last_error"],
+                "Worker lease expired during supervisor boot reconciliation.",
+            )
+            refresh_worker_lease.assert_not_called()
+            terminate_worker_pid.assert_called_once_with(1234)
+            self.assertEqual(
+                state["worker_runtime_metrics"]["totals"]["expired_lease_workers_failed"],
                 1,
             )
 
