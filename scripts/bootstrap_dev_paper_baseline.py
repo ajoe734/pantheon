@@ -50,12 +50,34 @@ def assert_dev_paper_boundary() -> None:
         )
 
 
-def _credential(name: str, *fallbacks: str) -> str:
-    for candidate in (name, *fallbacks):
-        value = os.getenv(candidate, "").strip()
-        if value:
-            return value
-    raise BootstrapError(f"required credential {name} is not configured")
+def _login_credential_pair() -> tuple[str, str, str]:
+    profiles = (
+        (
+            "PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID",
+            "PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET",
+            "operator_a",
+        ),
+        (
+            "PANTHEON_BFF_OIDC_CLIENT_ID",
+            "PANTHEON_BFF_OIDC_CLIENT_SECRET",
+            "operator",
+        ),
+        (
+            "PANTHEON_BFF_DEV_LOGIN_CLIENT_ID",
+            "PANTHEON_BFF_DEV_LOGIN_CLIENT_SECRET",
+            "operator",
+        ),
+    )
+    for client_id_name, client_secret_name, identity in profiles:
+        client_id = os.getenv(client_id_name, "").strip()
+        client_secret = os.getenv(client_secret_name, "").strip()
+        if client_id or client_secret:
+            if not (client_id and client_secret):
+                raise BootstrapError(
+                    f"required credential pair {client_id_name}/{client_secret_name} is incomplete"
+                )
+            return client_id, client_secret, identity
+    raise BootstrapError("no dev-login operator credential pair is configured")
 
 
 def _post_json(
@@ -89,14 +111,7 @@ def _post_json(
 
 
 def _login(base_url: str, *, request_timeout_seconds: float) -> str:
-    client_id = _credential(
-        "PANTHEON_BFF_OIDC_CLIENT_ID",
-        "PANTHEON_BFF_DEV_LOGIN_CLIENT_ID",
-    )
-    client_secret = _credential(
-        "PANTHEON_BFF_OIDC_CLIENT_SECRET",
-        "PANTHEON_BFF_DEV_LOGIN_CLIENT_SECRET",
-    )
+    client_id, client_secret, expected_identity = _login_credential_pair()
     status, body = _post_json(
         f"{base_url.rstrip('/')}/bff/auth/dev-login",
         {
@@ -108,9 +123,10 @@ def _login(base_url: str, *, request_timeout_seconds: float) -> str:
     )
     token = str(body.get("access_token") or "").strip()
     meta = body.get("meta") if isinstance(body.get("meta"), dict) else {}
-    if status != 200 or not token or meta.get("identity") != "operator":
+    if status != 200 or not token or meta.get("identity") != expected_identity:
         raise BootstrapError(
-            f"strict dev-login failed (HTTP {status}, identity={meta.get('identity')!r})"
+            "strict dev-login failed "
+            f"(HTTP {status}, identity={meta.get('identity')!r}, expected={expected_identity!r})"
         )
     return token
 
