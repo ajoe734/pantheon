@@ -65,6 +65,33 @@ def test_reverse_index_is_typed_tenant_environment_scoped_and_rbac_filtered():
     assert materializer.resolve("order_id", "same", tenant_id="tenant-a", environment="paper", allowed_journey_ids=set()) == []
 
 
+def test_persona_strategy_and_fill_identifiers_are_canonical_reverse_indexes():
+    materializer = JourneyMaterializer()
+    materializer.ingest(
+        event(
+            "e1",
+            "fill_management",
+            "partially_succeeded",
+            1,
+            persona_id="persona-1",
+            strategy_id="strategy-1",
+            fill_id="fill-1",
+        )
+    )
+
+    for identifier_type, identifier in (
+        ("persona_id", "persona-1"),
+        ("strategy_id", "strategy-1"),
+        ("fill_id", "fill-1"),
+    ):
+        assert materializer.resolve(
+            identifier_type,
+            identifier,
+            tenant_id="tenant-a",
+            environment="paper",
+        ) == ["tj_1"]
+
+
 def test_replace_chain_partial_fill_cancel_and_graph_are_materialized():
     materializer = JourneyMaterializer()
     materializer.rebuild([
