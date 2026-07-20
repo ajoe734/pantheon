@@ -123,6 +123,10 @@ def test_sync_reprovisions_stale_split_root_repo_owned_config(tmp_path: Path) ->
                     "worker_lease_seconds": 600,
                     "work_progress_stale_seconds": 360,
                 },
+                "task_state_store": {
+                    "mode": "shadow",
+                    "event_log": ".orchestrator/task-state-events.jsonl",
+                },
                 "watchdog": {},
             }
         )
@@ -148,6 +152,10 @@ def test_sync_reprovisions_stale_split_root_repo_owned_config(tmp_path: Path) ->
                 "worker_runtime": {
                     "worker_lease_seconds": 1800,
                     "work_progress_stale_seconds": 900,
+                },
+                "task_state_store": {
+                    "mode": "off",
+                    "event_log": "/stale/task-state-events.jsonl",
                 },
                 "watchdog": {},
             }
@@ -178,6 +186,10 @@ def test_sync_reprovisions_stale_split_root_repo_owned_config(tmp_path: Path) ->
     assert rendered["supervisor"]["lease_requires_work_progress"] is True
     assert rendered["worker_runtime"]["worker_lease_seconds"] == 600
     assert rendered["worker_runtime"]["work_progress_stale_seconds"] == 360
+    assert rendered["task_state_store"] == {
+        "mode": "shadow",
+        "event_log": str(live_config.parent / "task-state-events.jsonl"),
+    }
 
 
 def test_sync_records_pid_bound_intent_before_stopping_live_supervisor(tmp_path: Path) -> None:

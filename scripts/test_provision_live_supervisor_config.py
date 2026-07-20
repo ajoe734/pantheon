@@ -10,6 +10,7 @@ import pytest
 from provision_live_supervisor_config import (
     apply_provider_account_schema,
     apply_supervisor_lease_policy,
+    apply_task_state_store,
     build_live_config,
     canonical_status_paths,
     canonical_watchdog_runtime_paths,
@@ -120,6 +121,10 @@ def test_build_live_config_pins_status_paths_and_supervisor_command(tmp_path: Pa
         "coordination": {"enabled": True},
         "supervisor": {"lease_requires_work_progress": True},
         "worker_runtime": {"worker_lease_seconds": 600},
+        "task_state_store": {
+            "mode": "shadow",
+            "event_log": ".orchestrator/task-state-events.jsonl",
+        },
     }
     existing = {
         "github_bus": {"enabled": False},
@@ -127,6 +132,10 @@ def test_build_live_config_pins_status_paths_and_supervisor_command(tmp_path: Pa
         "paths": {"status_file": "/stale/ai-status.json"},
         "supervisor": {"lease_requires_work_progress": False},
         "worker_runtime": {"worker_lease_seconds": 1800},
+        "task_state_store": {
+            "mode": "off",
+            "event_log": "/stale/task-state-events.jsonl",
+        },
     }
 
     rendered = build_live_config(
@@ -147,6 +156,10 @@ def test_build_live_config_pins_status_paths_and_supervisor_command(tmp_path: Pa
     assert rendered["github_bus"]["enabled"] is False
     assert rendered["supervisor"]["lease_requires_work_progress"] is True
     assert rendered["worker_runtime"]["worker_lease_seconds"] == 600
+    assert rendered["task_state_store"] == {
+        "mode": "shadow",
+        "event_log": str(live_config.parent / "task-state-events.jsonl"),
+    }
     assert rendered["watchdog"]["supervisor_command"] == [
         str(python),
         "-u",
@@ -167,6 +180,48 @@ def test_build_live_config_pins_status_paths_and_supervisor_command(tmp_path: Pa
         / "metrics"
         / "supervisor-watchdog-contention.jsonl"
     )
+
+
+def test_task_state_store_rejects_runtime_path_inside_git_roots(tmp_path: Path) -> None:
+    status_root = tmp_path / "canonical-root"
+    status_root.mkdir()
+    rendered: dict[str, object] = {}
+
+    with pytest.raises(ValueError, match="outside the status git root"):
+        apply_task_state_store(
+            {
+                "task_state_store": {
+                    "mode": "shadow",
+                    "event_log": ".orchestrator/task-state-events.jsonl",
+                }
+            },
+            rendered,
+            command_root=tmp_path / "dev-root",
+            status_root=status_root,
+            live_config_path=status_root / "live.json",
+        )
+
+
+def test_task_state_store_rejects_symlink_event_log(tmp_path: Path) -> None:
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    real_log = tmp_path / "real-events.jsonl"
+    real_log.write_text("", encoding="utf-8")
+    (runtime / "task-state-events.jsonl").symlink_to(real_log)
+
+    with pytest.raises(ValueError, match="symlink"):
+        apply_task_state_store(
+            {
+                "task_state_store": {
+                    "mode": "shadow",
+                    "event_log": ".orchestrator/task-state-events.jsonl",
+                }
+            },
+            {},
+            command_root=tmp_path / "dev-root",
+            status_root=tmp_path / "status-root",
+            live_config_path=runtime / "live.json",
+        )
 
 
 def test_canonical_watchdog_runtime_paths_preserves_paths_inside_status_root(

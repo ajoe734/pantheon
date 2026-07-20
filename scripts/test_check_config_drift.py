@@ -83,6 +83,18 @@ def test_progress_lease_policy_drift_is_actionable_by_default() -> None:
     }
 
 
+def test_task_state_shadow_mode_drift_is_actionable_by_default() -> None:
+    report = find_drift(
+        {"task_state_store": {"mode": "shadow"}},
+        {"task_state_store": {"mode": "off"}},
+    )
+
+    assert report["intentional"] == []
+    assert report["drift"] == [
+        {"path": "task_state_store.mode", "repo": "shadow", "live": "off"}
+    ]
+
+
 def test_find_drift_missing_flag_is_reported_not_drift() -> None:
     report = find_drift({}, {}, critical_flags=("ready_dispatcher.enabled",), overrides=frozenset())
     assert report["drift"] == []
