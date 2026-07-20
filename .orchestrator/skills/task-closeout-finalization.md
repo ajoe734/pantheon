@@ -191,6 +191,9 @@ The command fails closed unless all of the following are true:
   and that commit is an ancestor of Pantheon `origin/dev`;
 - the evidence binds the exact task id, owner, reviewer, and
   `review_approved` status from the canonical row;
+- if the canonical reviewer changed after approval, the activity audit contains
+  an exact `task_reassigned` event whose timestamp and message still match the
+  task row and whose owner did not change;
 - the task resolves to one delivery repository;
 - the supplied delivery checkout has the expected GitHub origin, and the full
   delivery commit is an ancestor of its `origin/dev`;

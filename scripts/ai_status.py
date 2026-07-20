@@ -5273,6 +5273,58 @@ def _merged_commit(
     return commit, target_sha
 
 
+def _verified_reviewer_reassignment(
+    task: dict[str, Any],
+    *,
+    evidence_reviewer: str,
+    current_reviewer: str,
+) -> dict[str, Any]:
+    """Return the exact canonical reassignment that explains reviewer drift."""
+
+    try:
+        payload = read_regular_file_bytes(
+            LOG_FILE,
+            source="canonical reviewer reassignment evidence",
+        )
+    except FileNotFoundError as exc:
+        raise SystemExit(
+            "Cannot reconcile task: canonical reviewer differs from merged evidence and "
+            "the activity audit is unavailable."
+        ) from exc
+
+    task_id = str(task.get("id") or "").strip()
+    owner = canonical_agent_name(task.get("owner"))
+    task_last_update = str(task.get("last_update") or "").strip()
+    task_next = str(task.get("next") or "").strip()
+    for raw_line in payload.splitlines():
+        if not raw_line.strip():
+            continue
+        event = strict_activity_json_loads(raw_line)
+        if not isinstance(event, dict):
+            continue
+        if (
+            event.get("type") == "task_reassigned"
+            and str(event.get("task_id") or "").strip() == task_id
+            and canonical_agent_name(event.get("old_owner")) == owner
+            and canonical_agent_name(event.get("new_owner")) == owner
+            and canonical_agent_name(event.get("old_reviewer")) == evidence_reviewer
+            and canonical_agent_name(event.get("new_reviewer")) == current_reviewer
+            and str(event.get("ts") or "").strip() == task_last_update
+            and str(event.get("message") or "").strip() == task_next
+        ):
+            return {
+                "event_id": str(event.get("event_id") or "").strip() or None,
+                "ts": task_last_update,
+                "old_reviewer": evidence_reviewer,
+                "new_reviewer": current_reviewer,
+                "message": task_next,
+            }
+    raise SystemExit(
+        "Cannot reconcile task: merged evidence does not bind the canonical reviewer metadata "
+        "and no exact task_reassigned audit event explains the drift."
+    )
+
+
 def validate_merged_done_evidence(task: dict[str, Any]) -> dict[str, Any]:
     """Validate immutable, dev-merged review and delivery evidence.
 
@@ -5338,7 +5390,6 @@ def validate_merged_done_evidence(task: dict[str, Any]) -> dict[str, Any]:
         "task": rf"^# Task Brief:\s*{re.escape(task_id)}\s*$",
         "status": r"^- Status:\s*review_approved\s*$",
         "owner": rf"^- Owner:\s*{re.escape(owner)}\s*$",
-        "reviewer": rf"^- Reviewer:\s*{re.escape(reviewer)}\s*$",
     }
     missing = [
         label
@@ -5349,6 +5400,25 @@ def validate_merged_done_evidence(task: dict[str, Any]) -> dict[str, Any]:
         raise SystemExit(
             "Cannot reconcile task: merged evidence does not bind the canonical "
             f"{', '.join(missing)} metadata."
+        )
+    evidence_reviewer_match = re.search(
+        r"^- Reviewer:\s*(?P<reviewer>.+?)\s*$",
+        evidence_text,
+        flags=re.MULTILINE,
+    )
+    evidence_reviewer = canonical_agent_name(
+        evidence_reviewer_match.group("reviewer") if evidence_reviewer_match else ""
+    )
+    if not evidence_reviewer or evidence_reviewer == owner:
+        raise SystemExit(
+            "Cannot reconcile task: merged evidence has invalid independent reviewer metadata."
+        )
+    reviewer_reassignment = None
+    if evidence_reviewer != reviewer:
+        reviewer_reassignment = _verified_reviewer_reassignment(
+            task,
+            evidence_reviewer=evidence_reviewer,
+            current_reviewer=reviewer,
         )
 
     config = load_config()
@@ -5412,8 +5482,14 @@ def validate_merged_done_evidence(task: dict[str, Any]) -> dict[str, Any]:
             "merge_target_ref": evidence_target_ref,
             "merge_target_sha": evidence_target_sha,
             "owner": owner,
-            "reviewer": reviewer,
+            "reviewer": evidence_reviewer,
+            "canonical_reviewer": reviewer,
             "status": "review_approved",
+            **(
+                {"reviewer_reassignment": reviewer_reassignment}
+                if reviewer_reassignment is not None
+                else {}
+            ),
         },
     }
 

@@ -1237,6 +1237,66 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                         }
                     )
 
+    def test_accepts_exact_audited_reviewer_reassignment(self) -> None:
+        message = (
+            "Auto-reassigned REG-002 away from unavailable lane Claude; "
+            "reviewer Claude -> Codex2."
+        )
+        event = {
+            "event_id": "supervisor-reassign-test",
+            "ts": "2026-07-19T23:52:06Z",
+            "agent": "Orchestrator",
+            "type": "task_reassigned",
+            "task_id": "REG-002",
+            "old_owner": "Codex",
+            "new_owner": "Codex",
+            "old_reviewer": "Claude",
+            "new_reviewer": "Codex2",
+            "message": message,
+        }
+        self._test_log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+        result = ai_status._verified_reviewer_reassignment(
+            {
+                "id": "REG-002",
+                "owner": "Codex",
+                "reviewer": "Codex2",
+                "last_update": event["ts"],
+                "next": message,
+            },
+            evidence_reviewer="Claude",
+            current_reviewer="Codex2",
+        )
+
+        self.assertEqual(result["event_id"], "supervisor-reassign-test")
+        self.assertEqual(result["old_reviewer"], "Claude")
+        self.assertEqual(result["new_reviewer"], "Codex2")
+
+    def test_reviewer_reassignment_requires_exact_task_readback(self) -> None:
+        event = {
+            "event_id": "supervisor-reassign-test",
+            "ts": "2026-07-19T23:52:06Z",
+            "type": "task_reassigned",
+            "task_id": "REG-002",
+            "old_owner": "Codex",
+            "new_owner": "Codex",
+            "old_reviewer": "Claude",
+            "new_reviewer": "Codex2",
+            "message": "canonical reassignment",
+        }
+        self._test_log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+        with self.assertRaisesRegex(SystemExit, "no exact task_reassigned"):
+            ai_status._verified_reviewer_reassignment(
+                {
+                    "id": "REG-002",
+                    "owner": "Codex",
+                    "reviewer": "Codex2",
+                    "last_update": event["ts"],
+                    "next": "different readback",
+                },
+                evidence_reviewer="Claude",
+                current_reviewer="Codex2",
+            )
+
     def test_handoff_must_go_from_owner_to_reviewer(self) -> None:
         with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
             with self.assertRaises(SystemExit):
