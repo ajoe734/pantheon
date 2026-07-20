@@ -25,6 +25,16 @@ WATCHDOG_RUNTIME_PATH_DEFAULTS = {
     "metrics_file": ".orchestrator/metrics/supervisor-watchdog.jsonl",
     "contention_metrics_file": ".orchestrator/metrics/supervisor-watchdog-contention.jsonl",
 }
+REPO_OWNED_SUPERVISOR_LEASE_POLICY = {
+    "supervisor": (
+        "observe_worker_commit_progress",
+        "lease_requires_work_progress",
+    ),
+    "worker_runtime": (
+        "worker_lease_seconds",
+        "work_progress_stale_seconds",
+    ),
+}
 
 
 def load_json_object(path: Path) -> dict[str, Any]:
@@ -165,6 +175,22 @@ def apply_provider_account_schema(
         )
 
 
+def apply_supervisor_lease_policy(
+    repo_config: dict[str, Any], rendered: dict[str, Any]
+) -> None:
+    """Make safety-critical worker lease policy win over stale live overlays."""
+    for section_name, keys in REPO_OWNED_SUPERVISOR_LEASE_POLICY.items():
+        repo_section = repo_config.get(section_name)
+        if repo_section is None:
+            continue
+        rendered_section = rendered.setdefault(section_name, {})
+        if not isinstance(repo_section, dict) or not isinstance(rendered_section, dict):
+            raise ValueError(f"{section_name} config must be a JSON object")
+        for key in keys:
+            if key in repo_section:
+                rendered_section[key] = copy.deepcopy(repo_section[key])
+
+
 def build_live_config(
     repo_config: dict[str, Any],
     *,
@@ -176,6 +202,7 @@ def build_live_config(
 ) -> dict[str, Any]:
     rendered = deep_merge(repo_config, existing_live_config or {})
     apply_provider_account_schema(repo_config, rendered)
+    apply_supervisor_lease_policy(repo_config, rendered)
     rendered["paths"] = canonical_status_paths(repo_config, status_root)
 
     watchdog = rendered.setdefault("watchdog", {})

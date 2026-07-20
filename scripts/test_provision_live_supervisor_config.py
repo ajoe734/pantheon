@@ -9,6 +9,7 @@ import pytest
 
 from provision_live_supervisor_config import (
     apply_provider_account_schema,
+    apply_supervisor_lease_policy,
     build_live_config,
     canonical_status_paths,
     canonical_watchdog_runtime_paths,
@@ -64,6 +65,46 @@ def test_apply_provider_account_schema_rejects_unknown_provider_without_account(
         apply_provider_account_schema(repo, rendered)
 
 
+def test_apply_supervisor_lease_policy_replaces_stale_live_overlay() -> None:
+    repo = {
+        "supervisor": {
+            "observe_worker_commit_progress": True,
+            "lease_requires_work_progress": True,
+            "poll_interval_seconds": 30,
+        },
+        "worker_runtime": {
+            "worker_lease_seconds": 600,
+            "queue_lease_seconds": 1800,
+            "work_progress_stale_seconds": 360,
+        },
+    }
+    rendered = {
+        "supervisor": {
+            "observe_worker_commit_progress": False,
+            "lease_requires_work_progress": False,
+            "poll_interval_seconds": 15,
+        },
+        "worker_runtime": {
+            "worker_lease_seconds": 1800,
+            "queue_lease_seconds": 900,
+            "work_progress_stale_seconds": 900,
+        },
+    }
+
+    apply_supervisor_lease_policy(repo, rendered)
+
+    assert rendered["supervisor"] == {
+        "observe_worker_commit_progress": True,
+        "lease_requires_work_progress": True,
+        "poll_interval_seconds": 15,
+    }
+    assert rendered["worker_runtime"] == {
+        "worker_lease_seconds": 600,
+        "queue_lease_seconds": 900,
+        "work_progress_stale_seconds": 360,
+    }
+
+
 def test_build_live_config_pins_status_paths_and_supervisor_command(tmp_path: Path) -> None:
     command_root = tmp_path / "dev-root"
     status_root = tmp_path / "canonical-root"
@@ -77,11 +118,15 @@ def test_build_live_config_pins_status_paths_and_supervisor_command(tmp_path: Pa
         },
         "watchdog": {"enabled": True, "supervisor_command": ["stale"]},
         "coordination": {"enabled": True},
+        "supervisor": {"lease_requires_work_progress": True},
+        "worker_runtime": {"worker_lease_seconds": 600},
     }
     existing = {
         "github_bus": {"enabled": False},
         "coordination": {"enabled": False},
         "paths": {"status_file": "/stale/ai-status.json"},
+        "supervisor": {"lease_requires_work_progress": False},
+        "worker_runtime": {"worker_lease_seconds": 1800},
     }
 
     rendered = build_live_config(
@@ -100,6 +145,8 @@ def test_build_live_config_pins_status_paths_and_supervisor_command(tmp_path: Pa
     }
     assert rendered["coordination"]["enabled"] is False
     assert rendered["github_bus"]["enabled"] is False
+    assert rendered["supervisor"]["lease_requires_work_progress"] is True
+    assert rendered["worker_runtime"]["worker_lease_seconds"] == 600
     assert rendered["watchdog"]["supervisor_command"] == [
         str(python),
         "-u",
