@@ -37,21 +37,24 @@ class SelectUtilizationActionTests(unittest.TestCase):
         )
 
 
-class IncumbentSidecarDisableTests(unittest.TestCase):
-    """Phase 7: the live sidecar make-work engine is switchable off today."""
+class IncumbentSidecarDeletedTests(unittest.TestCase):
+    """Phase 7: the sidecar make-work synthesis engine is physically deleted."""
 
-    def test_disabled_sidecar_is_a_clean_noop(self) -> None:
+    def test_synthesis_engine_is_gone(self) -> None:
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
         import supervisor
 
-        config = {"underutilization_dispatch": {"enabled": False}, "agents": {"claude": {}}}
-        state = {"workers": {}}
-        changed = supervisor.dispatch_underutilization_sidecars(config, state)
-        self.assertFalse(changed)
-        # no tasks synthesized
-        self.assertFalse(state.get("tasks"))
-        # and it parked its tracking rather than accumulating a wave
-        self.assertIsNone(state.get("underutilization", {}).get("below_threshold_since"))
+        # the synthesis engine + its exclusive helpers were removed; only the
+        # shared existing-sidecar dispatch helpers remain.
+        for removed in (
+            "dispatch_underutilization_sidecars",
+            "create_sidecar_task",
+            "build_catalog_sidecar_candidates",
+            "eligible_idle_agents_for_sidecars",
+        ):
+            self.assertFalse(hasattr(supervisor, removed), f"{removed} should be deleted")
+        for kept in ("task_is_sidecar", "sidecar_only_agent_names", "sidecar_statuses"):
+            self.assertTrue(hasattr(supervisor, kept), f"{kept} (shared dispatch helper) must remain")
 
 
 if __name__ == "__main__":

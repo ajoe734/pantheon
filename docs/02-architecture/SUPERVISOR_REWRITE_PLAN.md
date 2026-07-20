@@ -423,16 +423,18 @@ touches the hot path.
   task-level event vocabulary or source of truth. Live parity must be observed
   before reads move off `ai-status.json`; that authoritative read cutover remains
   the plan's Medium-High-risk item.
-- **Phase 7 — sidecar OFF by default (dormant); event-queue/discussion pending.**
+- **Phase 7 — sidecar synthesis engine DELETED; event-queue/discussion pending.**
   `rewrite/utilization.py` encodes the §3.8 principle (`select_utilization_action`
   ⇒ reprioritize real backlog, never synthesize). The sidecar make-work engine is
-  now **off by default** — `underutilization_settings` defaults `enabled=False` and
-  `config.json` sets it false — so the live cycle no longer manufactures tasks; the
-  code path is retained (set `underutilization_dispatch.enabled=true` to restore)
-  pending physical deletion once confirmed dormant on the fleet. Still pending
-  (both large, fleet-gated, test-contract-bound removals): drop the event-queue
-  indirection (`process_queue`/`reconcile_queue_records` — core dispatch plumbing)
-  and fold discussion-planning into a task `kind`.
+  now **physically removed**: `dispatch_underutilization_sidecars` + its 17
+  synthesis-exclusive helpers (658 lines) and their tests (653 lines) are deleted,
+  and the cycle no longer calls it. Verified contained first — no cross-module
+  refs, and the existing-sidecar *dispatch* path keeps its separate shared helpers
+  (`task_is_sidecar`, `sidecar_only_agent_names`, `sidecar_statuses`,
+  `sidecar_excluded_agent_keys`). Still pending (both large, fleet-gated,
+  contract-bound removals): drop the event-queue indirection
+  (`process_queue`/`reconcile_queue_records` — core dispatch plumbing) and fold
+  discussion-planning into a task `kind`.
 
 **Build discipline:** the new modules land in a parallel package and are
 exercised in shadow/dry-run against real state (read the live board, compute
