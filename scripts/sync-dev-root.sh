@@ -22,7 +22,15 @@ log() { echo "[sync-dev-root $(stamp)] $*"; }
 
 cd "$DEV_ROOT" || { log "FATAL: cannot cd $DEV_ROOT"; exit 1; }
 
-if ! git fetch --quiet origin "${REF#origin/}"; then
+fetch_ref="${REF#origin/}"
+if [[ "$REF" == origin/* ]]; then
+  # dev-root intentionally has a narrow remote fetch config. An unqualified
+  # `git fetch origin dev` updates FETCH_HEAD only and can leave origin/dev
+  # stale, which previously produced a false "behind 0" result. Update the
+  # exact remote-tracking ref consumed below regardless of that config.
+  fetch_ref="${REF#origin/}:refs/remotes/origin/${REF#origin/}"
+fi
+if ! git fetch --quiet origin "$fetch_ref"; then
   log "fetch $REF failed; aborting"; exit 1
 fi
 
