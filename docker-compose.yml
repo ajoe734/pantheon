@@ -547,16 +547,17 @@ services:
 
   openclaw-gateway:
     profiles: ["openclaw"]
-    # Pantheon-derived image: governed upstream openclaw 2026.6.8 + Claude Code
-    # CLI baked in, so OpenClaw's claude-cli runtime can serve anthropic/* models
-    # for multi-model persona routing. Upstream pin governed (see
+    # Pantheon-derived image: governed upstream OpenClaw 2026.7.1 plus Claude
+    # Code and Gemini CLIs, so the shared model pool can serve Anthropic and
+    # Google CLI-backed routes. Upstream pin governed (see
     # OSS_INTEGRATION_CHECKLIST.md / integrations/openclaw/governance.md).
     build:
       context: .
       dockerfile: integrations/openclaw/gateway/Dockerfile
       args:
-        ANTHROPIC_CLAUDE_CODE_NPM_VERSION: "2.1.178"
-    image: pantheon-openclaw-gateway:2026.6.8
+        ANTHROPIC_CLAUDE_CODE_NPM_VERSION: "2.1.216"
+        GOOGLE_GEMINI_CLI_NPM_VERSION: "0.51.0"
+    image: pantheon-openclaw-gateway:2026.7.1
     restart: unless-stopped
     environment:
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-pantheon-local-token}

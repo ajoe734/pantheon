@@ -8,19 +8,33 @@
 Think OS processes:
 
 - **LLM models = a small shared resource pool (kernel processes).** Set up
-  **once**, at the gateway/provider level: each provider has one auth profile.
-  Today the pool is two entries — `openai/gpt-5.5` (Codex subscription OAuth) and
-  `anthropic/claude-opus-4-8` (Claude CLI subscription). Adding a model to the
-  pool = a one-time auth + runtime wiring step (see `governance.md §9`).
+  **once**, at the gateway/provider level. The dev pool has five routable model
+  slots: two Codex, two Claude, and one Gemini. Model registration and provider
+  credentials are deliberately separate: multiple model slots can share an
+  auth profile, while providers that support named profiles can route to a
+  specific account.
 - **Personas = many lightweight identities (user processes).** A persona does
   **not** own or install a model. It just **references** a model ref from the
   pool via its OpenClaw agent config (`model.primary`, and an `agentRuntime` for
   CLI-backed models). Many personas → the same model. It is a **many-to-few**
   mapping, never one-pin-per-persona.
 
-So "make a new persona that runs on Claude" is **not** a setup task — there is no
-new auth, no new install, no new runtime. It is a single config field on the
-persona pointing at an already-pooled model ref.
+The idempotent route declaration lives in
+`scripts/openclaw-configure-shared-model-pool.sh` and is applied after every
+root dev deploy. Provider OAuth remains only in the persistent OpenClaw volume.
+
+Current model slots:
+
+| Slot | Model ref | Runtime | Auth |
+|---|---|---|---|
+| Codex Sol | `openai/gpt-5.6-sol` | `codex` | OpenAI/Codex OAuth profile |
+| Codex 5.5 | `openai/gpt-5.5` | `codex` | OpenAI/Codex OAuth profile |
+| Claude Opus | `anthropic/claude-opus-4-8` | `claude-cli` | persisted Claude CLI login |
+| Claude Sonnet | `anthropic/claude-sonnet-4-6` | `claude-cli` | persisted Claude CLI login |
+| Gemini Pro | `google/gemini-3.1-pro-preview` | `google-gemini-cli` | Gemini CLI OAuth profile |
+
+So "make a new persona that runs on Claude" is **not** an install task. It is a
+single config field on the persona pointing at an already-pooled model ref.
 
 ## How a persona selects a model
 
@@ -45,7 +59,13 @@ re-declared per persona:
 
 ```json5
 { agents: { defaults: { models: {
+  "openai/gpt-5.6-sol": { agentRuntime: { id: "codex" } },
+  "openai/gpt-5.5": { agentRuntime: { id: "codex" } },
   "anthropic/claude-opus-4-8": { agentRuntime: { id: "claude-cli" } },
+  "anthropic/claude-sonnet-4-6": { agentRuntime: { id: "claude-cli" } },
+  "google/gemini-3.1-pro-preview": {
+    agentRuntime: { id: "google-gemini-cli" },
+  },
 } } } }
 ```
 
@@ -55,8 +75,8 @@ entry.
 
 ## The real bottleneck: shared quota, not persona count
 
-Because the pool is shared, every persona on a given model draws from that one
-account's allowance:
+Because the pool is shared, every persona on a given auth profile draws from
+that account's allowance:
 
 - All `anthropic/*` personas share the Claude subscription's Agent SDK credit and
   rate limit (post-2026-06-15 billing; see `governance.md §9`).
@@ -66,9 +86,12 @@ A multi-persona debate with ten Claude personas is ten user-processes contending
 for **one** kernel resource. The concurrency/throughput ceiling is the model
 account's quota, **not** the number of personas.
 
-**To scale concurrency, grow the pool (add accounts / provider profiles), not the
-persona count.** Each added account is another `openclaw models auth login ...`
-profile (a new kernel-process), after which personas can be routed across them.
+**To scale concurrency, grow the auth pool, not the persona count.** OpenClaw
+2026.7.1 supports multiple named Codex logins with `--profile-id`, explicit
+selection with `/model ...@<profileId>`, and ordered rotation. The two Claude
+model slots intentionally reuse one Claude CLI login; separate Claude accounts
+require separate direct Anthropic profiles or isolated CLI homes. Do not copy a
+Claude token into repo config to simulate an extra account.
 
 ## See also
 - `integrations/openclaw/governance.md §9` — provider auth setup (Codex
