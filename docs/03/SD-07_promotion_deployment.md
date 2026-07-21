@@ -1,5 +1,7 @@
 # SD-07 — Governance & Promotion / Review Gate、Deployment Planner 與 Rollback 設計
 
+> **2026-07-20 Canonical correction**: `ajoe734/execute-plans` (delivery branch `dev`) is the sole frontend repository and owns the Console Plane. Any `front-ai-trading-system` repo-mapping language in this SD note is superseded and remains as historical reference only; do not treat it as an active gap, delivery target, or task target. Retired by `docs/04/pantheon_repo_impl_diff_2026-05-16/REPORT.md` (2026-05-16) and `docs/delivery-coordination-bus.md` (2026-06-08); the current rule is in `AGENTS.md` and `docs/frontend/execute-plans-dev-hosting.md` (2026-07-19).
+
 版本：v0.1 Codex-ready draft
 適用範圍：Governance & Promotion Plane、Patch Validators、Review Gates、Approval Decision Store、Promotion Controller、Deployment Planner、Rollback Controller、Execution Loader Checks
 前置依賴：SD-00、SD-01、SD-04 Research Orchestrator、SD-05 Consultation / Red-Team、SD-06 Capital Pool Governance

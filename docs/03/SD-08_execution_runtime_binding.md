@@ -1,5 +1,7 @@
 # SD-08 — Execution Runtime Binding / pantheon-lean 執行底座與 Runtime 邊界設計
 
+> **2026-07-20 Canonical correction**: `ajoe734/execute-plans` (delivery branch `dev`) is the sole frontend repository and owns the Console Plane. Any `front-ai-trading-system` repo-mapping language in this SD note is superseded and remains as historical reference only; do not treat it as an active gap, delivery target, or task target. Retired by `docs/04/pantheon_repo_impl_diff_2026-05-16/REPORT.md` (2026-05-16) and `docs/delivery-coordination-bus.md` (2026-06-08); the current rule is in `AGENTS.md` and `docs/frontend/execute-plans-dev-hosting.md` (2026-07-19).
+
 版本：v0.1 Codex-ready draft
 適用範圍：Execution Plane、Runtime Manager、Artifact Loader、Runtime Binding Store、LEAN Paper / Canary / Live Runtime、Broker / Exchange / Subaccounts、Pause / Liquidate / Replace Actions
 前置依賴：SD-00、SD-01、SD-06 Capital Pool Governance、SD-07 Promotion / Deployment
