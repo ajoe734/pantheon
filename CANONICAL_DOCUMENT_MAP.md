@@ -24,6 +24,7 @@ Start here for almost every task:
 10. `DELIVERY_CLOSURE_AND_LOOP_STATES.md`
 11. `EXECUTION_PROOF_AND_MATURITY_LEVELS.md`
 12. the L1 policy file closest to your task
+13. the newest dated packets under `docs/04/`, including every addendum in the packet directory, before concluding that anything is outstanding or dispatchable
 
 ## 2. Tier Map
 
@@ -32,8 +33,9 @@ Start here for almost every task:
 | `L0` | collaboration state and operator coordination | `AI_COLLABORATION_GUIDE.md`, `ai-status.json`, `ai-activity-log.jsonl` | machine-readable state beats summaries |
 | `L0.5` | derived narrative only | `current-work.md` | derived views never outrank `L0` |
 | `L1` | current platform architecture and policy semantics | `TARGET_ARCHITECTURE.md`, `OPENCLAW_RUNTIME_CONTRACT.md`, `PERSONA_RUNTIME_MODEL.md`, `BINDING_AND_DEPLOYMENT_SEMANTICS.md`, `PAPER_CANARY_LIVE_POLICY.md`, `ROLLBACK_AND_POSITION_SEMANTICS.md`, `LINEAGE_AND_TELEMETRY_STORAGE_DECISIONS.md`, `EVOLUTION_REVIEW_AND_THRESHOLDS.md`, `CROSS_SERVICE_CONSISTENCY_AND_SAGA_POLICY.md`, `KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md`, `MULTI_PERSONA_AGGREGATION_AND_CONFLICT_RESOLUTION.md`, `TELEMETRY_INGEST_AND_STORAGE_ARCHITECTURE.md`, `DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md`, `EVENT_ORDERING_AND_DELIVERY_GUARANTEES.md`, `EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md`, `BFF_HA_AND_CONTROL_PLANE_RESILIENCE.md`, `LOOP_TRIGGER_AND_CONCURRENCY_POLICY.md`, `DATA_SOURCE_SCOPE_MATRIX.md`, `docs/conventions/GLOBAL_CANONICAL_CONVENTIONS.md`, `docs/conventions/BFF_RESPONSE_ENVELOPE.md`, `docs/conventions/DEGRADATION_DICTIONARY.md`, `docs/conventions/MODULE_READINESS_LADDER.md`, `docs/decisions/LIN-002-lineage-ownership.md`, `docs/decisions/control-plane-persona-boundary.md`, `docs/decisions/control-plane-router-enforcement-ownership.md` | narrower L1 policy beats broader L1 overview |
-| `L2` | canonical planning and document-governance rules | `CANONICAL_DOCUMENT_MAP.md`, `DOCUMENT_AUTHORITY_AND_RECORD_BOUNDARY.md`, `ROADMAP.md`, `DEVELOPMENT_WORKBREAKDOWN.md`, `WORKBENCH_DELIVERY_BACKLOG.md`, `DELIVERY_CLOSURE_AND_LOOP_STATES.md`, `EXECUTION_PROOF_AND_MATURITY_LEVELS.md`, `OSS_INTEGRATION_CHECKLIST.md`, `docs/04/SUPERVISOR_IDLE_EFFICIENCY_CONTROL_AND_MEASUREMENT.md` | planning cannot override L1 semantics |
-| `L3` | rationale, migration notes, and future-state blueprints | `CANONICAL_CONTRACT_MIGRATION_DECISION.md`, `WORK_REBASELINE.md`, `Pantheon_總索引版系統分析文件.md`, `Pantheon_資料表_Schema_設計版.md`, `Pantheon_API_Service_Contract_設計版.md` | background only unless explicitly promoted |
+| `L1.5` | dated program packets that amend scope, sequencing, or dispatch eligibility | `docs/04/<packet>/` — read newest-first; an addendum inside a packet outranks that packet's own `INDEX.md` | a dated packet beats an older canonical doc on scope and sequencing only, never on L1 semantics |
+| `L2` | canonical planning and document-governance rules | `CANONICAL_DOCUMENT_MAP.md`, `DOCUMENT_AUTHORITY_AND_RECORD_BOUNDARY.md`, `ROADMAP.md`, `DEVELOPMENT_WORKBREAKDOWN.md`, `WORKBENCH_DELIVERY_BACKLOG.md`, `DELIVERY_CLOSURE_AND_LOOP_STATES.md`, `EXECUTION_PROOF_AND_MATURITY_LEVELS.md`, `OSS_INTEGRATION_CHECKLIST.md` | planning cannot override L1 semantics |
+| `L3` | rationale, migration notes, and future-state blueprints | `docs/04/SUPERVISOR_IDLE_EFFICIENCY_CONTROL_AND_MEASUREMENT.md` (historical: the underutilization sidecar it specifies was deleted 2026-07-19), `CANONICAL_CONTRACT_MIGRATION_DECISION.md`, `WORK_REBASELINE.md`, `Pantheon_總索引版系統分析文件.md`, `Pantheon_資料表_Schema_設計版.md`, `Pantheon_API_Service_Contract_設計版.md` | background only unless explicitly promoted |
 
 Planning sessions, review writeups, and execution loops are not canonical blueprint files. They are working records unless explicitly promoted.
 
@@ -45,6 +47,7 @@ Apply these rules in order:
 2. Execution records do not redefine blueprint truth.
 3. L1 policy documents outrank L2 planning documents.
 4. Within L1, the more specific scope wins.
+4a. On scope, sequencing, and whether a task may be dispatched, the newest dated `docs/04/` packet outranks the older canonical documents, which are only edited by deliberate decision and therefore lag. Inside a packet, a dated addendum outranks that packet's own `INDEX.md`; a task listed `todo` in an `INDEX.md` that a later addendum placed on hold is held, not open. This rule does not extend to L1 semantics.
 5. L3 documents may explain or anticipate future work, but they do not redefine current truth.
 6. If two documents still appear to conflict, update the broader one to cite the narrower one instead of inventing a third interpretation.
 
@@ -78,7 +81,7 @@ Use this map when you need an answer quickly:
 | Who owns gateway, router, governance, TTL, and command approval concerns? | `docs/decisions/control-plane-router-enforcement-ownership.md` |
 | Which external execution, market-data, disclosure, and research vendors are canonical by market? | `DATA_SOURCE_SCOPE_MATRIX.md`, `MARKET_SCOPE_AND_INSTRUMENT_POLICY.md` |
 | Which files are immutable blueprint vs working records? | `DOCUMENT_AUTHORITY_AND_RECORD_BOUNDARY.md` |
-| How should supervisor avoid idle token churn and measure auto-worker efficiency? | `docs/04/SUPERVISOR_IDLE_EFFICIENCY_CONTROL_AND_MEASUREMENT.md` |
+| How should supervisor avoid idle token churn and measure auto-worker efficiency? | `docs/02-architecture/SUPERVISOR_REWRITE_PLAN.md` (the underutilization sidecar in `docs/04/SUPERVISOR_IDLE_EFFICIENCY_CONTROL_AND_MEASUREMENT.md` was deleted 2026-07-19; utilization now means reprioritizing real backlog, never synthesizing tasks) |
 | How should work be sequenced? | `ROADMAP.md` |
 | What exact foundational tasks exist next? | `DEVELOPMENT_WORKBREAKDOWN.md` |
 | What product or workbench modules are still open? | `WORKBENCH_DELIVERY_BACKLOG.md` |

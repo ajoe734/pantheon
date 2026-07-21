@@ -206,7 +206,7 @@ Pantheon 定義五條 operator 路徑：
 | BFF degraded panel smoke test | `S-BFF` | spec defined | frontend team |
 | Internal API auth + audit smoke test | `S-IAPI` | smoke-tested: direct pause writes command audit record without BFF | Codex2 |
 | Role matrix RBAC enforcement test | all surfaces | not tested | platform / security team |
-| Lovable / front repo cutover confirmation | `S-BFF` | pending cutover | frontend team |
+| Lovable / front repo cutover confirmation | `S-BFF` | complete: cutover to `ajoe734/execute-plans` (branch `dev`) landed 2026-06-08; `front-ai-trading-system` and the Lovable hosting lane are retired | frontend team |
 
 ---
 

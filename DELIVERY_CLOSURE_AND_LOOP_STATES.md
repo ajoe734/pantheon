@@ -3,7 +3,8 @@
 Last updated: 2026-04-19
 Status: canonical semantics for Pantheon delivery-loop state and closure
 Tier: L2 Planning & Execution
-Scope: `.coordination` status meanings, closure rules, and when a frontend or backend loop is actually complete
+Superseded-in-part: 2026-06-08 — the `.coordination` delivery bus whose vocabulary this file defines is retired for frontend routing (`docs/delivery-coordination-bus.md:3-4,11`); the tree is archived at `archive/coordination-retired-20260608/`. Frontend delivery now runs through GitHub branch, PR and merge on `ajoe734/execute-plans`. The closure and loop-completion semantics below remain canonical; only the `.coordination` transport is historical.
+Scope: delivery-loop closure rules and when a frontend or backend loop is actually complete (the `.coordination` status vocabulary is retained as historical reference)
 Conflict rule: this file defines delivery-loop semantics, but packet-specific contracts and L1 policy still define the underlying product truth
 
 ## 1. Core Rule
