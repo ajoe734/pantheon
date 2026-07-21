@@ -32,6 +32,67 @@ def authority_boundary() -> Dict[str, Any]:
     }
 
 
+def provider_output_shape() -> Dict[str, Any]:
+    """Return the complete provider contract shown to the selected Persona.
+
+    Keep this example as strict as ``ProviderOpinionPayload``.  In particular,
+    an empty measure example is not sufficient: a provider asked to recommend
+    a measure must know every field that the fail-closed validator requires.
+    """
+
+    evidence_ref = {
+        "ref_type": "non-empty string",
+        "ref_id": "non-empty string",
+        "version": None,
+        "observed_at": "RFC3339 timestamp",
+        "data_cutoff": "RFC3339 timestamp",
+        "freshness": "fresh|stale|unknown",
+        "summary": None,
+    }
+    return {
+        "conclusion": "support|oppose|conditional|abstain|insufficient_evidence",
+        "rationale": "non-empty string",
+        "confidence": "number 0..1",
+        "uncertainty": ["string"],
+        "risks": ["string"],
+        "invalidation_conditions": ["string"],
+        "evidence_refs": [evidence_ref],
+        "recommended_measures": [{
+            "measure_id": "stable non-empty provider-local string",
+            "measure_type": (
+                "strategy_parameter_change|condition_change|risk_limit_recommendation|"
+                "research_request|paper_candidate_request|allocation_review_request|"
+                "containment_recommendation|journal_lesson|memory_candidate|"
+                "persona_mutation_review"
+            ),
+            "target": {
+                "kind": "non-empty string",
+                "id": "non-empty string",
+                "version": "non-empty string",
+                "path": None,
+            },
+            "current_value": None,
+            "proposed_value": "any JSON value",
+            "rationale": "non-empty string",
+            "expected_benefit": "non-empty string",
+            "adverse_scenarios": ["non-empty string"],
+            "confidence": "number 0..1",
+            "evidence_refs": [evidence_ref],
+            "environment_ceiling": "analysis|research|shadow|paper",
+            "validation_plan": {
+                "validator": "pantheon_candidate_validation_v1",
+                "required_checks": [
+                    "source_binding|evidence_freshness|target_version|"
+                    "authority_boundary|rollback_plan"
+                ],
+            },
+            "rollback_trigger": "non-empty string",
+            "rollback_action": "non-empty string",
+            "authority": authority_boundary(),
+        }],
+    }
+
+
 class EvidenceRef(BaseModel):
     model_config = {"extra": "forbid"}
 
@@ -264,25 +325,16 @@ def build_provider_prompt(
         "authority": authority_boundary(),
     }
     exact_context = json.dumps(context_pack, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    schema = {
-        "conclusion": "support|oppose|conditional|abstain|insufficient_evidence",
-        "rationale": "non-empty string",
-        "confidence": "number 0..1",
-        "uncertainty": ["string"],
-        "risks": ["string"],
-        "invalidation_conditions": ["string"],
-        "evidence_refs": [{
-            "ref_type": "string", "ref_id": "string", "version": None,
-            "observed_at": "RFC3339", "data_cutoff": "RFC3339",
-            "freshness": "fresh|stale|unknown", "summary": None,
-        }],
-        "recommended_measures": [],
-    }
+    schema = provider_output_shape()
     prompt = (
         "Return exactly one JSON object and no markdown. Act only as the frozen selected Persona. "
         "Do not call tools or read/write memory. Do not submit orders, call brokers, change capital, "
         "bind runtime, promote lifecycle, mutate policy, or claim execution. "
         f"Required output shape: {json.dumps(schema, separators=(',', ':'))}\n"
+        "recommended_measures may be empty. If it is non-empty, every measure must include every "
+        "field shown above, use at least one fully populated evidence_refs entry, carry the exact "
+        "no-authority object shown above, and contain no extra fields. Do not return "
+        "measure_sha256; Pantheon appends that binding only after validation.\n"
         "For each recommended measure set validation_plan.validator to "
         "pantheon_candidate_validation_v1 and choose required_checks only from "
         "source_binding,evidence_freshness,target_version,authority_boundary,rollback_plan.\n"
