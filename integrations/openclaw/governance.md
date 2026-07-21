@@ -1,9 +1,9 @@
 # OpenClaw Integration — Governance Mapping
 
-Last updated: 2026-06-16
+Last updated: 2026-07-21
 Owner: BP5-OSS-001 (Codex)
 Reviewer: Claude
-Status: governed baseline locked — bumped to 2026.6.8
+Status: governed baseline locked — bumped to 2026.7.1
 Related: `OPENCLAW_RUNTIME_CONTRACT.md`, `OC-001`, `OC-002`, `OC-003`
 
 ## 1. Purpose
@@ -12,9 +12,9 @@ This document defines how the pinned OpenClaw runtime baseline is governed by Pa
 
 Pinned baseline:
 
-- Git tag: `v2026.6.8`
-- Commit: `844f405ac1be805d5c598922a37254f12ab6d765`
-- Runtime image: `ghcr.io/openclaw/openclaw:2026.6.8`
+- Git tag: `v2026.7.1`
+- Commit: `2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4`
+- Runtime image: `ghcr.io/openclaw/openclaw:2026.7.1`
 
 OpenClaw remains an **external runtime substrate**. Pantheon never delegates governance authority to it.
 
@@ -219,6 +219,35 @@ When the pinned OpenClaw version changes:
 **Config migration:** `openclaw doctor --fix` migrates the volume config across the minor bump (same as the 6.4.7→6.6 bump). `~/.codex` import remains removed.
 
 **Capability boundary:** unchanged. `/v1/responses` is an operator-auth agent-run surface; it does NOT relax OC-001 deny-first tool filtering, OC-002 job governance, or open broker/paper/canary/live/capital-binding — those stay fail-closed.
+
+### 2026-07-21: bump v2026.6.8 → v2026.7.1 + official five-route model pool
+
+**What:** the governed upstream pin moves to stable tag `v2026.7.1`, commit
+`2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4`, and multi-arch image digest
+`sha256:6a31d44b2944e7adcd2b582bf6fb463111264ebca97a0201795b799135bd102c`.
+The derived gateway installs Claude Code `2.1.216` and Gemini CLI `0.51.0`.
+Root deploys atomically register two Codex, two Claude, and one Gemini model
+route without storing provider credentials in the repository.
+
+**Why:** 2026.7.1 makes multiple named OpenAI/Codex OAuth profiles first-class
+(`--profile-id`, auth ordering, `/model ...@profileId`) and rotates profiles
+when Codex reports a usage-limit reset. It also provides the canonical
+`google/*` model plus `google-gemini-cli` runtime path and improves CLI session
+identity, fallback, provider diagnostics, and Gateway recovery. These are the
+upstream mechanisms required for Pantheon's shared multi-provider pool.
+
+**Credential boundary:** model routes and credentials are different layers.
+The repo owns only the five route declarations. OpenClaw's persistent agent
+auth store owns OAuth profiles. Two Codex model routes may use one login or
+named logins; both Claude model routes reuse the authenticated Claude CLI home;
+Gemini uses its own CLI OAuth. No token or refresh credential is committed.
+
+**Compatibility evidence:** the official amd64 image was pulled and executed;
+`OpenClaw 2026.7.1`, Node 24, `/app/openclaw.mjs`, `models auth login
+--profile-id`, and the existing Gateway CLI surface all passed before the repo
+pin changed. The regular baseline smoke, derived-image build, config validation,
+strict deployment, and live Management AI smoke remain required merge/deploy
+gates.
 
 ## 10. Relationship to Other Governance Documents
 

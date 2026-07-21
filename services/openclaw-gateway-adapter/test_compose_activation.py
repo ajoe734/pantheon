@@ -6,6 +6,7 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
+OPENCLAW_VERSION = "2026.7.1"
 
 
 def test_compose_wires_openclaw_gateway_adapter_without_broker_activation() -> None:
@@ -41,6 +42,11 @@ def test_compose_wires_openclaw_gateway_adapter_without_broker_activation() -> N
 
     upstream = services["openclaw-gateway"]
     assert upstream["profiles"] == ["openclaw"]
+    assert upstream["image"] == f"pantheon-openclaw-gateway:{OPENCLAW_VERSION}"
+    assert upstream["build"]["args"] == {
+        "ANTHROPIC_CLAUDE_CODE_NPM_VERSION": "2.1.216",
+        "GOOGLE_GEMINI_CLI_NPM_VERSION": "0.51.0",
+    }
     assert upstream["depends_on"]["openclaw-data-init"]["condition"] == "service_completed_successfully"
     upstream_healthcheck = " ".join(upstream["healthcheck"]["test"])
     assert "/readyz" in upstream_healthcheck
@@ -116,3 +122,38 @@ def test_honest_stack_smoke_checks_openclaw_adapter_degraded_boundary() -> None:
     assert "/api/openclaw-adapter/capabilities" in smoke
     assert "/api/openclaw-adapter/sessions" in smoke
     assert "CAPABILITY_DENIED" in smoke
+
+
+def test_openclaw_pin_and_shared_model_pool_stay_in_lockstep() -> None:
+    upstream_image = f"ghcr.io/openclaw/openclaw:{OPENCLAW_VERSION}"
+    gateway_dockerfile = (ROOT / "integrations/openclaw/gateway/Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    adapter_dockerfile = (ROOT / "services/openclaw-gateway-adapter/Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    runtime = (ROOT / "integrations/openclaw/adapter/gateway_runtime.py").read_text(
+        encoding="utf-8"
+    )
+    smoke = (ROOT / "scripts/openclaw-smoke-test.sh").read_text(encoding="utf-8")
+    model_pool = (ROOT / "scripts/openclaw-configure-shared-model-pool.sh").read_text(
+        encoding="utf-8"
+    )
+    deploy = (ROOT / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8")
+
+    assert f"FROM {upstream_image}" in gateway_dockerfile
+    assert f"FROM {upstream_image} AS openclaw_cli" in adapter_dockerfile
+    assert f'image_ref: str = "{upstream_image}"' in runtime
+    assert f'IMAGE="{upstream_image}"' in smoke
+
+    expected_models = {
+        "openai/gpt-5.6-sol",
+        "openai/gpt-5.5",
+        "anthropic/claude-opus-4-8",
+        "anthropic/claude-sonnet-4-6",
+        "google/gemini-3.1-pro-preview",
+    }
+    assert all(model_ref in model_pool for model_ref in expected_models)
+    assert "plugins.entries.codex.enabled" in model_pool
+    assert "plugins.entries.google.enabled" in model_pool
+    assert "openclaw-configure-shared-model-pool.sh" in deploy

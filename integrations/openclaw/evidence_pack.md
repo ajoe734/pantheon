@@ -1,6 +1,6 @@
 # OpenClaw Integration — Evidence Pack
 
-Last updated: 2026-06-16
+Last updated: 2026-07-21
 Owner: BP5-OSS-001 (Codex)
 Reviewer: Claude
 Status: review approved; baseline finalized
@@ -27,12 +27,33 @@ Supporting files:
 | Evidence item | Value |
 |---|---|
 | Upstream repository | `https://github.com/openclaw/openclaw` |
-| Selected tag | `v2026.6.6` |
-| Selected commit | `8c802aa683510c7f7503597b54c3021733245e59` |
-| npm package | `openclaw@2026.6.6` |
-| Container image | `ghcr.io/openclaw/openclaw:2026.6.6` |
-| Container digest | `sha256:4826ca6157377e93463786d5c16852e34eede9f4bd4be55e3773cdc509762857` (multi-arch index) |
+| Selected tag | `v2026.7.1` |
+| Selected commit | `2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4` |
+| npm package | `openclaw@2026.7.1` |
+| Container image | `ghcr.io/openclaw/openclaw:2026.7.1` |
+| Container digest | `sha256:6a31d44b2944e7adcd2b582bf6fb463111264ebca97a0201795b799135bd102c` (multi-arch index) |
 | Website / docs | `https://openclaw.ai`, `https://docs.openclaw.ai` |
+
+## 2.1 Upgrade Validation — `v2026.7.1` (2026-07-21)
+
+Local pre-merge evidence:
+
+1. official tag `v2026.7.1^{}` resolved to
+   `2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4`
+2. official multi-arch image pulled at immutable digest
+   `sha256:6a31d44b2944e7adcd2b582bf6fb463111264ebca97a0201795b799135bd102c`
+3. `bash scripts/openclaw-smoke-test.sh` passed `6/6`
+4. targeted compose/runtime tests passed `18/18`
+5. the Pantheon gateway image built and executed OpenClaw `2026.7.1`, Claude
+   Code `2.1.216`, and Gemini CLI `0.51.0`
+6. the adapter image built and executed OpenClaw `2026.7.1`, Codex CLI
+   `0.136.0`, and its Node-20-compatible Claude Code `2.1.161`
+7. an isolated compose project applied the five-route model pool, restarted
+   the gateway, reached `/readyz`, read all five exact model refs back, and
+   removed its test-only containers, volume, and network
+
+Hosted strict deployment and Management AI live smoke remain deployment
+evidence, not local pre-merge evidence.
 
 ## 3. Bump Rationale — 2026-04-17 Hold-Pin Context (superseded 2026-06-16)
 

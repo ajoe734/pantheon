@@ -1,6 +1,6 @@
 # OpenClaw Integration — Smoke Test Plan
 
-Last updated: 2026-04-17
+Last updated: 2026-07-21
 Owner: BP5-OSS-002 (Codex)
 Reviewer: Claude
 Status: baseline and live adapter smoke paths defined
@@ -94,7 +94,7 @@ bash scripts/openclaw-gateway-adapter-smoke.sh
 
 The script checks:
 
-- `refs/tags/v2026.6.8^{}` resolves to `8c802aa683510c7f7503597b54c3021733245e59`
+- `refs/tags/v2026.7.1^{}` resolves to `2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4`
 
 Acceptance:
 
@@ -104,8 +104,8 @@ Acceptance:
 
 The script checks:
 
-- `ghcr.io/openclaw/openclaw:2026.6.8` is published
-- the image digest matches `sha256:4826ca6157377e93463786d5c16852e34eede9f4bd4be55e3773cdc509762857` (multi-arch index)
+- `ghcr.io/openclaw/openclaw:2026.7.1` is published
+- the image digest matches `sha256:6a31d44b2944e7adcd2b582bf6fb463111264ebca97a0201795b799135bd102c` (multi-arch index)
 - the container can execute:
   - `openclaw --help`
   - `openclaw gateway --help`
