@@ -156,4 +156,9 @@ def test_openclaw_pin_and_shared_model_pool_stay_in_lockstep() -> None:
     assert all(model_ref in model_pool for model_ref in expected_models)
     assert "plugins.entries.codex.enabled" in model_pool
     assert "plugins.entries.google.enabled" in model_pool
+    assert (
+        '{"path":"agents.defaults.model.primary","value":"anthropic/claude-opus-4-8"}'
+        in model_pool
+    )
+    assert 'openclaw config get agents.defaults.model.primary --json' in model_pool
     assert "openclaw-configure-shared-model-pool.sh" in deploy
