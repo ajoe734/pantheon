@@ -11,6 +11,7 @@ COMPOSE_FILE="${PANTHEON_COMPOSE_FILE:-docker-compose.yml}"
 MODEL_POOL_BATCH='[
   {"path":"plugins.entries.codex.enabled","value":true},
   {"path":"plugins.entries.google.enabled","value":true},
+  {"path":"agents.defaults.model.primary","value":"anthropic/claude-opus-4-8"},
   {"path":"agents.defaults.models[\"openai/gpt-5.6-sol\"]","value":{"alias":"codex-sol","agentRuntime":{"id":"codex"}}},
   {"path":"agents.defaults.models[\"openai/gpt-5.5\"]","value":{"alias":"codex-5.5","agentRuntime":{"id":"codex"}}},
   {"path":"agents.defaults.models[\"anthropic/claude-opus-4-8\"]","value":{"alias":"opus","agentRuntime":{"id":"claude-cli"}}},
@@ -50,6 +51,8 @@ if [[ "$ready" != true ]]; then
 fi
 
 configured="$(openclaw config get agents.defaults.models --json)"
+primary="$(openclaw config get agents.defaults.model.primary --json)"
+jq -e '. == "anthropic/claude-opus-4-8"' <<<"$primary" >/dev/null
 for model_ref in \
   openai/gpt-5.6-sol \
   openai/gpt-5.5 \
