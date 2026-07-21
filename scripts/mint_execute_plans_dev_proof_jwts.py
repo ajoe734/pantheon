@@ -59,6 +59,11 @@ def build_bundle(
             "exp": now + TTL_SECONDS,
             "jti": secrets.token_urlsafe(18),
             "token_use": "pantheon-dev-hosted-proof",
+            # Hosted proof tokens are minted only by the dev-scoped rotation
+            # workflow after the human-authorized write window is established.
+            # The strict dev BFF requires an authenticated MFA claim even for
+            # /bff/me, so bind that proof to the short-lived token itself.
+            "mfa_verified": True,
             "tenant_id": TENANT_ID,
             "allowed_tenants": [TENANT_ID],
         }

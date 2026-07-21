@@ -12,7 +12,7 @@ def _decode(segment: str) -> dict[str, object]:
     return json.loads(base64.urlsafe_b64decode(segment))
 
 
-def test_bundle_has_distinct_tenant_scoped_one_hour_hs256_tokens() -> None:
+def test_bundle_has_distinct_mfa_verified_tenant_scoped_one_hour_hs256_tokens() -> None:
     secret = "unit-test-secret"
     tokens, metadata = build_bundle(
         secret=secret,
@@ -41,6 +41,7 @@ def test_bundle_has_distinct_tenant_scoped_one_hour_hs256_tokens() -> None:
         assert claims["nbf"] == claims["iat"] - 30
         assert claims["iss"] == "pantheon-dev"
         assert claims["aud"] == "bff-operators"
+        assert claims["mfa_verified"] is True
         subjects.add(claims["sub"])
         padded_signature = signature_segment + "=" * (-len(signature_segment) % 4)
         actual_signature = base64.urlsafe_b64decode(padded_signature)
