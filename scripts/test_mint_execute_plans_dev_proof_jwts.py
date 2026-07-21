@@ -34,9 +34,9 @@ def test_bundle_has_distinct_mfa_verified_tenant_scoped_one_hour_hs256_tokens() 
         assert claims["roles"] == expected_roles
         assert claims["user_id"] == claims["sub"]
         assert claims["sid"].startswith("pantheon-dev-proof-")
-        assert claims["app_metadata"] == {"tenant_id": "pantheon-dev"}
-        assert claims["tenant_id"] == "pantheon-dev"
-        assert claims["allowed_tenants"] == ["pantheon-dev"]
+        assert claims["app_metadata"] == {"tenant_id": "tenant-dev"}
+        assert claims["tenant_id"] == "tenant-dev"
+        assert claims["allowed_tenants"] == ["tenant-dev"]
         assert claims["exp"] - claims["iat"] == TTL_SECONDS == 3600
         assert claims["nbf"] == claims["iat"] - 30
         assert claims["iss"] == "pantheon-dev"
@@ -91,3 +91,6 @@ def test_workflow_is_dev_only_and_validates_before_secret_updates() -> None:
         assert workflow.index(f"gh secret set {secret_name}") > validate_at
     assert "--body" not in workflow
     assert "COORDINATION_REPO_TOKEN" in workflow
+    assert "--header 'X-Tenant-Id: tenant-dev'" in workflow
+    assert "--arg tenant 'tenant-dev'" in workflow
+    assert "X-Tenant-Id: pantheon-dev" not in workflow
