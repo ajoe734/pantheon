@@ -15,7 +15,10 @@ from pathlib import Path
 
 
 TTL_SECONDS = 3600
-TENANT_ID = "pantheon-dev"
+# The public dev environment is named ``pantheon-dev``, while its canonical
+# data-plane tenant is ``tenant-dev``.  Proof JWTs must follow the data-plane
+# tenant so hosted reads and writes exercise the same rows as the dev runtime.
+TENANT_ID = "tenant-dev"
 
 
 def _b64url(value: bytes) -> str:

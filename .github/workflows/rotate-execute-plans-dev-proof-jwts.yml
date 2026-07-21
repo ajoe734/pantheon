@@ -67,7 +67,7 @@ jobs:
               --connect-timeout 10 --max-time 30 \
               --output "${response}" --write-out '%{http_code}' \
               --header "Authorization: Bearer $(<"${credential_dir}/${label}.jwt")" \
-              --header 'X-Tenant-Id: pantheon-dev' \
+              --header 'X-Tenant-Id: tenant-dev' \
               "${DEV_BFF_URL%/}/bff/me")"
             if [[ "${status}" != "200" ]]; then
               echo "Live /bff/me rejected ${label}; no frontend secret was updated." >&2
@@ -78,7 +78,7 @@ jobs:
             jq -e \
               --arg sub "${expected_sub}" \
               --arg role "${expected_role}" \
-              --arg tenant 'pantheon-dev' \
+              --arg tenant 'tenant-dev' \
               '.data.currentUser.id == $sub
                and (.data.roles | sort) == [$role]
                and .data.tenant_id == $tenant
