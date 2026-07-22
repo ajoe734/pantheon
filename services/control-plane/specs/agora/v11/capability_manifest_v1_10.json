@@ -1,0 +1,67 @@
+{
+  "manifest_version": "1.10",
+  "extends": "v1.9",
+  "description": "Additive authoritative Strategy Performance projection and governed suggestion disposition contract. Missing source data is typed unavailable and every disposition is durable, scoped, idempotent, audited, CAS-protected, and execution-authority-free.",
+  "schema_bundle_index": "services/control-plane/specs/agora/bundle_index.v1_10.json",
+  "openapi_ref": "services/control-plane/openapi/agora_v1_10.openapi.yaml",
+  "capabilities": [
+    {
+      "id": "strategy_performance_truth",
+      "name": "agora.performance.truth.v1",
+      "version": "1.0",
+      "description": "User-private per-strategy/per-period compliance, intervention, canonical execution identity, warning, and governed adjustment-suggestion truth with explicit freshness and availability.",
+      "schemas": [
+        "SourceAvailability",
+        "ComplianceMetric",
+        "InterventionRecord",
+        "ExecutionHistoryRow",
+        "PerformanceWarning",
+        "AdjustmentSuggestion",
+        "StrategyPerformanceProjection",
+        "PerformanceProjectionEnvelope",
+        "SuggestionActionRequest",
+        "SuggestionActionReceipt",
+        "SuggestionActionEnvelope"
+      ],
+      "routes": [
+        "GET /bff/agora/trading-room/strategies/{strategy_id}/performance",
+        "POST /bff/agora/trading-room/strategies/{strategy_id}/performance/suggestions/{suggestion_id}/actions",
+        "GET /bff/agora/performance/action-receipts/{receipt_id}"
+      ],
+      "implementation_status": "implemented"
+    }
+  ],
+  "required_definition_checksums": [
+    "SourceAvailability",
+    "ComplianceMetric",
+    "InterventionRecord",
+    "ExecutionHistoryRow",
+    "PerformanceWarning",
+    "SuggestionProvenance",
+    "AdjustmentSuggestion",
+    "StrategyPerformanceProjection",
+    "PerformanceProjectionEnvelope",
+    "SuggestionActionRequest",
+    "SuggestionActionReceipt",
+    "SuggestionActionEnvelope"
+  ],
+  "storage_ownership": {
+    "lifecycle_execution_projection": "canonical_trade_journey_projector",
+    "compliance_intervention_warning_payloads": "source_owned_fields_on_canonical_lifecycle_events",
+    "suggestion_source_and_disposition": "agora_performance_sqlite",
+    "action_receipt": "agora_performance_sqlite",
+    "audit_event": "agora_performance_sqlite",
+    "frontend": "cache_only_no_authority"
+  },
+  "safety_boundary": {
+    "missing_data_fabrication": false,
+    "local_toast_is_receipt": false,
+    "direct_order_route": false,
+    "broker_call": false,
+    "capital_binding": false,
+    "runtime_binding_write": false,
+    "live_capital_change": false,
+    "execution_authority": "none"
+  },
+  "note": "This bundle is repository implementation truth only; hosted availability still requires a later accepted deployment manifest and AG-COMPAT gate."
+}
