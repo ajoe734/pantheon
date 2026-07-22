@@ -7864,8 +7864,24 @@ def poll_worker_failure_stage(
     provider_report: dict[str, Any],
 ) -> dict[str, bool]:
     """Classify and apply one exited worker's provider failure response."""
+    # A retry parent retains its original PID/log for evidence after the child
+    # launches.  Never classify that stale log again: doing so can cool the
+    # newly selected rotation slot and reassign the task while the retry child
+    # is actively working.  The other statuses below are likewise inactive or
+    # intentionally waiting outside the failure path.
+    if worker.get("status") in {
+        "completed",
+        "failed",
+        "fallback",
+        "manual_pending",
+        "reassigned",
+        "retried",
+        "retry_backoff",
+        "superseded",
+    }:
+        return {"changed": False, "stop": True}
     failure_reason = None if worker_runner_succeeded(worker) else detect_worker_failure(worker)
-    if not failure_reason or worker.get("status") == "failed":
+    if not failure_reason:
         return {"changed": False, "stop": False}
 
     failure = classify_worker_failure(config, worker, failure_reason)

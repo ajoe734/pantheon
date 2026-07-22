@@ -250,6 +250,7 @@ def verify_readback(
     client_id: str,
     client_secret: str,
     client: HttpClient,
+    expected_login_identity: str = "operator",
     surface_read_attempts: int = 4,
     surface_read_poll_seconds: float = 5.0,
     sleep: Callable[[float], None] = time.sleep,
@@ -290,7 +291,12 @@ def verify_readback(
     login_meta = _object(login.get("meta"), "bff_login_failed", "public BFF dev-login metadata was missing")
     token = str(login.get("access_token") or "")
     _require(login_result.status == 200 and token and login.get("token_type") == "bearer", "bff_login_failed", "public BFF dev-login failed")
-    _require(login_meta.get("identity") == "operator" and 300 <= int(login.get("expires_in") or 0) <= 3600, "bff_login_failed", "public BFF dev-login identity was unexpected")
+    _require(
+        login_meta.get("identity") == expected_login_identity
+        and 300 <= int(login.get("expires_in") or 0) <= 3600,
+        "bff_login_failed",
+        "public BFF dev-login identity was unexpected",
+    )
     auth = {"Authorization": f"Bearer {token}"}
 
     loop_id = str(identity["loop_run_id"])
@@ -519,6 +525,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--expected-sha", required=True)
+    parser.add_argument("--expected-login-identity", default="operator")
     parser.add_argument("--base-url", required=True)
     args = parser.parse_args(argv)
     code, artifact = execute_readback(
@@ -529,6 +536,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         client_id=os.getenv("DEV_BFF_OIDC_CLIENT_ID", "").strip(),
         client_secret=os.getenv("DEV_BFF_OIDC_CLIENT_SECRET", "").strip(),
         client=UrlLibHttpClient(),
+        expected_login_identity=args.expected_login_identity,
     )
     print(json.dumps({"outcome": artifact["outcome"], "output": str(args.output)}, sort_keys=True))
     return code

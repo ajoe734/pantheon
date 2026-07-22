@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review_approved
 - Owner: Codex2
 - Reviewer: Codex
-- Next: Hosted diagnostics proved the generic non-MFA operator token was correctly rejected by protected reads; Codex2 is wiring the lifecycle probe to the provisioned MFA-bound operator A identity before final redeploy.
+- Next: Codex2 is pinning the hosted readback's expected login identity to the MFA-bound operator A credential before the final accepted deploy.
 
 ## Summary
 修復 ENOSPC 後仍停更的 lifecycle projector，加入安全 generation retention、可恢復 publish 與 readiness/freshness truth，並把 live rescue 正式經 PR 部署。
