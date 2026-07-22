@@ -688,8 +688,8 @@ os.makedirs(BFF_DATA_DIR, exist_ok=True)
 def _lifecycle_projector_dependency() -> Dict[str, Any]:
     state_path = Path(
         os.getenv(
-            "LIFECYCLE_PROJECTOR_STATE_PATH",
-            str(Path(BFF_DATA_DIR) / "lifecycle-projection" / "controller_state.json"),
+            "LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH",
+            str(Path(BFF_DATA_DIR) / "lifecycle-projection" / "health_state.json"),
         )
     )
     root = Path(os.getenv("LIFECYCLE_PROJECTION_ROOT", str(state_path.parent)))
