@@ -3,8 +3,8 @@
 Priority: P1
 Repository: `ajoe734/pantheon`
 Merge target: `dev`
-Owner: Codex2
-Reviewer: Codex
+Owner: Claude
+Reviewer: Antigravity
 Depends on: `AG-WS-OPS-001`
 
 ## Objective

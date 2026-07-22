@@ -3,8 +3,8 @@
 Priority: P1
 Repository: `ajoe734/pantheon` (evidence and closeout only)
 Merge target: `dev`
-Owner: Codex
-Reviewer: Codex2
+Owner: Antigravity
+Reviewer: Claude
 Depends on: `AG-COMPAT-002-GATE`, `PAN-SOURCE-FRESH-001`
 
 ## Objective

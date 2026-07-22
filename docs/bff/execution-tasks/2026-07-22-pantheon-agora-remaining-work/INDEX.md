@@ -34,28 +34,29 @@ commands. It does not write `ai-status.json` or the activity log directly.
 
 | Priority | Task | Repository | Owner | Reviewer | Depends on |
 |---|---|---|---|---|---|
-| P0 | `OPS-DISPATCH-LEASE-SYNC-001` | Pantheon | Codex | Codex2 | — |
-| P0 | `PAN-LIFECYCLE-RECOVERY-001` | Pantheon | Codex2 | Codex | lease sync |
-| P0 | `AG-PERF-TRUTH-001-BE` | Pantheon | Codex | Codex2 | lease sync |
-| P0 | `AG-CAND-TRUTH-001-BE` | Pantheon | Codex2 | Codex | lease sync |
-| P1 | `AG-WS-OPS-001` | Pantheon | Codex | Codex2 | lease sync |
-| P1 | `PAN-SOURCE-FRESH-001` | Pantheon | Codex2 | Codex | lease sync |
-| P1 | `OPS-PROMOTE-CONFLICT-RECOVERY-001` | Pantheon | Codex2 | Codex | lease sync |
-| P2 | `OPS-TASK-PR-TRIAGE-001` | Pantheon | Codex | Codex2 | lease sync |
-| P1 | `OPS-SECURITY-DEPENDENCY-001` | Pantheon | Codex | Codex2 | lease sync |
+| P0 | `OPS-DISPATCH-LEASE-SYNC-001` | Pantheon | Codex | Claude | — |
+| P0 | `PAN-LIFECYCLE-RECOVERY-001` | Pantheon | Codex2 | Antigravity | lease sync |
+| P0 | `AG-PERF-TRUTH-001-BE` | Pantheon | Codex | Claude | lease sync |
+| P0 | `AG-CAND-TRUTH-001-BE` | Pantheon | Claude | Codex2 | lease sync |
+| P1 | `AG-WS-OPS-001` | Pantheon | Claude | Antigravity | lease sync |
+| P1 | `PAN-SOURCE-FRESH-001` | Pantheon | Antigravity | Codex2 | lease sync |
+| P1 | `OPS-PROMOTE-CONFLICT-RECOVERY-001` | Pantheon | Codex2 | Claude | lease sync |
+| P2 | `OPS-TASK-PR-TRIAGE-001` | Pantheon | Antigravity | Codex | lease sync |
+| P1 | `OPS-SECURITY-DEPENDENCY-001` | Pantheon | Codex | Claude | lease sync |
 | P0 | `PPL-ALLOC-009` | Pantheon + execute-plans | Codex | Codex2 | lease sync, lifecycle recovery, existing PPL children |
-| P0 | `TJ-E2E-012` | Pantheon + execute-plans | Codex2 | Codex | lease sync, lifecycle recovery, existing TJ children |
-| P0 | `AG-PERF-TRUTH-001-FE` | execute-plans | Codex2 | Codex | `AG-PERF-TRUTH-001-BE` |
-| P0 | `AG-CAND-TRUTH-001-FE` | execute-plans | Codex | Codex2 | `AG-CAND-TRUTH-001-BE` |
-| P1 | `AG-WS-OPS-002` | Pantheon | Codex2 | Codex | `AG-WS-OPS-001` |
-| P1 | `AG-COMPAT-001-BE` | Pantheon | Codex | Codex2 | both Agora truth BE tasks, `AG-WS-OPS-002` |
-| P1 | `AG-COMPAT-001-FE` | execute-plans | Codex2 | Codex | both Agora truth FE tasks, `AG-COMPAT-001-BE` |
-| P1 | `AG-COMPAT-002-GATE` | Pantheon | Codex | Codex2 | `AG-COMPAT-001-FE` |
-| P1 | `AG-HOSTED-CLOSE-001` | Pantheon evidence | Codex | Codex2 | compatibility gate, source freshness |
+| P0 | `TJ-E2E-012` | Pantheon + execute-plans | Codex2 | Claude | lease sync, lifecycle recovery, existing TJ children |
+| P0 | `AG-PERF-TRUTH-001-FE` | execute-plans | Antigravity | Codex | `AG-PERF-TRUTH-001-BE` |
+| P0 | `AG-CAND-TRUTH-001-FE` | execute-plans | Codex | Claude | `AG-CAND-TRUTH-001-BE` |
+| P1 | `AG-WS-OPS-002` | Pantheon | Claude | Antigravity | `AG-WS-OPS-001` |
+| P1 | `AG-COMPAT-001-BE` | Pantheon | Codex | Claude | both Agora truth BE tasks, `AG-WS-OPS-002` |
+| P1 | `AG-COMPAT-001-FE` | execute-plans | Antigravity | Codex2 | both Agora truth FE tasks, `AG-COMPAT-001-BE` |
+| P1 | `AG-COMPAT-002-GATE` | Pantheon | Claude | Codex | `AG-COMPAT-001-FE` |
+| P1 | `AG-HOSTED-CLOSE-001` | Pantheon evidence | Antigravity | Claude | compatibility gate, source freshness |
 
 The lease repair is the bootstrap frontier because the fleet must not fan out
 through a known-broken status lifecycle. After it completes, the next frontier
-has four tasks per enabled fleet owner and disjoint primary file footprints.
+has two tasks for each of the four enabled fleet owners and disjoint primary
+file footprints.
 Cross-repository product work is split into backend and frontend tasks. The two
 workshop implementation tasks are serialized because they share the versioned
 workshop route/store surface.
