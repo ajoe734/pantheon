@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Stop mixing live candidates with sample fields
-- Status: review
+- Status: review_approved
 - Owner: Codex
 - Reviewer: Claude
-- Next: Please independently review execute-plans PR #506 at f9fb01d6adaba41045178571d3d006e2ed1e6b05 against backend contract PR #3980 / Pantheon merge 5004450c5493aa8aef284cf42439c9b27ef54235. Focus on same-identity provenance rejection, unavailable/stale rendering, whole-dataset sample isolation, lens preservation, and desktop/393px accessibility. All visible CI is green; local revalidation: 99 focused Vitest tests, tsc, targeted ESLint 0 errors, live/strict build, Playwright 2/2.
+- Next: Owner closeout verified execute-plans PR #506 at reviewed HEAD f9fb01d6 and merged it into dev as 9597d0c3. Pantheon review and closeout records are ready for the task PR; after that PR merges into Pantheon dev, finalize with the governed done command and delivery metadata.
 
 ## Summary
 移除 live candidate + DEFAULT_CANDIDATES 混合；每欄只顯示同一 identity 的真實值、明確 unknown/stale，或整張清楚標示 sample。
