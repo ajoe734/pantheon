@@ -220,3 +220,34 @@ Fresh results on 2026-07-22 UTC:
   configuration limitation rather than claiming server-side coverage.
 - Reviewer `Claude` owns acceptance of the fail-closed runtime evidence and
   these residuals before merge.
+
+## Owner closeout finalization
+
+Reviewer `Claude` approved the delivered scope and all four residuals in
+`OPS-SECURITY-DEPENDENCY-001-review-2026-07-22.md`. The approval is recorded by
+commit `5075b15e34197132ace6c0ade1ab829fa1659cf1`; owner `Codex2` accepts that
+decision without changing the dependency pins, runtime boundaries, exclusions,
+or residual ownership described above.
+
+Immediately before publication of the closeout record, the owner repeated the
+acceptance-critical non-container checks on the task branch:
+
+```text
+python3 -m unittest scripts.security.test_dependabot_reachability
+(cd services/research/mlflow && python3 -m unittest test_security_boundary)
+(cd services/research/rllib && python3 -m unittest test_security_boundary)
+(cd services/research/rllib && python3 -m unittest test_adapter test_ray_tune_adapter)
+(cd services/registry/experiments && python3 -m unittest test_adapter)
+docker compose config --quiet
+python3 scripts/security/dependabot_reachability.py \
+  --alerts-json /tmp/OPS-SECURITY-DEPENDENCY-001-open-alerts.json \
+  --fail-on critical --fail-on high
+git diff --check
+```
+
+Results: 68/68 focused tests passed, Compose configuration and diff checks
+passed, and a fresh GitHub API result contained 14 open alerts (six critical,
+two high, five medium, one low). Reconciliation returned eight
+`candidate_fixed`, six `below_threshold_fixed`, zero violations, and exit 0.
+The implementation, evidence, and reviewer-approved closeout records must merge
+to `dev` through the task PR before the governed owner `done` transition.
