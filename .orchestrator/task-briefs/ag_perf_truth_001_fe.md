@@ -1,16 +1,16 @@
-# Task Brief: PAN-LIFECYCLE-RECOVERY-001
+# Task Brief: AG-PERF-TRUTH-001-FE
 
 Generated in the worker workspace because the supervisor root did not have a task brief file.
 
 ## Task
-- Title: Recover lifecycle projection and freshness health
+- Title: Remove simulated Strategy Performance product data
 - Status: review_approved
 - Owner: Codex2
 - Reviewer: Codex
-- Next: Hosted diagnostics proved the generic non-MFA operator token was correctly rejected by protected reads; Codex2 is wiring the lifecycle probe to the provisioned MFA-bound operator A identity before final redeploy.
+- Next: Review approved: PR #502 and exact FE/BFF accepted deployment verified; Codex2 should perform task-closeout finalization and mark done.
 
 ## Summary
-修復 ENOSPC 後仍停更的 lifecycle projector，加入安全 generation retention、可恢復 publish 與 readiness/freshness truth，並把 live rescue 正式經 PR 部署。
+移除 getSimulatedDetails 與 local-only success；依 BFF availability/provenance 顯示真實/unknown 狀態，suggestion action 只在 receipt readback 後成功。
 
 ## Coordination Root
 - Auto workers inherit `PANTHEON_STATUS_ROOT`, `PANTHEON_COMMAND_ROOT`, and `PANTHEON_COMMAND_RUNTIME_SHA` from the supervisor.
