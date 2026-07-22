@@ -73,3 +73,10 @@ low. The current manifests include MLflow 3.10.1, Ray/RLlib 2.9.3, and Torch
   fail-closed boundaries.
 - The six dismissed npm alerts refer only to the frontend mirror removed from
   Pantheon `dev` by `834318190c90962e024ee9b82243cf31a742f441`.
+- Remediation PR #3968 merged as
+  `983c2a84b2f4947f848ffbbd0f7f230d6c8d5875`; the least-privilege alert-read
+  workflow fix in PR #3969 merged as
+  `1f51fc82f918412bd5654a2872bb48df716a4f82`.
+- Dependency Alert Reachability run `29946794630` passed on the delivered
+  `dev` merge, including alert query, candidate reconciliation, and evidence
+  artifact upload.

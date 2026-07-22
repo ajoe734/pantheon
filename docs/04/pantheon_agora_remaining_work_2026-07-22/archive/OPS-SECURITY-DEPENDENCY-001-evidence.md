@@ -110,6 +110,61 @@ The following validations passed in this task worktree:
 - `docker compose config --quiet`, workflow/JSON parsing, Python compilation,
   and `git diff --check`.
 
+## Post-merge revalidation
+
+The owner repeated the full dependency/container/security pass after the
+initial delivery and its alert-inventory permission follow-up merged:
+
+- PR #3968 merged as `983c2a84b2f4947f848ffbbd0f7f230d6c8d5875`.
+- PR #3969 merged as `1f51fc82f918412bd5654a2872bb48df716a4f82`.
+- Pull-request run `29946691427` and delivered-`dev` run `29946794630` both
+  passed `Reachable critical/high inventory`; the latter also uploaded the
+  reconciliation artifact.
+- A fresh GitHub API query returned 14 open alerts: six critical, two high,
+  five medium, and one low. All eight critical/high alerts resolved as
+  `candidate_fixed`; the other six resolved as `below_threshold_fixed`.
+
+Successful focused commands and outcomes:
+
+```text
+python3 -m unittest scripts.security.test_dependabot_reachability
+(cd services/research/mlflow && python3 -m unittest test_security_boundary)
+(cd services/research/rllib && python3 -m unittest test_security_boundary)
+(cd services/research/rllib && python3 -m unittest test_adapter test_ray_tune_adapter)
+(cd services/registry/experiments && python3 -m unittest test_adapter)
+# 68 tests passed in service-isolated processes
+
+python3 -m unittest scripts.test_ci_stage0
+# 7 tests passed
+
+docker build -f services/research/mlflow/Dockerfile ...
+docker build -f services/research/rllib/Dockerfile ...
+docker build -f services/research/finrl/Dockerfile ...
+# all full dependency images built; pip check reported no broken requirements
+```
+
+The rebuilt images reported MLflow `3.11.1`, Ray `2.54.0`, Torch
+`2.13.0+cpu`, Gymnasium `1.2.2`, FinRL `0.3.7`, and Stable-Baselines3 `2.8.0`.
+All version/import checks ran with no network, a read-only root filesystem,
+all capabilities dropped, and `no-new-privileges`.
+
+`docker compose --profile dormant-smoke build` rebuilt MLflow, FinRL, RLlib,
+and Ray Tune. The three bounded worker smokes completed with deployment stage
+`none` and closed gates. The live MLflow dormant probe proved:
+
+- healthy localhost request: 200;
+- disallowed Host and Origin requests: 403;
+- root-filesystem write: refused;
+- runtime user: non-root; network mode: `none`; no port bindings;
+- non-loopback bind without basic auth: refused with exit 78.
+
+The full RLlib image completed one upstream PPO iteration under the secure
+local initializer (`backend=ray_rllib_ppo`, mean reward 156.5, random baseline
+11.0). Missing token material, a remote Ray address, and a non-loopback
+dashboard host each failed before Ray activation. Compose validation, Python
+compilation, workflow/JSON parsing, `git diff --check`, and a high-confidence
+changed-content secret scan also passed.
+
 ## Residuals and ownership
 
 - The upstream `finrl==0.3.7` top-level package imports an undeclared broker
