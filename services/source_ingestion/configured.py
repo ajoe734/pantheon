@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
-from services.external_egress import guard_external_url
+from services.external_egress import open_external_url
 
 from .connectors import SourceConnector, SourceEvidenceError, SourceRecord
 from .external_sources import validate_external_source_connector, validate_external_source_record
@@ -466,10 +466,14 @@ class ConfiguredConnectorFetcher:
                 raw = handle.read(max_bytes + 1)
         else:
             request = urllib.request.Request(
-                guard_external_url(url, caller="source_ingest.configured_feed"),
+                url,
                 headers={"Accept": "application/json", "User-Agent": "pantheon-source-ingest/0.1"},
             )
-            with urllib.request.urlopen(request, timeout=float(fetch["timeout_seconds"])) as response:
+            with open_external_url(
+                request,
+                caller="source_ingest.configured_feed",
+                timeout=float(fetch["timeout_seconds"]),
+            ) as response:
                 final_url = response.geturl()
                 _validate_feed_url(final_url, "external feed redirect")
                 if not _url_is_allowed(final_url, allowed_prefixes):
@@ -553,10 +557,14 @@ def _assert_robots_allowed(url: str, allowed_prefixes: list[str], timeout_second
         raise SourceEvidenceError("robots.txt URL is outside allowed_url_prefixes")
     try:
         request = urllib.request.Request(
-            guard_external_url(robots_url, caller="source_ingest.configured_robots"),
+            robots_url,
             headers={"Accept": "text/plain", "User-Agent": "pantheon-source-ingest/0.1"},
         )
-        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        with open_external_url(
+            request,
+            caller="source_ingest.configured_robots",
+            timeout=timeout_seconds,
+        ) as response:
             if response.status >= 400:
                 return
             robots_txt = response.read(100_000).decode("utf-8", errors="replace")
