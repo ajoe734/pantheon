@@ -133,3 +133,4 @@ def test_hosted_lifecycle_probe_uses_mfa_bound_governed_operator():
     assert probe["env"]["DEV_BFF_OIDC_CLIENT_SECRET"] == (
         "${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET }}"
     )
+    assert "--expected-login-identity operator_a" in probe["run"]
