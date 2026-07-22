@@ -1004,9 +1004,13 @@ services:
       PANTHEON_BFF_POSTMORTEM_STORE: ${PANTHEON_BFF_POSTMORTEM_STORE:-/data/bff/postmortems.json}
       # Both lifecycle read models are switched through one projector-owned
       # generation symlink, so the BFF can never observe a mixed generation.
-      PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE: ${PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE:-/data/bff/lifecycle-projection/current/trade_journey_events.json}
+      # These projector-owned read surfaces are deliberately not host-overridable.
+      # A stale .env override would let readiness observe the canonical controller
+      # while BFF reads remained pinned to legacy snapshots.
+      PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE: /data/bff/lifecycle-projection/current/trade_journey_events.json
       LIFECYCLE_PROJECTION_ROOT: /data/bff/lifecycle-projection
       LIFECYCLE_PROJECTOR_STATE_PATH: /data/bff/lifecycle-projection/controller_state.json
+      LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH: /data/bff/lifecycle-projection/health_state.json
       LIFECYCLE_PROJECTOR_GENERATION_RETENTION: ${LIFECYCLE_PROJECTOR_GENERATION_RETENTION:-32}
       LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS: ${LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS:-3600}
       LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS: ${LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS:-120}
@@ -1024,7 +1028,7 @@ services:
       PANTHEON_BFF_PERSONA_SESSION_STORE: /data/bff/persona_sessions.json
       PANTHEON_BFF_PAPER_LIVE_DRIFT_STORE: /data/bff/paper_live_drift_reports.json
       PANTHEON_BFF_V5_INTERVENTION_STORE: /data/bff/v5_interventions.json
-      PANTHEON_BFF_LOOP_RUN_STORE: ${PANTHEON_BFF_LOOP_RUN_STORE:-/data/bff/lifecycle-projection/current/loop_runs.json}
+      PANTHEON_BFF_LOOP_RUN_STORE: /data/bff/lifecycle-projection/current/loop_runs.json
       PANTHEON_BFF_CORS_ORIGINS: ${PANTHEON_BFF_CORS_ORIGINS:-https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io,https://pantheon-dev.lovable.app,https://pantheon-ai-system-front-dev.lovable.app,https://preview--pantheon-dev.lovable.app,https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com,https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app,https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com}
       PANTHEON_BFF_SERVICE_TIMEOUT_SECONDS: "2.0"
       PANTHEON_ENV: ${PANTHEON_ENV:-dev}
@@ -1220,6 +1224,7 @@ services:
       TELEMETRY_DB_DSN: ${TELEMETRY_DB_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       LIFECYCLE_PROJECTION_ROOT: /data/bff/lifecycle-projection
       LIFECYCLE_PROJECTOR_STATE_PATH: /data/bff/lifecycle-projection/controller_state.json
+      LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH: /data/bff/lifecycle-projection/health_state.json
       LIFECYCLE_PROJECTOR_POLL_SECONDS: ${LIFECYCLE_PROJECTOR_POLL_SECONDS:-1}
       LIFECYCLE_PROJECTOR_BATCH_SIZE: ${LIFECYCLE_PROJECTOR_BATCH_SIZE:-500}
       LIFECYCLE_PROJECTOR_MAX_TICKS: ${LIFECYCLE_PROJECTOR_MAX_TICKS:-0}
