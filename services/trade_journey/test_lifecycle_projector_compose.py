@@ -31,9 +31,15 @@ def test_canonical_lifecycle_projector_is_default_and_owns_both_read_models():
     )
     assert environment["LIFECYCLE_PROJECTOR_POLL_SECONDS"] == "${LIFECYCLE_PROJECTOR_POLL_SECONDS:-1}"
     assert environment["LIFECYCLE_PROJECTOR_GENERATION_RETENTION"] == "${LIFECYCLE_PROJECTOR_GENERATION_RETENTION:-32}"
-    assert environment["LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS"] == "${LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS:-3600}"
-    assert environment["LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_BYTES"] == "${LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_BYTES:-134217728}"
-    assert environment["LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_PERCENT"] == "${LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_PERCENT:-5}"
+    assert environment["LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS"] == (
+        "${LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS:-3600}"
+    )
+    assert environment["LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_BYTES"] == (
+        "${LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_BYTES:-134217728}"
+    )
+    assert environment["LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_PERCENT"] == (
+        "${LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_PERCENT:-5}"
+    )
     assert environment["GIT_SHA"] == "${GIT_SHA:-unknown}"
     assert "bff-data:/data/bff" in projector["volumes"]
     assert projector["depends_on"]["postgres"]["condition"] == "service_healthy"
