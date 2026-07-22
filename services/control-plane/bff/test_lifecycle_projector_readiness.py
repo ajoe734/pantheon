@@ -26,6 +26,10 @@ def _configure_dependencies(monkeypatch, projection_root: Path) -> None:
         str(projection_root / "controller_state.json"),
     )
     monkeypatch.setenv(
+        "LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH",
+        str(projection_root / "health_state.json"),
+    )
+    monkeypatch.setenv(
         "PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE",
         str(projection_root / "current" / "trade_journey_events.json"),
     )
@@ -62,7 +66,7 @@ def test_bff_readyz_fails_closed_when_projector_is_stale_and_recovers(
     assert dependency["source_high_watermark"] == 1
     assert dependency["last_successful_publish_at"]
 
-    state_path = tmp_path / "controller_state.json"
+    state_path = tmp_path / "health_state.json"
     state = json.loads(state_path.read_text(encoding="utf-8"))
     state["controller"]["last_poll_at"] = "2020-01-01T00:00:00Z"
     state_path.write_text(json.dumps(state), encoding="utf-8")
