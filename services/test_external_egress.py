@@ -149,8 +149,85 @@ def test_redirect_target_is_allowlisted_and_dns_revalidated() -> None:
     assert calls == ["cdn.example.com"]
 
 
-def test_redirect_escape_is_blocked_before_dns_or_transport() -> None:
+def test_same_origin_redirect_preserves_credential_headers() -> None:
+    handler = _GuardedRedirectHandler(
+        _RedirectPolicy(
+            caller="test",
+            env=_allowlist("api.example.com"),
+            resolver=_resolver("8.8.8.8"),
+            max_redirects=3,
+        )
+    )
+    request = urllib.request.Request(
+        "https://api.example.com/start",
+        headers={"Authorization": "Bearer secret", "X-Api-Key": "api-secret"},
+    )
+
+    redirected = handler.redirect_request(
+        request,
+        None,
+        302,
+        "Found",
+        {},
+        "https://api.example.com/next",
+    )
+
+    assert redirected is not None
+    assert redirected.get_header("Authorization") == "Bearer secret"
+    assert redirected.get_header("X-api-key") == "api-secret"
+
+
+def test_cross_origin_redirect_strips_credential_headers() -> None:
+    handler = _GuardedRedirectHandler(
+        _RedirectPolicy(
+            caller="test",
+            env=_allowlist("api.example.com", "cdn.example.com"),
+            resolver=_resolver("8.8.8.8"),
+            max_redirects=3,
+        )
+    )
+    request = urllib.request.Request(
+        "https://api.example.com/start",
+        headers={
+            "Authorization": "Bearer secret",
+            "Proxy-Authorization": "Basic secret",
+            "Cookie": "session=secret",
+            "X-Api-Key": "api-secret",
+            "X-Access-Token": "token-secret",
+            "Accept": "application/json",
+        },
+    )
+
+    redirected = handler.redirect_request(
+        request,
+        None,
+        302,
+        "Found",
+        {},
+        "https://cdn.example.com/object",
+    )
+
+    assert redirected is not None
+    assert redirected.get_header("Authorization") is None
+    assert redirected.get_header("Proxy-authorization") is None
+    assert redirected.get_header("Cookie") is None
+    assert redirected.get_header("X-api-key") is None
+    assert redirected.get_header("X-access-token") is None
+    assert redirected.get_header("Accept") == "application/json"
+
+
+def test_redirect_escape_is_blocked_before_dns_or_secret_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls: list[str] = []
+    transport_called = False
+
+    def redirect_transport(*args, **kwargs):
+        nonlocal transport_called
+        transport_called = True
+        raise AssertionError("blocked redirect must not construct a secret-bearing request")
+
+    monkeypatch.setattr(urllib.request.HTTPRedirectHandler, "redirect_request", redirect_transport)
 
     def resolver(host: str, port: int, *, type: int):
         calls.append(host)
@@ -166,7 +243,10 @@ def test_redirect_escape_is_blocked_before_dns_or_transport() -> None:
     )
     with pytest.raises(ExternalEgressBlocked) as excinfo:
         handler.redirect_request(
-            urllib.request.Request("https://api.example.com/start"),
+            urllib.request.Request(
+                "https://api.example.com/start",
+                headers={"Authorization": "Bearer secret", "X-Api-Key": "api-secret"},
+            ),
             None,
             302,
             "Found",
@@ -175,6 +255,7 @@ def test_redirect_escape_is_blocked_before_dns_or_transport() -> None:
         )
     assert excinfo.value.reason_code == "host_not_allowlisted"
     assert calls == []
+    assert transport_called is False
 
 
 def test_open_external_url_denies_before_building_transport(monkeypatch: pytest.MonkeyPatch) -> None:

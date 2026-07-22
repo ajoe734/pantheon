@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import os
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +18,7 @@ from typing import Any
 CONNECTOR_ID = "tw-twse-tpex-official-market"
 PROJECTOR = "source-ingest-market-data"
 DEFAULT_STALE_THRESHOLD_SECONDS = 86_400
+SOURCE_TIMESTAMP_FUTURE_TOLERANCE_SECONDS = 300
 
 
 def _get_source_records(base_url: str) -> list[dict[str, Any]]:
@@ -61,15 +62,23 @@ def _parse_timestamp(value: Any) -> datetime | None:
 
 def _freshness_metadata(
     *,
-    source_timestamp: str,
+    source_timestamp: str | None,
     connector_freshness: dict[str, Any],
     now: datetime,
     default_stale_threshold_seconds: int,
 ) -> dict[str, Any]:
     parsed_source_timestamp = _parse_timestamp(source_timestamp)
+    if not str(source_timestamp or "").strip():
+        source_timestamp_status = "missing"
+    elif parsed_source_timestamp is None:
+        source_timestamp_status = "invalid"
+    elif parsed_source_timestamp > now + timedelta(seconds=SOURCE_TIMESTAMP_FUTURE_TOLERANCE_SECONDS):
+        source_timestamp_status = "future"
+    else:
+        source_timestamp_status = "valid"
     age_seconds = (
         max(0, int((now - parsed_source_timestamp).total_seconds()))
-        if parsed_source_timestamp is not None
+        if parsed_source_timestamp is not None and source_timestamp_status == "valid"
         else None
     )
     threshold = max(
@@ -78,6 +87,8 @@ def _freshness_metadata(
     )
     stale = (
         connector_freshness.get("status") == "stale"
+        or connector_freshness.get("source_timestamp_status") in {"missing", "invalid", "future"}
+        or source_timestamp_status != "valid"
         or age_seconds is None
         or age_seconds > threshold
     )
@@ -87,11 +98,24 @@ def _freshness_metadata(
         "stale": stale,
         "lastSuccessAt": connector_freshness.get("last_success_at"),
         "sourceTimestamp": source_timestamp or None,
+        "sourceTimeStatus": source_timestamp_status,
         "ageSeconds": age_seconds,
         "staleThresholdSeconds": threshold,
         "nextRunAt": connector_freshness.get("next_run_at") or connector_freshness.get("next_due_at"),
         "lastTypedFailure": connector_freshness.get("last_typed_failure"),
     }
+
+
+def _explicit_source_timestamp(row: dict[str, Any], metadata: dict[str, Any]) -> str | None:
+    for container, keys in (
+        (row, ("available_time", "as_of_time", "event_time", "timestamp", "date")),
+        (metadata, ("available_time", "as_of_time", "event_time", "source_timestamp", "date")),
+    ):
+        for key in keys:
+            value = str(container.get(key) or "").strip()
+            if value:
+                return value
+    return None
 
 
 def project(
@@ -106,7 +130,7 @@ def project(
     if captured_at.tzinfo is None:
         captured_at = captured_at.replace(tzinfo=timezone.utc)
     captured_at = captured_at.astimezone(timezone.utc)
-    latest: dict[str, tuple[str, dict[str, Any], dict[str, Any]]] = {}
+    latest: dict[str, tuple[tuple[int, datetime, str, str], str | None, dict[str, Any], dict[str, Any]]] = {}
     for record in records:
         if str(record.get("connector_id") or "") != CONNECTOR_ID:
             continue
@@ -115,18 +139,27 @@ def project(
         if row.get("dataset") != "tw_price_daily":
             continue
         symbol = str(row.get("symbol") or "").strip()
-        observed_at = str(row.get("available_time") or row.get("date") or record.get("created_at") or "")
-        if symbol and (symbol not in latest or observed_at >= latest[symbol][0]):
-            latest[symbol] = (observed_at, record, row)
+        source_timestamp = _explicit_source_timestamp(row, metadata)
+        parsed_source_timestamp = _parse_timestamp(source_timestamp)
+        ordering_timestamp = parsed_source_timestamp or datetime.min.replace(tzinfo=timezone.utc)
+        source_id = str(record.get("source_id") or "")
+        ordering_key = (
+            1 if parsed_source_timestamp is not None else 0,
+            ordering_timestamp,
+            source_timestamp or "",
+            source_id,
+        )
+        if symbol and (symbol not in latest or ordering_key >= latest[symbol][0]):
+            latest[symbol] = (ordering_key, source_timestamp, record, row)
 
     watchlist: dict[str, dict[str, Any]] = {}
     signals: dict[str, dict[str, Any]] = {}
-    for symbol, (observed_at, record, row) in latest.items():
+    for symbol, (_ordering_key, source_timestamp, record, row) in latest.items():
         source_id = str(record.get("source_id") or "")
         metadata = record.get("metadata") or {}
         source_ref = f"source_ingest:{source_id}"
         freshness = _freshness_metadata(
-            source_timestamp=observed_at,
+            source_timestamp=source_timestamp,
             connector_freshness=freshness_readback,
             now=captured_at,
             default_stale_threshold_seconds=stale_threshold_seconds,
@@ -135,7 +168,7 @@ def project(
             "symbol": symbol,
             "market": row.get("market"),
             "venue": row.get("venue"),
-            "asOf": observed_at,
+            "asOf": source_timestamp,
             "source_ref": source_ref,
             "sourceId": source_id,
             "ingestRunId": metadata.get("source_ingest_run_id") or metadata.get("ingest_run_id"),
@@ -155,7 +188,7 @@ def project(
             "volume": row.get("volume"),
             **common,
         }
-        signal_id = f"market-signal-{symbol}-{str(row.get('date') or observed_at)[:10]}"
+        signal_id = f"market-signal-{symbol}-{str(row.get('date') or source_timestamp or 'unknown')[:10]}"
         signals[signal_id] = {
             "id": signal_id,
             "signal_id": signal_id,

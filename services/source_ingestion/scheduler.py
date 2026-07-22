@@ -206,6 +206,7 @@ class IngestReceipt:
     rejected_count: int
     watermark: str | None
     source_timestamp: str | None
+    source_timestamp_status: str = "unknown"
     evidence_refs: Mapping[str, Any] = field(default_factory=dict)
     storage_refs: Mapping[str, Any] = field(default_factory=dict)
     typed_failure: Mapping[str, Any] | None = None
@@ -219,6 +220,8 @@ class IngestReceipt:
         for field_name in ("raw_count", "normalized_count", "rejected_count"):
             if int(getattr(self, field_name)) < 0:
                 raise SourceEvidenceError(f"receipt {field_name} must be >= 0")
+        if self.source_timestamp_status not in {"valid", "missing", "invalid", "future", "unknown"}:
+            raise SourceEvidenceError("receipt source_timestamp_status is invalid")
         object.__setattr__(self, "evidence_refs", dict(self.evidence_refs))
         object.__setattr__(self, "storage_refs", dict(self.storage_refs))
         if self.typed_failure is not None:
@@ -239,6 +242,7 @@ class IngestReceipt:
             "rejected_count": self.rejected_count,
             "watermark": self.watermark,
             "source_timestamp": self.source_timestamp,
+            "source_timestamp_status": self.source_timestamp_status,
             "evidence_refs": dict(self.evidence_refs),
             "storage_refs": dict(self.storage_refs),
             "typed_failure": dict(self.typed_failure) if self.typed_failure is not None else None,
@@ -260,6 +264,10 @@ class IngestReceipt:
             rejected_count=int(data.get("rejected_count") or 0),
             watermark=data.get("watermark"),
             source_timestamp=data.get("source_timestamp"),
+            source_timestamp_status=str(
+                data.get("source_timestamp_status")
+                or ("valid" if data.get("source_timestamp") else "unknown")
+            ),
             evidence_refs=dict(data.get("evidence_refs") or {}),
             storage_refs=dict(data.get("storage_refs") or {}),
             typed_failure=dict(data["typed_failure"]) if isinstance(data.get("typed_failure"), Mapping) else None,

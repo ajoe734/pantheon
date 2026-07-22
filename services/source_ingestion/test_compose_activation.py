@@ -69,6 +69,7 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
     assert controller_env["PANTHEON_TENANT_ID"] == "${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}"
     assert "SOURCE_INGEST_CONTROLLER_LEASE_SECONDS" not in controller_env
     assert controller_env["SOURCE_INGEST_CONTROLLER_MAX_TICKS"] == "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-1}"
+    assert controller_env["SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS"] == "${SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS:-}"
     assert controller_env["SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY"] == "${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-1}"
     assert controller_env["DATABASE_URL"].startswith("${DATABASE_URL:-postgresql://")
     assert "source-ingest-data:/data/source-ingest" in controller["volumes"]

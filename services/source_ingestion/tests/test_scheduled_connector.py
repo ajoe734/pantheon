@@ -55,6 +55,7 @@ def _connector(**overrides):
 
 
 def _configure_with_records(test_client, connector_id="conn-sched-notes"):
+    source_timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     return test_client.post(
         "/api/source-ingest/connectors",
         json={
@@ -70,6 +71,7 @@ def _configure_with_records(test_client, connector_id="conn-sched-notes"):
                         "metadata": {
                             "body": "Autonomous scheduled evidence",
                             "access_scope": ["operator"],
+                            "available_time": source_timestamp,
                         },
                     }
                 ],
@@ -148,6 +150,7 @@ def test_run_scheduled_runs_due_connector_and_persists_evidence(client) -> None:
     assert receipt["connector_id"] == "conn-sched-notes"
     assert receipt["normalized_count"] == 1
     assert receipt["source_timestamp"]
+    assert receipt["source_timestamp_status"] == "valid"
     assert receipt["typed_failure"] is None
 
     receipt_readback = test_client.get(f"/api/source-ingest/receipts/{receipt['ingest_run_id']}")
@@ -278,6 +281,49 @@ def test_blocked_host_records_typed_denial_without_outbound_request(client, monk
     assert receipt["typed_failure"]["code"] == "host_not_allowlisted"
     assert receipt["typed_failure"]["retryable"] is False
     assert outbound_called is False
+
+
+def test_post_processing_failure_keeps_durable_typed_receipt_after_reload(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    test_client, _, module = client
+    configured = _configure_with_records(test_client, connector_id="conn-post-processing-failure")
+    assert configured.status_code == 201, configured.text
+    scheduled = test_client.put(
+        "/api/source-ingest/connectors/conn-post-processing-failure/schedule",
+        json={"interval_seconds": 60, "enabled": True},
+    )
+    assert scheduled.status_code == 200, scheduled.text
+
+    def fail_health_write(*args, **kwargs):
+        raise OSError("simulated health-store failure")
+
+    monkeypatch.setattr(module.source_health_store, "upsert", fail_health_write)
+    response = test_client.post("/api/source-ingest/run-scheduled", json={"max_concurrency": 1})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["summary"]["total_failed"] == 1
+    terminal_runs = [run for run in module.store.list_runs() if run.status.value == "completed"]
+    assert len(terminal_runs) == 1
+    receipt = module.store.get_receipt(terminal_runs[0].ingest_run_id)
+    assert receipt is not None
+    assert receipt.status == "failed"
+    assert receipt.typed_failure == {
+        "schema_version": "source_ingest_typed_failure.v1",
+        "category": "persistence",
+        "code": "post_processing_failed",
+        "error_type": "OSError",
+        "retryable": True,
+        "stage": "source_health_usage",
+    }
+
+    reloaded_store = module.JsonlIngestScheduleStore(module.SCHEDULE_STORE_PATH)
+    durable_run = reloaded_store.get_run(terminal_runs[0].ingest_run_id)
+    durable_receipt = reloaded_store.get_receipt(terminal_runs[0].ingest_run_id)
+    assert durable_run is not None and durable_run.status.value == "completed"
+    assert durable_receipt is not None and durable_receipt.status == "failed"
+    assert durable_receipt.typed_failure["code"] == "post_processing_failed"
 
 
 def test_run_scheduled_skips_disabled_connector(client) -> None:
@@ -696,7 +742,7 @@ def test_stale_source_remains_readable_with_explicit_readiness_truth(client) -> 
                         "source_id": "src-stale-readable-1",
                         "title": "Persisted stale source",
                         "content_ref": "memory://scheduled/stale/source-1",
-                        "created_at": "2020-01-01T00:00:00Z",
+                        "metadata": {"available_time": "2020-01-01T00:00:00Z"},
                     }
                 ],
             },
@@ -718,6 +764,66 @@ def test_stale_source_remains_readable_with_explicit_readiness_truth(client) -> 
 
     persisted = test_client.get("/api/source-ingest/source-records/src-stale-readable-1")
     assert persisted.status_code == 200
+
+
+@pytest.mark.parametrize(
+    ("connector_id", "metadata", "expected_status"),
+    [
+        ("conn-source-time-missing", {}, "missing"),
+        (
+            "conn-source-time-future",
+            {"available_time": "2099-01-01T00:00:00Z"},
+            "future",
+        ),
+        (
+            "conn-source-time-invalid",
+            {"available_time": "not-a-provider-timestamp"},
+            "invalid",
+        ),
+    ],
+)
+def test_unknown_or_future_source_time_is_never_reported_fresh(
+    client,
+    connector_id: str,
+    metadata: dict[str, str],
+    expected_status: str,
+) -> None:
+    test_client, _, _ = client
+    configured = test_client.post(
+        "/api/source-ingest/connectors",
+        json={
+            "connector": _connector(connector_id=connector_id),
+            "fetch": {
+                "mode": "static_records",
+                "records": [
+                    {
+                        "source_id": f"src-{connector_id}",
+                        "title": "Source-time truth fixture",
+                        "content_ref": f"memory://scheduled/{connector_id}",
+                        "metadata": metadata,
+                    }
+                ],
+            },
+        },
+    )
+    assert configured.status_code == 201, configured.text
+    test_client.put(
+        f"/api/source-ingest/connectors/{connector_id}/schedule",
+        json={"interval_seconds": 86400, "enabled": True},
+    )
+
+    run = test_client.post("/api/source-ingest/run-scheduled", json={"max_concurrency": 1})
+
+    assert run.status_code == 200, run.text
+    receipt = run.json()["ran"][0]["receipt"]
+    assert receipt["source_timestamp_status"] == expected_status
+    registry = test_client.get("/api/source-ingest/registry").json()
+    entry = next(item for item in registry["connectors"] if item["connector_id"] == connector_id)
+    freshness = entry["freshness"]
+    assert freshness["status"] == "stale"
+    assert freshness["stale"] is True
+    assert freshness["source_timestamp_status"] == expected_status
+    assert freshness["age_seconds"] is None
     ready = test_client.get("/readyz")
     assert ready.status_code == 200
     assert ready.json()["dependencies"]["source_freshness"]["status"] == "stale"

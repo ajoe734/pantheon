@@ -48,6 +48,7 @@ def test_projects_latest_real_row_with_provenance() -> None:
         "stale": False,
         "lastSuccessAt": "2026-07-07T01:00:00Z",
         "sourceTimestamp": "2026-07-07",
+        "sourceTimeStatus": "valid",
         "ageSeconds": 7200,
         "staleThresholdSeconds": 172800,
         "nextRunAt": "2026-07-08T01:00:00Z",
@@ -90,6 +91,42 @@ def test_projects_stale_persisted_market_with_typed_failure_truth() -> None:
     assert market["stale"] is True
     assert market["freshness"]["ageSeconds"] > market["freshness"]["staleThresholdSeconds"]
     assert market["freshness"]["lastTypedFailure"]["code"] == "host_not_allowlisted"
+
+
+def test_missing_source_time_never_falls_back_to_record_creation_time() -> None:
+    record = _record("src-missing-time", "2330", "2026-07-07", 905)
+    record["created_at"] = "2026-07-22T00:00:00Z"
+    del record["metadata"]["normalized_row"]["available_time"]
+    del record["metadata"]["normalized_row"]["date"]
+
+    stores = project(
+        [record],
+        connector_freshness={"status": "fresh", "stale_threshold_seconds": 86400},
+        now=datetime(2026, 7, 22, 1, tzinfo=timezone.utc),
+    )
+
+    market = stores["agora_watchlist"]["market-2330"]
+    assert market["asOf"] is None
+    assert market["freshnessStatus"] == "stale"
+    assert market["stale"] is True
+    assert market["freshness"]["sourceTimestamp"] is None
+    assert market["freshness"]["sourceTimeStatus"] == "missing"
+    assert market["freshness"]["ageSeconds"] is None
+
+
+def test_materially_future_source_time_is_explicitly_stale() -> None:
+    stores = project(
+        [_record("src-future-time", "2330", "2099-01-01", 905)],
+        connector_freshness={"status": "fresh", "stale_threshold_seconds": 86400},
+        now=datetime(2026, 7, 22, 1, tzinfo=timezone.utc),
+    )
+
+    market = stores["agora_watchlist"]["market-2330"]
+    assert market["asOf"] == "2099-01-01"
+    assert market["freshnessStatus"] == "stale"
+    assert market["stale"] is True
+    assert market["freshness"]["sourceTimeStatus"] == "future"
+    assert market["freshness"]["ageSeconds"] is None
 
 
 def test_compose_wires_both_projected_agora_stores() -> None:

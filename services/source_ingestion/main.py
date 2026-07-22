@@ -144,6 +144,10 @@ DEFAULT_STALE_THRESHOLD_SECONDS = max(
     1,
     int(os.getenv("SOURCE_INGEST_DEFAULT_STALE_THRESHOLD_SECONDS", "86400")),
 )
+SOURCE_TIMESTAMP_FUTURE_TOLERANCE_SECONDS = max(
+    0,
+    int(os.getenv("SOURCE_INGEST_FUTURE_TIMESTAMP_TOLERANCE_SECONDS", "300")),
+)
 # Optional: when set, notify search service after successful ingest runs (fire-and-forget).
 SEARCH_INGEST_NOTIFY_URL = os.getenv("SEARCH_INGEST_NOTIFY_URL", "").rstrip("/")
 PRODUCTION_POSTURE = require_source_search_posture("source-ingest")
@@ -694,19 +698,37 @@ def _connector_freshness_summary(connector_id: str) -> dict[str, Any]:
     last_success_at = (
         latest_success_receipt.finished_at
         if latest_success_receipt is not None
-        else (watermark.updated_at if watermark else None)
+        else (watermark.updated_at if watermark is not None and not store.list_receipts(connector_id=connector_id) else None)
     )
     last_success_dt = _parse_utc_datetime(last_success_at)
     source_timestamp = latest_success_receipt.source_timestamp if latest_success_receipt is not None else None
     source_timestamp_dt = _parse_utc_datetime(source_timestamp)
+    source_timestamp_status = (
+        latest_success_receipt.source_timestamp_status
+        if latest_success_receipt is not None
+        else "missing"
+    )
+    if source_timestamp:
+        if source_timestamp_dt is None:
+            source_timestamp_status = "invalid"
+        elif source_timestamp_dt > now + timedelta(seconds=SOURCE_TIMESTAMP_FUTURE_TOLERANCE_SECONDS):
+            source_timestamp_status = "future"
+        elif source_timestamp_status in {"unknown", "missing", "invalid", "future"}:
+            source_timestamp_status = "valid"
     latest_run_at = _run_effective_at(latest_run) if latest_run else None
     latest_run_status = _run_status_value(latest_run) if latest_run else None
     next_due_at: str | None = None
     seconds_until_due: int | None = None
     staleness_seconds: int | None = None
-    age_seconds = max(0, int((now - source_timestamp_dt).total_seconds())) if source_timestamp_dt else None
+    age_seconds = (
+        max(0, int((now - source_timestamp_dt).total_seconds()))
+        if source_timestamp_dt is not None and source_timestamp_status == "valid"
+        else None
+    )
     stale_threshold_seconds = _connector_stale_threshold_seconds(connector_id, schedule)
-    stale = age_seconds is not None and age_seconds > stale_threshold_seconds
+    stale = source_timestamp_status != "valid" or (
+        age_seconds is not None and age_seconds > stale_threshold_seconds
+    )
     is_due = False
 
     if schedule is None:
@@ -732,6 +754,19 @@ def _connector_freshness_summary(connector_id: str) -> dict[str, Any]:
     ):
         status = "stale" if stale else "degraded"
 
+    if (
+        latest_receipt is not None
+        and latest_receipt.status != "completed"
+        and (
+            last_success_dt is None
+            or (
+                _parse_utc_datetime(latest_receipt.finished_at or latest_receipt.started_at) is not None
+                and _parse_utc_datetime(latest_receipt.finished_at or latest_receipt.started_at) >= last_success_dt
+            )
+        )
+    ):
+        status = "stale" if stale else "degraded"
+
     latest_run_payload = None
     if latest_run is not None:
         latest_run_payload = {
@@ -752,6 +787,7 @@ def _connector_freshness_summary(connector_id: str) -> dict[str, Any]:
         "schedule_enabled": schedule_enabled,
         "last_success_at": last_success_at,
         "source_timestamp": source_timestamp,
+        "source_timestamp_status": source_timestamp_status,
         "age_seconds": age_seconds,
         "stale_threshold_seconds": stale_threshold_seconds,
         "last_failure_at": last_failed_receipt.finished_at if last_failed_receipt is not None else None,
@@ -1605,8 +1641,13 @@ def _provider_metadata_from_records(result: Any) -> dict[str, Any]:
     return metadata
 
 
-def _source_timestamp_for_result(result: Any) -> str | None:
+def _source_timestamp_state_for_result(
+    result: Any,
+    *,
+    now: datetime | None = None,
+) -> tuple[str | None, str]:
     timestamps: list[datetime] = []
+    explicit_candidate_seen = False
     for record in result.records:
         metadata = dict(record.metadata)
         normalized_row = metadata.get("normalized_row")
@@ -1620,24 +1661,47 @@ def _source_timestamp_for_result(result: Any) -> str | None:
             metadata.get(key)
             for key in ("available_time", "as_of_time", "event_time", "source_timestamp", "date")
         )
-        candidates.append(record.to_dict().get("created_at"))
         for candidate in candidates:
+            if candidate in (None, ""):
+                continue
+            explicit_candidate_seen = True
             parsed = _parse_utc_datetime(candidate)
             if parsed is not None:
                 timestamps.append(parsed)
                 break
     if not timestamps:
-        return None
-    return max(timestamps).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        return None, "invalid" if explicit_candidate_seen else "missing"
+    latest = max(timestamps).replace(microsecond=0)
+    captured_at = now or datetime.now(timezone.utc)
+    if captured_at.tzinfo is None:
+        captured_at = captured_at.replace(tzinfo=timezone.utc)
+    captured_at = captured_at.astimezone(timezone.utc)
+    status = (
+        "future"
+        if latest > captured_at + timedelta(seconds=SOURCE_TIMESTAMP_FUTURE_TOLERANCE_SECONDS)
+        else "valid"
+    )
+    return latest.isoformat().replace("+00:00", "Z"), status
 
 
-def _persist_ingest_receipt(result: Any, evidence_refs: Mapping[str, Any]) -> IngestReceipt:
+def _source_timestamp_for_result(result: Any) -> str | None:
+    return _source_timestamp_state_for_result(result)[0]
+
+
+def _persist_ingest_receipt(
+    result: Any,
+    evidence_refs: Mapping[str, Any],
+    *,
+    status: str | None = None,
+    typed_failure: Mapping[str, Any] | None = None,
+) -> IngestReceipt:
     run = result.run.to_dict()
     storage_refs = evidence_refs.get("storage_refs")
+    source_timestamp, source_timestamp_status = _source_timestamp_state_for_result(result)
     receipt = IngestReceipt(
         ingest_run_id=result.run.ingest_run_id,
         connector_id=result.run.connector_id,
-        status=result.run.status.value,
+        status=status or result.run.status.value,
         trigger_type=result.run.trigger_type,
         trace_id=result.run.trace_id,
         started_at=str(run["started_at"]),
@@ -1646,12 +1710,28 @@ def _persist_ingest_receipt(result: Any, evidence_refs: Mapping[str, Any]) -> In
         normalized_count=int(result.run.normalized_count or 0),
         rejected_count=int(result.run.rejected_count or 0),
         watermark=result.watermark.value if result.watermark else None,
-        source_timestamp=_source_timestamp_for_result(result),
+        source_timestamp=source_timestamp,
+        source_timestamp_status=source_timestamp_status,
         evidence_refs={key: value for key, value in evidence_refs.items() if key != "storage_refs"},
         storage_refs=dict(storage_refs) if isinstance(storage_refs, Mapping) else {},
-        typed_failure=dict(result.typed_failure) if result.typed_failure is not None else None,
+        typed_failure=(
+            dict(typed_failure)
+            if typed_failure is not None
+            else (dict(result.typed_failure) if result.typed_failure is not None else None)
+        ),
     )
     return store.upsert_receipt(receipt)
+
+
+def _post_processing_typed_failure(exc: Exception, *, stage: str) -> dict[str, Any]:
+    return {
+        "schema_version": "source_ingest_typed_failure.v1",
+        "category": "persistence",
+        "code": "post_processing_failed",
+        "error_type": type(exc).__name__,
+        "retryable": isinstance(exc, OSError),
+        "stage": stage,
+    }
 
 
 def _update_source_health_and_usage(
@@ -1740,12 +1820,37 @@ def _run_job(
         fetch_batch=fetch_batch,
         frontier_id=frontier_id,
     )
-    _append_audit_actions(result.audit_actions)
-    storage_refs = _persist_market_data_storage_refs(result)
-    evidence_refs = _persist_source_evidence_refs(result, storage_refs=storage_refs)
-    evidence_refs["storage_refs"] = storage_refs
-    _update_source_health_and_usage(connector=connector, result=result, storage_refs=storage_refs)
-    _persist_ingest_receipt(result, evidence_refs)
+    evidence_refs: dict[str, Any] = {
+        "source_ids": [],
+        "evidence_item_ids": [],
+        "evidence_bundle_id": None,
+        "knowledge_object_ids": [],
+        "storage_refs": {},
+    }
+    initial_receipt_status = "processing" if result.run.status.value == "completed" else result.run.status.value
+    _persist_ingest_receipt(result, evidence_refs, status=initial_receipt_status)
+    post_processing_stage = "audit"
+    try:
+        _append_audit_actions(result.audit_actions)
+        post_processing_stage = "market_storage"
+        storage_refs = _persist_market_data_storage_refs(result)
+        evidence_refs["storage_refs"] = storage_refs
+        post_processing_stage = "source_evidence"
+        evidence_refs = _persist_source_evidence_refs(result, storage_refs=storage_refs)
+        evidence_refs["storage_refs"] = storage_refs
+        post_processing_stage = "source_health_usage"
+        _update_source_health_and_usage(connector=connector, result=result, storage_refs=storage_refs)
+        post_processing_stage = "receipt_finalize"
+        _persist_ingest_receipt(result, evidence_refs)
+    except Exception as exc:
+        if post_processing_stage != "receipt_finalize":
+            _persist_ingest_receipt(
+                result,
+                evidence_refs,
+                status="failed",
+                typed_failure=_post_processing_typed_failure(exc, stage=post_processing_stage),
+            )
+        raise
     source_search_refresh: dict[str, Any] | None = None
     if result.run.status.value == "completed":
         source_search_refresh = _notify_search_index_refresh(

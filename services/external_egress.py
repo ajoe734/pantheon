@@ -34,6 +34,15 @@ MODE_ALLOWLIST = "allowlist"
 MODE_DENY = "deny"
 VALID_MODES = (MODE_ALLOWLIST, MODE_DENY)
 _INTERNAL_HOST_SUFFIXES = (".internal", ".local", ".localdomain", ".svc", ".cluster.local")
+_SENSITIVE_REDIRECT_HEADERS = frozenset(
+    {
+        "authorization",
+        "proxy-authorization",
+        "cookie",
+        "cookie2",
+        "token",
+    }
+)
 
 DNSResolver = Callable[..., Sequence[tuple[Any, ...]]]
 
@@ -345,7 +354,35 @@ class _GuardedRedirectHandler(urllib.request.HTTPRedirectHandler):
             env=self.policy.env,
             resolver=self.policy.resolver,
         )
-        return super().redirect_request(req, fp, code, msg, headers, absolute_url)
+        redirected = super().redirect_request(req, fp, code, msg, headers, absolute_url)
+        if redirected is not None and _request_origin(req.full_url) != _request_origin(absolute_url):
+            _strip_cross_origin_credentials(redirected)
+        return redirected
+
+
+def _request_origin(url: str) -> tuple[str, str, int | None]:
+    parsed = urlsplit(url)
+    scheme = parsed.scheme.lower()
+    host = _clean(parsed.hostname).lower().rstrip(".")
+    port = parsed.port if parsed.port is not None else (443 if scheme == "https" else None)
+    return scheme, host, port
+
+
+def _is_sensitive_redirect_header(name: str) -> bool:
+    normalized = str(name or "").strip().lower().replace("_", "-")
+    return (
+        normalized in _SENSITIVE_REDIRECT_HEADERS
+        or "api-key" in normalized
+        or "apikey" in normalized
+        or normalized.endswith("-token")
+    )
+
+
+def _strip_cross_origin_credentials(request: urllib.request.Request) -> None:
+    header_names = set(request.headers) | set(request.unredirected_hdrs)
+    for header_name in header_names:
+        if _is_sensitive_redirect_header(header_name):
+            request.remove_header(header_name)
 
 
 class _PinnedHTTPSConnection(http.client.HTTPSConnection):
