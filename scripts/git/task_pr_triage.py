@@ -87,10 +87,14 @@ def _parse_datetime(value: str | None) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def _snapshot_time(value: datetime) -> datetime:
+    """Normalize the captured time to the precision published in the report."""
+
+    return value.astimezone(timezone.utc).replace(microsecond=0)
+
+
 def _iso(value: datetime) -> str:
-    return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace(
-        "+00:00", "Z"
-    )
+    return _snapshot_time(value).isoformat().replace("+00:00", "Z")
 
 
 def _load_json(path: Path) -> Any:
@@ -1249,7 +1253,9 @@ def _refresh_refs(remote: str) -> None:
 
 
 def cmd_generate(args: argparse.Namespace) -> int:
-    as_of = _parse_datetime(args.as_of) if args.as_of else datetime.now(timezone.utc)
+    as_of = _snapshot_time(
+        _parse_datetime(args.as_of) if args.as_of else datetime.now(timezone.utc)
+    )
     assert as_of is not None
     status_root = Path(args.status_root).resolve()
     base_sha = capture_base_snapshot(args.remote, args.base_ref, args.refresh)

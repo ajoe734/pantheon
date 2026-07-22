@@ -251,6 +251,44 @@ class BranchClassificationTests(unittest.TestCase):
 
 
 class ValidationTests(unittest.TestCase):
+    def test_snapshot_time_round_trip_preserves_branch_age(self):
+        captured = triage._snapshot_time(
+            datetime(2026, 7, 22, 18, 0, 0, 999999, tzinfo=timezone.utc)
+        )
+        published = triage._parse_datetime(triage._iso(captured))
+        self.assertEqual(captured, published)
+
+        branch = {
+            "branch": "task/TASK-001",
+            "head_sha": "a" * 40,
+            "committed_at": "2026-06-01T00:00:00+00:00",
+            "last_commit_author": "example",
+            "last_commit_subject": "example",
+            "dev_reachable": True,
+        }
+        first = triage.classify_branch(
+            branch,
+            as_of=captured,
+            retention_days=30,
+            open_pr=None,
+            pr_disposition=None,
+            history=[],
+            active_tasks={},
+            archives={},
+        )
+        reproduced = triage.classify_branch(
+            branch,
+            as_of=published,
+            retention_days=30,
+            open_pr=None,
+            pr_disposition=None,
+            history=[],
+            active_tasks={},
+            archives={},
+        )
+        self.assertEqual(first["age_days"], reproduced["age_days"])
+        self.assertEqual(first["deletion_eligible"], reproduced["deletion_eligible"])
+
     def test_recent_open_pr_is_excluded_from_fixed_overdue_cohort_summary(self):
         old_pr = pr()
         recent_pr = pr(
