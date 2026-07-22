@@ -693,7 +693,46 @@ def _lifecycle_projector_dependency() -> Dict[str, Any]:
         )
     )
     root = Path(os.getenv("LIFECYCLE_PROJECTION_ROOT", str(state_path.parent)))
-    return projector_readiness(state_path=state_path, bundle_root=root)
+    dependency = projector_readiness(state_path=state_path, bundle_root=root)
+
+    expected_stores = {
+        "trade_journey_events": root / "current" / "trade_journey_events.json",
+        "loop_runs": root / "current" / "loop_runs.json",
+    }
+    configured_stores = {
+        "trade_journey_events": Path(
+            os.getenv(
+                "PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE",
+                str(expected_stores["trade_journey_events"]),
+            )
+        ),
+        "loop_runs": Path(
+            os.getenv(
+                "PANTHEON_BFF_LOOP_RUN_STORE",
+                str(expected_stores["loop_runs"]),
+            )
+        ),
+    }
+    store_status: Dict[str, Dict[str, Any]] = {}
+    mismatches: List[str] = []
+    for name, expected_path in expected_stores.items():
+        configured_path = configured_stores[name]
+        aligned = configured_path.absolute() == expected_path.absolute()
+        store_status[name] = {
+            "configured_path": str(configured_path),
+            "expected_path": str(expected_path),
+            "aligned": aligned,
+        }
+        if not aligned:
+            mismatches.append(name)
+    dependency["read_surface_stores"] = store_status
+    if mismatches:
+        reason = f"read_surface_store_mismatch:{','.join(mismatches)}"
+        dependency["ready"] = False
+        dependency["status"] = "degraded"
+        dependency["reasons"] = [*dependency.get("reasons", []), reason]
+        dependency["error_reason"] = dependency.get("error_reason") or reason
+    return dependency
 
 
 def _bff_readiness_dependencies() -> Dict[str, Dict[str, Any]]:
