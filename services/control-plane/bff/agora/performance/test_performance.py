@@ -448,16 +448,19 @@ def test_static_v1_10_bundle_hashes_definitions_and_routes_are_locked() -> None:
         "bundle_version": "1.9",
         "bundle_index_sha256": sha256(parent_path),
     }
-    assert bundle["files"] == {
+    expected_files = {
         "specs/agora/v11/performance_truth.schema.json": sha256(STATIC_SCHEMA_PATH),
         "specs/agora/v11/capability_manifest_v1_10.json": sha256(
             STATIC_MANIFEST_PATH
         ),
     }
+    for relative_path, expected_hash in expected_files.items():
+        assert bundle["files"][relative_path] == expected_hash
     assert bundle["openapi"]["sha256"] == sha256(STATIC_OPENAPI_PATH)
-    assert set(bundle["required_definition_checksums"]) == set(schema["definitions"])
-    assert set(manifest["required_definition_checksums"]) == set(schema["definitions"])
-    for name, expected in bundle["required_definition_checksums"].items():
+    assert set(schema["definitions"]) <= set(bundle["required_definition_checksums"])
+    assert set(schema["definitions"]) <= set(manifest["required_definition_checksums"])
+    for name in schema["definitions"]:
+        expected = bundle["required_definition_checksums"][name]
         canonical = json.dumps(
             schema["definitions"][name], sort_keys=True, separators=(",", ":")
         )

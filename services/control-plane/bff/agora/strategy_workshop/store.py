@@ -18,6 +18,7 @@ Backend env:
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -39,6 +40,25 @@ IDEMPOTENCY_AGGREGATE_TYPE = "strategy_workshop"
 WORKSHOP_STATUSES = ("open", "in_review", "concluded", "archived")
 TERMINAL_WORKSHOP_STATUSES = frozenset({"concluded", "archived"})
 COMMAND_STATUSES = ("admitted", "completed", "failed")
+_DOCUMENT_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+class WorkshopVersionProjectionConflict(ValueError):
+    """A durable version link disagrees with authoritative Registry identity."""
+
+
+def _document_sha256(value: Any) -> str:
+    digest = str(value or "").strip().lower()
+    if not _DOCUMENT_SHA256_RE.fullmatch(digest):
+        raise ValueError("document_sha256 must be 64 lowercase hexadecimal characters")
+    return digest
+
+
+def _legacy_workshop_version_id(workshop_id: str, registry_id: str) -> str:
+    digest = hashlib.sha256(
+        f"{workshop_id}\x00{registry_id}".encode("utf-8")
+    ).hexdigest()[:24]
+    return f"wsv-legacy-{digest}"
 
 
 @dataclass(frozen=True)
@@ -236,10 +256,13 @@ def build_strategy_workshop_table_ddl(schema: Optional[str] = None) -> List[str]
             parent_workshop_version_id TEXT NULL,
             source_event_id TEXT NULL,
             sequence_no BIGINT NOT NULL,
+            document_sha256 CHAR(64) NOT NULL,
             created_by TEXT NOT NULL,
             created_at TIMESTAMPTZ NOT NULL,
             CONSTRAINT ux_workshop_version_sequence UNIQUE (workshop_id, sequence_no),
-            CONSTRAINT ux_workshop_registry_version UNIQUE (workshop_id, strategy_spec_registry_id)
+            CONSTRAINT ux_workshop_registry_version UNIQUE (workshop_id, strategy_spec_registry_id),
+            CONSTRAINT ck_workshop_version_document_sha256
+                CHECK (document_sha256 ~ '^[0-9a-f]{{64}}$')
         )
         """,
         f"""
@@ -363,7 +386,7 @@ _CARD_COLS = [
 _VERSION_LINK_COLS = [
     "workshop_version_id", "workshop_id", "strategy_id",
     "strategy_spec_registry_id", "parent_workshop_version_id",
-    "source_event_id", "sequence_no", "created_by", "created_at",
+    "source_event_id", "sequence_no", "document_sha256", "created_by", "created_at",
 ]
 _COMMAND_RECEIPT_COLS = [
     "command_id", "tenant_id", "user_id", "workshop_id", "operation",
@@ -589,6 +612,168 @@ class MemoryWorkshopStore:
             )
             return _deep_copy_dict(row) if row is not None else None
 
+    def ensure_current_version_link(
+        self,
+        *,
+        workshop_id: str,
+        strategy_id: str,
+        strategy_spec_registry_id: str,
+        document_sha256: str,
+    ) -> Dict[str, Any]:
+        """Backfill the active Registry pointer into one immutable link.
+
+        Legacy sessions stored only ``active_strategy_spec_registry_id``.  The
+        deterministic id and session timestamps make repeated startup/readback
+        migration byte-stable without advancing the workshop ETag.
+        """
+
+        digest = _document_sha256(document_sha256)
+        with self._lock:
+            session = self._sessions.get(workshop_id)
+            if session is None:
+                raise KeyError(workshop_id)
+            active_registry_id = str(
+                session.get("active_strategy_spec_registry_id") or ""
+            )
+            if active_registry_id != strategy_spec_registry_id:
+                raise WorkshopVersionProjectionConflict(
+                    "active StrategySpec Registry identity changed during backfill"
+                )
+            session_strategy_id = str(session.get("strategy_id") or "")
+            if session_strategy_id and session_strategy_id != strategy_id:
+                raise WorkshopVersionProjectionConflict(
+                    "workshop and Registry strategy identities disagree"
+                )
+
+            links = self._version_links.setdefault(workshop_id, [])
+            existing = next(
+                (
+                    item
+                    for item in links
+                    if item["strategy_spec_registry_id"] == strategy_spec_registry_id
+                ),
+                None,
+            )
+            if existing is None:
+                pointer_ids = {
+                    str(value)
+                    for value in (
+                        session.get("active_workshop_version_id"),
+                        session.get("selected_version_id"),
+                    )
+                    if value
+                }
+                if len(pointer_ids) > 1:
+                    raise WorkshopVersionProjectionConflict(
+                        "legacy selected-version aliases disagree"
+                    )
+                workshop_version_id = next(iter(pointer_ids), None) or (
+                    _legacy_workshop_version_id(
+                        workshop_id, strategy_spec_registry_id
+                    )
+                )
+                collision = next(
+                    (
+                        item
+                        for item in links
+                        if item["workshop_version_id"] == workshop_version_id
+                    ),
+                    None,
+                )
+                if collision is not None:
+                    raise WorkshopVersionProjectionConflict(
+                        "selected workshop version points to another Registry version"
+                    )
+                latest = max(
+                    links,
+                    key=lambda item: int(item["sequence_no"]),
+                    default=None,
+                )
+                existing = {
+                    "workshop_version_id": workshop_version_id,
+                    "workshop_id": workshop_id,
+                    "strategy_id": strategy_id,
+                    "strategy_spec_registry_id": strategy_spec_registry_id,
+                    "parent_workshop_version_id": (
+                        latest["workshop_version_id"] if latest else None
+                    ),
+                    "source_event_id": None,
+                    "sequence_no": int(latest["sequence_no"]) + 1 if latest else 1,
+                    "document_sha256": digest,
+                    "created_by": session["user_id"],
+                    "created_at": session["created_at"],
+                }
+                links.append(existing)
+            else:
+                self._validate_version_link_identity(
+                    existing,
+                    strategy_id=strategy_id,
+                    document_sha256=digest,
+                )
+                if existing.get("document_sha256") is None:
+                    existing["document_sha256"] = digest
+
+            link_id = existing["workshop_version_id"]
+            for pointer_name in (
+                "active_workshop_version_id",
+                "selected_version_id",
+            ):
+                pointer = session.get(pointer_name)
+                if pointer and pointer != link_id:
+                    raise WorkshopVersionProjectionConflict(
+                        f"{pointer_name} disagrees with active Registry version"
+                    )
+                session[pointer_name] = link_id
+            if not session.get("strategy_id"):
+                session["strategy_id"] = strategy_id
+            return _deep_copy_dict(existing)
+
+    @staticmethod
+    def _validate_version_link_identity(
+        link: Dict[str, Any],
+        *,
+        strategy_id: str,
+        document_sha256: str,
+    ) -> None:
+        if str(link.get("strategy_id") or "") != strategy_id:
+            raise WorkshopVersionProjectionConflict(
+                "workshop version strategy identity is immutable"
+            )
+        stored_digest = str(link.get("document_sha256") or "")
+        if stored_digest and stored_digest != document_sha256:
+            raise WorkshopVersionProjectionConflict(
+                "authoritative StrategySpec bytes changed for an immutable version"
+            )
+
+    def ensure_version_link_digest(
+        self,
+        *,
+        workshop_id: str,
+        workshop_version_id: str,
+        strategy_id: str,
+        document_sha256: str,
+    ) -> Dict[str, Any]:
+        digest = _document_sha256(document_sha256)
+        with self._lock:
+            link = next(
+                (
+                    item
+                    for item in self._version_links.get(workshop_id, [])
+                    if item["workshop_version_id"] == workshop_version_id
+                ),
+                None,
+            )
+            if link is None:
+                raise KeyError(workshop_version_id)
+            self._validate_version_link_identity(
+                link,
+                strategy_id=strategy_id,
+                document_sha256=digest,
+            )
+            if link.get("document_sha256") is None:
+                link["document_sha256"] = digest
+            return _deep_copy_dict(link)
+
     # --- durable governed-command ledger ---
 
     @staticmethod
@@ -777,7 +962,7 @@ class MemoryWorkshopStore:
             if version_link is not None:
                 required = {
                     "workshop_version_id", "strategy_id",
-                    "strategy_spec_registry_id", "created_by",
+                    "strategy_spec_registry_id", "document_sha256", "created_by",
                 }
                 missing = required - set(version_link)
                 if missing:
@@ -794,6 +979,9 @@ class MemoryWorkshopStore:
                     ),
                     "source_event_id": version_link.get("source_event_id"),
                     "sequence_no": int(version_link.get("sequence_no") or (len(links) + 1)),
+                    "document_sha256": _document_sha256(
+                        version_link["document_sha256"]
+                    ),
                     "created_by": version_link["created_by"],
                     "created_at": version_link.get("created_at") or _utc_now(),
                 }
@@ -1300,13 +1488,42 @@ class PostgresWorkshopStore:
                     parent_workshop_version_id   TEXT,
                     source_event_id              TEXT,
                     sequence_no                  BIGINT NOT NULL,
+                    document_sha256              CHAR(64) NOT NULL,
                     created_by                   TEXT NOT NULL,
                     created_at                   TIMESTAMPTZ NOT NULL DEFAULT now(),
                     CONSTRAINT uq_ws_version_sequence
                         UNIQUE (workshop_id, sequence_no),
                     CONSTRAINT uq_ws_registry_version
-                        UNIQUE (workshop_id, strategy_spec_registry_id)
+                        UNIQUE (workshop_id, strategy_spec_registry_id),
+                    CONSTRAINT ck_ws_version_document_sha256
+                        CHECK (document_sha256 ~ '^[0-9a-f]{{64}}$')
                 )
+            """)
+            # Legacy rows predate immutable StrategySpec digests.  Keep the
+            # migration column nullable until authoritative Registry readback
+            # deterministically hydrates each row; every new write requires a
+            # validated digest in ``complete_command``.
+            conn.execute(f"""
+                ALTER TABLE {self._vlt}
+                    ADD COLUMN IF NOT EXISTS document_sha256 CHAR(64)
+            """)
+            conn.execute(f"""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1
+                          FROM pg_constraint
+                         WHERE conname = 'ck_ws_version_document_sha256'
+                           AND conrelid = '"{self.schema}"."strategy_workshop_version_link"'::regclass
+                    ) THEN
+                        ALTER TABLE {self._vlt}
+                            ADD CONSTRAINT ck_ws_version_document_sha256
+                            CHECK (
+                                document_sha256 IS NULL
+                                OR document_sha256 ~ '^[0-9a-f]{{64}}$'
+                            ) NOT VALID;
+                    END IF;
+                END $$
             """)
             conn.execute(f"""
                 CREATE INDEX IF NOT EXISTS idx_ws_version_workshop_sequence
@@ -1693,7 +1910,8 @@ class PostgresWorkshopStore:
                 f"""
                 SELECT workshop_version_id, workshop_id, strategy_id,
                        strategy_spec_registry_id, parent_workshop_version_id,
-                       source_event_id, sequence_no, created_by, created_at::text
+                       source_event_id, sequence_no, document_sha256,
+                       created_by, created_at::text
                   FROM {self._vlt}
                  WHERE workshop_id = %s
                  ORDER BY sequence_no ASC
@@ -1713,7 +1931,8 @@ class PostgresWorkshopStore:
                 f"""
                 SELECT workshop_version_id, workshop_id, strategy_id,
                        strategy_spec_registry_id, parent_workshop_version_id,
-                       source_event_id, sequence_no, created_by, created_at::text
+                       source_event_id, sequence_no, document_sha256,
+                       created_by, created_at::text
                   FROM {self._vlt}
                  WHERE workshop_id = %s AND workshop_version_id = %s
                 """,
@@ -1721,6 +1940,217 @@ class PostgresWorkshopStore:
             )
             row = cur.fetchone()
         return _row_to_dict(row, _VERSION_LINK_COLS) if row is not None else None
+
+    @staticmethod
+    def _validate_version_link_identity(
+        link: Dict[str, Any],
+        *,
+        strategy_id: str,
+        document_sha256: str,
+    ) -> None:
+        if str(link.get("strategy_id") or "") != strategy_id:
+            raise WorkshopVersionProjectionConflict(
+                "workshop version strategy identity is immutable"
+            )
+        stored_digest = str(link.get("document_sha256") or "").strip()
+        if stored_digest and stored_digest != document_sha256:
+            raise WorkshopVersionProjectionConflict(
+                "authoritative StrategySpec bytes changed for an immutable version"
+            )
+
+    def ensure_current_version_link(
+        self,
+        *,
+        workshop_id: str,
+        strategy_id: str,
+        strategy_spec_registry_id: str,
+        document_sha256: str,
+    ) -> Dict[str, Any]:
+        digest = _document_sha256(document_sha256)
+        with self._connect() as conn:
+            session_row = conn.execute(
+                f"""
+                SELECT tenant_id, user_id, strategy_id,
+                       active_strategy_spec_registry_id, selected_version_id,
+                       active_workshop_version_id, created_at::text
+                  FROM {self._st}
+                 WHERE workshop_id = %s
+                   FOR UPDATE
+                """,
+                (workshop_id,),
+            ).fetchone()
+            if session_row is None:
+                raise KeyError(workshop_id)
+            if str(session_row[3] or "") != strategy_spec_registry_id:
+                raise WorkshopVersionProjectionConflict(
+                    "active StrategySpec Registry identity changed during backfill"
+                )
+            if session_row[2] and str(session_row[2]) != strategy_id:
+                raise WorkshopVersionProjectionConflict(
+                    "workshop and Registry strategy identities disagree"
+                )
+
+            link_row = conn.execute(
+                f"""
+                SELECT workshop_version_id, workshop_id, strategy_id,
+                       strategy_spec_registry_id, parent_workshop_version_id,
+                       source_event_id, sequence_no, document_sha256,
+                       created_by, created_at::text
+                  FROM {self._vlt}
+                 WHERE workshop_id = %s AND strategy_spec_registry_id = %s
+                   FOR UPDATE
+                """,
+                (workshop_id, strategy_spec_registry_id),
+            ).fetchone()
+            if link_row is None:
+                pointer_ids = {
+                    str(value) for value in (session_row[4], session_row[5]) if value
+                }
+                if len(pointer_ids) > 1:
+                    raise WorkshopVersionProjectionConflict(
+                        "legacy selected-version aliases disagree"
+                    )
+                workshop_version_id = next(iter(pointer_ids), None) or (
+                    _legacy_workshop_version_id(
+                        workshop_id, strategy_spec_registry_id
+                    )
+                )
+                collision = conn.execute(
+                    f"""
+                    SELECT strategy_spec_registry_id
+                      FROM {self._vlt}
+                     WHERE workshop_version_id = %s
+                    """,
+                    (workshop_version_id,),
+                ).fetchone()
+                if collision is not None:
+                    raise WorkshopVersionProjectionConflict(
+                        "selected workshop version points to another Registry version"
+                    )
+                latest = conn.execute(
+                    f"""
+                    SELECT workshop_version_id, sequence_no
+                      FROM {self._vlt}
+                     WHERE workshop_id = %s
+                     ORDER BY sequence_no DESC
+                     LIMIT 1
+                    """,
+                    (workshop_id,),
+                ).fetchone()
+                parent_id = latest[0] if latest is not None else None
+                sequence_no = int(latest[1]) + 1 if latest is not None else 1
+                conn.execute(
+                    f"""
+                    INSERT INTO {self._vlt}
+                        (workshop_version_id, workshop_id, strategy_id,
+                         strategy_spec_registry_id, parent_workshop_version_id,
+                         source_event_id, sequence_no, document_sha256,
+                         created_by, created_at)
+                    VALUES (%s,%s,%s,%s,%s,NULL,%s,%s,%s,%s)
+                    """,
+                    (
+                        workshop_version_id, workshop_id, strategy_id,
+                        strategy_spec_registry_id, parent_id, sequence_no,
+                        digest, session_row[1], session_row[6],
+                    ),
+                )
+                link_row = conn.execute(
+                    f"""
+                    SELECT workshop_version_id, workshop_id, strategy_id,
+                           strategy_spec_registry_id, parent_workshop_version_id,
+                           source_event_id, sequence_no, document_sha256,
+                           created_by, created_at::text
+                      FROM {self._vlt}
+                     WHERE workshop_id = %s AND strategy_spec_registry_id = %s
+                    """,
+                    (workshop_id, strategy_spec_registry_id),
+                ).fetchone()
+
+            link = _row_to_dict(link_row, _VERSION_LINK_COLS)
+            self._validate_version_link_identity(
+                link,
+                strategy_id=strategy_id,
+                document_sha256=digest,
+            )
+            if not link.get("document_sha256"):
+                conn.execute(
+                    f"""
+                    UPDATE {self._vlt}
+                       SET document_sha256 = %s
+                     WHERE workshop_id = %s AND workshop_version_id = %s
+                       AND document_sha256 IS NULL
+                    """,
+                    (digest, workshop_id, link["workshop_version_id"]),
+                )
+                link["document_sha256"] = digest
+
+            link_id = str(link["workshop_version_id"])
+            for pointer_name, pointer in (
+                ("selected_version_id", session_row[4]),
+                ("active_workshop_version_id", session_row[5]),
+            ):
+                if pointer and str(pointer) != link_id:
+                    raise WorkshopVersionProjectionConflict(
+                        f"{pointer_name} disagrees with active Registry version"
+                    )
+            # This is an additive data migration, not a workshop command:
+            # preserve lock_version and timestamps so existing payload bytes
+            # outside the newly populated pointers remain unchanged.
+            conn.execute(
+                f"""
+                UPDATE {self._st}
+                   SET strategy_id = COALESCE(strategy_id, %s),
+                       selected_version_id = COALESCE(selected_version_id, %s),
+                       active_workshop_version_id =
+                           COALESCE(active_workshop_version_id, %s)
+                 WHERE workshop_id = %s
+                """,
+                (strategy_id, link_id, link_id, workshop_id),
+            )
+            return link
+
+    def ensure_version_link_digest(
+        self,
+        *,
+        workshop_id: str,
+        workshop_version_id: str,
+        strategy_id: str,
+        document_sha256: str,
+    ) -> Dict[str, Any]:
+        digest = _document_sha256(document_sha256)
+        with self._connect() as conn:
+            row = conn.execute(
+                f"""
+                SELECT workshop_version_id, workshop_id, strategy_id,
+                       strategy_spec_registry_id, parent_workshop_version_id,
+                       source_event_id, sequence_no, document_sha256,
+                       created_by, created_at::text
+                  FROM {self._vlt}
+                 WHERE workshop_id = %s AND workshop_version_id = %s
+                   FOR UPDATE
+                """,
+                (workshop_id, workshop_version_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError(workshop_version_id)
+            link = _row_to_dict(row, _VERSION_LINK_COLS)
+            self._validate_version_link_identity(
+                link,
+                strategy_id=strategy_id,
+                document_sha256=digest,
+            )
+            if not link.get("document_sha256"):
+                conn.execute(
+                    f"""
+                    UPDATE {self._vlt}
+                       SET document_sha256 = %s
+                     WHERE workshop_id = %s AND workshop_version_id = %s
+                       AND document_sha256 IS NULL
+                    """,
+                    (digest, workshop_id, workshop_version_id),
+                )
+                link["document_sha256"] = digest
+            return link
 
     # --- durable governed-command ledger ---
 
@@ -1975,7 +2405,7 @@ class PostgresWorkshopStore:
             if version_link is not None:
                 required = {
                     "workshop_version_id", "strategy_id",
-                    "strategy_spec_registry_id", "created_by",
+                    "strategy_spec_registry_id", "document_sha256", "created_by",
                 }
                 missing = required - set(version_link)
                 if missing:
@@ -1992,14 +2422,18 @@ class PostgresWorkshopStore:
                     version_link.get("sequence_no")
                     or (sequence_row[0] if sequence_row else 1)
                 )
+                document_sha256 = _document_sha256(
+                    version_link["document_sha256"]
+                )
                 created_at = version_link.get("created_at") or _utc_now()
                 inserted = conn.execute(
                     f"""
                     INSERT INTO {self._vlt}
                         (workshop_version_id, workshop_id, strategy_id,
                          strategy_spec_registry_id, parent_workshop_version_id,
-                         source_event_id, sequence_no, created_by, created_at)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                         source_event_id, sequence_no, document_sha256,
+                         created_by, created_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     ON CONFLICT DO NOTHING
                     RETURNING workshop_version_id
                     """,
@@ -2009,14 +2443,15 @@ class PostgresWorkshopStore:
                         version_link["strategy_spec_registry_id"],
                         version_link.get("parent_workshop_version_id"),
                         version_link.get("source_event_id"), sequence_no,
-                        version_link["created_by"], created_at,
+                        document_sha256, version_link["created_by"], created_at,
                     ),
                 ).fetchone()
                 candidate = conn.execute(
                     f"""
                     SELECT workshop_version_id, workshop_id, strategy_id,
                            strategy_spec_registry_id, parent_workshop_version_id,
-                           source_event_id, sequence_no, created_by, created_at::text
+                           source_event_id, sequence_no, document_sha256,
+                           created_by, created_at::text
                       FROM {self._vlt}
                      WHERE workshop_id = %s
                        AND (
@@ -2048,6 +2483,7 @@ class PostgresWorkshopStore:
                     ),
                     "source_event_id": version_link.get("source_event_id"),
                     "sequence_no": sequence_no,
+                    "document_sha256": document_sha256,
                     "created_by": version_link["created_by"],
                 }
                 if any(stored_link.get(key) != value for key, value in comparable.items()):
