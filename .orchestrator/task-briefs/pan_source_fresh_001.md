@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Formalize guarded source refresh and Agora freshness
-- Status: todo
+- Status: in_progress
 - Owner: Codex
 - Reviewer: Codex2
-- Next: Auto-reassigned ownership from Antigravity to Codex after repeated Antigravity quota terminal: Error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 1h17m51s.. Task returned to todo until Codex starts a fresh run.
+- Next: Started guarded source refresh implementation after validating task branch, clean task-owned workspace, Codex reassignment, and completed dispatch lease dependency.
 
 ## Summary
 把 deny-all egress 緊急修補正式交付，建立 HTTPS allowlist/SSRF guard、bounded scheduler、ingest receipt 與 Agora freshness/stale truth。
@@ -21,6 +21,8 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - `93fcee944` — exact-host HTTPS egress, DNS/IP/redirect guard, and connector adoption.
 - `a118ff8d6` — durable receipts, typed failures, source-time freshness,
   Agora stale projection, and bounded compose/deploy gates.
+- `79e1ac05e` — pinned TLS transport plus the bounded refresh and hosted-proof
+  contract prepared for independent review.
 
 The canonical status row records Codex as the reassigned owner and Codex2 as
 reviewer. Hosted dev evidence remains an owner-finalization step after review,
