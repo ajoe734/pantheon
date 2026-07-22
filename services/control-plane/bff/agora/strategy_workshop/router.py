@@ -3350,6 +3350,16 @@ def create_strategy_workshop_router(
                 "WORKSHOP_VERSION_REQUIRED",
                 precondition_failed="final_version_id",
             )
+        selected_version_id = str(session.get("selected_version_id") or "")
+        if str(version_id) != selected_version_id:
+            raise bff_error(
+                409,
+                ErrorCode.PRECONDITION_FAILED,
+                "Conclusion requires the currently selected workshop version",
+                "WORKSHOP_FINAL_VERSION_NOT_SELECTED",
+                precondition_failed="final_version_id",
+                details_extra={"selected_version_id": selected_version_id},
+            )
         two_person_proof = _require_approval(
             approval_decision_id=body.approval_decision_id,
             workshop_id=workshop_id,
@@ -3385,7 +3395,24 @@ def create_strategy_workshop_router(
             )
         registry_id = str(link["strategy_spec_registry_id"])
         try:
-            registry_readback = canonical.get_strategy_spec(registry_id)
+            # The terminal transition demands the same authoritative projection
+            # proof as version selection: Registry readback must expose a
+            # complete StrategySpec document in the caller's scope whose digest
+            # still matches the immutable durable link.
+            registry_readback, document_sha256, final_strategy_id = (
+                _read_strategy_version(
+                    registry_id=registry_id,
+                    scope=scope,
+                    expected_strategy_id=str(link.get("strategy_id") or "") or None,
+                    expected_workshop_id=workshop_id,
+                )
+            )
+            link = store.ensure_version_link_digest(
+                workshop_id=workshop_id,
+                workshop_version_id=str(version_id),
+                strategy_id=final_strategy_id,
+                document_sha256=document_sha256,
+            )
         except CanonicalOperationError as exc:
             _canonical_error(
                 workshop_id=workshop_id,
@@ -3394,6 +3421,39 @@ def create_strategy_workshop_router(
                 idempotency_key=command_key,
                 request_hash=request_hash,
                 error=exc,
+            )
+        except _StrategyVersionProjectionError as exc:
+            code = (
+                ErrorCode.FORBIDDEN
+                if exc.status_code == 403
+                else ErrorCode.UPSTREAM_ERROR
+                if exc.status_code >= 500
+                else ErrorCode.RESOURCE_CONFLICT
+            )
+            _fail_domain_command(
+                workshop_id=workshop_id,
+                operation="conclude",
+                scope=scope,
+                idempotency_key=command_key,
+                request_hash=request_hash,
+                status_code=exc.status_code,
+                code=code,
+                message="Final StrategySpec version projection is incomplete or inconsistent",
+                reason=exc.reason,
+                precondition_failed="strategy_version_projection",
+            )
+        except WorkshopVersionProjectionConflict:
+            _fail_domain_command(
+                workshop_id=workshop_id,
+                operation="conclude",
+                scope=scope,
+                idempotency_key=command_key,
+                request_hash=request_hash,
+                status_code=409,
+                code=ErrorCode.RESOURCE_CONFLICT,
+                message="Final workshop version digest no longer matches its immutable link",
+                reason="WORKSHOP_VERSION_PROJECTION_CONFLICT",
+                precondition_failed="workshop_version_projection",
             )
         concluded_at = utc_now()
         concluded_session = {
