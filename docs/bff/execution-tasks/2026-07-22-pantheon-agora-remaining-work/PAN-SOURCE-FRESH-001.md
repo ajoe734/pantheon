@@ -75,7 +75,9 @@ boundaries:
   single-label/internal hosts, non-global DNS answers, mixed public/private
   answers, redirect escapes, and excessive redirects. The TCP connection is
   pinned to the last revalidated global IP while TLS SNI and certificate
-  validation retain the approved hostname.
+  validation retain the approved hostname. Same-origin redirects preserve
+  request credentials; cross-origin redirects strip authorization, cookie,
+  API-key, and token headers before constructing the redirected request.
 - Internal compose smoke feeds use an explicit `internal_service` scope and a
   separate redirect guard. They do not weaken the external connector policy.
 - Every terminal source run persists a `source_ingest_receipt.v1` receipt with
@@ -84,10 +86,15 @@ boundaries:
 - Connector freshness v2 exposes last success, source timestamp, source age,
   stale threshold, next run, and last typed failure. Stale persisted records
   remain readable, while readiness and Agora watchlist/signal rows explicitly
-  report `stale`.
+  report `stale`. Only explicit provider timestamps count as source time;
+  missing, invalid, and materially future values never inherit ingest time and
+  carry explicit source-time status.
 - The `source-ingest-scheduler` profile is one-shot by default, never restarts,
-  caps ticks/concurrency/records at deploy preflight, and gates the Agora
-  projector on a successful controller exit.
+  caps ticks/concurrency/records at deploy preflight, forces the declared
+  connector, and gates the Agora projector on a successful controller exit.
+  The deploy waits for both one-shot containers, requires zero exit codes, and
+  verifies a new receipt/controller/Agora projection correlation before it can
+  continue to unrelated root-stack checks.
 
 ## Bounded dev refresh runbook
 
@@ -99,7 +106,9 @@ non-prod deploy command:
 ```sh
 export PANTHEON_DEV_COMPOSE_PROFILES=source-ingest-scheduler
 export PANTHEON_EXTERNAL_EGRESS=allowlist
-export PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=openapi.twse.com.tw
+export PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=openapi.twse.com.tw,www.tpex.org.tw
+export SOURCE_INGEST_BOUNDED_CONNECTOR_ID=tw-twse-tpex-official-market
+export SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS=1800
 export SOURCE_INGEST_CONTROLLER_MAX_TICKS=1
 export SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY=1
 export SOURCE_INGEST_MAX_RECORDS=100
@@ -109,12 +118,18 @@ bash scripts/deploy_nonprod_vm.sh \
   --sha <full-merged-dev-sha>
 ```
 
-The host list is an example for the official TWSE connector, not a default.
-Add every redirect host explicitly after review. Do not add wildcard domains,
-IP literals, credentials, tokens, or signed query strings. Provider secrets
-continue to come from the existing secret file/manager paths.
+The host list covers both venues fetched by the official TWSE/TPEx connector;
+it is not a default. The deploy preflight rejects this connector when either
+exact host is absent. Add every redirect host explicitly after review. Do not
+add wildcard domains, IP literals, credentials, tokens, or signed query
+strings. Provider secrets continue to come from the existing secret
+file/manager paths.
 
-After the run, archive only secret-free readback:
+The deploy itself waits for the scheduler and projector to exit zero, then
+requires a receipt created after deployment start, matching controller
+readback, and an Agora watchlist row with the same run/source IDs and explicit
+source-time/freshness metadata. After the run, archive only secret-free
+readback:
 
 ```sh
 docker compose -p pantheon -f docker-compose.yml ps -a \
@@ -139,7 +154,10 @@ fixtures or an unmerged branch are not hosted acceptance.
 - `docker compose -f docker-compose.yml config --quiet` passed for both the
   default profile set and an explicit bounded `source-ingest-scheduler`
   profile with one exact host, one tick, concurrency one, and record cap 100.
-- The task-focused suite passed with `760 passed, 2 skipped`; it covered
+- The post-review task-focused suite passed with `772 passed, 2 skipped`; it
+  added adversarial redirect credential, post-processing receipt reload,
+  missing/invalid/future source-time, forced bounded connector, and one-shot
+  zero/non-zero exit/readback gate coverage. It also covered
   external egress, all source-ingestion tests, research adapter tests, Agora
   projection tests, and the deploy contract. Skips were pre-existing optional
   live/provider paths, and only deprecation warnings were emitted.
