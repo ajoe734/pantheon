@@ -238,7 +238,16 @@ def assess_promotion_mode(main_ref: str, release_ref: str) -> tuple[str, str]:
     if merge_tree.returncode == 0:
         return "clean_merge", "merge-tree preflight succeeded"
     if merge_tree.returncode == 1:
-        return "conflicted", _result_detail(merge_tree)
+        # A publish tag is an immutable, already-gated full snapshot. For the
+        # single maximal candidate, preserving a textual conflict resolution
+        # can retain stale master-only fragments and produce a tree that was
+        # never accepted on dev. Build a two-parent merge whose tree is exactly
+        # the release tree instead; parent 1 keeps rollback to master and parent
+        # 2 makes every accepted release commit reachable.
+        return (
+            "snapshot_replace",
+            "standard merge conflicted; promote the exact immutable release tree",
+        )
     return "error", _result_detail(merge_tree)
 
 
@@ -382,7 +391,12 @@ def discover(
         candidate
         for candidate in candidates
         if candidate["disposition"] == "pending"
-        and candidate.get("promotion_mode") in {"clean_merge", "snapshot_bridge"}
+        and candidate.get("promotion_mode")
+        in {
+            "clean_merge",
+            "snapshot_bridge",
+            "snapshot_replace",
+        }
     ]
     terminal_snapshots: list[dict] = []
     for candidate in reversed(promotable):
@@ -507,18 +521,13 @@ def open_candidate(cand: dict, settings: dict) -> dict:
         }
 
     run_git("checkout", "-B", promote_branch, main_ref)
-    if cand.get("promotion_mode") == "snapshot_bridge":
+    promotion_mode = cand.get("promotion_mode")
+    if promotion_mode in {"snapshot_bridge", "snapshot_replace"}:
         create_snapshot_bridge(version, main_ref, release_ref)
     else:
         try:
-            run_git(
-                "merge",
-                "--no-ff",
-                "--no-edit",
-                "-m",
-                f"promote: {version}",
-                release_ref,
-            )
+            merge_args = ["merge", "--no-ff", "--no-edit", "-m", f"promote: {version}"]
+            run_git(*merge_args, release_ref)
         except subprocess.CalledProcessError as exc:
             _run_git_result("merge", "--abort")
             detail = (exc.stderr or exc.stdout or str(exc)).strip()

@@ -48,7 +48,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from .operations import CanonicalOperationError, WorkshopCanonicalOperations
-from .store import make_workshop_store
+from .store import WorkshopVersionProjectionConflict, make_workshop_store
 
 _CONTROL_PLANE_DIR = Path(__file__).resolve().parents[3]
 if str(_CONTROL_PLANE_DIR) not in sys.path:
@@ -58,6 +58,13 @@ from privacy.private_content_store import (  # noqa: E402
     EphemeralKeyProvider,
     MemoryPrivateContentStore,
 )
+
+
+class _StrategyVersionProjectionError(RuntimeError):
+    def __init__(self, reason: str, *, status_code: int = 409) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.status_code = status_code
 
 
 # --------------------------------------------------------------------------- #
@@ -1055,6 +1062,78 @@ def create_strategy_workshop_router(
 
     def _etag(workshop_id: str, lock_version: int) -> str:
         return f'W/"workshop:{workshop_id}:v{lock_version}"'
+
+    def _project_strategy_version(
+        *,
+        readback: Mapping[str, Any],
+        registry_id: str,
+        scope: Any,
+        expected_strategy_id: Optional[str] = None,
+        expected_workshop_id: Optional[str] = None,
+    ) -> tuple[Dict[str, Any], str, str]:
+        from services.research.strategy_spec.patching import compute_document_sha256
+
+        entry = readback.get("entry")
+        if not isinstance(entry, Mapping):
+            raise _StrategyVersionProjectionError(
+                "STRATEGY_SPEC_READBACK_MISSING",
+                status_code=502,
+            )
+        if str(entry.get("registry_id") or "") != registry_id:
+            raise _StrategyVersionProjectionError(
+                "STRATEGY_SPEC_REGISTRY_ID_MISMATCH",
+                status_code=502,
+            )
+        strategy_id = str(entry.get("strategy_id") or "")
+        if not strategy_id or (
+            expected_strategy_id and strategy_id != expected_strategy_id
+        ):
+            raise _StrategyVersionProjectionError(
+                "STRATEGY_SPEC_STRATEGY_ID_MISMATCH"
+            )
+        metadata = entry.get("metadata")
+        metadata = metadata if isinstance(metadata, Mapping) else {}
+        tenant_id = str(metadata.get("tenant_id") or "")
+        owner_user_id = str(metadata.get("owner_user_id") or "")
+        if (tenant_id and tenant_id != scope.tenant_id) or (
+            owner_user_id and owner_user_id != scope.user_id
+        ):
+            raise _StrategyVersionProjectionError(
+                "STRATEGY_SPEC_SCOPE_MISMATCH",
+                status_code=403,
+            )
+        linked_workshop_id = str(metadata.get("workshop_id") or "")
+        if (
+            linked_workshop_id
+            and expected_workshop_id
+            and linked_workshop_id != expected_workshop_id
+        ):
+            raise _StrategyVersionProjectionError(
+                "STRATEGY_SPEC_WORKSHOP_ID_MISMATCH"
+            )
+        document = metadata.get("strategy_spec")
+        if not isinstance(document, Mapping):
+            raise _StrategyVersionProjectionError(
+                "STRATEGY_SPEC_DOCUMENT_REQUIRED",
+                status_code=502,
+            )
+        return dict(readback), compute_document_sha256(document), strategy_id
+
+    def _read_strategy_version(
+        *,
+        registry_id: str,
+        scope: Any,
+        expected_strategy_id: Optional[str] = None,
+        expected_workshop_id: Optional[str] = None,
+    ) -> tuple[Dict[str, Any], str, str]:
+        readback = canonical.get_strategy_spec(registry_id)
+        return _project_strategy_version(
+            readback=readback,
+            registry_id=registry_id,
+            scope=scope,
+            expected_strategy_id=expected_strategy_id,
+            expected_workshop_id=expected_workshop_id,
+        )
 
     def _request_hash(payload: Mapping[str, Any]) -> str:
         canonical_payload = json.dumps(
@@ -2221,11 +2300,26 @@ def create_strategy_workshop_router(
         session = _scoped_session(workshop_id, scope)
         etag = _etag(workshop_id, int(session.get("lock_version") or 1))
         response.headers["ETag"] = etag
-        versions: List[Dict[str, Any]] = []
-        for link in store.list_version_links(workshop_id):
-            registry_id = str(link.get("strategy_spec_registry_id") or "")
+        readbacks: Dict[str, tuple[Dict[str, Any], str, str]] = {}
+        active_registry_id = str(
+            session.get("active_strategy_spec_registry_id") or ""
+        )
+        if active_registry_id:
             try:
-                readback = canonical.get_strategy_spec(registry_id)
+                active_projection = _read_strategy_version(
+                    registry_id=active_registry_id,
+                    scope=scope,
+                    expected_strategy_id=str(session.get("strategy_id") or "") or None,
+                    expected_workshop_id=workshop_id,
+                )
+                readbacks[active_registry_id] = active_projection
+                active_readback, active_digest, active_strategy_id = active_projection
+                store.ensure_current_version_link(
+                    workshop_id=workshop_id,
+                    strategy_id=active_strategy_id,
+                    strategy_spec_registry_id=active_registry_id,
+                    document_sha256=active_digest,
+                )
             except CanonicalOperationError as exc:
                 from models import ErrorCode
                 raise bff_error(
@@ -2234,6 +2328,86 @@ def create_strategy_workshop_router(
                     "StrategySpec version readback is unavailable",
                     exc.reason,
                     precondition_failed="strategy_registry",
+                ) from exc
+            except _StrategyVersionProjectionError as exc:
+                from models import ErrorCode
+                code = (
+                    ErrorCode.FORBIDDEN
+                    if exc.status_code == 403
+                    else ErrorCode.UPSTREAM_ERROR
+                    if exc.status_code >= 500
+                    else ErrorCode.RESOURCE_CONFLICT
+                )
+                raise bff_error(
+                    exc.status_code,
+                    code,
+                    "StrategySpec version projection is inconsistent",
+                    exc.reason,
+                    precondition_failed="strategy_version_projection",
+                ) from exc
+            except WorkshopVersionProjectionConflict as exc:
+                from models import ErrorCode
+                raise bff_error(
+                    409,
+                    ErrorCode.RESOURCE_CONFLICT,
+                    "Workshop version projection is inconsistent",
+                    "WORKSHOP_VERSION_PROJECTION_CONFLICT",
+                    precondition_failed="workshop_version_projection",
+                ) from exc
+
+        # Backfill is additive and leaves lock_version/ETag unchanged.  Refresh
+        # the session so the response includes deterministic selected pointers.
+        session = store.get_session(workshop_id) or session
+        versions: List[Dict[str, Any]] = []
+        for link in store.list_version_links(workshop_id):
+            registry_id = str(link.get("strategy_spec_registry_id") or "")
+            try:
+                projected = readbacks.get(registry_id) or _read_strategy_version(
+                    registry_id=registry_id,
+                    scope=scope,
+                    expected_strategy_id=str(link.get("strategy_id") or "") or None,
+                    expected_workshop_id=workshop_id,
+                )
+                readback, digest, strategy_id = projected
+                link = store.ensure_version_link_digest(
+                    workshop_id=workshop_id,
+                    workshop_version_id=str(link["workshop_version_id"]),
+                    strategy_id=strategy_id,
+                    document_sha256=digest,
+                )
+            except CanonicalOperationError as exc:
+                from models import ErrorCode
+                raise bff_error(
+                    503 if exc.retryable else 502,
+                    ErrorCode.DEPENDENCY_UNAVAILABLE if exc.retryable else ErrorCode.UPSTREAM_ERROR,
+                    "StrategySpec version readback is unavailable",
+                    exc.reason,
+                    precondition_failed="strategy_registry",
+                ) from exc
+            except _StrategyVersionProjectionError as exc:
+                from models import ErrorCode
+                code = (
+                    ErrorCode.FORBIDDEN
+                    if exc.status_code == 403
+                    else ErrorCode.UPSTREAM_ERROR
+                    if exc.status_code >= 500
+                    else ErrorCode.RESOURCE_CONFLICT
+                )
+                raise bff_error(
+                    exc.status_code,
+                    code,
+                    "StrategySpec version projection is inconsistent",
+                    exc.reason,
+                    precondition_failed="strategy_version_projection",
+                ) from exc
+            except WorkshopVersionProjectionConflict as exc:
+                from models import ErrorCode
+                raise bff_error(
+                    409,
+                    ErrorCode.RESOURCE_CONFLICT,
+                    "Workshop version projection is inconsistent",
+                    "WORKSHOP_VERSION_PROJECTION_CONFLICT",
+                    precondition_failed="workshop_version_projection",
                 ) from exc
             versions.append({"version": link, "strategy_spec": readback})
         return {
@@ -2344,7 +2518,20 @@ def create_strategy_workshop_router(
                 precondition_failed="active_strategy_spec_registry_id",
             )
         try:
-            base_readback = canonical.get_strategy_spec(base_registry_id)
+            base_readback, base_document_sha256, base_strategy_id = (
+                _read_strategy_version(
+                    registry_id=base_registry_id,
+                    scope=scope,
+                    expected_strategy_id=str(session.get("strategy_id") or "") or None,
+                    expected_workshop_id=workshop_id,
+                )
+            )
+            base_link = store.ensure_current_version_link(
+                workshop_id=workshop_id,
+                strategy_id=base_strategy_id,
+                strategy_spec_registry_id=base_registry_id,
+                document_sha256=base_document_sha256,
+            )
         except CanonicalOperationError as exc:
             _canonical_error(
                 workshop_id=workshop_id,
@@ -2353,6 +2540,39 @@ def create_strategy_workshop_router(
                 idempotency_key=command_key,
                 request_hash=request_hash,
                 error=exc,
+            )
+        except _StrategyVersionProjectionError as exc:
+            code = (
+                ErrorCode.FORBIDDEN
+                if exc.status_code == 403
+                else ErrorCode.UPSTREAM_ERROR
+                if exc.status_code >= 500
+                else ErrorCode.RESOURCE_CONFLICT
+            )
+            _fail_domain_command(
+                workshop_id=workshop_id,
+                operation="create_version",
+                scope=scope,
+                idempotency_key=command_key,
+                request_hash=request_hash,
+                status_code=exc.status_code,
+                code=code,
+                message="StrategySpec version projection is inconsistent",
+                reason=exc.reason,
+                precondition_failed="strategy_version_projection",
+            )
+        except WorkshopVersionProjectionConflict:
+            _fail_domain_command(
+                workshop_id=workshop_id,
+                operation="create_version",
+                scope=scope,
+                idempotency_key=command_key,
+                request_hash=request_hash,
+                status_code=409,
+                code=ErrorCode.RESOURCE_CONFLICT,
+                message="Workshop version projection is inconsistent",
+                reason="WORKSHOP_VERSION_PROJECTION_CONFLICT",
+                precondition_failed="workshop_version_projection",
             )
         base_entry = dict(base_readback["entry"])
         base_doc = dict((base_entry.get("metadata") or {}).get("strategy_spec") or {})
@@ -2370,7 +2590,7 @@ def create_strategy_workshop_router(
                 precondition_failed="strategy_spec",
             )
         try:
-            patched, _ = apply_patch_validated(
+            patched, patched_document_sha256 = apply_patch_validated(
                 base_doc,
                 body.patch,
                 expected_base_sha256=body.base_document_sha256,
@@ -2403,7 +2623,7 @@ def create_strategy_workshop_router(
         ).hexdigest()[:20]
         registry_id = f"reg-ws-{digest}"
         workshop_version_id = f"wsv-{digest}"
-        strategy_id = str(base_entry.get("strategy_id") or session.get("strategy_id") or "")
+        strategy_id = base_strategy_id
         try:
             registry_readback = canonical.create_strategy_spec(
                 {
@@ -2422,6 +2642,24 @@ def create_strategy_workshop_router(
                     "strategy_spec": patched,
                 }
             )
+            (
+                registry_readback,
+                authoritative_document_sha256,
+                authoritative_strategy_id,
+            ) = _project_strategy_version(
+                readback=registry_readback,
+                registry_id=registry_id,
+                scope=scope,
+                expected_strategy_id=strategy_id,
+                expected_workshop_id=workshop_id,
+            )
+            if (
+                authoritative_strategy_id != strategy_id
+                or authoritative_document_sha256 != patched_document_sha256
+            ):
+                raise _StrategyVersionProjectionError(
+                    "STRATEGY_SPEC_AUTHORITATIVE_DIGEST_MISMATCH"
+                )
         except CanonicalOperationError as exc:
             _canonical_error(
                 workshop_id=workshop_id,
@@ -2431,16 +2669,36 @@ def create_strategy_workshop_router(
                 request_hash=request_hash,
                 error=exc,
             )
+        except _StrategyVersionProjectionError as exc:
+            code = (
+                ErrorCode.FORBIDDEN
+                if exc.status_code == 403
+                else ErrorCode.UPSTREAM_ERROR
+                if exc.status_code >= 500
+                else ErrorCode.RESOURCE_CONFLICT
+            )
+            _fail_domain_command(
+                workshop_id=workshop_id,
+                operation="create_version",
+                scope=scope,
+                idempotency_key=command_key,
+                request_hash=request_hash,
+                status_code=exc.status_code,
+                code=code,
+                message="Authoritative StrategySpec version is inconsistent",
+                reason=exc.reason,
+                precondition_failed="strategy_version_projection",
+            )
         existing_links = store.list_version_links(workshop_id)
         link = {
             "workshop_version_id": workshop_version_id,
             "workshop_id": workshop_id,
             "strategy_id": strategy_id,
             "strategy_spec_registry_id": registry_id,
-            "parent_workshop_version_id": session.get("active_workshop_version_id")
-            or session.get("selected_version_id"),
+            "parent_workshop_version_id": base_link["workshop_version_id"],
             "source_event_id": f"wsevt-version-{digest}",
             "sequence_no": len(existing_links) + 1,
+            "document_sha256": authoritative_document_sha256,
             "created_by": scope.user_id,
             "created_at": utc_now(),
         }
@@ -2546,7 +2804,20 @@ def create_strategy_workshop_router(
             )
         registry_id = str(link["strategy_spec_registry_id"])
         try:
-            registry_readback = canonical.get_strategy_spec(registry_id)
+            registry_readback, document_sha256, strategy_id = (
+                _read_strategy_version(
+                    registry_id=registry_id,
+                    scope=scope,
+                    expected_strategy_id=str(link.get("strategy_id") or "") or None,
+                    expected_workshop_id=workshop_id,
+                )
+            )
+            link = store.ensure_version_link_digest(
+                workshop_id=workshop_id,
+                workshop_version_id=version_id,
+                strategy_id=strategy_id,
+                document_sha256=document_sha256,
+            )
         except CanonicalOperationError as exc:
             _canonical_error(
                 workshop_id=workshop_id,
@@ -2555,6 +2826,39 @@ def create_strategy_workshop_router(
                 idempotency_key=command_key,
                 request_hash=request_hash,
                 error=exc,
+            )
+        except _StrategyVersionProjectionError as exc:
+            code = (
+                ErrorCode.FORBIDDEN
+                if exc.status_code == 403
+                else ErrorCode.UPSTREAM_ERROR
+                if exc.status_code >= 500
+                else ErrorCode.RESOURCE_CONFLICT
+            )
+            _fail_domain_command(
+                workshop_id=workshop_id,
+                operation="select_version",
+                scope=scope,
+                idempotency_key=command_key,
+                request_hash=request_hash,
+                status_code=exc.status_code,
+                code=code,
+                message="StrategySpec version projection is inconsistent",
+                reason=exc.reason,
+                precondition_failed="strategy_version_projection",
+            )
+        except WorkshopVersionProjectionConflict:
+            _fail_domain_command(
+                workshop_id=workshop_id,
+                operation="select_version",
+                scope=scope,
+                idempotency_key=command_key,
+                request_hash=request_hash,
+                status_code=409,
+                code=ErrorCode.RESOURCE_CONFLICT,
+                message="Workshop version projection is inconsistent",
+                reason="WORKSHOP_VERSION_PROJECTION_CONFLICT",
+                precondition_failed="workshop_version_projection",
             )
         selected_session = {
             **session,
@@ -3046,6 +3350,16 @@ def create_strategy_workshop_router(
                 "WORKSHOP_VERSION_REQUIRED",
                 precondition_failed="final_version_id",
             )
+        selected_version_id = str(session.get("selected_version_id") or "")
+        if str(version_id) != selected_version_id:
+            raise bff_error(
+                409,
+                ErrorCode.PRECONDITION_FAILED,
+                "Conclusion requires the currently selected workshop version",
+                "WORKSHOP_FINAL_VERSION_NOT_SELECTED",
+                precondition_failed="final_version_id",
+                details_extra={"selected_version_id": selected_version_id},
+            )
         two_person_proof = _require_approval(
             approval_decision_id=body.approval_decision_id,
             workshop_id=workshop_id,
@@ -3081,7 +3395,24 @@ def create_strategy_workshop_router(
             )
         registry_id = str(link["strategy_spec_registry_id"])
         try:
-            registry_readback = canonical.get_strategy_spec(registry_id)
+            # The terminal transition demands the same authoritative projection
+            # proof as version selection: Registry readback must expose a
+            # complete StrategySpec document in the caller's scope whose digest
+            # still matches the immutable durable link.
+            registry_readback, document_sha256, final_strategy_id = (
+                _read_strategy_version(
+                    registry_id=registry_id,
+                    scope=scope,
+                    expected_strategy_id=str(link.get("strategy_id") or "") or None,
+                    expected_workshop_id=workshop_id,
+                )
+            )
+            link = store.ensure_version_link_digest(
+                workshop_id=workshop_id,
+                workshop_version_id=str(version_id),
+                strategy_id=final_strategy_id,
+                document_sha256=document_sha256,
+            )
         except CanonicalOperationError as exc:
             _canonical_error(
                 workshop_id=workshop_id,
@@ -3090,6 +3421,39 @@ def create_strategy_workshop_router(
                 idempotency_key=command_key,
                 request_hash=request_hash,
                 error=exc,
+            )
+        except _StrategyVersionProjectionError as exc:
+            code = (
+                ErrorCode.FORBIDDEN
+                if exc.status_code == 403
+                else ErrorCode.UPSTREAM_ERROR
+                if exc.status_code >= 500
+                else ErrorCode.RESOURCE_CONFLICT
+            )
+            _fail_domain_command(
+                workshop_id=workshop_id,
+                operation="conclude",
+                scope=scope,
+                idempotency_key=command_key,
+                request_hash=request_hash,
+                status_code=exc.status_code,
+                code=code,
+                message="Final StrategySpec version projection is incomplete or inconsistent",
+                reason=exc.reason,
+                precondition_failed="strategy_version_projection",
+            )
+        except WorkshopVersionProjectionConflict:
+            _fail_domain_command(
+                workshop_id=workshop_id,
+                operation="conclude",
+                scope=scope,
+                idempotency_key=command_key,
+                request_hash=request_hash,
+                status_code=409,
+                code=ErrorCode.RESOURCE_CONFLICT,
+                message="Final workshop version digest no longer matches its immutable link",
+                reason="WORKSHOP_VERSION_PROJECTION_CONFLICT",
+                precondition_failed="workshop_version_projection",
             )
         concluded_at = utc_now()
         concluded_session = {

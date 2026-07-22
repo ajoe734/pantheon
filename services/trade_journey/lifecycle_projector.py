@@ -47,7 +47,7 @@ DEFAULT_STATE_PATH = DEFAULT_ROOT / "controller_state.json"
 DEFAULT_CHANNEL = "pantheon_lifecycle_events"
 DEFAULT_GENERATION_RETENTION = 32
 DEFAULT_STAGING_MAX_AGE_SECONDS = 3600.0
-DEFAULT_HEALTH_MAX_AGE_SECONDS = 30.0
+DEFAULT_HEALTH_MAX_AGE_SECONDS = 120.0
 DEFAULT_HEALTH_MAX_BACKLOG = 5000
 DEFAULT_HEALTH_MIN_FREE_BYTES = 128 * 1024 * 1024
 DEFAULT_HEALTH_MIN_FREE_PERCENT = 5.0
@@ -482,7 +482,6 @@ class AtomicProjectionBundle:
                 os.fsync(directory_fd)
             finally:
                 os.close(directory_fd)
-            self.maintain()
             return final
         except BaseException:
             if staging.exists():
