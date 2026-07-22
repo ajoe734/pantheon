@@ -34,6 +34,9 @@ def test_canonical_lifecycle_projector_is_default_and_owns_both_read_models():
     assert environment["LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS"] == (
         "${LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS:-3600}"
     )
+    assert environment["LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS"] == (
+        "${LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS:-120}"
+    )
     assert environment["LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_BYTES"] == (
         "${LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_BYTES:-134217728}"
     )
@@ -66,7 +69,7 @@ def test_canonical_lifecycle_projector_is_default_and_owns_both_read_models():
         "/data/bff/lifecycle-projection/controller_state.json"
     )
     assert bff_environment["LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS"] == (
-        "${LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS:-30}"
+        "${LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS:-120}"
     )
     assert (
         bff["depends_on"]["loop-run-projector-scheduler"]["condition"]

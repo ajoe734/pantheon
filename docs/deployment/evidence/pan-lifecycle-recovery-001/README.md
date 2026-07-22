@@ -1,6 +1,7 @@
 # PAN-LIFECYCLE-RECOVERY-001 delivery evidence
 
-Status: implementation validated; hosted deployment and acceptance pending
+Status: follow-up hardening validated after first hosted deploy failed closed;
+follow-up PR, review, redeploy, and acceptance pending
 
 Environment: replacement Pantheon dev VM only (`pantheon-lupin-dev`, project
 `pantheon-lupin-dev-20260719`). No production or live-capital operation is in
@@ -58,7 +59,7 @@ Default thresholds:
 |---|---:|
 | Generation retention | 32 |
 | Abandoned staging age | 3600 seconds |
-| Maximum last-poll age | 30 seconds |
+| Maximum last-poll age | 120 seconds |
 | Maximum backlog | 5000 lifecycle rows |
 | Minimum free bytes | 134217728 |
 | Minimum free percent | 5% |
@@ -90,6 +91,57 @@ ask/inbox-route assertion. The identical assertion also fails on the untouched
 `52d9ed234af280fc239459bfeddf76886ae35f08` baseline with the same three routes,
 so it is not attributed to this task.
 
+## First hosted deploy: fail-closed evidence and follow-up
+
+The initial implementation merged through [PR #3958](https://github.com/ajoe734/pantheon/pull/3958)
+as `9a24478ed2570cfa542977deaa35942bc612ffe2`. Required branch checks and the
+independent Codex repository review passed. Governed nonprod deploy
+[run 29945331144](https://github.com/ajoe734/pantheon/actions/runs/29945331144)
+then deployed that exact SHA to the replacement dev VM under the shared
+environment lease with strict auth, but correctly failed rather than accepting
+an unhealthy BFF.
+
+Hosted readback during the failed run proved:
+
+- `/bff/version` reported exact SHA
+  `9a24478ed2570cfa542977deaa35942bc612ffe2`.
+- Disk pressure was no longer present: about 182 GB and 70.4% free versus the
+  128 MiB / 5% minimum policy.
+- The projector recovered from the transient `current=5040/controller=5039`
+  mismatch and converged at generation 5041 with checkpoint/high watermark
+  657255.
+- `/readyz` still flapped between 503 and 200 because observed large-volume
+  poll/cleanup intervals reached about 61 seconds while the configured default
+  freshness window was only 30 seconds. The deploy therefore failed at the
+  `operator-bff` health gate even though the scheduler container had reported
+  healthy.
+
+The follow-up removes the redundant retention pass after the atomic `current`
+switch. The pre-switch `reserve_for_publish` pass already leaves one slot, so
+the new generation remains within the deterministic retention bound without a
+post-switch interval where BFF can observe a new active generation and old
+controller state. It also raises the overridable default freshness window to
+120 seconds, covering the observed 61-second poll while continuing to fail
+closed after two minutes without a successful poll.
+
+Follow-up verification:
+
+```text
+python3 -m py_compile \
+  services/trade_journey/lifecycle_projector.py \
+  services/control-plane/bff/main.py \
+  services/control-plane/bff/test_lifecycle_projector_readiness.py
+
+/tmp/pan-lifecycle-recovery-001-venv/bin/python -m pytest -q \
+  services/trade_journey/test_lifecycle_projector.py \
+  services/trade_journey/test_lifecycle_projector_compose.py \
+  services/control-plane/bff/test_lifecycle_projector_readiness.py
+# 23 passed
+
+docker compose -f docker-compose.yml config --quiet
+git diff --check
+```
+
 ## Hosted acceptance ledger
 
 These fields must be completed from immutable GitHub and hosted artifacts
@@ -97,10 +149,10 @@ before the task can close:
 
 | Evidence | Result |
 |---|---|
-| PR and reviewer approval | pending |
-| Merge commit on `dev` | pending |
-| Governed nonprod deploy run | pending |
-| Deployed BFF/projector SHA | pending |
+| PR and reviewer approval | Initial PR #3958 approved; follow-up PR/re-review pending |
+| Merge commit on `dev` | Initial `9a24478ed2570cfa542977deaa35942bc612ffe2`; follow-up pending |
+| Governed nonprod deploy run | Run 29945331144 failed closed at BFF health; accepted rerun pending |
+| Deployed BFF/projector SHA | `9a24478ed2570cfa542977deaa35942bc612ffe2` observed but not accepted |
 | Cleanup-plan log and retained active generation | pending |
 | Three consecutive fresh readiness samples | pending |
 | New lifecycle stimulus advances `current` and is readable | pending |
@@ -115,3 +167,10 @@ projector-generated names, logs the classified plan first, and never removes
 the `current` target before the new atomic switch. Hosted closeout still needs
 the workflow artifact and cleanup log to prove those guards against the actual
 dev volume.
+
+The independent review also noted that syntactically valid controller JSON
+with corrupted numeric fields can currently raise `ValueError` and return HTTP
+500 instead of a structured degraded readiness payload. The projector's atomic
+writer only emits controlled integers, so this remains non-blocking hardening;
+the hosted closeout must retain it as residual risk unless a separate focused
+repair is delivered.
