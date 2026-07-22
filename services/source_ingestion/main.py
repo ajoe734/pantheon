@@ -470,6 +470,7 @@ class SetConnectorLifecycleRequest(StrictBaseModel):
 class RunScheduledRequest(StrictBaseModel):
     max_concurrency: int | None = None
     force_connector_ids: list[str] = Field(default_factory=list)
+    exclusive_connector_ids: list[str] = Field(default_factory=list)
 
 
 class PersonaSourceProvisioningRequest(StrictBaseModel):
@@ -1843,13 +1844,12 @@ def _run_job(
         post_processing_stage = "receipt_finalize"
         _persist_ingest_receipt(result, evidence_refs)
     except Exception as exc:
-        if post_processing_stage != "receipt_finalize":
-            _persist_ingest_receipt(
-                result,
-                evidence_refs,
-                status="failed",
-                typed_failure=_post_processing_typed_failure(exc, stage=post_processing_stage),
-            )
+        _persist_ingest_receipt(
+            result,
+            evidence_refs,
+            status="failed",
+            typed_failure=_post_processing_typed_failure(exc, stage=post_processing_stage),
+        )
         raise
     source_search_refresh: dict[str, Any] | None = None
     if result.run.status.value == "completed":
@@ -2849,12 +2849,24 @@ def _run_scheduled_connectors(request: RunScheduledRequest | None = None) -> dic
         for connector_id in (request.force_connector_ids if request else [])
         if str(connector_id).strip()
     }
+    exclusive_connector_ids = {
+        str(connector_id).strip()
+        for connector_id in (request.exclusive_connector_ids if request else [])
+        if str(connector_id).strip()
+    }
+    if exclusive_connector_ids and force_connector_ids - exclusive_connector_ids:
+        raise HTTPException(
+            status_code=400,
+            detail="force_connector_ids must stay within exclusive_connector_ids",
+        )
+    force_connector_ids.update(exclusive_connector_ids)
     if max_concurrency < 1:
         raise HTTPException(status_code=400, detail="max_concurrency must be >= 1")
     schedules = schedule_config_store.list_schedules()
     enqueued: list[dict[str, Any]] = []
     ran: list[dict[str, Any]] = []
     skipped: list[str] = []
+    excluded: list[str] = []
     failed: list[dict[str, Any]] = []
     resolved_dlq = _resolve_pending_dlq_for_completed_frontiers()
     recovered_frontier = store.recover_stale_running(
@@ -2867,12 +2879,23 @@ def _run_scheduled_connectors(request: RunScheduledRequest | None = None) -> dic
         if item.status in {"queued", "running", "retry"}
     }
     configured_schedule_ids = {schedule.connector_id for schedule in schedules}
-    for connector_id in sorted(force_connector_ids - configured_schedule_ids):
+    for connector_id in sorted(exclusive_connector_ids - configured_schedule_ids):
+        failed.append({"connector_id": connector_id, "error": "exclusively selected connector schedule not found"})
+    for connector_id in sorted(force_connector_ids - configured_schedule_ids - exclusive_connector_ids):
         failed.append({"connector_id": connector_id, "error": "forced connector schedule not found"})
 
     for sched in schedules:
+        if exclusive_connector_ids and sched.connector_id not in exclusive_connector_ids:
+            excluded.append(sched.connector_id)
+            continue
         if not sched.enabled or sched.interval_seconds <= 0:
-            skipped.append(sched.connector_id)
+            if sched.connector_id in exclusive_connector_ids:
+                failed.append({
+                    "connector_id": sched.connector_id,
+                    "error": "exclusively selected connector schedule is disabled",
+                })
+            else:
+                skipped.append(sched.connector_id)
             continue
         if sched.connector_id in active_frontier_connector_ids:
             skipped.append(sched.connector_id)
@@ -2892,7 +2915,13 @@ def _run_scheduled_connectors(request: RunScheduledRequest | None = None) -> dic
             failed.append({"connector_id": sched.connector_id, "error": "connector config not found"})
             continue
         if config.connector.status == ConnectorStatus.DISABLED:
-            skipped.append(sched.connector_id)
+            if sched.connector_id in exclusive_connector_ids:
+                failed.append({
+                    "connector_id": sched.connector_id,
+                    "error": "exclusively selected connector is disabled",
+                })
+            else:
+                skipped.append(sched.connector_id)
             continue
         try:
             _register_or_validate_connector(config.connector)
@@ -2908,7 +2937,11 @@ def _run_scheduled_connectors(request: RunScheduledRequest | None = None) -> dic
         except (EvidenceValidationError, SourceEvidenceError) as exc:
             failed.append({"connector_id": sched.connector_id, "error": str(exc)})
 
-    claimed = store.claim_due_frontier(limit=max_concurrency, now=now_iso)
+    claimed = store.claim_due_frontier(
+        limit=max_concurrency,
+        now=now_iso,
+        connector_ids=exclusive_connector_ids or None,
+    )
     for frontier in claimed:
         try:
             result, evidence_refs, updated_frontier, source_search_refresh = _run_frontier_item(frontier)
@@ -2938,11 +2971,25 @@ def _run_scheduled_connectors(request: RunScheduledRequest | None = None) -> dic
                 }
             )
 
+    if exclusive_connector_ids:
+        accounted_connector_ids = {
+            str(item.get("connector_id") or "")
+            for item in [*ran, *failed]
+            if isinstance(item, Mapping)
+        }
+        claimed_connector_ids = {item.connector_id for item in claimed}
+        for connector_id in sorted(exclusive_connector_ids - accounted_connector_ids - claimed_connector_ids):
+            failed.append({
+                "connector_id": connector_id,
+                "error": "exclusively selected connector was not runnable",
+            })
+
     return {
         "enqueued": enqueued,
         "claimed": [item.to_dict() for item in claimed],
         "ran": ran,
         "skipped": skipped,
+        "excluded": excluded,
         "failed": failed,
         "recovered_frontier": [item.to_dict() for item in recovered_frontier],
         "resolved_dlq": resolved_dlq,
@@ -2953,6 +3000,8 @@ def _run_scheduled_connectors(request: RunScheduledRequest | None = None) -> dic
             "total_enqueued": len(enqueued),
             "max_concurrency": max_concurrency,
             "forced_connector_count": len(force_connector_ids),
+            "exclusive_connector_count": len(exclusive_connector_ids),
+            "total_excluded": len(excluded),
             "recovered_frontier_count": len(recovered_frontier),
             "resolved_dlq_count": len(resolved_dlq),
         },

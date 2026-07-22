@@ -58,6 +58,7 @@ def _config(
     *,
     truth_level: str = FINAL_TRUTH_LEVEL,
     force_connector_ids: tuple[str, ...] = (),
+    exclusive_connector_ids: tuple[str, ...] = (),
 ) -> ControllerConfig:
     return ControllerConfig(
         api_url="http://source-ingest.test:8097",
@@ -72,6 +73,7 @@ def _config(
         truth_level=truth_level,
         controller_token="controller-test-token-that-is-at-least-32-characters",
         force_connector_ids=force_connector_ids,
+        exclusive_connector_ids=exclusive_connector_ids,
     )
 
 
@@ -351,6 +353,7 @@ def _patch_successful_tick(
     events: list[str],
     *,
     expected_force_connector_ids: list[str] | None = None,
+    expected_exclusive_connector_ids: list[str] | None = None,
 ) -> None:
     def load_desired_state(*, timeout_seconds: float) -> tuple[tuple[dict[str, Any], ...], dict[str, Any]]:
         assert timeout_seconds == 5.0
@@ -365,6 +368,7 @@ def _patch_successful_tick(
     def run_schedule_tick(**kwargs: Any) -> dict[str, Any]:
         assert kwargs["max_concurrency"] == 2
         assert kwargs["force_connector_ids"] == (expected_force_connector_ids or [])
+        assert kwargs["exclusive_connector_ids"] == (expected_exclusive_connector_ids or [])
         assert kwargs["controller_token"] == "controller-test-token-that-is-at-least-32-characters"
         events.append("run_schedule_tick")
         return _schedule()
@@ -773,12 +777,16 @@ def test_run_controller_tick_orders_terminal_success_after_readback_validation(
     assert _call(writer, "success")["kwargs"]["dlq_count"] == 0
 
 
-def test_run_controller_tick_forces_governed_bounded_connector(
+def test_run_controller_tick_exclusively_selects_governed_bounded_connector(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     events: list[str] = []
-    config = _config(tmp_path, force_connector_ids=(CONNECTOR_ID,))
+    config = _config(
+        tmp_path,
+        force_connector_ids=("unrelated-force",),
+        exclusive_connector_ids=(CONNECTOR_ID,),
+    )
     state = _state()
     store = RecordingStateStore(config.state_path, events)
     writer = RecordingWriter(events)
@@ -786,6 +794,7 @@ def test_run_controller_tick_forces_governed_bounded_connector(
         monkeypatch,
         events,
         expected_force_connector_ids=[CONNECTOR_ID],
+        expected_exclusive_connector_ids=[CONNECTOR_ID],
     )
 
     result = run_controller_tick(config=config, state=state, store=store, writer=writer)

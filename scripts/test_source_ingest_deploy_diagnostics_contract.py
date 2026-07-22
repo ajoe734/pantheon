@@ -95,6 +95,7 @@ def test_bounded_source_refresh_profile_is_fail_closed() -> None:
     assert "SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS <= 3600" in gate
     assert 'required = {"openapi.twse.com.tw", "www.tpex.org.tw"}' in gate
     assert 'export SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}"' in gate
+    assert 'export SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS="${SOURCE_INGEST_BOUNDED_CONNECTOR_ID}"' in gate
     assert "from services.external_egress import allowed_hosts" in gate
 
     root_start = deploy.index("  root)\n")

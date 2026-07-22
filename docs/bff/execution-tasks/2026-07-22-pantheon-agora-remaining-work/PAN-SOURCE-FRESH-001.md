@@ -90,8 +90,9 @@ boundaries:
   missing, invalid, and materially future values never inherit ingest time and
   carry explicit source-time status.
 - The `source-ingest-scheduler` profile is one-shot by default, never restarts,
-  caps ticks/concurrency/records at deploy preflight, forces the declared
-  connector, and gates the Agora projector on a successful controller exit.
+  caps ticks/concurrency/records at deploy preflight, exclusively selects and
+  forces the declared connector across both schedule enqueue and existing
+  frontier claims, and gates the Agora projector on a successful controller exit.
   The deploy waits for both one-shot containers, requires zero exit codes, and
   verifies a new receipt/controller/Agora projection correlation before it can
   continue to unrelated root-stack checks.

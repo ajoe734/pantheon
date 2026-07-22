@@ -319,6 +319,54 @@ class JsonlIngestScheduleStore:
                 self._receipts[receipt.ingest_run_id] = receipt
             else:
                 raise SourceEvidenceError(f"Unsupported ingest schedule record: {record_type or '<missing>'}")
+        self._recover_incomplete_receipts()
+
+    def _recover_incomplete_receipts(self) -> list[IngestReceipt]:
+        """Durably terminalize receipts stranded by a post-processing crash.
+
+        A ``processing`` receipt is written only after the scheduler has made
+        the ingest run terminal.  Seeing that pair during replay therefore
+        proves that post-processing did not publish its final receipt.  Append
+        a secret-free typed failure before exposing the reloaded store so a
+        restart cannot leave completed run truth paired with a permanently
+        nonterminal receipt.
+        """
+
+        recovered: list[IngestReceipt] = []
+        for ingest_run_id, receipt in list(self._receipts.items()):
+            run = self._runs.get(ingest_run_id)
+            if receipt.status != "processing" or run is None or run.status != IngestRunStatus.COMPLETED:
+                continue
+            run_payload = run.to_dict()
+            terminal_receipt = IngestReceipt(
+                ingest_run_id=receipt.ingest_run_id,
+                connector_id=receipt.connector_id,
+                status="failed",
+                trigger_type=receipt.trigger_type,
+                trace_id=receipt.trace_id,
+                started_at=receipt.started_at,
+                finished_at=run_payload.get("finished_at") or receipt.finished_at,
+                raw_count=receipt.raw_count,
+                normalized_count=receipt.normalized_count,
+                rejected_count=receipt.rejected_count,
+                watermark=receipt.watermark,
+                source_timestamp=receipt.source_timestamp,
+                source_timestamp_status=receipt.source_timestamp_status,
+                evidence_refs=receipt.evidence_refs,
+                storage_refs=receipt.storage_refs,
+                typed_failure={
+                    "schema_version": "source_ingest_typed_failure.v1",
+                    "category": "persistence",
+                    "code": "post_processing_interrupted",
+                    "error_type": "IncompleteReceiptRecovered",
+                    "retryable": True,
+                    "stage": "restart_recovery",
+                },
+            )
+            self._append("ingest_receipt", terminal_receipt.ingest_run_id, terminal_receipt.to_dict())
+            self._receipts[ingest_run_id] = terminal_receipt
+            recovered.append(terminal_receipt)
+        return recovered
 
     def upsert_run(self, run: IngestRun) -> IngestRun:
         self._append("ingest_run", run.ingest_run_id, run.to_dict())
@@ -391,14 +439,27 @@ class JsonlIngestScheduleStore:
     def get_frontier(self, frontier_id: str) -> CrawlFrontierItem | None:
         return self._frontier.get(frontier_id)
 
-    def claim_due_frontier(self, *, limit: int, now: str | None = None) -> list[CrawlFrontierItem]:
+    def claim_due_frontier(
+        self,
+        *,
+        limit: int,
+        now: str | None = None,
+        connector_ids: Iterable[str] | None = None,
+    ) -> list[CrawlFrontierItem]:
         if limit < 1:
             raise SourceEvidenceError("frontier claim limit must be >= 1")
+        allowed_connector_ids = (
+            None
+            if connector_ids is None
+            else {str(connector_id).strip() for connector_id in connector_ids if str(connector_id).strip()}
+        )
         claimed: list[CrawlFrontierItem] = []
         for item in self.list_frontier():
             if len(claimed) >= limit:
                 break
             if item.status not in {"queued", "retry"}:
+                continue
+            if allowed_connector_ids is not None and item.connector_id not in allowed_connector_ids:
                 continue
             try:
                 claimed.append(self.claim_frontier(item.frontier_id, now=now))

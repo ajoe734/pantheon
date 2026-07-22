@@ -184,6 +184,85 @@ def test_run_scheduled_force_reconciles_changed_connector_before_cadence(client)
     assert forced.json()["summary"]["forced_connector_count"] == 1
 
 
+def test_run_scheduled_exclusive_scope_never_enqueues_or_runs_unrelated_due_connector(client) -> None:
+    test_client, _, module = client
+    target_id = "conn-exclusive-target"
+    unrelated_id = "conn-exclusive-unrelated"
+    for connector_id in (target_id, unrelated_id):
+        configured = _configure_with_records(test_client, connector_id=connector_id)
+        assert configured.status_code == 201, configured.text
+        scheduled = test_client.put(
+            f"/api/source-ingest/connectors/{connector_id}/schedule",
+            json={"interval_seconds": 1, "enabled": True},
+        )
+        assert scheduled.status_code == 200, scheduled.text
+
+    response = test_client.post(
+        "/api/source-ingest/run-scheduled",
+        json={
+            "max_concurrency": 1,
+            "force_connector_ids": [target_id],
+            "exclusive_connector_ids": [target_id],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["summary"]["total_enqueued"] == 1
+    assert body["summary"]["total_ran"] == 1
+    assert body["summary"]["total_failed"] == 0
+    assert body["summary"]["exclusive_connector_count"] == 1
+    assert body["summary"]["total_excluded"] == 1
+    assert [item["connector_id"] for item in body["enqueued"]] == [target_id]
+    assert [item["connector_id"] for item in body["ran"]] == [target_id]
+    assert body["excluded"] == [unrelated_id]
+    assert all(item.connector_id != unrelated_id for item in module.store.list_frontier())
+    assert module.store.list_receipts(connector_id=unrelated_id) == []
+
+
+@pytest.mark.parametrize(
+    ("setup", "expected_error"),
+    [
+        ("missing", "schedule not found"),
+        ("disabled_schedule", "schedule is disabled"),
+        ("disabled_connector", "connector is disabled"),
+    ],
+)
+def test_run_scheduled_exclusive_scope_fails_closed_when_target_is_unavailable(
+    client,
+    setup: str,
+    expected_error: str,
+) -> None:
+    test_client, _, _ = client
+    connector_id = f"conn-exclusive-{setup}"
+    if setup != "missing":
+        connector_overrides = {"status": "disabled"} if setup == "disabled_connector" else {}
+        configured = test_client.post(
+            "/api/source-ingest/connectors",
+            json={
+                "connector": _connector(connector_id=connector_id, **connector_overrides),
+                "fetch": {"mode": "static_records", "records": []},
+            },
+        )
+        assert configured.status_code == 201, configured.text
+        scheduled = test_client.put(
+            f"/api/source-ingest/connectors/{connector_id}/schedule",
+            json={"interval_seconds": 60, "enabled": setup != "disabled_schedule"},
+        )
+        assert scheduled.status_code == 200, scheduled.text
+
+    response = test_client.post(
+        "/api/source-ingest/run-scheduled",
+        json={"exclusive_connector_ids": [connector_id]},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["summary"]["total_ran"] == 0
+    assert response.json()["summary"]["total_enqueued"] == 0
+    assert response.json()["summary"]["total_failed"] == 1
+    assert expected_error in response.json()["failed"][0]["error"]
+
+
 def test_stale_running_frontier_is_durably_recovered_after_restart(client) -> None:
     _, _, module = client
     item = module.store.enqueue_frontier(
@@ -324,6 +403,90 @@ def test_post_processing_failure_keeps_durable_typed_receipt_after_reload(
     assert durable_run is not None and durable_run.status.value == "completed"
     assert durable_receipt is not None and durable_receipt.status == "failed"
     assert durable_receipt.typed_failure["code"] == "post_processing_failed"
+
+
+def test_final_receipt_append_failure_is_rewritten_as_terminal_typed_failure(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    test_client, _, module = client
+    connector_id = "conn-final-receipt-retry"
+    assert _configure_with_records(test_client, connector_id=connector_id).status_code == 201
+    assert test_client.put(
+        f"/api/source-ingest/connectors/{connector_id}/schedule",
+        json={"interval_seconds": 60, "enabled": True},
+    ).status_code == 200
+
+    original_upsert = module.store.upsert_receipt
+    receipt_writes = 0
+
+    def fail_final_receipt_once(receipt):
+        nonlocal receipt_writes
+        receipt_writes += 1
+        if receipt_writes == 2:
+            raise OSError("simulated final receipt append failure")
+        return original_upsert(receipt)
+
+    monkeypatch.setattr(module.store, "upsert_receipt", fail_final_receipt_once)
+    response = test_client.post("/api/source-ingest/run-scheduled", json={"max_concurrency": 1})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["summary"]["total_failed"] == 1
+    run = next(run for run in module.store.list_runs() if run.connector_id == connector_id)
+    receipt = module.store.get_receipt(run.ingest_run_id)
+    assert run.status.value == "completed"
+    assert receipt is not None and receipt.status == "failed"
+    assert receipt.typed_failure["code"] == "post_processing_failed"
+    assert receipt.typed_failure["stage"] == "receipt_finalize"
+    assert receipt_writes == 3
+
+    durable_receipt = module.JsonlIngestScheduleStore(module.SCHEDULE_STORE_PATH).get_receipt(run.ingest_run_id)
+    assert durable_receipt is not None and durable_receipt.status == "failed"
+    assert durable_receipt.typed_failure["stage"] == "receipt_finalize"
+
+
+def test_restart_recovers_processing_receipt_when_final_and_fallback_appends_fail(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    test_client, _, module = client
+    connector_id = "conn-final-receipt-restart"
+    assert _configure_with_records(test_client, connector_id=connector_id).status_code == 201
+    assert test_client.put(
+        f"/api/source-ingest/connectors/{connector_id}/schedule",
+        json={"interval_seconds": 60, "enabled": True},
+    ).status_code == 200
+
+    original_upsert = module.store.upsert_receipt
+
+    def fail_terminal_receipts(receipt):
+        if receipt.status != "processing":
+            raise OSError("simulated persistent terminal receipt failure")
+        return original_upsert(receipt)
+
+    monkeypatch.setattr(module.store, "upsert_receipt", fail_terminal_receipts)
+    response = test_client.post("/api/source-ingest/run-scheduled", json={"max_concurrency": 1})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["summary"]["total_failed"] == 1
+    run = next(run for run in module.store.list_runs() if run.connector_id == connector_id)
+    stranded = module.store.get_receipt(run.ingest_run_id)
+    assert run.status.value == "completed"
+    assert stranded is not None and stranded.status == "processing"
+
+    reloaded = module.JsonlIngestScheduleStore(module.SCHEDULE_STORE_PATH)
+    recovered = reloaded.get_receipt(run.ingest_run_id)
+    assert recovered is not None and recovered.status == "failed"
+    assert recovered.typed_failure == {
+        "schema_version": "source_ingest_typed_failure.v1",
+        "category": "persistence",
+        "code": "post_processing_interrupted",
+        "error_type": "IncompleteReceiptRecovered",
+        "retryable": True,
+        "stage": "restart_recovery",
+    }
+    replayed = module.JsonlIngestScheduleStore(module.SCHEDULE_STORE_PATH).get_receipt(run.ingest_run_id)
+    assert replayed is not None and replayed.to_dict() == recovered.to_dict()
 
 
 def test_run_scheduled_skips_disabled_connector(client) -> None:
