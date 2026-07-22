@@ -66980,6 +66980,7 @@ app.include_router(_create_trade_journal_router(
 
 
 # TJ-E2E-005: canonical Trade Journey read API via isolated module
+import trade_journeys as _trade_journeys  # noqa: E402
 from trade_journeys import create_trade_journeys_router as _create_trade_journeys_router  # noqa: E402
 app.include_router(_create_trade_journeys_router(
     extract_identity=_extract_identity,
@@ -67178,6 +67179,7 @@ app.include_router(
         bff_error=_bff_error,
         utc_now=utc_now,
         get_read_store=lambda: read_store,
+        get_trade_journey_store=lambda: _trade_journeys.EVENT_STORE,
         sync_servant_agent=lambda persona: _ensure_agora_servant_openclaw_agent(dict(persona)),
         canonical_context_ref_resolver=_resolve_agora_interaction_context_ref,
     )
