@@ -300,3 +300,71 @@ git diff --check
 
 No external request, provider credential, deployment, production state, or
 live-capital surface was touched during re-review.
+
+## Final remediation re-review
+
+Reviewed remediation commits: `efc71382f0cc89993496376e6dacb9df291635b8`
+and `721bf4bc1b0bca0ac6b37d1af455d065f3f47cca`
+
+Reviewed branch tip: `7e159061f44bed8a37c0c7d9e027ff403212302a`
+
+Verdict: **APPROVED — RETURN TO OWNER FOR FINALIZATION**
+
+Both remaining findings from the prior remediation re-review are resolved:
+
+- Receipt finalization now retries the terminal typed-failure receipt when the
+  success receipt append fails. If both terminal appends fail, JSONL replay
+  detects the durable `completed` run paired with a `processing` receipt and
+  appends an idempotent `post_processing_interrupted` terminal failure before
+  exposing the reloaded store. The focused tests inject both a one-time final
+  append failure and persistent terminal append failures, then reload twice to
+  prove convergence and stable replay.
+- The bounded path now carries an explicit exclusive connector set from deploy
+  environment through Compose, controller, scheduler worker, and API. It
+  filters schedule enqueue and existing frontier claims while leaving ordinary
+  non-exclusive scheduler calls unchanged. The regression proves an unrelated
+  enabled/due schedule is excluded, its pre-existing due frontier remains
+  queued, and no unrelated receipt is created. Missing schedules, disabled
+  schedules/connectors, and selected-connector fetch failures remain explicit
+  terminal controller failures.
+
+Independent final verification on the reviewed branch tip passed:
+
+```text
+/home/lupin/pantheon/.venv/bin/python -m pytest -q \
+  services/test_external_egress.py \
+  services/source_ingestion/tests/test_scheduled_connector.py \
+  services/source_ingestion/tests/test_controller_worker.py \
+  scripts/test_project_market_data_to_bff_agora_surfaces.py \
+  services/source_ingestion/test_compose_activation.py \
+  scripts/test_source_ingest_deploy_diagnostics_contract.py
+
+127 passed, 1 warning in 33.95s
+
+/home/lupin/pantheon/.venv/bin/python -m compileall -q \
+  services/source_ingestion/main.py \
+  services/source_ingestion/scheduler.py \
+  services/source_ingestion/scheduler_worker.py \
+  services/source_ingestion/controller_worker.py
+
+bash -n scripts/deploy_nonprod_vm.sh
+COMPOSE_PROFILES= docker compose -f docker-compose.yml config --quiet
+PANTHEON_EXTERNAL_EGRESS=allowlist \
+PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=openapi.twse.com.tw,www.tpex.org.tw \
+SOURCE_INGEST_BOUNDED_CONNECTOR_ID=tw-twse-tpex-official-market \
+SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS=1800 \
+SOURCE_INGEST_CONTROLLER_MAX_TICKS=1 \
+SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY=1 \
+SOURCE_INGEST_MAX_RECORDS=100 \
+COMPOSE_PROFILES=source-ingest-scheduler \
+docker compose -f docker-compose.yml config --quiet
+git diff --check
+```
+
+The branch had no open PR at review time. `origin/dev` advanced after the owner
+created the reviewed tip, so owner finalization must integrate the then-current
+`dev`, re-run appropriate checks, create the task PR, and merge it before
+`done`. Hosted source/projection proof remains owner/`AG-HOSTED-CLOSE-001`
+closeout work; this approval does not claim a deployment. No external request,
+provider credential, deployment, production state, or live-capital surface was
+touched during final re-review.

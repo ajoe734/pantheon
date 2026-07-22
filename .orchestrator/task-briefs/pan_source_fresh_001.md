@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Formalize guarded source refresh and Agora freshness
-- Status: in_progress
+- Status: review
 - Owner: Codex
 - Reviewer: Codex2
-- Next: Receipt restart convergence and exclusive bounded connector selection are implemented at efc71382f/721bf4bc1; latest origin/dev is merged, and the post-merge suite passed 779 tests with 2 optional skips plus compileall, shell syntax, default/bounded Compose config, and diff checks. Ready for Codex2 re-review.
+- Next: Codex2 independently re-reviewed 7e159061f and found both findings from d2633fae0 resolved. Reviewer evidence is ready for the governed approve transition back to Codex for finalization, latest-dev integration, PR, checks, merge, and hosted-proof handoff.
 
 ## Summary
 把 deny-all egress 緊急修補正式交付，建立 HTTPS allowlist/SSRF guard、bounded scheduler、ingest receipt 與 Agora freshness/stale truth。
