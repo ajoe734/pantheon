@@ -1,17 +1,17 @@
 {
-  "bundle_version": "1.10",
+  "bundle_version": "1.12",
   "extends": {
-    "bundle_path": "services/control-plane/specs/agora/bundle_index.v1_9.json",
-    "bundle_version": "1.9",
-    "bundle_index_sha256": "3485acad9de193aff972910e8286193b09924ac6505b06b7debc931211999795"
+    "bundle_path": "services/control-plane/specs/agora/bundle_index.v1_11.json",
+    "bundle_version": "1.11",
+    "bundle_index_sha256": "202f97b5099806849511c69349f9c77e08f2c3420294dbe92ec6b1c2b07679a0"
   },
   "files": {
-    "specs/agora/v11/candidate_member_truth_projection.schema.json": "2e83a208b870d56bb17810acff47e7c531adca0d00ab8195e89e524c3687ce06",
-    "specs/agora/v11/capability_manifest_v1_10.json": "5bbfae91b9f0ed7d56801c89eacf9f0caf165d9c171d170df462fe5e015b0b69"
+    "specs/agora/v13/candidate_member_truth_projection.schema.json": "7ed59957adc97dd48af20aab19f8476acb84c29e8832d3ad076fe8625e610b00",
+    "specs/agora/v13/capability_manifest_v1_12.json": "d35999b82e6b606f22de5baf4e6d260f03ce85d0cc871f5c1aa68145a0543188"
   },
   "openapi": {
-    "path": "services/control-plane/openapi/agora_v1_10.openapi.yaml",
-    "sha256": "0d408b254bd391568bf4e31e28b335e34f704fe1289dba1cfd9aec67bf14e4b4"
+    "path": "services/control-plane/openapi/agora_v1_12.openapi.yaml",
+    "sha256": "88a707090a1e58ebe3159d530ab437f6f0bb0d130f26e396edf6f1de3678f53f"
   },
   "required_definition_checksums": {
     "FieldProvenance": "ed99cbd2b7c11da08e1930c2e35bc42863b64ced84adcc949f4fb414aa4814da",
@@ -53,5 +53,5 @@
     "specs/agora/v5/candidate_member_review.schema.json": "not rehashed; frozen source of projected rationale values",
     "specs/agora/v5/candidate_monitoring_status.schema.json": "not rehashed; frozen source of projected next_event values"
   },
-  "note": "AG-CAND-TRUTH-001-BE additive candidate truth projection. Every rendered candidate field is field-schema-bound and linked to a durable record of the same candidate with provenance/as-of or explicitly typed unavailable. Evidence is unavailable without a persisted governed ref; recipe requirements never create synthetic evidence refs. Evidence summaries and score-component explanations are redacted from lists and viewer detail. No generated narrative, cross-candidate sample text, broker orders, RuntimeBinding writes, or capital binding. Sharpe-derived scores remain explicitly identified."
+  "note": "AG-CAND-TRUTH-001-BE additive v1.12 candidate truth projection over exact v1.11 bytes. Every rendered candidate field is field-schema-bound and linked to a durable record of the same candidate with provenance/as-of or explicitly typed unavailable. Evidence is unavailable without a persisted governed ref; recipe requirements never create synthetic evidence refs. Evidence summaries and score-component explanations are redacted from lists and viewer detail. Existing v1.10/v1.11 contract bytes remain unchanged. No generated narrative, cross-candidate sample text, broker orders, RuntimeBinding writes, or capital binding. Sharpe-derived scores remain explicitly identified."
 }

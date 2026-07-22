@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://pantheon/agora/v11/candidate_member_truth_projection",
+  "$id": "https://pantheon/agora/v13/candidate_member_truth_projection",
   "title": "CandidateMemberTruthProjectionBundle",
   "description": "AG-CAND-TRUTH-001-BE additive contract: every candidate field rendered by Trading Room is either linked to a durable record of the same candidate (with provenance and as-of) or explicitly typed unavailable. The BFF never fabricates rationale, concerns, next-event, or evidence narrative and never presents a Sharpe-derived value as a generic confidence score.",
   "type": "object",

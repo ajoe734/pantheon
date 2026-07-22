@@ -1,7 +1,7 @@
-"""AG-CAND-TRUTH-001-BE — Agora v1.10 candidate-truth bundle integrity tests.
+"""AG-CAND-TRUTH-001-BE — Agora v1.12 candidate-truth bundle integrity tests.
 
 Locks the additive candidate member truth projection contract:
-  - bundle extends v1.9 without rewriting the parent index
+  - bundle extends v1.11 without rewriting the parent index
   - file and per-definition hashes match exact contract bytes
   - OpenAPI and capability manifest publish the same routes
   - field states are available-with-provenance or typed-unavailable only
@@ -19,10 +19,10 @@ from jsonschema import Draft7Validator, FormatChecker, RefResolver
 
 ROOT = Path(__file__).resolve().parents[1]
 AGORA_SPECS = ROOT / "services/control-plane/specs/agora"
-SCHEMA_PATH = AGORA_SPECS / "v11/candidate_member_truth_projection.schema.json"
-MANIFEST_PATH = AGORA_SPECS / "v11/capability_manifest_v1_10.json"
-OPENAPI_PATH = ROOT / "services/control-plane/openapi/agora_v1_10.openapi.yaml"
-BUNDLE_PATH = AGORA_SPECS / "bundle_index.v1_10.json"
+SCHEMA_PATH = AGORA_SPECS / "v13/candidate_member_truth_projection.schema.json"
+MANIFEST_PATH = AGORA_SPECS / "v13/capability_manifest_v1_12.json"
+OPENAPI_PATH = ROOT / "services/control-plane/openapi/agora_v1_12.openapi.yaml"
+BUNDLE_PATH = AGORA_SPECS / "bundle_index.v1_12.json"
 
 
 def _sha256(path: Path) -> str:
@@ -54,18 +54,18 @@ def _assert_invalid(name: str, value: object) -> None:
     assert list(_validator(name).iter_errors(value)) != []
 
 
-def test_v1_10_bundle_extends_v1_9_without_rewriting_parent() -> None:
+def test_v1_12_bundle_extends_v1_11_without_rewriting_parent() -> None:
     bundle = json.loads(BUNDLE_PATH.read_text(encoding="utf-8"))
 
-    assert bundle["bundle_version"] == "1.10"
+    assert bundle["bundle_version"] == "1.12"
     assert bundle["extends"] == {
-        "bundle_path": "services/control-plane/specs/agora/bundle_index.v1_9.json",
-        "bundle_version": "1.9",
-        "bundle_index_sha256": _sha256(AGORA_SPECS / "bundle_index.v1_9.json"),
+        "bundle_path": "services/control-plane/specs/agora/bundle_index.v1_11.json",
+        "bundle_version": "1.11",
+        "bundle_index_sha256": _sha256(AGORA_SPECS / "bundle_index.v1_11.json"),
     }
 
 
-def test_v1_10_bundle_hashes_lock_exact_contract_bytes() -> None:
+def test_v1_12_bundle_hashes_lock_exact_contract_bytes() -> None:
     bundle = json.loads(BUNDLE_PATH.read_text(encoding="utf-8"))
 
     for relative_path, expected_hash in bundle["files"].items():
@@ -73,7 +73,7 @@ def test_v1_10_bundle_hashes_lock_exact_contract_bytes() -> None:
         assert path.exists(), relative_path
         assert _sha256(path) == expected_hash
     assert bundle["openapi"] == {
-        "path": "services/control-plane/openapi/agora_v1_10.openapi.yaml",
+        "path": "services/control-plane/openapi/agora_v1_12.openapi.yaml",
         "sha256": _sha256(OPENAPI_PATH),
     }
 

@@ -1,9 +1,9 @@
 {
-  "manifest_version": "1.10",
-  "extends": "v1.9",
-  "description": "Additive candidate-truth extension over the frozen Agora v1.9 bundle. Candidate pool member reads now carry per-field provenance/as-of, typed unavailable states, role-aware evidence redaction, explicit score semantics, stable pagination, and observable freshness so Trading Room can render honest candidates without static sample fallback.",
-  "schema_bundle_index": "services/control-plane/specs/agora/bundle_index.v1_10.json",
-  "openapi_ref": "services/control-plane/openapi/agora_v1_10.openapi.yaml",
+  "manifest_version": "1.12",
+  "extends": "v1.11",
+  "description": "Additive candidate-truth extension over the exact Agora v1.11 bundle. Candidate pool member reads now carry per-field provenance/as-of, typed unavailable states, role-aware evidence redaction, explicit score semantics, stable pagination, and observable freshness so Trading Room can render honest candidates without static sample fallback.",
+  "schema_bundle_index": "services/control-plane/specs/agora/bundle_index.v1_12.json",
+  "openapi_ref": "services/control-plane/openapi/agora_v1_12.openapi.yaml",
   "capabilities": [
     {
       "id": "candidate_member_truth_projection_contract",

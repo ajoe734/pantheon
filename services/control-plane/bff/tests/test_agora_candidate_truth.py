@@ -28,7 +28,7 @@ _VIEWER_AUTH = "Bearer agora-truth-viewer:viewer"
 _OTHER_OPERATOR_AUTH = "Bearer agora-truth-other:operator"
 _TRUTH_SCHEMA = (
     REPO_ROOT
-    / "services/control-plane/specs/agora/v11/candidate_member_truth_projection.schema.json"
+    / "services/control-plane/specs/agora/v13/candidate_member_truth_projection.schema.json"
 )
 
 _FIELD_NAMES = ("rationale", "concerns", "next_event", "evidence", "details")

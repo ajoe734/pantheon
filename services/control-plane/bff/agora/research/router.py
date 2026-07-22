@@ -138,14 +138,14 @@ _REVIEW_DECISION_TO_LIFECYCLE = {
 }
 
 # ---------------------------------------------------------------------------
-# AG-CAND-TRUTH-001-BE — candidate member truth projection (bundle v1.10)
+# AG-CAND-TRUTH-001-BE — candidate member truth projection (bundle v1.12)
 #
 # Every rendered candidate field is either linked to a durable record of the
 # same candidate (with provenance + as-of) or explicitly typed unavailable.
 # The BFF never fabricates rationale/concerns/next-event narrative; values are
 # projected verbatim from the candidate's own score result, review, or
 # monitoring records. See:
-#   services/control-plane/specs/agora/v11/candidate_member_truth_projection.schema.json
+#   services/control-plane/specs/agora/v13/candidate_member_truth_projection.schema.json
 # ---------------------------------------------------------------------------
 
 _FIELD_SOURCE_MEMBER = "candidate_pool_member"

@@ -1,9 +1,9 @@
 openapi: "3.1.0"
 info:
-  title: Pantheon Agora API v1.10 Contract Extension
-  version: "1.10.0"
+  title: Pantheon Agora API v1.12 Candidate Truth Extension
+  version: "1.12.0"
   description: |
-    Contract-first additive extension over the frozen Agora v1.9 bundle for
+    Contract-first additive extension over the exact Agora v1.11 bundle for
     honest Trading Room candidate rendering (AG-CAND-TRUTH-001-BE).
 
     Candidate pool member reads now carry a per-field truth projection: each
@@ -32,8 +32,8 @@ info:
       - Member ordering is stable (created_at, artifact_id) with opaque
         page tokens, honest filtered totals, and observable freshness
         (pool_snapshot_at, data_cutoff, last_score_run_at).
-  x-extends-contract: "services/control-plane/specs/agora/bundle_index.v1_9.json"
-  x-capability-manifest: "services/control-plane/specs/agora/v11/capability_manifest_v1_10.json"
+  x-extends-contract: "services/control-plane/specs/agora/bundle_index.v1_11.json"
+  x-capability-manifest: "services/control-plane/specs/agora/v13/capability_manifest_v1_12.json"
   x-implementation-status: implemented
 servers:
   - url: "{bff_base}"
@@ -88,27 +88,27 @@ components:
       schema: {type: integer, minimum: 1, maximum: 200, default: 50}
   schemas:
     CandidateFieldState:
-      $ref: "../specs/agora/v11/candidate_member_truth_projection.schema.json#/definitions/CandidateFieldState"
+      $ref: "../specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateFieldState"
     CandidateRationaleFieldState:
-      $ref: "../specs/agora/v11/candidate_member_truth_projection.schema.json#/definitions/CandidateRationaleFieldState"
+      $ref: "../specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateRationaleFieldState"
     CandidateConcernsFieldState:
-      $ref: "../specs/agora/v11/candidate_member_truth_projection.schema.json#/definitions/CandidateConcernsFieldState"
+      $ref: "../specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateConcernsFieldState"
     CandidateNextEventFieldState:
-      $ref: "../specs/agora/v11/candidate_member_truth_projection.schema.json#/definitions/CandidateNextEventFieldState"
+      $ref: "../specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateNextEventFieldState"
     CandidateEvidenceFieldState:
-      $ref: "../specs/agora/v11/candidate_member_truth_projection.schema.json#/definitions/CandidateEvidenceFieldState"
+      $ref: "../specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateEvidenceFieldState"
     CandidateDetailsFieldState:
-      $ref: "../specs/agora/v11/candidate_member_truth_projection.schema.json#/definitions/CandidateDetailsFieldState"
+      $ref: "../specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateDetailsFieldState"
     CandidateTruthFields:
-      $ref: "../specs/agora/v11/candidate_member_truth_projection.schema.json#/definitions/CandidateTruthFields"
+      $ref: "../specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateTruthFields"
     CandidateScoreSemantics:
-      $ref: "../specs/agora/v11/candidate_member_truth_projection.schema.json#/definitions/CandidateScoreSemantics"
+      $ref: "../specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateScoreSemantics"
     CandidateMemberTruthProjection:
-      $ref: "../specs/agora/v11/candidate_member_truth_projection.schema.json#/definitions/CandidateMemberTruthProjection"
+      $ref: "../specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateMemberTruthProjection"
     CandidateMemberPageInfo:
-      $ref: "../specs/agora/v11/candidate_member_truth_projection.schema.json#/definitions/CandidateMemberPageInfo"
+      $ref: "../specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateMemberPageInfo"
     CandidateMemberListFreshness:
-      $ref: "../specs/agora/v11/candidate_member_truth_projection.schema.json#/definitions/CandidateMemberListFreshness"
+      $ref: "../specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateMemberListFreshness"
     CandidateMemberListItem:
       description: |
         Frozen v1.4 member projection (artifact_id, strategy_ref, title,
