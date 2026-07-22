@@ -901,6 +901,33 @@ class MemoryWorkshopStore:
             receipt = self._command_receipts.get(composite)
             return _deep_copy_dict(receipt) if receipt is not None else None
 
+    def _resolve_compensation_locked(
+        self,
+        *,
+        workshop_id: str,
+        tenant_id: str,
+        user_id: str,
+        operation: str,
+        idempotency_key: str,
+        resolution: Dict[str, Any],
+    ) -> None:
+        """Merge a resolution into a failed source receipt under self._lock.
+
+        Bookkeeping over lineage: a missing or non-failed source is skipped so
+        the successor's own terminal write stays authoritative.
+        """
+
+        composite = self._command_key(
+            tenant_id, user_id, workshop_id, operation, idempotency_key
+        )
+        receipt = self._command_receipts.get(composite)
+        if receipt is None or receipt["status"] != "failed":
+            return
+        compensation = dict(receipt.get("compensation") or {})
+        compensation.update(deepcopy(dict(resolution)))
+        receipt["compensation"] = compensation
+        receipt["updated_at"] = _utc_now()
+
     def complete_command(
         self,
         *,
@@ -915,8 +942,15 @@ class MemoryWorkshopStore:
         version_link: Optional[Dict[str, Any]] = None,
         session_updates: Optional[Dict[str, Any]] = None,
         event: Optional[Dict[str, Any]] = None,
+        resolve_compensation: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Complete an admitted command and its authoritative readback atomically."""
+        """Complete an admitted command and its authoritative readback atomically.
+
+        ``resolve_compensation`` resolves the adopted lineage source
+        (``{"operation", "idempotency_key", "resolution"}``) in the same
+        critical section as the successor's completion, so a committed
+        successor and a still-resumable source can never coexist.
+        """
 
         composite = self._command_key(
             tenant_id, user_id, workshop_id, operation, idempotency_key
@@ -1008,8 +1042,16 @@ class MemoryWorkshopStore:
             prepared_event: Optional[Dict[str, Any]] = None
             if event is not None:
                 bucket = self._events.setdefault(workshop_id, [])
+                requested_event_id = event.get("event_id") or _new_id()
+                if any(row["event_id"] == requested_event_id for row in bucket):
+                    # Parity with the Postgres event_id primary key: a
+                    # colliding digest-derived event id must abort the commit
+                    # instead of silently duplicating the event stream.
+                    raise ValueError(
+                        f"workshop event_id already exists: {requested_event_id!r}"
+                    )
                 prepared_event = {
-                    "event_id": event.get("event_id") or _new_id(),
+                    "event_id": requested_event_id,
                     "workshop_id": workshop_id,
                     "sequence_no": len(bucket) + 1,
                     "actor_type": event["actor_type"],
@@ -1038,6 +1080,19 @@ class MemoryWorkshopStore:
                     "updated_at": now,
                 }
             )
+            if resolve_compensation is not None:
+                self._resolve_compensation_locked(
+                    workshop_id=workshop_id,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    operation=str(
+                        resolve_compensation.get("operation") or operation
+                    ),
+                    idempotency_key=str(
+                        resolve_compensation.get("idempotency_key") or ""
+                    ),
+                    resolution=dict(resolve_compensation.get("resolution") or {}),
+                )
             return {
                 "outcome": "completed",
                 "receipt": _deep_copy_dict(receipt),
@@ -1063,12 +1118,16 @@ class MemoryWorkshopStore:
         compensation: Optional[Dict[str, Any]] = None,
         canonical_refs: Optional[Any] = None,
         event: Optional[Dict[str, Any]] = None,
+        resolve_compensation: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Persist failure/compensation without rolling the workshop lock back.
 
         ``canonical_refs`` records downstream identifiers that were already
         created before the failure (partial effects), keeping the failed
         receipt truthful about what exists downstream.
+        ``resolve_compensation`` resolves (or releases the claim on) the
+        adopted lineage source in the same critical section, so the lineage
+        moves to exactly one live receipt.
         """
 
         composite = self._command_key(
@@ -1119,6 +1178,19 @@ class MemoryWorkshopStore:
                     "created_at": event.get("created_at") or now,
                 }
                 bucket.append(prepared_event)
+            if resolve_compensation is not None:
+                self._resolve_compensation_locked(
+                    workshop_id=workshop_id,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    operation=str(
+                        resolve_compensation.get("operation") or operation
+                    ),
+                    idempotency_key=str(
+                        resolve_compensation.get("idempotency_key") or ""
+                    ),
+                    resolution=dict(resolve_compensation.get("resolution") or {}),
+                )
             return {
                 "outcome": "failed",
                 "receipt": _deep_copy_dict(receipt),
@@ -1160,6 +1232,64 @@ class MemoryWorkshopStore:
                 key=lambda row: str(row.get("failed_at") or row.get("updated_at") or "")
             )
             return _deep_copy_dict(candidates[-1])
+
+    def claim_resumable_command(
+        self,
+        *,
+        workshop_id: str,
+        tenant_id: str,
+        user_id: str,
+        operation: str,
+        request_hash: str,
+        claimed_by_idempotency_key: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Atomically claim the latest resumable lineage for one successor.
+
+        The find and the claim stamp are one critical section: while a
+        successor holds the claim, a concurrent new-key retry gets ``None``
+        and must open fresh downstream resources instead of adopting shared
+        ones.  Re-claim by the same successor key succeeds so an exact
+        command replay can recover after a crash mid-flight.  The claim is
+        released or resolved transactionally by the successor's terminal
+        ``complete_command`` / ``fail_command`` write.
+        """
+
+        if not claimed_by_idempotency_key:
+            raise ValueError("claimed_by_idempotency_key is required")
+        with self._lock:
+            candidates = [
+                receipt
+                for receipt in self._command_receipts.values()
+                if receipt["workshop_id"] == workshop_id
+                and receipt["tenant_id"] == tenant_id
+                and receipt["user_id"] == user_id
+                and receipt["operation"] == operation
+                and receipt["request_hash"] == request_hash
+                and receipt["status"] == "failed"
+                and isinstance(receipt.get("compensation"), dict)
+                and receipt["compensation"].get("resumable") is True
+                and not receipt["compensation"].get("resolved_at")
+            ]
+            if not candidates:
+                return None
+            candidates.sort(
+                key=lambda row: str(row.get("failed_at") or row.get("updated_at") or "")
+            )
+            receipt = candidates[-1]
+            claimed_by = str(
+                receipt["compensation"].get("claimed_by_idempotency_key") or ""
+            )
+            if claimed_by and claimed_by != claimed_by_idempotency_key:
+                # The whole lineage chain shares one downstream digest, so a
+                # claim on the latest receipt blocks adoption outright rather
+                # than falling back to an older receipt of the same chain.
+                return None
+            compensation = dict(receipt["compensation"])
+            compensation["claimed_by_idempotency_key"] = claimed_by_idempotency_key
+            compensation["claimed_at"] = _utc_now()
+            receipt["compensation"] = compensation
+            receipt["updated_at"] = _utc_now()
+            return _deep_copy_dict(receipt)
 
     def resolve_command_compensation(
         self,
@@ -2445,6 +2575,7 @@ class PostgresWorkshopStore:
         version_link: Optional[Dict[str, Any]] = None,
         session_updates: Optional[Dict[str, Any]] = None,
         event: Optional[Dict[str, Any]] = None,
+        resolve_compensation: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         updates = self._validate_session_updates(session_updates)
         with self._connect() as conn:
@@ -2629,6 +2760,22 @@ class PostgresWorkshopStore:
                     now, now, receipt["command_id"],
                 ),
             )
+            if resolve_compensation is not None:
+                # Same transaction as the successor's completion: a committed
+                # successor and a still-resumable source can never coexist.
+                self._resolve_compensation_in_txn(
+                    conn,
+                    workshop_id=workshop_id,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    operation=str(
+                        resolve_compensation.get("operation") or operation
+                    ),
+                    idempotency_key=str(
+                        resolve_compensation.get("idempotency_key") or ""
+                    ),
+                    resolution=dict(resolve_compensation.get("resolution") or {}),
+                )
             completed = self._fetch_command_receipt(
                 conn,
                 workshop_id=workshop_id,
@@ -2658,6 +2805,7 @@ class PostgresWorkshopStore:
         compensation: Optional[Dict[str, Any]] = None,
         canonical_refs: Optional[Any] = None,
         event: Optional[Dict[str, Any]] = None,
+        resolve_compensation: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         with self._connect() as conn:
             receipt = self._fetch_command_receipt(
@@ -2749,6 +2897,22 @@ class PostgresWorkshopStore:
                         receipt["command_id"],
                     ),
                 )
+            if resolve_compensation is not None:
+                # Same transaction as the successor's failure write: the
+                # lineage moves to exactly one live receipt.
+                self._resolve_compensation_in_txn(
+                    conn,
+                    workshop_id=workshop_id,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    operation=str(
+                        resolve_compensation.get("operation") or operation
+                    ),
+                    idempotency_key=str(
+                        resolve_compensation.get("idempotency_key") or ""
+                    ),
+                    resolution=dict(resolve_compensation.get("resolution") or {}),
+                )
             failed = self._fetch_command_receipt(
                 conn,
                 workshop_id=workshop_id,
@@ -2800,6 +2964,124 @@ class PostgresWorkshopStore:
             )
             row = cur.fetchone()
             return _decode_command_receipt_row(row) if row is not None else None
+
+    def claim_resumable_command(
+        self,
+        *,
+        workshop_id: str,
+        tenant_id: str,
+        user_id: str,
+        operation: str,
+        request_hash: str,
+        claimed_by_idempotency_key: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Atomically claim the latest resumable lineage for one successor.
+
+        ``SELECT ... FOR UPDATE`` plus the claim stamp run in one
+        transaction: while a successor holds the claim, a concurrent new-key
+        retry gets ``None`` and must open fresh downstream resources instead
+        of adopting shared ones.  Re-claim by the same successor key succeeds
+        so an exact command replay can recover after a crash mid-flight.
+        """
+
+        if not claimed_by_idempotency_key:
+            raise ValueError("claimed_by_idempotency_key is required")
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"""
+                SELECT command_id, tenant_id, user_id, workshop_id, operation,
+                       idempotency_key, request_hash, request_payload_json::text,
+                       request_id, trace_id, status, expected_lock_version,
+                       admitted_lock_version, resulting_lock_version,
+                       result_json::text, canonical_refs_json::text,
+                       failure_json::text, compensation_json::text,
+                       admitted_at::text, completed_at::text, failed_at::text,
+                       updated_at::text
+                  FROM {self._crt}
+                 WHERE tenant_id = %s AND user_id = %s AND workshop_id = %s
+                   AND operation = %s AND request_hash = %s
+                   AND status = 'failed'
+                   AND compensation_json->>'resumable' = 'true'
+                   AND compensation_json->>'resolved_at' IS NULL
+                 ORDER BY failed_at DESC NULLS LAST, updated_at DESC
+                 LIMIT 1
+                   FOR UPDATE
+                """,
+                (tenant_id, user_id, workshop_id, operation, request_hash),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return None
+            receipt = _decode_command_receipt_row(row)
+            claimed_by = str(
+                (receipt.get("compensation") or {}).get(
+                    "claimed_by_idempotency_key"
+                )
+                or ""
+            )
+            if claimed_by and claimed_by != claimed_by_idempotency_key:
+                # The whole lineage chain shares one downstream digest, so a
+                # claim on the latest receipt blocks adoption outright rather
+                # than falling back to an older receipt of the same chain.
+                return None
+            now = _utc_now()
+            claim = {
+                "claimed_by_idempotency_key": claimed_by_idempotency_key,
+                "claimed_at": now,
+            }
+            conn.execute(
+                f"""
+                UPDATE {self._crt}
+                   SET compensation_json =
+                           COALESCE(compensation_json, '{{}}'::jsonb) || %s::jsonb,
+                       updated_at = %s
+                 WHERE command_id = %s AND status = 'failed'
+                """,
+                (_json_dumps(claim), now, receipt["command_id"]),
+            )
+            claimed = self._fetch_command_receipt(
+                conn,
+                workshop_id=workshop_id,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                operation=operation,
+                idempotency_key=str(receipt["idempotency_key"]),
+            )
+            return claimed
+
+    def _resolve_compensation_in_txn(
+        self,
+        conn: Any,
+        *,
+        workshop_id: str,
+        tenant_id: str,
+        user_id: str,
+        operation: str,
+        idempotency_key: str,
+        resolution: Dict[str, Any],
+    ) -> None:
+        """Merge a resolution into a failed source receipt inside *conn*.
+
+        Bookkeeping over lineage: a missing or non-failed source is skipped so
+        the successor's own terminal write stays authoritative.  ``conn`` is
+        the caller's open transaction — this never commits or rolls back.
+        """
+
+        conn.execute(
+            f"""
+            UPDATE {self._crt}
+               SET compensation_json =
+                       COALESCE(compensation_json, '{{}}'::jsonb) || %s::jsonb,
+                   updated_at = %s
+             WHERE tenant_id = %s AND user_id = %s AND workshop_id = %s
+               AND operation = %s AND idempotency_key = %s
+               AND status = 'failed'
+            """,
+            (
+                _json_dumps(dict(resolution)), _utc_now(),
+                tenant_id, user_id, workshop_id, operation, idempotency_key,
+            ),
+        )
 
     def resolve_command_compensation(
         self,

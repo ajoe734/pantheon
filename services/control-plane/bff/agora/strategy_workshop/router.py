@@ -988,6 +988,51 @@ def create_strategy_workshop_router(
         private_content_store = MemoryPrivateContentStore(key_provider=EphemeralKeyProvider())
     router = APIRouter(tags=["agora-workshop"])
 
+    # Stores with claim_resumable_command also accept resolve_compensation on
+    # complete_command/fail_command, so adopting a lineage source and
+    # resolving it happen atomically with the successor's terminal write.
+    _supports_atomic_lineage = hasattr(store, "claim_resumable_command")
+
+    def _source_resolution(
+        resume: Mapping[str, Any],
+        *,
+        resolution: str,
+        resolved_by: str,
+        extra: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Transactional resolution payload for an adopted lineage source."""
+        return {
+            "operation": (resume["receipt"] or {}).get("operation"),
+            "idempotency_key": str(
+                (resume["receipt"] or {}).get("idempotency_key") or ""
+            ),
+            "resolution": {
+                "resolved_at": utc_now(),
+                "resolution": resolution,
+                "resolved_by_idempotency_key": resolved_by,
+                **dict(extra or {}),
+            },
+        }
+
+    def _source_claim_release(
+        resume: Mapping[str, Any],
+        *,
+        released_by: str,
+    ) -> Dict[str, Any]:
+        """Release an adoption claim without resolving the source lineage."""
+        return {
+            "operation": (resume["receipt"] or {}).get("operation"),
+            "idempotency_key": str(
+                (resume["receipt"] or {}).get("idempotency_key") or ""
+            ),
+            "resolution": {
+                "claimed_by_idempotency_key": None,
+                "claimed_at": None,
+                "claim_released_at": utc_now(),
+                "claim_released_by_idempotency_key": released_by,
+            },
+        }
+
     # Lazy import to avoid circular import at module load time
     def _scope(
         authorization: Optional[str],
@@ -1350,12 +1395,18 @@ def create_strategy_workshop_router(
         error: CanonicalOperationError,
         compensation: Optional[Mapping[str, Any]] = None,
         resume_digest: Optional[str] = None,
+        resume: Optional[Mapping[str, Any]] = None,
     ) -> None:
         from models import ErrorCode
 
         partial_effects = {
             key: value
-            for key, value in dict(getattr(error, "partial_effects", None) or {}).items()
+            for key, value in {
+                # An adopted source's recorded ids stay part of the lineage
+                # even when the failing downstream call reports none itself.
+                **dict((resume or {}).get("partial_effects") or {}),
+                **dict(getattr(error, "partial_effects", None) or {}),
+            }.items()
             if value
         }
         compensation_payload = dict(compensation or {})
@@ -1371,6 +1422,22 @@ def create_strategy_workshop_router(
         fail_kwargs: Dict[str, Any] = {}
         if partial_effects:
             fail_kwargs["canonical_refs"] = partial_effects
+        if resume is not None and _supports_atomic_lineage:
+            if resumable:
+                # The lineage moves onto this failed receipt in the same
+                # transaction, so exactly one receipt stays resumable.
+                fail_kwargs["resolve_compensation"] = _source_resolution(
+                    resume,
+                    resolution="superseded",
+                    resolved_by=idempotency_key,
+                )
+            else:
+                # This attempt cannot carry the lineage forward; release the
+                # claim so the recorded source stays adoptable by a retry.
+                fail_kwargs["resolve_compensation"] = _source_claim_release(
+                    resume,
+                    released_by=idempotency_key,
+                )
         store.fail_command(
             workshop_id=workshop_id,
             tenant_id=scope.tenant_id,
@@ -1416,7 +1483,11 @@ def create_strategy_workshop_router(
         message: str,
         reason: str,
         precondition_failed: str,
+        resolve_source: Optional[Mapping[str, Any]] = None,
     ) -> None:
+        fail_kwargs: Dict[str, Any] = {}
+        if resolve_source is not None and _supports_atomic_lineage:
+            fail_kwargs["resolve_compensation"] = dict(resolve_source)
         store.fail_command(
             workshop_id=workshop_id,
             tenant_id=scope.tenant_id,
@@ -1430,6 +1501,7 @@ def create_strategy_workshop_router(
                 "precondition_failed": precondition_failed,
             },
             compensation={"workshop_effect": "none"},
+            **fail_kwargs,
         )
         raise bff_error(
             status_code,
@@ -1494,6 +1566,7 @@ def create_strategy_workshop_router(
         session_updates: Optional[Mapping[str, Any]] = None,
         event: Optional[Mapping[str, Any]] = None,
         downstream_digest: Optional[str] = None,
+        resume: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
         from models import ErrorCode
 
@@ -1516,6 +1589,28 @@ def create_strategy_workshop_router(
                 }
             return compensation
 
+        def _lineage_kwargs(resolution: str) -> Dict[str, Any]:
+            # Adopted-source resolution rides the successor's terminal write
+            # so the transaction commits both or neither.
+            if resume is None or not _supports_atomic_lineage:
+                return {}
+            if resolution == "superseded" and not downstream_digest:
+                # This failed receipt carries no resumable lineage of its
+                # own; release the claim so the source stays adoptable.
+                return {
+                    "resolve_compensation": _source_claim_release(
+                        resume,
+                        released_by=idempotency_key,
+                    )
+                }
+            return {
+                "resolve_compensation": _source_resolution(
+                    resume,
+                    resolution=resolution,
+                    resolved_by=idempotency_key,
+                )
+            }
+
         try:
             completed = store.complete_command(
                 workshop_id=workshop_id,
@@ -1529,6 +1624,7 @@ def create_strategy_workshop_router(
                 version_link=dict(version_link) if version_link else None,
                 session_updates=dict(session_updates or {}),
                 event=dict(event) if event else None,
+                **_lineage_kwargs("resumed"),
             )
         except Exception as exc:
             try:
@@ -1541,6 +1637,7 @@ def create_strategy_workshop_router(
                     request_hash=request_hash,
                     failure={"reason": "WORKSHOP_COMMIT_EXCEPTION"},
                     compensation=_commit_failure_compensation(),
+                    **_lineage_kwargs("superseded"),
                 )
             except Exception:
                 pass
@@ -1561,6 +1658,7 @@ def create_strategy_workshop_router(
                 request_hash=request_hash,
                 failure={"reason": "WORKSHOP_COMMIT_FAILED"},
                 compensation=_commit_failure_compensation(),
+                **_lineage_kwargs("superseded"),
             )
             raise bff_error(
                 503,
@@ -1585,23 +1683,37 @@ def create_strategy_workshop_router(
         scope: Any,
         operation: str,
         request_hash: str,
+        claimed_by: str,
     ) -> Optional[Dict[str, Any]]:
         """Durable partial-effect lineage of the same logical request.
 
         Matching by ``request_hash`` restricts resume to a retry of the same
         request body; a genuinely different request never adopts another
-        command's downstream resources.
+        command's downstream resources.  With a claim-capable store the find
+        and the claim are one atomic step, so concurrent new-key retries can
+        never both adopt the same source: the loser opens fresh downstream
+        resources under its own digest instead.
         """
 
-        if not hasattr(store, "find_resumable_command"):
+        if _supports_atomic_lineage:
+            receipt = store.claim_resumable_command(
+                workshop_id=workshop_id,
+                tenant_id=scope.tenant_id,
+                user_id=scope.user_id,
+                operation=operation,
+                request_hash=request_hash,
+                claimed_by_idempotency_key=claimed_by,
+            )
+        elif hasattr(store, "find_resumable_command"):
+            receipt = store.find_resumable_command(
+                workshop_id=workshop_id,
+                tenant_id=scope.tenant_id,
+                user_id=scope.user_id,
+                operation=operation,
+                request_hash=request_hash,
+            )
+        else:
             return None
-        receipt = store.find_resumable_command(
-            workshop_id=workshop_id,
-            tenant_id=scope.tenant_id,
-            user_id=scope.user_id,
-            operation=operation,
-            request_hash=request_hash,
-        )
         if not receipt:
             return None
         compensation = receipt.get("compensation") or {}
@@ -1625,7 +1737,13 @@ def create_strategy_workshop_router(
         resume: Optional[Dict[str, Any]],
         resolved_by_idempotency_key: str,
     ) -> None:
-        if resume is None or not hasattr(store, "resolve_command_compensation"):
+        # Legacy best-effort fallback only: an atomic-lineage store resolves
+        # the source inside the successor's completion transaction instead.
+        if (
+            resume is None
+            or _supports_atomic_lineage
+            or not hasattr(store, "resolve_command_compensation")
+        ):
             return
         try:
             store.resolve_command_compensation(
@@ -3122,6 +3240,7 @@ def create_strategy_workshop_router(
             scope=scope,
             operation="dispatch_research",
             request_hash=request_hash,
+            claimed_by=command_key,
         )
         # Reusing the recorded downstream idempotency digest keeps the
         # downstream task/run idempotency keys stable across a new-key retry,
@@ -3184,6 +3303,7 @@ def create_strategy_workshop_router(
                 request_hash=request_hash,
                 error=exc,
                 resume_digest=digest,
+                resume=resume,
             )
         run = dict(downstream["run"])
         run_id = str(run.get("run_id") or run.get("id") or "")
@@ -3242,6 +3362,7 @@ def create_strategy_workshop_router(
                 "trace_id": request_id,
             },
             downstream_digest=digest,
+            resume=resume,
         )
         _resolve_resumed_compensation(
             workshop_id=workshop_id,
@@ -3343,6 +3464,7 @@ def create_strategy_workshop_router(
             scope=scope,
             operation="open_consultation",
             request_hash=request_hash,
+            claimed_by=command_key,
         )
         # Reusing the recorded digest re-derives the same deterministic
         # consultation request id, so a new-key retry adopts the request a
@@ -3402,8 +3524,36 @@ def create_strategy_workshop_router(
                 request_hash=request_hash,
                 error=exc,
                 resume_digest=digest,
+                resume=resume,
             )
         downstream_status = str(consultation.get("status") or "").lower()
+        if downstream_status == "cancelled":
+            # A cancelled consultation is not a successful open.  Seal the
+            # adopted lineage in the same transaction as this failure so no
+            # later retry re-adopts the dead request; a new-key retry then
+            # opens a fresh consultation under its own digest.
+            _fail_domain_command(
+                workshop_id=workshop_id,
+                operation="open_consultation",
+                scope=scope,
+                idempotency_key=command_key,
+                request_hash=request_hash,
+                status_code=409,
+                code=ErrorCode.RESOURCE_CONFLICT,
+                message="Consultation request is cancelled downstream",
+                reason="CONSULTATION_REQUEST_CANCELLED",
+                precondition_failed="consultation_request",
+                resolve_source=(
+                    _source_resolution(
+                        resume,
+                        resolution="cancelled",
+                        resolved_by=command_key,
+                        extra={"consultation_request_id": consultation_id},
+                    )
+                    if resume is not None
+                    else None
+                ),
+            )
         resource = {
             "consultation": consultation,
             "downstream_status": downstream_status,
@@ -3446,40 +3596,47 @@ def create_strategy_workshop_router(
                     "trace_id": request_id,
                 },
                 downstream_digest=digest,
+                resume=resume,
             )
         except HTTPException:
-            # Compensation-or-resume: cancel the downstream request; on
-            # success seal the failed receipt's compensation as cancelled so
-            # a retry opens a fresh consultation.  If cancellation itself
-            # fails, the receipt keeps its resumable partial-effect lineage
-            # and a new-key retry adopts the recorded request instead of
-            # opening a duplicate.
-            cancelled = False
-            try:
-                canonical.cancel_consultation(
-                    consultation_id,
-                    actor_id=scope.user_id,
-                    trace_id=request_id,
-                )
-                cancelled = True
-            except Exception:
-                pass
-            if cancelled and hasattr(store, "resolve_command_compensation"):
+            # Compensation-or-resume with exclusive effect ownership: only a
+            # consultation this attempt itself created (resume is None) may
+            # be cancelled; on success the failed receipt's compensation is
+            # sealed as cancelled so a retry opens a fresh consultation.  An
+            # adopted request is shared lineage — cancelling it could destroy
+            # a resource the prior receipt chain still references — so the
+            # failed receipt keeps its resumable lineage instead (the adopted
+            # source was resolved as superseded in the same failure write).
+            # If cancellation itself fails, the receipt likewise keeps its
+            # resumable lineage and a new-key retry adopts the recorded
+            # request instead of opening a duplicate.
+            if resume is None:
+                cancelled = False
                 try:
-                    store.resolve_command_compensation(
-                        workshop_id=workshop_id,
-                        tenant_id=scope.tenant_id,
-                        user_id=scope.user_id,
-                        operation="open_consultation",
-                        idempotency_key=command_key,
-                        resolution={
-                            "resolved_at": utc_now(),
-                            "resolution": "cancelled",
-                            "consultation_request_id": consultation_id,
-                        },
+                    canonical.cancel_consultation(
+                        consultation_id,
+                        actor_id=scope.user_id,
+                        trace_id=request_id,
                     )
+                    cancelled = True
                 except Exception:
                     pass
+                if cancelled and hasattr(store, "resolve_command_compensation"):
+                    try:
+                        store.resolve_command_compensation(
+                            workshop_id=workshop_id,
+                            tenant_id=scope.tenant_id,
+                            user_id=scope.user_id,
+                            operation="open_consultation",
+                            idempotency_key=command_key,
+                            resolution={
+                                "resolved_at": utc_now(),
+                                "resolution": "cancelled",
+                                "consultation_request_id": consultation_id,
+                            },
+                        )
+                    except Exception:
+                        pass
             raise
         _resolve_resumed_compensation(
             workshop_id=workshop_id,
