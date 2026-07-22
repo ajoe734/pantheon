@@ -1061,9 +1061,15 @@ class MemoryWorkshopStore:
         request_hash: str,
         failure: Dict[str, Any],
         compensation: Optional[Dict[str, Any]] = None,
+        canonical_refs: Optional[Any] = None,
         event: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Persist failure/compensation without rolling the workshop lock back."""
+        """Persist failure/compensation without rolling the workshop lock back.
+
+        ``canonical_refs`` records downstream identifiers that were already
+        created before the failure (partial effects), keeping the failed
+        receipt truthful about what exists downstream.
+        """
 
         composite = self._command_key(
             tenant_id, user_id, workshop_id, operation, idempotency_key
@@ -1095,6 +1101,8 @@ class MemoryWorkshopStore:
                     "updated_at": now,
                 }
             )
+            if canonical_refs is not None:
+                receipt["canonical_refs"] = deepcopy(canonical_refs)
             prepared_event: Optional[Dict[str, Any]] = None
             if event is not None:
                 bucket = self._events.setdefault(workshop_id, [])
@@ -1119,6 +1127,70 @@ class MemoryWorkshopStore:
                     "lock_version"
                 ),
             }
+
+    def find_resumable_command(
+        self,
+        *,
+        workshop_id: str,
+        tenant_id: str,
+        user_id: str,
+        operation: str,
+        request_hash: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Latest failed receipt of the same logical request with unresolved
+        resumable compensation (recorded partial downstream effects)."""
+
+        with self._lock:
+            candidates = [
+                receipt
+                for receipt in self._command_receipts.values()
+                if receipt["workshop_id"] == workshop_id
+                and receipt["tenant_id"] == tenant_id
+                and receipt["user_id"] == user_id
+                and receipt["operation"] == operation
+                and receipt["request_hash"] == request_hash
+                and receipt["status"] == "failed"
+                and isinstance(receipt.get("compensation"), dict)
+                and receipt["compensation"].get("resumable") is True
+                and not receipt["compensation"].get("resolved_at")
+            ]
+            if not candidates:
+                return None
+            candidates.sort(
+                key=lambda row: str(row.get("failed_at") or row.get("updated_at") or "")
+            )
+            return _deep_copy_dict(candidates[-1])
+
+    def resolve_command_compensation(
+        self,
+        *,
+        workshop_id: str,
+        tenant_id: str,
+        user_id: str,
+        operation: str,
+        idempotency_key: str,
+        resolution: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Merge a resolution (resumed / cancelled) into a failed receipt's
+        compensation so partial effects are not adopted twice."""
+
+        composite = self._command_key(
+            tenant_id, user_id, workshop_id, operation, idempotency_key
+        )
+        with self._lock:
+            receipt = self._command_receipts.get(composite)
+            if receipt is None:
+                return {"outcome": "not_found", "receipt": None}
+            if receipt["status"] != "failed":
+                return {
+                    "outcome": "invalid_state",
+                    "receipt": _deep_copy_dict(receipt),
+                }
+            compensation = dict(receipt.get("compensation") or {})
+            compensation.update(deepcopy(dict(resolution)))
+            receipt["compensation"] = compensation
+            receipt["updated_at"] = _utc_now()
+            return {"outcome": "resolved", "receipt": _deep_copy_dict(receipt)}
 
     # --- event ---
 
@@ -2584,6 +2656,7 @@ class PostgresWorkshopStore:
         request_hash: str,
         failure: Dict[str, Any],
         compensation: Optional[Dict[str, Any]] = None,
+        canonical_refs: Optional[Any] = None,
         event: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         with self._connect() as conn:
@@ -2646,19 +2719,36 @@ class PostgresWorkshopStore:
                     "created_at": created_at,
                 }
             now = _utc_now()
-            conn.execute(
-                f"""
-                UPDATE {self._crt}
-                   SET status = 'failed', failure_json = %s::jsonb,
-                       compensation_json = %s::jsonb, failed_at = %s,
-                       updated_at = %s
-                 WHERE command_id = %s AND status = 'admitted'
-                """,
-                (
-                    _json_dumps(failure), _json_dumps(compensation), now, now,
-                    receipt["command_id"],
-                ),
-            )
+            if canonical_refs is not None:
+                conn.execute(
+                    f"""
+                    UPDATE {self._crt}
+                       SET status = 'failed', failure_json = %s::jsonb,
+                           compensation_json = %s::jsonb,
+                           canonical_refs_json = %s::jsonb, failed_at = %s,
+                           updated_at = %s
+                     WHERE command_id = %s AND status = 'admitted'
+                    """,
+                    (
+                        _json_dumps(failure), _json_dumps(compensation),
+                        _json_dumps(canonical_refs), now, now,
+                        receipt["command_id"],
+                    ),
+                )
+            else:
+                conn.execute(
+                    f"""
+                    UPDATE {self._crt}
+                       SET status = 'failed', failure_json = %s::jsonb,
+                           compensation_json = %s::jsonb, failed_at = %s,
+                           updated_at = %s
+                     WHERE command_id = %s AND status = 'admitted'
+                    """,
+                    (
+                        _json_dumps(failure), _json_dumps(compensation), now, now,
+                        receipt["command_id"],
+                    ),
+                )
             failed = self._fetch_command_receipt(
                 conn,
                 workshop_id=workshop_id,
@@ -2673,6 +2763,91 @@ class PostgresWorkshopStore:
                 "event": stored_event,
                 "current_lock_version": lock_row[0] if lock_row else None,
             }
+
+    def find_resumable_command(
+        self,
+        *,
+        workshop_id: str,
+        tenant_id: str,
+        user_id: str,
+        operation: str,
+        request_hash: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Latest failed receipt of the same logical request with unresolved
+        resumable compensation (recorded partial downstream effects)."""
+
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"""
+                SELECT command_id, tenant_id, user_id, workshop_id, operation,
+                       idempotency_key, request_hash, request_payload_json::text,
+                       request_id, trace_id, status, expected_lock_version,
+                       admitted_lock_version, resulting_lock_version,
+                       result_json::text, canonical_refs_json::text,
+                       failure_json::text, compensation_json::text,
+                       admitted_at::text, completed_at::text, failed_at::text,
+                       updated_at::text
+                  FROM {self._crt}
+                 WHERE tenant_id = %s AND user_id = %s AND workshop_id = %s
+                   AND operation = %s AND request_hash = %s
+                   AND status = 'failed'
+                   AND compensation_json->>'resumable' = 'true'
+                   AND compensation_json->>'resolved_at' IS NULL
+                 ORDER BY failed_at DESC NULLS LAST, updated_at DESC
+                 LIMIT 1
+                """,
+                (tenant_id, user_id, workshop_id, operation, request_hash),
+            )
+            row = cur.fetchone()
+            return _decode_command_receipt_row(row) if row is not None else None
+
+    def resolve_command_compensation(
+        self,
+        *,
+        workshop_id: str,
+        tenant_id: str,
+        user_id: str,
+        operation: str,
+        idempotency_key: str,
+        resolution: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Merge a resolution (resumed / cancelled) into a failed receipt's
+        compensation so partial effects are not adopted twice."""
+
+        with self._connect() as conn:
+            receipt = self._fetch_command_receipt(
+                conn,
+                workshop_id=workshop_id,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                operation=operation,
+                idempotency_key=idempotency_key,
+                for_update=True,
+            )
+            if receipt is None:
+                return {"outcome": "not_found", "receipt": None}
+            if receipt["status"] != "failed":
+                return {"outcome": "invalid_state", "receipt": receipt}
+            now = _utc_now()
+            conn.execute(
+                f"""
+                UPDATE {self._crt}
+                   SET compensation_json =
+                           COALESCE(compensation_json, '{{}}'::jsonb) || %s::jsonb,
+                       updated_at = %s
+                 WHERE command_id = %s AND status = 'failed'
+                """,
+                (_json_dumps(dict(resolution)), now, receipt["command_id"]),
+            )
+            resolved = self._fetch_command_receipt(
+                conn,
+                workshop_id=workshop_id,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                operation=operation,
+                idempotency_key=idempotency_key,
+            )
+            return {"outcome": "resolved", "receipt": resolved}
 
     # --- event ---
 
