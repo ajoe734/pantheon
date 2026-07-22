@@ -251,6 +251,61 @@ class BranchClassificationTests(unittest.TestCase):
 
 
 class ValidationTests(unittest.TestCase):
+    def test_recent_open_pr_is_excluded_from_fixed_overdue_cohort_summary(self):
+        old_pr = pr()
+        recent_pr = pr(
+            number=11,
+            title="TASK-002: recent work",
+            url="https://github.com/ajoe734/pantheon/pull/11",
+            created_at="2026-07-22T12:00:00Z",
+            updated_at="2026-07-22T12:00:00Z",
+            head_ref="task/TASK-002",
+            head_sha="b" * 40,
+        )
+        branches = [
+            {
+                "branch": item["head_ref"],
+                "head_sha": item["head_sha"],
+                "committed_at": item["updated_at"],
+                "last_commit_author": "example",
+                "last_commit_subject": item["title"],
+                "dev_reachable": False,
+            }
+            for item in (old_pr, recent_pr)
+        ]
+
+        with mock.patch.object(
+            triage,
+            "git_commit_trailers",
+            return_value={"Task-ID": "TASK-001", "LLM-Agent": "Claude"},
+        ):
+            report, manifest = triage.build_report(
+                repository="ajoe734/pantheon",
+                remote="origin",
+                base_ref="origin/dev",
+                base_sha="c" * 40,
+                as_of=datetime(2026, 7, 22, 18, 0, tzinfo=timezone.utc),
+                overdue_hours=24,
+                retention_days=30,
+                expected_cohort_count=1,
+                included_prs=[],
+                history=[],
+                open_prs=[old_pr, recent_pr],
+                included_details={},
+                branches=branches,
+                active_tasks={},
+                archives={},
+            )
+
+        self.assertEqual([item["number"] for item in report["cohort_prs"]], [10])
+        self.assertEqual(report["summary"]["cohort_open_pr_count"], 1)
+        self.assertEqual(report["summary"]["cohort_resolved_pr_count"], 0)
+        self.assertEqual(report["summary"]["global_open_task_pr_count"], 2)
+        markdown = triage.render_markdown(report, manifest)
+        self.assertIn("1 remain open and 0 are now closed or merged", markdown)
+        self.assertIn("Repository-wide, **2** task PRs are open", markdown)
+        self.assertNotIn("2 remain open and 0 are now closed or merged", markdown)
+
     def test_refresh_completes_before_base_sha_capture(self):
         events = []
 
