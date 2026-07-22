@@ -1010,6 +1010,7 @@ services:
       PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE: /data/bff/lifecycle-projection/current/trade_journey_events.json
       LIFECYCLE_PROJECTION_ROOT: /data/bff/lifecycle-projection
       LIFECYCLE_PROJECTOR_STATE_PATH: /data/bff/lifecycle-projection/controller_state.json
+      LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH: /data/bff/lifecycle-projection/health_state.json
       LIFECYCLE_PROJECTOR_GENERATION_RETENTION: ${LIFECYCLE_PROJECTOR_GENERATION_RETENTION:-32}
       LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS: ${LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS:-3600}
       LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS: ${LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS:-120}
@@ -1223,6 +1224,7 @@ services:
       TELEMETRY_DB_DSN: ${TELEMETRY_DB_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       LIFECYCLE_PROJECTION_ROOT: /data/bff/lifecycle-projection
       LIFECYCLE_PROJECTOR_STATE_PATH: /data/bff/lifecycle-projection/controller_state.json
+      LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH: /data/bff/lifecycle-projection/health_state.json
       LIFECYCLE_PROJECTOR_POLL_SECONDS: ${LIFECYCLE_PROJECTOR_POLL_SECONDS:-1}
       LIFECYCLE_PROJECTOR_BATCH_SIZE: ${LIFECYCLE_PROJECTOR_BATCH_SIZE:-500}
       LIFECYCLE_PROJECTOR_MAX_TICKS: ${LIFECYCLE_PROJECTOR_MAX_TICKS:-0}
