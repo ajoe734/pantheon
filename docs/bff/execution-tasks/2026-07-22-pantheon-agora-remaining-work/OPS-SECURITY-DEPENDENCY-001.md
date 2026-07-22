@@ -63,3 +63,13 @@ low. The current manifests include MLflow 3.10.1, Ray/RLlib 2.9.3, and Torch
 - No production activation of MLflow, RLlib, FinRL, or EP5.
 - No blanket alert dismissal and no disabling Dependabot/security checks.
 - No execute-plans source or lockfile committed to Pantheon.
+
+## Delivery evidence
+
+- Task evidence:
+  `docs/04/pantheon_agora_remaining_work_2026-07-22/archive/OPS-SECURITY-DEPENDENCY-001-evidence.md`
+- The candidate pins MLflow 3.11.1, Ray/RLlib 2.54.0, Gymnasium 1.2.2, and
+  Torch 2.13.0 CPU, and keeps all research services behind tested dormant,
+  fail-closed boundaries.
+- The six dismissed npm alerts refer only to the frontend mirror removed from
+  Pantheon `dev` by `834318190c90962e024ee9b82243cf31a742f441`.

@@ -75,7 +75,12 @@ from services.foundation import (  # noqa: E402
     foundation_id,
     sha256_checksum,
 )
-from services.foundation.health import register_fastapi_health_routes  # noqa: E402
+from services.foundation.health import (  # noqa: E402
+    health_payload,
+    readiness_status_code,
+    register_fastapi_health_routes,
+)
+from services.trade_journey.lifecycle_projector import projector_readiness  # noqa: E402
 from services.source_ingestion.replication_bridge import (  # noqa: E402
     StrategySeedReplicationBridge,
     StrategySeedReplicationBridgeError,
@@ -678,10 +683,21 @@ async def _bff_session_rbac_contract(request: Request, call_next):
 
 BFF_DATA_DIR = os.getenv("BFF_DATA_DIR", "/tmp/pantheon/bff")
 os.makedirs(BFF_DATA_DIR, exist_ok=True)
-register_fastapi_health_routes(
-    app,
-    "operator-bff",
-    dependencies=lambda: {
+
+
+def _lifecycle_projector_dependency() -> Dict[str, Any]:
+    state_path = Path(
+        os.getenv(
+            "LIFECYCLE_PROJECTOR_STATE_PATH",
+            str(Path(BFF_DATA_DIR) / "lifecycle-projection" / "controller_state.json"),
+        )
+    )
+    root = Path(os.getenv("LIFECYCLE_PROJECTION_ROOT", str(state_path.parent)))
+    return projector_readiness(state_path=state_path, bundle_root=root)
+
+
+def _bff_readiness_dependencies() -> Dict[str, Dict[str, Any]]:
+    return {
         "runtime_manager": {
             "status": "ok" if os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "").strip() else "degraded",
             "url": os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "").strip(),
@@ -694,7 +710,14 @@ register_fastapi_health_routes(
             "status": "ok" if os.getenv("PANTHEON_DEPLOYMENT_API_URL", "").strip() else "degraded",
             "url": os.getenv("PANTHEON_DEPLOYMENT_API_URL", "").strip(),
         },
-    },
+        "lifecycle_projector": _lifecycle_projector_dependency(),
+    }
+
+
+register_fastapi_health_routes(
+    app,
+    "operator-bff",
+    dependencies=_bff_readiness_dependencies,
     details=lambda: {"version": "0.2.0", "data_dir": BFF_DATA_DIR},
 )
 
@@ -62167,17 +62190,32 @@ async def sem_bff_version():
     }
 
 
-@app.get("/bff/healthz")
-@app.get("/bff/readyz")
-async def sem_bff_health_alias():
+def _sem_bff_health_payload() -> Dict[str, Any]:
     commit = _bff_source_commit()
-    return {
-        "status": "ok",
-        "service": "operator-bff",
-        "version": "0.2.0",
-        "commit": commit,
-        "source_commit_sha": commit,
-    }
+    payload = health_payload(
+        "operator-bff",
+        dependencies=_bff_readiness_dependencies,
+        details={"version": "0.2.0", "data_dir": BFF_DATA_DIR},
+    )
+    payload.update(
+        {
+            "version": "0.2.0",
+            "commit": commit,
+            "source_commit_sha": commit,
+        }
+    )
+    return payload
+
+
+@app.get("/bff/healthz")
+async def sem_bff_health_alias():
+    return _sem_bff_health_payload()
+
+
+@app.get("/bff/readyz")
+async def sem_bff_readiness_alias():
+    payload = _sem_bff_health_payload()
+    return JSONResponse(payload, status_code=readiness_status_code(payload))
 
 
 @app.get("/bff/capabilities")
@@ -66980,6 +67018,7 @@ app.include_router(_create_trade_journal_router(
 
 
 # TJ-E2E-005: canonical Trade Journey read API via isolated module
+import trade_journeys as _trade_journeys  # noqa: E402
 from trade_journeys import create_trade_journeys_router as _create_trade_journeys_router  # noqa: E402
 app.include_router(_create_trade_journeys_router(
     extract_identity=_extract_identity,
@@ -67178,6 +67217,7 @@ app.include_router(
         bff_error=_bff_error,
         utc_now=utc_now,
         get_read_store=lambda: read_store,
+        get_trade_journey_store=lambda: _trade_journeys.EVENT_STORE,
         sync_servant_agent=lambda persona: _ensure_agora_servant_openclaw_agent(dict(persona)),
         canonical_context_ref_resolver=_resolve_agora_interaction_context_ref,
     )
