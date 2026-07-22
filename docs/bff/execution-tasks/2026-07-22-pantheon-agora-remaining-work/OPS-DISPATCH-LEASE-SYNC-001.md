@@ -49,9 +49,9 @@ terminal state without a missing-lease exit loop.
 
 ## Delivery and lifecycle evidence — 2026-07-22
 
-Status: the canonical implementation, live lease propagation, and lease-backed
-owner progress transaction are verified. The task is ready for the real Claude
-reviewer transition and owner closeout.
+Status: Claude approved the canonical implementation, live lease propagation,
+and lease-backed owner progress transaction. Evidence/tests PR #3956 merged to
+`dev`; the task is ready for owner closeout.
 
 ### Canonical repair
 
@@ -106,7 +106,19 @@ reviewer transition and owner closeout.
   authoritative journal event 145, with parity follow-up event 146. There was
   no missing-lease, expired-lease, cross-root, or lock-wait exit.
 
-The remaining lifecycle actions are intentionally performed by their real
-actors: Codex hands the task to Claude for `review`, Claude records
-`review_approved`, and Codex finalizes `done` only after this task branch's
-evidence/tests PR merges to `dev`.
+The final lifecycle actions were intentionally performed by their real actors:
+Codex handed the task to Claude for `review`, Claude recorded
+`review_approved`, and Codex proceeds to `done` only after the task branch's
+evidence/tests PR merged to `dev`.
+
+### Review and closeout
+
+- Claude recorded `review_approved` after independently re-running the
+  supervisor suite (320 passed), the status suite (103 passed), and the focused
+  lease/root suite (6 passed).
+- Evidence/tests PR #3956 merged to `dev` as
+  `46638a7e7e5e9b81afcc2e20c09d124bdaa9f550`. That commit is also the
+  installed command-runtime SHA used for owner closeout.
+- With the reviewer gate and repository delivery complete, Codex may perform
+  the governed `done` transition; no architecture, validation, or provider
+  authority boundary changes are part of closeout.
