@@ -50,9 +50,7 @@ def create_performance_router(
                 identity, utc_now=utc_now, requested_tenant_id=tenant_id
             )
         except AgoraScopeResolutionError as exc:
-            from models import ErrorCode
-
-            code = ErrorCode.AUTH_REQUIRED if exc.status_code == 401 else ErrorCode.FORBIDDEN
+            code = "AUTH_REQUIRED" if exc.status_code == 401 else "FORBIDDEN"
             raise bff_error(
                 exc.status_code,
                 code,
@@ -86,6 +84,16 @@ def create_performance_router(
         x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
     ) -> dict[str, Any]:
         scope = resolve_scope(authorization, x_tenant_id)
+        if environment == "live" and not {
+            "operator", "reviewer", "approver", "admin"
+        }.intersection(scope.roles):
+            raise bff_error(
+                403,
+                "FORBIDDEN",
+                "Live performance identities require operator-level access",
+                "live_performance_identity_role_denied",
+                precondition_failed="role_check",
+            )
         projection = service.project(
             tenant_id=scope.tenant_id,
             owner_user_id=scope.user_id,

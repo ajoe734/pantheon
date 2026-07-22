@@ -71,7 +71,11 @@ def _projection_visible_to_user(projection: Any, user_id: str) -> bool:
 def _projection_strategy_id(projection: Any) -> str:
     identifiers = projection.snapshot.get("identifiers") or {}
     values = identifiers.get("strategy_id") or []
-    return str(values[0]) if values else ""
+    return str(values[0]) if len(values) == 1 else ""
+
+
+def _dedupe(values: Iterable[Any]) -> List[str]:
+    return list(dict.fromkeys(str(value) for value in values if str(value or "")))
 
 
 def _source_availability(
@@ -209,12 +213,16 @@ class PerformanceProjectionService:
                         status=str(projection.snapshot.get("status") or "unknown"),
                         occurred_at=str(projection.snapshot.get("created_at") or ""),
                         updated_at=str(projection.snapshot.get("updated_at") or ""),
-                        decision_ids=list(identifiers.get("decision_id") or []),
-                        order_ids=list(identifiers.get("order_id") or [])
-                        + list(identifiers.get("broker_order_id") or []),
-                        fill_ids=list(identifiers.get("fill_id") or [])
-                        + list(identifiers.get("broker_trade_id") or []),
-                        reconciliation_ids=list(
+                        decision_ids=_dedupe(identifiers.get("decision_id") or []),
+                        order_ids=_dedupe(
+                            list(identifiers.get("order_id") or [])
+                            + list(identifiers.get("broker_order_id") or [])
+                        ),
+                        fill_ids=_dedupe(
+                            list(identifiers.get("fill_id") or [])
+                            + list(identifiers.get("broker_trade_id") or [])
+                        ),
+                        reconciliation_ids=_dedupe(
                             identifiers.get("reconciliation_id") or []
                         ),
                         evidence_refs=evidence_refs,

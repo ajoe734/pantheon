@@ -294,6 +294,28 @@ def test_viewer_can_read_but_cannot_write(tmp_path: Path) -> None:
     assert response.status_code == 403
 
 
+def test_viewer_cannot_read_live_execution_identities(tmp_path: Path) -> None:
+    store = PerformanceSuggestionStore(str(tmp_path / "performance.db"))
+    client = TestClient(_app(store, _JourneyStore(_events())))
+    response = client.get(
+        "/bff/agora/trading-room/strategies/strategy-alpha/performance"
+        "?period=latest&environment=live",
+        headers=_headers(role="viewer"),
+    )
+    assert response.status_code == 403
+
+
+def test_conflicting_strategy_identity_fails_closed(tmp_path: Path) -> None:
+    events = _events()
+    events[-1] = {**events[-1], "strategy_id": "strategy-beta"}
+    store = PerformanceSuggestionStore(str(tmp_path / "performance.db"))
+    client = TestClient(_app(store, _JourneyStore(events)))
+    response = client.get(_performance_url(), headers=_headers())
+    assert response.status_code == 200
+    assert response.json()["data"]["execution_history"]["availability"]["status"] == "unavailable"
+    assert response.json()["data"]["execution_history"]["items"] == []
+
+
 @pytest.mark.parametrize(
     ("action", "expected_status"),
     [
