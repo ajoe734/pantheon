@@ -196,3 +196,107 @@ governed `reopen` command. Authoritative task-state journal sequence 360 records
 `PAN-SOURCE-FRESH-001` as `in_progress` at `2026-07-22T22:19:40Z`, owned by
 Codex with Codex2 as reviewer, and carries the five required changes back to
 the owner. The lagging `ai-status.json` projection was not edited manually.
+
+## Remediation re-review
+
+Reviewed remediation commits: `f193b33bae834f7e3de82fd83c603769f15bcfb5`
+and `53c5f99634f5f43fa7e237ceb8fd186f782277f0`
+
+Reviewed branch tip: `0f90bfffe32583366ad3bc382fdff797fba25550`
+
+Verdict: **CHANGES REQUIRED — NOT APPROVED**
+
+The credential redirect remediation is accepted: same-origin credentials are
+preserved, cross-origin authorization/cookie/API-key/token headers are removed,
+and an unallowlisted redirect is rejected before request construction. The
+Agora projector no longer falls back to record creation time, missing/invalid/
+future provider time is stale, and the bounded TWSE/TPEx example plus preflight
+require both exact provider hosts.
+
+Two failure paths still contradict the delivered contract.
+
+### A. Receipt-finalization failure leaves nonterminal receipt truth
+
+`_run_job` first writes a `processing` receipt and later overwrites it with the
+terminal receipt. Its exception handler deliberately skips the typed-failure
+write when `post_processing_stage == "receipt_finalize"`. If that final append
+fails, the durable store therefore contains a completed run paired with a
+`processing` receipt and no typed failure after reload.
+
+Independent fault injection against the second `upsert_receipt` call produced:
+
+```text
+{'summary': {'total_ran': 0, 'total_failed': 1, 'total_enqueued': 1, ...},
+ 'run_status': 'completed',
+ 'receipt_status': 'processing',
+ 'typed_failure': None,
+ 'receipt_writes': 2}
+```
+
+Required resolution:
+
+- make receipt terminalization and terminal run truth converge after a failed
+  final receipt append or process restart;
+- never leave a completed run permanently paired with `processing` and no
+  typed failure;
+- add a reload regression that fails the final receipt write itself, not only a
+  preceding health/evidence write.
+
+### B. The bounded forced connector is not an exclusive run scope
+
+The controller forwards `SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS`, but
+`_run_scheduled_connectors` uses that set only to bypass cadence for matching
+connectors. It still iterates and enqueues every other enabled due schedule.
+With the bounded TWSE/TPEx allowlist, an unrelated due connector can be denied
+and make the controller exit nonzero through `total_failed`, or can perform an
+unrequested fetch if it shares an allowed host.
+
+Independent two-schedule reproduction produced:
+
+```text
+{'forced': 1,
+ 'total_enqueued': 2,
+ 'total_ran': 2,
+ 'ran': ['target', 'unrelated']}
+```
+
+Required resolution:
+
+- give the bounded one-shot path an explicit exclusive connector selection,
+  while preserving existing non-exclusive scheduler semantics for ordinary
+  callers if needed;
+- prove an unrelated enabled/due schedule is neither enqueued nor run;
+- retain fail-closed reporting when the exclusively selected connector is
+  missing, disabled, or fails.
+
+### Re-review verification
+
+Passed:
+
+```text
+/home/lupin/pantheon/.venv/bin/python -m pytest -q \
+  services/test_external_egress.py \
+  services/source_ingestion/tests/test_scheduled_connector.py \
+  services/source_ingestion/tests/test_controller_worker.py \
+  scripts/test_project_market_data_to_bff_agora_surfaces.py \
+  services/source_ingestion/test_compose_activation.py \
+  scripts/test_source_ingest_deploy_diagnostics_contract.py
+
+120 passed, 1 warning in 49.99s
+
+bash -n scripts/deploy_nonprod_vm.sh
+COMPOSE_PROFILES= docker compose -f docker-compose.yml config --quiet
+PANTHEON_EXTERNAL_EGRESS=allowlist \
+PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=openapi.twse.com.tw,www.tpex.org.tw \
+SOURCE_INGEST_BOUNDED_CONNECTOR_ID=tw-twse-tpex-official-market \
+SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS=1800 \
+SOURCE_INGEST_CONTROLLER_MAX_TICKS=1 \
+SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY=1 \
+SOURCE_INGEST_MAX_RECORDS=100 \
+COMPOSE_PROFILES=source-ingest-scheduler \
+docker compose -f docker-compose.yml config --quiet
+git diff --check
+```
+
+No external request, provider credential, deployment, production state, or
+live-capital surface was touched during re-review.

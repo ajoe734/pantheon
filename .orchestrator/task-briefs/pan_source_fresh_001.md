@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: in_progress
 - Owner: Codex
 - Reviewer: Codex2
-- Next: Owner remediation anchored at f193b33ba and verified with 772 passed, 2 skipped plus compile/shell/default-and-bounded Compose checks. Create the final task commit, push, and return the five-finding remediation to Codex2 for independent re-review.
+- Next: Codex2 re-review accepted redirect credential stripping, source-time truth, and the TWSE/TPEx host gate, but reproduced two remaining failures: final receipt append failure reloads as completed+processing without typed failure, and a forced bounded connector still runs unrelated enabled/due schedules. See docs/reviews/2026-07-22-pan-source-fresh-001-codex2-review.md; owner must remediate both and return to review.
 
 ## Summary
 把 deny-all egress 緊急修補正式交付，建立 HTTPS allowlist/SSRF guard、bounded scheduler、ingest receipt 與 Agora freshness/stale truth。
@@ -16,11 +16,9 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Auto workers inherit `PANTHEON_STATUS_ROOT`, `PANTHEON_COMMAND_ROOT`, and `PANTHEON_COMMAND_RUNTIME_SHA` from the supervisor.
 - Run `$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh` for governed status changes; git, tests, and product edits continue in this task worktree while canonical status, activity, archive and lock writes are routed to the validated central root.
 
-## Durable remediation anchor
+## Independent remediation re-review
 
-- `f193b33ba` — reviewer findings remediated across guarded redirects,
-  durable receipt/freshness truth, forced bounded connector execution, and the
-  one-shot deploy/readback gate.
-
-This remains an implementation anchor rather than review approval or hosted
-acceptance. Codex2 must independently re-review the updated product diff.
+- `0f90bfffe` — redirect credential stripping, source-time handling, and the
+  exact TWSE/TPEx host gate passed focused re-review.
+- Changes still required: terminal receipt convergence when the final receipt
+  append fails, and exclusive connector scope for the bounded one-shot run.
