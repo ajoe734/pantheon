@@ -18,9 +18,9 @@ external connector boundary.
 from __future__ import annotations
 
 import ipaddress
+import http.client
 import os
 import socket
-import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Sequence
@@ -348,6 +348,75 @@ class _GuardedRedirectHandler(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, absolute_url)
 
 
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    """Connect TLS to a policy-validated IP while preserving hostname SNI."""
+
+    def __init__(self, host: str, *, policy: _RedirectPolicy, **kwargs: Any) -> None:
+        self._egress_policy = policy
+        super().__init__(host, **kwargs)
+
+    def connect(self) -> None:
+        if self._tunnel_host:
+            raise _blocked(
+                url=f"https://{self.host}/",
+                caller=self._egress_policy.caller,
+                env=self._egress_policy.env,
+                reason_code="proxy_tunnel_forbidden",
+                detail="external connector proxy tunnels are not supported by the pinned transport",
+            )
+        url = f"https://{self.host}/"
+        # Revalidate immediately before opening the socket. The socket then
+        # targets the returned IP literal, so the transport cannot perform an
+        # unguarded DNS lookup after this decision.
+        try:
+            addresses = _resolve_global_addresses(self.host, resolver=self._egress_policy.resolver)
+        except _UnsafeAddressError as exc:
+            raise _blocked(
+                url=url,
+                caller=self._egress_policy.caller,
+                env=self._egress_policy.env,
+                reason_code="target_ip_forbidden",
+                detail="all DNS answers must be globally routable at connect time",
+                resolved_addresses=exc.addresses,
+            ) from exc
+        except _DNSResolutionError as exc:
+            raise _blocked(
+                url=url,
+                caller=self._egress_policy.caller,
+                env=self._egress_policy.env,
+                reason_code="dns_resolution_failed",
+                detail=str(exc),
+            ) from exc
+
+        last_error: OSError | None = None
+        for address in addresses:
+            try:
+                self.sock = socket.create_connection(
+                    (address, self.port),
+                    self.timeout,
+                    self.source_address,
+                )
+                break
+            except OSError as exc:
+                last_error = exc
+        else:
+            assert last_error is not None
+            raise last_error
+        self.sock = self._context.wrap_socket(self.sock, server_hostname=self.host)
+
+
+class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
+    def __init__(self, policy: _RedirectPolicy) -> None:
+        super().__init__()
+        self.policy = policy
+
+    def https_open(self, req: urllib.request.Request) -> Any:
+        def connection_factory(host: str, **kwargs: Any) -> _PinnedHTTPSConnection:
+            return _PinnedHTTPSConnection(host, policy=self.policy, **kwargs)
+
+        return self.do_open(connection_factory, req)
+
+
 def open_external_url(
     request: str | urllib.request.Request,
     *,
@@ -364,5 +433,9 @@ def open_external_url(
     url = request.full_url if isinstance(request, urllib.request.Request) else str(request)
     guard_external_url(url, caller=caller, env=env, resolver=resolver)
     policy = _RedirectPolicy(caller=caller, env=env, resolver=resolver, max_redirects=max_redirects)
-    opener = urllib.request.build_opener(_GuardedRedirectHandler(policy))
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        _GuardedRedirectHandler(policy),
+        _PinnedHTTPSHandler(policy),
+    )
     return opener.open(request, timeout=timeout)

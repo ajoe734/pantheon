@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import socket
+import ssl
 import urllib.request
 
 import pytest
@@ -8,6 +9,7 @@ import pytest
 from services.external_egress import (
     ExternalEgressBlocked,
     _GuardedRedirectHandler,
+    _PinnedHTTPSConnection,
     _RedirectPolicy,
     allowed_hosts,
     external_egress_allowed,
@@ -193,6 +195,42 @@ def test_open_external_url_denies_before_building_transport(monkeypatch: pytest.
             resolver=_resolver("8.8.8.8"),
         )
     assert built is False
+
+
+def test_https_transport_pins_connect_to_revalidated_global_ip(monkeypatch: pytest.MonkeyPatch) -> None:
+    connected: list[tuple[tuple[str, int], float, object]] = []
+    wrapped: list[tuple[object, str]] = []
+    raw_socket = object()
+
+    def create_connection(target, timeout, source_address):
+        connected.append((target, timeout, source_address))
+        return raw_socket
+
+    class FakeContext:
+        check_hostname = False
+        verify_mode = ssl.CERT_NONE
+
+        def wrap_socket(self, sock, *, server_hostname):
+            wrapped.append((sock, server_hostname))
+            return sock
+
+    monkeypatch.setattr(socket, "create_connection", create_connection)
+    connection = _PinnedHTTPSConnection(
+        "api.example.com",
+        policy=_RedirectPolicy(
+            caller="test",
+            env=_allowlist("api.example.com"),
+            resolver=_resolver("8.8.8.8"),
+            max_redirects=3,
+        ),
+        timeout=2,
+        context=FakeContext(),
+    )
+
+    connection.connect()
+
+    assert connected == [(('8.8.8.8', 443), 2, None)]
+    assert wrapped == [(raw_socket, "api.example.com")]
 
 
 def test_denial_message_redacts_query_values() -> None:
