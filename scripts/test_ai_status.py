@@ -329,6 +329,167 @@ class LogicalActorNormalizationTests(unittest.TestCase):
         self.assertEqual(ai_status.normalize_logical_actor("codex2-3"), "codex2")
 
 
+class StatusCommandLeaseValidationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        _setup_test_isolation(self)
+        self.task_id = "LEASE-SYNC-001"
+        self.run_id = "codex-lease-sync-run"
+        self.workspace = self._test_root / "task-worktree"
+        self.command_root = self._test_root / "command-runtime"
+        self.workspace.mkdir()
+        self.command_root.mkdir()
+        self.issued_runtime = {
+            "command_root": str(self.command_root),
+            "source_sha": "lease-sync-runtime-sha",
+        }
+        self._test_status_file.write_text(
+            json.dumps(
+                {
+                    "tasks": [
+                        {
+                            "id": self.task_id,
+                            "owner": "Codex",
+                            "reviewer": "Claude",
+                            "status": "in_progress",
+                        }
+                    ]
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+    def tearDown(self) -> None:
+        _teardown_test_isolation(self)
+
+    def _runtime_state(
+        self,
+        *,
+        logical_agent_id: str = "codex",
+        lease_expires_at: str = "2999-01-01T00:00:00Z",
+        task_id: str | None = None,
+        status_root: Path | None = None,
+    ) -> dict[str, object]:
+        worker_task_id = task_id or self.task_id
+        worker_status_root = status_root or self._test_root
+        return {
+            "workers": {
+                self.run_id: {
+                    "run_id": self.run_id,
+                    "logical_agent_id": logical_agent_id,
+                    "task_id": worker_task_id,
+                    "status": "running",
+                    "lease_expires_at": lease_expires_at,
+                    "workspace_path": str(self.workspace),
+                    "status_root": str(worker_status_root),
+                    "status_command_runtime": self.issued_runtime,
+                }
+            },
+            "worker_worktrees": {
+                "leases": {
+                    worker_task_id: {
+                        "task_id": worker_task_id,
+                        "path": str(self.workspace),
+                        "status_root": str(worker_status_root),
+                    }
+                }
+            },
+        }
+
+    def _validate(
+        self,
+        command: str,
+        args: list[str],
+        *,
+        actor: str,
+        runtime_state: dict[str, object] | None = None,
+        env_task_id: str | None = None,
+    ) -> None:
+        env = {
+            "AI_NAME": actor,
+            "ORCH_RUN_ID": self.run_id,
+            "PANTHEON_WORKTREE_ROOT": str(self.workspace),
+            "ORCH_WORKSPACE_PATH": str(self.workspace),
+        }
+        if env_task_id is not None:
+            env["ORCH_TASK_ID"] = env_task_id
+        with (
+            mock.patch.dict(os.environ, env, clear=True),
+            mock.patch.object(ai_status, "load_config", return_value={}),
+            mock.patch.object(
+                ai_status,
+                "load_runtime_state_snapshot",
+                return_value=runtime_state or self._runtime_state(),
+            ),
+            mock.patch.object(
+                ai_status,
+                "status_command_metadata",
+                return_value=self.issued_runtime,
+            ),
+        ):
+            ai_status.validate_active_status_command_lease(command, args)
+
+    def test_accepts_valid_owner_and_reviewer_dispatch_leases(self) -> None:
+        self._validate(
+            "progress",
+            [self.task_id, "owner progress"],
+            actor="Codex",
+            env_task_id=self.task_id,
+        )
+        self._validate(
+            "approve",
+            [self.task_id, "review approved"],
+            actor="Claude",
+            env_task_id=self.task_id,
+            runtime_state=self._runtime_state(logical_agent_id="claude"),
+        )
+
+    def test_rejects_auto_worker_without_run_lease(self) -> None:
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=True):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "status command lease required for auto worker: Codex",
+            ):
+                ai_status.validate_active_status_command_lease(
+                    "progress", [self.task_id, "missing lease"]
+                )
+
+    def test_rejects_expired_run_lease(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "status command lease .* is expired"):
+            self._validate(
+                "progress",
+                [self.task_id, "expired lease"],
+                actor="Codex",
+                env_task_id=self.task_id,
+                runtime_state=self._runtime_state(
+                    lease_expires_at="2000-01-01T00:00:00Z"
+                ),
+            )
+
+    def test_rejects_cross_task_authority(self) -> None:
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "worker task LEASE-SYNC-001 != command task OTHER-TASK-001",
+        ):
+            self._validate(
+                "progress",
+                ["OTHER-TASK-001", "cross-task attempt"],
+                actor="Codex",
+            )
+
+    def test_rejects_cross_root_authority(self) -> None:
+        other_root = self._test_root / "other-status-root"
+        other_root.mkdir()
+        with self.assertRaisesRegex(RuntimeError, "status command root mismatch"):
+            self._validate(
+                "progress",
+                [self.task_id, "cross-root attempt"],
+                actor="Codex",
+                env_task_id=self.task_id,
+                runtime_state=self._runtime_state(status_root=other_root),
+            )
+
+
 class StatusRootRoutingTests(unittest.TestCase):
     def _init_repo(self, path: Path) -> None:
         path.mkdir(parents=True, exist_ok=True)
