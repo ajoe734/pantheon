@@ -1,11 +1,12 @@
 # OPS-TASK-PR-TRIAGE-001 evidence report
 
-Generated from live GitHub and git evidence at `2026-07-22T17:43:50Z`.
-Base proof: `origin/dev` = `ea1a860738d6ee8bf3fb2456c905531623f94279`.
+Generated from live GitHub and git evidence at `2026-07-22T22:33:01Z`.
+Base proof: `origin/dev` = `fb2df8ec805754a3bf7a83ea544138ca9c32c521`.
 
 ## Cohort result
 
 The fixed audit cohort contains **29** task PRs: 23 remain open and 6 are now closed or merged.
+Repository-wide, **25** task PRs are open at this snapshot; that global count includes recent PRs outside the fixed overdue cohort.
 
 | PR | State | Merge | Draft | Disposition | Owner | Evidence |
 |---:|---|---|:---:|---|---|---|
@@ -55,7 +56,7 @@ Recorded branch deletions: 0.
 
 ## Branch inventory and deletion dry run
 
-- Remote task branches: 2096
+- Remote task branches: 2098
 - No-open-PR task branches: 2073
 - Dry-run deletion candidates: 1148
 - No branch deletion command exists in this task or tool.
@@ -65,7 +66,7 @@ Disposition counts:
 - `abandoned-unproven`: 78
 - `active-repair`: 18
 - `conflict-needs-owner`: 8
-- `merged-reachable`: 1946
+- `merged-reachable`: 1948
 - `protected-retain`: 43
 - `superseded`: 3
 

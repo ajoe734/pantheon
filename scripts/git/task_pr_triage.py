@@ -87,10 +87,14 @@ def _parse_datetime(value: str | None) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def _snapshot_time(value: datetime) -> datetime:
+    """Normalize the captured time to the precision published in the report."""
+
+    return value.astimezone(timezone.utc).replace(microsecond=0)
+
+
 def _iso(value: datetime) -> str:
-    return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace(
-        "+00:00", "Z"
-    )
+    return _snapshot_time(value).isoformat().replace("+00:00", "Z")
 
 
 def _load_json(path: Path) -> Any:
@@ -1004,6 +1008,8 @@ def build_report(
 
     branch_counts = Counter(item["disposition"] for item in classified_branches)
     pr_counts = Counter(item["disposition"] for item in cohort)
+    cohort_open_pr_count = sum(1 for item in cohort if item.get("state") == "OPEN")
+    cohort_resolved_pr_count = len(cohort) - cohort_open_pr_count
     closure_candidates = [item for item in cohort if item["close_authorized"]]
     report = {
         "schema_version": 1,
@@ -1022,8 +1028,10 @@ def build_report(
         },
         "summary": {
             "cohort_pr_count": len(cohort),
+            "cohort_open_pr_count": cohort_open_pr_count,
+            "cohort_resolved_pr_count": cohort_resolved_pr_count,
             "cohort_pr_dispositions": dict(sorted(pr_counts.items())),
-            "open_task_pr_count": len(open_by_branch),
+            "global_open_task_pr_count": len(open_by_branch),
             "resolved_baseline_prs": sorted(
                 number for number in included_prs if number not in open_by_number
             ),
@@ -1102,6 +1110,27 @@ def validate_report(
                 f"deletion candidate {candidate['branch']} is not dev-reachable"
             )
 
+    summary = report.get("summary") or {}
+    cohort_open_pr_count = sum(
+        1 for item in cohort if item.get("state") == "OPEN"
+    )
+    cohort_resolved_pr_count = len(cohort) - cohort_open_pr_count
+    expected_summary_counts = {
+        "cohort_pr_count": len(cohort),
+        "cohort_open_pr_count": cohort_open_pr_count,
+        "cohort_resolved_pr_count": cohort_resolved_pr_count,
+    }
+    for field, expected in expected_summary_counts.items():
+        if summary.get(field) != expected:
+            raise TriageError(
+                f"summary {field}={summary.get(field)!r} does not match {expected}"
+            )
+    global_open_count = summary.get("global_open_task_pr_count")
+    if not isinstance(global_open_count, int) or global_open_count < cohort_open_pr_count:
+        raise TriageError(
+            "summary global_open_task_pr_count must include every open cohort PR"
+        )
+
 
 def render_markdown(
     report: dict[str, Any],
@@ -1118,8 +1147,11 @@ def render_markdown(
         "## Cohort result",
         "",
         f"The fixed audit cohort contains **{summary['cohort_pr_count']}** task PRs: "
-        f"{summary['open_task_pr_count']} remain open and "
-        f"{len(summary['resolved_baseline_prs'])} are now closed or merged.",
+        f"{summary['cohort_open_pr_count']} remain open and "
+        f"{summary['cohort_resolved_pr_count']} are now closed or merged.",
+        f"Repository-wide, **{summary['global_open_task_pr_count']}** task PRs are open "
+        "at this snapshot; that global count includes recent PRs outside the fixed "
+        "overdue cohort.",
         "",
         "| PR | State | Merge | Draft | Disposition | Owner | Evidence |",
         "|---:|---|---|:---:|---|---|---|",
@@ -1221,7 +1253,9 @@ def _refresh_refs(remote: str) -> None:
 
 
 def cmd_generate(args: argparse.Namespace) -> int:
-    as_of = _parse_datetime(args.as_of) if args.as_of else datetime.now(timezone.utc)
+    as_of = _snapshot_time(
+        _parse_datetime(args.as_of) if args.as_of else datetime.now(timezone.utc)
+    )
     assert as_of is not None
     status_root = Path(args.status_root).resolve()
     base_sha = capture_base_snapshot(args.remote, args.base_ref, args.refresh)
