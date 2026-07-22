@@ -6,26 +6,35 @@
     "bundle_index_sha256": "3485acad9de193aff972910e8286193b09924ac6505b06b7debc931211999795"
   },
   "files": {
-    "specs/agora/v11/candidate_member_truth_projection.schema.json": "7be2efb279aac544992a5c3d505a91f5add2acf62afb7dbe0a8704ddea1834fe",
-    "specs/agora/v11/capability_manifest_v1_10.json": "9243b11c2fb3d1bcc9dff8b304a414cc68786c322358c146df42cf46136fdf2d"
+    "specs/agora/v11/candidate_member_truth_projection.schema.json": "2e83a208b870d56bb17810acff47e7c531adca0d00ab8195e89e524c3687ce06",
+    "specs/agora/v11/capability_manifest_v1_10.json": "5bbfae91b9f0ed7d56801c89eacf9f0caf165d9c171d170df462fe5e015b0b69"
   },
   "openapi": {
     "path": "services/control-plane/openapi/agora_v1_10.openapi.yaml",
-    "sha256": "b1308a2f766cd0c3e9f4cf78e00be34c4e24c2d804040476f701f7f9c52fce15"
+    "sha256": "0d408b254bd391568bf4e31e28b335e34f704fe1289dba1cfd9aec67bf14e4b4"
   },
   "required_definition_checksums": {
     "FieldProvenance": "ed99cbd2b7c11da08e1930c2e35bc42863b64ced84adcc949f4fb414aa4814da",
-    "AvailableField": "d5d90fae26e3217c8dedd5a8ca7447bcda3281b0cf919a094522362ba5b61b28",
     "UnavailableField": "106646eba2a84192d8143a48ae7e9a3f32e8de1251a288549ef42e8658b21942",
-    "CandidateFieldState": "d8d7945e6c0d4c5370634fb634232458e093890a30f054fbd4f51633b5ef3fd9",
-    "ComponentDigest": "3814f02d3cbcb6cee39bbb85789aefdee343834af9a2b76593fc6b25a5ec7583",
+    "ComponentDigest": "cbbe123d963001623e4efddd6ec88c9c743ed4638989b0cec3538bfc3134f896",
     "CandidateRationaleValue": "2c4ba5976a7f5cd0b73b3e70f17be208942e4bacb6afbdf5df3d066089047227",
     "CandidateConcernsValue": "bf4cd0551ee4daf7f8502acf34f02645f2dc542b7920a8ea75470914e30f7d42",
     "CandidateNextEventValue": "a90919753378fc5e0c0d7dcf0788243ab2c09a91107d0d4e91f7ed7cddc6e6c5",
-    "CandidateEvidenceItem": "a5212734bc873776385b3d5b8de979f78da47e871fb9cd07725539b8ef9eb32a",
-    "CandidateEvidenceValue": "2e5faad860c7a928459f6a8fdb6189416cd8c662ee5e0516de2c61739b3920a5",
+    "CandidateEvidenceItem": "41d3a22b29ab2248c539fce5a1c311663075a17b772cba865c591e076c04be08",
+    "CandidateEvidenceValue": "f7af8046d6818eaa3951a326a6d98cbf68626bbf259d4f65dcff4253772ec759",
     "CandidateDetailsValue": "8fc046c635068576d3b31c0666eeca28527a752f3cc261ca07d83ac6360d1dc2",
-    "CandidateTruthFields": "4709357d6484b18ab9becec41ef26f627a224b63c633297d84c4c3c0777ad33a",
+    "CandidateRationaleAvailableField": "c99e997e306131c0d4dab009291d6ee79a4ae4e73c6454b03cdb483c7bbef057",
+    "CandidateConcernsAvailableField": "83c79e78017abeb23a1c170a093fa89926519a97b7cc86be9f9f414dbc84d550",
+    "CandidateNextEventAvailableField": "0cdef977c3bd1aa444ef444b67f0e5813bce9053567cc88579a5986fc6c41102",
+    "CandidateEvidenceAvailableField": "e6d920bf37f741202dc18e9093e954bfbdc2c4907b498a2070fa96e324e1e4e6",
+    "CandidateDetailsAvailableField": "e27b48281da0e697e9132502cca0eeaa8d6e2753ea1c08d49547fe9c9d72416f",
+    "CandidateFieldState": "3449c12be31303a6b4a40c62ec4994dcb45dde979c074a12697eb1967932bbf0",
+    "CandidateRationaleFieldState": "cdfc2d13da8ece7d9fb69155bf6fcd7920b6d8595308733c7c0eeeaf7803d16f",
+    "CandidateConcernsFieldState": "3e8ca3d8cf3ae9540f2602395f7969fa5be28c56e8674c8fd364afad5d683d3e",
+    "CandidateNextEventFieldState": "ee682f3511a6cdcf371a69c06ba274d8cb63b459ea491c011ecf4c7b7d11e528",
+    "CandidateEvidenceFieldState": "59b406855e46061d0a091e3f64b0030e3e417c9f862f695687ea74bc13f19a28",
+    "CandidateDetailsFieldState": "7949795c7105708d29f59405d1c333c28f58e0a4c9fd1b98cc9beb9a643ebaa2",
+    "CandidateTruthFields": "8811b326f5537ca2df0a3e1fc4136972d5b1c44348b894d1c0d6778f88a3c751",
     "ScoreSemanticsEntry": "6db56f38dfda15c5dd7be7e056d9c26ceb96ee333e52bf4f2d6c1f5e621c93bf",
     "CandidateScoreSemantics": "19084530d965afb99a09fabca71b786445ebbe6cba0e4694cc339c3c7e923691",
     "CandidateMemberTruthProjection": "06ef01762b711571d0efbc8ba92aa64dbf6ba6af5024eb1dec28beeaa7c2b468",
@@ -44,5 +53,5 @@
     "specs/agora/v5/candidate_member_review.schema.json": "not rehashed; frozen source of projected rationale values",
     "specs/agora/v5/candidate_monitoring_status.schema.json": "not rehashed; frozen source of projected next_event values"
   },
-  "note": "AG-CAND-TRUTH-001-BE additive candidate truth projection. Every rendered candidate field is linked to a durable record of the same candidate with provenance/as-of or explicitly typed unavailable. No generated narrative, no cross-candidate sample text, role-redacted evidence summaries, no raw private content in list responses, Sharpe-derived scores identified as such. No broker orders, no RuntimeBinding writes, no capital binding."
+  "note": "AG-CAND-TRUTH-001-BE additive candidate truth projection. Every rendered candidate field is field-schema-bound and linked to a durable record of the same candidate with provenance/as-of or explicitly typed unavailable. Evidence is unavailable without a persisted governed ref; recipe requirements never create synthetic evidence refs. Evidence summaries and score-component explanations are redacted from lists and viewer detail. No generated narrative, cross-candidate sample text, broker orders, RuntimeBinding writes, or capital binding. Sharpe-derived scores remain explicitly identified."
 }

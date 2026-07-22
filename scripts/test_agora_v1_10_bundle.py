@@ -123,18 +123,68 @@ def test_openapi_defaults_to_the_current_replacement_dev_bff() -> None:
 
 
 def test_field_states_are_available_with_provenance_or_typed_unavailable() -> None:
-    _assert_valid("CandidateFieldState", {
-        "availability": "available",
-        "value": {"kind": "candidate_identity", "strategy_ref": "strategy://x",
-                  "lifecycle_state": "candidate", "created_at": "2026-07-22T00:00:00Z"},
-        "provenance": {
-            "source_type": "candidate_pool_member",
-            "source_ref": "candidate-pool-member:cpool-1:artifact-1",
-            "as_of": "2026-07-22T00:00:00Z",
+    provenance = {
+        "source_type": "candidate_pool_member",
+        "source_ref": "candidate-pool-member:cpool-1:artifact-1",
+        "as_of": "2026-07-22T00:00:00Z",
+    }
+    field_values = {
+        "CandidateRationaleFieldState": {
+            "kind": "score_component_attribution",
+            "band": "discuss",
+            "effective_score": 55.0,
+            "top_components": [],
         },
+        "CandidateConcernsFieldState": {
+            "kind": "score_risk_attribution",
+            "blockers": [],
+            "penalty_components": [],
+        },
+        "CandidateNextEventFieldState": {
+            "kind": "monitoring_schedule",
+            "monitoring_state": "active",
+            "review_due_at": None,
+            "trigger_conditions": [],
+        },
+        "CandidateEvidenceFieldState": {
+            "kind": "score_evidence_refs",
+            "items": [{
+                "component_id": "expected_value",
+                "evidence_refs": ["artifact://evidence/expected-value"],
+                "summary": None,
+                "summary_redacted": True,
+                "redaction_reason": "list_response",
+            }],
+            "total_refs": 1,
+        },
+        "CandidateDetailsFieldState": {
+            "kind": "candidate_identity",
+            "strategy_ref": "strategy://x",
+            "lifecycle_state": "candidate",
+            "created_at": "2026-07-22T00:00:00Z",
+        },
+    }
+    for state_name, value in field_values.items():
+        payload = {
+            "availability": "available",
+            "value": value,
+            "provenance": provenance,
+        }
+        _assert_valid(state_name, payload)
+        _assert_valid("CandidateFieldState", payload)
+        _assert_invalid(state_name, {**payload, "value": None})
+
+    # A field-specific state cannot accept another field's typed value.
+    _assert_invalid("CandidateRationaleFieldState", {
+        "availability": "available",
+        "value": field_values["CandidateDetailsFieldState"],
+        "provenance": provenance,
     })
+
     for reason in ("score_not_run", "no_governed_source", "not_recorded"):
         _assert_valid("CandidateFieldState", {"availability": "unavailable", "reason": reason})
+        for state_name in field_values:
+            _assert_valid(state_name, {"availability": "unavailable", "reason": reason})
 
     # Available without provenance, unavailable without a typed reason, and
     # free-text reasons are all contract violations.
@@ -186,6 +236,24 @@ def test_evidence_items_require_redaction_typing() -> None:
         "summary": None,
         "summary_redacted": True,
         "redaction_reason": "because",
+    })
+    _assert_invalid("CandidateEvidenceItem", {
+        "component_id": "expected_value",
+        "evidence_refs": ["artifact://evidence/expected-value"],
+        "summary": "raw private component explanation",
+        "summary_redacted": True,
+        "redaction_reason": "list_response",
+    })
+    _assert_invalid("CandidateEvidenceItem", {
+        "component_id": "expected_value",
+        "evidence_refs": ["artifact://evidence/expected-value"],
+        "summary": None,
+        "summary_redacted": False,
+    })
+    _assert_invalid("CandidateEvidenceValue", {
+        "kind": "score_evidence_refs",
+        "items": [],
+        "total_refs": 0,
     })
 
 

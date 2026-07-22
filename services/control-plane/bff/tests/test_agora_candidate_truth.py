@@ -20,6 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(BFF_DIR))
 
 import main as bff_main  # noqa: E402
+import agora.research.router as research_router  # noqa: E402
 
 
 _OPERATOR_AUTH = "Bearer agora-truth-user:operator"
@@ -31,6 +32,54 @@ _TRUTH_SCHEMA = (
 )
 
 _FIELD_NAMES = ("rationale", "concerns", "next_event", "evidence", "details")
+_DEFAULT_REGISTRY_CANDIDATES = research_router._default_registry_candidates
+
+
+def _enable_governed_evidence(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Attach persisted evidence refs to the test registry candidates."""
+    def candidates_with_evidence(now: str) -> list[dict]:
+        candidates = _DEFAULT_REGISTRY_CANDIDATES(now)
+        for candidate in candidates:
+            artifact_id = candidate["artifact_id"]
+            metrics = candidate["_metrics"]
+            metrics["evidence_refs"] = {
+                component_id: [f"artifact://evidence/{artifact_id}/{component_id}"]
+                for component_id in metrics["components"]
+            }
+        return candidates
+
+    monkeypatch.setattr(
+        research_router,
+        "_default_registry_candidates",
+        candidates_with_evidence,
+    )
+
+
+def _assert_private_score_explanations_absent(
+    projection: dict,
+    *,
+    score_key: str,
+) -> None:
+    score = projection[score_key]
+    assert score is not None
+    assert all("explanation" not in component for component in score["components"])
+
+    rationale = projection["fields"]["rationale"]
+    if (
+        rationale["availability"] == "available"
+        and rationale["value"]["kind"] == "score_component_attribution"
+    ):
+        assert all(
+            component["explanation"] is None
+            for component in rationale["value"]["top_components"]
+        )
+
+    concerns = projection["fields"]["concerns"]
+    if concerns["availability"] == "available":
+        assert all(
+            component["explanation"] is None
+            for component in concerns["value"]["penalty_components"]
+        )
 
 
 def _client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
@@ -146,13 +195,14 @@ def test_every_available_field_traces_to_the_requested_candidate(
     # distinct component values, so their projections must differ.
     first, second = body["items"]
     assert first["fields"]["rationale"]["value"] != second["fields"]["rationale"]["value"]
-    first_refs = {
-        ref
-        for evidence_item in first["fields"]["evidence"]["value"]["items"]
-        for ref in evidence_item["evidence_refs"]
+    assert first["fields"]["evidence"] == {
+        "availability": "unavailable",
+        "reason": "no_governed_source",
     }
-    assert all(first["artifact_id"] in ref for ref in first_refs)
-    assert not any(second["artifact_id"] in ref for ref in first_refs)
+    assert second["fields"]["evidence"] == {
+        "availability": "unavailable",
+        "reason": "no_governed_source",
+    }
 
 
 def test_unscored_pool_returns_typed_unavailable_fields_not_static_defaults(
@@ -268,6 +318,7 @@ def test_cross_tenant_and_cross_user_reads_are_denied(
 def test_evidence_summaries_are_redacted_by_role_and_in_lists(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _enable_governed_evidence(monkeypatch)
     client = _client(monkeypatch)
 
     # Operator-owned pool: detail summaries visible, list summaries redacted.
@@ -276,6 +327,10 @@ def test_evidence_summaries_are_redacted_by_role_and_in_lists(
     _score_pool(client, pool_id, created["meta"]["etag"], "ag-cand-truth-redact-op-score")
 
     list_item = _list_members(client, pool_id)["items"][0]
+    _assert_private_score_explanations_absent(
+        list_item,
+        score_key="current_score",
+    )
     for evidence_item in list_item["fields"]["evidence"]["value"]["items"]:
         assert evidence_item["summary"] is None
         assert evidence_item["summary_redacted"] is True
@@ -287,6 +342,15 @@ def test_evidence_summaries_are_redacted_by_role_and_in_lists(
     for evidence_item in detail_items:
         assert evidence_item["summary_redacted"] is False
         assert evidence_item["summary"]
+    assert all(component["explanation"] for component in detail["score"]["components"])
+    assert all(
+        component["explanation"]
+        for component in detail["fields"]["rationale"]["value"]["top_components"]
+    )
+    assert all(
+        component["explanation"]
+        for component in detail["fields"]["concerns"]["value"]["penalty_components"]
+    )
 
     # Viewer-owned pool: even the detail read keeps summaries redacted.
     viewer_created = _create_pool(
@@ -299,13 +363,73 @@ def test_evidence_summaries_are_redacted_by_role_and_in_lists(
         "ag-cand-truth-redact-viewer-score", auth=_VIEWER_AUTH,
     )
     viewer_item = _list_members(client, viewer_pool_id, auth=_VIEWER_AUTH)["items"][0]
+    _assert_private_score_explanations_absent(
+        viewer_item,
+        score_key="current_score",
+    )
     viewer_detail = _get_member(
         client, viewer_pool_id, viewer_item["artifact_id"], auth=_VIEWER_AUTH,
     )["data"]
+    _assert_private_score_explanations_absent(viewer_detail, score_key="score")
     for evidence_item in viewer_detail["fields"]["evidence"]["value"]["items"]:
         assert evidence_item["summary"] is None
         assert evidence_item["summary_redacted"] is True
         assert evidence_item["redaction_reason"] == "viewer_role"
+
+
+def test_generated_recipe_requirements_are_not_durable_evidence_refs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _client(monkeypatch)
+    created = _create_pool(
+        client,
+        "ag-cand-truth-no-evidence-create",
+        operator_id="agora-truth-user",
+    )
+    pool_id = created["data"]["pool_id"]
+    _score_pool(
+        client,
+        pool_id,
+        created["meta"]["etag"],
+        "ag-cand-truth-no-evidence-score",
+    )
+
+    for item in _list_members(client, pool_id)["items"]:
+        assert item["fields"]["evidence"] == {
+            "availability": "unavailable",
+            "reason": "no_governed_source",
+        }
+        assert all(
+            component["evidence_refs"] == []
+            for component in item["current_score"]["components"]
+        )
+
+
+def test_details_provenance_uses_persisted_member_mutation_timestamp() -> None:
+    projection = research_router._member_truth_projection(
+        pool={
+            "pool_id": "cpool-mutation",
+            "snapshot_at": "2026-07-22T00:00:00Z",
+        },
+        member={
+            "artifact_id": "artifact-mutation",
+            "strategy_ref": "strategy://winner-branch/default",
+            "lifecycle_state": "approved",
+            "created_at": "2026-07-22T00:00:00Z",
+            "_updated_at": "2026-07-22T02:00:00Z",
+        },
+        score=None,
+        reviews=[],
+        monitoring=None,
+        recipe={"penalty_components": []},
+        evidence_summary_mode="list_response",
+        operator_grade=True,
+    )
+
+    details = projection["fields"]["details"]
+    assert details["value"]["lifecycle_state"] == "approved"
+    assert details["provenance"]["as_of"] == "2026-07-22T02:00:00Z"
+    assert projection["as_of"] == "2026-07-22T02:00:00Z"
 
 
 def test_member_pagination_is_stable_and_freshness_observable(

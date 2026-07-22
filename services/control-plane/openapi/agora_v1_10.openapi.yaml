@@ -20,8 +20,12 @@ info:
         from another candidate's sample text.
       - No next event is returned unless a governed monitoring record owns it.
       - List responses never carry raw private evidence content; evidence
-        summaries are role-redacted (viewer-only callers receive
-        summary_redacted=true even on detail reads).
+        summaries and score-component explanations are role-redacted
+        (viewer-only callers receive summary_redacted=true and no component
+        explanations even on detail reads).
+      - Evidence is available only when a governed reference was persisted
+        with the candidate metrics; recipe requirements never become synthetic
+        evidence:// references.
       - effective_score is identified as a recipe-weighted score and
         sharpe_summary as a Sharpe ratio from the producing research run;
         neither may be presented as a generic confidence score.
@@ -85,6 +89,16 @@ components:
   schemas:
     CandidateFieldState:
       $ref: "../specs/agora/v11/candidate_member_truth_projection.schema.json#/definitions/CandidateFieldState"
+    CandidateRationaleFieldState:
+      $ref: "../specs/agora/v11/candidate_member_truth_projection.schema.json#/definitions/CandidateRationaleFieldState"
+    CandidateConcernsFieldState:
+      $ref: "../specs/agora/v11/candidate_member_truth_projection.schema.json#/definitions/CandidateConcernsFieldState"
+    CandidateNextEventFieldState:
+      $ref: "../specs/agora/v11/candidate_member_truth_projection.schema.json#/definitions/CandidateNextEventFieldState"
+    CandidateEvidenceFieldState:
+      $ref: "../specs/agora/v11/candidate_member_truth_projection.schema.json#/definitions/CandidateEvidenceFieldState"
+    CandidateDetailsFieldState:
+      $ref: "../specs/agora/v11/candidate_member_truth_projection.schema.json#/definitions/CandidateDetailsFieldState"
     CandidateTruthFields:
       $ref: "../specs/agora/v11/candidate_member_truth_projection.schema.json#/definitions/CandidateTruthFields"
     CandidateScoreSemantics:
@@ -112,7 +126,10 @@ components:
             sharpe_summary: {type: [number, "null"]}
             run_ref: {type: [string, "null"]}
             created_at: {type: string}
-            current_score: {type: object, additionalProperties: true}
+            current_score:
+              type: object
+              description: Score projection with component explanations omitted on every list response.
+              additionalProperties: true
             band: {type: [string, "null"]}
             rank: {type: [integer, "null"]}
             effective_score: {type: [number, "null"]}
@@ -162,7 +179,10 @@ components:
           required: [candidate, fields, as_of, score_semantics]
           properties:
             candidate: {type: object, additionalProperties: true}
-            score: {type: [object, "null"], additionalProperties: true}
+            score:
+              type: [object, "null"]
+              description: Full score for operator-grade callers; component explanations omitted for viewer-only callers.
+              additionalProperties: true
             reviews: {type: array, items: {type: object, additionalProperties: true}}
             monitoring: {type: [object, "null"], additionalProperties: true}
             negative_examples: {type: array, items: {type: object, additionalProperties: true}}

@@ -31,16 +31,6 @@
       },
       "additionalProperties": false
     },
-    "AvailableField": {
-      "type": "object",
-      "required": ["availability", "value", "provenance"],
-      "properties": {
-        "availability": {"const": "available"},
-        "value": {},
-        "provenance": {"$ref": "#/definitions/FieldProvenance"}
-      },
-      "additionalProperties": false
-    },
     "UnavailableField": {
       "type": "object",
       "required": ["availability", "reason"],
@@ -53,12 +43,6 @@
       },
       "additionalProperties": false
     },
-    "CandidateFieldState": {
-      "oneOf": [
-        {"$ref": "#/definitions/AvailableField"},
-        {"$ref": "#/definitions/UnavailableField"}
-      ]
-    },
     "ComponentDigest": {
       "type": "object",
       "required": ["component_id", "label", "contribution", "explanation"],
@@ -68,7 +52,7 @@
         "contribution": {"type": ["number", "null"]},
         "explanation": {
           "type": ["string", "null"],
-          "description": "Verbatim explanation stored on the candidate's own score result; never synthesized by the BFF."
+          "description": "Verbatim explanation stored on the candidate's own score result for operator-grade detail reads; null in every list response and viewer-only detail read. Never synthesized by the BFF."
         }
       },
       "additionalProperties": false
@@ -150,7 +134,23 @@
           "enum": ["list_response", "viewer_role"]
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {"summary_redacted": {"const": true}},
+            "required": ["summary_redacted"]
+          },
+          "then": {
+            "properties": {"summary": {"type": "null"}},
+            "required": ["redaction_reason"]
+          },
+          "else": {
+            "properties": {"summary": {"type": "string", "minLength": 1}},
+            "not": {"required": ["redaction_reason"]}
+          }
+        }
+      ]
     },
     "CandidateEvidenceValue": {
       "type": "object",
@@ -159,9 +159,10 @@
         "kind": {"const": "score_evidence_refs"},
         "items": {
           "type": "array",
-          "items": {"$ref": "#/definitions/CandidateEvidenceItem"}
+          "items": {"$ref": "#/definitions/CandidateEvidenceItem"},
+          "minItems": 1
         },
-        "total_refs": {"type": "integer", "minimum": 0}
+        "total_refs": {"type": "integer", "minimum": 1}
       },
       "additionalProperties": false
     },
@@ -179,15 +180,105 @@
       },
       "additionalProperties": false
     },
+    "CandidateRationaleAvailableField": {
+      "type": "object",
+      "required": ["availability", "value", "provenance"],
+      "properties": {
+        "availability": {"const": "available"},
+        "value": {"$ref": "#/definitions/CandidateRationaleValue"},
+        "provenance": {"$ref": "#/definitions/FieldProvenance"}
+      },
+      "additionalProperties": false
+    },
+    "CandidateConcernsAvailableField": {
+      "type": "object",
+      "required": ["availability", "value", "provenance"],
+      "properties": {
+        "availability": {"const": "available"},
+        "value": {"$ref": "#/definitions/CandidateConcernsValue"},
+        "provenance": {"$ref": "#/definitions/FieldProvenance"}
+      },
+      "additionalProperties": false
+    },
+    "CandidateNextEventAvailableField": {
+      "type": "object",
+      "required": ["availability", "value", "provenance"],
+      "properties": {
+        "availability": {"const": "available"},
+        "value": {"$ref": "#/definitions/CandidateNextEventValue"},
+        "provenance": {"$ref": "#/definitions/FieldProvenance"}
+      },
+      "additionalProperties": false
+    },
+    "CandidateEvidenceAvailableField": {
+      "type": "object",
+      "required": ["availability", "value", "provenance"],
+      "properties": {
+        "availability": {"const": "available"},
+        "value": {"$ref": "#/definitions/CandidateEvidenceValue"},
+        "provenance": {"$ref": "#/definitions/FieldProvenance"}
+      },
+      "additionalProperties": false
+    },
+    "CandidateDetailsAvailableField": {
+      "type": "object",
+      "required": ["availability", "value", "provenance"],
+      "properties": {
+        "availability": {"const": "available"},
+        "value": {"$ref": "#/definitions/CandidateDetailsValue"},
+        "provenance": {"$ref": "#/definitions/FieldProvenance"}
+      },
+      "additionalProperties": false
+    },
+    "CandidateFieldState": {
+      "oneOf": [
+        {"$ref": "#/definitions/CandidateRationaleAvailableField"},
+        {"$ref": "#/definitions/CandidateConcernsAvailableField"},
+        {"$ref": "#/definitions/CandidateNextEventAvailableField"},
+        {"$ref": "#/definitions/CandidateEvidenceAvailableField"},
+        {"$ref": "#/definitions/CandidateDetailsAvailableField"},
+        {"$ref": "#/definitions/UnavailableField"}
+      ]
+    },
+    "CandidateRationaleFieldState": {
+      "oneOf": [
+        {"$ref": "#/definitions/CandidateRationaleAvailableField"},
+        {"$ref": "#/definitions/UnavailableField"}
+      ]
+    },
+    "CandidateConcernsFieldState": {
+      "oneOf": [
+        {"$ref": "#/definitions/CandidateConcernsAvailableField"},
+        {"$ref": "#/definitions/UnavailableField"}
+      ]
+    },
+    "CandidateNextEventFieldState": {
+      "oneOf": [
+        {"$ref": "#/definitions/CandidateNextEventAvailableField"},
+        {"$ref": "#/definitions/UnavailableField"}
+      ]
+    },
+    "CandidateEvidenceFieldState": {
+      "oneOf": [
+        {"$ref": "#/definitions/CandidateEvidenceAvailableField"},
+        {"$ref": "#/definitions/UnavailableField"}
+      ]
+    },
+    "CandidateDetailsFieldState": {
+      "oneOf": [
+        {"$ref": "#/definitions/CandidateDetailsAvailableField"},
+        {"$ref": "#/definitions/UnavailableField"}
+      ]
+    },
     "CandidateTruthFields": {
       "type": "object",
       "required": ["rationale", "concerns", "next_event", "evidence", "details"],
       "properties": {
-        "rationale": {"$ref": "#/definitions/CandidateFieldState"},
-        "concerns": {"$ref": "#/definitions/CandidateFieldState"},
-        "next_event": {"$ref": "#/definitions/CandidateFieldState"},
-        "evidence": {"$ref": "#/definitions/CandidateFieldState"},
-        "details": {"$ref": "#/definitions/CandidateFieldState"}
+        "rationale": {"$ref": "#/definitions/CandidateRationaleFieldState"},
+        "concerns": {"$ref": "#/definitions/CandidateConcernsFieldState"},
+        "next_event": {"$ref": "#/definitions/CandidateNextEventFieldState"},
+        "evidence": {"$ref": "#/definitions/CandidateEvidenceFieldState"},
+        "details": {"$ref": "#/definitions/CandidateDetailsFieldState"}
       },
       "additionalProperties": false
     },
