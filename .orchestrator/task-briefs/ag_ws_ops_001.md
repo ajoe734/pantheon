@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Durable Workshop versions and selection
-- Status: todo
+- Status: review_approved
 - Owner: Codex2
 - Reviewer: Claude
-- Next: Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.
+- Next: Independent review passed: reran 120+2-skip suite and Postgres restart tests locally (4 passed, 0 residual schemas); verified digest write-once, deterministic ETag-stable backfill, CAS conflict leaves pointers unchanged, tenant isolation before Registry access, and hash-locked additive v1.10 chain over frozen v1.9. Approved and returned to owner Codex2 for PR + closeout.
 
 ## Summary
 實作 workshop versions list/create/select 三條 deferred API，含 durable StrategySpec version、lineage、idempotency、ETag CAS、tenant isolation 與 restart persistence。
@@ -54,13 +54,15 @@ Generated in the worker workspace because the supervisor root did not have a tas
 ```text
 /home/lupin/pantheon/.venv/bin/python -m compileall -q services/control-plane/bff/agora/strategy_workshop
 /home/lupin/pantheon/.venv/bin/python -m pytest -q services/control-plane/bff/agora/strategy_workshop/test_versions.py services/control-plane/bff/tests/test_agora_workshop_live_operations.py services/control-plane/bff/tests/test_strategy_workshop_command_store.py services/control-plane/bff/tests/test_agora_write_authority.py services/control-plane/bff/tests/test_agora_strategy_workshop.py scripts/test_agora_v1_8_bundle.py scripts/test_agora_v1_9_bundle.py
-# 120 passed, 2 skipped; skips are opt-in Postgres paths in the no-DSN run.
+# Owner closeout rerun: 120 passed, 2 skipped; skips are opt-in Postgres paths in the no-DSN run.
 
 TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:15432/pantheon /home/lupin/pantheon/.venv/bin/python -m pytest -q services/control-plane/bff/agora/strategy_workshop/test_versions.py
-# 4 passed; isolated agora_ws_ops_* schema count after finalizer: 0.
+# Owner closeout rerun: 4 passed; isolated agora_ws_ops_* schema count after finalizer: 0.
 
 git diff --check
 ```
 
-Reviewer gate remains pending; no `review_approved`, PR merge, or `done` claim
-is made by this handoff record.
+Claude independently repeated the focused no-DSN and Postgres restart suites,
+verified the immutable digest, deterministic backfill, CAS no-mutation,
+pre-Registry tenant isolation, and additive v1.10 hash chain, then approved the
+task for owner PR closeout.
