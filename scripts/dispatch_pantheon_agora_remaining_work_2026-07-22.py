@@ -95,7 +95,7 @@ TASKS: list[dict[str, Any]] = [
         "Recover lifecycle projection and freshness health",
         "修復 ENOSPC 後仍停更的 lifecycle projector，加入安全 generation retention、可恢復 publish 與 readiness/freshness truth，並把 live rescue 正式經 PR 部署。",
         "Codex2", "Codex", "P0", "pantheon", "Pantheon/Agora Recovery / Wave 0 lifecycle",
-        [], ["services/trade_journey/lifecycle_projector.py", "services/control-plane/bff", "docker-compose.yml", "docs/deployment/evidence"],
+        ["OPS-DISPATCH-LEASE-SYNC-001"], ["services/trade_journey/lifecycle_projector.py", "services/control-plane/bff", "docker-compose.yml", "docs/deployment/evidence"],
         "runtime-lifecycle-recovery", "Recover the projector, then deliver retention and readiness through dev.",
     ),
     _new_task(
@@ -103,7 +103,7 @@ TASKS: list[dict[str, Any]] = [
         "Governed Agora performance projection and actions",
         "新增真實績效/介入/執行歷史/調整建議 projection 與 governed apply/reject/return receipt；缺資料回 unavailable，不得造數或造結論。",
         "Codex", "Codex2", "P0", "pantheon", "Agora Truth / Wave 0 performance backend",
-        [], ["services/control-plane/bff", "services/control-plane/specs/agora", "services/control-plane/openapi"],
+        ["OPS-DISPATCH-LEASE-SYNC-001"], ["services/control-plane/bff", "services/control-plane/specs/agora", "services/control-plane/openapi"],
         "agora-performance-backend", "Implement authoritative performance reads and durable suggestion receipts.",
     ),
     _new_task(
@@ -111,7 +111,7 @@ TASKS: list[dict[str, Any]] = [
         "Complete Agora candidate provenance projection",
         "讓 candidate DTO 的理由、疑慮、事件、證據與細節都屬於同一真實 candidate 並帶 provenance/as-of；缺欄位明確 unavailable。",
         "Codex2", "Codex", "P0", "pantheon", "Agora Truth / Wave 0 candidate backend",
-        [], ["services/control-plane/bff", "services/research", "services/control-plane/specs/agora"],
+        ["OPS-DISPATCH-LEASE-SYNC-001"], ["services/control-plane/bff", "services/research", "services/control-plane/specs/agora"],
         "agora-candidate-backend", "Deliver candidate-field provenance and honest missing-field semantics.",
     ),
     _new_task(
@@ -119,7 +119,7 @@ TASKS: list[dict[str, Any]] = [
         "Durable Workshop versions and selection",
         "實作 workshop versions list/create/select 三條 deferred API，含 durable StrategySpec version、lineage、idempotency、ETag CAS、tenant isolation 與 restart persistence。",
         "Codex", "Codex2", "P1", "pantheon", "Agora Completion / Wave 0 workshop versions",
-        [], ["services/control-plane/bff/agora/strategy_workshop", "services/control-plane/specs/agora"],
+        ["OPS-DISPATCH-LEASE-SYNC-001"], ["services/control-plane/bff/agora/strategy_workshop", "services/control-plane/specs/agora"],
         "agora-workshop-versions", "Implement the three version/selection operations with durable CAS semantics.",
     ),
     _new_task(
@@ -127,7 +127,7 @@ TASKS: list[dict[str, Any]] = [
         "Formalize guarded source refresh and Agora freshness",
         "把 deny-all egress 緊急修補正式交付，建立 HTTPS allowlist/SSRF guard、bounded scheduler、ingest receipt 與 Agora freshness/stale truth。",
         "Codex2", "Codex", "P1", "pantheon", "Pantheon Data / Wave 0 source freshness",
-        [], ["services/external_egress.py", "services/source_ingestion", "services/research/adapters", "docker-compose.yml", "scripts/deploy_nonprod_vm.sh"],
+        ["OPS-DISPATCH-LEASE-SYNC-001"], ["services/external_egress.py", "services/source_ingestion", "services/research/adapters", "docker-compose.yml", "scripts/deploy_nonprod_vm.sh"],
         "source-refresh-governance", "Reconcile the live rescue and deliver deny-by-default bounded refresh.",
     ),
     _new_task(
@@ -135,7 +135,7 @@ TASKS: list[dict[str, Any]] = [
         "Recover publish-to-master promote train",
         "修復 publish-promote 在第一個 historical conflict 即中止的行為，逐筆分類候選並保留 protected checks、tag immutability 與 rollback safety。",
         "Codex2", "Codex", "P1", "pantheon", "Delivery Control / Wave 0 promote recovery",
-        [], ["scripts/git/publish_promote.py", ".github/workflows/publish-promote.yml"],
+        ["OPS-DISPATCH-LEASE-SYNC-001"], ["scripts/git/publish_promote.py", ".github/workflows/publish-promote.yml"],
         "ops-promote-recovery", "Reproduce v2026.07.15.0 conflict and make candidate handling deterministic.",
     ),
     _new_task(
@@ -143,8 +143,16 @@ TASKS: list[dict[str, Any]] = [
         "Evidence-based overdue PR and branch triage",
         "把 29 個 overdue task PR 與 no-open-PR branches 依 dev reachability、PR history、archive evidence 分類；只關閉明確 superseded PR，僅產生 branch deletion dry run。",
         "Codex", "Codex2", "P2", "pantheon", "Delivery Control / Wave 0 repository triage",
-        [], ["scripts/git", "docs/operations", "docs/deployment/evidence"],
+        ["OPS-DISPATCH-LEASE-SYNC-001"], ["scripts/git", "docs/operations", "docs/deployment/evidence"],
         "ops-repository-triage", "Build the read-only inventory and disposition every overdue PR.",
+    ),
+    _new_task(
+        "OPS-SECURITY-DEPENDENCY-001",
+        "Reconcile and remediate current dependency alerts",
+        "重新綁定 20 個 Dependabot alerts 到 current dev reachable graph；修復或 fail-closed 隔離 MLflow/Ray/Torch critical/high，並以 commit/path evidence 清掉已刪除 FE manifest 的歷史 alert。",
+        "Codex", "Codex2", "P1", "pantheon", "Security / Wave 1 dependency remediation",
+        ["OPS-DISPATCH-LEASE-SYNC-001"], ["services/research/mlflow/requirements.txt", "services/research/rllib/requirements.txt", "services/research/finrl/requirements.txt", "docker-compose.yml", ".github/workflows"],
+        "security-dependency-remediation", "Re-query all alerts and remove or isolate every reachable critical/high dependency risk.",
     ),
 ]
 

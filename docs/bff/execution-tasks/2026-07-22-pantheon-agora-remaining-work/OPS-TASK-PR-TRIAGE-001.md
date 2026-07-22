@@ -5,6 +5,7 @@ Repository: `ajoe734/pantheon`
 Merge target: `dev`
 Owner: Codex
 Reviewer: Codex2
+Depends on: `OPS-DISPATCH-LEASE-SYNC-001`
 
 ## Objective
 

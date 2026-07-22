@@ -74,6 +74,11 @@ The canonical execution packet is:
    candidates need evidence-based triage. This packet authorizes read-only
    classification and closing demonstrably superseded PRs; it does not
    authorize blanket branch deletion.
+3. GitHub currently reports 20 open Dependabot alerts on the default branch:
+   seven critical, three high, nine medium, and one low. Six npm alerts point at
+   a removed historical `execute-plans/package-lock.json`; reachable MLflow,
+   Ray/RLlib, and Torch manifests still require fresh remediation/isolation
+   evidence rather than reuse of stale June PR claims.
 
 ## Explicit exclusions
 

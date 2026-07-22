@@ -35,12 +35,18 @@ class PacketTests(unittest.TestCase):
                     task["id"],
                 )
 
-    def test_initial_frontier_fits_enabled_owner_capacity(self) -> None:
+    def test_bootstrap_then_frontier_fits_enabled_owner_capacity(self) -> None:
         counts = {"Codex": 0, "Codex2": 0}
+        initial = []
         for task in MODULE.TASKS:
-            if task.get("existing") or task.get("depends_on"):
+            if task.get("existing"):
                 continue
-            counts[task["owner"]] += 1
+            deps = task.get("depends_on") or []
+            if not deps:
+                initial.append(task["id"])
+            if deps == ["OPS-DISPATCH-LEASE-SYNC-001"]:
+                counts[task["owner"]] += 1
+        self.assertEqual(initial, ["OPS-DISPATCH-LEASE-SYNC-001"])
         self.assertEqual(counts, {"Codex": 4, "Codex2": 4})
 
     def test_ep5_live_work_is_not_dispatched(self) -> None:

@@ -35,13 +35,14 @@ commands. It does not write `ai-status.json` or the activity log directly.
 | Priority | Task | Repository | Owner | Reviewer | Depends on |
 |---|---|---|---|---|---|
 | P0 | `OPS-DISPATCH-LEASE-SYNC-001` | Pantheon | Codex | Codex2 | — |
-| P0 | `PAN-LIFECYCLE-RECOVERY-001` | Pantheon | Codex2 | Codex | — |
-| P0 | `AG-PERF-TRUTH-001-BE` | Pantheon | Codex | Codex2 | — |
-| P0 | `AG-CAND-TRUTH-001-BE` | Pantheon | Codex2 | Codex | — |
-| P1 | `AG-WS-OPS-001` | Pantheon | Codex | Codex2 | — |
-| P1 | `PAN-SOURCE-FRESH-001` | Pantheon | Codex2 | Codex | — |
-| P1 | `OPS-PROMOTE-CONFLICT-RECOVERY-001` | Pantheon | Codex2 | Codex | — |
-| P2 | `OPS-TASK-PR-TRIAGE-001` | Pantheon | Codex | Codex2 | — |
+| P0 | `PAN-LIFECYCLE-RECOVERY-001` | Pantheon | Codex2 | Codex | lease sync |
+| P0 | `AG-PERF-TRUTH-001-BE` | Pantheon | Codex | Codex2 | lease sync |
+| P0 | `AG-CAND-TRUTH-001-BE` | Pantheon | Codex2 | Codex | lease sync |
+| P1 | `AG-WS-OPS-001` | Pantheon | Codex | Codex2 | lease sync |
+| P1 | `PAN-SOURCE-FRESH-001` | Pantheon | Codex2 | Codex | lease sync |
+| P1 | `OPS-PROMOTE-CONFLICT-RECOVERY-001` | Pantheon | Codex2 | Codex | lease sync |
+| P2 | `OPS-TASK-PR-TRIAGE-001` | Pantheon | Codex | Codex2 | lease sync |
+| P1 | `OPS-SECURITY-DEPENDENCY-001` | Pantheon | Codex | Codex2 | lease sync |
 | P0 | `PPL-ALLOC-009` | Pantheon + execute-plans | Codex | Codex2 | lease sync, lifecycle recovery, existing PPL children |
 | P0 | `TJ-E2E-012` | Pantheon + execute-plans | Codex2 | Codex | lease sync, lifecycle recovery, existing TJ children |
 | P0 | `AG-PERF-TRUTH-001-FE` | execute-plans | Codex2 | Codex | `AG-PERF-TRUTH-001-BE` |
@@ -52,16 +53,19 @@ commands. It does not write `ai-status.json` or the activity log directly.
 | P1 | `AG-COMPAT-002-GATE` | Pantheon | Codex | Codex2 | `AG-COMPAT-001-FE` |
 | P1 | `AG-HOSTED-CLOSE-001` | Pantheon evidence | Codex | Codex2 | compatibility gate, source freshness |
 
-The first frontier has four tasks per enabled fleet owner and disjoint primary
-file footprints. Cross-repository product work is split into backend and
-frontend tasks. The two workshop implementation tasks are serialized because
-they share the versioned workshop route/store surface.
+The lease repair is the bootstrap frontier because the fleet must not fan out
+through a known-broken status lifecycle. After it completes, the next frontier
+has four tasks per enabled fleet owner and disjoint primary file footprints.
+Cross-repository product work is split into backend and frontend tasks. The two
+workshop implementation tasks are serialized because they share the versioned
+workshop route/store surface.
 
 ## DAG
 
 ```text
-OPS-DISPATCH-LEASE-SYNC-001 ─┬─> PPL-ALLOC-009
-                             └─> TJ-E2E-012
+OPS-DISPATCH-LEASE-SYNC-001 ─> eight-way product/ops frontier
+                             ├─> PPL-ALLOC-009 (also waits for lifecycle)
+                             └─> TJ-E2E-012 (also waits for lifecycle)
 PAN-LIFECYCLE-RECOVERY-001 ──┴─> both hosted closeouts
 
 AG-PERF-TRUTH-001-BE ─> AG-PERF-TRUTH-001-FE ─┐
@@ -105,6 +109,7 @@ PAN-SOURCE-FRESH-001 ───────────────────�
 - [AG-HOSTED-CLOSE-001](AG-HOSTED-CLOSE-001.md)
 - [OPS-PROMOTE-CONFLICT-RECOVERY-001](OPS-PROMOTE-CONFLICT-RECOVERY-001.md)
 - [OPS-TASK-PR-TRIAGE-001](OPS-TASK-PR-TRIAGE-001.md)
+- [OPS-SECURITY-DEPENDENCY-001](OPS-SECURITY-DEPENDENCY-001.md)
 - [PPL-ALLOC-009 acceptance addendum](../2026-07-07-persona-promotion-allocation-gap/PPL-ALLOC-009-2026-07-22-acceptance-addendum.md)
 - [TJ-E2E-012 acceptance addendum](../2026-07-11-trade-journey-e2e/TJ-E2E-012-2026-07-22-acceptance-addendum.md)
 
