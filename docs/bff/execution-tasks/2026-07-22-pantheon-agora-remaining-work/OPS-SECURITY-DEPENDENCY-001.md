@@ -3,7 +3,7 @@
 Priority: P1
 Repository: `ajoe734/pantheon`
 Merge target: `dev`
-Owner: Codex
+Owner: Codex2 (reassigned from Codex)
 Reviewer: Claude
 Depends on: `OPS-DISPATCH-LEASE-SYNC-001`
 
@@ -80,3 +80,5 @@ low. The current manifests include MLflow 3.10.1, Ray/RLlib 2.9.3, and Torch
 - Dependency Alert Reachability run `29946794630` passed on the delivered
   `dev` merge, including alert query, candidate reconciliation, and evidence
   artifact upload.
+- Follow-up evidence PR #3975 records the full post-merge and Codex2
+  reassignment revalidation for Claude's independent review.

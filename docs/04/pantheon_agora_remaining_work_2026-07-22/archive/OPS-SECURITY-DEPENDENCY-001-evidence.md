@@ -144,7 +144,8 @@ docker build -f services/research/finrl/Dockerfile ...
 ```
 
 The rebuilt images reported MLflow `3.11.1`, Ray `2.54.0`, Torch
-`2.13.0+cpu`, Gymnasium `1.2.2`, FinRL `0.3.7`, and Stable-Baselines3 `2.8.0`.
+`2.13.0+cpu`, RLlib Gymnasium `1.2.2`, FinRL `0.3.7`, FinRL Gymnasium `1.2.3`,
+and Stable-Baselines3 `2.8.0`.
 All version/import checks ran with no network, a read-only root filesystem,
 all capabilities dropped, and `no-new-privileges`.
 
@@ -164,6 +165,45 @@ local initializer (`backend=ray_rllib_ppo`, mean reward 156.5, random baseline
 dashboard host each failed before Ray activation. Compose validation, Python
 compilation, workflow/JSON parsing, `git diff --check`, and a high-confidence
 changed-content secret scan also passed.
+
+## Codex2 reassignment revalidation
+
+After ownership moved from Codex to Codex2, the replacement owner merged
+current `origin/dev` at `fb2df8ec805754a3bf7a83ea544138ca9c32c521` into
+the evidence branch and independently repeated the acceptance-critical checks.
+The prior bare-module terminal report
+`unittest.loader._FailedTest.test_adapter` did not reproduce when the two
+same-named adapter suites were invoked from their owning service directories,
+as required by the repository test layout.
+
+Fresh results on 2026-07-22 UTC:
+
+- 68/68 focused tests passed across Dependabot reachability, MLflow security,
+  Ray security, RLlib/Ray Tune adapters, and the registry adapter; the registry
+  and RLlib `test_adapter.py` modules ran in separate processes.
+- 7/7 Stage-0 matrix tests passed, `docker compose config --quiet` passed,
+  Python compilation and workflow/JSON parsing passed, `git diff --check`
+  passed, and the changed-content high-confidence secret scan found no match.
+- A live GitHub API query returned 14 open alerts: six critical, two high,
+  five medium, and one low. Reconciliation produced eight `candidate_fixed`,
+  six `below_threshold_fixed`, and zero violations.
+- The four dormant Compose images rebuilt successfully. The FinRL, RLlib, and
+  Ray Tune bounded smokes stayed on stub backends; RLlib and Ray Tune reported
+  `deployment_stage=none` and `gate_state=closed`.
+- Separate full RLlib and FinRL Dockerfile builds succeeded. In containers
+  with no network, read-only roots, all capabilities dropped, and
+  `no-new-privileges`, versions resolved to Ray `2.54.0`, Torch `2.13.0+cpu`,
+  RLlib Gymnasium `1.2.2`, FinRL `0.3.7`, FinRL Gymnasium `1.2.3`, and
+  Stable-Baselines3 `2.8.0`; MLflow resolved to `3.11.1`. All three images
+  returned `No broken requirements found` from `pip check`.
+- The full RLlib image repeated one required upstream PPO iteration inside the
+  isolated container (`backend=ray_rllib_ppo`, mean reward 156.5, random
+  baseline 11.0).
+- The live dormant MLflow probe returned 200 for the allowed health request,
+  403 for disallowed Host and Origin requests, refused a root-filesystem
+  write, and reported non-root user, `network_mode=none`, no port bindings,
+  read-only root, all capabilities dropped, and `no-new-privileges`. A
+  non-loopback bind without basic auth again failed closed with exit 78.
 
 ## Residuals and ownership
 

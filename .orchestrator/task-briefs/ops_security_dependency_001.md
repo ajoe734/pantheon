@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: in_progress
 - Owner: Codex2
 - Reviewer: Claude
-- Next: Codex2 is revalidating the delivered dependency boundaries and the isolated adapter test invocation before returning the evidence PR to Claude.
+- Next: Codex2 revalidation passed on current dev; PR #3975 is ready for Claude's independent security review.
 
 ## Summary
 重新綁定 20 個 Dependabot alerts 到 current dev reachable graph；修復或 fail-closed 隔離 MLflow/Ray/Torch critical/high，並以 commit/path evidence 清掉已刪除 FE manifest 的歷史 alert。
