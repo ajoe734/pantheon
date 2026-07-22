@@ -421,7 +421,22 @@ def test_all_six_operations_read_back_canonical_state_and_never_execute() -> Non
         },
     )
     assert listed.status_code == 200, listed.text
-    assert listed.json()["data"]["versions"] == [created_resource]
+    versions = listed.json()["data"]["versions"]
+    assert len(versions) == 2
+    legacy_base, created_readback = versions
+    assert created_readback == created_resource
+    assert legacy_base["version"]["strategy_spec_registry_id"] == BASE_REGISTRY_ID
+    assert legacy_base["version"]["document_sha256"] == compute_document_sha256(
+        _base_strategy_spec()
+    )
+    assert created_resource["version"]["parent_workshop_version_id"] == (
+        legacy_base["version"]["workshop_version_id"]
+    )
+    assert created_resource["version"]["document_sha256"] == (
+        compute_document_sha256(
+            created_resource["strategy_spec"]["entry"]["metadata"]["strategy_spec"]
+        )
+    )
 
     selected = client.post(
         f"/bff/agora/workshops/{WORKSHOP_ID}/versions/{version_id}/select",
@@ -606,6 +621,57 @@ def test_command_guards_reject_stale_etag_wrong_tenant_and_missing_mfa() -> None
     assert missing_mfa.status_code == 401, missing_mfa.text
     assert _reason(missing_mfa) == "MFA_REQUIRED"
     assert mfa_canonical.calls == []
+
+
+def test_version_read_scope_and_select_cas_leave_projection_unchanged() -> None:
+    tenant_client, _tenant_store, tenant_canonical = _harness()
+    denied = tenant_client.get(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/versions",
+        headers={
+            "Authorization": "Bearer workshop-test",
+            "X-Tenant-Id": "tenant-beta",
+        },
+    )
+    assert denied.status_code == 403, denied.text
+    assert _reason(denied) == "CROSS_USER_ACCESS_FORBIDDEN"
+    assert tenant_canonical.calls == []
+
+    client, store, _canonical = _harness()
+    created, version_id = _create_version(client, store, key="select-cas-create")
+    selected_before = store.get_session(WORKSHOP_ID)["selected_version_id"]
+    stale = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/versions/{version_id}/select",
+        headers=_command_headers(
+            "select-cas-stale",
+            f'W/"workshop:{WORKSHOP_ID}:v1"',
+        ),
+    )
+    assert stale.status_code == 409, stale.text
+    assert _reason(stale) == "CONCURRENT_MODIFICATION"
+    assert store.get_session(WORKSHOP_ID)["selected_version_id"] == selected_before
+    assert store.get_session(WORKSHOP_ID)["lock_version"] == 2
+    assert created.headers["etag"] == f'W/"workshop:{WORKSHOP_ID}:v2"'
+
+
+def test_immutable_version_digest_rejects_changed_registry_bytes() -> None:
+    client, store, canonical = _harness()
+    created, _version_id = _create_version(client, store, key="digest-create")
+    registry_id = created.json()["data"]["resource"]["version"][
+        "strategy_spec_registry_id"
+    ]
+    canonical.registry[registry_id]["entry"]["metadata"]["strategy_spec"][
+        "title"
+    ] = "Mutated behind immutable Registry identity"
+
+    listed = client.get(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/versions",
+        headers={
+            "Authorization": "Bearer workshop-test",
+            "X-Tenant-Id": TENANT_ID,
+        },
+    )
+    assert listed.status_code == 409, listed.text
+    assert _reason(listed) == "WORKSHOP_VERSION_PROJECTION_CONFLICT"
 
 
 def test_research_requires_an_authoritative_distinct_approver() -> None:

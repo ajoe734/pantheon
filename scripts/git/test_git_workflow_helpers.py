@@ -341,7 +341,7 @@ class PublishPromoteTests(unittest.TestCase):
                 self._git(repo, "rev-parse", "HEAD^{tree}").stdout.strip(), master_tree
             )
 
-    def test_common_history_content_conflict_stays_fail_closed(self) -> None:
+    def test_common_history_conflict_uses_exact_snapshot_and_is_rollback_safe(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
             self._git(repo, "init", "-b", "master")
@@ -354,13 +354,28 @@ class PublishPromoteTests(unittest.TestCase):
             (repo / "state.txt").write_text("publish\n")
             self._git(repo, "commit", "-am", "publish")
             release = self._git(repo, "rev-parse", "HEAD").stdout.strip()
+            release_tree = self._git(repo, "rev-parse", "HEAD^{tree}").stdout.strip()
             self._git(repo, "checkout", "master")
             (repo / "state.txt").write_text("master\n")
             self._git(repo, "commit", "-am", "master")
             master = self._git(repo, "rev-parse", "HEAD").stdout.strip()
+            master_tree = self._git(repo, "rev-parse", "HEAD^{tree}").stdout.strip()
             with mock.patch.object(publish_promote, "ROOT", repo):
                 mode, _detail = publish_promote.assess_promotion_mode(master, release)
-            self.assertEqual(mode, "conflicted")
+                self.assertEqual(mode, "snapshot_replace")
+                merge_commit = publish_promote.create_snapshot_bridge(
+                    "v2026.07.22.2", master, release
+                )
+            parents = self._git(repo, "show", "-s", "--format=%P", merge_commit).stdout.split()
+            self.assertEqual(parents, [master, release])
+            self.assertEqual(
+                self._git(repo, "rev-parse", f"{merge_commit}^{{tree}}").stdout.strip(),
+                release_tree,
+            )
+            self._git(repo, "revert", "-m", "1", merge_commit, "--no-edit")
+            self.assertEqual(
+                self._git(repo, "rev-parse", "HEAD^{tree}").stdout.strip(), master_tree
+            )
 
     def test_empty_successful_merge_base_is_portably_unrelated(self) -> None:
         no_base = subprocess.CompletedProcess(
