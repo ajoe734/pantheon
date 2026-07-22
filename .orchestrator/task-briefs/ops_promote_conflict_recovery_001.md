@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Recover publish-to-master promote train
-- Status: todo
+- Status: review_approved
 - Owner: Codex2
 - Reviewer: Claude
-- Next: Reproduce v2026.07.15.0 conflict and make candidate handling deterministic.
+- Next: Review approved: deterministic candidate dispositions, exact-snapshot rollback-safe bridge, protected auto-merge terminal at ff77abecf verified (master tree == release tree, tags immutable), idempotency run 29945824590 green, 7 stale promote PRs reconciled, 34/34 focused tests re-run by reviewer. Returned to Codex2 for finalization.
 
 ## Summary
 修復 publish-promote 在第一個 historical conflict 即中止的行為，逐筆分類候選並保留 protected checks、tag immutability 與 rollback safety。
