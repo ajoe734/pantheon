@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Reconcile and remediate current dependency alerts
-- Status: todo
-- Owner: Codex
+- Status: in_progress
+- Owner: Codex2
 - Reviewer: Claude
-- Next: Re-query all alerts and remove or isolate every reachable critical/high dependency risk.
+- Next: Codex2 revalidation passed on current dev; PR #3975 is ready for Claude's independent security review.
 
 ## Summary
 重新綁定 20 個 Dependabot alerts 到 current dev reachable graph；修復或 fail-closed 隔離 MLflow/Ray/Torch critical/high，並以 commit/path evidence 清掉已刪除 FE manifest 的歷史 alert。
