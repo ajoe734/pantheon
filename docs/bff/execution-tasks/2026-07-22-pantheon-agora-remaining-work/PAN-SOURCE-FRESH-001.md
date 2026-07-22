@@ -155,10 +155,11 @@ fixtures or an unmerged branch are not hosted acceptance.
 - `docker compose -f docker-compose.yml config --quiet` passed for both the
   default profile set and an explicit bounded `source-ingest-scheduler`
   profile with one exact host, one tick, concurrency one, and record cap 100.
-- The post-review task-focused suite passed with `772 passed, 2 skipped`; it
-  added adversarial redirect credential, post-processing receipt reload,
-  missing/invalid/future source-time, forced bounded connector, and one-shot
-  zero/non-zero exit/readback gate coverage. It also covered
+- The final task-focused suite passed with `779 passed, 2 skipped`; it added
+  adversarial redirect credential, final receipt append/restart recovery,
+  missing/invalid/future source-time, exclusive schedule/frontier selection,
+  unavailable selected-connector failure, and one-shot zero/non-zero
+  exit/readback gate coverage. It also covered
   external egress, all source-ingestion tests, research adapter tests, Agora
   projection tests, and the deploy contract. Skips were pre-existing optional
   live/provider paths, and only deprecation warnings were emitted.

@@ -196,6 +196,10 @@ def test_run_scheduled_exclusive_scope_never_enqueues_or_runs_unrelated_due_conn
             json={"interval_seconds": 1, "enabled": True},
         )
         assert scheduled.status_code == 200, scheduled.text
+    unrelated_frontier = module.store.enqueue_frontier(
+        connector_id=unrelated_id,
+        available_at="2020-01-01T00:00:00Z",
+    )
 
     response = test_client.post(
         "/api/source-ingest/run-scheduled",
@@ -216,32 +220,42 @@ def test_run_scheduled_exclusive_scope_never_enqueues_or_runs_unrelated_due_conn
     assert [item["connector_id"] for item in body["enqueued"]] == [target_id]
     assert [item["connector_id"] for item in body["ran"]] == [target_id]
     assert body["excluded"] == [unrelated_id]
-    assert all(item.connector_id != unrelated_id for item in module.store.list_frontier())
+    assert module.store.get_frontier(unrelated_frontier.frontier_id).status == "queued"
     assert module.store.list_receipts(connector_id=unrelated_id) == []
 
 
 @pytest.mark.parametrize(
-    ("setup", "expected_error"),
+    ("setup", "expected_error", "expected_enqueued"),
     [
-        ("missing", "schedule not found"),
-        ("disabled_schedule", "schedule is disabled"),
-        ("disabled_connector", "connector is disabled"),
+        ("missing", "schedule not found", 0),
+        ("disabled_schedule", "schedule is disabled", 0),
+        ("disabled_connector", "connector is disabled", 0),
+        ("fetch_failure", "selected connector fetch failed", 1),
     ],
 )
 def test_run_scheduled_exclusive_scope_fails_closed_when_target_is_unavailable(
     client,
     setup: str,
     expected_error: str,
+    expected_enqueued: int,
 ) -> None:
     test_client, _, _ = client
     connector_id = f"conn-exclusive-{setup}"
     if setup != "missing":
         connector_overrides = {"status": "disabled"} if setup == "disabled_connector" else {}
+        fetch = {"mode": "static_records", "records": []}
+        if setup == "fetch_failure":
+            fetch.update(
+                {
+                    "fail_until_attempt": 2,
+                    "failure_reason": "selected connector fetch failed",
+                }
+            )
         configured = test_client.post(
             "/api/source-ingest/connectors",
             json={
                 "connector": _connector(connector_id=connector_id, **connector_overrides),
-                "fetch": {"mode": "static_records", "records": []},
+                "fetch": fetch,
             },
         )
         assert configured.status_code == 201, configured.text
@@ -258,7 +272,7 @@ def test_run_scheduled_exclusive_scope_fails_closed_when_target_is_unavailable(
 
     assert response.status_code == 200, response.text
     assert response.json()["summary"]["total_ran"] == 0
-    assert response.json()["summary"]["total_enqueued"] == 0
+    assert response.json()["summary"]["total_enqueued"] == expected_enqueued
     assert response.json()["summary"]["total_failed"] == 1
     assert expected_error in response.json()["failed"][0]["error"]
 
