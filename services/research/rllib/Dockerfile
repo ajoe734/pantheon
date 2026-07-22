@@ -15,7 +15,7 @@ COPY services/research/rllib/__init__.py services/research/rllib/adapter.py serv
 RUN addgroup --system pantheon \
     && adduser --system --ingroup pantheon --home /home/pantheon pantheon \
     && chown -R pantheon:pantheon /app /home/pantheon
-ENV HOME=/home/pantheon \
+ENV HOME=/tmp/pantheon \
     RAY_AUTH_MODE=token \
     RAY_AUTH_TOKEN_PATH=/run/secrets/pantheon_ray_auth_token \
     RAY_DASHBOARD_HOST=127.0.0.1

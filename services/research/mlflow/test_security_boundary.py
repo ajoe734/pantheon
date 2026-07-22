@@ -58,11 +58,28 @@ class MlflowSecurityBoundaryTests(unittest.TestCase):
                     }
                 )
 
+    def test_missing_explicit_admin_credentials_are_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            auth_path = Path(tmpdir) / "basic_auth.ini"
+            auth_path.write_text("[mlflow]\nadmin_username = operator\n", encoding="utf-8")
+            with self.assertRaisesRegex(MlflowSecurityBoundaryError, "credentials"):
+                build_server_command(
+                    {
+                        "MLFLOW_HOST": "0.0.0.0",
+                        "MLFLOW_APP_NAME": "basic-auth",
+                        "MLFLOW_AUTH_CONFIG_PATH": str(auth_path),
+                    }
+                )
+
     def test_job_execution_and_wildcard_hosts_are_refused(self) -> None:
         with self.assertRaisesRegex(MlflowSecurityBoundaryError, "JOB_EXECUTION"):
             build_server_command({"MLFLOW_SERVER_ENABLE_JOB_EXECUTION": "true"})
         with self.assertRaisesRegex(MlflowSecurityBoundaryError, "non-wildcard"):
             build_server_command({"MLFLOW_SERVER_ALLOWED_HOSTS": "*"})
+        with self.assertRaisesRegex(MlflowSecurityBoundaryError, "non-wildcard"):
+            build_server_command({"MLFLOW_SERVER_ALLOWED_HOSTS": "*:*"})
+        with self.assertRaisesRegex(MlflowSecurityBoundaryError, "non-wildcard"):
+            build_server_command({"MLFLOW_SERVER_CORS_ALLOWED_ORIGINS": "http://*:*"})
 
 
 if __name__ == "__main__":

@@ -8,20 +8,18 @@ and mounts a non-default authentication configuration.
 
 from __future__ import annotations
 
+import configparser
 import ipaddress
 import os
-import re
 import sys
 from pathlib import Path
 from typing import Mapping
+from urllib.parse import urlsplit
 
 
 FALSE_VALUES = frozenset({"0", "false", "no", "off"})
 LOOPBACK_NAMES = frozenset({"localhost", "localhost.localdomain"})
-UNSAFE_ADMIN_PASSWORD_RE = re.compile(
-    r"^\s*admin_password\s*=\s*(?:admin|password)\s*$",
-    re.IGNORECASE | re.MULTILINE,
-)
+UNSAFE_ADMIN_PASSWORDS = frozenset({"admin", "password"})
 
 
 class MlflowSecurityBoundaryError(RuntimeError):
@@ -46,8 +44,21 @@ def _require_false(env: Mapping[str, str], key: str, *, default: str = "false") 
 
 def _require_no_wildcard(env: Mapping[str, str], key: str, *, default: str) -> None:
     values = [item.strip() for item in env.get(key, default).split(",") if item.strip()]
-    if not values or "*" in values:
-        raise MlflowSecurityBoundaryError(f"{key} must be an explicit non-wildcard allowlist")
+    for value in values:
+        if "://" in value:
+            host = urlsplit(value).hostname
+        elif value.startswith("["):
+            host = value.partition("]")[0].lstrip("[")
+        else:
+            host = value.partition(":")[0]
+        if not host or "*" in host:
+            raise MlflowSecurityBoundaryError(
+                f"{key} must be an explicit non-wildcard host allowlist"
+            )
+    if not values:
+        raise MlflowSecurityBoundaryError(
+            f"{key} must be an explicit non-wildcard host allowlist"
+        )
 
 
 def _validate_auth_config(path_value: str) -> Path:
@@ -60,8 +71,21 @@ def _validate_auth_config(path_value: str) -> Path:
         raise MlflowSecurityBoundaryError(
             f"MLFLOW_AUTH_CONFIG_PATH does not name a readable file: {path}"
         )
-    content = path.read_text(encoding="utf-8", errors="replace")
-    if UNSAFE_ADMIN_PASSWORD_RE.search(content):
+    parser = configparser.ConfigParser(interpolation=None)
+    try:
+        with path.open(encoding="utf-8") as stream:
+            parser.read_file(stream)
+    except (configparser.Error, OSError) as exc:
+        raise MlflowSecurityBoundaryError(
+            f"MLFLOW_AUTH_CONFIG_PATH is not a valid readable INI file: {path}"
+        ) from exc
+    username = parser.get("mlflow", "admin_username", fallback="").strip()
+    password = parser.get("mlflow", "admin_password", fallback="").strip()
+    if not username or not password:
+        raise MlflowSecurityBoundaryError(
+            "MLFLOW_AUTH_CONFIG_PATH must define explicit mlflow admin credentials"
+        )
+    if password.casefold() in UNSAFE_ADMIN_PASSWORDS:
         raise MlflowSecurityBoundaryError(
             "MLFLOW_AUTH_CONFIG_PATH contains a known default admin password"
         )
@@ -86,12 +110,12 @@ def build_server_command(env: Mapping[str, str] | None = None) -> list[str]:
     _require_no_wildcard(
         runtime,
         "MLFLOW_SERVER_ALLOWED_HOSTS",
-        default="localhost,127.0.0.1",
+        default="localhost:*,127.0.0.1:*",
     )
     _require_no_wildcard(
         runtime,
         "MLFLOW_SERVER_CORS_ALLOWED_ORIGINS",
-        default="http://localhost,http://127.0.0.1",
+        default="http://localhost:*,http://127.0.0.1:*",
     )
 
     app_name = runtime.get("MLFLOW_APP_NAME", "").strip()

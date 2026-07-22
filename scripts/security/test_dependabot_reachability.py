@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from dependabot_reachability import reconcile_alerts
+from scripts.security.dependabot_reachability import reconcile_alerts
 
 
 def alert(

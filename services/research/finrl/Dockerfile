@@ -8,7 +8,7 @@ RUN addgroup --system pantheon \
 COPY --chown=pantheon:pantheon . /app/services/research/finrl/
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONPATH=/app:/usr/local/lib/python3.11/site-packages
-ENV HOME=/home/pantheon
+ENV HOME=/tmp/pantheon
 WORKDIR /app/services/research/finrl
 USER pantheon
 CMD ["python", "smoke_test.py"]

@@ -184,10 +184,10 @@ def _train_with_rllib(
 
     ray.init(
         **secure_local_ray_init_kwargs(
-        ignore_reinit_error=True,
-        local_mode=True,
-        logging_level="ERROR",
-        num_cpus=1,
+            ignore_reinit_error=True,
+            local_mode=True,
+            logging_level="ERROR",
+            num_cpus=1,
         ),
     )
     algo = None
@@ -196,13 +196,17 @@ def _train_with_rllib(
     try:
         algo_cfg = (
             ppo_config_cls()
+            .api_stack(
+                enable_rl_module_and_learner=False,
+                enable_env_runner_and_connector_v2=False,
+            )
             .environment(env=ENV_NAME, env_config=dict(env_config))
             .framework("torch")
             .resources(num_gpus=0)
             .training(
                 train_batch_size=200,
-                sgd_minibatch_size=64,
-                num_sgd_iter=1,
+                minibatch_size=64,
+                num_epochs=1,
                 lr=5e-4,
             )
             .debugging(seed=config.seed, log_level="ERROR")
