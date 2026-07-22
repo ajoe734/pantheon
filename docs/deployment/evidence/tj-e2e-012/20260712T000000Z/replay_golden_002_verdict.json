@@ -1,0 +1,49 @@
+{
+  "scenario": "replay-golden-002",
+  "verified_at": "2026-07-12T23:52:23.471387+00:00",
+  "overall": "PASS",
+  "expected_verdict": "approved",
+  "expected_deployment_mode": "paper",
+  "criteria": [
+    {
+      "criterion": "telemetry_file_readable",
+      "passed": true,
+      "detail": "loaded /tmp/replay-golden-002/telemetry_events.json"
+    },
+    {
+      "criterion": "lineage_file_readable",
+      "passed": true,
+      "detail": "loaded /tmp/replay-golden-002/lineage_trace.json"
+    },
+    {
+      "criterion": "telemetry_emitted",
+      "passed": true,
+      "detail": "1 strategy_cycle_completed event(s) found"
+    },
+    {
+      "criterion": "telemetry_fields_complete",
+      "passed": true,
+      "detail": "all required telemetry fields present"
+    },
+    {
+      "criterion": "verdict_matches",
+      "passed": true,
+      "detail": "verdict = 'approved'"
+    },
+    {
+      "criterion": "deployment_mode_paper",
+      "passed": true,
+      "detail": "deployment_mode = 'paper'"
+    },
+    {
+      "criterion": "ex001_mock_recorded",
+      "passed": true,
+      "detail": "execution_feedback = 'MOCKED_EX001_DEFERRED'"
+    },
+    {
+      "criterion": "lineage_trace_complete",
+      "passed": true,
+      "detail": "all required lineage keys present"
+    }
+  ]
+}

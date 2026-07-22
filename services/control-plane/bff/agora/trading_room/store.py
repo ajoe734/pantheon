@@ -1,4 +1,4 @@
-"""Agora trading-room in-memory store.
+"""Agora trading-room stores.
 
 Provides simple dict-backed stores for TradingDecisionEvent and TradingIntent
 records within a single BFF process.  Not durable — each restart starts empty.
@@ -9,7 +9,18 @@ handoff record has the canonical no_order_route_proof for its schema.
 """
 from __future__ import annotations
 
+import copy
+import logging
+import os
+import re
 from typing import Any, Dict, List, Optional
+
+
+BACKEND_ENV = "AGORA_TRADING_ROOM_STORE_BACKEND"
+DSN_ENV = "AGORA_TRADING_ROOM_STORE_DSN"
+SCHEMA_ENV = "AGORA_TRADING_ROOM_STORE_SCHEMA"
+DEFAULT_SCHEMA = "agora"
+_logger = logging.getLogger(__name__)
 
 
 class TradingRoomStore:
@@ -23,6 +34,10 @@ class TradingRoomStore:
         self._handoffs_by_intent: Dict[str, List[str]] = {}
         self._trader_decisions: Dict[str, List[Dict[str, Any]]] = {}
         self._idempotency_keys: Dict[str, bool] = {}
+        self._workspace_proposals: Dict[str, Dict[str, Any]] = {}
+        self._workspaces: Dict[str, Dict[str, Any]] = {}
+        self._widget_revision_proposals: Dict[str, Dict[str, Any]] = {}
+        self._workspace_versions: Dict[str, List[Dict[str, Any]]] = {}
 
     # ------------------------------------------------------------------
     # Decision events
@@ -195,6 +210,317 @@ class TradingRoomStore:
         self._idempotency_keys[composite] = True
         return False
 
+    # ------------------------------------------------------------------
+    # Trading Room workspace proposals and workspaces
+    # ------------------------------------------------------------------
 
-def make_trading_room_store() -> TradingRoomStore:
-    return TradingRoomStore()
+    def upsert_workspace_proposal(
+        self,
+        proposal: Dict[str, Any],
+        *,
+        tenant_id: str,
+        user_id: str,
+        generation_meta: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        proposal_id = str(proposal["proposalId"])
+        existing = self._workspace_proposals.get(proposal_id) or {}
+        if generation_meta is None:
+            generation_meta = existing.get("generation_meta") or {}
+        self._workspace_proposals[proposal_id] = {
+            "tenant_id": tenant_id,
+            "user_id": user_id,
+            "proposal": copy.deepcopy(proposal),
+            "generation_meta": copy.deepcopy(generation_meta),
+        }
+        return copy.deepcopy(proposal)
+
+    def get_workspace_proposal_record(self, proposal_id: str) -> Optional[Dict[str, Any]]:
+        record = self._workspace_proposals.get(proposal_id)
+        return copy.deepcopy(record) if record is not None else None
+
+    def get_workspace_proposal_generation_meta(self, proposal_id: str) -> Dict[str, Any]:
+        record = self._workspace_proposals.get(proposal_id) or {}
+        return copy.deepcopy(record.get("generation_meta") or {})
+
+    def upsert_workspace(
+        self,
+        workspace: Dict[str, Any],
+        *,
+        tenant_id: str,
+        user_id: str,
+    ) -> Dict[str, Any]:
+        workspace_id = str(workspace["id"])
+        self._workspaces[workspace_id] = {
+            "tenant_id": tenant_id,
+            "user_id": user_id,
+            "workspace": copy.deepcopy(workspace),
+        }
+        return copy.deepcopy(workspace)
+
+    def get_workspace_record(self, workspace_id: str) -> Optional[Dict[str, Any]]:
+        record = self._workspaces.get(workspace_id)
+        return copy.deepcopy(record) if record is not None else None
+
+    # ------------------------------------------------------------------
+    # Widget revision proposals
+    # ------------------------------------------------------------------
+
+    def upsert_widget_revision_proposal(
+        self,
+        proposal: Dict[str, Any],
+        *,
+        tenant_id: str,
+        user_id: str,
+    ) -> Dict[str, Any]:
+        proposal_id = str(proposal["id"])
+        self._widget_revision_proposals[proposal_id] = {
+            "tenant_id": tenant_id,
+            "user_id": user_id,
+            "proposal": copy.deepcopy(proposal),
+        }
+        return copy.deepcopy(proposal)
+
+    def get_widget_revision_proposal_record(
+        self,
+        proposal_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        record = self._widget_revision_proposals.get(proposal_id)
+        return copy.deepcopy(record) if record is not None else None
+
+    # ------------------------------------------------------------------
+    # Workspace versions and change log
+    # ------------------------------------------------------------------
+
+    def record_workspace_version(
+        self,
+        workspace: Dict[str, Any],
+        *,
+        tenant_id: str,
+        user_id: str,
+        created_at: str,
+        change_summary: str,
+        generated_by: Optional[str] = None,
+        changed_by: Optional[str] = None,
+        reason: Optional[str] = None,
+        affected_views: Optional[List[str]] = None,
+        affected_widgets: Optional[List[str]] = None,
+        effect_evaluation: Optional[str] = None,
+        source_revision_proposal_id: Optional[str] = None,
+        rollback_of_version_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        workspace_id = str(workspace["id"])
+        versions = self._workspace_versions.setdefault(workspace_id, [])
+        dashboard_version = int(workspace.get("dashboardVersion") or 0)
+        for version in versions:
+            if int(version.get("dashboardVersion") or 0) == dashboard_version:
+                return copy.deepcopy(version)
+
+        previous_version_id = versions[-1]["id"] if versions else None
+        version_id = f"trdv_{workspace_id}_v{dashboard_version}"
+        record = {
+            "id": version_id,
+            "userId": workspace["userId"],
+            "strategyId": workspace["strategyId"],
+            "strategyVersion": workspace["strategyVersion"],
+            "dashboardVersion": dashboard_version,
+            "generatedBy": generated_by or workspace.get("generatedBy") or "user_modified",
+            "previousVersionId": previous_version_id,
+            "changeSummary": change_summary,
+            "views": copy.deepcopy(workspace.get("views") or []),
+            "createdAt": created_at,
+            "status": "active",
+            "changeLog": {
+                "changedAt": created_at,
+                "changedBy": changed_by or generated_by or workspace.get("generatedBy") or "user_modified",
+                "reason": reason or change_summary,
+                "affectedViews": list(affected_views or []),
+                "affectedWidgets": list(affected_widgets or []),
+                "effectEvaluation": effect_evaluation or "not_evaluated",
+                "rollbackAvailable": True,
+                "sourceRevisionProposalId": source_revision_proposal_id,
+                "rollbackOfVersionId": rollback_of_version_id,
+            },
+        }
+        for prior in versions:
+            if prior.get("status") == "active":
+                prior["status"] = "superseded"
+                prior.setdefault("changeLog", {})["rollbackAvailable"] = True
+        versions.append(record)
+        return copy.deepcopy(record)
+
+    def list_workspace_version_records(
+        self,
+        workspace_id: str,
+        *,
+        tenant_id: str,
+        user_id: str,
+    ) -> List[Dict[str, Any]]:
+        workspace_record = self._workspaces.get(workspace_id)
+        if (
+            workspace_record is None
+            or str(workspace_record.get("tenant_id") or "") != tenant_id
+            or str(workspace_record.get("user_id") or "") != user_id
+        ):
+            return []
+        return copy.deepcopy(self._workspace_versions.get(workspace_id, []))
+
+    def get_workspace_version_record(
+        self,
+        workspace_id: str,
+        version_id: str,
+        *,
+        tenant_id: str,
+        user_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        for version in self.list_workspace_version_records(
+            workspace_id,
+            tenant_id=tenant_id,
+            user_id=user_id,
+        ):
+            if str(version.get("id") or "") == version_id:
+                return version
+        return None
+
+
+class PostgresTradingRoomStore(TradingRoomStore):
+    """Durable trading-room store backed by one transaction-locked JSONB row.
+
+    The JSON document mirrors :class:`TradingRoomStore`'s private collections,
+    so the public method contract (including proof validation and version/ETag
+    inputs) stays identical while separate BFF processes share durable state.
+    """
+
+    _STATE_ID = "trading-room-v1"
+    _STATE_ATTRS = (
+        "_decision_events", "_intents", "_intent_states", "_handoffs",
+        "_handoffs_by_intent", "_trader_decisions", "_idempotency_keys",
+        "_workspace_proposals", "_workspaces", "_widget_revision_proposals",
+        "_workspace_versions",
+    )
+
+    def __init__(self, *, dsn: str, schema: str = DEFAULT_SCHEMA) -> None:
+        if not dsn:
+            raise ValueError("Postgres DSN is required for PostgresTradingRoomStore")
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", schema):
+            raise ValueError(f"Invalid Postgres schema name: {schema!r}")
+        super().__init__()
+        self.dsn = dsn
+        self.schema = schema
+        self._table = f'"{schema}"."trading_room_store_state"'
+        self._bootstrap()
+
+    def _connect(self) -> Any:
+        try:
+            import psycopg  # type: ignore[import]
+        except ImportError as exc:
+            raise RuntimeError("psycopg is required for PostgresTradingRoomStore") from exc
+        return psycopg.connect(self.dsn)
+
+    def _bootstrap(self) -> None:
+        with self._connect() as conn:
+            try:
+                conn.execute(f'CREATE SCHEMA IF NOT EXISTS "{self.schema}"')
+            except Exception as exc:
+                if getattr(exc, "sqlstate", "") != "42501":
+                    raise
+                conn.rollback()
+                row = conn.execute(
+                    "SELECT 1 FROM information_schema.schemata WHERE schema_name = %s",
+                    (self.schema,),
+                ).fetchone()
+                if not row:
+                    raise
+            conn.execute(f"""
+                CREATE TABLE IF NOT EXISTS {self._table} (
+                    state_id TEXT PRIMARY KEY,
+                    payload JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+            """)
+            conn.execute(
+                f"INSERT INTO {self._table} (state_id) VALUES (%s) "
+                "ON CONFLICT (state_id) DO NOTHING",
+                (self._STATE_ID,),
+            )
+
+    def _load_payload(self, payload: Any) -> None:
+        if isinstance(payload, str):
+            import json
+            payload = json.loads(payload)
+        payload = payload or {}
+        for attr in self._STATE_ATTRS:
+            setattr(self, attr, copy.deepcopy(payload.get(attr, {})))
+
+    def _payload(self) -> Dict[str, Any]:
+        return {attr: copy.deepcopy(getattr(self, attr)) for attr in self._STATE_ATTRS}
+
+    def _call(self, method: str, *args: Any, write: bool = False, **kwargs: Any) -> Any:
+        with self._connect() as conn:
+            suffix = " FOR UPDATE" if write else ""
+            row = conn.execute(
+                f"SELECT payload FROM {self._table} WHERE state_id = %s{suffix}",
+                (self._STATE_ID,),
+            ).fetchone()
+            self._load_payload(row[0] if row else {})
+            self._inside_persisted_call = True
+            try:
+                result = getattr(super(), method)(*args, **kwargs)
+            finally:
+                self._inside_persisted_call = False
+            if write:
+                from psycopg.types.json import Jsonb  # type: ignore[import]
+                conn.execute(
+                    f"UPDATE {self._table} SET payload = %s, updated_at = now() WHERE state_id = %s",
+                    (Jsonb(self._payload()), self._STATE_ID),
+                )
+            return copy.deepcopy(result)
+
+    def __getattribute__(self, name: str) -> Any:
+        if name not in {"_inside_persisted_call", "__dict__"} and object.__getattribute__(
+            self, "__dict__"
+        ).get("_inside_persisted_call", False):
+            return super().__getattribute__(name)
+        mutators = {
+            "upsert_decision_event", "record_trader_decision", "upsert_intent",
+            "set_intent_state", "upsert_handoff", "withdraw_intent",
+            "check_and_record_idempotency_key", "upsert_workspace_proposal",
+            "upsert_workspace", "upsert_widget_revision_proposal",
+            "record_workspace_version",
+        }
+        readers = {
+            "get_decision_event", "list_decision_events", "get_intent",
+            "get_intent_state", "get_handoff", "list_handoffs_for_intent",
+            "get_workspace_proposal_record", "get_workspace_proposal_generation_meta",
+            "get_workspace_record", "get_widget_revision_proposal_record",
+            "list_workspace_version_records", "get_workspace_version_record",
+        }
+        if name in mutators or name in readers:
+            return lambda *args, **kwargs: object.__getattribute__(self, "_call")(
+                name, *args, write=name in mutators, **kwargs
+            )
+        return super().__getattribute__(name)
+
+
+def make_trading_room_store(
+    backend: Optional[str] = None,
+    dsn: Optional[str] = None,
+    schema: Optional[str] = None,
+) -> TradingRoomStore:
+    """Construct the configured store; memory remains the safe default."""
+    resolved = (backend or os.environ.get(BACKEND_ENV, "off")).strip().lower()
+    if resolved in {"off", "false", "disabled", "none", ":memory:", ""}:
+        store = TradingRoomStore()
+        _logger.info("Agora trading-room store initialized backend=memory store=%s", type(store).__name__)
+        return store
+    if resolved == "postgres":
+        resolved_dsn = dsn or os.environ.get(DSN_ENV, "")
+        if not resolved_dsn:
+            raise RuntimeError(f"{DSN_ENV} must be set when {BACKEND_ENV}=postgres")
+        resolved_schema = schema or os.environ.get(SCHEMA_ENV, DEFAULT_SCHEMA)
+        store = PostgresTradingRoomStore(dsn=resolved_dsn, schema=resolved_schema)
+        _logger.info(
+            "Agora trading-room store initialized backend=postgres store=%s schema=%s",
+            type(store).__name__, resolved_schema,
+        )
+        return store
+    raise RuntimeError(f"Unknown {BACKEND_ENV}={resolved!r}; expected 'off' or 'postgres'")

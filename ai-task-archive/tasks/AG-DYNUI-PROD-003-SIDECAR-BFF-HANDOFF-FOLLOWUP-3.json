@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "AG-DYNUI-PROD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+  "archived_at": "2026-07-04T01:59:19Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DYNUI-PROD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+    "title": "Prepare AG-DYNUI-PROD-003 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-DYNUI-PROD-003，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Agora DYNUI Production Gap / Default Route",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-DYNUI-PROD-001"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-DYNUI-PROD-003/AG-DYNUI-PROD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized: re-verified PR #2874 packet still accurate (standalone execute-plans/dev unchanged at dd59740, feature grep 0 matches, deployment.json unchanged), added closeout record via PR #2875 (merged c3562ae6a into dev), support-only scope confirmed. Parent AG-DYNUI-PROD-003 remains review_approved pending its own owner (Codex) hosted-deploy closeout; no further sidecar-owned work expected unless publish state changes.",
+    "last_update": "2026-07-04T01:59:19Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-DYNUI-PROD-003",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Reviewed packet + PR #2874 (merged, packet-only diff). Re-verified all claims: standalone ajoe734/execute-plans dev HEAD still dd59740, TradingRoomDefaultEntry/selectDefaultReadyStrategy absent, no agora-main.tsx (router-based AgoraTradingRoomRoute confirmed), TradingRoomPage.tsx diff 866 lines confirmed via independent diff. deployment.json unchanged. No canonical/runtime/frontend code touched by this sidecar. Approved."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-04T01:59:19Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-dynui-prod-003-sidecar-bff-handoff-followup-3",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-DYNUI-PROD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "git_clean_required": false,
+      "commit": "c3562ae6a949bd2a147326e2f65a0c74a8700364",
+      "commit_subject": "AG-DYNUI-PROD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3: closeout record",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Re-verified the review-approved sidecar packet is still accurate": "PR #2874",
+        "still the identical dd597405e0 / 2026-07-04T01": "20:41Z snapshot. Adds the",
+        "- git -C /home/lupin/code/execute-plans show origin/dev": ".../TradingRoomPage.tsx | grep TradingRoomDefaultEntry|selectDefaultReadyStrategy (0 matches)",
+        "- curl deployment.json (commit dd597405e0, deployedAt 2026-07-04T01": "20:41Z, unchanged)",
+        "LLM-Agent": "Claude",
+        "Task-ID": "AG-DYNUI-PROD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+        "Reviewer": "Claude2",
+        "Verified": "git merge-base --is-ancestor HEAD origin/dev; gh pr view 2874 (MERGED); re-verified standalone execute-plans/dev and deployment.json unchanged since packet was written"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-DYNUI-PROD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "64139be96c7a67123b8f7c4f678187528762f342",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-DYNUI-PROD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Packet committed (678cf36f4) and PR #2874 opened with auto-merge into dev. Confirms AG-DYNUI-PROD-003's publish gap is still open and unchanged since FOLLOWUP-2, and adds a new finding: the standalone execute-plans repo has no agora-main.tsx entry point (it uses router-based AgoraTradingRoomRoute in src/routes/agora.tsx) and TradingRoomPage.tsx has diverged 866/1087 lines from the pantheon pre-PROD-003 base, so a dry-run git apply --check of the merged diff fails. Porting is a scoped re-implementation against the standalone router wiring (onOpenWorkshop via navigate(), mirroring onBackToWorkshop), not a mechanical cherry-pick. Please review support/sidecars/AG-DYNUI-PROD-003/AG-DYNUI-PROD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md and PR #2874.",
+      "status": "done",
+      "created_at": "2026-07-04T01:52:42Z",
+      "resolved_at": "2026-07-04T01:54:52Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Verified packet accuracy and PR #2874 merge; support-only scope confirmed; approved for owner finalization.",
+      "status": "done",
+      "created_at": "2026-07-04T01:54:52Z",
+      "resolved_at": "2026-07-04T01:59:20Z"
+    }
+  ],
+  "blockers": []
+}

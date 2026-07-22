@@ -1,0 +1,1019 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  html,body { margin:0; padding:0; }
+  *{ box-sizing:border-box; }
+  ::-webkit-scrollbar{ width:9px; height:9px; }
+  ::-webkit-scrollbar-thumb{ background:rgba(127,127,127,.32); border-radius:6px; }
+  ::-webkit-scrollbar-track{ background:transparent; }
+  input::placeholder{ color:var(--faint); }
+  @keyframes ag-spin{ to{ transform:rotate(360deg); } }
+  @keyframes ag-pulse{ 0%,100%{ opacity:.35; } 50%{ opacity:1; } }
+  @keyframes ag-rise{ from{ opacity:0; transform:translateY(8px); } to{ opacity:1; transform:none; } }
+  @keyframes ag-slide{ from{ opacity:0; transform:translateX(18px); } to{ opacity:1; transform:none; } }
+</style>
+</helmet>
+
+<div ref="{{ rootRef }}" style="--canvas:#1b1f27; --panel:#232831; --panel2:#2a303b; --panel3:#333a46; --line:rgba(255,255,255,.08); --line2:rgba(255,255,255,.14); --tx:#eef0f3; --mut:#9aa1ad; --faint:#6b7280; --ai:#e3a94e; --ai-soft:rgba(227,169,78,.13); --ai-line:rgba(227,169,78,.45); --on-ai:#241a06; --up:#f05c61; --up-soft:rgba(240,92,97,.14); --down:#43cf94; --down-soft:rgba(67,207,148,.14); --warn:#e3a94e; --warn-soft:rgba(227,169,78,.14); --rowpy:13px; font-family:'Noto Sans TC',sans-serif; background:var(--canvas); color:var(--tx); height:100vh; overflow:hidden; display:flex; flex-direction:column;">
+
+  <!-- ===================== TOP BAR ===================== -->
+  <div style="position:relative; z-index:40; display:flex; align-items:center; gap:16px; padding:0 20px; height:60px; background:var(--panel); border-bottom:1px solid var(--line); flex-shrink:0;">
+    <div style="display:flex; align-items:center; gap:10px;">
+      <div style="width:29px; height:29px; border-radius:9px; background:var(--ai); display:flex; align-items:center; justify-content:center; color:var(--on-ai); font-weight:700; font-size:16px;">A</div>
+      <div style="font-weight:700; letter-spacing:.15em; font-size:14px;">AGORA</div>
+    </div>
+    <div style="display:flex; align-items:center; gap:8px; padding:5px 12px; background:var(--panel2); border-radius:999px; font-size:12px; color:var(--mut); white-space:nowrap;"><span style="width:7px; height:7px; border-radius:50%; background:var(--ai);"></span>{{ trader }} · {{ persona }}</div>
+
+    <div style="flex:1; position:relative; min-width:0;">
+      <div style="display:flex; align-items:center; gap:11px; padding:0 8px 0 16px; height:42px; background:var(--panel2); border:1px solid {{ cmdBorder }}; border-radius:999px;">
+        <span style="color:var(--ai); font-size:15px; flex-shrink:0;">✦</span>
+        <input value="{{ command }}" onInput="{{ onCmdInput }}" onKeyDown="{{ onCmdKey }}" onFocus="{{ onCmdFocus }}" placeholder="{{ placeholder }}" style="flex:1; min-width:0; background:transparent; border:none; outline:none; color:var(--tx); font-family:'Noto Sans TC',sans-serif; font-size:13.5px;" />
+        <button onClick="{{ submitCommand }}" style="flex-shrink:0; border:none; cursor:pointer; padding:7px 16px; border-radius:999px; background:var(--ai); color:var(--on-ai); font-weight:600; font-size:12.5px; font-family:'Noto Sans TC',sans-serif;">問 AI</button>
+      </div>
+
+      <!-- AI RESULT DROPDOWN -->
+      <sc-if value="{{ aiOpen }}" hint-placeholder-val="{{ false }}">
+        <div style="position:absolute; top:50px; left:0; right:0; background:var(--panel); border:1px solid var(--line2); border-radius:14px; box-shadow:0 30px 70px -20px rgba(0,0,0,.6); padding:18px 20px; max-height:62vh; overflow:auto;">
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+            <div style="display:flex; align-items:center; gap:9px; font-size:12px; color:var(--mut);"><span style="color:var(--ai);">✦</span> AI 解讀 · {{ aiContextLabel }}</div>
+            <div onClick="{{ closeAi }}" style="cursor:pointer; color:var(--faint); font-size:18px; line-height:1; padding:2px 6px;">×</div>
+          </div>
+
+          <sc-if value="{{ aiLoading }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex; align-items:center; gap:12px; padding:18px 4px; color:var(--mut); font-size:13px;">
+              <div style="width:18px; height:18px; border:2px solid var(--line2); border-top-color:var(--ai); border-radius:50%; animation:ag-spin .8s linear infinite;"></div>
+              正在拆解你的需求、比對產業與籌碼資料…
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ aiHasResult }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex; flex-direction:column; gap:16px;">
+              <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                <span style="font-size:11px; padding:4px 11px; border-radius:999px; background:var(--ai-soft); color:var(--ai); font-weight:600;">{{ aiResult.taskType }}</span>
+                <span style="font-size:11px; padding:4px 11px; border-radius:999px; background:var(--panel3); color:var(--mut);">{{ aiResult.thesis }}</span>
+              </div>
+              <div style="font-size:14px; line-height:1.65; color:var(--tx);">{{ aiResult.summary }}</div>
+
+              <div style="display:grid; grid-template-columns:1.2fr 1fr; gap:16px;">
+                <div style="background:var(--panel2); border:1px solid var(--line); border-radius:11px; padding:14px;">
+                  <div style="font-size:10.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--faint); font-weight:700; margin-bottom:10px;">建議任務計畫</div>
+                  <div style="display:flex; flex-direction:column; gap:9px;">
+                    <sc-for list="{{ aiResult.plan }}" as="step" hint-placeholder-count="4">
+                      <div style="display:flex; gap:9px; font-size:13px; color:var(--mut); line-height:1.5;"><span style="color:var(--ai); font-family:'IBM Plex Mono',monospace; font-size:11px; margin-top:2px;">{{ step.n }}</span>{{ step.t }}</div>
+                    </sc-for>
+                  </div>
+                </div>
+                <div style="background:var(--panel2); border:1px solid var(--line); border-radius:11px; padding:14px;">
+                  <div style="font-size:10.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--warn); font-weight:700; margin-bottom:10px;">風險 / 盲點</div>
+                  <div style="display:flex; flex-direction:column; gap:9px;">
+                    <sc-for list="{{ aiResult.risks }}" as="r" hint-placeholder-count="3">
+                      <div style="display:flex; gap:8px; font-size:13px; color:var(--mut); line-height:1.5;"><span style="color:var(--warn); margin-top:1px;">●</span>{{ r }}</div>
+                    </sc-for>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <div style="font-size:10.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--faint); font-weight:700; margin-bottom:10px;">下一步 — 轉成工作流</div>
+                <div style="display:flex; flex-wrap:wrap; gap:9px;">
+                  <sc-for list="{{ aiResult.actions }}" as="a" hint-placeholder-count="3">
+                    <button onClick="{{ a.run }}" style="cursor:pointer; border:1px solid var(--ai-line); background:var(--ai-soft); color:var(--ai); border-radius:9px; padding:9px 15px; font-size:12.5px; font-weight:600; font-family:'Noto Sans TC',sans-serif;">{{ a.label }}</button>
+                  </sc-for>
+                </div>
+              </div>
+            </div>
+          </sc-if>
+        </div>
+      </sc-if>
+    </div>
+
+    <div style="display:flex; align-items:center; gap:14px; color:var(--mut); font-size:15px; flex-shrink:0;">
+      <span style="cursor:pointer;">◷</span>
+      <span style="cursor:pointer;">⊕</span>
+      <div style="width:31px; height:31px; border-radius:50%; background:var(--panel2); border:1px solid var(--line);"></div>
+    </div>
+  </div>
+
+  <!-- ===================== MAIN TABS ===================== -->
+  <div style="display:flex; align-items:center; padding:0 20px; height:52px; background:var(--canvas); border-bottom:1px solid var(--line); gap:30px; flex-shrink:0; z-index:20;">
+    <div onClick="{{ goRadar }}" style="display:flex; align-items:center; height:100%; cursor:pointer; border-bottom:2px solid {{ radarTabLine }}; color:{{ radarTabColor }}; font-weight:{{ radarTabWeight }}; font-size:15px;">盯盤 Radar</div>
+    <div onClick="{{ goLab }}" style="display:flex; align-items:center; height:100%; cursor:pointer; border-bottom:2px solid {{ labTabLine }}; color:{{ labTabColor }}; font-weight:{{ labTabWeight }}; font-size:15px;">策略 Lab</div>
+    <div onClick="{{ goCockpit }}" style="display:flex; align-items:center; height:100%; cursor:pointer; border-bottom:2px solid {{ cockTabLine }}; color:{{ cockTabColor }}; font-weight:{{ cockTabWeight }}; font-size:15px;">部位 Cockpit</div>
+    <div style="margin-left:auto; display:flex; gap:8px;">
+      <sc-for list="{{ quickActions }}" as="q" hint-placeholder-count="4">
+        <div onClick="{{ q.run }}" style="cursor:pointer; padding:7px 13px; border:1px solid var(--line2); border-radius:999px; font-size:12px; color:var(--mut); background:var(--panel); white-space:nowrap;">{{ q.label }}</div>
+      </sc-for>
+    </div>
+  </div>
+
+  <!-- ===================== RADAR ===================== -->
+  <sc-if value="{{ isRadar }}" hint-placeholder-val="{{ true }}">
+  <div style="flex:1; display:flex; flex-direction:column; min-height:0;">
+    <!-- lens tabs -->
+    <div style="display:flex; align-items:center; gap:8px; padding:12px 20px; border-bottom:1px solid var(--line); background:var(--panel); overflow-x:auto;">
+      <sc-for list="{{ lensTabs }}" as="l" hint-placeholder-count="3">
+        <div onClick="{{ l.run }}" style="cursor:pointer; display:flex; align-items:center; gap:8px; padding:8px 15px; border-radius:999px; background:{{ l.bg }}; color:{{ l.fg }}; border:1px solid {{ l.bd }}; font-size:12.5px; font-weight:{{ l.weight }}; white-space:nowrap;"><sc-if value="{{ l.risk }}" hint-placeholder-val="{{ false }}"><span style="width:6px; height:6px; border-radius:50%; background:var(--up);"></span></sc-if>{{ l.name }}</div>
+      </sc-for>
+      <div onClick="{{ newLens }}" style="cursor:pointer; padding:8px 15px; border-radius:999px; border:1px dashed var(--line2); color:var(--faint); font-size:12.5px; white-space:nowrap;">+ 新 Lens</div>
+    </div>
+
+    <div style="flex:1; display:grid; grid-template-columns:{{ radarGrid }}; min-height:0;">
+      <!-- LENS SIDEBAR -->
+      <div style="border-right:1px solid var(--line); background:var(--panel); padding:18px 16px; display:flex; flex-direction:column; gap:20px; overflow:auto;">
+        <div style="background:var(--panel2); border:1px solid var(--line); border-radius:11px; padding:14px;">
+          <div style="font-size:13.5px; font-weight:700; margin-bottom:6px;">{{ activeLens.name }}</div>
+          <div style="font-size:12px; color:var(--mut); line-height:1.55;">{{ activeLens.thesis }}</div>
+          <div style="margin-top:11px; display:flex; align-items:center; gap:7px; font-size:11px; color:var(--faint);"><span style="width:5px; height:5px; border-radius:50%; background:var(--down);"></span>AI 最近更新 · {{ activeLens.updated }}</div>
+        </div>
+        <div>
+          <div style="font-size:10.5px; letter-spacing:.16em; color:var(--faint); text-transform:uppercase; font-weight:700; margin-bottom:10px;">候選與監控池</div>
+          <div style="display:flex; flex-direction:column; gap:2px;">
+            <sc-for list="{{ statusTabs }}" as="s" hint-placeholder-count="6">
+              <div onClick="{{ s.run }}" style="cursor:pointer; display:flex; align-items:center; justify-content:space-between; padding:10px 11px; border-radius:9px; background:{{ s.bg }}; color:{{ s.fg }}; font-size:13px; font-weight:{{ s.weight }};">{{ s.label }}<span style="font-family:'IBM Plex Mono',monospace; font-size:12px;">{{ s.count }}</span></div>
+            </sc-for>
+          </div>
+        </div>
+        <sc-if value="{{ activeLens.highRisk }}" hint-placeholder-val="{{ false }}">
+          <div style="background:var(--up-soft); border:1px solid var(--up); border-radius:11px; padding:12px;">
+            <div style="font-size:11px; color:var(--up); font-weight:700; margin-bottom:5px;">⚠ 高風險提醒</div>
+            <div style="font-size:12px; color:var(--mut); line-height:1.5;">同券商分點在 3017 出現反向賣超，可能影響本 Lens 2 檔候選。</div>
+          </div>
+        </sc-if>
+      </div>
+
+      <!-- CENTER -->
+      <div style="display:flex; flex-direction:column; min-width:0; background:var(--canvas);">
+        <div style="display:flex; align-items:center; gap:12px; padding:14px 20px; border-bottom:1px solid var(--line);">
+          <div style="font-size:15px; font-weight:700; white-space:nowrap;">{{ statusTitle }}</div>
+          <div style="font-size:12px; color:var(--faint); font-family:'IBM Plex Mono',monospace; white-space:nowrap;">{{ boardCount }}</div>
+          <div style="margin-left:auto; display:flex; align-items:center; gap:8px;">
+            <div style="display:flex; background:var(--panel2); border:1px solid var(--line); border-radius:999px; padding:3px;">
+              <div onClick="{{ viewBoard }}" style="cursor:pointer; padding:6px 14px; border-radius:999px; font-size:12px; white-space:nowrap; background:{{ boardToggleBg }}; color:{{ boardToggleFg }};">候選清單</div>
+              <div onClick="{{ viewDash }}" style="cursor:pointer; padding:6px 14px; border-radius:999px; font-size:12px; white-space:nowrap; background:{{ dashToggleBg }}; color:{{ dashToggleFg }};">Lens 儀表板</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- BOARD -->
+        <sc-if value="{{ showBoard }}" hint-placeholder-val="{{ true }}">
+        <div style="flex:1; overflow:auto;">
+          <div style="display:grid; grid-template-columns:var(--bcols); gap:10px; align-items:center; padding:11px 20px; border-bottom:1px solid var(--line); font-size:10px; letter-spacing:.05em; color:var(--faint); text-transform:uppercase; font-weight:700; position:sticky; top:0; background:var(--canvas); --bcols:{{ boardColsCss }};">
+            <sc-for list="{{ boardCols }}" as="c" hint-placeholder-count="8"><div style="white-space:nowrap;">{{ c }}</div></sc-for>
+          </div>
+          <sc-for list="{{ boardRows }}" as="row" hint-placeholder-count="6">
+            <div onClick="{{ row.open }}" style="cursor:pointer; display:grid; grid-template-columns:var(--bcols); gap:10px; align-items:center; padding:var(--rowpy) 20px; border-bottom:1px solid var(--line); background:{{ row.bg }}; --bcols:{{ boardColsCss }};">
+              <sc-for list="{{ row.cells }}" as="cell" hint-placeholder-count="8">
+                <div>
+                  <sc-if value="{{ cell.isRank }}" hint-placeholder-val="{{ false }}"><span style="font-family:'IBM Plex Mono',monospace; font-size:12px; color:{{ cell.color }};">{{ cell.v }}</span></sc-if>
+                  <sc-if value="{{ cell.isSym }}" hint-placeholder-val="{{ false }}"><div style="font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:14px;">{{ cell.code }}</div><div style="font-size:11.5px; color:var(--mut);">{{ cell.name }}</div></sc-if>
+                  <sc-if value="{{ cell.isBar }}" hint-placeholder-val="{{ false }}"><div style="display:flex; align-items:center; gap:7px;"><span style="font-family:'IBM Plex Mono',monospace; font-weight:700; color:{{ cell.color }}; font-size:13px;">{{ cell.v }}</span><div style="flex:1; height:4px; background:var(--line2); border-radius:2px; overflow:hidden;"><div style="width:{{ cell.pct }}; height:100%; background:{{ cell.color }};"></div></div></div></sc-if>
+                  <sc-if value="{{ cell.isNum }}" hint-placeholder-val="{{ false }}"><span style="font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:13px;">{{ cell.v }}</span></sc-if>
+                  <sc-if value="{{ cell.isText }}" hint-placeholder-val="{{ false }}"><span style="font-size:12px; color:var(--mut);">{{ cell.v }}</span></sc-if>
+                  <sc-if value="{{ cell.isChip }}" hint-placeholder-val="{{ false }}"><span style="display:inline-block; padding:3px 10px; border-radius:999px; font-size:11.5px; background:{{ cell.bg }}; color:{{ cell.fg }};">{{ cell.v }}</span></sc-if>
+                </div>
+              </sc-for>
+            </div>
+          </sc-for>
+          <div style="padding:14px 20px; font-size:11.5px; color:var(--faint);">{{ poolFootnote }}</div>
+        </div>
+        </sc-if>
+
+        <!-- LENS DASHBOARD -->
+        <sc-if value="{{ showDash }}" hint-placeholder-val="{{ false }}">
+        <div style="flex:1; overflow:auto; padding:18px 20px;">
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+            <div style="font-size:12px; color:var(--mut);">此儀表板由 AI 依「{{ activeLens.name }}」策略自動編排 · <span style="color:var(--ai);">v4</span></div>
+            <div onClick="{{ openChangeLog }}" style="cursor:pointer; display:flex; align-items:center; gap:7px; font-size:12px; white-space:nowrap; color:var(--ai); border:1px solid var(--ai-line); border-radius:9px; padding:7px 13px;">◷ Dashboard 變更紀錄 <span style="background:var(--ai); color:var(--on-ai); border-radius:999px; padding:1px 7px; font-size:10px; font-weight:700;">3</span></div>
+          </div>
+          <div style="display:grid; grid-template-columns:repeat(2,1fr); gap:14px;">
+            <sc-for list="{{ widgets }}" as="w" hint-placeholder-count="4">
+              <div style="background:var(--panel); border:1px solid var(--line); border-radius:13px; padding:15px; grid-column:{{ w.span }};">
+                <div style="display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:12px;">
+                  <div>
+                    <div style="font-size:13px; font-weight:700;">{{ w.title }}</div>
+                    <div style="font-size:11px; color:var(--faint); margin-top:2px;">{{ w.sub }}</div>
+                  </div>
+                  <div style="display:flex; gap:6px; align-items:center;">
+                    <sc-if value="{{ w.pinned }}" hint-placeholder-val="{{ false }}"><span style="font-size:11px; color:var(--ai);">📌</span></sc-if>
+                    <div onClick="{{ w.feedback }}" style="cursor:pointer; color:var(--faint); font-size:16px; line-height:1;">⋯</div>
+                  </div>
+                </div>
+                <div style="font-family:'IBM Plex Mono',monospace;">{{ w.body }}</div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+        </sc-if>
+      </div>
+
+      <!-- DRAWER -->
+      <sc-if value="{{ drawerOpen }}" hint-placeholder-val="{{ false }}">
+      <div style="border-left:1px solid var(--line); background:var(--panel); display:flex; flex-direction:column; min-height:0; animation:ag-slide .2s ease;">
+        <div style="flex:1; overflow:auto; padding:20px; display:flex; flex-direction:column; gap:18px;">
+          <div style="display:flex; align-items:flex-start; justify-content:space-between;">
+            <div>
+              <div style="font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:20px;">{{ sel.code }}</div>
+              <div style="font-size:13px; color:var(--mut);">{{ sel.name }} · {{ sel.sector }}</div>
+            </div>
+            <div style="display:flex; align-items:center; gap:12px;">
+              <div style="text-align:right;"><div style="font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:20px; color:var(--ai);">{{ sel.score }}</div><div style="font-size:10px; color:var(--faint); letter-spacing:.08em;">FIT SCORE</div></div>
+              <div onClick="{{ closeDrawer }}" style="cursor:pointer; color:var(--faint); font-size:20px; line-height:1;">×</div>
+            </div>
+          </div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <span style="font-size:11px; padding:4px 10px; border-radius:999px; background:{{ sel.statusBg }}; color:{{ sel.statusFg }};">{{ sel.statusLabel }}</span>
+            <span style="font-size:11px; padding:4px 10px; border-radius:999px; background:var(--panel3); color:var(--mut);">AI 信心 {{ sel.confidence }}</span>
+          </div>
+          <div>
+            <div style="font-size:10.5px; letter-spacing:.16em; color:var(--faint); text-transform:uppercase; font-weight:700; margin-bottom:10px;">AI 為什麼選它</div>
+            <div style="display:flex; flex-direction:column; gap:9px;">
+              <sc-for list="{{ sel.reasons }}" as="r" hint-placeholder-count="4">
+                <div style="display:flex; gap:8px; font-size:13px; color:var(--mut); line-height:1.55;"><span style="color:var(--ai); margin-top:1px;">●</span>{{ r }}</div>
+              </sc-for>
+            </div>
+          </div>
+          <div>
+            <div style="font-size:10.5px; letter-spacing:.16em; color:var(--warn); text-transform:uppercase; font-weight:700; margin-bottom:10px;">AI 疑慮</div>
+            <div style="display:flex; flex-direction:column; gap:9px;">
+              <sc-for list="{{ sel.concerns }}" as="c" hint-placeholder-count="2">
+                <div style="display:flex; gap:8px; font-size:13px; color:var(--mut); line-height:1.55;"><span style="color:var(--warn); margin-top:1px;">●</span>{{ c }}</div>
+              </sc-for>
+            </div>
+          </div>
+          <div style="background:var(--ai-soft); border:1px solid var(--ai-line); border-radius:12px; padding:14px;">
+            <div style="font-size:10.5px; letter-spacing:.16em; color:var(--ai); text-transform:uppercase; font-weight:700; margin-bottom:7px;">AI 建議下一步</div>
+            <div style="font-size:13px; color:var(--tx); line-height:1.6;">{{ sel.suggestion }}</div>
+          </div>
+          <sc-if value="{{ counterShown }}" hint-placeholder-val="{{ false }}">
+            <div style="background:var(--panel2); border:1px solid var(--up); border-radius:12px; padding:14px;">
+              <div style="font-size:10.5px; letter-spacing:.16em; color:var(--up); text-transform:uppercase; font-weight:700; margin-bottom:7px;">AI 反方論點</div>
+              <sc-if value="{{ counterLoading }}" hint-placeholder-val="{{ false }}"><div style="display:flex; align-items:center; gap:9px; color:var(--mut); font-size:12.5px;"><div style="width:14px; height:14px; border:2px solid var(--line2); border-top-color:var(--up); border-radius:50%; animation:ag-spin .8s linear infinite;"></div>建構反方論點中…</div></sc-if>
+              <sc-if value="{{ counterReady }}" hint-placeholder-val="{{ false }}"><div style="font-size:13px; color:var(--tx); line-height:1.6;">{{ counter }}</div></sc-if>
+            </div>
+          </sc-if>
+          <div>
+            <div style="font-size:10.5px; letter-spacing:.16em; color:var(--faint); text-transform:uppercase; font-weight:700; margin-bottom:9px;">核心證據</div>
+            <div style="display:flex; flex-wrap:wrap; gap:7px;">
+              <sc-for list="{{ sel.evidence }}" as="e" hint-placeholder-count="4">
+                <span style="font-size:11.5px; color:var(--mut); border:1px solid var(--line2); border-radius:999px; padding:4px 11px;">{{ e }}</span>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+        <div style="border-top:1px solid var(--line); padding:14px 16px; background:var(--panel2); display:flex; flex-direction:column; gap:8px;">
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+            <button onClick="{{ actMonitor }}" style="cursor:pointer; grid-column:span 2; border:none; padding:11px; border-radius:10px; background:var(--ai); color:var(--on-ai); font-weight:700; font-size:13px; font-family:'Noto Sans TC',sans-serif;">加入監控池</button>
+            <button onClick="{{ actShadow }}" style="cursor:pointer; border:1px solid var(--line2); background:transparent; padding:10px; border-radius:10px; color:var(--tx); font-size:12.5px; font-family:'Noto Sans TC',sans-serif;">送 Shadow</button>
+            <button onClick="{{ actResearch }}" style="cursor:pointer; border:1px solid var(--line2); background:transparent; padding:10px; border-radius:10px; color:var(--tx); font-size:12.5px; font-family:'Noto Sans TC',sans-serif;">需更多研究</button>
+            <button onClick="{{ askCounter }}" style="cursor:pointer; border:1px solid var(--line2); background:transparent; padding:10px; border-radius:10px; color:var(--tx); font-size:12.5px; font-family:'Noto Sans TC',sans-serif;">問反方論點</button>
+            <button onClick="{{ actTrain }}" style="cursor:pointer; border:1px solid var(--line2); background:transparent; padding:10px; border-radius:10px; color:var(--tx); font-size:12.5px; font-family:'Noto Sans TC',sans-serif;">寫入我的規則</button>
+            <button onClick="{{ actPark }}" style="cursor:pointer; border:1px solid var(--line2); background:transparent; padding:10px; border-radius:10px; color:var(--mut); font-size:12.5px; font-family:'Noto Sans TC',sans-serif;">暫放 Parking</button>
+            <button onClick="{{ actReject }}" style="cursor:pointer; border:1px solid var(--up); background:transparent; padding:10px; border-radius:10px; color:var(--up); font-size:12.5px; font-family:'Noto Sans TC',sans-serif;">剔除</button>
+          </div>
+        </div>
+      </div>
+      </sc-if>
+    </div>
+  </div>
+  </sc-if>
+
+  <!-- ===================== STRATEGY LAB ===================== -->
+  <sc-if value="{{ isLab }}" hint-placeholder-val="{{ false }}">
+  <div style="flex:1; display:grid; grid-template-columns:{{ labGrid }}; min-height:0;">
+    <div style="display:flex; flex-direction:column; min-width:0; border-right:1px solid var(--line);">
+      <div style="display:flex; align-items:center; gap:8px; padding:14px 20px; border-bottom:1px solid var(--line); overflow-x:auto;">
+        <sc-for list="{{ labStatusTabs }}" as="t" hint-placeholder-count="5">
+          <div onClick="{{ t.run }}" style="cursor:pointer; padding:7px 14px; border-radius:999px; font-size:12.5px; background:{{ t.bg }}; color:{{ t.fg }}; border:1px solid {{ t.bd }}; white-space:nowrap;">{{ t.label }} <span style="font-family:'IBM Plex Mono',monospace; opacity:.7;">{{ t.count }}</span></div>
+        </sc-for>
+      </div>
+      <div style="flex:1; overflow:auto; padding:18px 20px; display:flex; flex-direction:column; gap:12px;">
+        <sc-for list="{{ missions }}" as="m" hint-placeholder-count="4">
+          <div onClick="{{ m.open }}" style="cursor:pointer; background:var(--panel); border:1px solid {{ m.bd }}; border-radius:13px; padding:16px;">
+            <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px;">
+              <div style="min-width:0;">
+                <div style="display:flex; align-items:center; gap:9px; margin-bottom:5px;"><span style="font-size:10px; font-family:'IBM Plex Mono',monospace; color:var(--ai); background:var(--ai-soft); padding:2px 8px; border-radius:6px;">{{ m.type }}</span><sc-if value="{{ m.needsDecision }}" hint-placeholder-val="{{ false }}"><span style="font-size:10px; color:var(--warn); background:var(--warn-soft); padding:2px 8px; border-radius:6px;">待你決定</span></sc-if></div>
+                <div style="font-size:15px; font-weight:700; margin-bottom:6px;">{{ m.title }}</div>
+                <div style="font-size:12.5px; color:var(--mut); line-height:1.55;">{{ m.thesis }}</div>
+              </div>
+              <span style="flex-shrink:0; font-size:11px; padding:4px 11px; border-radius:999px; background:{{ m.statusBg }}; color:{{ m.statusFg }}; white-space:nowrap;">{{ m.statusLabel }}</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:18px; margin-top:14px; padding-top:13px; border-top:1px solid var(--line);">
+              <div style="display:flex; align-items:center; gap:7px; flex:1;"><div style="flex:1; height:5px; background:var(--line2); border-radius:3px; overflow:hidden;"><div style="width:{{ m.progress }}; height:100%; background:var(--ai);"></div></div><span style="font-size:11px; color:var(--faint); font-family:'IBM Plex Mono',monospace;">{{ m.progress }}</span></div>
+              <div style="font-size:11.5px; color:var(--mut);">候選 <span style="font-family:'IBM Plex Mono',monospace; color:var(--tx);">{{ m.candidates }}</span></div>
+              <div style="font-size:11.5px; color:var(--faint);">{{ m.updated }}</div>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <!-- MISSION DETAIL -->
+    <div style="display:flex; flex-direction:column; min-height:0; background:var(--canvas);">
+      <sc-if value="{{ missionSelected }}" hint-placeholder-val="{{ true }}">
+      <div style="flex:1; overflow:auto; padding:22px 24px; display:flex; flex-direction:column; gap:18px;">
+        <div>
+          <div style="font-size:11px; color:var(--ai); font-family:'IBM Plex Mono',monospace; margin-bottom:6px;">{{ activeMission.type }}</div>
+          <div style="font-size:20px; font-weight:700; margin-bottom:8px;">{{ activeMission.title }}</div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;"><sc-for list="{{ activeMission.seeds }}" as="s" hint-placeholder-count="3"><span style="font-family:'IBM Plex Mono',monospace; font-size:12px; padding:3px 10px; border-radius:7px; background:var(--panel2); border:1px solid var(--line);">{{ s }}</span></sc-for></div>
+        </div>
+        <div style="background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px;">
+          <div style="font-size:10.5px; letter-spacing:.16em; color:var(--faint); text-transform:uppercase; font-weight:700; margin-bottom:9px;">1 · 交易員假說</div>
+          <div style="font-size:13.5px; color:var(--tx); line-height:1.65;">{{ activeMission.userThesis }}</div>
+        </div>
+        <div style="background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px;">
+          <div style="font-size:10.5px; letter-spacing:.16em; color:var(--ai); text-transform:uppercase; font-weight:700; margin-bottom:12px;">2 · AI 任務計畫</div>
+          <div style="display:flex; flex-direction:column; gap:9px;">
+            <sc-for list="{{ activeMission.plan }}" as="p" hint-placeholder-count="6">
+              <div style="display:flex; gap:10px; font-size:13px; color:var(--mut); line-height:1.5;"><span style="flex-shrink:0; width:18px; height:18px; border-radius:5px; background:{{ p.bg }}; color:{{ p.fg }}; display:flex; align-items:center; justify-content:center; font-size:10px; font-family:'IBM Plex Mono',monospace;">{{ p.icon }}</span>{{ p.t }}</div>
+            </sc-for>
+          </div>
+        </div>
+        <div>
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:11px;"><div style="font-size:10.5px; letter-spacing:.16em; color:var(--faint); text-transform:uppercase; font-weight:700;">5 · 候選結果</div><div style="font-size:11.5px; color:var(--faint);">{{ activeMission.candidateNote }}</div></div>
+          <div style="background:var(--panel); border:1px solid var(--line); border-radius:12px; overflow:hidden;">
+            <div style="display:grid; grid-template-columns:32px 1.4fr 84px 80px 84px 78px; gap:10px; align-items:center; padding:10px 15px; border-bottom:1px solid var(--line); font-size:10px; letter-spacing:.05em; color:var(--faint); text-transform:uppercase; font-weight:700;">
+              <div>#</div><div>標的</div><div>相似度</div><div>落後幅度</div><div>催化關聯</div><div>動作</div>
+            </div>
+            <sc-for list="{{ activeMission.rows }}" as="r" hint-placeholder-count="4">
+              <div style="display:grid; grid-template-columns:32px 1.4fr 84px 80px 84px 78px; gap:10px; align-items:center; padding:12px 15px; border-bottom:1px solid var(--line);">
+                <div style="font-family:'IBM Plex Mono',monospace; color:var(--faint); font-size:12px;">{{ r.rank }}</div>
+                <div><div style="font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:13.5px;">{{ r.code }}</div><div style="font-size:11px; color:var(--mut);">{{ r.name }}</div></div>
+                <div style="display:flex; align-items:center; gap:6px;"><span style="font-family:'IBM Plex Mono',monospace; font-weight:700; color:var(--ai); font-size:12.5px;">{{ r.sim }}</span><div style="flex:1; height:3px; background:var(--line2); border-radius:2px; overflow:hidden;"><div style="width:{{ r.simPct }}; height:100%; background:var(--ai);"></div></div></div>
+                <div><span style="font-size:11px; padding:2px 9px; border-radius:999px; background:var(--warn-soft); color:var(--warn);">{{ r.lag }}</span></div>
+                <div><span style="font-size:11px; padding:2px 9px; border-radius:999px; background:var(--down-soft); color:var(--down);">{{ r.cat }}</span></div>
+                <div><span onClick="{{ r.add }}" style="cursor:pointer; font-size:11px; color:var(--ai); border:1px solid var(--ai-line); border-radius:7px; padding:4px 9px;">加盯盤</span></div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+        <div style="background:var(--up-soft); border:1px solid var(--up); border-radius:12px; padding:16px;">
+          <div style="font-size:10.5px; letter-spacing:.16em; color:var(--up); text-transform:uppercase; font-weight:700; margin-bottom:9px;">6 · 反方論點</div>
+          <div style="font-size:13px; color:var(--tx); line-height:1.65;">{{ activeMission.counter }}</div>
+        </div>
+        <div style="display:flex; gap:9px; flex-wrap:wrap;">
+          <button onClick="{{ missionToRadar }}" style="cursor:pointer; border:none; background:var(--ai); color:var(--on-ai); border-radius:10px; padding:11px 18px; font-weight:700; font-size:13px; font-family:'Noto Sans TC',sans-serif;">轉成盯盤 Lens</button>
+          <button onClick="{{ missionShadow }}" style="cursor:pointer; border:1px solid var(--line2); background:transparent; color:var(--tx); border-radius:10px; padding:11px 18px; font-size:13px; font-family:'Noto Sans TC',sans-serif;">全部送 Shadow</button>
+          <button onClick="{{ missionJournal }}" style="cursor:pointer; border:1px solid var(--line2); background:transparent; color:var(--tx); border-radius:10px; padding:11px 18px; font-size:13px; font-family:'Noto Sans TC',sans-serif;">寫入 Journal</button>
+        </div>
+      </div>
+      </sc-if>
+    </div>
+  </div>
+  </sc-if>
+
+  <!-- ===================== POSITION COCKPIT ===================== -->
+  <sc-if value="{{ isCockpit }}" hint-placeholder-val="{{ false }}">
+  <div style="flex:1; display:grid; grid-template-columns:{{ cockGrid }}; min-height:0;">
+    <div style="display:flex; flex-direction:column; min-width:0; border-right:1px solid var(--line);">
+      <div style="display:flex; align-items:center; gap:8px; padding:14px 20px; border-bottom:1px solid var(--line); overflow-x:auto;">
+        <sc-for list="{{ cockStatusTabs }}" as="t" hint-placeholder-count="6">
+          <div onClick="{{ t.run }}" style="cursor:pointer; padding:7px 13px; border-radius:999px; font-size:12.5px; background:{{ t.bg }}; color:{{ t.fg }}; border:1px solid {{ t.bd }}; white-space:nowrap;">{{ t.label }} <span style="font-family:'IBM Plex Mono',monospace; opacity:.7;">{{ t.count }}</span></div>
+        </sc-for>
+      </div>
+      <div style="flex:1; overflow:auto; padding:18px 20px; display:flex; flex-direction:column; gap:20px;">
+        <sc-for list="{{ posGroups }}" as="g" hint-placeholder-count="2">
+          <div>
+            <div style="display:flex; align-items:center; gap:9px; margin-bottom:10px;"><div style="font-size:12px; font-weight:700; color:var(--mut);">{{ g.name }}</div><div style="flex:1; height:1px; background:var(--line);"></div><div style="font-size:11px; color:var(--faint); font-family:'IBM Plex Mono',monospace;">{{ g.pnl }}</div></div>
+            <div style="display:flex; flex-direction:column; gap:9px;">
+              <sc-for list="{{ g.rows }}" as="p" hint-placeholder-count="2">
+                <div onClick="{{ p.open }}" style="cursor:pointer; background:var(--panel); border:1px solid {{ p.bd }}; border-radius:12px; padding:14px;">
+                  <div style="display:grid; grid-template-columns:1.4fr 92px 80px 96px; gap:12px; align-items:center;">
+                    <div style="display:flex; align-items:center; gap:11px;"><div><div style="font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:14px;">{{ p.code }}</div><div style="font-size:11px; color:var(--mut);">{{ p.name }}</div></div></div>
+                    <div style="text-align:right;"><div style="font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:14px; color:{{ p.pnlColor }};">{{ p.pnl }}</div><div style="font-size:10px; color:var(--faint);">未實現損益</div></div>
+                    <div style="text-align:right;"><div style="font-family:'IBM Plex Mono',monospace; font-size:13px; color:var(--mut);">{{ p.days }}</div><div style="font-size:10px; color:var(--faint);">持有日</div></div>
+                    <div style="text-align:right;"><span style="font-size:11px; padding:3px 10px; border-radius:999px; background:{{ p.thesisBg }}; color:{{ p.thesisFg }};">{{ p.thesisLabel }}</span></div>
+                  </div>
+                  <div style="margin-top:11px; padding-top:11px; border-top:1px solid var(--line); display:flex; align-items:center; gap:9px; font-size:12px; color:var(--mut); line-height:1.5;"><span style="color:var(--ai); flex-shrink:0;">✦</span>{{ p.aiRead }}</div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <!-- POSITION DETAIL -->
+    <div style="display:flex; flex-direction:column; min-height:0; background:var(--canvas);">
+      <sc-if value="{{ posSelected }}" hint-placeholder-val="{{ true }}">
+      <div style="flex:1; overflow:auto; padding:22px 24px; display:flex; flex-direction:column; gap:16px;">
+        <div style="display:flex; align-items:flex-start; justify-content:space-between;">
+          <div>
+            <div style="font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:22px;">{{ activePos.code }}</div>
+            <div style="font-size:13px; color:var(--mut);">{{ activePos.name }} · {{ activePos.lens }}</div>
+          </div>
+          <span style="font-size:12px; padding:5px 13px; border-radius:999px; background:{{ activePos.thesisBg }}; color:{{ activePos.thesisFg }};">Thesis {{ activePos.thesisLabel }}</span>
+        </div>
+        <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:11px;">
+          <sc-for list="{{ activePos.metrics }}" as="mt" hint-placeholder-count="4">
+            <div style="background:var(--panel); border:1px solid var(--line); border-radius:11px; padding:13px;"><div style="font-size:10px; color:var(--faint); letter-spacing:.06em; margin-bottom:5px;">{{ mt.k }}</div><div style="font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:16px; color:{{ mt.c }};">{{ mt.v }}</div></div>
+          </sc-for>
+        </div>
+        <div style="background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px;">
+          <div style="font-size:10.5px; letter-spacing:.16em; color:var(--faint); text-transform:uppercase; font-weight:700; margin-bottom:9px;">原始 Thesis</div>
+          <div style="font-size:13.5px; color:var(--tx); line-height:1.65;">{{ activePos.originalThesis }}</div>
+        </div>
+        <div style="background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px;">
+          <div style="font-size:10.5px; letter-spacing:.16em; color:var(--ai); text-transform:uppercase; font-weight:700; margin-bottom:9px;">進場後發生什麼變化</div>
+          <div style="display:flex; flex-direction:column; gap:9px;">
+            <sc-for list="{{ activePos.changes }}" as="c" hint-placeholder-count="3">
+              <div style="display:flex; gap:9px; font-size:13px; color:var(--mut); line-height:1.55;"><span style="color:{{ c.dot }}; margin-top:1px;">●</span>{{ c.t }}</div>
+            </sc-for>
+          </div>
+        </div>
+        <div style="background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px;">
+          <div style="font-size:10.5px; letter-spacing:.16em; color:var(--faint); text-transform:uppercase; font-weight:700; margin-bottom:11px;">Invalidation Checklist</div>
+          <div style="display:flex; flex-direction:column; gap:8px;">
+            <sc-for list="{{ activePos.checklist }}" as="ck" hint-placeholder-count="3">
+              <div style="display:flex; align-items:center; gap:10px; font-size:13px;"><span style="width:17px; height:17px; border-radius:5px; border:1px solid {{ ck.bd }}; background:{{ ck.bg }}; color:{{ ck.fg }}; display:flex; align-items:center; justify-content:center; font-size:11px; flex-shrink:0;">{{ ck.mark }}</span><span style="color:{{ ck.tc }};">{{ ck.t }}</span></div>
+            </sc-for>
+          </div>
+        </div>
+        <div style="display:flex; gap:9px; flex-wrap:wrap;">
+          <button onClick="{{ posReview }}" style="cursor:pointer; border:none; background:var(--ai); color:var(--on-ai); border-radius:10px; padding:11px 18px; font-weight:700; font-size:13px; font-family:'Noto Sans TC',sans-serif;">請 AI 複盤 thesis</button>
+          <button onClick="{{ posShadow }}" style="cursor:pointer; border:1px solid var(--line2); background:transparent; color:var(--tx); border-radius:10px; padding:11px 18px; font-size:13px; font-family:'Noto Sans TC',sans-serif;">找替代標的 (Shadow)</button>
+          <button onClick="{{ posPlan }}" style="cursor:pointer; border:1px solid var(--line2); background:transparent; color:var(--tx); border-radius:10px; padding:11px 18px; font-size:13px; font-family:'Noto Sans TC',sans-serif;">建立減碼計畫</button>
+        </div>
+      </div>
+      </sc-if>
+    </div>
+  </div>
+  </sc-if>
+
+  <!-- ===================== TOAST ===================== -->
+  <sc-if value="{{ toast }}" hint-placeholder-val="{{ false }}">
+    <div style="position:fixed; bottom:24px; left:50%; transform:translateX(-50%); z-index:80; background:var(--panel3); border:1px solid var(--line2); color:var(--tx); padding:12px 20px; border-radius:11px; font-size:13px; box-shadow:0 18px 44px -16px rgba(0,0,0,.6); animation:ag-rise .2s ease; display:flex; align-items:center; gap:10px;"><span style="color:var(--ai);">✦</span>{{ toast }}</div>
+  </sc-if>
+
+  <!-- ===================== CHANGE LOG MODAL ===================== -->
+  <sc-if value="{{ changeLogOpen }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeChangeLog }}" style="position:fixed; inset:0; z-index:90; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; padding:40px;">
+      <div onClick="{{ stop }}" style="width:560px; max-width:100%; max-height:80vh; overflow:auto; background:var(--panel); border:1px solid var(--line2); border-radius:16px; padding:22px; animation:ag-rise .2s ease;">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;">
+          <div><div style="font-size:16px; font-weight:700;">Dashboard 變更紀錄</div><div style="font-size:12px; color:var(--mut); margin-top:3px;">AI 依你的行為調整了「{{ activeLens.name }}」儀表板</div></div>
+          <div onClick="{{ closeChangeLog }}" style="cursor:pointer; color:var(--faint); font-size:20px;">×</div>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:12px;">
+          <sc-for list="{{ changeLog }}" as="c" hint-placeholder-count="3">
+            <div style="background:var(--panel2); border:1px solid var(--line); border-radius:12px; padding:15px;">
+              <div style="display:flex; align-items:center; gap:9px; margin-bottom:7px;"><span style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--ai); background:var(--ai-soft); padding:2px 8px; border-radius:6px;">{{ c.tag }}</span><span style="font-size:13.5px; font-weight:600;">{{ c.title }}</span></div>
+              <div style="font-size:12.5px; color:var(--mut); line-height:1.55; margin-bottom:11px;">{{ c.reason }}</div>
+              <div style="display:flex; gap:7px; flex-wrap:wrap;">
+                <button onClick="{{ c.accept }}" style="cursor:pointer; border:1px solid var(--ai-line); background:var(--ai-soft); color:var(--ai); border-radius:8px; padding:6px 12px; font-size:11.5px; font-family:'Noto Sans TC',sans-serif;">接受</button>
+                <button onClick="{{ c.undo }}" style="cursor:pointer; border:1px solid var(--line2); background:transparent; color:var(--tx); border-radius:8px; padding:6px 12px; font-size:11.5px; font-family:'Noto Sans TC',sans-serif;">還原</button>
+                <button onClick="{{ c.never }}" style="cursor:pointer; border:1px solid var(--line2); background:transparent; color:var(--mut); border-radius:8px; padding:6px 12px; font-size:11.5px; font-family:'Noto Sans TC',sans-serif;">別再這樣做</button>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:960},&quot;theme&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;desk&quot;,&quot;terminal&quot;,&quot;daylight&quot;],&quot;default&quot;:&quot;desk&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;trader&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;陳柏宇&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;persona&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;籌碼派&quot;,&quot;tsType&quot;:&quot;string&quot;}}">
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.root = React.createRef();
+    this.themes = {
+      desk: {'--canvas':'#1b1f27','--panel':'#232831','--panel2':'#2a303b','--panel3':'#333a46','--line':'rgba(255,255,255,.08)','--line2':'rgba(255,255,255,.14)','--tx':'#eef0f3','--mut':'#9aa1ad','--faint':'#6b7280','--ai':'#e3a94e','--ai-soft':'rgba(227,169,78,.13)','--ai-line':'rgba(227,169,78,.45)','--on-ai':'#241a06','--up':'#f05c61','--up-soft':'rgba(240,92,97,.14)','--down':'#43cf94','--down-soft':'rgba(67,207,148,.14)','--warn':'#e3a94e','--warn-soft':'rgba(227,169,78,.14)'},
+      terminal: {'--canvas':'#14161b','--panel':'#191c22','--panel2':'#1e222a','--panel3':'#262b34','--line':'rgba(255,255,255,.08)','--line2':'rgba(255,255,255,.14)','--tx':'#e6e8ec','--mut':'#8b919c','--faint':'#5b616b','--ai':'#5fb3d4','--ai-soft':'rgba(95,179,212,.12)','--ai-line':'rgba(95,179,212,.45)','--on-ai':'#06222b','--up':'#ef4d52','--up-soft':'rgba(239,77,82,.14)','--down':'#37c98a','--down-soft':'rgba(55,201,138,.14)','--warn':'#e0a23c','--warn-soft':'rgba(224,162,60,.14)'},
+      daylight: {'--canvas':'#f3f1ec','--panel':'#ffffff','--panel2':'#fbfaf8','--panel3':'#f0eee9','--line':'#e6e3dc','--line2':'#d8d4cc','--tx':'#23262d','--mut':'#6c7079','--faint':'#9aa0a8','--ai':'#4f5bd5','--ai-soft':'rgba(79,91,213,.08)','--ai-line':'rgba(79,91,213,.35)','--on-ai':'#ffffff','--up':'#d8453f','--up-soft':'rgba(216,69,63,.09)','--down':'#1f9d6b','--down-soft':'rgba(31,157,107,.1)','--warn':'#c8861f','--warn-soft':'rgba(200,134,31,.12)'}
+    };
+    this.state = {
+      tab:'radar', lensId:'chip', status:'candidate', radarView:'board',
+      selectedId:null, counter:null, counterLoading:false,
+      command:'', aiOpen:false, aiLoading:false, aiResult:null, aiContextLabel:'盯盤 Radar',
+      toast:null, changeLogOpen:false,
+      labStatus:'active', missionId:'m1',
+      cockStatus:'all', posId:'p1',
+      candidates: this.seedCandidates(),
+      missions: this.seedMissions(),
+      positions: this.seedPositions()
+    };
+    this._toastT = null;
+  }
+  componentDidMount(){ this.applyTheme(this.props.theme || 'desk'); }
+  componentDidUpdate(prev){ if (prev.theme !== this.props.theme) this.applyTheme(this.props.theme || 'desk'); }
+  applyTheme(name){ const t = this.themes[name] || this.themes.desk; const el = this.root.current; if(!el) return; Object.entries(t).forEach(([k,v]) => el.style.setProperty(k,v)); }
+
+  toast(msg){ if(this._toastT) clearTimeout(this._toastT); this.setState({toast:msg}); this._toastT = setTimeout(()=>this.setState({toast:null}), 2600); }
+
+  // ---------- SEED DATA ----------
+  seedCandidates(){
+    return {
+      chip: [
+        {rank:1, code:'8086', name:'宏捷科', sector:'砷化鎵', score:92, status:'needs_discussion', confidence:'高',
+          chip:92, buyDays:7, conc:'高', dist:'低', related:'中', liq:'充足', pricePos:'低檔',
+          reasons:['近 10 日分點淨買集中，買盤在區間內吸收而非追高','同族群已有 3 檔先行起漲，此檔相對落後','成交金額穩定，流動性足以分批建立部位','技術面仍處低檔，價格尚未反映籌碼'],
+          concerns:['同券商另一分點於同族群某檔出現賣超','今日量增但價格尚未有效突破前高','若明日跌破 78 元則 thesis 弱化'],
+          suggestion:'加入監控池，將「分點買盤是否延續」設為主要觸發條件，先觀察 2 個交易日再決定是否送 Shadow。',
+          evidence:['分點明細 10D','K 線','同族群比較','成交量分布']},
+        {rank:2, code:'6669', name:'緯穎', sector:'伺服器', score:85, status:'needs_discussion', confidence:'高',
+          chip:85, buyDays:6, conc:'高', dist:'低', related:'低', liq:'充足', pricePos:'中段',
+          reasons:['特定外資分點連續 6 日淨買','AI server 訂單能見度提升','籌碼換手後浮額減少'],
+          concerns:['股價位置偏中段，追進空間有限','法人多單已偏高'],
+          suggestion:'已具監控價值，但價格不在低檔，建議設定回檔承接條件再進場。',
+          evidence:['外資買賣超','訂單追蹤','籌碼分布']},
+        {rank:3, code:'3017', name:'奇鋐', sector:'散熱', score:88, status:'approved_for_monitoring', confidence:'中',
+          chip:88, buyDays:5, conc:'中', dist:'中', related:'高', liq:'充足', pricePos:'中段',
+          reasons:['散熱題材延續，分點買盤穩定','液冷滲透率提升'],
+          concerns:['關聯分點在同族群某檔賣超，需留意換手','量增價未過前高'],
+          suggestion:'維持監控，密切觀察關聯分點是否轉為調節。',
+          evidence:['分點明細','液冷供應鏈','技術型態']},
+        {rank:4, code:'3035', name:'智原', sector:'IP / ASIC', score:79, status:'new', confidence:'中',
+          chip:79, buyDays:4, conc:'中', dist:'中', related:'中', liq:'普通', pricePos:'低檔',
+          reasons:['ASIC 設計服務需求轉強','分點買盤初步集中'],
+          concerns:['流動性普通，建立部位需分批','買盤天數尚短'],
+          suggestion:'資料仍不足，建議列入「需更多研究」再觀察 3 日。',
+          evidence:['分點明細','營收追蹤']},
+        {rank:5, code:'2454', name:'聯發科', sector:'IC 設計', score:74, status:'new', confidence:'低',
+          chip:74, buyDays:3, conc:'低', dist:'中', related:'中', liq:'充足', pricePos:'高檔',
+          reasons:['權值股具指標意義','部分分點回補'],
+          concerns:['價格位置偏高','籌碼集中度不足，非典型吸貨型態'],
+          suggestion:'與本 Lens thesis 契合度偏低，可考慮剔除或暫放。',
+          evidence:['分點明細','大盤連動']},
+        {rank:6, code:'3661', name:'世芯-KY', sector:'ASIC', score:71, status:'parked', confidence:'低',
+          chip:71, buyDays:2, conc:'中', dist:'高', related:'中', liq:'普通', pricePos:'高檔',
+          reasons:['ASIC 龍頭題材','分點短線買進'],
+          concerns:['出貨風險偏高','價格已在高檔'],
+          suggestion:'暫放 Parking，待回檔與籌碼沉澱再評估。',
+          evidence:['分點明細','法人動向']},
+        {rank:7, code:'2376', name:'技嘉', sector:'板卡 / 伺服器', score:60, status:'rejected', confidence:'低',
+          chip:60, buyDays:1, conc:'低', dist:'高', related:'高', liq:'普通', pricePos:'高檔',
+          reasons:['伺服器題材沾邊'],
+          concerns:['關聯分點隔日常倒貨','籌碼凌亂，不符吸貨型態'],
+          suggestion:'已剔除：交易員標記此分點不可信，列為負面樣本。',
+          evidence:['分點明細']}
+      ]
+    };
+  }
+  seedMissions(){
+    return [
+      {id:'m1', type:'industry_peer_laggard', title:'AI server 供應鏈落後補漲', thesis:'AI server 需求轉強，找出同族群中基本面跟上但股價尚未反應的落後股並排序。', status:'completed_review', statusLabel:'已完成 · 待覆核', progress:'100%', candidates:14, needsDecision:true, updated:'8 分鐘前',
+        seeds:['3017','2376','6669'],
+        userThesis:'我覺得 ABC 這些股票因為 AI server 供應鏈可能會漲，幫我找出同產業還沒反應的標的，並依相似度與落後幅度排序。',
+        plan:[{n:'1',t:'解析 thesis 與產業範圍',done:true},{n:'2',t:'建立 AI server 供應鏈位置圖',done:true},{n:'3',t:'找出同族群 universe（28 檔）',done:true},{n:'4',t:'計算相似度與漲幅落後程度',done:true},{n:'5',t:'檢查成交量 / 流動性',done:true},{n:'6',t:'檢查籌碼 / 分點支持',done:true},{n:'7',t:'排名候選並產出反方論點',done:true}],
+        candidateNote:'28 檔 universe → 14 檔候選',
+        rows:[{rank:'01',code:'3017',name:'奇鋐',sim:94,lag:'落後 18%',cat:'高'},{rank:'02',code:'3324',name:'雙鴻',sim:89,lag:'落後 22%',cat:'高'},{rank:'03',code:'3045',name:'台灣大',sim:71,lag:'落後 9%',cat:'中'},{rank:'04',code:'6271',name:'同欣電',sim:68,lag:'落後 14%',cat:'中'}],
+        counter:'若 AI server 拉貨在 Q3 提前見高，落後股補漲行情可能還沒啟動就被基本面反轉打斷；其中 2 檔的落後其實反映了較弱的客戶集中度，未必是「還沒漲」，而是「漲不動」。'},
+      {id:'m2', type:'broker_branch_flow', title:'8086 分點連續吸貨追蹤', thesis:'追蹤 8086 最近 10 天是否有特定分點連續買進，並檢查同券商其他分點是否在同族群出貨。', status:'in_progress', statusLabel:'進行中', progress:'65%', candidates:1, needsDecision:false, updated:'2 分鐘前',
+        seeds:['8086'],
+        userThesis:'幫我追蹤 8086 最近 10 天是否有特定分點連續買進，並檢查同券商或關聯分點是否在同族群其他股票出貨。',
+        plan:[{n:'1',t:'抓取 8086 近 10 日分點進出',done:true},{n:'2',t:'找出連續淨買分點 Top 5',done:true},{n:'3',t:'比對同券商其他分點行為',done:true},{n:'4',t:'檢查同族群跨檔資金流',done:false},{n:'5',t:'判讀是否為換手或輪動',done:false}],
+        candidateNote:'追蹤中',
+        rows:[{rank:'01',code:'8086',name:'宏捷科',sim:92,lag:'低檔',cat:'高'}],
+        counter:'連續買超的分點過去曾有「養量出貨」前科，需確認本次買盤是否伴隨融資增加；若是，吸貨判斷需下修。'},
+      {id:'m3', type:'multi_stock_comparison', title:'三檔主升段前籌碼結構比較', thesis:'比較 A/B/C 三檔誰比較像主升段前的籌碼結構。', status:'shadowing', statusLabel:'Shadow 中', progress:'100%', candidates:3, needsDecision:false, updated:'1 小時前',
+        seeds:['8086','3017','3035'],
+        userThesis:'幫我比較這三檔誰比較像主升段前的籌碼結構，包含集中度、浮額、分點穩定度。',
+        plan:[{n:'1',t:'計算三檔籌碼集中度',done:true},{n:'2',t:'分析浮額變化',done:true},{n:'3',t:'評估分點穩定度',done:true},{n:'4',t:'給出排序與信心',done:true}],
+        candidateNote:'3 檔比較',
+        rows:[{rank:'01',code:'8086',name:'宏捷科',sim:91,lag:'最像',cat:'高'},{rank:'02',code:'3035',name:'智原',sim:77,lag:'次之',cat:'中'},{rank:'03',code:'3017',name:'奇鋐',sim:64,lag:'偏弱',cat:'中'}],
+        counter:'籌碼結構相似不代表催化條件相同；8086 缺乏明確的近期事件催化，主升段啟動時點可能延後。'},
+      {id:'m4', type:'event_research', title:'CES 後散熱族群事件交易', thesis:'CES 展後散熱題材是否有事件交易機會。', status:'converted', statusLabel:'已轉成盯盤', progress:'100%', candidates:6, needsDecision:false, updated:'昨天',
+        seeds:['3017','3324'],
+        userThesis:'CES 之後散熱族群有沒有可以做的事件交易？',
+        plan:[{n:'1',t:'整理 CES 散熱相關發表',done:true},{n:'2',t:'比對族群股價反應',done:true},{n:'3',t:'篩出反應不足個股',done:true}],
+        candidateNote:'已轉成 Radar Lens',
+        rows:[{rank:'01',code:'3017',name:'奇鋐',sim:88,lag:'已反應',cat:'高'},{rank:'02',code:'3324',name:'雙鴻',sim:82,lag:'反應不足',cat:'高'}],
+        counter:'事件交易窗口短，若展後一週未發動，題材容易被新的市場焦點稀釋。'}
+    ];
+  }
+  seedPositions(){
+    return [
+      {id:'p1', code:'8086', name:'宏捷科', lens:'籌碼大戶部位建立', pnl:'+12.4%', pnlNum:1, days:18, thesis:'weakening',
+        originalThesis:'分點連續吸貨、價格仍處低檔，預期主力建立部位後將推升至前高。',
+        changes:[{t:'原吸貨分點近 3 日轉為小幅調節',c:'warn'},{t:'同族群 6669 已先行突破，比價效應仍在',c:'down'},{t:'融資餘額增加，浮額略升',c:'warn'}],
+        checklist:[{t:'跌破 78 元支撐',ok:false},{t:'吸貨分點轉為連續賣超',ok:false},{t:'同族群全面轉弱',ok:true}],
+        metrics:[{k:'未實現損益',v:'+12.4%'},{k:'最大回落',v:'-4.1%'},{k:'持有日',v:'18'},{k:'部位',v:'8 張'}]},
+      {id:'p2', code:'3227', name:'原相', lens:'籌碼大戶部位建立', pnl:'+3.1%', pnlNum:1, days:9, thesis:'intact',
+        originalThesis:'分點吸貨且價格在低檔整理，等待籌碼沉澱後表態。',
+        changes:[{t:'吸貨分點持續淨買，無調節跡象',c:'down'},{t:'價格守穩月線',c:'down'}],
+        checklist:[{t:'跌破整理區下緣',ok:false},{t:'分點買盤中斷',ok:false}],
+        metrics:[{k:'未實現損益',v:'+3.1%'},{k:'最大回落',v:'-2.0%'},{k:'持有日',v:'9'},{k:'部位',v:'12 張'}]},
+      {id:'p3', code:'3017', name:'奇鋐', lens:'AI server 落後補漲', pnl:'+24.8%', pnlNum:1, days:31, thesis:'improved',
+        originalThesis:'散熱題材落後補漲，基本面轉強股價尚未反應。',
+        changes:[{t:'液冷訂單能見度持續上修',c:'down'},{t:'外資分點轉為連續買超',c:'down'}],
+        checklist:[{t:'訂單能見度轉弱',ok:false},{t:'外資轉賣',ok:false}],
+        metrics:[{k:'未實現損益',v:'+24.8%'},{k:'最大回落',v:'-6.3%'},{k:'持有日',v:'31'},{k:'部位',v:'5 張'}]},
+      {id:'p4', code:'2376', name:'技嘉', lens:'AI server 落後補漲', pnl:'-8.6%', pnlNum:-1, days:14, thesis:'invalidated',
+        originalThesis:'板卡 / 伺服器題材落後補漲。',
+        changes:[{t:'關聯分點持續倒貨，籌碼凌亂',c:'up'},{t:'跌破停損價，thesis 已失效',c:'up'},{t:'同族群轉強而本檔不漲',c:'up'}],
+        checklist:[{t:'跌破停損 230 元',ok:true},{t:'分點轉連續賣超',ok:true},{t:'比價效應失效',ok:true}],
+        metrics:[{k:'未實現損益',v:'-8.6%'},{k:'最大回落',v:'-11.2%'},{k:'持有日',v:'14'},{k:'部位',v:'6 張'}]}
+    ];
+  }
+
+  // ---------- HELPERS ----------
+  toneC(tone){
+    const m = {good:{bg:'var(--down-soft)',fg:'var(--down)'},warn:{bg:'var(--warn-soft)',fg:'var(--warn)'},bad:{bg:'var(--up-soft)',fg:'var(--up)'},ai:{bg:'var(--ai-soft)',fg:'var(--ai)'},neutral:{bg:'var(--panel3)',fg:'var(--mut)'}};
+    return m[tone] || m.neutral;
+  }
+  statusMeta(s){
+    const m = {
+      new:{label:'候選',tone:'neutral'}, needs_discussion:{label:'待討論',tone:'ai'},
+      approved_for_monitoring:{label:'監控中',tone:'good'}, needs_more_research:{label:'研究中',tone:'warn'},
+      shadowing:{label:'Shadow 中',tone:'ai'}, rejected:{label:'已剔除',tone:'bad'},
+      parked:{label:'Parking',tone:'warn'}, archived:{label:'已歸檔',tone:'neutral'}
+    };
+    return m[s] || m.new;
+  }
+  concTone(v){ return v==='高'?'ai':(v==='中'?'warn':'neutral'); }
+  riskTone(v){ return v==='低'?'good':(v==='中'?'warn':'bad'); }
+
+  // ---------- RADAR FILTERING ----------
+  filteredCandidates(){
+    const all = this.state.candidates[this.state.lensId] || [];
+    const s = this.state.status;
+    if (s==='candidate') return all.filter(c => !['rejected','parked','archived'].includes(c.status));
+    if (s==='discuss') return all.filter(c => c.status==='needs_discussion');
+    if (s==='monitoring') return all.filter(c => c.status==='approved_for_monitoring');
+    if (s==='shadow') return all.filter(c => c.status==='shadowing');
+    if (s==='rejected') return all.filter(c => c.status==='rejected');
+    if (s==='parked') return all.filter(c => c.status==='parked');
+    return all;
+  }
+  setCandidateStatus(id, status, msg){
+    const cands = {...this.state.candidates};
+    cands[this.state.lensId] = cands[this.state.lensId].map(c => c.id===id || c.code===id ? {...c, status} : c);
+    this.setState({candidates:cands, selectedId:null, counter:null});
+    if (msg) this.toast(msg);
+  }
+
+  // ---------- AI ----------
+  async submitCommand(textArg){
+    const q = ((textArg!=null?textArg:this.state.command)||'').trim();
+    if (!q){ this.focusCmd(); return; }
+    const label = this.state.tab==='radar'?'盯盤 Radar':(this.state.tab==='lab'?'策略 Lab':'部位 Cockpit');
+    this.setState({command:q, aiOpen:true, aiLoading:true, aiResult:null, aiContextLabel:label});
+    const prompt = `你是 Agora —— 一個給專業股票交易員的 AI 交易桌助手。使用者目前在「${label}」工作區。請把使用者的交易需求拆解成結構化研究計畫。\n\n使用者輸入：「${q}」\n\n請只回傳 JSON（繁體中文內容），格式如下，不要任何多餘文字：\n{"summary":"兩三句話總結你理解的需求與打算怎麼做","taskType":"任務類型短語，如 產業落後補漲 / 分點籌碼研究 / 部位複盤","thesis":"一句話描述解析出的交易假說","plan":["步驟1","步驟2","步驟3","步驟4"],"risks":["風險或盲點1","風險2","風險3"],"actions":["建立盯盤 Lens","產生候選池","建立研究任務"]}\n\n注意：你是專業交易工具，使用專業籌碼/產業/技術語彙，不要散戶口吻，不要保證獲利，不要提及下單。`;
+    try {
+      const raw = await window.claude.complete(prompt);
+      const result = this.parseAi(raw);
+      this.setState({aiLoading:false, aiResult:result});
+    } catch(e){
+      this.setState({aiLoading:false, aiResult:{summary:'AI 暫時無法連線，請稍後再試。', taskType:'錯誤', thesis:'—', plan:[], risks:[], actions:[]}});
+    }
+  }
+  parseAi(raw){
+    let obj = null;
+    try { obj = JSON.parse(raw); } catch(e){
+      const m = raw && raw.match(/\{[\s\S]*\}/);
+      if (m){ try { obj = JSON.parse(m[0]); } catch(e2){} }
+    }
+    if (!obj) return {summary: (raw||'').slice(0,400), taskType:'AI 回覆', thesis:'—', plan:[], risks:[], actions:[]};
+    return {
+      summary: obj.summary||'', taskType: obj.taskType||'研究任務', thesis: obj.thesis||'',
+      plan: Array.isArray(obj.plan)?obj.plan:[], risks: Array.isArray(obj.risks)?obj.risks:[],
+      actions: Array.isArray(obj.actions)?obj.actions:[]
+    };
+  }
+  activeLensName(){ const l=(this.state.candidates?{chip:'籌碼大戶部位建立',laggard:'AI server 落後補漲',breakout:'技術突破'}:{}); return l[this.state.lensId]||'籌碼大戶部位建立'; }
+
+  async runCounter(){
+    const all = this.state.candidates[this.state.lensId]||[];
+    const c = all.find(x=>x.code===this.state.selectedId);
+    if (!c) return;
+    this.setState({counter:{loading:true,text:''}});
+    const prompt = `針對台股 ${c.code} ${c.name}，在「${this.activeLensName()}」策略下，AI 原本看多的理由是：${c.reasons.join('；')}。請用專業交易員角度，給出 3 句以內的「反方論點」(bear case)，指出這個多方論點最可能錯在哪裡。只回繁體中文純文字，不要列點符號以外的多餘文字，不要保證、不要提下單。`;
+    try { const raw = await window.claude.complete(prompt); this.setState({counter:{loading:false,text:(raw||'').trim()}}); }
+    catch(e){ this.setState({counter:{loading:false,text:'反方論點暫時無法產生，請稍後再試。'}}); }
+  }
+
+  // ---------- RENDER ----------
+  renderVals(){
+    const S = this.state;
+    const lensName = {chip:'籌碼大戶部位建立', laggard:'AI server 落後補漲', breakout:'技術突破'};
+    const lensList = [
+      {id:'chip', name:'籌碼大戶部位建立', thesis:'追蹤分點連續吸貨、買盤集中、且價格仍處低檔的個股，捕捉主力建立部位的早期訊號。', updated:'3 分鐘前', highRisk:true},
+      {id:'laggard', name:'AI server 落後補漲', thesis:'AI server 供應鏈中基本面轉強、但股價尚未反應的落後股。', updated:'12 分鐘前', highRisk:false},
+      {id:'breakout', name:'技術突破', thesis:'帶量突破關鍵價位、且假突破風險偏低的個股。', updated:'1 小時前', highRisk:false}
+    ];
+    const activeLens = lensList.find(l=>l.id===S.lensId) || lensList[0];
+
+    // lens tabs
+    const lensTabs = lensList.map(l => ({
+      name:l.name, risk:l.highRisk, run:()=>this.setState({lensId:l.id, selectedId:null, status:'candidate'}),
+      bg: l.id===S.lensId?'var(--ai-soft)':'transparent', fg: l.id===S.lensId?'var(--ai)':'var(--mut)',
+      bd: l.id===S.lensId?'var(--ai-line)':'var(--line2)', weight: l.id===S.lensId?'700':'500'
+    }));
+
+    // status counts (sidebar)
+    const counts = {chip:{candidate:38,discuss:12,monitoring:9,shadow:4,rejected:13,parked:6}, laggard:{candidate:26,discuss:8,monitoring:6,shadow:3,rejected:7,parked:2}, breakout:{candidate:19,discuss:5,monitoring:4,shadow:2,rejected:6,parked:1}}[S.lensId];
+    const statusDefs = [['candidate','候選池'],['discuss','待討論'],['monitoring','監控中'],['shadow','Shadow 中'],['rejected','已剔除'],['parked','Parking']];
+    const statusTabs = statusDefs.map(([k,label]) => ({
+      label, count: counts[k], run:()=>this.setState({status:k, selectedId:null}),
+      bg: S.status===k?'var(--ai-soft)':'transparent', fg: S.status===k?'var(--ai)':'var(--mut)', weight: S.status===k?'700':'500'
+    }));
+    const statusTitleMap = {candidate:'候選池', discuss:'待討論', monitoring:'監控中', shadow:'Shadow 中', rejected:'已剔除', parked:'Parking Lot'};
+
+    // board columns + rows (lens-specific)
+    const colDefs = {
+      chip: ['#','標的','籌碼分數','連買','集中度','出貨風險','流動性','狀態'],
+      laggard: ['#','標的','籌碼分數','連買','集中度','出貨風險','流動性','狀態'],
+      breakout: ['#','標的','籌碼分數','連買','集中度','出貨風險','流動性','狀態']
+    };
+    const colsCss = {chip:'28px 1.5fr 92px 52px 70px 78px 64px 80px'}[S.lensId] || '28px 1.5fr 92px 52px 70px 78px 64px 80px';
+    const list = this.filteredCandidates();
+    const boardRows = list.map(c => {
+      const sm = this.statusMeta(c.status); const st = this.toneC(sm.tone);
+      const cc = this.toneC(this.concTone(c.conc)); const rc = this.toneC(this.riskTone(c.dist));
+      const selected = c.code===S.selectedId;
+      return {
+        open:()=>this.setState({selectedId:c.code, counter:null}),
+        bg: selected?'var(--ai-soft)':'transparent',
+        cells:[
+          {isRank:true, v:String(c.rank).padStart(2,'0'), color: selected?'var(--ai)':'var(--faint)'},
+          {isSym:true, code:c.code, name:c.name},
+          {isBar:true, v:c.chip, pct:c.chip+'%', color: selected?'var(--ai)':'var(--mut)'},
+          {isNum:true, v:c.buyDays},
+          {isChip:true, v:c.conc, bg:cc.bg, fg:cc.fg},
+          {isChip:true, v:c.dist, bg:rc.bg, fg:rc.fg},
+          {isText:true, v:c.liq},
+          {isChip:true, v:sm.label, bg:st.bg, fg:st.fg}
+        ]
+      };
+    });
+
+    // selected candidate (drawer)
+    const allCand = S.candidates[S.lensId]||[];
+    const selRaw = allCand.find(c=>c.code===S.selectedId);
+    let sel = null;
+    if (selRaw){
+      const sm = this.statusMeta(selRaw.status); const st = this.toneC(sm.tone);
+      sel = {...selRaw, statusLabel:sm.label, statusBg:st.bg, statusFg:st.fg};
+    }
+    const counterState = S.counter;
+
+    // widgets (lens dashboard)
+    const widgets = this.buildWidgets(S.lensId);
+
+    // quick actions per tab
+    const qa = {
+      radar:[['新增盯盤',()=>{this.setState({command:'幫我建立一個盯盤策略：'});this.focusCmd();}],['分點檢查',()=>this.submitCommand('幫我檢查 8086 最近 10 天分點連續買進狀況，並檢查同券商其他分點是否在同族群出貨')],['找同族群',()=>this.submitCommand('找出與 8086 同族群、籌碼結構相似的個股')],['異常提醒',()=>this.toast('已開啟本 Lens 異常提醒設定')]],
+      lab:[['產業落後補漲',()=>this.submitCommand('我覺得 AI server 供應鏈會漲，幫我找同產業還沒反應的落後股並依相似度與落後幅度排序')],['分點籌碼研究',()=>this.submitCommand('追蹤 8086 近 10 日分點連續買，並檢查同券商是否在同族群出貨')],['多標的比較',()=>this.submitCommand('比較 8086 / 3017 / 3035 誰比較像主升段前的籌碼結構')],['反方論點',()=>this.toast('請先選一個 Mission 再產生反方論點')]],
+      cockpit:[['檢查 thesis',()=>this.submitCommand('幫我檢查目前持有的 8086 原始 thesis 是否還成立')],['檢查風險',()=>this.submitCommand('檢查我目前部位中風險升高、thesis 弱化的標的')],['找替代標的',()=>this.toast('已在 Shadow 中尋找替代標的')],['減碼計畫',()=>this.toast('已建立減碼計畫草稿')]]
+    }[S.tab];
+    const quickActions = qa.map(([label,run])=>({label,run}));
+
+    // lab
+    const labStatusDefs = [['active','進行中'],['completed_review','已完成'],['shadowing','Shadow 中'],['converted','已轉成盯盤'],['archived','已歸檔']];
+    const labCounts = {active:1,completed_review:1,shadowing:1,converted:1,archived:0};
+    const labFilter = {active:['in_progress'],completed_review:['completed_review'],shadowing:['shadowing'],converted:['converted'],archived:['archived']};
+    const labStatusTabs = labStatusDefs.map(([k,label])=>({
+      label, count: labCounts[k], run:()=>this.setState({labStatus:k}),
+      bg: S.labStatus===k?'var(--ai)':'var(--panel)', fg: S.labStatus===k?'var(--on-ai)':'var(--mut)', bd: S.labStatus===k?'var(--ai)':'var(--line2)'
+    }));
+    const missionStatusTone = {in_progress:'ai', completed_review:'warn', shadowing:'ai', converted:'good', archived:'neutral'};
+    const visibleMissions = S.missions.filter(m=> (labFilter[S.labStatus]||[]).includes(m.status));
+    const missionsView = visibleMissions.map(m=>{
+      const t = this.toneC(missionStatusTone[m.status]||'neutral');
+      return {...m, open:()=>this.setState({missionId:m.id}), statusBg:t.bg, statusFg:t.fg, bd: m.id===S.missionId?'var(--ai-line)':'var(--line)'};
+    });
+    const activeMissionRaw = S.missions.find(m=>m.id===S.missionId) || S.missions[0];
+    const activeMission = activeMissionRaw ? {
+      ...activeMissionRaw,
+      plan: activeMissionRaw.plan.map(p=>({t:p.t, icon: p.done?'✓':p.n, bg: p.done?'var(--ai)':'var(--panel3)', fg: p.done?'var(--on-ai)':'var(--mut)'})),
+      rows: activeMissionRaw.rows.map(r=>({...r, simPct:r.sim+'%', add:()=>this.toast(r.code+' 已加入盯盤 Radar')}))
+    } : null;
+    const missionSelected = !!activeMission;
+
+    // cockpit
+    const cockDefs = [['all','全部部位'],['attention','需要注意'],['weakening','Thesis 弱化'],['risk','風險升高'],['shadow','Shadow 替代'],['closed','已平倉']];
+    const thesisTone = {intact:'good', improved:'ai', weakening:'warn', invalidated:'bad', needs_review:'warn'};
+    const thesisLabelMap = {intact:'成立', improved:'轉強', weakening:'弱化', invalidated:'已失效', needs_review:'待覆核'};
+    const cockCounts = {all:S.positions.length, attention:2, weakening:1, risk:1, shadow:1, closed:0};
+    const cockStatusTabs = cockDefs.map(([k,label])=>({
+      label, count: cockCounts[k], run:()=>this.setState({cockStatus:k}),
+      bg: S.cockStatus===k?'var(--ai)':'var(--panel)', fg: S.cockStatus===k?'var(--on-ai)':'var(--mut)', bd: S.cockStatus===k?'var(--ai)':'var(--line2)'
+    }));
+    let posList = S.positions;
+    if (S.cockStatus==='weakening') posList = posList.filter(p=>p.thesis==='weakening');
+    else if (S.cockStatus==='risk') posList = posList.filter(p=>p.thesis==='invalidated'||p.pnlNum<0);
+    else if (S.cockStatus==='attention') posList = posList.filter(p=>['weakening','invalidated','needs_review'].includes(p.thesis));
+    const lensOrder = ['籌碼大戶部位建立','AI server 落後補漲'];
+    const posGroups = lensOrder.map(ln=>{
+      const rows = posList.filter(p=>p.lens===ln);
+      if (!rows.length) return null;
+      return {name:ln, pnl: rows.length+' 檔', rows: rows.map(p=>this.posRow(p, thesisTone, thesisLabelMap))};
+    }).filter(Boolean);
+    const activePosRaw = S.positions.find(p=>p.id===S.posId) || S.positions[0];
+    let activePos = null;
+    if (activePosRaw){
+      const tt = this.toneC(thesisTone[activePosRaw.thesis]);
+      activePos = {...activePosRaw, thesisLabel:thesisLabelMap[activePosRaw.thesis], thesisBg:tt.bg, thesisFg:tt.fg,
+        metrics: activePosRaw.metrics.map((m,i)=>({k:m.k, v:m.v, c: i===0?(activePosRaw.pnlNum<0?'var(--down)':'var(--up)'):'var(--tx)'})),
+        changes: activePosRaw.changes.map(c=>({t:c.t, dot: c.c==='up'?'var(--up)':(c.c==='down'?'var(--down)':'var(--warn)')})),
+        checklist: activePosRaw.checklist.map(ck=>({t:ck.t, mark: ck.ok?'✓':'', bg: ck.ok?'var(--up-soft)':'transparent', bd: ck.ok?'var(--up)':'var(--line2)', fg:'var(--up)', tc: ck.ok?'var(--up)':'var(--mut)'}))
+      };
+    }
+    const posSelected = !!activePos;
+
+    // change log
+    const changeLog = [
+      {tag:'移到首排', title:'把「出貨風險」移到第一排', reason:'你最近 5 次候選討論中，有 3 次因關聯分點賣超而剔除標的，AI 因此提高出貨風險的顯示優先級。'},
+      {tag:'隱藏', title:'隱藏 RSI 面板', reason:'你連續 8 次未開啟此面板，且曾標記「太雜訊」。'},
+      {tag:'調權重', title:'提高流動性權重', reason:'你最近拒絕了 4 檔低成交量候選股，AI 將流動性納入更高排序權重。'}
+    ].map((c,i)=>({...c, accept:()=>{this.toast('已接受變更：'+c.title);}, undo:()=>{this.toast('已還原：'+c.title);}, never:()=>{this.toast('AI 不會再這樣做');}}));
+
+    // main tab styling
+    const tabColor = (t)=> S.tab===t?(this.props.theme==='daylight'?'var(--ai)':'var(--tx)'):'var(--mut)';
+    const tc = (t)=> S.tab===t?'var(--ai)':'var(--mut)';
+
+    return {
+      rootRef: this.root,
+      trader: this.props.trader || '陳柏宇', persona: this.props.persona || '籌碼派',
+      theme: this.props.theme,
+      // command
+      command: S.command, placeholder: {radar:'輸入你想建立的盯盤策略，例如：找可能有大戶建立部位的股票…', lab:'輸入交易假說，例如：我覺得 ABC 因為 AI server 需求可能會漲，幫我找落後補漲股…', cockpit:'輸入部位問題，例如：幫我檢查 XYZ 原本 thesis 是否還成立…'}[S.tab],
+      cmdBorder: S.aiOpen?'var(--ai-line)':'var(--line2)',
+      onCmdInput: (e)=>this.setState({command:e.target.value}),
+      onCmdKey: (e)=>{ if(e.key==='Enter') this.submitCommand(); },
+      onCmdFocus: ()=>{},
+      submitCommand: ()=>this.submitCommand(),
+      closeAi: ()=>this.setState({aiOpen:false}),
+      aiOpen: S.aiOpen, aiLoading: S.aiLoading, aiHasResult: !!S.aiResult && !S.aiLoading,
+      aiResult: S.aiResult ? {...S.aiResult, plan: S.aiResult.plan.map((t,i)=>({n:String(i+1), t})), actions: S.aiResult.actions.map(label=>({label, run:()=>{this.setState({aiOpen:false}); this.toast('已建立：'+label);}}))} : null,
+      aiContextLabel: S.aiContextLabel,
+      // tabs
+      isRadar: S.tab==='radar', isLab: S.tab==='lab', isCockpit: S.tab==='cockpit',
+      goRadar:()=>this.setState({tab:'radar'}), goLab:()=>this.setState({tab:'lab'}), goCockpit:()=>this.setState({tab:'cockpit'}),
+      radarTabLine: S.tab==='radar'?'var(--ai)':'transparent', labTabLine: S.tab==='lab'?'var(--ai)':'transparent', cockTabLine: S.tab==='cockpit'?'var(--ai)':'transparent',
+      radarTabColor: tabColor('radar'), labTabColor: tabColor('lab'), cockTabColor: tabColor('cockpit'),
+      radarTabWeight: S.tab==='radar'?'700':'500', labTabWeight: S.tab==='lab'?'700':'500', cockTabWeight: S.tab==='cockpit'?'700':'500',
+      quickActions,
+      // radar
+      radarGrid: sel?'248px 1fr 360px':'248px 1fr', lensTabs, activeLens, statusTabs,
+      newLens:()=>{this.setState({command:'幫我建立一個新的盯盤策略 Lens：'}); this.focusCmd();},
+      statusTitle: statusTitleMap[S.status], boardCount: list.length+' 檔',
+      boardCols: colDefs[S.lensId], boardColsCss: colsCss, boardRows,
+      poolFootnote: '顯示 '+list.length+' / '+counts[S.status==='candidate'?'candidate':S.status]+' 檔 · 剔除的標的會保留為負面樣本，不會真的刪除',
+      radarView:S.radarView, showBoard: S.radarView==='board', showDash: S.radarView==='dashboard',
+      viewBoard:()=>this.setState({radarView:'board'}), viewDash:()=>this.setState({radarView:'dashboard'}),
+      boardToggleBg: S.radarView==='board'?'var(--ai)':'transparent', boardToggleFg: S.radarView==='board'?'var(--on-ai)':'var(--mut)',
+      dashToggleBg: S.radarView==='dashboard'?'var(--ai)':'transparent', dashToggleFg: S.radarView==='dashboard'?'var(--on-ai)':'var(--mut)',
+      widgets,
+      openChangeLog:()=>this.setState({changeLogOpen:true}), closeChangeLog:()=>this.setState({changeLogOpen:false}), changeLogOpen:S.changeLogOpen, changeLog,
+      stop:(e)=>{ e.stopPropagation(); },
+      // drawer
+      drawerOpen: !!sel, sel, closeDrawer:()=>this.setState({selectedId:null, counter:null}),
+      actMonitor: ()=>this.setCandidateStatus(S.selectedId,'approved_for_monitoring', sel?sel.code+' 已加入監控池':''),
+      actShadow: ()=>this.setCandidateStatus(S.selectedId,'shadowing', sel?sel.code+' 已送 Shadow 追蹤':''),
+      actResearch: ()=>this.setCandidateStatus(S.selectedId,'needs_more_research', sel?sel.code+' 已列入需更多研究':''),
+      actPark: ()=>this.setCandidateStatus(S.selectedId,'parked', sel?sel.code+' 已暫放 Parking':''),
+      actReject: ()=>this.setCandidateStatus(S.selectedId,'rejected', sel?sel.code+' 已剔除（保留為負面樣本）':''),
+      actTrain: ()=>this.toast('已開啟「寫入我的規則」— 訓練 AI'),
+      askCounter: ()=>this.runCounter(),
+      counterShown: !!counterState, counterLoading: !!(counterState && counterState.loading), counterReady: !!(counterState && !counterState.loading), counter: counterState? counterState.text : '',
+      // lab
+      labGrid: '1fr 1.25fr', labStatusTabs, missions: missionsView, missionSelected, activeMission,
+      missionToRadar:()=>{this.toast('已轉成盯盤 Lens'); this.setState({tab:'radar'});},
+      missionShadow:()=>this.toast('Mission 候選已全部送 Shadow'),
+      missionJournal:()=>this.toast('已寫入 Journal'),
+      // cockpit
+      cockGrid: '1fr 1.2fr', cockStatusTabs, posGroups, posSelected, activePos,
+      posReview:()=>this.submitCommand('幫我複盤 '+(activePos?activePos.code:'')+' '+(activePos?activePos.name:'')+' 的原始 thesis 是否還成立，並指出最可能失效的條件'),
+      posShadow:()=>this.toast('已在 Shadow 中尋找替代標的'),
+      posPlan:()=>this.toast('已建立減碼計畫草稿'),
+      // toast
+      toast: S.toast
+    };
+  }
+
+  posRow(p, thesisTone, thesisLabelMap){
+    const tt = this.toneC(thesisTone[p.thesis]);
+    return {...p, open:()=>this.setState({posId:p.id}),
+      pnlColor: p.pnlNum<0?'var(--down)':'var(--up)',
+      thesisLabel: thesisLabelMap[p.thesis], thesisBg: tt.bg, thesisFg: tt.fg,
+      bd: p.id===this.state.posId?'var(--ai-line)':'var(--line)',
+      aiRead: this.posReadText(p)};
+  }
+  posReadText(p){
+    const m = {p1:'吸貨分點轉為小幅調節，比價效應仍在；建議縮小停利區間並觀察 2 日。', p2:'籌碼持續沉澱，thesis 完整，可續抱。', p3:'基本面與籌碼雙雙轉強，原 thesis 強化，續抱並可加碼。', p4:'thesis 已失效，跌破停損且分點倒貨，建議停損出場。'};
+    return m[p.id]||'';
+  }
+
+  html(s){ return React.createElement('div', {dangerouslySetInnerHTML:{__html:s}}); }
+  buildWidgets(lensId){
+    const heat = (vals)=>'<div style="display:grid; grid-template-columns:repeat(10,1fr); gap:3px;">'+vals.map(v=>'<div style="aspect-ratio:1; border-radius:3px; background:rgba(227,169,78,'+v+');"></div>').join('')+'</div>';
+    const bars = (data)=>'<div style="display:flex; flex-direction:column; gap:7px;">'+data.map(d=>'<div style="display:flex; align-items:center; gap:8px;"><span style="width:38px; font-size:11px; color:var(--mut);">'+d[0]+'</span><div style="flex:1; height:9px; background:var(--line2); border-radius:3px; overflow:hidden;"><div style="width:'+d[1]+'%; height:100%; background:var(--ai);"></div></div><span style="width:30px; text-align:right; font-size:11px; color:var(--tx);">'+d[2]+'</span></div>').join('')+'</div>';
+    const scatter = ()=>{ const pts=[[20,70],[35,55],[48,40],[60,62],[72,30],[55,78],[40,85],[80,48]]; return '<div style="position:relative; height:130px; border-left:1px solid var(--line2); border-bottom:1px solid var(--line2);">'+pts.map(p=>'<div style="position:absolute; left:'+p[0]+'%; bottom:'+p[1]+'%; width:8px; height:8px; border-radius:50%; background:var(--ai); transform:translate(-50%,50%);"></div>').join('')+'<div style="position:absolute; bottom:-18px; right:0; font-size:9px; color:var(--faint);">相似度 →</div></div>'; };
+    const gauge = (pct,label)=>'<div style="display:flex; flex-direction:column; align-items:center; gap:8px; padding:6px 0;"><div style="font-size:30px; font-weight:700; color:var(--ai); font-family:\'IBM Plex Mono\',monospace;">'+pct+'</div><div style="width:100%; height:7px; background:var(--line2); border-radius:4px; overflow:hidden;"><div style="width:'+pct+'; height:100%; background:var(--ai);"></div></div><div style="font-size:11px; color:var(--mut);">'+label+'</div></div>';
+    const hvals = [.15,.25,.4,.55,.7,.85,.95,.6,.45,.3, .2,.35,.5,.65,.8,.9,.7,.5,.4,.25, .1,.2,.3,.45,.6,.75,.85,.55,.35,.2, .25,.4,.55,.7,.85,.95,.8,.6,.4,.3, .15,.3,.45,.6,.75,.9,.7,.5,.35,.2];
+    return [
+      {title:'分點 × 日期 吸貨熱度', sub:'近 10 日 Top 5 分點淨買', span:'span 1', pinned:true, feedback:()=>this.toast('Widget 回饋：分點熱圖'), body: this.html(heat(hvals))},
+      {title:'連續淨買天數', sub:'候選池 Top 排序', span:'span 1', pinned:false, feedback:()=>this.toast('Widget 回饋：連買天數'), body: this.html(bars([['8086',90,'7'],['6669',78,'6'],['3017',64,'5'],['3035',50,'4']]))},
+      {title:'相似度 × 漲幅落後 散布', sub:'同族群比價缺口', span:'span 1', pinned:false, feedback:()=>this.toast('Widget 回饋：散布圖'), body: this.html(scatter())},
+      {title:'出貨風險警示', sub:'關聯分點反向流偵測', span:'span 1', pinned:true, feedback:()=>this.toast('Widget 回饋：出貨風險'), body: this.html(gauge('低','本 Lens 整體出貨風險'))}
+    ];
+  }
+
+  focusCmd(){ this.setState({aiOpen:false}); setTimeout(()=>{ const el=this.root.current && this.root.current.querySelector('input'); if(el) el.focus(); }, 30); }
+}
+</script>
+<script>
+(async () => {
+  // Prepend so page-supplied @page / break rules (deck-stage's margin:0,
+  // author CSS) keep source-order precedence over the baseline.
+  const baseCss = document.createElement('style');
+  baseCss.textContent = "@media print {\n  @page { margin: 0.5cm; }\n  html, body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }\n  section, article, figure, table { break-inside: avoid; }\n  *, *::before, *::after {\n    animation-delay: -99s !important; animation-duration: .001s !important;\n    animation-iteration-count: 1 !important; animation-fill-mode: both !important;\n    animation-play-state: running !important; transition-duration: 0s !important;\n  }\n}";
+  document.head.prepend(baseCss);
+  if (document.readyState === 'loading') {
+    await new Promise((r) => document.addEventListener('DOMContentLoaded', r, { once: true }));
+  }
+  let ds = document.querySelector('deck-stage');
+  // whenDefined never resolves when nothing registers the element, so only
+  // await it when a <deck-stage> tag exists (and race a timeout regardless).
+  if (ds && !customElements.get('deck-stage')) {
+    try {
+      await Promise.race([
+        customElements.whenDefined('deck-stage'),
+        new Promise((r) => setTimeout(r, 3000)),
+      ]);
+    } catch (e) {}
+    ds = document.querySelector('deck-stage');
+  }
+  // dc-runtime assigns window.DCLogic at init and mounts into #dc-root on
+  // DOMContentLoaded; settle on that subtree so React has rendered before
+  // print(). Non-DC pages fall through to weighing body.
+  const isDc = !ds && 'DCLogic' in window;
+  const settleRoot = ds || (isDc ? document.getElementById('dc-root') : null) || document.body;
+  if (settleRoot) {
+    // Weigh only content children — skip script/style/template so inline
+    // Babel/CSS doesn't register as stable "content" before the framework
+    // has mounted anything.
+    const MEDIA = 'img,svg,canvas,video,picture,iframe,embed,object';
+    const weigh = () => {
+      let text = 0, media = 0;
+      for (const c of settleRoot.children) {
+        const t = c.tagName;
+        if (t === 'SCRIPT' || t === 'STYLE' || t === 'TEMPLATE') continue;
+        text += (c.textContent || '').trim().length;
+        media += c.querySelectorAll(MEDIA).length + (c.matches(MEDIA) ? 1 : 0);
+      }
+      return text + media * 100;
+    };
+    // "Non-zero and stable" alone is not sufficient to mean rendered: generic
+    // body can carry a static shell while async main content is pending, and
+    // #dc-root can carry the root DC's static text while child refs are still
+    // .sc-placeholder boxes. Gate generic on readyState 'complete', and never
+    // accept stability while a dc-runtime placeholder is present.
+    const isGeneric = settleRoot === document.body;
+    const deadline = Date.now() + 15000;
+    let last = -1, stable = 0;
+    while (Date.now() < deadline) {
+      const n = weigh();
+      const ready =
+        (!isGeneric || document.readyState === 'complete') &&
+        !settleRoot.querySelector('.sc-placeholder');
+      if (n > 0 && n === last && ready) { if (++stable >= 2) break; } else { stable = 0; }
+      last = n;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  }
+  try { await document.fonts.ready; } catch (e) {}
+  // Jump every animation to its end state so print() never captures a slide
+  // mid-entrance. Ordering matters: the 0s-transition style must be live
+  // BEFORE data-deck-active is set so attribute-keyed transitions don't
+  // start a (now-0s) run from the pre-active base.
+  const st = document.createElement('style');
+  st.textContent = '*,*::before,*::after{animation-delay:-99s !important;animation-duration:.001s !important;animation-iteration-count:1 !important;animation-fill-mode:both !important;animation-play-state:running !important;transition-duration:0s !important}';
+  document.head.appendChild(st);
+  for (const d of document.querySelectorAll('deck-stage')) {
+    for (const c of d.children) {
+      const t = c.tagName;
+      if (t === 'SCRIPT' || t === 'STYLE' || t === 'TEMPLATE') continue;
+      c.setAttribute('data-deck-active', '');
+    }
+  }
+  try {
+    const sweep = () => {
+      for (const a of document.getAnimations()) {
+        try { a.finish(); } catch (e) {
+          try { a.currentTime = (a.effect && a.effect.getComputedTiming().duration) || 0; a.pause(); } catch (e2) {}
+        }
+      }
+    };
+    sweep();
+    await new Promise((r) => requestAnimationFrame(r));
+    sweep();
+    await new Promise((r) => requestAnimationFrame(r));
+  } catch (e) {}
+  setTimeout(() => { try { window.print(); } catch (e) {} }, 200);
+})();
+</script>
+</body>
+</html>

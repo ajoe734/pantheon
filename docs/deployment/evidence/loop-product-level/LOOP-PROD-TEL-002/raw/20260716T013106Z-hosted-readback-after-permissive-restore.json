@@ -1,0 +1,106 @@
+{
+  "schema_version": "loop_product_raw_evidence.v1",
+  "task_id": "LOOP-PROD-TEL-002",
+  "captured_at": "2026-07-16T01:31:06Z",
+  "source": "GitHub workflow run metadata and public HTTPS probes from the task worktree after the strict root deployment failed",
+  "base_url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+  "strict_product_target": {
+    "latest_completed_strict_root_run_id": 29462890670,
+    "latest_completed_strict_root_sha": "6915f1fe7a2cc9d97e8160af0e351a34cc8e4bd3",
+    "latest_attempted_dev_head_sha": "55b2202bbf02f1ff58245728447b03320d9705a5",
+    "required_profile": "dev/root/strict",
+    "required_probe": "run_loop_prod_tel_002_probe=true"
+  },
+  "restoration_run": {
+    "workflow": "Pantheon Nonprod Deploy",
+    "workflow_database_id": 269991390,
+    "run_id": 29463957129,
+    "job_id": 87513060855,
+    "url": "https://github.com/ajoe734/pantheon/actions/runs/29463957129",
+    "event": "workflow_dispatch",
+    "head_branch": "publish/v2026.07.15.2",
+    "head_sha": "be105af5f1b381f518d767efb9f72813139d5077",
+    "created_at": "2026-07-16T01:22:31Z",
+    "completed_at": "2026-07-16T01:24:51Z",
+    "conclusion": "success",
+    "requested_delivery": {
+      "environment": "dev",
+      "component": "bff",
+      "auth_profile": "permissive-stub",
+      "requested_ref": "a10f752b3ea4420f271535e255f2d4e7d3d498b2",
+      "allow_dirty": false,
+      "allow_example_env": false,
+      "run_loop_prod_tel_002_probe": false
+    },
+    "prepared_worktree": "/home/lupin/pantheon-ci-deploy/dev-bff",
+    "prepared_sha": "a10f752b3ea4420f271535e255f2d4e7d3d498b2",
+    "bff_source_sha_verified": "a10f752b3ea4420f271535e255f2d4e7d3d498b2",
+    "public_bff_smoke": "passed",
+    "agora_restart_persistence_smoke": "passed",
+    "product_level_conclusion": "availability restored only; not accepted for LOOP-PROD-TEL-002 because it is BFF-only, stale SHA, permissive-stub, and did not run the canonical paper lifecycle hosted probe"
+  },
+  "version_response": {
+    "http_status": 200,
+    "service": "operator-bff",
+    "version": "0.2.0",
+    "source_commit_sha": "a10f752b3ea4420f271535e255f2d4e7d3d498b2",
+    "source_commit_known": true,
+    "image_digest": "unknown",
+    "build_time": "unknown",
+    "environment": "dev",
+    "config_posture": {
+      "auth_stub": true,
+      "auth_mode": "permissive",
+      "dev_login_enabled": false,
+      "mfa_required": false,
+      "assistant_kernel_enabled": true
+    }
+  },
+  "healthz_response": {
+    "http_status": 200,
+    "status": "ok",
+    "service": "operator-bff",
+    "live": true,
+    "ready": true,
+    "dependencies": {
+      "runtime_manager": "ok",
+      "governance": "ok",
+      "deployment": "ok"
+    },
+    "timestamp": "2026-07-16T01:29:36Z"
+  },
+  "health_response": {
+    "http_status": 200,
+    "status": "ok",
+    "service": "operator-bff",
+    "version": "0.2.0",
+    "timestamp": "2026-07-16T01:29:36Z"
+  },
+  "security_probes": {
+    "unauthenticated_loop_runs": {
+      "route": "GET /bff/v5/loop-runs",
+      "http_status": 401,
+      "expected": 401,
+      "conclusion": "pass"
+    }
+  },
+  "workflow_state_at_capture": {
+    "workflow": "Pantheon Nonprod Deploy",
+    "workflow_database_id": 269991390,
+    "state": "disabled_manually"
+  },
+  "admission": {
+    "exact_strict_source_sha": false,
+    "strict_auth": false,
+    "dev_login_enabled": false,
+    "hosted_lifecycle_proof_available": false,
+    "overall": "blocked"
+  },
+  "safety": {
+    "public_bff_available": true,
+    "live_broker_enabled": false,
+    "live_capital_effect": false,
+    "permissive_fallback_used_as_product_evidence": false
+  },
+  "conclusion": "The public dev BFF is reachable after a separate permissive-stub BFF-only restore, but it serves stale source a10f752b3 and cannot satisfy exact strict deployment identity, auth posture, or canonical lifecycle hosted proof for LOOP-PROD-TEL-002."
+}

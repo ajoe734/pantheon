@@ -33,8 +33,32 @@ pressure, restart budget, and circuit breaker state. If the supervisor is dead
 or stale and restart gates allow it, the watchdog writes safe mode into
 `.orchestrator/state.json` and starts the supervisor.
 
+The systemd service is a oneshot with `KillMode=process`. The watchdog main
+process exits after each probe, but a supervisor child started by a permitted
+restart must remain alive in its own session. The singleton flock and later
+watchdog ticks, not the oneshot cgroup teardown, govern that child.
+
 Do not treat tmux or dashboard uptime as supervisor health. The dashboard can
 remain up while the supervisor and auto workers are dead.
+
+## Intentional Deployment Restarts
+
+`scripts/sync-dev-root.sh` records a short-lived restart intent before it sends
+`SIGTERM` to a live supervisor after a code or config update. The intent is
+bound to both the old supervisor PID and the full target commit SHA. If the
+intent cannot be written durably, sync fails closed and leaves the running
+supervisor untouched.
+
+On the next unhealthy probe, a valid intent lets the watchdog bypass an open
+crash-loop circuit and the ordinary restart budget. Resource-pressure gates
+still take precedence. A successful handoff consumes the intent, closes the
+old crash circuit with an audit reason, and records the event in
+`intentional_restart_attempts`; it does not add a crash-budget attempt. Stale,
+malformed, or PID-mismatched intents do not authorize a restart.
+
+The default intent file is next to the canonical runtime state at
+`supervisor-restart-intent.json`, not in the deploy checkout. Its default TTL is
+300 seconds.
 
 ## Install
 
@@ -43,6 +67,49 @@ Preferred install:
 ```bash
 python3 scripts/supervisor_watchdog_install.py --method auto --start-now
 ```
+
+When the supervisor command checkout and canonical status checkout are
+different, pin the generated live config explicitly. Relative config paths are
+not safe for this split-root topology:
+
+```bash
+python3 scripts/provision_live_supervisor_config.py \
+  --repo-config /home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/config.json \
+  --live-config /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json \
+  --command-root /home/lupin/pantheon-ci-deploy/dev-root \
+  --status-root /home/lupin/pantheon
+python3 scripts/supervisor_watchdog_install.py \
+  --repo /home/lupin/pantheon-ci-deploy/dev-root \
+  --config /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json \
+  --method auto \
+  --start-now
+```
+
+Provisioning converts the watchdog state, normal metrics, and contention
+metrics paths to absolute paths beneath the canonical status root. This keeps
+the watchdog writer and `supervisor_runtime_health.py` reader on the same files;
+relative watchdog paths would otherwise resolve beneath the immutable command
+checkout and make a healthy persistent loop appear unmonitored.
+
+The dev root deployment performs these commands automatically after the root
+stack validations pass. It fails the deployment unless the user-systemd timer
+(or cron fallback), watchdog probe, singleton supervisor, and canonical
+heartbeat all become healthy. For user systemd it also enables and verifies
+login linger, so the timer starts after a reboot without requiring an
+interactive login.
+
+Before the watchdog starts, split-root config provisioning also creates the
+ignored canonical `.orchestrator/approval-queue.json` marker when it is absent.
+Creation is exclusive and owner-only; an existing valid v2 queue is validated
+and preserved byte-for-byte so pending or historical approvals are never reset.
+This marker is part of the isolated worker's coordination-root contract, not a
+Git-tracked deployment artifact.
+
+On a first deployment, an absent `.orchestrator/state.json` is an expected
+bootstrap condition: the watchdog may start the supervisor, which creates the
+canonical state under its singleton and runtime-state locks. This exception is
+exact. An empty file, invalid JSON, unreadable file, or invalid top-level schema
+still suppresses restart as `resource_pressure:state_read_failed`.
 
 `--method auto` prefers a user systemd timer and falls back to cron when user
 systemd is unavailable.
@@ -82,7 +149,8 @@ Healthy output must have:
 - `healthy: true`
 - `supervisor.alive: true`
 - `supervisor.heartbeat_age_seconds` under the configured watchdog threshold
-- a fresh watchdog state update, normally under 180 seconds old
+- a fresh watchdog probe, normally under 180 seconds old, proven by either the
+  serialized watchdog state update or a valid lock-contention metric
 
 For a live shell check:
 
@@ -91,6 +159,37 @@ ps -p "$(cat .orchestrator/supervisor.pid)" -o pid,ppid,stat,etime,cmd
 tail -n 40 .orchestrator/logs/supervisor-watchdog-cron.log 2>/dev/null || true
 jq '.last_decision' .orchestrator/watchdog-state.json
 ```
+
+## Lock Contention & Single-Flight Behavior
+
+To prevent supervisor watchdog processes from queuing up and accumulating under lock contention (e.g., when `runtime-admission.lock` is held for a long time by a running supervisor or other worker loops), the watchdog implements a bounded, nonblocking single-flight protocol:
+
+1. **Nonblocking Contention Detection**:
+   - The watchdog attempts to acquire the `runtime-admission.lock` using a nonblocking lock.
+   - If the lock is already held, it immediately returns with a `skip` decision and the `lock_contention` reason without blocking or waiting.
+
+2. **Zero Locked-State Writes & Drop-Safe Metrics**:
+   - Under contention, the watchdog does not attempt to write to the main `watchdog-state.json` or `metrics.jsonl` files (which would trigger blocking writes).
+   - Instead, it attempts a nonblocking write to `.orchestrator/metrics/supervisor-watchdog-contention.jsonl` using a separate `.lock` file.
+   - If the contention metrics lock is also contended, the metric write is dropped and a message is written to `sys.stderr` to prevent secondary blocking loops.
+   - Runtime health uses the newest valid contention metric as probe-freshness
+     evidence while still requiring the serialized watchdog state file to exist.
+
+3. **Diagnostics & JSON Contract**:
+   - When run with `--json`, a contended watchdog probe exits with code `0` and outputs a structured JSON contract detailing the contention event:
+     ```json
+     {
+       "decision": "skip",
+       "reason": "lock_contention",
+       "pid": 123,
+       "new_pid": null,
+       "heartbeat_age_seconds": 45.0,
+       "resource": { ... },
+       "lock_held": true
+     }
+     ```
+   - Standard exit code for a contended run is `0` (since it is a recognized and handled operational state rather than a script crash).
+   - Under systemd or cron, multiple overlapping ticks will exit instantly instead of stacking up.
 
 ## Acceptance For Auto Worker Readiness
 

@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+  "archived_at": "2026-07-11T09:50:56Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+    "title": "Prepare PPL-ALLOC-006 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 PPL-ALLOC-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Persona Promotion Allocation / Wave 2 frontend workbench",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "PPL-ALLOC-003",
+      "PPL-ALLOC-004"
+    ],
+    "artifacts": [
+      "support/sidecars/PPL-ALLOC-006/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-9.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Support-only BFF/frontend handoff packet finalized in PR #3172 (merge 413a2802fe742955efeebecfe3dc934f860f40ef); verified source paths, git diff --check, commit trailers, runtime mirror guard, and smoke acceptance. Parent owner retains absorption decision.",
+    "last_update": "2026-07-11T09:50:56Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "PPL-ALLOC-006",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Verified via gh pr view: PR #251 (task/PPL-ALLOC-006-workbench) OPEN/MERGEABLE at head 436aa32eaa24b4f048ae0b08c8a46686ceb56659, matches packet claim",
+      "Confirmed BFF routes exist in services/control-plane/bff/main.py: /bff/management/promotion-reviews, /bff/management/allocation-policy/evaluate, /bff/rebalances (GET/POST/apply/detail/patch)",
+      "Confirmed PPL-ALLOC-008 still todo in ai-status.json, consistent with emergency-containment gap claim",
+      "Absorption matrix and fail-closed rules are accurate and consistent with Follow-Up 8; no canonical truth touched"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T09:50:56Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ppl-alloc-006-sidecar-bff-handoff-followup-9",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+      "git_clean_required": false,
+      "commit": "b9bddd148b6c057291d9c264dbbad3f478f0e048",
+      "commit_subject": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-9: finalize packet",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support-only BFF/frontend absorption and reviewer handoff.",
+        "Not changing": "canonical truth, BFF/frontend implementation, runtime, registry, governance, or parent lifecycle.",
+        "Composes with": "PPL-ALLOC-006 and PPL-ALLOC-003/004/008 delivery evidence.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+        "Reviewer": "Claude",
+        "Verified": "source existence checks; git diff --check"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+      "ahead": 0,
+      "behind": 6,
+      "push_status": "behind",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "413a2802fe742955efeebecfe3dc934f860f40ef",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only absorption matrix and reviewer decision packet committed at 222afe5db; please review fail-closed delivery claims.",
+      "status": "done",
+      "created_at": "2026-07-11T09:43:45Z",
+      "resolved_at": "2026-07-11T09:46:54Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Verified PR #251 head/state, BFF route existence, and PPL-ALLOC-008 dependency status; absorption matrix and fail-closed claims check out. Approved for owner finalization.",
+      "status": "done",
+      "created_at": "2026-07-11T09:46:54Z",
+      "resolved_at": "2026-07-11T09:50:57Z"
+    }
+  ],
+  "blockers": []
+}

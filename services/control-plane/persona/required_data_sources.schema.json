@@ -1,0 +1,45 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RequiredDataSource",
+  "description": "A first-class data requirement declared by a persona. Describes which dataset the persona needs, how it must be sourced, which connectors can satisfy the requirement, and what policy gates must be cleared before binding.",
+  "type": "object",
+  "required": [
+    "dataset",
+    "market",
+    "cadence",
+    "source_class"
+  ],
+  "properties": {
+    "dataset": {
+      "type": "string",
+      "description": "Stable dataset identifier, e.g. tw_price_daily, tw_options_hourly, finmind_broker_flow."
+    },
+    "market": {
+      "type": "string",
+      "description": "Market scope for this data requirement, e.g. TW, US, HK."
+    },
+    "cadence": {
+      "type": "string",
+      "enum": ["realtime", "minutely", "hourly", "daily", "weekly", "on_demand"],
+      "description": "Required delivery cadence for this dataset."
+    },
+    "source_class": {
+      "type": "string",
+      "enum": ["live_push", "live_pull", "seed_only"],
+      "description": "Classification of the data source binding type. 'live_push' and 'live_pull' require an approved, active connector. 'seed_only' declares a seed label — this class MUST NOT be used as live data source binding proof."
+    },
+    "connector_candidates": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Ordered list of connector IDs that can satisfy this data requirement. The source provisioning reconciler evaluates these in order.",
+      "default": []
+    },
+    "policy_gates": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Policy gate identifiers that must pass before binding is considered active, e.g. require_connector_approved, require_schedule_active, require_freshness_within_1d.",
+      "default": []
+    }
+  },
+  "additionalProperties": false
+}

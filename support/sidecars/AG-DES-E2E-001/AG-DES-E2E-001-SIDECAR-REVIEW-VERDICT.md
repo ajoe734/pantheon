@@ -1,8 +1,8 @@
 # AG-DES-E2E-001-SIDECAR-REVIEW — Reviewer Verdict
 
-**Reviewer:** Claude2  
-**Review date:** 2026-06-21  
-**Verdict:** APPROVED  
+**Reviewer:** Claude2
+**Review date:** 2026-06-21
+**Verdict:** APPROVED
 
 ---
 

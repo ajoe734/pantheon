@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "snapshot_date": "2026-07-02",
+    "snapshot_date": "2026-06-28",
     "owner_task": "BFF-LUV-GAP-001",
     "source_repo": "/home/lupin/code/execute-plans",
     "source_scope": [
@@ -11,7 +11,7 @@
       "execute-plans/src/**",
       "execute-plans/README.md"
     ],
-    "audited_active_endpoint_references": 179,
+    "audited_active_endpoint_references": 175,
     "status_values": [
       "implemented",
       "implemented_by_alias",
@@ -1330,38 +1330,6 @@
     },
     {
       "method": "GET",
-      "path": "/bff/management/shell-summary",
-      "family": "management-console",
-      "status": "implemented",
-      "task_id": "MGMT-LOAD-002",
-      "proof": "test_shell_summary_returns_frontend_contract_shape"
-    },
-    {
-      "method": "POST",
-      "path": "/bff/management/personas/paper-launch",
-      "family": "management-console",
-      "status": "implemented",
-      "task_id": "PPLG-002",
-      "proof": "test_paper_launch_creates_complete_paper_runtime_and_fleet_row"
-    },
-    {
-      "method": "GET",
-      "path": "/bff/management/personas/{personaId}/readiness",
-      "family": "management-console",
-      "status": "implemented",
-      "task_id": "PPLG-002",
-      "proof": "test_paper_launch_creates_complete_paper_runtime_and_fleet_row"
-    },
-    {
-      "method": "POST",
-      "path": "/bff/management/personas/{personaId}/setup/retry",
-      "family": "management-console",
-      "status": "implemented",
-      "task_id": "PPLG-002",
-      "proof": "test_paper_launch_step_failure_is_repairable_and_retry_starts_runtime"
-    },
-    {
-      "method": "GET",
       "path": "/bff/assistant/control-mode",
       "family": "unknown",
       "status": "implemented"
@@ -1380,6 +1348,12 @@
     },
     {
       "method": "POST",
+      "path": "/bff/assistant/providers",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
       "path": "/bff/assistant/control-mode/activate",
       "family": "unknown",
       "status": "implemented"
@@ -1393,6 +1367,12 @@
     {
       "method": "POST",
       "path": "/bff/assistant/provider/reauth",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/assistant/provider/reauth/{id}/code",
       "family": "unknown",
       "status": "implemented"
     }

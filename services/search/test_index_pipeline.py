@@ -590,13 +590,54 @@ def test_notify_search_index_refresh_fires_on_completed_run():
         importlib.reload(ingest_main)
         # Reload to pick up env var
         assert ingest_main.SEARCH_INGEST_NOTIFY_URL == "http://search-svc:8098"
+        fake_response = mock.Mock()
+        fake_response.__enter__ = mock.Mock(return_value=fake_response)
+        fake_response.__exit__ = mock.Mock(return_value=None)
+        fake_response.read.return_value = json.dumps(
+            {
+                "truth": {
+                    "index_refreshed": True,
+                    "pipeline_run_id": "pipe-run-abc",
+                    "freshness_status": "fresh",
+                    "freshness_within_sla": True,
+                    "materialized": True,
+                    "materialized_matches_completion": True,
+                }
+            }
+        ).encode("utf-8")
+        fake_response.getcode.return_value = 200
         with mock.patch("urllib.request.urlopen") as mock_open:
-            ingest_main._notify_search_index_refresh("run-abc")
+            mock_open.return_value = fake_response
+            summary = ingest_main._notify_search_index_refresh(
+                "run-abc",
+                connector_id="conn-test",
+                source_type="paper",
+                trace_id="trace-run-abc",
+                normalized_count=2,
+                evidence_refs={
+                    "source_ids": ["src-a"],
+                    "evidence_bundle_id": "evbundle-a",
+                    "knowledge_object_ids": ["ko-a"],
+                },
+            )
         mock_open.assert_called_once()
         req = mock_open.call_args.args[0]
-        assert req.full_url == "http://search-svc:8098/api/search/index/refresh"
+        assert req.full_url == "http://search-svc:8098/api/search/index/source-completions"
         assert req.get_method() == "POST"
-        assert req.data == b'{"triggered_by":"ingest_completion","trigger_ref":"run-abc"}'
+        assert json.loads(req.data.decode("utf-8")) == {
+            "ingest_run_id": "run-abc",
+            "connector_id": "conn-test",
+            "source_type": "paper",
+            "trace_id": "trace-run-abc",
+            "normalized_count": 2,
+            "source_ids": ["src-a"],
+            "evidence_bundle_id": "evbundle-a",
+            "knowledge_object_ids": ["ko-a"],
+            "materialize": True,
+        }
+        assert summary["status"] == "refreshed"
+        assert summary["search_service"]["pipeline_run_id"] == "pipe-run-abc"
+        assert summary["search_service"]["materialized_matches_completion"] is True
         ingest_main.SEARCH_INGEST_NOTIFY_URL = ""
 
 
@@ -606,8 +647,10 @@ def test_notify_search_index_refresh_noop_when_url_empty():
     with mock.patch("urllib.request.urlopen") as mock_open:
         with mock.patch.dict("os.environ", {"SEARCH_INGEST_NOTIFY_URL": ""}):
             ingest_main.SEARCH_INGEST_NOTIFY_URL = ""
-            ingest_main._notify_search_index_refresh("run-abc")
+            summary = ingest_main._notify_search_index_refresh("run-abc")
         mock_open.assert_not_called()
+        assert summary["status"] == "not_configured"
+        assert summary["configured"] is False
 
 
 def test_notify_search_index_refresh_ignores_network_errors():
@@ -615,5 +658,7 @@ def test_notify_search_index_refresh_ignores_network_errors():
     import services.source_ingestion.main as ingest_main
     with mock.patch("urllib.request.urlopen", side_effect=OSError("connection refused")):
         ingest_main.SEARCH_INGEST_NOTIFY_URL = "http://search-svc:8098"
-        ingest_main._notify_search_index_refresh("run-abc")  # must not raise
+        summary = ingest_main._notify_search_index_refresh("run-abc")  # must not raise
+        assert summary["status"] == "notify_failed"
+        assert "connection refused" in summary["error"]
         ingest_main.SEARCH_INGEST_NOTIFY_URL = ""

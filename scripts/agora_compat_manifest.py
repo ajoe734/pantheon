@@ -23,11 +23,22 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MANIFEST = REPO_ROOT / "docs" / "contracts" / "agora" / "dev-compatibility-manifest.json"
 DEFAULT_FRONTEND_ROOT = REPO_ROOT / "execute-plans"
+CONTRACT_VERSION = "1.8"
+CONTRACT_FAMILY = f"agora.v{CONTRACT_VERSION}"
 BASE_BUNDLE_PATH = "services/control-plane/specs/agora/bundle_index.json"
-EXTENSION_BUNDLE_PATH = "services/control-plane/specs/agora/bundle_index.v1_1.json"
-OPENAPI_PATH = "services/control-plane/openapi/agora_v1_1.openapi.yaml"
+EXTENSION_BUNDLE_PATH = "services/control-plane/specs/agora/bundle_index.v1_8.json"
+OPENAPI_PATH = "services/control-plane/openapi/agora_v1_8.openapi.yaml"
 BASE_CAPABILITY_PATH = "services/control-plane/specs/agora/capability_manifest.json"
-EXTENSION_CAPABILITY_PATH = "services/control-plane/specs/agora/v2/capability_manifest_v1_1.json"
+EXTENSION_CAPABILITY_PATHS = (
+    "services/control-plane/specs/agora/v2/capability_manifest_v1_1.json",
+    "services/control-plane/specs/agora/v3/capability_manifest_v1_2.json",
+    "services/control-plane/specs/agora/v4/capability_manifest_v1_3.json",
+    "services/control-plane/specs/agora/v5/capability_manifest_v1_4.json",
+    "services/control-plane/specs/agora/v6/capability_manifest_v1_5.json",
+    "services/control-plane/specs/agora/v7/capability_manifest_v1_6.json",
+    "services/control-plane/specs/agora/v8/capability_manifest_v1_7.json",
+    "services/control-plane/specs/agora/v9/capability_manifest_v1_8.json",
+)
 COMPAT_SCHEMA_PATH = "services/control-plane/specs/agora/v2/compatibility_manifest.schema.json"
 DEFAULT_GENERATED_TYPE_PATHS = (
     "src/lib/bff-v1/agora/contract-snapshot.json",
@@ -136,13 +147,14 @@ def load_capabilities() -> dict[str, str]:
         if name:
             add_capability(name, str(capability.get("version") or "1.0"))
 
-    extension = read_json(require_file(EXTENSION_CAPABILITY_PATH))
-    for capability in extension.get("capabilities", []):
-        if not isinstance(capability, dict):
-            continue
-        name = str(capability.get("name") or "")
-        if name:
-            add_capability(name, str(capability.get("version") or "1.0"))
+    for extension_path in EXTENSION_CAPABILITY_PATHS:
+        extension = read_json(require_file(extension_path))
+        for capability in extension.get("capabilities", []):
+            if not isinstance(capability, dict):
+                continue
+            name = str(capability.get("name") or "")
+            if name:
+                add_capability(name, str(capability.get("version") or "1.0"))
 
     return advertised
 
@@ -180,8 +192,8 @@ def generated_types_snapshot_reasons(frontend_root: Path) -> list[str]:
         snapshot = read_json(snapshot_path)
     except ManifestError:
         return ["frontend-generated-types-invalid-json"]
-    if snapshot.get("contract_version") != "1.1":
-        return ["frontend-generated-types-not-agora-v1.1"]
+    if snapshot.get("contract_version") != CONTRACT_VERSION:
+        return [f"frontend-generated-types-not-agora-v{CONTRACT_VERSION}"]
     if snapshot.get("source_bundle") != EXTENSION_BUNDLE_PATH:
         return ["frontend-generated-types-source-bundle-mismatch"]
     return []
@@ -224,7 +236,7 @@ def build_manifest(args: argparse.Namespace) -> dict[str, Any]:
 
     return {
         "manifest_version": "1.0",
-        "contract_family": "agora.v1.1",
+        "contract_family": CONTRACT_FAMILY,
         "environment": args.environment,
         "generated": True,
         "backend": {
@@ -279,8 +291,8 @@ def validate_manifest_shape(manifest: dict[str, Any]) -> list[str]:
     issues.extend(f"missing top-level field: {field}" for field in missing)
     if manifest.get("manifest_version") != "1.0":
         issues.append("manifest_version must be 1.0")
-    if manifest.get("contract_family") != "agora.v1.1":
-        issues.append("contract_family must be agora.v1.1")
+    if manifest.get("contract_family") != CONTRACT_FAMILY:
+        issues.append(f"contract_family must be {CONTRACT_FAMILY}")
     if manifest.get("environment") not in {"dev", "staging", "production"}:
         issues.append("environment must be dev, staging, or production")
     if manifest.get("generated") is not True:

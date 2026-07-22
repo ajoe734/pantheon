@@ -6,6 +6,7 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
+OPENCLAW_VERSION = "2026.7.1"
 
 
 def test_compose_wires_openclaw_gateway_adapter_without_broker_activation() -> None:
@@ -24,9 +25,9 @@ def test_compose_wires_openclaw_gateway_adapter_without_broker_activation() -> N
     assert adapter["environment"]["OPENCLAW_CAPITAL_BINDING_ENABLED"] == "false"
     assert (
         adapter["environment"]["OPENCLAW_ALLOWED_TOOLS"]
-        == "${OPENCLAW_ALLOWED_TOOLS:-assistant.command,assistant.sa_sd.generate,assistant.openclaw.ask,assistant.control_mode.status,assistant.transcript.resync,assistant.orchestrator.status}"
+        == "${OPENCLAW_ALLOWED_TOOLS:-assistant.command,assistant.sa_sd.generate,assistant.provider.reauth,assistant.provider.register,assistant.openclaw.ask,assistant.control_mode.status,assistant.transcript.resync,assistant.orchestrator.status}"
     )
-    assert adapter["ports"] == ["${OPENCLAW_GATEWAY_ADAPTER_PORT:-18104}:8104"]
+    assert adapter["ports"] == ["127.0.0.1:${OPENCLAW_GATEWAY_ADAPTER_PORT:-18104}:8104"]
     assert adapter["cap_add"] == ["SYS_ADMIN"]
     assert adapter["security_opt"] == ["seccomp=unconfined", "apparmor=unconfined"]
 
@@ -41,6 +42,11 @@ def test_compose_wires_openclaw_gateway_adapter_without_broker_activation() -> N
 
     upstream = services["openclaw-gateway"]
     assert upstream["profiles"] == ["openclaw"]
+    assert upstream["image"] == f"pantheon-openclaw-gateway:{OPENCLAW_VERSION}"
+    assert upstream["build"]["args"] == {
+        "ANTHROPIC_CLAUDE_CODE_NPM_VERSION": "2.1.216",
+        "GOOGLE_GEMINI_CLI_NPM_VERSION": "0.51.0",
+    }
     assert upstream["depends_on"]["openclaw-data-init"]["condition"] == "service_completed_successfully"
     upstream_healthcheck = " ".join(upstream["healthcheck"]["test"])
     assert "/readyz" in upstream_healthcheck
@@ -100,7 +106,7 @@ def test_compose_wires_openclaw_gateway_adapter_without_broker_activation() -> N
     broker = services["broker"]
     assert broker["build"]["dockerfile"] == "services/broker/Dockerfile"
     assert broker["environment"]["PORT"] == "8102"
-    assert broker["environment"]["BROKER_PAPER_ENABLED"] == "false"
+    assert broker["environment"]["BROKER_PAPER_ENABLED"] == "${BROKER_PAPER_ENABLED:-false}"
     assert "profiles" not in broker
 
     smoke = services["smoke-stack"]
@@ -116,3 +122,43 @@ def test_honest_stack_smoke_checks_openclaw_adapter_degraded_boundary() -> None:
     assert "/api/openclaw-adapter/capabilities" in smoke
     assert "/api/openclaw-adapter/sessions" in smoke
     assert "CAPABILITY_DENIED" in smoke
+
+
+def test_openclaw_pin_and_shared_model_pool_stay_in_lockstep() -> None:
+    upstream_image = f"ghcr.io/openclaw/openclaw:{OPENCLAW_VERSION}"
+    gateway_dockerfile = (ROOT / "integrations/openclaw/gateway/Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    adapter_dockerfile = (ROOT / "services/openclaw-gateway-adapter/Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    runtime = (ROOT / "integrations/openclaw/adapter/gateway_runtime.py").read_text(
+        encoding="utf-8"
+    )
+    smoke = (ROOT / "scripts/openclaw-smoke-test.sh").read_text(encoding="utf-8")
+    model_pool = (ROOT / "scripts/openclaw-configure-shared-model-pool.sh").read_text(
+        encoding="utf-8"
+    )
+    deploy = (ROOT / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8")
+
+    assert f"FROM {upstream_image}" in gateway_dockerfile
+    assert f"FROM {upstream_image} AS openclaw_cli" in adapter_dockerfile
+    assert f'image_ref: str = "{upstream_image}"' in runtime
+    assert f'IMAGE="{upstream_image}"' in smoke
+
+    expected_models = {
+        "openai/gpt-5.6-sol",
+        "openai/gpt-5.5",
+        "anthropic/claude-opus-4-8",
+        "anthropic/claude-sonnet-4-6",
+        "google/gemini-3.1-pro-preview",
+    }
+    assert all(model_ref in model_pool for model_ref in expected_models)
+    assert "plugins.entries.codex.enabled" in model_pool
+    assert "plugins.entries.google.enabled" in model_pool
+    assert (
+        '{"path":"agents.defaults.model.primary","value":"anthropic/claude-opus-4-8"}'
+        in model_pool
+    )
+    assert 'openclaw config get agents.defaults.model.primary --json' in model_pool
+    assert "openclaw-configure-shared-model-pool.sh" in deploy

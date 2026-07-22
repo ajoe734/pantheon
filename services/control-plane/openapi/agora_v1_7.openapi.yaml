@@ -1,0 +1,358 @@
+openapi: "3.1.0"
+info:
+  title: Pantheon Agora API v1.7 Extension
+  version: "1.7.0"
+  description: |
+    Additive runtime-reconciliation extension over the frozen Agora v1.6
+    contract bundle. It publishes the already-merged PINT interaction,
+    governed proposal, and OODA readback routes without modifying v1.6.
+
+    Interaction submission is analysis/request-only and returns
+    execution_authority=none. Proposal approval is only proposal lifecycle
+    state and does not execute the governed target. OODA routes are read-only.
+  x-extends-contract: "services/control-plane/specs/agora/bundle_index.v1_6.json"
+  x-capability-manifest: "services/control-plane/specs/agora/v8/capability_manifest_v1_7.json"
+servers:
+  - url: "{bff_base}"
+    variables:
+      bff_base:
+        default: "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io"
+security:
+  - BearerAuth: []
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: {type: string, minLength: 1}
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      schema: {type: string, minLength: 1}
+    ProposalId:
+      name: proposal_id
+      in: path
+      required: true
+      schema: {type: string, minLength: 1}
+    PacketId:
+      name: packet_id
+      in: path
+      required: true
+      schema: {type: string, minLength: 1}
+    StrategyId:
+      name: strategy_id
+      in: path
+      required: true
+      schema: {type: string, minLength: 1}
+    RuntimeId:
+      name: runtime_id
+      in: path
+      required: true
+      schema: {type: string, minLength: 1}
+    ProgramId:
+      name: program_id
+      in: path
+      required: true
+      schema: {type: string, minLength: 1}
+    PageToken:
+      name: page_token
+      in: query
+      schema: {type: string}
+    PageSize:
+      name: page_size
+      in: query
+      schema: {type: integer, minimum: 1, maximum: 200, default: 20}
+  schemas:
+    ContextRef:
+      $ref: "../specs/agora/v8/pint_ooda_live_routes.schema.json#/definitions/ContextRef"
+    ResolveContextRequest:
+      $ref: "../specs/agora/v8/pint_ooda_live_routes.schema.json#/definitions/ResolveContextRequest"
+    EligibilityRequest:
+      $ref: "../specs/agora/v8/pint_ooda_live_routes.schema.json#/definitions/EligibilityRequest"
+    SubmitInteractionRequest:
+      $ref: "../specs/agora/v8/pint_ooda_live_routes.schema.json#/definitions/SubmitInteractionRequest"
+    ProposalCreateRequest:
+      $ref: "../specs/agora/v8/pint_ooda_live_routes.schema.json#/definitions/ProposalCreateRequest"
+    ProposalActionRequest:
+      $ref: "../specs/agora/v8/pint_ooda_live_routes.schema.json#/definitions/ProposalActionRequest"
+    OodaPacket:
+      $ref: "../specs/agora/v8/pint_ooda_live_routes.schema.json#/definitions/OodaPacket"
+    DetailEnvelope:
+      type: object
+      required: [data, meta]
+      properties:
+        data: {}
+        meta: {type: object, additionalProperties: true}
+      additionalProperties: false
+    ListEnvelope:
+      type: object
+      required: [data, meta]
+      properties:
+        data: {type: array, items: {}}
+        meta: {type: object, additionalProperties: true}
+      additionalProperties: false
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: {type: string}
+            message: {type: string}
+            details: {type: object, additionalProperties: true}
+      additionalProperties: false
+  responses:
+    BadRequest:
+      description: Request failed validation or a required idempotency key is absent
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+    Forbidden:
+      description: Tenant, role, capability, or audience scope denied
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+    NotFound:
+      description: Requested resource was not found
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+paths:
+  /bff/agora/interactions/context:resolve:
+    post:
+      operationId: resolveAgoraInteractionContext
+      summary: Resolve or reopen a Workshop against immutable typed context
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ResolveContextRequest"}
+      responses:
+        "200":
+          description: Verified context and canonical Workshop identity
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DetailEnvelope"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409":
+          description: Immutable strategy version conflicts with the Workshop
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+  /bff/agora/interactions/participants:eligible:
+    post:
+      operationId: listEligibleAgoraInteractionParticipants
+      summary: Return included and excluded Personas with fail-closed reasons
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/EligibilityRequest"}
+      responses:
+        "200":
+          description: Eligibility snapshot
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DetailEnvelope"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /bff/agora/interactions:
+    post:
+      operationId: submitAgoraInteraction
+      summary: Submit a typed Persona interaction with no execution authority
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/SubmitInteractionRequest"}
+      responses:
+        "202":
+          description: Interaction queued; data.execution_authority is none
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DetailEnvelope"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409":
+          description: Interaction context conflicts with immutable Workshop context
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+        "422":
+          description: One or more participants are ineligible
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+  /bff/agora/proposals:
+    post:
+      operationId: createAgoraGovernedProposal
+      summary: Create an immutable-revision governed proposal draft
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ProposalCreateRequest"}
+      responses:
+        "201":
+          description: Proposal draft with ETag response header
+          headers:
+            ETag: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DetailEnvelope"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409":
+          description: Idempotency key was reused with a different payload
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+        "422": {$ref: "#/components/responses/BadRequest"}
+  /bff/agora/proposals/{proposal_id}:
+    get:
+      operationId: getAgoraGovernedProposal
+      summary: Read the latest governed proposal revision
+      parameters:
+        - {$ref: "#/components/parameters/ProposalId"}
+      responses:
+        "200":
+          description: Latest proposal revision with ETag response header
+          headers:
+            ETag: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DetailEnvelope"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /bff/agora/proposals/{proposal_id}/revisions:
+    get:
+      operationId: listAgoraGovernedProposalRevisions
+      summary: Read immutable governed proposal revision history
+      parameters:
+        - {$ref: "#/components/parameters/ProposalId"}
+      responses:
+        "200":
+          description: Proposal revision history
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ListEnvelope"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /bff/agora/proposals/{proposal_id}/actions:
+    post:
+      operationId: actOnAgoraGovernedProposal
+      summary: Append a governed proposal lifecycle revision
+      description: Proposal approval changes proposal state only and does not execute the target action.
+      parameters:
+        - {$ref: "#/components/parameters/ProposalId"}
+        - {$ref: "#/components/parameters/IfMatch"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ProposalActionRequest"}
+      responses:
+        "200":
+          description: Appended proposal revision with ETag response header
+          headers:
+            ETag: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DetailEnvelope"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: Proposal is already in a terminal state
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+        "412":
+          description: If-Match ETag is stale
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+        "422": {$ref: "#/components/responses/BadRequest"}
+  /bff/ooda/packets:
+    get:
+      operationId: listOodaPackets
+      summary: List replayable OODA packets
+      parameters:
+        - {name: status, in: query, schema: {type: string}}
+        - {name: stage, in: query, schema: {type: string}}
+        - {name: strategy_id, in: query, schema: {type: string}}
+        - {name: runtime_id, in: query, schema: {type: string}}
+        - {name: evolution_program_id, in: query, schema: {type: string}}
+        - {$ref: "#/components/parameters/PageToken"}
+        - {$ref: "#/components/parameters/PageSize"}
+      responses:
+        "200":
+          description: OODA packet page
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ListEnvelope"}
+  /bff/ooda/packets/{packet_id}:
+    get:
+      operationId: getOodaPacket
+      summary: Read one replayable OODA packet
+      parameters:
+        - {$ref: "#/components/parameters/PacketId"}
+      responses:
+        "200":
+          description: OODA packet or honest degraded detail
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DetailEnvelope"}
+        "404": {$ref: "#/components/responses/NotFound"}
+  /bff/strategies/{strategy_id}/ooda:
+    get:
+      operationId: listStrategyOodaPackets
+      summary: List OODA packets linked to a strategy
+      parameters:
+        - {$ref: "#/components/parameters/StrategyId"}
+        - {$ref: "#/components/parameters/PageToken"}
+        - {$ref: "#/components/parameters/PageSize"}
+      responses:
+        "200":
+          description: Strategy-linked OODA packet page
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ListEnvelope"}
+  /bff/runtimes/{runtime_id}/ooda:
+    get:
+      operationId: listRuntimeOodaPackets
+      summary: List OODA packets linked to a runtime or RuntimeBinding
+      parameters:
+        - {$ref: "#/components/parameters/RuntimeId"}
+        - {$ref: "#/components/parameters/PageToken"}
+        - {$ref: "#/components/parameters/PageSize"}
+      responses:
+        "200":
+          description: Runtime-linked OODA packet page
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ListEnvelope"}
+  /bff/evolution-programs/{program_id}/ooda:
+    get:
+      operationId: listEvolutionProgramOodaPackets
+      summary: List OODA packets linked to an evolution program
+      parameters:
+        - {$ref: "#/components/parameters/ProgramId"}
+        - {$ref: "#/components/parameters/PageToken"}
+        - {$ref: "#/components/parameters/PageSize"}
+      responses:
+        "200":
+          description: Evolution-program-linked OODA packet page
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ListEnvelope"}

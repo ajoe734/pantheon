@@ -18,6 +18,13 @@ from services.execution.lean_runtime.pending_signal_store import (
     RedisPendingSignalStore,
     validate_signal_payload_minimal,
 )
+from services.trade_journey.correlation_envelope import (
+    CorrelationEnvelopeError,
+    ENVIRONMENTS,
+    mint_trade_envelope,
+    propagate_envelope,
+    validate_envelope,
+)
 
 SIGNAL_SCHEMA_VERSION = "1.0"
 
@@ -154,13 +161,18 @@ def build_decision_signals(
 ) -> list[dict[str, Any]]:
     """Normalize a persona/strategy decision to one or more schema-v1 signals."""
     payload = _mapping_from_decision(decision)
+    decision_metadata = _json_object(_field(payload, "metadata")) or {}
     timestamp = _first_string(payload, "timestamp", "signal_timestamp", "created_at", "decided_at")
     timestamp = timestamp or now_iso or _utc_now()
     normalized_strategy_id = _strategy_id(payload, strategy_id)
+    upstream_envelope = _upstream_envelope(payload, decision_metadata)
+    tenant_id, environment = _trade_identity(payload, decision_metadata, upstream_envelope)
     common = {
         "version": SIGNAL_SCHEMA_VERSION,
         "strategy_id": normalized_strategy_id,
         "timestamp": timestamp,
+        "tenant_id": tenant_id,
+        "environment": environment,
     }
     if run_id or _first_string(payload, "run_id"):
         common["run_id"] = str(run_id or _first_string(payload, "run_id"))
@@ -177,6 +189,20 @@ def build_decision_signals(
         for index, target in enumerate(targets)
     ]
     for signal in signals:
+        envelope = _signal_envelope(
+            payload,
+            upstream_envelope,
+            signal_id=str(signal["signal_id"]),
+            tenant_id=tenant_id,
+            environment=environment,
+            timestamp=timestamp,
+        )
+        signal["correlation_envelope"] = envelope
+        signal["journey_id"] = envelope["journey_id"]
+        metadata = signal.setdefault("metadata", {})
+        metadata.setdefault("tenant_id", tenant_id)
+        metadata.setdefault("environment", environment)
+        metadata.setdefault("journey_id", envelope["journey_id"])
         validate_signal_v1(signal)
     return signals
 
@@ -208,6 +234,111 @@ def validate_signal_v1(signal: Mapping[str, Any]) -> None:
     metadata = signal.get("metadata")
     if metadata is not None and not isinstance(metadata, Mapping):
         raise SignalProducerValidationError("metadata must be an object when provided")
+    envelope = signal.get("correlation_envelope")
+    if not isinstance(envelope, Mapping):
+        raise SignalProducerValidationError("correlation_envelope is required")
+    try:
+        validated_envelope = validate_envelope(envelope)
+    except CorrelationEnvelopeError as exc:
+        raise SignalProducerValidationError(str(exc)) from exc
+    if signal.get("journey_id") != validated_envelope["journey_id"]:
+        raise SignalProducerValidationError(
+            "journey_id must match correlation_envelope.journey_id"
+        )
+
+
+def _upstream_envelope(
+    decision: Mapping[str, Any],
+    metadata: Mapping[str, Any],
+) -> dict[str, Any]:
+    raw = decision.get("correlation_envelope")
+    if raw is None:
+        raw = metadata.get("correlation_envelope")
+    if raw is None:
+        return {}
+    if not isinstance(raw, Mapping):
+        raise SignalProducerValidationError("correlation_envelope must be an object")
+    return dict(raw)
+
+
+def _trade_identity(
+    decision: Mapping[str, Any],
+    metadata: Mapping[str, Any],
+    upstream_envelope: Mapping[str, Any],
+) -> tuple[str, str]:
+    """Resolve stable tenant/environment identity for the signal boundary."""
+    tenant_id = (
+        _first_string(decision, "tenant_id")
+        or _first_string(metadata, "tenant_id")
+        or _first_string(upstream_envelope, "tenant_id")
+        or "default"
+    )
+    environment = (
+        _first_string(decision, "environment", "deployment_stage", "runtime_mode")
+        or _first_string(metadata, "environment", "deployment_stage", "runtime_mode")
+        or _first_string(upstream_envelope, "environment")
+    )
+    if environment is None:
+        scope = _first_string(decision, "scope_ref") or _first_string(metadata, "scope_ref")
+        environment = scope if scope in ENVIRONMENTS else "paper"
+    environment = environment.strip().lower()
+
+    upstream_tenant = _first_string(upstream_envelope, "tenant_id")
+    upstream_environment = _first_string(upstream_envelope, "environment")
+    if upstream_tenant and upstream_tenant != tenant_id:
+        raise SignalProducerValidationError(
+            "tenant_id conflicts with correlation_envelope.tenant_id"
+        )
+    if upstream_environment and upstream_environment != environment:
+        raise SignalProducerValidationError(
+            "environment conflicts with correlation_envelope.environment"
+        )
+    if environment not in ENVIRONMENTS:
+        raise SignalProducerValidationError(f"unsupported environment: {environment}")
+    return tenant_id, environment
+
+
+def _signal_envelope(
+    decision: Mapping[str, Any],
+    upstream_envelope: Mapping[str, Any],
+    *,
+    signal_id: str,
+    tenant_id: str,
+    environment: str,
+    timestamp: str,
+) -> dict[str, Any]:
+    """Create one signal occurrence envelope while preserving upstream lineage."""
+    event_id = f"signal:{signal_id}"
+    try:
+        if upstream_envelope.get("journey_id"):
+            validated = validate_envelope(upstream_envelope)
+            return propagate_envelope(
+                validated,
+                producer="execution.signal-decision",
+                event_id=event_id,
+                event_time=timestamp,
+            )
+
+        seed = dict(upstream_envelope)
+        seed["tenant_id"] = tenant_id
+        seed["environment"] = environment
+        seed.setdefault("correlation_id", str(uuid.uuid4()))
+        seed.setdefault("trace_id", str(uuid.uuid4()))
+        return mint_trade_envelope(
+            seed,
+            producer="execution.signal-decision",
+            now=timestamp,
+            journey_id=(
+                _first_string(decision, "journey_id")
+                or _first_string(
+                    _json_object(_field(decision, "metadata")) or {},
+                    "journey_id",
+                )
+            ),
+            event_id=event_id,
+        )
+    except CorrelationEnvelopeError as exc:
+        raise SignalProducerValidationError(str(exc)) from exc
 
 
 def _build_one_signal(

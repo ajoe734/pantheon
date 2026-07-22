@@ -31,12 +31,25 @@ def test_dev_compose_enables_codex_assistant_provider_for_bff() -> None:
         == "${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH:-/data/bff/assistant-control-mode.json}"
     )
     assert (
+        env["PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH"]
+        == "${PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH:-}"
+    )
+    assert (
         env["PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS"]
         == "${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS:-300}"
     )
     assert (
         env["PANTHEON_BFF_STUB_CAPABILITIES"]
-        == "${PANTHEON_BFF_STUB_CAPABILITIES:-assistant.kernel.debug,assistant.kernel.repair}"
+        == "${PANTHEON_BFF_STUB_CAPABILITIES:-}"
+    )
+    assert env["PANTHEON_BFF_MFA_REQUIRED"] == "${PANTHEON_BFF_MFA_REQUIRED:-false}"
+    assert (
+        env["PANTHEON_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED"]
+        == "${PANTHEON_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED:-false}"
+    )
+    assert (
+        env["PANTHEON_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED"]
+        == "${PANTHEON_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED:-false}"
     )
     assert (
         env["PANTHEON_MANAGEMENT_AI_STORE_PATH"]
@@ -52,6 +65,38 @@ def test_dev_compose_enables_codex_assistant_provider_for_bff() -> None:
         == "${PANTHEON_MANAGEMENT_AI_AUDIT_PATH:-/data/bff/management-ai-audit.jsonl}"
     )
     assert env["PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL"] == "http://openclaw-gateway-adapter:8104"
+    assert (
+        env["PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN"]
+        == "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}"
+    )
+    assert (
+        env["PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED"]
+        == "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-true}"
+    )
+    assert (
+        env["PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_REQUIRED"]
+        == "${PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_REQUIRED:-true}"
+    )
+    assert (
+        env["PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_STORE_PATH"]
+        == "${PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_STORE_PATH:-/data/bff/assistant-command-idempotency.json}"
+    )
+    assert (
+        env["PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_RECOVERY_SECONDS"]
+        == "${PANTHEON_ASSISTANT_COMMAND_IDEMPOTENCY_RECOVERY_SECONDS:-300}"
+    )
+    assert (
+        env["PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_REQUIRED"]
+        == "${PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_REQUIRED:-true}"
+    )
+    assert (
+        env["PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH"]
+        == "${PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH:-/data/bff/management-nl-command-idempotency.json}"
+    )
+    assert (
+        env["PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_RECOVERY_SECONDS"]
+        == "${PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_RECOVERY_SECONDS:-300}"
+    )
     assert env["PANTHEON_LIVE_BROKER_ENABLED"] == "${PANTHEON_LIVE_BROKER_ENABLED:-false}"
     assert (
         "${PANTHEON_STATUS_ROOT_HOST:-.}:${PANTHEON_STATUS_ROOT_CONTAINER:-/workspace/status-root}:rw"
@@ -82,6 +127,15 @@ def test_openclaw_adapter_can_prepare_repair_worktrees_from_status_root() -> Non
         env["PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS"]
         == "${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS:-https://github.com/ajoe734/execute-plans.git}"
     )
+    assert (
+        env["PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN"]
+        == "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}"
+    )
+    assert (
+        env["PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED"]
+        == "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-true}"
+    )
+    assert service["ports"] == ["127.0.0.1:${OPENCLAW_GATEWAY_ADAPTER_PORT:-18104}:8104"]
     assert (
         "${PANTHEON_STATUS_ROOT_HOST:-.}:${PANTHEON_STATUS_ROOT_CONTAINER:-/workspace/status-root}:ro"
         in service["volumes"]

@@ -67,6 +67,18 @@ python3 scripts/git/worker_commit.py \
 AI_NAME=<Owner> ./scripts/ai-status.sh done "$TASK" "<checkpoint message>"
 ```
 
+On an authoritative Phase-6 deployment, Supervisor-issued commands receive the
+journal binding automatically. A direct Human/Ops invocation must export the
+same absolute, git-external binding from the provisioned live config first:
+
+```bash
+export PANTHEON_TASK_STATE_STORE_MODE=authoritative
+export PANTHEON_TASK_STATE_EVENT_LOG="$(jq -r '.task_state_store.event_log' "$LIVE_CONFIG")"
+```
+
+The wrapper rejects the command if either value is missing; do not point it at
+the relative repository template.
+
 ### Background Worker Restrictions
 
 Auto workers run without a human-attended terminal. Forbidden:
@@ -176,6 +188,45 @@ was created. This is an exception, not the default.
   remote/upstream, and push status.
 
 Do not edit these generated state files by hand during closeout.
+
+## Operator Recovery For Already-Merged Work
+
+If the canonical task row lost its approval state but an immutable task brief
+already records the independent `review_approved` decision and the delivery is
+already merged, `Human/Ops` may use `reconcile_merged_done`. This is a recovery
+path, not a substitute for normal review or owner closeout.
+
+The command fails closed unless all of the following are true:
+
+- the actor is `Human/Ops`;
+- the evidence file is tracked, byte-identical to the supplied Pantheon commit,
+  and that commit is an ancestor of Pantheon `origin/dev`;
+- the evidence binds the exact task id, owner, reviewer, and
+  `review_approved` status from the canonical row;
+- if the canonical reviewer changed after approval, the activity audit contains
+  an exact `task_reassigned` event whose timestamp and message still match the
+  task row and whose owner did not change;
+- the task resolves to one delivery repository;
+- the supplied delivery checkout has the expected GitHub origin, and the full
+  delivery commit is an ancestor of its `origin/dev`;
+- the merged evidence file cites that repository and full delivery commit.
+
+Example:
+
+```bash
+AI_NAME=Human/Ops \
+RECONCILE_EVIDENCE_FILE=.orchestrator/task-briefs/<task>.md \
+RECONCILE_EVIDENCE_COMMIT=<pantheon-merged-evidence-commit> \
+RECONCILE_DELIVERY_REPOSITORY=<owner/repo> \
+RECONCILE_DELIVERY_ROOT=</absolute/clean/repo/root> \
+RECONCILE_DELIVERY_COMMIT=<full-delivery-commit> \
+./scripts/ai-status.sh reconcile_merged_done <task-id> "<recovery reason>"
+```
+
+The command records both merge targets and commits in delivery metadata,
+resolves stale blockers/handoffs, and archives the task through the same
+canonical transaction as `done`. Never use it with a draft, unmerged review
+file, inferred reviewer identity, or a commit that is not already on `dev`.
 
 ## Push and Merge Policy
 

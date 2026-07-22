@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import base64
+import asyncio
 import json
 import os
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 from unittest import mock
 
+import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -15,6 +19,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import main as bff_main
 from assistant.control_mode import ControlModeStore
 from assistant.models import AssistantMode
+from assistant.repair_receipts import issue_repair_receipt
+from management_nl_command_idempotency import (
+    ManagementNlCommandIdempotencyStore,
+    ManagementNlCommandPayloadConflict,
+    ManagementNlCommandRecoveryRequired,
+    ManagementNlCommandScope,
+    ManagementNlCommandStorageError,
+)
 from models import OperatorIdentity
 from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 from read_store import ReadSurfaceStore
@@ -24,7 +36,12 @@ OPERATOR_HEADERS = {"Authorization": "Bearer asst-bff-002:operator"}
 
 
 class FakeProviderClient:
-    def __init__(self, result: dict[str, Any] | None = None, exc: Exception | None = None) -> None:
+    def __init__(
+        self,
+        result: dict[str, Any] | None = None,
+        exc: Exception | None = None,
+        stream_events: list[dict[str, Any]] | None = None,
+    ) -> None:
         self.result = result or {
             "status": "ok",
             "data": {
@@ -35,6 +52,15 @@ class FakeProviderClient:
             },
         }
         self.exc = exc
+        self.stream_events = stream_events or [
+            {"type": "delta", "text": "Streamed provider answer."},
+            {
+                "type": "done",
+                "text": "Streamed provider answer.",
+                "elapsed_ms": 12,
+                "transport": "responses_http",
+            },
+        ]
         self.calls: list[dict[str, Any]] = []
 
     def invoke_assistant_provider(self, **kwargs: Any) -> dict[str, Any]:
@@ -43,6 +69,12 @@ class FakeProviderClient:
             raise self.exc
         return self.result
 
+    def stream_assistant_provider(self, **kwargs: Any):
+        self.calls.append({"stream": True, **kwargs})
+        if self.exc is not None:
+            raise self.exc
+        yield from self.stream_events
+
     def get_assistant_readiness(self, **_kwargs: Any) -> dict[str, Any]:
         return {
             "provider": "codex_cli",
@@ -50,6 +82,45 @@ class FakeProviderClient:
             "ready": True,
             "status": "ready",
             "capabilities": {"read": True, "repairWrite": True},
+        }
+
+    def list_assistant_providers(self, *, auth_probe: bool = False) -> dict[str, Any]:
+        return {
+            "status": "ok",
+            "data": [
+                {
+                    "provider": "codex_cli",
+                    "provider_name": "Codex CLI",
+                    "runtime": "openclaw_gateway_cli_mount",
+                    "ready": True,
+                    "status": "ready",
+                    "auth_status": "ready" if auth_probe else "not_checked",
+                    "usage": {
+                        "status": "captured",
+                        "source": "provider_snapshot",
+                        "remaining": 12,
+                        "remaining_percent": 24,
+                        "limit": 50,
+                        "used": 38,
+                        "unit": "requests",
+                        "reset_at": "2026-06-30T00:00:00Z",
+                    },
+                },
+                {
+                    "provider": "claude",
+                    "provider_name": "Claude CLI",
+                    "runtime": "openclaw_gateway_cli_mount",
+                    "ready": False,
+                    "status": "degraded",
+                    "auth_status": "failed" if auth_probe else "not_checked",
+                    "usage": {
+                        "status": "unknown",
+                        "source": "not_configured",
+                        "reason": "provider_usage_source_not_configured",
+                    },
+                },
+            ],
+            "meta": {"auth_probe": auth_probe},
         }
 
     def get_tool_policy(self) -> dict[str, Any]:
@@ -71,6 +142,22 @@ class FakeProviderClient:
             "policy_allowed_tools": ["assistant.command"],
             "effective_tools": [],
         }
+
+
+class BlockingProviderClient(FakeProviderClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self._calls_lock = threading.Lock()
+
+    def invoke_assistant_provider(self, **kwargs: Any) -> dict[str, Any]:
+        with self._calls_lock:
+            self.calls.append(kwargs)
+        self.entered.set()
+        if not self.release.wait(timeout=10):
+            raise TimeoutError("test provider release timed out")
+        return self.result
 
 
 class FakeHttpResponse:
@@ -233,6 +320,19 @@ def _clear_provider_env(monkeypatch) -> None:
         monkeypatch.delenv(env_name, raising=False)
 
 
+def _enable_management_nl_command_idempotency(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_REQUIRED", "true")
+    monkeypatch.setenv(
+        "PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_STORE_PATH",
+        str(tmp_path / "management-nl-command-idempotency.json"),
+    )
+    monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_RECOVERY_SECONDS", "30")
+    monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_WAIT_SECONDS", "5")
+    monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_POLL_SECONDS", "0.01")
+    bff_main._MGMT_NL_COMMAND_IDEMPOTENCY_STORE = None
+    bff_main._MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG = None
+
+
 def _kernel_operator_identity(
     *,
     operator_id: str = "asst-bff-002",
@@ -291,6 +391,350 @@ def test_management_ai_conversation_store_persists_sessions_and_turns_to_json(tm
     sessions = reloaded.list_sessions(owner_id="asst-bff-002", tenant_id="tenant-alpha")
     assert [session["sessionId"] for session in sessions] == ["mgmt-json-session"]
     assert reloaded.list_sessions(owner_id="other-operator", tenant_id="tenant-other") == []
+
+
+def test_management_nl_idempotency_storage_is_scoped_by_actor_and_tenant() -> None:
+    client_key = "same-browser-key"
+
+    actor_a = bff_main._mgmt_nl_idempotency_storage_key(
+        client_key,
+        actor_id="operator-a",
+        tenant_id="tenant-alpha",
+    )
+    actor_b = bff_main._mgmt_nl_idempotency_storage_key(
+        client_key,
+        actor_id="operator-b",
+        tenant_id="tenant-alpha",
+    )
+    tenant_b = bff_main._mgmt_nl_idempotency_storage_key(
+        client_key,
+        actor_id="operator-a",
+        tenant_id="tenant-beta",
+    )
+
+    assert len({actor_a, actor_b, tenant_b}) == 3
+    assert all(client_key not in value for value in (actor_a, actor_b, tenant_b))
+
+
+def test_management_nl_command_store_reloads_exact_result_and_scopes_every_boundary(
+    tmp_path: Path,
+) -> None:
+    store_path = tmp_path / "management-nl-command-idempotency.json"
+    store = ManagementNlCommandIdempotencyStore(str(store_path))
+    request_hash = "a" * 64
+    result = {
+        "status": "accepted",
+        "data": {
+            "status": "completed",
+            "message_id": "mnl-durable",
+            "answer": "canonical replay remains byte-for-byte stable",
+        },
+        "meta": {"idempotency": {"idempotencyKey": "browser-key"}},
+    }
+    scope = ManagementNlCommandScope(
+        actor_id="operator-a",
+        tenant_id="tenant-a",
+        route="POST /bff/management/nl/ask",
+        idempotency_key="browser-key",
+    )
+
+    owner = store.admit(scope, request_hash=request_hash)
+    assert owner.state == "owner"
+    assert owner.reservation is not None
+    store.complete(owner.reservation, result)
+
+    reloaded = ManagementNlCommandIdempotencyStore(str(store_path))
+    replay = reloaded.admit(scope, request_hash=request_hash)
+    assert replay.state == "complete"
+    assert replay.result == result
+    assert store_path.stat().st_mode & 0o777 == 0o600
+    persisted = json.loads(store_path.read_text(encoding="utf-8"))
+    persisted_result = next(iter(persisted["records"].values()))["result"]
+    assert persisted_result["meta"]["idempotency"]["idempotencyKey"] != "browser-key"
+
+    short_scope = ManagementNlCommandScope(
+        actor_id="operator-a",
+        tenant_id="tenant-a",
+        route="POST /bff/management/nl/ask",
+        idempotency_key="a",
+    )
+    short_result = {
+        "data": {"status": "completed", "answer": "alpha stays unchanged"},
+        "meta": {"idempotency": {"idempotencyKey": "a"}},
+    }
+    short = reloaded.admit(short_scope, request_hash="c" * 64)
+    assert short.reservation is not None
+    reloaded.complete(short.reservation, short_result)
+    assert reloaded.admit(short_scope, request_hash="c" * 64).result == short_result
+
+    with pytest.raises(ManagementNlCommandPayloadConflict):
+        reloaded.admit(scope, request_hash="b" * 64)
+
+    scoped_variants = (
+        ManagementNlCommandScope("operator-b", "tenant-a", scope.route, "browser-key"),
+        ManagementNlCommandScope("operator-a", "tenant-b", scope.route, "browser-key"),
+        ManagementNlCommandScope("operator-a", "tenant-a", "POST /different", "browser-key"),
+        ManagementNlCommandScope("operator-a", "tenant-a", scope.route, "different-key"),
+    )
+    assert all(
+        reloaded.admit(variant, request_hash=request_hash).state == "owner"
+        for variant in scoped_variants
+    )
+
+
+def test_management_nl_command_store_reload_expires_to_uncertain_without_reexecution(
+    tmp_path: Path,
+) -> None:
+    now = [100.0]
+    scope = ManagementNlCommandScope(
+        "operator-a",
+        "tenant-a",
+        "POST /bff/management/nl/ask",
+        "crash-key",
+    )
+    request_hash = "c" * 64
+    path = tmp_path / "management-nl-command-idempotency.json"
+    first = ManagementNlCommandIdempotencyStore(
+        str(path),
+        recovery_seconds=5,
+        clock=lambda: now[0],
+    )
+    assert first.admit(scope, request_hash=request_hash).state == "owner"
+
+    now[0] = 106.0
+    reloaded = ManagementNlCommandIdempotencyStore(
+        str(path),
+        recovery_seconds=5,
+        clock=lambda: now[0],
+    )
+    with pytest.raises(ManagementNlCommandRecoveryRequired):
+        reloaded.observe(scope, request_hash=request_hash)
+    with pytest.raises(ManagementNlCommandRecoveryRequired):
+        reloaded.admit(scope, request_hash=request_hash)
+
+    document = json.loads(path.read_text(encoding="utf-8"))
+    assert list(document["records"].values())[0]["status"] == "uncertain"
+    assert list(document["records"].values())[0]["reason"] == "reservation_expired"
+
+
+def test_management_nl_command_store_size_retention_and_corruption_fail_closed(
+    tmp_path: Path,
+) -> None:
+    now = [100.0]
+    path = tmp_path / "bounded-management-nl-commands.json"
+    store = ManagementNlCommandIdempotencyStore(
+        str(path),
+        retention_seconds=1,
+        max_response_bytes=1024,
+        clock=lambda: now[0],
+    )
+    first_scope = ManagementNlCommandScope(
+        "operator-a", "tenant-a", "POST /bff/management/nl/ask", "first-key"
+    )
+    first = store.admit(first_scope, request_hash="d" * 64)
+    assert first.reservation is not None
+    store.complete(first.reservation, {"data": {"status": "completed"}})
+
+    now[0] = 102.0
+    second_scope = ManagementNlCommandScope(
+        "operator-a", "tenant-a", "POST /bff/management/nl/ask", "second-key"
+    )
+    second = store.admit(second_scope, request_hash="e" * 64)
+    assert second.reservation is not None
+    document = json.loads(path.read_text(encoding="utf-8"))
+    assert ManagementNlCommandIdempotencyStore.storage_key(first_scope) not in document["records"]
+    assert ManagementNlCommandIdempotencyStore.storage_key(second_scope) in document["records"]
+
+    with pytest.raises(ManagementNlCommandStorageError, match="size limit"):
+        store.complete(
+            second.reservation,
+            {"data": {"status": "completed", "answer": "x" * 2048}},
+        )
+    still_reserved = store.observe(second_scope, request_hash="e" * 64)
+    assert still_reserved.state == "wait"
+
+    corrupt_path = tmp_path / "corrupt-management-nl-commands.json"
+    corrupt_path.write_text("{not-json", encoding="utf-8")
+    corrupt = ManagementNlCommandIdempotencyStore(str(corrupt_path))
+    with pytest.raises(ManagementNlCommandStorageError, match="unreadable"):
+        corrupt.admit(first_scope, request_hash="f" * 64)
+
+
+def test_management_nl_request_exception_marks_reservation_uncertain_immediately(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    original_store = bff_main.read_store
+    try:
+        _clear_provider_env(monkeypatch)
+        _enable_management_nl_command_idempotency(tmp_path, monkeypatch)
+        _seeded_client(tmp_path, monkeypatch)
+        payload = {
+            "question": "Exercise fail-closed command admission.",
+            "focus": "portfolio",
+            "sessionId": "mgmt-command-exception",
+        }
+        kwargs = {
+            "payload": payload,
+            "authorization": OPERATOR_HEADERS["Authorization"],
+            "idempotency_key": "mgmt-command-exception-key",
+            "x_idempotency_key": None,
+            "x_tenant_id": None,
+            "x_pantheon_tenant": None,
+        }
+
+        with mock.patch.object(
+            bff_main,
+            "_management_ai_ensure_session",
+            side_effect=RuntimeError("injected session failure"),
+        ) as ensure_session:
+            with pytest.raises(RuntimeError, match="injected session failure"):
+                asyncio.run(bff_main.bff_management_nl_ask(**kwargs))
+            assert ensure_session.call_count == 1
+
+        path = tmp_path / "management-nl-command-idempotency.json"
+        document = json.loads(path.read_text(encoding="utf-8"))
+        record = next(iter(document["records"].values()))
+        assert record["status"] == "uncertain"
+        assert record["reason"] == "request_failed_before_terminal_commit"
+
+        with pytest.raises(HTTPException) as retry:
+            asyncio.run(bff_main.bff_management_nl_ask(**kwargs))
+        assert retry.value.status_code == 409
+        assert retry.value.detail["error"]["details"]["precondition_failed"] == (
+            "idempotency_recovery_required"
+        )
+    finally:
+        bff_main.read_store = original_store
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._MGMT_NL_COMMAND_IDEMPOTENCY_STORE = None
+        bff_main._MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG = None
+
+
+def test_management_nl_concurrent_exact_request_invokes_provider_once_and_replays_terminal(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    original_store = bff_main.read_store
+    provider = BlockingProviderClient()
+    try:
+        _clear_provider_env(monkeypatch)
+        _enable_management_nl_command_idempotency(tmp_path, monkeypatch)
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_PROVIDER_INLINE_GRACE_SECONDS", "8")
+        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: provider)
+        _seeded_client(tmp_path, monkeypatch)
+        payload = {
+            "question": "Prove concurrent exact command admission.",
+            "focus": "portfolio",
+            "sessionId": "mgmt-command-concurrent-exact",
+        }
+        key = "mgmt-command-concurrent-key"
+
+        async def exercise() -> tuple[Any, Any]:
+            kwargs = {
+                "payload": payload,
+                "authorization": OPERATOR_HEADERS["Authorization"],
+                "idempotency_key": key,
+                "x_idempotency_key": None,
+                "x_tenant_id": None,
+                "x_pantheon_tenant": None,
+            }
+            first = asyncio.create_task(bff_main.bff_management_nl_ask(**kwargs))
+            assert await asyncio.to_thread(provider.entered.wait, 10)
+            second = asyncio.create_task(bff_main.bff_management_nl_ask(**kwargs))
+            await asyncio.sleep(0.1)
+            assert not second.done(), "the exact contender should wait without invoking the provider"
+            provider.release.set()
+            return await asyncio.gather(first, second)
+
+        first_response, second_response = asyncio.run(exercise())
+        assert first_response.status_code == 202
+        assert second_response.status_code == 202
+        assert json.loads(second_response.body) == json.loads(first_response.body)
+        assert len(provider.calls) == 1
+        turns = bff_main._management_ai_conversation_store().list_turns(
+            "mgmt-command-concurrent-exact"
+        )
+        assert [turn["role"] for turn in turns] == ["user", "assistant"]
+    finally:
+        provider.release.set()
+        bff_main.read_store = original_store
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._MGMT_NL_COMMAND_IDEMPOTENCY_STORE = None
+        bff_main._MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG = None
+
+
+def test_management_nl_concurrent_conflict_returns_409_before_second_side_effect(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    original_store = bff_main.read_store
+    provider = BlockingProviderClient()
+    try:
+        _clear_provider_env(monkeypatch)
+        _enable_management_nl_command_idempotency(tmp_path, monkeypatch)
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_PROVIDER_INLINE_GRACE_SECONDS", "8")
+        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: provider)
+        _seeded_client(tmp_path, monkeypatch)
+        key = "mgmt-command-conflict-key"
+        first_payload = {
+            "question": "First command owns this durable key.",
+            "focus": "portfolio",
+            "sessionId": "mgmt-command-conflict-owner",
+        }
+        conflict_payload = {
+            "question": "Different command must fail before side effects.",
+            "focus": "portfolio",
+            "sessionId": "mgmt-command-conflict-contender",
+        }
+
+        async def exercise() -> Any:
+            common = {
+                "authorization": OPERATOR_HEADERS["Authorization"],
+                "idempotency_key": key,
+                "x_idempotency_key": None,
+                "x_tenant_id": None,
+                "x_pantheon_tenant": None,
+            }
+            first = asyncio.create_task(
+                bff_main.bff_management_nl_ask(payload=first_payload, **common)
+            )
+            assert await asyncio.to_thread(provider.entered.wait, 10)
+            with pytest.raises(HTTPException) as conflict:
+                await bff_main.bff_management_nl_ask(payload=conflict_payload, **common)
+            assert getattr(conflict.value, "status_code", None) == 409
+            assert len(provider.calls) == 1
+            assert (
+                bff_main._management_ai_conversation_store().get_session(
+                    "mgmt-command-conflict-contender"
+                )
+                is None
+            )
+            provider.release.set()
+            return await first
+
+        assert asyncio.run(exercise()).status_code == 202
+    finally:
+        provider.release.set()
+        bff_main.read_store = original_store
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._MGMT_NL_COMMAND_IDEMPOTENCY_STORE = None
+        bff_main._MGMT_NL_COMMAND_IDEMPOTENCY_CONFIG = None
+
+
+def test_management_nl_repair_waits_through_provider_timeout_before_return(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_PROVIDER_INLINE_GRACE_SECONDS", "0.2")
+    monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS", "12")
+    monkeypatch.delenv("PANTHEON_MANAGEMENT_NL_REPAIR_INLINE_TIMEOUT_SECONDS", raising=False)
+
+    assert bff_main._mgmt_nl_provider_inline_wait_seconds(
+        {"active": True, "mode": "kernel_repair"}
+    ) == 17.0
+    assert bff_main._mgmt_nl_provider_inline_wait_seconds(
+        {"active": True, "mode": "kernel_debug"}
+    ) == 0.2
 
 
 def test_openclaw_client_invokes_codex_provider_contract(monkeypatch) -> None:
@@ -481,6 +925,27 @@ def test_openclaw_client_lists_assistant_providers_with_auth_probe(monkeypatch) 
     assert recorded["timeout"] == 1.5
 
 
+def test_openclaw_client_provider_list_auth_probe_uses_assistant_timeout(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://openclaw-adapter:8104")
+    monkeypatch.setenv("PANTHEON_BFF_SERVICE_TIMEOUT_SECONDS", "2.0")
+    monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER_TIMEOUT_SECONDS", "12.5")
+    recorded: dict[str, Any] = {}
+
+    def fake_urlopen(request, timeout):
+        recorded["url"] = request.full_url
+        recorded["timeout"] = timeout
+        return FakeHttpResponse({"status": "ok", "data": []})
+
+    with mock.patch("openclaw_ops_client.urllib.request.urlopen", fake_urlopen):
+        result = OpenClawOpsClient().list_assistant_providers(auth_probe=True)
+
+    assert result["status"] == "ok"
+    assert recorded["url"] == (
+        "http://openclaw-adapter:8104/api/openclaw-adapter/assistant/providers?auth_probe=true"
+    )
+    assert recorded["timeout"] == 12.5
+
+
 def test_openclaw_client_starts_provider_reauth_device_flow(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://openclaw-adapter:8104")
     monkeypatch.setenv("PANTHEON_ASSISTANT_REAUTH_TIMEOUT_SECONDS", "4.0")
@@ -522,6 +987,49 @@ def test_openclaw_client_starts_provider_reauth_device_flow(monkeypatch) -> None
     assert recorded["timeout"] == 4.0
 
 
+def test_openclaw_client_starts_claude_provider_reauth_device_flow(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://openclaw-adapter:8104")
+    monkeypatch.setenv("PANTHEON_ASSISTANT_REAUTH_TIMEOUT_SECONDS", "4.0")
+    recorded: dict[str, Any] = {}
+
+    def fake_urlopen(request, timeout):
+        recorded["url"] = request.full_url
+        recorded["headers"] = dict(request.header_items())
+        recorded["body"] = json.loads(request.data.decode("utf-8"))
+        recorded["timeout"] = timeout
+        return FakeHttpResponse(
+            {
+                "status": "ok",
+                "data": {
+                    "reauth_session_id": "claude_reauth_1",
+                    "provider": "claude",
+                    "status": "pending",
+                    "verification_uri": "https://claude.ai/login",
+                    "user_code": None,
+                },
+            },
+            status_code=202,
+        )
+
+    with mock.patch("openclaw_ops_client.urllib.request.urlopen", fake_urlopen):
+        result = OpenClawOpsClient(timeout_seconds=1.5).start_assistant_provider_reauth(
+            provider="claude",
+            payload={"reason": "expired"},
+            operator_id="operator-1",
+            trace_id="trace-claude-reauth-1",
+        )
+
+    assert result["status"] == "ok"
+    assert result["data"]["reauth_session_id"] == "claude_reauth_1"
+    assert recorded["url"] == (
+        "http://openclaw-adapter:8104/api/openclaw-adapter/assistant/providers/claude/reauth"
+    )
+    assert recorded["headers"]["X-operator-id"] == "operator-1"
+    assert recorded["headers"]["X-trace-id"] == "trace-claude-reauth-1"
+    assert recorded["body"] == {"reason": "expired", "provider": "claude"}
+    assert recorded["timeout"] == 4.0
+
+
 def test_openclaw_client_reads_provider_reauth_status(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://openclaw-adapter:8104")
     recorded: dict[str, Any] = {}
@@ -554,6 +1062,136 @@ def test_openclaw_client_reads_provider_reauth_status(monkeypatch) -> None:
     assert recorded["headers"]["X-operator-id"] == "operator-1"
 
 
+def test_openclaw_client_reads_claude_provider_reauth_status(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://openclaw-adapter:8104")
+    recorded: dict[str, Any] = {}
+
+    def fake_urlopen(request, timeout):
+        recorded["url"] = request.full_url
+        recorded["headers"] = dict(request.header_items())
+        return FakeHttpResponse(
+            {
+                "status": "ok",
+                "data": {
+                    "reauth_session_id": "claude_reauth_1",
+                    "provider": "claude",
+                    "status": "completed",
+                    "readiness": {"ready": True},
+                },
+            }
+        )
+
+    with mock.patch("openclaw_ops_client.urllib.request.urlopen", fake_urlopen):
+        result = OpenClawOpsClient(timeout_seconds=1.5).get_assistant_provider_reauth_status(
+            provider="claude",
+            session_id="claude_reauth_1",
+            operator_id="operator-1",
+        )
+
+    assert result["data"]["status"] == "completed"
+    assert result["data"]["provider"] == "claude"
+    assert recorded["url"] == (
+        "http://openclaw-adapter:8104/api/openclaw-adapter/assistant/providers/claude/reauth/claude_reauth_1"
+    )
+    assert recorded["headers"]["X-operator-id"] == "operator-1"
+
+
+def test_openclaw_client_submits_claude_provider_reauth_code(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://openclaw-adapter:8104")
+    monkeypatch.setenv("PANTHEON_ASSISTANT_REAUTH_TIMEOUT_SECONDS", "4.0")
+    recorded: dict[str, Any] = {}
+
+    def fake_urlopen(request, timeout):
+        recorded["url"] = request.full_url
+        recorded["headers"] = dict(request.header_items())
+        recorded["body"] = json.loads(request.data.decode("utf-8"))
+        recorded["timeout"] = timeout
+        return FakeHttpResponse(
+            {
+                "status": "ok",
+                "data": {
+                    "reauth_session_id": "claude_reauth_1",
+                    "provider": "claude",
+                    "status": "code_submitted",
+                    "code_submitted_at": "2026-07-01T00:00:00Z",
+                },
+            }
+        )
+
+    with mock.patch("openclaw_ops_client.urllib.request.urlopen", fake_urlopen):
+        result = OpenClawOpsClient(timeout_seconds=1.5).submit_assistant_provider_reauth_code(
+            provider="claude",
+            session_id="claude_reauth_1",
+            code="claude-oauth-code-123",
+            operator_id="operator-1",
+            trace_id="trace-claude-code-1",
+        )
+
+    assert result["data"]["status"] == "code_submitted"
+    assert recorded["url"] == (
+        "http://openclaw-adapter:8104/api/openclaw-adapter/assistant/providers/claude"
+        "/reauth/claude_reauth_1/code"
+    )
+    assert recorded["headers"]["X-operator-id"] == "operator-1"
+    assert recorded["headers"]["X-trace-id"] == "trace-claude-code-1"
+    assert recorded["headers"]["X-assistant-mode"] == "user"
+    assert recorded["headers"]["X-operator-role"] == "operator"
+    assert recorded["body"] == {
+        "provider": "claude",
+        "code": "claude-oauth-code-123",
+        "mode": "user",
+        "operator_role": "operator",
+        "confirmed": True,
+        "control_mode": {"active": False, "mode": "user", "activation_id": None},
+    }
+    assert recorded["timeout"] == 4.0
+
+
+def test_openclaw_client_registers_assistant_provider_metadata(monkeypatch) -> None:
+    monkeypatch.setenv("PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL", "http://openclaw-adapter:8104")
+    recorded: dict[str, Any] = {}
+
+    def fake_urlopen(request, timeout):
+        recorded["url"] = request.full_url
+        recorded["headers"] = dict(request.header_items())
+        recorded["body"] = json.loads(request.data.decode("utf-8"))
+        recorded["timeout"] = timeout
+        return FakeHttpResponse(
+            {
+                "status": "ok",
+                "data": {
+                    "provider": "gemini_cli",
+                    "provider_name": "Gemini CLI",
+                    "status": "registered",
+                    "ready": False,
+                },
+            },
+            status_code=201,
+        )
+
+    with mock.patch("openclaw_ops_client.urllib.request.urlopen", fake_urlopen):
+        result = OpenClawOpsClient(timeout_seconds=1.5).register_assistant_provider(
+            {
+                "provider": "gemini_cli",
+                "providerName": "Gemini CLI",
+                "model": "gemini-2.5-pro",
+                "mode": "kernel_debug",
+                "operator_role": "operator",
+            },
+            operator_id="operator-1",
+            trace_id="trace-provider-register-1",
+        )
+
+    assert result["status"] == "ok"
+    assert recorded["url"] == "http://openclaw-adapter:8104/api/openclaw-adapter/assistant/providers"
+    assert recorded["headers"]["X-operator-id"] == "operator-1"
+    assert recorded["headers"]["X-trace-id"] == "trace-provider-register-1"
+    assert recorded["headers"]["X-operator-role"] == "operator"
+    assert recorded["headers"]["X-assistant-mode"] == "kernel_debug"
+    assert recorded["body"]["provider"] == "gemini_cli"
+    assert recorded["body"]["model"] == "gemini-2.5-pro"
+
+
 def test_provider_disabled_returns_deterministic_answer_and_context_pack(tmp_path, monkeypatch) -> None:
     original_store = bff_main.read_store
     fake = FakeProviderClient()
@@ -571,11 +1209,13 @@ def test_provider_disabled_returns_deterministic_answer_and_context_pack(tmp_pat
         assert resp.status_code == 202, resp.text
         body = resp.json()
         assert body["data"]["answer"].startswith("Management summary for question:")
-        assert body["data"]["providerStatus"]["status"] == "disabled"
-        assert body["data"]["providerStatus"]["reason"] == "feature_disabled"
-        assert body["data"]["providerStatus"]["used"] is False
-        assert body["data"]["contextPack"]["mode"] == "user"
-        assert body["data"]["contextPack"]["backend"]["management_nl"]["data"]["tenant_id"] == "tenant-alpha"
+        assert "providerStatus" not in body["data"]
+        assert body["data"]["provider_status"]["status"] == "disabled"
+        assert body["data"]["provider_status"]["reason"] == "feature_disabled"
+        assert body["data"]["provider_status"]["used"] is False
+        assert "contextPack" not in body["data"]
+        assert body["data"]["context_pack"]["mode"] == "user"
+        assert body["data"]["context_pack"]["backend"]["management_nl"]["data"]["tenant_id"] == "tenant-alpha"
         assert fake.calls == []
     finally:
         bff_main.read_store = original_store
@@ -602,8 +1242,8 @@ def test_provider_enabled_invokes_openclaw_with_tenant_scoped_context(tmp_path, 
         assert resp.status_code == 202, resp.text
         body = resp.json()
         assert body["data"]["answer"] == "Provider grounded management answer."
-        assert body["data"]["providerStatus"]["status"] == "completed"
-        assert body["data"]["providerStatus"]["used"] is True
+        assert body["data"]["provider_status"]["status"] == "completed"
+        assert body["data"]["provider_status"]["used"] is True
         assert body["data"]["confidence"] in {"high", "partial", "unavailable"}
         assert body["data"]["sources"] == ["portfolio"]
         assert len(fake.calls) == 1
@@ -700,18 +1340,22 @@ def test_management_nl_passes_conversation_and_ui_context_to_provider(tmp_path, 
 
         assert resp.status_code == 202, resp.text
         body = resp.json()
-        assert body["data"]["sessionId"] == "mgmt-multi-session"
+        assert "sessionId" not in body["data"]
+        assert body["data"]["session_id"] == "mgmt-multi-session"
         assert body["data"]["conversation"]["href"].endswith(
             "/bff/management/ai/conversations/mgmt-multi-session"
         )
         assert "trace_id=" not in body["data"]["conversation"]["href"]
-        assert body["data"]["session"]["ttlSeconds"] >= 7 * 24 * 60 * 60
+        assert body["data"]["session"]["ttl_seconds"] >= 7 * 24 * 60 * 60
+        assert "ttlSeconds" not in body["data"]["session"]
 
         management_context = fake.calls[0]["context_pack"]["backend"]["management_nl"]["data"]
         assert management_context["focus"] == "persona_fleet"
         assert management_context["conversation"]["source"] == "server"
-        assert management_context["conversation"]["recentTurns"][0]["content"] == "Continue from the previous answer."
-        assert management_context["conversation"]["clientHint"]["recentTurns"][0]["content"] == "What is unhealthy?"
+        assert management_context["conversation"]["recent_turns"][0]["content"] == "Continue from the previous answer."
+        assert management_context["conversation"]["client_hint"]["recent_turns"][0]["content"] == "What is unhealthy?"
+        assert "recentTurns" not in management_context["conversation"]
+        assert "clientHint" not in management_context["conversation"]
         assert management_context["conversation"]["summary"] == "The operator is reviewing degraded personas."
         assert management_context["ui"]["currentRoute"] == "/management/personas"
         assert management_context["ui"]["selectedEntity"] == {"kind": "persona", "id": "persona-alpha"}
@@ -758,14 +1402,16 @@ def test_management_nl_context_pack_reflects_active_control_mode(tmp_path, monke
 
         assert resp.status_code == 202, resp.text
         body = resp.json()
-        assert body["data"]["controlMode"]["active"] is True
-        assert body["data"]["controlMode"]["mode"] == "kernel_debug"
-        context_pack = body["data"]["contextPack"]
+        assert body["data"]["control_mode"]["active"] is True
+        assert body["data"]["control_mode"]["mode"] == "kernel_debug"
+        assert "controlMode" not in body["data"]
+        context_pack = body["data"]["context_pack"]
         assert context_pack["mode"] == "kernel_debug"
         assert "assistant.kernel.debug" in context_pack["actor"]["capabilities"]
         management_context = context_pack["backend"]["management_nl"]["data"]
-        assert management_context["controlMode"]["active"] is True
-        assert management_context["controlMode"]["mode"] == "kernel_debug"
+        assert management_context["control_mode"]["active"] is True
+        assert management_context["control_mode"]["mode"] == "kernel_debug"
+        assert "controlMode" not in management_context
     finally:
         bff_main.read_store = original_store
         bff_main._ASSISTANT_CONTROL_MODE_STORE = original_control_store
@@ -893,7 +1539,7 @@ def test_management_nl_provider_uses_active_kernel_debug_mode(tmp_path, monkeypa
         monkeypatch.setattr(
             bff_main,
             "_extract_identity",
-            lambda authorization: _kernel_operator_identity(),
+            lambda authorization=None, **_kwargs: _kernel_operator_identity(),
         )
         client = _seeded_client(tmp_path, monkeypatch)
 
@@ -909,8 +1555,8 @@ def test_management_nl_provider_uses_active_kernel_debug_mode(tmp_path, monkeypa
 
         assert resp.status_code == 202, resp.text
         body = resp.json()
-        assert body["data"]["controlMode"]["active"] is True
-        assert body["data"]["providerStatus"]["mode"] == "kernel_debug"
+        assert body["data"]["control_mode"]["active"] is True
+        assert body["data"]["provider_status"]["mode"] == "kernel_debug"
         call = fake.calls[0]
         assert call["mode"] == "kernel_debug"
         assert call["metadata"]["control_mode"]["active"] is True
@@ -960,6 +1606,7 @@ def test_management_nl_kernel_repair_passes_openclaw_task_metadata(tmp_path, mon
     )
     try:
         _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("PANTHEON_ASSISTANT_REPAIR_RECEIPT_KEY", "repair-receipt-test-secret")
         monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
         monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER", "codex_cli")
         monkeypatch.setattr(bff_main, "_ASSISTANT_CONTROL_MODE_STORE", control_store)
@@ -967,9 +1614,28 @@ def test_management_nl_kernel_repair_passes_openclaw_task_metadata(tmp_path, mon
         monkeypatch.setattr(
             bff_main,
             "_extract_identity",
-            lambda authorization: _kernel_operator_identity(capabilities=["assistant.kernel.repair"]),
+            lambda authorization=None, **_kwargs: _kernel_operator_identity(capabilities=["assistant.kernel.repair"]),
         )
         client = _seeded_client(tmp_path, monkeypatch)
+        repair = {
+            "task_id": "ASST-REPAIR-123",
+            "task_worktree": "/srv/pantheon-assistant/worktrees/asst-repair-123",
+            "declared_scope": [
+                "services/control-plane/bff/main.py",
+                "services/control-plane/bff/tests/test_management_nl_assistant_provider.py",
+            ],
+            "expected_branch": "task/ASST-REPAIR-123",
+            "remote": "origin",
+            "merge_target": "dev",
+            "require_clean": True,
+            "repo_key": "pantheon",
+        }
+        repair["receipt"] = issue_repair_receipt(
+            repair,
+            actor_id="asst-bff-002",
+            tenant_id="tenant-alpha",
+            control_status=control_store.status_for_actor("asst-bff-002"),
+        )
 
         resp = client.post(
             "/bff/management/nl/ask",
@@ -977,18 +1643,7 @@ def test_management_nl_kernel_repair_passes_openclaw_task_metadata(tmp_path, mon
                 "question": "Update the assistant integration files according to this repair task.",
                 "sessionId": "mgmt-kernel-repair-provider",
                 "openclaw": {
-                    "repair": {
-                        "taskId": "ASST-REPAIR-123",
-                        "taskWorktree": "/srv/pantheon-assistant/worktrees/asst-repair-123",
-                        "declaredScope": [
-                            "services/control-plane/bff/main.py",
-                            "services/control-plane/bff/tests/test_management_nl_assistant_provider.py",
-                        ],
-                        "expectedBranch": "task/ASST-REPAIR-123",
-                        "mergeTarget": "dev",
-                        "requireClean": True,
-                        "repoKey": "pantheon",
-                    }
+                    "repair": repair
                 },
                 "ui": {"currentRoute": "/management/cockpit", "availableUiActions": []},
             },
@@ -997,11 +1652,13 @@ def test_management_nl_kernel_repair_passes_openclaw_task_metadata(tmp_path, mon
 
         assert resp.status_code == 202, resp.text
         body = resp.json()
-        provider_status = body["data"]["providerStatus"]
+        provider_status = body["data"]["provider_status"]
         assert provider_status["mode"] == "kernel_repair"
         assert provider_status["sandbox"] == "workspace-write"
-        assert provider_status["workspaceClass"] == "task_worktree"
-        assert provider_status["repairWorkflow"]["task_id"] == "ASST-REPAIR-123"
+        assert provider_status["workspace_class"] == "task_worktree"
+        assert provider_status["repair_workflow"]["task_id"] == "ASST-REPAIR-123"
+        assert "workspaceClass" not in provider_status
+        assert "repairWorkflow" not in provider_status
         call = fake.calls[0]
         assert call["mode"] == "kernel_repair"
         assert call["metadata"]["task_id"] == "ASST-REPAIR-123"
@@ -1014,9 +1671,73 @@ def test_management_nl_kernel_repair_passes_openclaw_task_metadata(tmp_path, mon
         assert call["metadata"]["merge_target"] == "dev"
         assert call["metadata"]["repo_key"] == "pantheon"
         assert call["metadata"]["require_clean"] is True
-        assert call["metadata"]["repair_metadata_source"] == "management_nl_openclaw_payload"
+        assert call["metadata"]["repair_metadata_source"] == "bff_prepared_repair_receipt"
+        assert "receipt" not in call["metadata"]
         assert "You are operating in kernel_repair mode through OpenClaw/Codex." in call["prompt"]
         assert "workspace-write" in call["prompt"]
+    finally:
+        bff_main.read_store = original_store
+        bff_main._ASSISTANT_CONTROL_MODE_STORE = original_control_store
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._MGMT_AI_AUDIT_EVENTS.clear()
+        bff_main._sse_buffers["ask"].clear()
+
+
+def test_management_nl_kernel_repair_rejects_browser_metadata_without_prepare_receipt(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    original_store = bff_main.read_store
+    original_control_store = bff_main._ASSISTANT_CONTROL_MODE_STORE
+    control_store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
+    control_store.activate(
+        actor_id="asst-bff-002",
+        mode=AssistantMode.KERNEL_REPAIR,
+        capabilities=["assistant.kernel.repair"],
+        reason="repair receipt negative test",
+        passphrase="control phrase ok",
+        ttl_seconds=900,
+        idle_ttl_seconds=120,
+    )
+    fake = FakeProviderClient()
+    try:
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("PANTHEON_ASSISTANT_REPAIR_RECEIPT_KEY", "repair-receipt-test-secret")
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setattr(bff_main, "_ASSISTANT_CONTROL_MODE_STORE", control_store)
+        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+        monkeypatch.setattr(
+            bff_main,
+            "_extract_identity",
+            lambda authorization=None, **_kwargs: _kernel_operator_identity(
+                capabilities=["assistant.kernel.repair"]
+            ),
+        )
+        client = _seeded_client(tmp_path, monkeypatch)
+
+        response = client.post(
+            "/bff/management/nl/ask",
+            json={
+                "question": "Attempt a repair with unsigned browser metadata.",
+                "sessionId": "mgmt-kernel-repair-no-receipt",
+                "openclaw": {
+                    "repair": {
+                        "taskId": "ASST-REPAIR-UNSIGNED",
+                        "taskWorktree": "/srv/shared/live-checkout",
+                        "declaredScope": ["services/control-plane/bff"],
+                        "expectedBranch": "task/ASST-REPAIR-UNSIGNED",
+                        "remote": "origin",
+                        "mergeTarget": "dev",
+                        "repoKey": "pantheon",
+                    }
+                },
+            },
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "asst-repair-no-receipt"},
+        )
+
+        assert response.status_code == 403, response.text
+        assert response.json()["error"]["details"]["reason"] == "repair_receipt_missing"
+        assert fake.calls == []
     finally:
         bff_main.read_store = original_store
         bff_main._ASSISTANT_CONTROL_MODE_STORE = original_control_store
@@ -1043,7 +1764,7 @@ def test_management_nl_direct_passphrase_activates_control_mode_without_provider
         monkeypatch.setattr(
             bff_main,
             "_extract_identity",
-            lambda authorization: _kernel_operator_identity(),
+            lambda authorization=None, **_kwargs: _kernel_operator_identity(),
         )
         client = _seeded_client(tmp_path, monkeypatch)
 
@@ -1061,14 +1782,15 @@ def test_management_nl_direct_passphrase_activates_control_mode_without_provider
         assert resp.status_code == 202, resp.text
         body = resp.json()
         assert body["data"]["status"] == "completed"
-        assert body["data"]["lifecycleStatus"] == "completed"
+        assert body["data"]["lifecycle_status"] == "completed"
+        assert "lifecycleStatus" not in body["data"]
         assert body["meta"]["status"] == "completed"
         assert body["data"]["question"] == "[CONTROL MODE COMMAND REDACTED]"
-        assert body["data"]["controlMode"]["active"] is True
-        assert body["data"]["controlMode"]["mode"] == "kernel_debug"
-        assert body["data"]["controlCommand"] == "activate"
-        assert body["data"]["contextPack"] is None
-        provider_status = body["data"]["providerStatus"]
+        assert body["data"]["control_mode"]["active"] is True
+        assert body["data"]["control_mode"]["mode"] == "kernel_debug"
+        assert body["data"]["control_command"] == "activate"
+        assert body["data"]["context_pack"] is None
+        provider_status = body["data"]["provider_status"]
         assert provider_status["provider"] == "pantheon_bff"
         assert provider_status["runtime"] == "management_nl_control_command_interceptor"
         assert provider_status["used"] is True
@@ -1081,7 +1803,8 @@ def test_management_nl_direct_passphrase_activates_control_mode_without_provider
             event for event in sse_events if event.get("type") == "management.nl.ask.completed"
         )
         assert domain_completed["data"]["status"] == "completed"
-        assert domain_completed["data"]["controlCommand"] == "activate"
+        assert domain_completed["data"]["control_command"] == "activate"
+        assert "controlCommand" not in domain_completed["data"]
         assert domain_completed["data"]["conversation"]["href"].endswith("/mgmt-chat-control-session")
 
         conversation_resp = client.get(
@@ -1120,7 +1843,7 @@ def test_management_nl_explicit_control_status_and_off_are_redacted(tmp_path, mo
         monkeypatch.setattr(
             bff_main,
             "_extract_identity",
-            lambda authorization: _kernel_operator_identity(),
+            lambda authorization=None, **_kwargs: _kernel_operator_identity(),
         )
         client = _seeded_client(tmp_path, monkeypatch)
 
@@ -1130,7 +1853,7 @@ def test_management_nl_explicit_control_status_and_off_are_redacted(tmp_path, mo
             headers={**OPERATOR_HEADERS, "Idempotency-Key": "asst-bff-002-control-prefix"},
         )
         assert activate_resp.status_code == 202, activate_resp.text
-        assert activate_resp.json()["data"]["controlMode"]["active"] is True
+        assert activate_resp.json()["data"]["control_mode"]["active"] is True
 
         status_resp = client.post(
             "/bff/management/nl/ask",
@@ -1138,8 +1861,8 @@ def test_management_nl_explicit_control_status_and_off_are_redacted(tmp_path, mo
             headers={**OPERATOR_HEADERS, "Idempotency-Key": "asst-bff-002-control-status"},
         )
         assert status_resp.status_code == 202, status_resp.text
-        assert status_resp.json()["data"]["controlMode"]["active"] is True
-        assert status_resp.json()["data"]["controlCommand"] == "status"
+        assert status_resp.json()["data"]["control_mode"]["active"] is True
+        assert status_resp.json()["data"]["control_command"] == "status"
 
         off_resp = client.post(
             "/bff/management/nl/ask",
@@ -1147,8 +1870,8 @@ def test_management_nl_explicit_control_status_and_off_are_redacted(tmp_path, mo
             headers={**OPERATOR_HEADERS, "Idempotency-Key": "asst-bff-002-control-off"},
         )
         assert off_resp.status_code == 202, off_resp.text
-        assert off_resp.json()["data"]["controlMode"]["active"] is False
-        assert off_resp.json()["data"]["controlCommand"] == "deactivate"
+        assert off_resp.json()["data"]["control_mode"]["active"] is False
+        assert off_resp.json()["data"]["control_command"] == "deactivate"
         assert fake.calls == []
 
         conversation_resp = client.get(
@@ -1201,7 +1924,9 @@ def test_management_nl_stream_control_status_uses_bff_interceptor(tmp_path, monk
             headers=OPERATOR_HEADERS,
         )
         assert audit_resp.status_code == 200, audit_resp.text
-        events = audit_resp.json()["data"]
+        audit_body = audit_resp.json()
+        assert "items" not in audit_body
+        events = audit_body["data"]["items"]
         assert any(event.get("control_command") == "status" for event in events)
     finally:
         bff_main.read_store = original_store
@@ -1209,6 +1934,123 @@ def test_management_nl_stream_control_status_uses_bff_interceptor(tmp_path, monk
         bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
+
+
+def test_management_nl_stream_records_openclaw_provider_audit_and_usage(tmp_path, monkeypatch) -> None:
+    fake = FakeProviderClient()
+    try:
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+        client = _seeded_client(tmp_path, monkeypatch)
+        bff_main._MGMT_AI_AUDIT_EVENTS.clear()
+
+        resp = client.post(
+            "/bff/management/nl/ask/stream",
+            json={
+                "question": "Stream provider audit check",
+                "sessionId": "mgmt-stream-provider-audit-session",
+                "traceId": "mgmt-stream-provider-audit-trace",
+            },
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "asst-bff-002-stream-provider-audit"},
+        )
+
+        assert resp.status_code == 200, resp.text
+        body = resp.text
+        assert "Streamed provider answer." in body
+        assert '"provider": "openclaw"' in body
+        assert fake.calls and fake.calls[0]["stream"] is True
+
+        audit_resp = client.get(
+            "/bff/management/ai/audit?session_id=mgmt-stream-provider-audit-session",
+            headers=OPERATOR_HEADERS,
+        )
+        assert audit_resp.status_code == 200, audit_resp.text
+        audit_body = audit_resp.json()
+        assert "items" not in audit_body
+        events = audit_body["data"]["items"]
+        provider_events = [event for event in events if event["event_type"].startswith("management_ai.provider.")]
+        assert [event["event_type"] for event in provider_events] == [
+            "management_ai.provider.started",
+            "management_ai.provider.completed",
+        ]
+        assert provider_events[0]["provider"] == "openclaw"
+        assert provider_events[0]["route"] == "POST /api/openclaw-adapter/assistant/providers/openclaw/invoke/stream"
+        assert provider_events[1]["provider"] == "openclaw"
+        assert provider_events[1]["output_summary"]["model"] == "openclaw/main"
+
+        usage_resp = client.get(
+            "/bff/assistant/providers/usage-summary?auth_probe=false&limit=50&window_hours=24",
+            headers=OPERATOR_HEADERS,
+        )
+        assert usage_resp.status_code == 200, usage_resp.text
+        rows = usage_resp.json()["data"]["providers"]
+        openclaw = next(row for row in rows if row["provider"] == "openclaw")
+        assert openclaw["calls"] == 1
+        assert openclaw["success_count"] == 1
+        assert "successCount" not in openclaw
+        assert openclaw["observed_usage"]["source"] == "management_ai_bff_audit"
+        assert "observedUsage" not in openclaw
+        assert openclaw["models"][0]["model"] == "openclaw/main"
+    finally:
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._MGMT_AI_AUDIT_EVENTS.clear()
+        bff_main._sse_buffers["ask"].clear()
+
+
+def test_management_nl_stream_records_done_only_openclaw_answer(tmp_path, monkeypatch) -> None:
+    fake = FakeProviderClient(
+        stream_events=[
+            {
+                "type": "done",
+                "text": "Done-only provider answer.",
+                "elapsed_ms": 12,
+                "transport": "responses_http",
+            }
+        ]
+    )
+    try:
+        _clear_provider_env(monkeypatch)
+        monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "true")
+        monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+        client = _seeded_client(tmp_path, monkeypatch)
+        bff_main._MGMT_AI_AUDIT_EVENTS.clear()
+
+        resp = client.post(
+            "/bff/management/nl/ask/stream",
+            json={
+                "question": "Done-only stream audit check",
+                "sessionId": "mgmt-stream-provider-done-only-session",
+                "traceId": "mgmt-stream-provider-done-only-trace",
+            },
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "asst-bff-002-stream-provider-done-only"},
+        )
+
+        assert resp.status_code == 200, resp.text
+        assert "Done-only provider answer." in resp.text
+
+        audit_resp = client.get(
+            "/bff/management/ai/audit?session_id=mgmt-stream-provider-done-only-session",
+            headers=OPERATOR_HEADERS,
+        )
+        assert audit_resp.status_code == 200, audit_resp.text
+        audit_body = audit_resp.json()
+        assert "items" not in audit_body
+        provider_events = [
+            event
+            for event in audit_body["data"]["items"]
+            if event["event_type"].startswith("management_ai.provider.")
+        ]
+        assert [event["event_type"] for event in provider_events] == [
+            "management_ai.provider.started",
+            "management_ai.provider.completed",
+        ]
+        assert provider_events[1]["output_summary"]["output_bytes"] == len("Done-only provider answer.".encode("utf-8"))
+    finally:
+        bff_main._MGMT_NL_IDEMPOTENCY.clear()
+        bff_main._MGMT_AI_AUDIT_EVENTS.clear()
+        bff_main._sse_buffers["ask"].clear()
+
 
 def test_management_nl_chat_control_command_requires_authorized_operator(tmp_path, monkeypatch) -> None:
     original_store = bff_main.read_store
@@ -1225,7 +2067,7 @@ def test_management_nl_chat_control_command_requires_authorized_operator(tmp_pat
         monkeypatch.setattr(
             bff_main,
             "_extract_identity",
-            lambda authorization: _kernel_operator_identity(roles=["reviewer"]),
+            lambda authorization=None, **_kwargs: _kernel_operator_identity(roles=["reviewer"]),
         )
         client = _seeded_client(tmp_path, monkeypatch)
 
@@ -1386,9 +2228,10 @@ def test_provider_enabled_extracts_codex_item_completed_text(tmp_path, monkeypat
         assert resp.status_code == 202, resp.text
         body = resp.json()
         assert body["data"]["answer"] == "Codex transcript answer."
-        assert body["data"]["providerStatus"]["status"] == "completed"
-        assert body["data"]["providerStatus"]["used"] is True
-        assert "reason" not in body["data"]["providerStatus"]
+        assert body["data"]["provider_status"]["status"] == "completed"
+        assert body["data"]["provider_status"]["used"] is True
+        assert "providerStatus" not in body["data"]
+        assert "reason" not in body["data"]["provider_status"]
     finally:
         bff_main.read_store = original_store
         bff_main._MGMT_NL_IDEMPOTENCY.clear()
@@ -1463,25 +2306,28 @@ def test_management_ai_audit_records_exchange_and_provider_trace(tmp_path, monke
         )
         assert conversation_resp.status_code == 200, conversation_resp.text
         conversation = conversation_resp.json()["data"]
-        assert conversation["sessionId"] == "mgmt-audit-session"
         assert conversation["session_id"] == "mgmt-audit-session"
+        assert "sessionId" not in conversation
         turns = conversation["turns"]
         assert [turn["role"] for turn in turns] == ["user", "assistant"]
         assert turns[0]["id"] == turns[0]["message_id"]
         assert turns[0]["text"] == "What is the scoped portfolio?"
-        assert turns[0]["createdAt"]
+        assert turns[0]["created_at"]
+        assert "createdAt" not in turns[0]
         assert turns[0]["content"] == "What is the scoped portfolio?"
         assert turns[1]["text"] == "Audited provider answer."
         assert turns[1]["content"] == "Audited provider answer."
-        assert turns[1]["providerStatus"]["used"] is True
         assert turns[1]["provider_status"]["used"] is True
+        assert "providerStatus" not in turns[1]
 
         audit_resp = client.get(
             "/bff/management/ai/audit?session_id=mgmt-audit-session&trace_id=mgmt-audit-trace",
             headers=OPERATOR_HEADERS,
         )
         assert audit_resp.status_code == 200, audit_resp.text
-        events = audit_resp.json()["data"]
+        audit_body = audit_resp.json()
+        assert "items" not in audit_body
+        events = audit_body["data"]["items"]
         event_types = [event["event_type"] for event in events]
         assert event_types == [
             "management_ai.exchange.accepted",
@@ -1503,6 +2349,142 @@ def test_management_ai_audit_records_exchange_and_provider_trace(tmp_path, monke
         bff_main._MGMT_NL_IDEMPOTENCY.clear()
         bff_main._MGMT_AI_AUDIT_EVENTS.clear()
         bff_main._sse_buffers["ask"].clear()
+
+
+def test_assistant_provider_usage_summary_aggregates_history_and_quota(tmp_path, monkeypatch) -> None:
+    fake = FakeProviderClient()
+    _clear_provider_env(monkeypatch)
+    monkeypatch.setattr(bff_main, "OpenClawOpsClient", lambda: fake)
+    client = _seeded_client(tmp_path, monkeypatch)
+    original_provider_list = bff_main._assistant_provider_list
+
+    def provider_list_with_openclaw(*, auth_probe=False):
+        payload = original_provider_list(auth_probe=auth_probe)
+        payload["data"].append(
+            {
+                "provider": "openclaw",
+                "provider_name": "OpenClaw",
+                "runtime": "openclaw_gateway_agent_cli",
+                "ready": True,
+                "status": "ready",
+                "auth_status": "ready",
+            }
+        )
+        return payload
+
+    monkeypatch.setattr(bff_main, "_assistant_provider_list", provider_list_with_openclaw)
+    bff_main._MGMT_AI_AUDIT_EVENTS.clear()
+    now = bff_main.datetime.now(bff_main.timezone.utc).replace(microsecond=0)
+    started_at = (now - bff_main.timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
+    completed_at = (now - bff_main.timedelta(minutes=4, seconds=57)).isoformat().replace("+00:00", "Z")
+    failed_at = (now - bff_main.timedelta(minutes=4)).isoformat().replace("+00:00", "Z")
+
+    bff_main._management_ai_record_event(
+        {
+            "event_type": "management_ai.provider.started",
+            "recorded_at": started_at,
+            "session_id": "usage-session",
+            "message_id": "usage-message",
+            "trace_id": "usage-trace",
+            "provider_run_id": "usage-run-codex",
+            "provider": "codex_cli",
+            "mode": "user",
+            "prompt_bytes": 1200,
+        }
+    )
+    bff_main._management_ai_record_event(
+        {
+            "event_type": "management_ai.provider.completed",
+            "recorded_at": completed_at,
+            "session_id": "usage-session",
+            "message_id": "usage-message",
+            "trace_id": "usage-trace",
+            "provider_run_id": "usage-run-codex",
+            "provider": "codex_cli",
+            "provider_state": "completed",
+            "duration_ms": 2500,
+            "output_summary": {
+                "model": "gpt-5-codex",
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": 4,
+                    "total_tokens": 14,
+                },
+            },
+        }
+    )
+    bff_main._management_ai_record_event(
+        {
+            "event_type": "management_ai.provider.failed",
+            "recorded_at": failed_at,
+            "session_id": "usage-session",
+            "message_id": "usage-message-2",
+            "trace_id": "usage-trace-2",
+            "provider_run_id": "usage-run-claude",
+            "provider": "claude",
+            "duration_ms": 900,
+            "error_code": "CLAUDE_AUTH_UNAVAILABLE",
+        }
+    )
+
+    resp = client.get(
+        "/bff/assistant/providers/usage-summary?auth_probe=true&limit=50&window_hours=24",
+        headers=OPERATOR_HEADERS,
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "ok"
+    data = body["data"]
+    assert data["totals"]["calls"] == 2
+    assert data["totals"]["success_count"] == 1
+    assert data["totals"]["failed_count"] == 1
+    assert "successCount" not in data["totals"]
+    assert "failedCount" not in data["totals"]
+    providers = {row["provider"]: row for row in data["providers"]}
+    codex = providers["codex_cli"]
+    assert codex["live_auth"] is True
+    assert codex["provider_auth"]["authenticated"] is True
+    assert codex["live_smoke"]["status"] == "not_checked"
+    assert codex["readiness"]["mount_ready_is_sufficient"] is False
+    assert codex["reauth"]["status"] == "not_started"
+    assert codex["persona_dependencies"] == {
+        "status": "unavailable",
+        "count": None,
+        "personas": [],
+        "source": None,
+        "reason": "persona_dependency_inventory_unavailable",
+    }
+    assert "liveAuth" not in codex
+    assert codex["quota"]["source"] == "provider_snapshot"
+    assert codex["quota"]["remaining"] == 12
+    assert codex["quota"]["used"] == 38
+    assert codex["observed_usage"]["source"] == "management_ai_bff_audit"
+    assert codex["observed_usage"]["coverage"] == "bff_observed_management_ai_only"
+    assert codex["observed_usage"]["stale"] is False
+    assert codex["observed_usage"]["total_tokens"] == 14
+    assert "observedUsage" not in codex
+    assert codex["models"][0]["model"] == "gpt-5-codex"
+    assert codex["models"][0]["input_tokens"] == 10
+    claude = providers["claude"]
+    assert claude["live_auth"] is False
+    assert claude["provider_auth"]["authenticated"] is False
+    assert claude["live_smoke"]["status"] == "not_checked"
+    assert claude["readiness"]["mount_ready_is_sufficient"] is False
+    assert claude["reauth"]["status"] == "not_started"
+    assert claude["persona_dependencies"]["reason"] == "persona_dependency_inventory_unavailable"
+    assert claude["failed_count"] == 1
+    assert claude["quota"]["source"] == "not_configured"
+    openclaw = providers["openclaw"]
+    assert openclaw["provider_auth"]["status"] == "ready"
+    assert openclaw["live_smoke"]["status"] == "not_checked"
+    assert openclaw["readiness"]["mount_ready_is_sufficient"] is False
+    assert openclaw["reauth"]["status"] == "not_started"
+    assert openclaw["persona_dependencies"]["reason"] == "persona_dependency_inventory_unavailable"
+    assert data["quota"]["missing_source_means"] == "quota remaining is unknown, not zero"
+    assert data["usage"]["truth_policy"] == "observed_bff_events_only"
+    assert "missingSourceMeans" not in data["quota"]
+    assert "truthPolicy" not in data["usage"]
 
 
 def test_management_ai_conversation_reader_returns_full_session_and_ignores_trace_filter(
@@ -1551,7 +2533,8 @@ def test_management_ai_conversation_reader_returns_full_session_and_ignores_trac
         )
         assert conversation_resp.status_code == 200, conversation_resp.text
         body = conversation_resp.json()
-        assert body["data"]["sessionId"] == "mgmt-full-session"
+        assert body["data"]["session_id"] == "mgmt-full-session"
+        assert "sessionId" not in body["data"]
         assert body["meta"]["filters"]["trace_id_ignored"] is True
         turns = body["data"]["turns"]
         assert [turn["role"] for turn in turns] == ["user", "assistant", "user", "assistant"]
@@ -1561,16 +2544,20 @@ def test_management_ai_conversation_reader_returns_full_session_and_ignores_trac
             "Question 2?",
             "Threaded provider answer.",
         ]
-        assert turns[1]["providerStatus"]["provider"] == "codex_cli"
+        assert turns[1]["provider_status"]["provider"] == "codex_cli"
         assert turns[1]["actions"] == []
-        assert body["data"]["session"]["ttlSeconds"] >= 7 * 24 * 60 * 60
+        assert body["data"]["session"]["ttl_seconds"] >= 7 * 24 * 60 * 60
 
         list_resp = client.get("/bff/management/ai/conversations", headers=OPERATOR_HEADERS)
         assert list_resp.status_code == 200, list_resp.text
-        sessions = list_resp.json()["items"]
-        assert sessions[0]["sessionId"] == "mgmt-full-session"
+        list_body = list_resp.json()
+        assert "items" not in list_body
+        sessions = list_body["data"]["items"]
+        assert sessions[0]["session_id"] == "mgmt-full-session"
         assert sessions[0]["href"] == "/bff/management/ai/conversations/mgmt-full-session"
-        assert sessions[0]["turnCount"] == 4
+        assert sessions[0]["turn_count"] == 4
+        assert "sessionId" not in sessions[0]
+        assert "turnCount" not in sessions[0]
     finally:
         bff_main.read_store = original_store
         bff_main._MGMT_NL_IDEMPOTENCY.clear()
@@ -1620,10 +2607,10 @@ def test_management_ai_persists_30_messages_as_60_ordered_turns(tmp_path, monkey
 
         last_management_context = fake.calls[-1]["context_pack"]["backend"]["management_nl"]["data"]
         assert last_management_context["conversation"]["source"] == "server"
-        assert last_management_context["conversation"]["historySource"] == "management_ai_store"
-        assert last_management_context["conversation"]["historyCharBudget"] > 32 * 1024
-        assert len(last_management_context["conversation"]["recentTurns"]) == 59
-        assert last_management_context["conversation"]["recentTurns"][0]["content"] == "Persistence question 1?"
+        assert last_management_context["conversation"]["history_source"] == "management_ai_store"
+        assert last_management_context["conversation"]["history_char_budget"] > 32 * 1024
+        assert len(last_management_context["conversation"]["recent_turns"]) == 59
+        assert last_management_context["conversation"]["recent_turns"][0]["content"] == "Persistence question 1?"
     finally:
         bff_main.read_store = original_store
         bff_main._MGMT_NL_IDEMPOTENCY.clear()
@@ -1665,22 +2652,22 @@ def test_management_ai_uses_server_history_when_fe_recent_turns_are_truncated(
         management_context = fake.calls[-1]["context_pack"]["backend"]["management_nl"]["data"]
         conversation = management_context["conversation"]
         assert conversation["source"] == "server"
-        assert [turn["content"] for turn in conversation["recentTurns"]] == [
+        assert [turn["content"] for turn in conversation["recent_turns"]] == [
             "Server history question 1?",
             "Provider grounded management answer.",
             "Server history question 2?",
             "Provider grounded management answer.",
             "Server history question 3?",
         ]
-        assert conversation["historySource"] == "management_ai_store"
-        assert conversation["storedTurnCount"] == 5
-        assert conversation["historyTruncated"] is False
-        assert conversation["historyCharBudget"] > 32 * 1024
+        assert conversation["history_source"] == "management_ai_store"
+        assert conversation["stored_turn_count"] == 5
+        assert conversation["history_truncated"] is False
+        assert conversation["history_char_budget"] > 32 * 1024
         prompt = fake.calls[-1]["prompt"]
         assert "Server-side conversation history JSON" in prompt
         assert "Server history question 1?" in prompt
         assert "Only the latest FE-window hint remains." in prompt
-        assert conversation["clientHint"]["recentTurns"] == [
+        assert conversation["client_hint"]["recent_turns"] == [
             {
                 "role": "user",
                 "content": "Only the latest FE-window hint remains.",
@@ -1709,12 +2696,12 @@ def test_management_ai_provider_history_window_exceeds_fe_budget_and_truncates()
 
     windowed, budget = bff_main._management_ai_provider_history_window(turns)
 
-    assert budget["historyCharBudget"] > 32 * 1024
-    assert budget["historyTruncated"] is True
-    assert budget["historyOmittedTurnCount"] > 0
-    assert budget["historyEstimatedChars"] <= budget["historyCharBudget"]
+    assert budget["history_char_budget"] > 32 * 1024
+    assert budget["history_truncated"] is True
+    assert budget["history_omitted_turn_count"] > 0
+    assert budget["history_estimated_chars"] <= budget["history_char_budget"]
     assert windowed[-1]["id"] == "turn-39"
-    assert [turn["createdAt"] for turn in windowed] == sorted(turn["createdAt"] for turn in windowed)
+    assert [turn["created_at"] for turn in windowed] == sorted(turn["created_at"] for turn in windowed)
 
 
 def test_management_ai_idempotency_replay_does_not_duplicate_persisted_turns(
@@ -1891,16 +2878,16 @@ def test_management_ai_inline_attachment_is_stored_and_read_back_as_proxy_url(
         attachment = conversation_resp.json()["data"]["turns"][0]["attachments"][0]
         assert attachment == {
             "id": stored_attachment["id"],
-            "attachmentId": stored_attachment["id"],
             "attachment_id": stored_attachment["id"],
             "kind": "image",
-            "mimeType": "image/png",
             "mime_type": "image/png",
             "filename": "screen.png",
-            "sizeBytes": len(image_bytes),
             "size_bytes": len(image_bytes),
             "url": f"/bff/management/ai/attachments/{stored_attachment['id']}",
         }
+        assert "attachmentId" not in attachment
+        assert "mimeType" not in attachment
+        assert "sizeBytes" not in attachment
         assert "dataBase64" not in json.dumps(conversation_resp.json(), ensure_ascii=False)
 
         attachment_resp = client.get(attachment["url"], headers=OPERATOR_HEADERS)
@@ -1942,7 +2929,8 @@ def test_provider_degraded_falls_back_to_deterministic_answer(tmp_path, monkeypa
         assert resp.status_code == 202, resp.text
         body = resp.json()
         assert body["data"]["answer"].startswith("Management summary for question:")
-        provider_status = body["data"]["providerStatus"]
+        provider_status = body["data"]["provider_status"]
+        assert "providerStatus" not in body["data"]
         assert provider_status["status"] == "degraded"
         assert provider_status["reason"] == "OPENCLAW_ADAPTER_UNREACHABLE"
         assert provider_status["fallback"] == "deterministic_synthesis"
@@ -1979,16 +2967,16 @@ def test_codex_auth_unavailable_status_has_operator_notice(tmp_path, monkeypatch
         assert resp.status_code == 202, resp.text
         body = resp.json()
         assert body["data"]["answer"].startswith("Management summary for question:")
-        provider_status = body["data"]["providerStatus"]
+        provider_status = body["data"]["provider_status"]
         assert provider_status["status"] == "degraded"
         assert provider_status["reason"] == "CODEX_AUTH_UNAVAILABLE"
-        assert provider_status["reasonCode"] == "CODEX_AUTH_UNAVAILABLE"
         assert provider_status["reason_code"] == "CODEX_AUTH_UNAVAILABLE"
         assert provider_status["severity"] == "warning"
-        assert "Codex service-user session expired" in provider_status["displayMessage"]
-        assert provider_status["display_message"] == provider_status["displayMessage"]
-        assert provider_status["operatorAction"] == "reauth_codex_service_user"
+        assert "reasonCode" not in provider_status
+        assert "Codex service-user session expired" in provider_status["display_message"]
+        assert "displayMessage" not in provider_status
         assert provider_status["operator_action"] == "reauth_codex_service_user"
+        assert "operatorAction" not in provider_status
         assert provider_status["fallback"] == "deterministic_synthesis"
         assert provider_status["used"] is False
         assert len(fake.calls) == 1
@@ -2137,7 +3125,7 @@ def test_claude_provider_enabled_invokes_openclaw_claude_route(tmp_path, monkeyp
         assert call["provider"] == "claude_cli"
         assert call["mode"] == "user"
         assert call["operator_id"] == "asst-bff-002"
-        provider_status = body["data"]["providerStatus"]
+        provider_status = body["data"]["provider_status"]
         assert provider_status["used"] is True
     finally:
         bff_main.read_store = original_store
@@ -2171,7 +3159,7 @@ def test_claude_provider_degraded_falls_back_to_deterministic_answer(tmp_path, m
         assert resp.status_code == 202, resp.text
         body = resp.json()
         assert body["data"]["answer"].startswith("Management summary for question:")
-        provider_status = body["data"]["providerStatus"]
+        provider_status = body["data"]["provider_status"]
         assert provider_status["status"] == "degraded"
         assert provider_status["reason"] == "CLAUDE_BINARY_NOT_FOUND"
         assert provider_status["fallback"] == "deterministic_synthesis"
@@ -2213,9 +3201,11 @@ def test_provider_async_returns_processing_under_slow_provider(tmp_path, monkeyp
         assert resp.status_code == 202, resp.text
         body = resp.json()
         assert body["data"]["status"] == "processing"
-        assert body["data"]["lifecycleStatus"] == "processing"
-        assert body["data"]["providerStatus"]["status"] == "processing"
-        assert body["data"]["providerStatus"]["used"] is False
+        assert body["data"]["lifecycle_status"] == "processing"
+        assert "lifecycleStatus" not in body["data"]
+        assert body["data"]["provider_status"]["status"] == "processing"
+        assert body["data"]["provider_status"]["used"] is False
+        assert "providerStatus" not in body["data"]
         # Deterministic answer is served immediately; the provider answer is
         # finalised asynchronously by the background task.
         assert body["data"]["answer"].startswith("Management summary for question:")
@@ -2252,7 +3242,7 @@ def test_mgmt_nl_finalize_provider_turn_appends_assistant_turn_and_idempotency(t
     )
     base_result = {
         "status": "accepted",
-        "data": {"status": "processing", "lifecycleStatus": "processing", "answer": "deterministic"},
+        "data": {"status": "processing", "lifecycle_status": "processing", "answer": "deterministic"},
         "meta": {"status": "processing", "idempotency": {"idempotencyKey": "k-fin", "replayed": False}},
     }
     provider_status = bff_main._mgmt_nl_provider_status(
@@ -2287,4 +3277,7 @@ def test_mgmt_nl_finalize_provider_turn_appends_assistant_turn_and_idempotency(t
     assert cached is not None
     assert cached["result"]["data"]["answer"] == "Async provider answer."
     assert cached["result"]["data"]["status"] == "completed"
+    assert cached["result"]["data"]["lifecycle_status"] == "completed"
+    assert "lifecycleStatus" not in cached["result"]["data"]
+    assert "providerStatus" not in cached["result"]["data"]
     bff_main._MGMT_NL_IDEMPOTENCY.clear()

@@ -1,0 +1,50 @@
+{
+  "task_id": "MGMT-OPS-003-GAP-003-FLOW-FOCUS-FIX",
+  "owner": "Codex2",
+  "recorded_at": "20260711T235934Z",
+  "execute_plans": {
+    "pr": 263,
+    "task_commit": "a05e3b3257210e0b2371b299c82fd2118215d0d3",
+    "merge_commit": "a74e58696c900112557b0c748c3f8c69629da106",
+    "base": "dev"
+  },
+  "deployment": {
+    "fe_host": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io",
+    "bff_host": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+    "deployed_at": "20260711T234143Z",
+    "deployment_json_commit": "a74e58696c900112557b0c748c3f8c69629da106",
+    "build_mode": {
+      "VITE_BFF_MODE": "live",
+      "VITE_BFF_FALLBACK": "strict",
+      "VITE_BFF_REAL_WRITES": "false"
+    }
+  },
+  "github_runs": {
+    "pr_integration_gate": {
+      "run_id": 29172001643,
+      "result": "success",
+      "duration": "17m38s"
+    },
+    "dev_integration_gate": {
+      "run_id": 29172478139,
+      "result": "success",
+      "duration": "18m26s"
+    },
+    "dev_fe_deploy": {
+      "run_id": 29172478132,
+      "result": "success"
+    }
+  },
+  "openapi": {
+    "persona_fleet_query_parameters": [
+      { "name": "q", "in": "query", "type": "", "required": false },
+      { "name": "page_size", "in": "query", "type": "integer", "required": false }
+    ]
+  },
+  "validation": {
+    "focused_unit_tests": "passed: 5 files, 50 tests",
+    "build": "passed",
+    "pre_deploy_workflow_e2e": "passed: desktop and mobile",
+    "hosted_post_deploy_workflow_e2e": "passed: 2 tests in 16.2s"
+  }
+}

@@ -11,9 +11,10 @@ Background:
   forever (the OPS-ARCHIVE-BACKFILL-001 incident).
 
 What this script does:
-  1. Detects ``ai-task-archive/tasks/*.json`` + ``.orchestrator/task-briefs/*.md``
-     that are untracked in the main worktree, plus a modified
-     ``ai-task-archive/index.json``.
+  1. Detects flat terminal ``ai-task-archive/tasks/*.json`` records,
+     nested non-terminal assistant dev-bridge admission records, and
+     ``.orchestrator/task-briefs/*.md`` files that are untracked in the main
+     worktree, plus a modified ``ai-task-archive/index.json``.
   2. If trigger conditions are met (>= MIN_FILES pending OR oldest file
      >= MIN_AGE_SECONDS old), opens a per-task PR via the same flow as
      scripts/git/task_start.sh + worker_commit.py + task_finalize.sh.
@@ -58,6 +59,11 @@ TASK_ID_PREFIX = "OPS-ARCHIVE-AUTO-COMMIT"
 MIN_FILES = 5
 MIN_AGE_SECONDS = 4 * 3600
 STALE_LOCK_SECONDS = 3600
+TERMINAL_ARCHIVE_PREFIX = "ai-task-archive/tasks/"
+BRIDGE_ADMISSION_PREFIX = (
+    "ai-task-archive/tasks/assistant-dev-bridge-admissions/"
+)
+TASK_BRIEF_PREFIX = ".orchestrator/task-briefs/"
 
 
 def iso_now() -> str:
@@ -69,18 +75,40 @@ def _run(cmd: list[str], *, cwd: Path | None = None, check: bool = True) -> subp
 
 
 def detect_pending() -> dict[str, object]:
-    """Return {'briefs': [...], 'archives': [...], 'index_modified': bool}."""
+    """Return pending files split by terminal/non-terminal semantics.
+
+    ``--untracked-files=all`` is intentional: without it git collapses a new
+    admission directory to one porcelain entry, and the copy loop later sees a
+    directory instead of individual files.
+    """
+
     briefs: list[str] = []
     archives: list[str] = []
-    out = _run(["git", "-C", str(ROOT), "status", "--short"], check=False).stdout
+    admissions: list[str] = []
+    out = _run(
+        [
+            "git",
+            "-C",
+            str(ROOT),
+            "status",
+            "--short",
+            "--untracked-files=all",
+        ],
+        check=False,
+    ).stdout
     for raw in out.split("\n"):
         line = raw.rstrip()
-        if not line:
+        if not line.startswith("?? "):
             continue
-        if line.startswith("?? .orchestrator/task-briefs/"):
-            briefs.append(line[3:].strip())
-        elif line.startswith("?? ai-task-archive/tasks/"):
-            archives.append(line[3:].strip())
+        path = line[3:].strip()
+        if path.startswith(BRIDGE_ADMISSION_PREFIX) and path.endswith(".json"):
+            admissions.append(path)
+        elif path.startswith(TASK_BRIEF_PREFIX) and path.endswith(".md"):
+            briefs.append(path)
+        elif path.startswith(TERMINAL_ARCHIVE_PREFIX) and path.endswith(".json"):
+            remainder = path[len(TERMINAL_ARCHIVE_PREFIX) :]
+            if remainder and "/" not in remainder:
+                archives.append(path)
     index_modified = (
         _run(
             ["git", "-C", str(ROOT), "diff", "--quiet", "--", "ai-task-archive/index.json"],
@@ -88,19 +116,25 @@ def detect_pending() -> dict[str, object]:
         ).returncode
         != 0
     )
-    return {"briefs": briefs, "archives": archives, "index_modified": index_modified}
+    return {
+        "briefs": briefs,
+        "archives": archives,
+        "admissions": admissions,
+        "index_modified": index_modified,
+    }
 
 
 def should_trigger(pending: dict[str, object]) -> tuple[bool, str]:
     briefs = pending["briefs"]  # type: ignore[index]
     archives = pending["archives"]  # type: ignore[index]
-    total = len(briefs) + len(archives)
+    admissions = pending.get("admissions", [])  # type: ignore[assignment]
+    total = len(briefs) + len(archives) + len(admissions)
     if total == 0 and not pending["index_modified"]:
         return False, "no pending files"
     if total >= MIN_FILES:
         return True, f"pending file count {total} >= {MIN_FILES}"
     oldest = float("inf")
-    for f in [*briefs, *archives]:
+    for f in [*briefs, *archives, *admissions]:
         p = ROOT / str(f)
         try:
             oldest = min(oldest, p.stat().st_mtime)
@@ -163,8 +197,9 @@ def release_lock() -> None:
 def _build_commit_message(task_id: str, pending: dict[str, object]) -> str:
     briefs = pending["briefs"]  # type: ignore[index]
     archives = pending["archives"]  # type: ignore[index]
+    admissions = pending.get("admissions", [])  # type: ignore[assignment]
     idx = 1 if pending["index_modified"] else 0
-    total = len(briefs) + len(archives) + idx
+    total = len(briefs) + len(archives) + len(admissions) + idx
     # Subject capped at 72 chars by check_commit_trailers.py.
     # task_id alone is ~40 chars; keep description very tight.
     lines = [
@@ -177,6 +212,7 @@ def _build_commit_message(task_id: str, pending: dict[str, object]) -> str:
         "",
         "Backfilled:",
         f"- {len(archives)} ai-task-archive/tasks/*.json terminal task records",
+        f"- {len(admissions)} non-terminal assistant dev-bridge admission records",
         f"- {len(briefs)} .orchestrator/task-briefs/*.md generated briefs",
         f"- {idx} ai-task-archive/index.json (recent_terminal_ids + counts bump)",
         "",
@@ -210,6 +246,7 @@ def run_backfill_pr(pending: dict[str, object], *, dry_run: bool = False) -> tup
     files: list[str] = []
     files.extend(str(b) for b in pending["briefs"])  # type: ignore[arg-type]
     files.extend(str(a) for a in pending["archives"])  # type: ignore[arg-type]
+    files.extend(str(a) for a in pending.get("admissions", []))  # type: ignore[arg-type]
     if pending["index_modified"]:
         files.append("ai-task-archive/index.json")
     if not files:
@@ -229,6 +266,16 @@ def run_backfill_pr(pending: dict[str, object], *, dry_run: bool = False) -> tup
 
         for f in files:
             src = ROOT / f
+            try:
+                src.resolve(strict=True).relative_to(ROOT.resolve(strict=True))
+            except (OSError, ValueError) as exc:
+                raise FileNotFoundError(
+                    f"auto-commit scope entry escapes the status root: {src}"
+                ) from exc
+            if src.is_symlink() or not src.is_file():
+                raise FileNotFoundError(
+                    f"auto-commit scope entry is not a regular file: {src}"
+                )
             dst = worktree_path / f
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst)

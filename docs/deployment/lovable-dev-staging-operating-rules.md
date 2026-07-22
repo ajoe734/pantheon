@@ -173,6 +173,9 @@ PANTHEON_BFF_JWT_AUDIENCE=bff-operators
 PANTHEON_BFF_OIDC_CLIENT_ID=<dev-client-id>
 PANTHEON_BFF_OIDC_CLIENT_SECRET=<dev-client-secret>
 PANTHEON_BFF_DEV_LOGIN_TTL_SECONDS=900
+PANTHEON_BFF_DEV_LOGIN_ROLES=operator,reviewer,approver
+PANTHEON_BFF_TENANT_ID=tenant-dev
+PANTHEON_BFF_ALLOWED_TENANTS=tenant-dev,pantheon-dev
 
 # staging BFF on pantheon-lupin-staging-control
 PANTHEON_BFF_CORS_ORIGINS=https://pantheon-ai-system-front-staging-live.lovable.app

@@ -76,6 +76,8 @@ def test_ready_dispatch_settings_current_defaults() -> None:
     assert settings["max_tasks_per_agent_by_agent"] == {}
     assert settings["max_dispatches_per_tick"] == 4
     assert settings["orphaned_queue_event_grace_seconds"] == DEFAULT_ORPHANED_QUEUE_EVENT_GRACE_SECONDS
+    assert settings["max_concurrent_per_account"] == {}
+    assert "max_concurrent_per_quota_group" not in settings
 
 
 def test_ready_dispatch_settings_treats_missing_ready_dispatcher_as_defaults() -> None:
@@ -100,6 +102,15 @@ def test_ready_dispatch_settings_preserves_configured_values() -> None:
     assert settings["owned_statuses"] == ["queued"]
     assert settings["max_tasks_per_agent"] == 2
     assert settings["max_dispatches_per_tick"] == 8
+
+
+def test_ready_dispatch_settings_preserves_legacy_account_cap_without_masking_it() -> None:
+    settings = ready_dispatch_settings(
+        {"ready_dispatcher": {"max_concurrent_per_quota_group": {"legacy": 2}}}
+    )
+
+    assert settings["max_concurrent_per_quota_group"] == {"legacy": 2}
+    assert "max_concurrent_per_account" not in settings
 
 
 def test_ready_dispatch_settings_uses_done_statuses_for_legacy_terminal_default() -> None:

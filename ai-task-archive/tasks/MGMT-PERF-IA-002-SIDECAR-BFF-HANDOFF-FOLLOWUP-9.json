@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+  "archived_at": "2026-07-11T08:51:16Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+    "title": "Prepare MGMT-PERF-IA-002 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-PERF-IA-002，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Management Performance Ranking IA / Wave 0 BFF contract",
+    "owner": "Codex",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/MGMT-PERF-IA-002/MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-9.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner closeout complete: support-only no-material-delta BFF/frontend handoff checkpoint verified; Antigravity approval accepted; PR #3156 merged into dev at 070715c00cffc0df7a76fa72f1cf0a9aa69e42af; parent pause remains until clean scoped implementation and contract evidence exist.",
+    "last_update": "2026-07-11T08:51:16Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-PERF-IA-002",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過",
+      "同意 Codex 整理的 no-material-delta 查核點，維持 Follow-up 8 的暫停決策直到父任務 MGMT-PERF-IA-002 提供乾淨實作與合約測試證據"
+    ],
+    "review_file": "support/sidecars/MGMT-PERF-IA-002/MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-9.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T08:51:16Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-perf-ia-002-sidecar-bff-handoff-followup-9",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+      "git_clean_required": false,
+      "commit": "a346e15bbcca18db8f403a3251978dc4c292a5ee",
+      "commit_subject": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-9: add checkpoint",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support-only BFF/frontend handoff evidence checkpoint",
+        "Not changing": "canonical truth, BFF runtime/tests, ranking policy, or frontend source",
+        "Composes with": "MGMT-PERF-IA-002 parent rebuild and Antigravity review",
+        "LLM-Agent": "Codex",
+        "Task-ID": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+        "Reviewer": "Antigravity",
+        "Verified": "git diff --check -- support/sidecars/MGMT-PERF-IA-002/MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-9.md"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "070715c00cffc0df7a76fa72f1cf0a9aa69e42af",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+      "from": "Codex",
+      "to": "Antigravity",
+      "message": "Support-only no-material-delta checkpoint ready. Verified origin/dev 14f5a3e730d6 versus unchanged contaminated parent d0d4d0497d6f; PR #3156, commit a346e15bb; please confirm pause gate remains appropriate.",
+      "status": "done",
+      "created_at": "2026-07-11T08:48:15Z",
+      "resolved_at": "2026-07-11T08:50:03Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-9",
+      "from": "Antigravity",
+      "to": "Codex",
+      "message": "Review approved and returned to the owner for finalization",
+      "status": "done",
+      "created_at": "2026-07-11T08:50:03Z",
+      "resolved_at": "2026-07-11T08:51:17Z"
+    }
+  ],
+  "blockers": []
+}

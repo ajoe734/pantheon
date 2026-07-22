@@ -8,7 +8,8 @@ Transport modes
 ---------------
 1. HTTP mode: when ``PANTHEON_RUNTIME_MANAGER_URL`` is set, dispatches to the
    deployable Flask service surface in ``services/runtime-manager/main.py``.
-2. Local mode: otherwise instantiates ``RuntimeManagerService`` in-process.
+2. Explicit test/local mode: instantiates ``RuntimeManagerService`` in-process
+   only when the caller opts in with ``allow_local=True``.
 
 Both modes normalize responses to plain dictionaries so callers can keep one
 mutation path while tests stay lightweight.
@@ -61,8 +62,19 @@ class RuntimeManagerClient:
         base_url: Optional[str] = None,
         bearer_token: Optional[str] = None,
         timeout_seconds: Optional[int] = None,
+        require_remote: bool = False,
+        allow_local: bool = False,
     ) -> None:
         self._base_url = (base_url or os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "")).strip().rstrip("/")
+        if require_remote and allow_local:
+            raise RuntimeManagerClientError(
+                "require_remote and allow_local cannot both be enabled."
+            )
+        if not self._base_url and (require_remote or not allow_local):
+            raise RuntimeManagerClientError(
+                "PANTHEON_RUNTIME_MANAGER_URL is required; refusing an in-process "
+                "RuntimeManager fallback unless allow_local=True is explicit."
+            )
         self._auth = resolve_runtime_manager_auth(token=bearer_token)
         self._bearer_token = self._auth.token
         self._timeout_seconds = int(
@@ -81,6 +93,37 @@ class RuntimeManagerClient:
             return self._request_json("POST", "/api/runtimes/deploy", request)
         binding = self._local().deploy(request)
         return binding.to_dict()
+
+    def replace(self, runtime_id: str, request: Dict[str, Any]) -> Dict[str, Any]:
+        """Forward-replace a binding through the canonical runtime route.
+
+        ``runtime_id`` is copied into the request when absent.  If the caller
+        supplies a conflicting body value, both HTTP and local service modes
+        reject it instead of silently rewriting runtime identity.
+        """
+        payload = dict(request)
+        if not payload.get("runtime_id"):
+            payload["runtime_id"] = runtime_id
+        if self._use_http():
+            return self._request_json(
+                "POST", f"/api/runtimes/{runtime_id}/replace", payload
+            )
+        return self._local().replace(payload)
+
+    def promote(self, binding_id: str, request: Dict[str, Any]) -> Dict[str, Any]:
+        """Promote one binding exactly one stage through the governed cutover."""
+        payload = dict(request)
+        current_binding_id = payload.get("current_binding_id")
+        if current_binding_id and current_binding_id != binding_id:
+            raise RuntimeManagerClientError(
+                "current_binding_id conflicts with the promoted binding path"
+            )
+        payload["current_binding_id"] = binding_id
+        if self._use_http():
+            return self._request_json(
+                "POST", f"/api/runtime-bindings/{binding_id}/promote", payload
+            )
+        return self._local().promote_stage(payload)
 
     def get(self, binding_id: str) -> Optional[Dict[str, Any]]:
         if self._use_http():
@@ -104,6 +147,13 @@ class RuntimeManagerClient:
             payload = self._request_json("GET", f"/api/runtime-bindings?pool_id={capital_pool_id}")
             return list(payload.get("bindings", []))
         return [binding.to_dict() for binding in self._local().list_by_pool(capital_pool_id)]
+
+    def list_by_plan(self, plan_id: str) -> list[Dict[str, Any]]:
+        """Return authoritative bindings created for one DeploymentPlan."""
+        if self._use_http():
+            payload = self._request_json("GET", f"/api/runtime-bindings?plan_id={plan_id}")
+            return list(payload.get("bindings", []))
+        return [binding.to_dict() for binding in self._local().list_by_plan(plan_id)]
 
     def get_active_for_pool(self, capital_pool_id: str) -> Optional[Dict[str, Any]]:
         if self._use_http():

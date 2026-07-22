@@ -1,0 +1,226 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/trade_journey/trade_journey/v1",
+  "title": "TradeJourney",
+  "type": "object",
+  "required": [
+    "journey_id",
+    "correlation_id",
+    "trace_id",
+    "environment",
+    "tenant_id",
+    "symbol",
+    "side",
+    "quantity",
+    "status",
+    "stages",
+    "revision",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "journey_id": {
+      "type": "string",
+      "pattern": "^tj_[a-zA-Z0-9_-]+$"
+    },
+    "research_journey_id": {
+      "type": "string",
+      "pattern": "^rj_[a-zA-Z0-9_-]+$"
+    },
+    "strategy_lifecycle_id": {
+      "type": "string",
+      "pattern": "^sl_[a-zA-Z0-9_-]+$"
+    },
+    "correlation_id": {
+      "type": "string"
+    },
+    "trace_id": {
+      "type": "string"
+    },
+    "environment": {
+      "type": "string",
+      "enum": ["paper", "broker_sandbox", "canary", "live"]
+    },
+    "tenant_id": {
+      "type": "string"
+    },
+    "symbol": {
+      "type": "string"
+    },
+    "side": {
+      "type": "string",
+      "enum": ["buy", "sell"]
+    },
+    "quantity": {
+      "type": "number",
+      "minimum": 0
+    },
+    "price": {
+      "type": "number",
+      "minimum": 0
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "open",
+        "waiting_human",
+        "blocked",
+        "executing",
+        "partially_filled",
+        "completed",
+        "completed_with_variance",
+        "failed",
+        "cancelled",
+        "expired",
+        "incomplete"
+      ]
+    },
+    "stages": {
+      "type": "object",
+      "required": [
+        "research_rationale",
+        "strategy_candidate",
+        "candidate_evaluation",
+        "promotion_decision",
+        "capital_binding",
+        "deployment_runtime",
+        "signal_generation",
+        "trade_decision",
+        "risk_evaluation",
+        "order_submission",
+        "broker_acknowledgement",
+        "fill_management",
+        "ledger_booking",
+        "reconciliation"
+      ],
+      "properties": {
+        "research_rationale": { "$ref": "#/definitions/StageInfo" },
+        "strategy_candidate": { "$ref": "#/definitions/StageInfo" },
+        "candidate_evaluation": { "$ref": "#/definitions/StageInfo" },
+        "promotion_decision": { "$ref": "#/definitions/StageInfo" },
+        "capital_binding": { "$ref": "#/definitions/StageInfo" },
+        "deployment_runtime": { "$ref": "#/definitions/StageInfo" },
+        "signal_generation": { "$ref": "#/definitions/StageInfo" },
+        "trade_decision": { "$ref": "#/definitions/StageInfo" },
+        "risk_evaluation": { "$ref": "#/definitions/StageInfo" },
+        "order_submission": { "$ref": "#/definitions/StageInfo" },
+        "broker_acknowledgement": { "$ref": "#/definitions/StageInfo" },
+        "fill_management": { "$ref": "#/definitions/StageInfo" },
+        "ledger_booking": { "$ref": "#/definitions/StageInfo" },
+        "reconciliation": { "$ref": "#/definitions/StageInfo" }
+      },
+      "additionalProperties": false
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "correction_events": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/CorrectionEvent"
+      }
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "terminal_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "definitions": {
+    "StageInfo": {
+      "type": "object",
+      "required": ["status", "updated_at", "revision"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "not_applicable",
+            "pending",
+            "active",
+            "waiting_human",
+            "blocked",
+            "succeeded",
+            "partially_succeeded",
+            "rejected",
+            "failed",
+            "cancelled",
+            "expired",
+            "unknown"
+          ]
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "latency_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "owner": {
+          "type": "string"
+        },
+        "block_reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "CorrectionEvent": {
+      "type": "object",
+      "required": [
+        "event_id",
+        "corrected_at",
+        "original_variance_reason",
+        "resolution_action",
+        "actor"
+      ],
+      "properties": {
+        "event_id": {
+          "type": "string"
+        },
+        "corrected_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "original_variance_reason": {
+          "type": "string"
+        },
+        "resolution_action": {
+          "type": "string"
+        },
+        "actor": {
+          "type": "object",
+          "required": ["type", "id"],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": ["persona", "human", "service", "broker"]
+            },
+            "id": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

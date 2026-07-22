@@ -34,7 +34,6 @@ differs from what would actually be committed.
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import subprocess
 import sys
@@ -60,6 +59,11 @@ def _detect_repo_root() -> Path:
 ROOT = _detect_repo_root()
 STATUS_ROOT = Path(os.environ.get("PANTHEON_STATUS_ROOT") or ROOT).resolve()
 ACTIVITY_LOG = STATUS_ROOT / "ai-activity-log.jsonl"
+ORCHESTRATOR_DIR = ROOT / ".orchestrator"
+if str(ORCHESTRATOR_DIR) not in sys.path:
+    sys.path.insert(0, str(ORCHESTRATOR_DIR))
+
+from common import write_activity_log
 
 
 def _git(*args: str, env: dict[str, str] | None = None, check: bool = True) -> subprocess.CompletedProcess:
@@ -179,9 +183,10 @@ def _stage_scope(scope: list[str], env: dict[str, str]) -> subprocess.CompletedP
 
 def _append_audit(payload: dict) -> None:
     try:
-        ACTIVITY_LOG.parent.mkdir(parents=True, exist_ok=True)
-        with ACTIVITY_LOG.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        write_activity_log(
+            {"paths": {"activity_log": str(ACTIVITY_LOG)}},
+            payload,
+        )
     except OSError as exc:
         print(f"warning: could not append audit log: {exc}", file=sys.stderr)
 
@@ -297,6 +302,7 @@ def main() -> int:
     # Step 5: record audit entry.
     head_sha = _git("rev-parse", "HEAD", env=env).stdout.strip()
     audit = {
+        "event_id": f"worker-commit-{head_sha}",
         "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "agent": args.llm_agent or "unknown",
         "type": "worker_commit",

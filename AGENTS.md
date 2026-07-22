@@ -60,26 +60,40 @@ Use repository `ajoe734/execute-plans` and local checkout
 not create, revive, mirror to, or assign new work to `front-ai-trading-system`;
 that name is legacy-only and must not be used for current development.
 
+`execute-plans` is a separate repository and must never be materialized as an
+`execute-plans/` directory inside a Pantheon checkout. Do not copy, mirror, or
+commit frontend source, frontend tests, or frontend build configuration here.
+Frontend artifacts named `execute-plans/...` in cross-repository task packets
+refer to paths in `ajoe734/execute-plans`, not paths under this repository.
+
 Do not ask the operator to press Lovable publish for Pantheon dev frontend
 delivery. Do not wait on Lovable connector authorization, Lovable publish
 status, or `https://pantheon-dev.lovable.app` before continuing Pantheon dev
 work. The current dev frontend is deployed from a GitHub-visible
 `execute-plans` commit to Pantheon-owned hosting.
 
-As of 2026-06-08 the `execute-plans` remote has `main` as its frontend delivery
-base; there is no remote `dev` branch. If a frontend dev branch is later
-created, update this file and `docs/frontend/execute-plans-dev-hosting.md`
-before routing work to it.
+As of 2026-07-13 the `execute-plans` remote and GitHub default branch use
+`dev` as the frontend delivery base. Route new frontend task PRs to `dev`
+unless the branch policy is deliberately changed in both this file and
+`docs/frontend/execute-plans-dev-hosting.md`. The remote `main` branch still
+exists but has diverged from `dev`; do not use `main` as an implicit delivery
+target or treat a main-only merge as deployed dev evidence.
 
 Do not treat Lovable publish status as the dev frontend host or as the release
 truth for Pantheon dev. Lovable URLs may remain historical evidence or an
 external reference, but current dev frontend delivery must be served by the
 Pantheon dev environment from an `execute-plans` commit. The intended dev host
 is Pantheon-owned, for example
-`https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io`, with the BFF target
-`https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io`.
+`https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io`, with the BFF target
+`https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io`.
 
-Current verified dev deployment, 2026-06-08:
+As of 2026-07-19 the prior GCP project `pantheon-benjamin-20260528` is
+suspended. The replacement dev VM is `pantheon-lupin-dev` in project
+`pantheon-lupin-dev-20260719`, external IP `35.201.204.12`, and the backend
+source checkout is `/home/lupin/pantheon`. Do not deploy dev to the suspended
+project, the old `35.201.239.38` host, or `/home/lupin/code/pantheon`.
+
+Historical verified dev deployment, 2026-06-08:
 
 - `pantheon` BFF/adapter base: merge commit
   `22b89367a56cdbb4fb8a7345fc7c4ad1d293a118` on `dev`.
@@ -87,6 +101,13 @@ Current verified dev deployment, 2026-06-08:
   `8337b19a0cf6ac41aa2a4c2fa3950f6af3a87abf` on `main`.
 - Hosted frontend bundle path on the dev VM:
   `/var/www/pantheon-dev-fe/`.
+
+Current delivery truth must be read from the hosted deployment manifest and
+GitHub deployment/check evidence. A newer remote commit or a successful build
+does not prove that the hosted symlink serves it. If the hosted manifest has
+unsafe write defaults, lacks exact FE/BFF identities, or points to a candidate
+whose deployment workflow failed, treat the deployment as unaccepted until a
+gate-before-switch and rollback-safe release passes.
 
 When deploying or validating the dev frontend, ensure the frontend build uses
 `VITE_BFF_MODE=live`, `VITE_BFF_BASE_URL` pointing at the dev BFF,

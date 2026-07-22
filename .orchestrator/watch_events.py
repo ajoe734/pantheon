@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import re
+import stat
 import sys
 import time
 from pathlib import Path
@@ -28,7 +31,12 @@ from common import (
     utc_now,
     write_activity_log,
 )
-from runtime_state import enqueue_event, load_runtime_state, save_runtime_state
+from runtime_state import (
+    canonical_task_state_lock_file,
+    load_runtime_state,
+    runtime_state_lock,
+    save_runtime_state,
+)
 from task_archive import DEFAULT_RECENT_LIMIT, recent_terminal_summaries
 
 
@@ -54,6 +62,67 @@ def handoff_key(handoff: dict[str, Any]) -> str:
 
 def enqueue_runtime_events_enabled(config: dict[str, Any]) -> bool:
     return bool(config.get("events", {}).get("enqueue_runtime_events", False))
+
+
+def _assert_regular_queue_leaf(path: Path, descriptor: int) -> None:
+    descriptor_stat = os.fstat(descriptor)
+    path_stat = path.lstat()
+    if (
+        not stat.S_ISREG(descriptor_stat.st_mode)
+        or stat.S_ISLNK(path_stat.st_mode)
+        or path_stat.st_dev != descriptor_stat.st_dev
+        or path_stat.st_ino != descriptor_stat.st_ino
+    ):
+        raise RuntimeError(f"runtime event queue data leaf changed during append: {path}")
+
+
+def _pread_exact(descriptor: int, size: int, offset: int) -> bytes:
+    chunks: list[bytes] = []
+    remaining = size
+    while remaining:
+        chunk = os.pread(descriptor, remaining, offset)
+        if not chunk:
+            break
+        chunk = chunk[:remaining]
+        chunks.append(chunk)
+        offset += len(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+def _append_runtime_event_locked(config: dict[str, Any], event: dict[str, Any]) -> None:
+    """Durably append one queue event while the runtime sidecar is held."""
+
+    path = config_path(config, "event_queue")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_symlink():
+        raise RuntimeError(f"runtime event queue data leaf cannot be a symlink: {path}")
+    payload = (json.dumps(event, ensure_ascii=False) + "\n").encode("utf-8")
+    flags = os.O_RDWR | os.O_APPEND | os.O_CREAT | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags, 0o600)
+    try:
+        _assert_regular_queue_leaf(path, descriptor)
+        offset = os.lseek(descriptor, 0, os.SEEK_END)
+        if offset and os.pread(descriptor, 1, offset - 1) != b"\n":
+            raise RuntimeError(f"runtime event queue is not newline terminated: {path}")
+        view = memoryview(payload)
+        while view:
+            written = os.write(descriptor, view)
+            if written <= 0:
+                raise OSError("runtime event queue append made no progress")
+            view = view[written:]
+        os.fsync(descriptor)
+        _assert_regular_queue_leaf(path, descriptor)
+        if _pread_exact(descriptor, len(payload), offset) != payload:
+            raise RuntimeError(f"runtime event queue readback mismatch: {path}")
+        _assert_regular_queue_leaf(path, descriptor)
+    finally:
+        os.close(descriptor)
+    directory_descriptor = os.open(path.parent, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+    try:
+        os.fsync(directory_descriptor)
+    finally:
+        os.close(directory_descriptor)
 
 
 def build_snapshot(config: dict[str, Any], status: dict[str, Any]) -> dict[str, Any]:
@@ -277,6 +346,11 @@ def render_wakeup_message(config: dict[str, Any], event: dict[str, Any], target_
 
 
 def queue_delivery_event(config: dict[str, Any], event: dict[str, Any]) -> bool:
+    with runtime_state_lock(config, shared=False, nonblocking=False):
+        return _queue_delivery_event_locked(config, event)
+
+
+def _queue_delivery_event_locked(config: dict[str, Any], event: dict[str, Any]) -> bool:
     target_agent = event.get("target_agent")
     if not target_agent:
         write_activity_log(
@@ -290,9 +364,14 @@ def queue_delivery_event(config: dict[str, Any], event: dict[str, Any]) -> bool:
         return False
 
     agent = agent_config_for(config, target_agent)
-    context_files = event.get("context_files") or execution_context_files(config, event.get("task_id"))
-    event["context_files"] = context_files
-    message = render_wakeup_message(config, event, target_agent)
+    with canonical_task_state_lock_file(
+        config_path(config, "status_file", "ai-status.json"),
+        shared=True,
+        nonblocking=False,
+    ):
+        context_files = event.get("context_files") or execution_context_files(config, event.get("task_id"))
+        event["context_files"] = context_files
+        message = render_wakeup_message(config, event, target_agent)
     queue_payload = {
         "event_id": new_runtime_id("evt"),
         "created_at": utc_now(),
@@ -307,7 +386,7 @@ def queue_delivery_event(config: dict[str, Any], event: dict[str, Any]) -> bool:
         "target_files": event.get("task", {}).get("artifacts") or [],
         "metadata": {"handoff": event.get("handoff"), "task": event.get("task", {})},
     }
-    enqueue_event(config, queue_payload)
+    _append_runtime_event_locked(config, queue_payload)
     write_activity_log(
         config,
         {
@@ -333,8 +412,23 @@ def trim_seen_events(state: dict[str, Any], max_entries: int) -> None:
 
 
 def run_scan(config: dict[str, Any], state: dict[str, Any], replay: bool, provider_capabilities: dict[str, Any]) -> bool:
-    status = load_status(config)
-    snapshot = build_snapshot(config, status)
+    with runtime_state_lock(config, shared=False, nonblocking=False):
+        return _run_scan_locked(
+            config,
+            state,
+            replay=replay,
+            provider_capabilities=provider_capabilities,
+        )
+
+
+def _run_scan_locked(config: dict[str, Any], state: dict[str, Any], replay: bool, provider_capabilities: dict[str, Any]) -> bool:
+    with canonical_task_state_lock_file(
+        config_path(config, "status_file", "ai-status.json"),
+        shared=True,
+        nonblocking=False,
+    ):
+        status = load_status(config)
+        snapshot = build_snapshot(config, status)
     is_first_run = not state.get("initialized_at")
     if is_first_run and not replay and not config.get("watcher", {}).get("replay_on_start", False):
         state["initialized_at"] = utc_now()
@@ -380,18 +474,20 @@ def run_scan(config: dict[str, Any], state: dict[str, Any], replay: bool, provid
 def main() -> int:
     args = parse_args()
     config = load_config(args.config)
-    state = load_runtime_state(config)
     provider_capabilities = load_json(config_path(config, "provider_capabilities"), default={})
 
     poll_interval = args.poll_interval or float(config.get("watcher", {}).get("poll_interval_seconds", 2.0))
-    run_scan(config, state, replay=args.replay, provider_capabilities=provider_capabilities)
+    with runtime_state_lock(config, shared=False, nonblocking=False):
+        state = load_runtime_state(config)
+        run_scan(config, state, replay=args.replay, provider_capabilities=provider_capabilities)
     if args.once:
         return 0
 
     while True:
         time.sleep(poll_interval)
-        state = load_runtime_state(config)
-        run_scan(config, state, replay=False, provider_capabilities=provider_capabilities)
+        with runtime_state_lock(config, shared=False, nonblocking=False):
+            state = load_runtime_state(config)
+            run_scan(config, state, replay=False, provider_capabilities=provider_capabilities)
 
 
 if __name__ == "__main__":

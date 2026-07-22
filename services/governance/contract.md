@@ -1,6 +1,6 @@
 # Governance Service — API Contract
 
-Last updated: 2026-04-15
+Last updated: 2026-07-13
 Status: canonical API contract for BP5-SVC-003
 Owner: Claude
 Reviewer: Codex
@@ -18,6 +18,12 @@ first-class deployable HTTP API.  Promotion, deployment-plan creation, and
 evolution-decision follow-through flows **must** cite this service instead of
 maintaining local approval fallbacks.
 
+It also owns the canonical read models for **FreezeOrder** governance
+quarantines and rollback request/outcome records.  Freeze and rollback remain
+separate objects: a freeze changes future deployability, while a rollback is
+an operational mitigation whose RuntimeBinding effects remain owned by the
+Rollback Controller and Runtime Manager.
+
 ---
 
 ## Service Boundary
@@ -27,6 +33,8 @@ maintaining local approval fallbacks.
 | ApprovalDecision propose / review / decide / revoke | **Governance Service** (this service) |
 | Write-authority matrix (who may decide at which risk level) | **Governance Service** |
 | Audit log (append-only, append on every state change) | **Governance Service** |
+| FreezeOrder quarantine record | **Governance Service** |
+| Rollback request/outcome read model | **Governance Service** |
 | DeploymentPlan creation | `services/deployment/` (BP5-SVC-004) |
 | RuntimeBinding writes | Execution Plane / Runtime Manager |
 | EvolutionDecision lifecycle | `services/evolution/` (BP5-SVC-012) |
@@ -82,6 +90,67 @@ evolution follow-through.
 Retrieve a single decision by ID.
 
 **Errors**: `404 Not Found`
+
+---
+
+### `GET /api/governance/freeze-orders`
+List canonical FreezeOrder records.  Supports exact-match `status` and
+`scope` filters and returns most-recent records first.  A healthy empty store
+returns `200 []`.
+
+Dev/local storage is `GOVERNANCE_DATA_DIR/freeze_orders.json`.  Enforced
+Postgres posture uses `governance.freeze_orders` by default.
+
+### `GET /api/governance/freeze-orders/{freeze_order_id}`
+Retrieve one FreezeOrder record.  Returns `404` when it does not exist.
+
+### `POST /api/governance/freeze-orders`
+Record or update a canonical FreezeOrder record with audit fields.
+
+**Request body**:
+```json
+{
+  "freeze_order_id": "freeze-123",
+  "status": "active",
+  "scope": "persona",
+  "target_id": "persona-alpha",
+  "actor": "admin",
+  "identity": "op-user",
+  "source_command_id": "cmd-123",
+  "reason": "Evolution sweep freeze."
+}
+```
+
+### `GET /api/governance/rollbacks`
+List canonical rollback request/outcome records.  Supports exact-match
+`runtime_id`, `action_type`, and `status` filters and returns most-recent
+records first.  A healthy empty store returns `200 []`.
+
+This surface is an audit/read model.  It does not give governance authority
+to modify RuntimeBinding or position lineage; those writes remain with the
+Rollback Controller and Runtime Manager.
+
+Dev/local storage is `GOVERNANCE_DATA_DIR/rollbacks.json`.  Enforced Postgres
+posture uses `governance.rollbacks` by default.
+
+### `GET /api/governance/rollbacks/{rollback_id}`
+Retrieve one rollback record.  Returns `404` when it does not exist.
+
+### `POST /api/governance/rollbacks`
+Record or update a canonical Rollback record with audit fields.
+
+**Request body**:
+```json
+{
+  "rollback_id": "rollback-123",
+  "runtime_id": "runtime-alpha",
+  "action_type": "replace",
+  "status": "completed",
+  "actor": "reviewer",
+  "identity": "op-user",
+  "source_command_id": "cmd-123"
+}
+```
 
 ---
 
@@ -218,13 +287,20 @@ and (when `GCP_PROJECT_ID` is set) to Firestore collection `governance_audit`.
 
 ## Storage
 
-Default: `$GOVERNANCE_DATA_DIR/approval_decisions.json` (JSON, file-backed).
-Override with `GOVERNANCE_DATA_DIR` env var.
+Dev/local posture stores each owned dataset in a separate JSON file under
+`GOVERNANCE_DATA_DIR`:
 
-Production deployments should replace the file store with a database-backed
-store.  The `ApprovalDecisionStore` interface in
-`services/control-plane/governance/approval_decision.py` is the extension
-point.
+| Dataset | JSON store | Postgres owner table |
+|---|---|---|
+| Approval decisions | `approval_decisions.json` | `governance.approval_decisions` |
+| Freeze orders | `freeze_orders.json` | `governance.freeze_orders` |
+| Rollback request/outcome records | `rollbacks.json` | `governance.rollbacks` |
+
+`GOVERNANCE_STORE_BACKEND=json|postgres` selects the persistence posture for
+all three datasets.  Postgres uses `GOVERNANCE_STORE_DSN` or `DATABASE_URL`;
+the two new table names may be overridden with
+`GOVERNANCE_FREEZE_ORDER_STORE_TABLE` and `GOVERNANCE_ROLLBACK_STORE_TABLE`.
+The JSON files remain the dev rollback path, not a BFF-owned source of truth.
 
 ---
 

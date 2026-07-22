@@ -1,0 +1,143 @@
+{
+  "version": 1,
+  "task_id": "MGMT-LOAD-003",
+  "archived_at": "2026-07-01T16:14:39Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-LOAD-003",
+    "title": "Frontend shell fanout reduction",
+    "summary_zh": "TopBar 改接 shell-summary；summary unavailable 時 defer full list reads；JobProgressDrawer 不在 first route load 重複抓 /bff/jobs；drawer hydration 延後到使用者開啟或 primary content 後。",
+    "phase": "MGMT Console Load Gap / Wave 2 FE shell fanout",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "MGMT-LOAD-001",
+      "MGMT-LOAD-002"
+    ],
+    "artifacts": [
+      "frontend-checkout:src/platform",
+      "frontend-checkout:src/lib/bff-v1",
+      "frontend-checkout:e2e",
+      "docs/bff/execution-tasks/2026-07-01-management-console-load-gap/MGMT-LOAD-003-fe-shell-fanout.md"
+    ],
+    "acceptance": [
+      "Evidence first row 前 non-primary BFF requests <= 2; no duplicate /bff/jobs before first row/empty state; tests cover summary success/degraded/unavailable and lazy drawer hydration"
+    ],
+    "next": "Done: closeout evidence commit edb7526bd merged via pantheon PR #2709 (merge 8315eb8a466c08e08b5d01346dc6d2ed5cee3357); execute-plans PR #136 and pantheon evidence PR #2705 were already merged with green checks.",
+    "last_update": "2026-07-01T16:14:39Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_management_console_load_gap_2026-07-01",
+    "auto_generated": true,
+    "source_ref": {
+      "doc": "docs/04/pantheon_management_console_load_gap_2026-07-01/MANAGEMENT_CONSOLE_LOAD_GAP_SPEC.md",
+      "packet": "docs/bff/execution-tasks/2026-07-01-management-console-load-gap/INDEX.md",
+      "parent_packet": "docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "helper_parent": "MGMT-GAP-010",
+    "helper_kind": "load_gap_execution_slice",
+    "wave": 2,
+    "fleet_lane": "frontend-shell-fanout",
+    "review_notes_zh": [
+      "Approved: reviewed execute-plans PR #136/#137 and Pantheon evidence PR #2705. Follow-up commit 6dae62a gates TopBar unavailable fallback and JobProgressDrawer background hydration on route-primary-ready plus idle; e2e/23 asserts approvals/alerts/jobs do not start before Evidence primary-ready. Local focused verification on execute-plans merge 5b7d6b7: npx tsc --noEmit -p tsconfig.json passed; npm run test -- src/platform/components/TopBar.test.tsx src/platform/components/JobProgressDrawer.test.tsx passed 6/6; e2e/23 full spec passed 3/3 after one transient blank-page retry. e2e/22 was attempted but failed under strict fallback because its baseline fixture does not mock SSE and page fell to mock evidence before primary API; not a MGMT-LOAD-003 hard gate."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-01T16:14:39Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-load-003",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-LOAD-003",
+      "git_clean_required": false,
+      "commit": "edb7526bde90e405b5f82ce86a90dd95752ae8b5",
+      "commit_subject": "MGMT-LOAD-003: finalize closeout evidence",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped closeout brief and execution artifact evidence.",
+        "Not changing": "frontend runtime, Pantheon BFF runtime, route registry, L1 canonical architecture, CI, or governance policy.",
+        "Composes with": "execute-plans PR #136 and pantheon PR #2705 already merged into their dev branches.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "MGMT-LOAD-003",
+        "Reviewer": "Codex",
+        "Verified": "git diff --check; AI_NAME=Codex2 ./scripts/ai-status.sh show MGMT-LOAD-003; gh pr view 136 --repo ajoe734/execute-plans --json number,state,mergedAt,mergeCommit,headRefName,baseRefName,title,url,statusCheckRollup; gh pr view 2705 --repo ajoe734/pantheon --json number,state,mergedAt,mergeCommit,headRefName,baseRefName,title,url,statusCheckRollup"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-LOAD-003",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "8315eb8a466c08e08b5d01346dc6d2ed5cee3357",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-LOAD-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implementation complete and merged evidence recorded (commit 72cc0d586). FE work lives in ajoe734/execute-plans PR #136 (branch task/MGMT-LOAD-003): TopBar/JobProgressDrawer now consume /bff/management/shell-summary instead of fanning out on every route mount; unavailable summary defers full-list reads via idle-callback; JobProgressDrawer lazy-hydrates instead of duplicate-fetching /bff/jobs. PR #136 CI (integration-gate) is green and mergeable=clean, but merging it requires human/reviewer approval per this session's auto-mode policy -- I did not merge it. Please review PR #136 and, if it looks good, either approve+merge it yourself or ask a human to merge, then approve this task so I can finalize.",
+      "status": "done",
+      "created_at": "2026-07-01T13:05:44Z",
+      "resolved_at": "2026-07-01T13:15:09Z"
+    },
+    {
+      "task_id": "MGMT-LOAD-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review did not approve execute-plans PR #136: PR head b0f317a focused unit tests pass, but local e2e/23-management-shell-fanout.spec.ts failed 2/3; SSE liveStatus fallback causes duplicate shell-summary read and unavailable readiness check can match TopBar text before Evidence primary content. Owner should fix PR and re-handoff.",
+      "status": "done",
+      "created_at": "2026-07-01T13:15:09Z",
+      "resolved_at": "2026-07-01T13:15:09Z"
+    },
+    {
+      "task_id": "MGMT-LOAD-003",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review: execute-plans PR #136 merged at 75a943ed3fb007c61f056496e5b8f7dfdb305a53; Pantheon artifact PR #2696 merged at c07dd8665aaefc0d611373e7e831fde98a142429; integration-gate and Branch CI Gate checks passed. Please review FE shell-summary fanout reduction and return review_approved for owner closeout.",
+      "status": "done",
+      "created_at": "2026-07-01T15:35:20Z",
+      "resolved_at": "2026-07-01T15:37:35Z"
+    },
+    {
+      "task_id": "MGMT-LOAD-003",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review failed: execute-plans PR #136 is merged and checks are green, but MGMT-LOAD-003 acceptance is not proven. The shell-summary unavailable path schedules full-list fallback with requestIdleCallback immediately after summary failure; the e2e comment admits that fallback can resolve before the Evidence row/empty-state on fixture-mocked routes. This still lets approvals/alerts fallback compete with primary content and can exceed the <=2 non-primary BFF request target before first row. Please gate fallback on route-primary-ready/first-row milestone or add an equivalent proof, and update e2e/23 to assert unavailable-path request timing instead of documenting the race away.",
+      "status": "done",
+      "created_at": "2026-07-01T15:37:35Z",
+      "resolved_at": "2026-07-01T15:37:35Z"
+    },
+    {
+      "task_id": "MGMT-LOAD-003",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Ready for review after route-ready follow-up: execute-plans PR #136 is merged at 75a943ed3fb007c61f056496e5b8f7dfdb305a53; Pantheon evidence PR #2705 is merged at 3f9c91f0c70f37e6645b14cf03611890e645df1a. Follow-up commit 6dae62a7a697e8427ce2623c1ee0dca48e4dd418 gates TopBar unavailable fallback and JobProgressDrawer background hydration on route-primary-ready plus idle, and e2e/23 now asserts approvals/alerts/jobs do not start before the Evidence primary-ready timestamp. Verified by merged checks: execute-plans integration-gate success and Pantheon Branch CI Gate success. Please review and approve MGMT-LOAD-003 for owner closeout.",
+      "status": "done",
+      "created_at": "2026-07-01T16:02:38Z",
+      "resolved_at": "2026-07-01T16:08:54Z"
+    },
+    {
+      "task_id": "MGMT-LOAD-003",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved for owner closeout: shell-summary fanout reduction and route-primary-ready follow-up are merged with green PR checks; local focused review validated TopBar, JobProgressDrawer, and e2e/23 acceptance.",
+      "status": "done",
+      "created_at": "2026-07-01T16:08:54Z",
+      "resolved_at": "2026-07-01T16:14:40Z"
+    }
+  ],
+  "blockers": []
+}

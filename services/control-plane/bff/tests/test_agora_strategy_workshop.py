@@ -8,13 +8,20 @@ Covers:
 """
 from __future__ import annotations
 
+import json
+import logging
 import os
 import sys
+import uuid
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+_AGORA_SCHEMA_ROOT = _REPO_ROOT / "services" / "control-plane" / "specs" / "agora"
 
 
 # --------------------------------------------------------------------------- #
@@ -227,11 +234,99 @@ class TestMemoryWorkshopStoreCompleteness:
             assert field in snap, f"Missing field: {field}"
 
 
+class TestMemoryWorkshopStoreReadinessAndCards:
+    def _store(self):
+        from agora.strategy_workshop import MemoryWorkshopStore
+        return MemoryWorkshopStore()
+
+    def test_create_and_get_readiness_assessment(self):
+        store = self._store()
+        assessment = store.create_readiness_assessment({
+            "spec_version": "1.0",
+            "workshop_id": "ws-ready-1",
+            "strategy_id": "strat-1",
+            "workshop_version_id": "wv-1",
+            "strategy_spec_registry_id": "registry-1",
+            "gates": [
+                {"gate": "preliminary_research", "state": "ready", "requirements": []},
+                {"gate": "full_validation", "state": "conditional", "requirements": []},
+                {"gate": "trading_room", "state": "blocked", "requirements": []},
+            ],
+            "highest_ready_gate": "preliminary_research",
+            "assessed_at": "2026-07-05T00:00:00Z",
+        })
+
+        assert assessment["assessment_id"].startswith("ready_")
+        assert assessment["assessment_version"] == 1
+        latest = store.get_latest_readiness_assessment("ws-ready-1")
+        assert latest is not None
+        assert latest["assessment_id"] == assessment["assessment_id"]
+
+    def test_readiness_assessment_versions_increment(self):
+        store = self._store()
+        base = {
+            "spec_version": "1.0",
+            "workshop_id": "ws-ready-2",
+            "strategy_id": "strat-2",
+            "workshop_version_id": "wv-2",
+            "strategy_spec_registry_id": "registry-2",
+            "gates": [],
+            "assessed_at": "2026-07-05T00:00:00Z",
+        }
+        first = store.create_readiness_assessment(base)
+        second = store.create_readiness_assessment(base)
+
+        assert first["assessment_version"] == 1
+        assert second["assessment_version"] == 2
+        assert store.get_latest_readiness_assessment("ws-ready-2")["assessment_version"] == 2
+
+    def test_record_and_list_workshop_cards(self):
+        store = self._store()
+        card = store.record_workshop_card({
+            "card_id": "card-ready-1",
+            "card_type": "readiness_gate",
+            "workshop_id": "ws-cards-1",
+            "sequence_no": 7,
+            "status": "completed",
+            "title": "Readiness",
+            "payload": {"gates": [], "assessed_at": "2026-07-05T00:00:00Z"},
+            "created_at": "2026-07-05T00:00:00Z",
+        })
+
+        assert card["sequence_no"] == 7
+        cards = store.list_workshop_cards("ws-cards-1")
+        assert [item["card_id"] for item in cards] == ["card-ready-1"]
+        assert store.list_workshop_cards("ws-cards-1", after_sequence=7) == []
+
+
 # --------------------------------------------------------------------------- #
 # Factory and import tests
 # --------------------------------------------------------------------------- #
 
 class TestWorkshopStoreFactory:
+    def test_make_workshop_store_logs_postgres_backend_without_dsn(self, monkeypatch, caplog):
+        from agora.strategy_workshop import store as store_module
+
+        class FakePostgresStore:
+            def __init__(self, *, dsn, schema):
+                self.dsn = dsn
+                self.schema = schema
+
+        monkeypatch.setattr(store_module, "PostgresWorkshopStore", FakePostgresStore)
+        with caplog.at_level(logging.INFO, logger=store_module.__name__):
+            result = store_module.make_workshop_store(
+                backend="postgres",
+                dsn="postgresql://secret-user:secret-password@postgres/pantheon",
+                schema="agora",
+            )
+
+        assert isinstance(result, FakePostgresStore)
+        assert "backend=postgres" in caplog.text
+        assert "store=FakePostgresStore" in caplog.text
+        assert "schema=agora" in caplog.text
+        assert "secret-user" not in caplog.text
+        assert "secret-password" not in caplog.text
+
     def test_make_workshop_store_off_returns_memory(self):
         from agora.strategy_workshop import make_workshop_store, MemoryWorkshopStore
         store = make_workshop_store(backend="off")
@@ -267,6 +362,30 @@ class TestWorkshopStoreFactory:
         assert DEFAULT_SCHEMA == "agora"
         assert BACKEND_ENV == "AGORA_WORKSHOP_STORE_BACKEND"
 
+    def test_postgres_create_event_replays_equivalent_and_rejects_collision(self):
+        dsn = os.getenv("TEST_DATABASE_URL")
+        if not dsn:
+            pytest.skip("TEST_DATABASE_URL is not set")
+        from agora.strategy_workshop import PostgresWorkshopStore
+
+        store = PostgresWorkshopStore(dsn=dsn, schema=f"agora_ws_{uuid.uuid4().hex[:12]}")
+        workshop_id = f"ws-{uuid.uuid4().hex}"
+        store.create_session({
+            "workshop_id": workshop_id, "tenant_id": "tenant-a", "user_id": "user-a",
+        })
+        event = {
+            "event_id": f"evt-{uuid.uuid4().hex}", "workshop_id": workshop_id,
+            "actor_type": "operator", "event_type": "opinion_requested",
+            "private_content_ref": "private://one", "redacted_summary": "safe",
+            "payload_refs_json": {"interaction_id": "int-1"}, "trace_id": "trace-1",
+        }
+        first = store.create_event(event)
+        replay = store.create_event(event)
+        assert replay["sequence_no"] == first["sequence_no"]
+        assert len(store.list_events(workshop_id)) == 1
+        with pytest.raises(ValueError, match="different payload"):
+            store.create_event({**event, "redacted_summary": "different"})
+
 
 # --------------------------------------------------------------------------- #
 # Router endpoint integration tests (in-memory store, permissive auth)
@@ -290,6 +409,41 @@ def _get_current_etag(client, workshop_id: str) -> str:
     )
     assert resp.status_code == 200, f"ETag fetch failed: {resp.text}"
     return resp.headers["etag"]
+
+
+def _create_workshop(client, idem_key: str, *, strategy_ref: str | None = None) -> str:
+    payload = {"initial_message": "Private winner-branch strategy description"}
+    if strategy_ref:
+        payload["strategy_spec_ref"] = strategy_ref
+    resp = client.post(
+        "/bff/agora/workshops",
+        headers={
+            "Authorization": _OPERATOR_AUTH,
+            "Idempotency-Key": idem_key,
+            "Content-Type": "application/json",
+        },
+        json=payload,
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()["data"]["workshop_id"]
+
+
+def _ready_state_map() -> dict:
+    return {
+        "data_pit": "confirmed",
+        "exit_invalidation": "confirmed",
+        "entry_signal": "confirmed",
+        "risk_constraints": "confirmed",
+        "position_sizing": "confirmed",
+        "universe_rule": "confirmed",
+        "liquidity": "confirmed",
+    }
+
+
+def _validate_schema(schema_name: str, payload: dict) -> None:
+    jsonschema = pytest.importorskip("jsonschema")
+    schema = json.loads((_AGORA_SCHEMA_ROOT / schema_name).read_text(encoding="utf-8"))
+    jsonschema.Draft7Validator(schema, format_checker=jsonschema.FormatChecker()).validate(payload)
 
 
 class TestWorkshopRouterEndpoints:
@@ -489,7 +643,285 @@ class TestWorkshopRouterEndpoints:
         assert comp_resp.status_code == 200, comp_resp.text
         assert comp_resp.json()["data"] is None
 
-    def test_deferred_versions_returns_501(self, monkeypatch):
+    def test_post_winner_branch_completeness_blocks_projection(self, monkeypatch):
+        client = _workshop_client(monkeypatch)
+        workshop_id = _create_workshop(
+            client,
+            "idem-comp-winner-branch-create-001",
+            strategy_ref="strat-winner-branch-001",
+        )
+        etag_before = _get_current_etag(client, workshop_id)
+
+        # 12 blocks, all confirmed except sizing_leverage (missing) and monitoring_update (missing)
+        winner_state_map = {
+            "market_scope": "confirmed",
+            "insider_branch_mapping": "confirmed",
+            "winner_branch_scoring": "confirmed",
+            "migration_reverse_flow": "confirmed",
+            "event_lead": "confirmed",
+            "signal_formation": "confirmed",
+            "entry_holding": "confirmed",
+            "add_reduce_exit": "confirmed",
+            "sizing_leverage": "missing",
+            "cost_liquidity_capacity": "confirmed",
+            "validation_backtest_refutation": "confirmed",
+            "monitoring_update": "missing",
+        }
+
+        create_snapshot = client.post(
+            f"/bff/agora/workshops/{workshop_id}/completeness",
+            headers={
+                "Authorization": _OPERATOR_AUTH,
+                "Idempotency-Key": "idem-comp-winner-branch-post-001",
+                "If-Match": etag_before,
+                "Content-Type": "application/json",
+            },
+            json={
+                "strategy_version_id": "wv-winner-branch-001",
+                "state_map_json": winner_state_map,
+                "blocking_items_json": [],
+                "next_question_json": {},
+            },
+        )
+
+        assert create_snapshot.status_code == 201, create_snapshot.text
+        payload = create_snapshot.json()["data"]
+
+        # Since sizing_leverage is weak, risk_constraints / position_sizing will be weak, which blocks validation
+        assert payload["readiness"]["highest_ready_gate"] == "preliminary_research"
+
+        # Check that completeness card generated dimension updates mapped correctly
+        cards = client.get(
+            f"/bff/agora/workshops/{workshop_id}/cards",
+            headers={"Authorization": _OPERATOR_AUTH},
+        )
+        assert cards.status_code == 200
+        comp_card = next(c for c in cards.json()["data"] if c["card_type"] == "completeness_update")
+        dim_updates = {u["dimension"]: u for u in comp_card["payload"]["dimension_updates"]}
+
+        # 7 generic dimensions projected from the 12 blocks:
+        # hypothesis (event_lead, signal_formation) -> complete
+        assert dim_updates["hypothesis"]["current_grade"] == "complete"
+        # risk_constraints (sizing_leverage) -> missing (missing -> missing)
+        assert dim_updates["risk_constraints"]["current_grade"] == "missing"
+        # governance (monitoring_update) -> missing
+        assert dim_updates["governance"]["current_grade"] == "missing"
+
+        client = _workshop_client(monkeypatch)
+        workshop_id = _create_workshop(
+            client,
+            "idem-comp-materialize-create-001",
+            strategy_ref="strat-live-materialize-001",
+        )
+        etag_before = _get_current_etag(client, workshop_id)
+
+        create_snapshot = client.post(
+            f"/bff/agora/workshops/{workshop_id}/completeness",
+            headers={
+                "Authorization": _OPERATOR_AUTH,
+                "Idempotency-Key": "idem-comp-materialize-post-001",
+                "If-Match": etag_before,
+                "Content-Type": "application/json",
+            },
+            json={
+                "strategy_version_id": "wv-live-materialize-001",
+                "state_map_json": _ready_state_map(),
+                "blocking_items_json": [],
+                "next_question_json": {},
+            },
+        )
+
+        assert create_snapshot.status_code == 201, create_snapshot.text
+        assert "etag" in create_snapshot.headers
+        assert create_snapshot.headers["etag"] != etag_before
+        payload = create_snapshot.json()["data"]
+        assert payload["snapshot"]["strategy_version_id"] == "wv-live-materialize-001"
+        assert payload["readiness"]["highest_ready_gate"] == "trading_room"
+
+        completeness = client.get(
+            f"/bff/agora/workshops/{workshop_id}/completeness",
+            headers={"Authorization": _OPERATOR_AUTH},
+        )
+        readiness = client.get(
+            f"/bff/agora/workshops/{workshop_id}/readiness",
+            headers={"Authorization": _OPERATOR_AUTH},
+        )
+        cards = client.get(
+            f"/bff/agora/workshops/{workshop_id}/cards",
+            headers={"Authorization": _OPERATOR_AUTH},
+        )
+        trading_room = client.get(
+            "/bff/agora/trading-room",
+            headers={"Authorization": _OPERATOR_AUTH},
+        )
+        strategy_detail = client.get(
+            "/bff/agora/trading-room/strategies/strat-live-materialize-001",
+            headers={"Authorization": _OPERATOR_AUTH},
+        )
+
+        assert completeness.status_code == 200, completeness.text
+        assert completeness.json()["data"]["state_map_json"]["entry_signal"] == "confirmed"
+        assert readiness.status_code == 200, readiness.text
+        assert readiness.json()["data"]["highest_ready_gate"] == "trading_room"
+        assert cards.status_code == 200, cards.text
+        card_types = [card["card_type"] for card in cards.json()["data"]]
+        assert "completeness_update" in card_types
+        assert "readiness_gate" in card_types
+        assert trading_room.status_code == 200, trading_room.text
+        strategies = trading_room.json()["strategies"]
+        assert [item["strategy_id"] for item in strategies] == ["strat-live-materialize-001"]
+        assert strategy_detail.status_code == 200, strategy_detail.text
+        assert strategy_detail.json()["data"]["strategy_version"] == "wv-live-materialize-001"
+
+    def test_post_completeness_requires_if_match_and_idempotency_key(self, monkeypatch):
+        client = _workshop_client(monkeypatch)
+        workshop_id = _create_workshop(
+            client,
+            "idem-comp-requires-create-001",
+            strategy_ref="strat-live-materialize-002",
+        )
+        etag = _get_current_etag(client, workshop_id)
+
+        missing_if_match = client.post(
+            f"/bff/agora/workshops/{workshop_id}/completeness",
+            headers={
+                "Authorization": _OPERATOR_AUTH,
+                "Idempotency-Key": "idem-comp-missing-if",
+                "Content-Type": "application/json",
+            },
+            json={"state_map_json": _ready_state_map()},
+        )
+        missing_idem = client.post(
+            f"/bff/agora/workshops/{workshop_id}/completeness",
+            headers={
+                "Authorization": _OPERATOR_AUTH,
+                "If-Match": etag,
+                "Content-Type": "application/json",
+            },
+            json={"state_map_json": _ready_state_map()},
+        )
+
+        assert missing_if_match.status_code == 428, missing_if_match.text
+        assert missing_idem.status_code == 400, missing_idem.text
+
+    def test_cards_returns_live_projection_for_existing_workshop(self, monkeypatch):
+        client = _workshop_client(monkeypatch)
+        workshop_id = _create_workshop(client, "idem-cards-live-001")
+
+        cards_resp = client.get(
+            f"/bff/agora/workshops/{workshop_id}/cards",
+            headers={"Authorization": _OPERATOR_AUTH},
+        )
+
+        assert cards_resp.status_code == 200, cards_resp.text
+        cards = cards_resp.json()["data"]
+        assert [card["card_type"] for card in cards] == [
+            "user_strategy_description",
+            "readiness_gate",
+        ]
+        assert "Private winner-branch strategy description" not in json.dumps(cards)
+        _validate_schema("v4/workshop_card.schema.json", cards[0])
+
+    def test_readiness_returns_assessment_for_existing_workshop(self, monkeypatch):
+        client = _workshop_client(monkeypatch)
+        workshop_id = _create_workshop(client, "idem-readiness-live-001", strategy_ref="strat-live-1")
+
+        readiness_resp = client.get(
+            f"/bff/agora/workshops/{workshop_id}/readiness",
+            headers={"Authorization": _OPERATOR_AUTH},
+        )
+
+        assert readiness_resp.status_code == 200, readiness_resp.text
+        readiness = readiness_resp.json()["data"]
+        assert readiness["workshop_id"] == workshop_id
+        assert readiness["strategy_id"] == "strat-live-1"
+        assert {gate["gate"] for gate in readiness["gates"]} == {
+            "preliminary_research",
+            "full_validation",
+            "trading_room",
+        }
+        _validate_schema("v4/strategy_readiness.schema.json", readiness)
+
+    def test_reassess_persists_fresh_readiness_and_bumps_etag(self, monkeypatch):
+        client = _workshop_client(monkeypatch)
+        workshop_id = _create_workshop(client, "idem-reassess-create-001", strategy_ref="strat-live-2")
+        etag_before = _get_current_etag(client, workshop_id)
+
+        reassess_resp = client.post(
+            f"/bff/agora/workshops/{workshop_id}/readiness/reassess",
+            headers={
+                "Authorization": _OPERATOR_AUTH,
+                "Idempotency-Key": "idem-reassess-post-001",
+                "If-Match": etag_before,
+                "Content-Type": "application/json",
+            },
+            json={},
+        )
+
+        assert reassess_resp.status_code == 202, reassess_resp.text
+        readiness = reassess_resp.json()["data"]
+        assert readiness["assessment_version"] == 1
+        assert "etag" in reassess_resp.headers
+        assert reassess_resp.headers["etag"] != etag_before
+
+        get_resp = client.get(
+            f"/bff/agora/workshops/{workshop_id}/readiness",
+            headers={"Authorization": _OPERATOR_AUTH},
+        )
+        assert get_resp.status_code == 200, get_resp.text
+        assert get_resp.json()["data"]["assessment_id"] == readiness["assessment_id"]
+
+    def test_reassess_requires_if_match_and_idempotency_key(self, monkeypatch):
+        client = _workshop_client(monkeypatch)
+        workshop_id = _create_workshop(client, "idem-reassess-create-002")
+        etag = _get_current_etag(client, workshop_id)
+
+        missing_if_match = client.post(
+            f"/bff/agora/workshops/{workshop_id}/readiness/reassess",
+            headers={
+                "Authorization": _OPERATOR_AUTH,
+                "Idempotency-Key": "idem-reassess-missing-if",
+                "Content-Type": "application/json",
+            },
+            json={},
+        )
+        assert missing_if_match.status_code == 428, missing_if_match.text
+
+        missing_idem = client.post(
+            f"/bff/agora/workshops/{workshop_id}/readiness/reassess",
+            headers={
+                "Authorization": _OPERATOR_AUTH,
+                "If-Match": etag,
+                "Content-Type": "application/json",
+            },
+            json={},
+        )
+        assert missing_idem.status_code == 400, missing_idem.text
+
+    def test_readiness_and_cards_unknown_workshop_return_404(self, monkeypatch):
+        client = _workshop_client(monkeypatch)
+        for suffix in ("readiness", "cards"):
+            resp = client.get(
+                f"/bff/agora/workshops/no-such-workshop-live/{suffix}",
+                headers={"Authorization": _OPERATOR_AUTH},
+            )
+            assert resp.status_code == 404, resp.text
+
+    def test_readiness_cross_tenant_returns_403_not_internal_error(self, monkeypatch):
+        monkeypatch.setenv("PANTHEON_BFF_TENANT_ID", "tenant-alpha")
+        monkeypatch.setenv("PANTHEON_BFF_ALLOWED_TENANTS", "tenant-alpha,tenant-beta")
+        client = _workshop_client(monkeypatch)
+        workshop_id = _create_workshop(client, "idem-cross-tenant-readiness-001")
+
+        resp = client.get(
+            f"/bff/agora/workshops/{workshop_id}/readiness",
+            headers={"Authorization": _OPERATOR_AUTH, "X-Tenant-Id": "tenant-beta"},
+        )
+
+        assert resp.status_code == 403, resp.text
+        assert resp.json()["error"]["code"] == "FORBIDDEN"
+
+    def test_versions_route_is_live_and_returns_authoritative_empty_list(self, monkeypatch):
         client = _workshop_client(monkeypatch)
         create_resp = client.post(
             "/bff/agora/workshops",
@@ -506,7 +938,9 @@ class TestWorkshopRouterEndpoints:
             f"/bff/agora/workshops/{workshop_id}/versions",
             headers={"Authorization": _OPERATOR_AUTH},
         )
-        assert resp.status_code == 501
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["versions"] == []
+        assert resp.headers["etag"].startswith('W/"workshop:')
 
     def test_workshop_router_importable(self):
         from agora.strategy_workshop.router import create_strategy_workshop_router
@@ -522,11 +956,124 @@ class TestWorkshopRouterEndpoints:
         router = create_strategy_workshop_router(
             extract_identity=lambda auth: {"sub": "test"},
             require_read_role=lambda identity: None,
+            require_write_role=lambda identity: None,
             bff_error=lambda *a, **kw: HTTPException(status_code=a[0]),
             utc_now=lambda: "2026-06-21T00:00:00Z",
             workshop_store=store,
         )
         assert router is not None
+
+    def test_readiness_route_accepts_injected_dict_identity(self):
+        from agora.strategy_workshop import MemoryWorkshopStore
+        from agora.strategy_workshop.router import create_strategy_workshop_router
+        from fastapi import FastAPI, HTTPException
+
+        store = MemoryWorkshopStore()
+        store.create_session({
+            "workshop_id": "ws-dict-identity",
+            "tenant_id": "tenant-alpha",
+            "user_id": "user-alpha",
+            "strategy_id": "strat-dict-1",
+            "active_strategy_spec_registry_id": "registry-dict-1",
+        })
+        store.create_event({
+            "workshop_id": "ws-dict-identity",
+            "actor_type": "operator",
+            "event_type": "message",
+            "private_content_ref": "priv://dict-identity/event-1",
+            "redacted_summary": "Winner branch strategy captured.",
+        })
+        store.create_completeness_snapshot({
+            "workshop_id": "ws-dict-identity",
+            "strategy_version_id": "wv-dict-1",
+            "state_map_json": {
+                "data_pit": "confirmed",
+                "exit_invalidation": "confirmed",
+                "entry_signal": "confirmed",
+                "risk_constraints": "confirmed",
+                "position_sizing": "confirmed",
+                "universe_rule": "confirmed",
+                "liquidity": "confirmed",
+            },
+            "blocking_items_json": [],
+            "next_question_json": {},
+        })
+        identity = {
+            "operator_id": "user-alpha",
+            "roles": ["operator"],
+            "claims": {
+                "tenant_id": "tenant-alpha",
+                "allowed_tenants": ["tenant-alpha"],
+            },
+        }
+        app = FastAPI()
+        app.include_router(create_strategy_workshop_router(
+            extract_identity=lambda auth: identity,
+            require_read_role=lambda current: None,
+            require_write_role=lambda current: None,
+            bff_error=lambda status_code, *args, **kwargs: HTTPException(status_code=status_code),
+            utc_now=lambda: "2026-07-05T00:00:00Z",
+            workshop_store=store,
+        ))
+        client = TestClient(app, raise_server_exceptions=False)
+
+        resp = client.get(
+            "/bff/agora/workshops/ws-dict-identity/readiness",
+            headers={"Authorization": "Bearer ignored"},
+        )
+
+        assert resp.status_code == 200, resp.text
+        readiness = resp.json()["data"]
+        assert readiness["highest_ready_gate"] == "trading_room"
+        assert readiness["workshop_version_id"] == "wv-dict-1"
+
+    def test_cards_route_accepts_injected_operator_identity(self):
+        from agora.strategy_workshop import MemoryWorkshopStore
+        from agora.strategy_workshop.router import create_strategy_workshop_router
+        from fastapi import FastAPI, HTTPException
+        from models import OperatorIdentity
+
+        store = MemoryWorkshopStore()
+        store.create_session({
+            "workshop_id": "ws-operator-identity",
+            "tenant_id": "tenant-alpha",
+            "user_id": "user-alpha",
+        })
+        store.create_event({
+            "workshop_id": "ws-operator-identity",
+            "actor_type": "operator",
+            "event_type": "message",
+            "private_content_ref": "priv://operator-identity/event-1",
+        })
+        identity = OperatorIdentity(
+            operator_id="user-alpha",
+            roles=["operator"],
+            claims={
+                "tenant_id": "tenant-alpha",
+                "allowed_tenants": ["tenant-alpha"],
+            },
+        )
+        app = FastAPI()
+        app.include_router(create_strategy_workshop_router(
+            extract_identity=lambda auth: identity,
+            require_read_role=lambda current: None,
+            require_write_role=lambda current: None,
+            bff_error=lambda status_code, *args, **kwargs: HTTPException(status_code=status_code),
+            utc_now=lambda: "2026-07-05T00:00:00Z",
+            workshop_store=store,
+        ))
+        client = TestClient(app, raise_server_exceptions=False)
+
+        resp = client.get(
+            "/bff/agora/workshops/ws-operator-identity/cards",
+            headers={"Authorization": "Bearer ignored"},
+        )
+
+        assert resp.status_code == 200, resp.text
+        assert {card["card_type"] for card in resp.json()["data"]} == {
+            "user_strategy_description",
+            "readiness_gate",
+        }
 
 
 # --------------------------------------------------------------------------- #
@@ -620,6 +1167,55 @@ class TestWorkshopConcurrencyContract:
         assert msg_resp.status_code == 409, (
             f"Stale ETag must return 409, got {msg_resp.status_code}: {msg_resp.text}"
         )
+
+    def test_stale_if_match_discards_private_content_orphan(self, monkeypatch):
+        from agora.strategy_workshop import MemoryWorkshopStore
+        from agora.strategy_workshop.router import create_strategy_workshop_router
+        from fastapi import FastAPI, HTTPException
+        from privacy.private_content_models import PrivateContentAccessDenied
+        from privacy.private_content_store import EphemeralKeyProvider, MemoryPrivateContentStore
+
+        workshop_store = MemoryWorkshopStore()
+        workshop_store.create_session({
+            "workshop_id": "ws-cas-orphan", "tenant_id": "tenant-alpha",
+            "user_id": "user-alpha",
+        })
+        private_store = MemoryPrivateContentStore(key_provider=EphemeralKeyProvider())
+        written = []
+        original_put = private_store.put
+
+        def recording_put(**kwargs):
+            descriptor = original_put(**kwargs)
+            written.append(descriptor)
+            return descriptor
+
+        private_store.put = recording_put
+        identity = {"operator_id": "user-alpha", "roles": ["operator"],
+                    "claims": {"tenant_id": "tenant-alpha"}}
+        app = FastAPI()
+        app.include_router(create_strategy_workshop_router(
+            extract_identity=lambda auth: identity,
+            require_read_role=lambda current: None,
+            require_write_role=lambda current: None,
+            bff_error=lambda status_code, *args, **kwargs: HTTPException(status_code=status_code),
+            utc_now=lambda: "2026-07-12T00:00:00Z",
+            workshop_store=workshop_store,
+            private_content_store=private_store,
+        ))
+        response = TestClient(app, raise_server_exceptions=False).post(
+            "/bff/agora/workshops/ws-cas-orphan/messages",
+            headers={"Authorization": "Bearer ignored", "Idempotency-Key": "cas-fail",
+                     "If-Match": 'W/"workshop:ws-cas-orphan:v0"'},
+            json={"content": "must not survive"},
+        )
+        assert response.status_code == 409
+        assert len(written) == 1
+        with pytest.raises(PrivateContentAccessDenied):
+            private_store.get_for_owner(
+                private_content_ref=written[0].private_content_ref,
+                tenant_id="tenant-alpha", owner_user_id="user-alpha",
+                purpose="orphan-regression", request_id="req-orphan",
+            )
 
     def test_post_message_with_matching_if_match_succeeds(self, monkeypatch):
         """Correct If-Match must allow the mutation through."""
@@ -740,6 +1336,91 @@ class TestWorkshopPrivacyContract:
     """Events from message/create paths must carry private_content_ref.
     Raw message content must never appear as the redacted_summary.
     """
+
+    def test_create_private_store_failure_leaves_no_partial_session(self):
+        from agora.strategy_workshop import MemoryWorkshopStore
+        from agora.strategy_workshop.router import create_strategy_workshop_router
+        from fastapi import FastAPI, HTTPException
+
+        class FailingPrivateStore:
+            def put(self, **kwargs):
+                raise RuntimeError("private store unavailable")
+
+        workshop_store = MemoryWorkshopStore()
+        identity = {"operator_id": "user-alpha", "roles": ["operator"],
+                    "claims": {"tenant_id": "tenant-alpha"}}
+        app = FastAPI()
+        app.include_router(create_strategy_workshop_router(
+            extract_identity=lambda auth: identity,
+            require_read_role=lambda current: None,
+            require_write_role=lambda current: None,
+            bff_error=lambda status_code, *args, **kwargs: HTTPException(status_code=status_code),
+            utc_now=lambda: "2026-07-12T00:00:00Z",
+            workshop_store=workshop_store,
+            private_content_store=FailingPrivateStore(),
+        ))
+        response = TestClient(app, raise_server_exceptions=False).post(
+            "/bff/agora/workshops",
+            headers={"Authorization": "Bearer ignored", "Idempotency-Key": "create-fail"},
+            json={"initial_message": "must not create a session"},
+        )
+        assert response.status_code == 500
+        sessions, _ = workshop_store.list_sessions(
+            user_id="user-alpha", tenant_id="tenant-alpha"
+        )
+        assert sessions == []
+
+    def test_create_event_failure_discards_private_object_and_session(self):
+        from agora.strategy_workshop import MemoryWorkshopStore
+        from agora.strategy_workshop.router import create_strategy_workshop_router
+        from fastapi import FastAPI, HTTPException
+        from privacy.private_content_models import PrivateContentAccessDenied
+        from privacy.private_content_store import EphemeralKeyProvider, MemoryPrivateContentStore
+
+        class EventFailingStore(MemoryWorkshopStore):
+            def create_event(self, event):
+                raise RuntimeError("event write failed")
+
+        workshop_store = EventFailingStore()
+        private_store = MemoryPrivateContentStore(key_provider=EphemeralKeyProvider())
+        written = []
+        original_put = private_store.put
+
+        def recording_put(**kwargs):
+            descriptor = original_put(**kwargs)
+            written.append(descriptor)
+            return descriptor
+
+        private_store.put = recording_put
+        identity = {"operator_id": "user-alpha", "roles": ["operator"],
+                    "claims": {"tenant_id": "tenant-alpha"}}
+        app = FastAPI()
+        app.include_router(create_strategy_workshop_router(
+            extract_identity=lambda auth: identity,
+            require_read_role=lambda current: None,
+            require_write_role=lambda current: None,
+            bff_error=lambda status_code, *args, **kwargs: HTTPException(status_code=status_code),
+            utc_now=lambda: "2026-07-12T00:00:00Z",
+            workshop_store=workshop_store,
+            private_content_store=private_store,
+        ))
+        response = TestClient(app, raise_server_exceptions=False).post(
+            "/bff/agora/workshops",
+            headers={"Authorization": "Bearer ignored", "Idempotency-Key": "event-fail"},
+            json={"initial_message": "must be hard discarded"},
+        )
+        assert response.status_code == 500
+        sessions, _ = workshop_store.list_sessions(
+            user_id="user-alpha", tenant_id="tenant-alpha"
+        )
+        assert sessions == []
+        assert len(written) == 1
+        with pytest.raises(PrivateContentAccessDenied):
+            private_store.get_for_owner(
+                private_content_ref=written[0].private_content_ref,
+                tenant_id="tenant-alpha", owner_user_id="user-alpha",
+                purpose="orphan-regression", request_id="req-create-orphan",
+            )
 
     def test_initial_event_has_private_content_ref(self, monkeypatch):
         """create_workshop must generate private_content_ref for the initial event."""

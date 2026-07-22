@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-17",
+  "archived_at": "2026-07-11T22:19:33Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-17",
+    "title": "Prepare OCLAW-PMEM-002 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 OCLAW-PMEM-002，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "OpenClaw Persona Memory Gap / Wave 1 agent reconcile",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "OCLAW-PMEM-001"
+    ],
+    "artifacts": [
+      "support/sidecars/OCLAW-PMEM-002/OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-17.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "PR #3282 merged at 215add786f56ebd5f7fe0d2f02d319b2f5e46119; review-approved support-only unchanged-state receipt finalized. Stop rule remains active; parent owner must assign BFF implementation ownership or defer.",
+    "last_update": "2026-07-11T22:19:33Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "OCLAW-PMEM-002",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：remote baseline、parent diff 與四項 stop-rule 輸入均可重現且未變；此核准僅限 unchanged-state support receipt，不代表 parent acceptance、BFF/runtime 實作或 hosted frontend proof。",
+      "Parent owner 應指派具名 BFF implementation owner 或記錄等待依賴；在 governed projection 合併前不得派發 frontend。"
+    ],
+    "review_file": "support/sidecars/OCLAW-PMEM-002/OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-17.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T22:19:33Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/oclaw-pmem-002-sidecar-bff-handoff-followup-17",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-17",
+      "git_clean_required": false,
+      "commit": "d38d4ab64f9d47cd3f121f7193bd18a2bec5862a",
+      "commit_subject": "OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-17: finalize receipt",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support-only BFF/frontend unchanged-state handoff receipt.",
+        "Not changing": "canonical contracts, runtime/registry/governance implementation, parent acceptance, or frontend proof.",
+        "Composes with": "parent OCLAW-PMEM-002 owner decision and follow-up 10/11 handoff contract and stop rule.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-17",
+        "Reviewer": "Codex",
+        "Verified": "git diff --check; artifact existence and approval-marker rg"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-17",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "215add786f56ebd5f7fe0d2f02d319b2f5e46119",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-17",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Support-only unchanged-state receipt committed at e03061db2; please review stop-rule evaluation and parent-owner return.",
+      "status": "done",
+      "created_at": "2026-07-11T22:15:41Z",
+      "resolved_at": "2026-07-11T22:16:38Z"
+    },
+    {
+      "task_id": "OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-17",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Approved support-only unchanged-state receipt at e03061db2; stop rule remains active and parent owner must choose BFF implementation ownership or defer.",
+      "status": "done",
+      "created_at": "2026-07-11T22:16:38Z",
+      "resolved_at": "2026-07-11T22:19:35Z"
+    }
+  ],
+  "blockers": []
+}

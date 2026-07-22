@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "task_id": "MGMT-OPS-003-GAP-004-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-07-11T16:36:06Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-OPS-003-GAP-004-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare MGMT-OPS-003-GAP-004 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-OPS-003-GAP-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "MGMT-OPS-003 Hosted Gap / Wave 2 review gate",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "MGMT-OPS-003-GAP-001",
+      "MGMT-OPS-003-GAP-002"
+    ],
+    "artifacts": [
+      "support/sidecars/MGMT-OPS-003-GAP-004/MGMT-OPS-003-GAP-004-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: support-only BFF/frontend handoff packet merged via PR #3243 to dev at 183ffc3c982168935704ae54fe10e18b7aa4144b; focused Portfolio Book contract verification passed (46 tests). Parent owner retains fail-closed verdict authority using fresh hosted evidence.",
+    "last_update": "2026-07-11T16:36:06Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-OPS-003-GAP-004",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：holdings/positions query mapping 與實際 route signatures 一致；缺 telemetry 的 degraded row、MISSING_TELEMETRY incident、Human Review link 與 partial attribution fail-closed contract 一致；sidecar boundary 未改 canonical/runtime/frontend truth。驗證：pytest -q services/control-plane/bff/test_bff_pm12_portfolio_book_contract.py -q（46 passed）；PR #3243 已 merge。",
+      "Owner 應依 closeout spec 確認 merge SHA 後正式 done；parent owner 僅把本 packet 作 checklist aid，仍以 fresh hosted evidence 與 signed reviewer checklist 決定 parent verdict。"
+    ],
+    "review_file": "support/sidecars/MGMT-OPS-003-GAP-004/MGMT-OPS-003-GAP-004-SIDECAR-BFF-HANDOFF.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T16:36:06Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-ops-003-gap-004-sidecar-bff-handoff",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-OPS-003-GAP-004-SIDECAR-BFF-HANDOFF",
+      "git_clean_required": false,
+      "commit": "12c9beaddabd558cd34d618d3293d75747b5f0a6",
+      "commit_subject": "MGMT-OPS-003-GAP-004-SIDECAR-BFF-HANDOFF: add BFF handoff packet",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support-only BFF query, operator journey, and frontend handoff packet.",
+        "Not changing": "canonical truth, BFF/runtime implementation, frontend implementation, or parent verdict.",
+        "Composes with": "MGMT-OPS-003-GAP-001/002/003 evidence and MGMT-OPS-003-GAP-004 independent closeout.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "MGMT-OPS-003-GAP-004-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex2",
+        "Verified": "git diff --check; required packet sections and non-empty artifact checked"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-OPS-003-GAP-004-SIDECAR-BFF-HANDOFF",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "183ffc3c982168935704ae54fe10e18b7aa4144b",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-OPS-003-GAP-004-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only BFF/frontend handoff packet committed as 12c9beadd; PR #3243 is open to dev with auto-merge enabled. Please review query mapping, fail-closed operator journey, and parent composition boundary.",
+      "status": "done",
+      "created_at": "2026-07-11T16:31:57Z",
+      "resolved_at": "2026-07-11T16:34:38Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-004-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved: query mapping and fail-closed handoff verified; PR #3243 merged. Return to Codex for formal closeout.",
+      "status": "done",
+      "created_at": "2026-07-11T16:34:38Z",
+      "resolved_at": "2026-07-11T16:36:07Z"
+    }
+  ],
+  "blockers": []
+}

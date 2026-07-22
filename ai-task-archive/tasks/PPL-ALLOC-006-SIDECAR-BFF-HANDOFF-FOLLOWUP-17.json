@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-17",
+  "archived_at": "2026-07-11T13:13:13Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-17",
+    "title": "Prepare PPL-ALLOC-006 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 PPL-ALLOC-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Persona Promotion Allocation / Wave 2 frontend workbench",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "PPL-ALLOC-003",
+      "PPL-ALLOC-004"
+    ],
+    "artifacts": [
+      "support/sidecars/PPL-ALLOC-006/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-17.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "PR #3220 merged to dev at 60f981dff70defbd5afff32c83244fd93784632d; support-only Follow-Up 17 packet finalized after Claude approval. Reverified execute-plans PR #251 remains OPEN/MERGEABLE at 436aa32e with integration-gate SUCCESS and no merge commit; fourth-repeat no-delta dispatch-loop escalation remains fail-closed.",
+    "last_update": "2026-07-11T13:13:13Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "PPL-ALLOC-006",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "已重新確認 execute-plans PR #251 evidence 與 Follow-Up 17 packet 內容一致（OPEN/MERGEABLE，head 436aa32e，mergeCommit null，integration-gate SUCCESS）",
+      "no-delta boundary 與第四次重複 escalation 屬實",
+      "核准此 support-only checkpoint，交回 owner Codex 收尾"
+    ],
+    "review_file": "support/sidecars/PPL-ALLOC-006/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-17.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T13:13:13Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ppl-alloc-006-sidecar-bff-handoff-followup-17",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-17",
+      "git_clean_required": false,
+      "commit": "ac3a99edadec13ea77178dde72dcc45857a9315d",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-17",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-17",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "60f981dff70defbd5afff32c83244fd93784632d",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-17",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only Follow-Up 17 is committed at 97ef0d894. Please verify unchanged execute-plans PR #251 evidence, no-delta boundary, and fourth-repeat supervisor escalation.",
+      "status": "done",
+      "created_at": "2026-07-11T12:18:49Z",
+      "resolved_at": "2026-07-11T13:10:22Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-17",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Verified PR #251 evidence unchanged (OPEN/MERGEABLE, head 436aa32e, mergeCommit null, integration-gate SUCCESS); no-delta boundary and fourth-repeat dispatch-loop escalation confirmed accurate. Approved and handed back to owner Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-07-11T13:10:22Z",
+      "resolved_at": "2026-07-11T13:13:14Z"
+    }
+  ],
+  "blockers": []
+}

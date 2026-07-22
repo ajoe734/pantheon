@@ -7,6 +7,7 @@ import argparse
 import json
 import re
 import sys
+import urllib.parse
 from pathlib import Path
 from typing import Any
 
@@ -17,9 +18,16 @@ PREFLIGHT_JSON_NAME = "BFF-LIVE-EVIDENCE-PREFLIGHT.json"
 SUMMARY_JSON_NAME = "release-gate-summary.json"
 FORBIDDEN_AUDIT_DIR_NAMES = {"historical", "archive", "archives", "baseline"}
 CURRENT_RUN_OUTPUT_SCOPE = ".lovable/audits/current-run"
+MAX_CURRENT_RUN_ARTIFACT_FILES = 32
+MAX_CURRENT_RUN_ARTIFACT_BYTES = 8 * 1024 * 1024
+MAX_CURRENT_RUN_ARTIFACT_FILE_BYTES = 4 * 1024 * 1024
+STRICT_LIVE_SSE_MIN_HEARTBEATS = 2
 ALLOWED_LIVE_EVIDENCE_ENVIRONMENTS = {"dev", "staging-live"}
 ALLOWED_DEV_REFS = {"dev", "refs/heads/dev"}
 GIT_SHA_RE = re.compile(r"\A[0-9a-f]{40}\Z", re.IGNORECASE)
+BEARER_HASH_RE = re.compile(r"\A[0-9a-f]{12}\Z", re.IGNORECASE)
+REQUIRED_STRICT_RUN_KEYS = ("github_environment", "github_run_id", "github_run_attempt", "ref", "sha")
+OPTIONAL_STRICT_RUN_KEYS = ("github_workflow", "github_job", "repository")
 SECRET_LEAK_PATTERNS = (
     ("raw_bearer", re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{12,}")),
     ("jwt", re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b")),
@@ -57,11 +65,30 @@ CHECK_LABELS = {
 }
 RBAC_LABELS = ("anonymous", "viewer", "operator", "reviewer", "approver", "admin", "empty", "unknown")
 RBAC_PROVIDED_LABELS = tuple(label for label in RBAC_LABELS if label != "anonymous")
+BEARER_SHAPE_REQUIRED_SOURCES = (
+    "smoke",
+    *(f"rbac:{label}" for label in RBAC_PROVIDED_LABELS),
+    "approval_race:a",
+    "approval_race:b",
+)
+MIN_BEARER_SHAPE_TOKEN_LENGTH = 12
 RBAC_READ_RESOURCES = ("bff-strategies", "bff-ranking-formulas", "bff-agora-signals")
 RBAC_WRITE_RESOURCES = ("strategy", "ranking-formula", "agora-note", "intervention-claim")
+RBAC_WRITE_READBACK_RESOURCES = {"strategy", "ranking-formula", "agora-note"}
 RBAC_READ_ALLOWED = {"viewer", "operator", "reviewer", "approver", "admin"}
 RBAC_WRITE_ALLOWED = {"operator", "reviewer", "approver", "admin"}
 RBAC_DENIED_ERROR_CODES = {"AUTH_REQUIRED", "FORBIDDEN", "INSUFFICIENT_ROLE", "PERMISSION_DENIED"}
+RBAC_READ_EXPECTATIONS = {
+    "bff-strategies": {"method": "GET", "path": "/bff/strategies"},
+    "bff-ranking-formulas": {"method": "GET", "path": "/bff/ranking-formulas"},
+    "bff-agora-signals": {"method": "GET", "path": "/bff/agora/signals"},
+}
+RBAC_WRITE_EXPECTATIONS = {
+    "strategy": {"method": "POST", "path": "/bff/strategies"},
+    "ranking-formula": {"method": "POST", "path": "/bff/ranking-formulas"},
+    "agora-note": {"method": "POST", "path": "/bff/agora/notes"},
+    "intervention-claim": {"method": "POST", "path": "/bff/v5/interventions/int-live-rbac-matrix/claim"},
+}
 APPROVAL_RACE_ACCEPTED_STATUSES = {200, 201, 202}
 APPROVAL_RACE_SAFE_ERROR_CODES = {
     "RESOURCE_NOT_FOUND",
@@ -73,6 +100,44 @@ APPROVAL_RACE_SAFE_ERROR_CODES = {
     "VALIDATION_FAILED",
     "PRECONDITION_NOT_MET",
     "APPROVAL_ALREADY_DECIDED",
+}
+RACE_TIMING_PROOF = "monotonic_ms_relative_to_race_start"
+RACE_MAX_START_SKEW_MS = 1000.0
+RACE_TIMING_LINK_TOLERANCE_MS = 2.0
+DRY_RUN_META_EXPECTATIONS = {
+    "dry-run-strategy-create": {
+        "kind": "dry_run_preview_meta",
+        "method": "POST",
+        "path": "/bff/strategies",
+        "status": 200,
+        "readback_family": "dry-run-strategy-create-readback-not-persisted",
+        "readback_path_prefix": "/bff/strategies/",
+    },
+    "dry-run-ranking-formula-create": {
+        "kind": "dry_run_preview_meta",
+        "method": "POST",
+        "path": "/bff/ranking-formulas",
+        "status": 200,
+        "readback_family": "dry-run-ranking-formula-create-readback-not-persisted",
+        "readback_path_prefix": "/bff/ranking-formulas/",
+    },
+    "dry-run-v5-intervention-claim": {
+        "kind": "dry_run_command_meta",
+        "method": "POST",
+        "path": "/bff/v5/interventions/int-live-dry-run/claim",
+        "status": 200,
+        "readback_family": "",
+        "readback_path_prefix": "",
+    },
+}
+DRY_RUN_READBACK_FAMILIES = {
+    str(spec["readback_family"]): family
+    for family, spec in DRY_RUN_META_EXPECTATIONS.items()
+    if spec["readback_family"]
+}
+DRY_RUN_VALIDATION_EXPECTATIONS = {
+    "dry-run-invalid-strategy": {"method": "POST", "path": "/bff/strategies", "status": 422},
+    "dry-run-invalid-ranking-formula": {"method": "POST", "path": "/bff/ranking-formulas", "status": 422},
 }
 
 
@@ -166,6 +231,305 @@ def summary_check_status(summary: Any, key: str) -> tuple[str, str]:
     return status, note
 
 
+def list_of_strings(value: Any) -> tuple[list[str], bool]:
+    if not isinstance(value, list):
+        return [], False
+    result: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            return [], False
+        result.append(item)
+    return result, True
+
+
+def invalid_input_names(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    names: list[str] = []
+    for item in value:
+        if isinstance(item, dict):
+            names.append(str(item.get("name") or ""))
+        elif item:
+            names.append(str(item))
+    return names
+
+
+def is_plain_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def list_of_string_lists(value: Any) -> tuple[list[list[str]], bool]:
+    if not isinstance(value, list):
+        return [], False
+    groups: list[list[str]] = []
+    for group in value:
+        items, ok = list_of_strings(group)
+        if not ok:
+            return [], False
+        groups.append(items)
+    return groups, True
+
+
+def ordered_subset(items: list[str], expected: list[str]) -> bool:
+    return items == [source for source in expected if source in set(items)]
+
+
+def preflight_rbac_matrix_failures(payload: dict[str, Any], missing: list[Any], invalid: list[Any]) -> list[str]:
+    matrix = payload.get("rbac_matrix")
+    if not isinstance(matrix, dict):
+        return ["missing"]
+
+    failures: list[str] = []
+    expected_labels = list(RBAC_PROVIDED_LABELS)
+    expected_label_set = set(expected_labels)
+    required_labels, required_ok = list_of_strings(matrix.get("required_labels"))
+    present_labels, present_ok = list_of_strings(matrix.get("present_labels"))
+    missing_labels, missing_ok = list_of_strings(matrix.get("missing_labels"))
+    duplicate_groups, duplicate_ok = list_of_string_lists(matrix.get("duplicate_label_groups"))
+
+    if not required_ok or required_labels != expected_labels:
+        failures.append("required_labels")
+    if not present_ok or not ordered_subset(present_labels, expected_labels):
+        failures.append("present_labels")
+    if not missing_ok:
+        failures.append("missing_labels_type")
+    elif missing_labels != [label for label in expected_labels if label not in set(present_labels)]:
+        failures.append("missing_labels")
+    if set(present_labels) - expected_label_set:
+        failures.append("present_label_unknown")
+    if len(set(present_labels)) != len(present_labels):
+        failures.append("present_labels_duplicate")
+
+    expected_cases = matrix.get("expected_cases")
+    provided_cases = matrix.get("provided_cases")
+    distinct_count = matrix.get("distinct_bearer_count")
+    if not is_plain_int(expected_cases) or expected_cases != len(expected_labels):
+        failures.append("expected_cases")
+    if not is_plain_int(provided_cases) or provided_cases != len(present_labels):
+        failures.append("provided_cases")
+    if not is_plain_int(distinct_count) or distinct_count < 0 or distinct_count > len(present_labels):
+        failures.append("distinct_bearer_count")
+    if not isinstance(matrix.get("distinct_bearers"), bool):
+        failures.append("distinct_bearers_type")
+
+    duplicate_notes: list[str] = []
+    if not duplicate_ok:
+        failures.append("duplicate_label_groups_type")
+    else:
+        for index, group in enumerate(duplicate_groups):
+            if len(group) < 2:
+                failures.append(f"duplicate_group:{index}")
+                continue
+            if any(label not in expected_label_set for label in group):
+                failures.append(f"duplicate_group_unknown:{index}")
+                continue
+            duplicate_notes.append("/".join(group))
+
+    rbac_invalid_reported = "PANTHEON_BFF_RBAC_TOKENS_JSON" in invalid_input_names(invalid)
+    if duplicate_notes and not rbac_invalid_reported:
+        failures.append("duplicate_groups_without_invalid")
+
+    ready = not missing and not invalid
+    if ready:
+        if present_labels != expected_labels:
+            failures.append(f"present_labels:{len(present_labels)}/{len(expected_labels)}")
+        if missing_labels:
+            failures.append("missing_labels_ready")
+        if matrix.get("distinct_bearers") is not True:
+            failures.append("distinct_bearers")
+        if distinct_count != len(expected_labels):
+            failures.append(f"distinct_bearer_count:{distinct_count}/{len(expected_labels)}")
+        if duplicate_notes:
+            failures.append("duplicate_label_groups")
+
+    return failures
+
+
+def preflight_approval_race_token_failures(payload: dict[str, Any], missing: list[Any], invalid: list[Any]) -> list[str]:
+    tokens = payload.get("approval_race_tokens")
+    if not isinstance(tokens, dict):
+        return ["missing"]
+
+    failures: list[str] = []
+    for key in ("token_a_present", "token_b_present", "distinct_bearers"):
+        if not isinstance(tokens.get(key), bool):
+            failures.append(f"{key}_type")
+
+    ready = not missing and not invalid
+    if ready:
+        if tokens.get("token_a_present") is not True:
+            failures.append("token_a_present")
+        if tokens.get("token_b_present") is not True:
+            failures.append("token_b_present")
+        if tokens.get("distinct_bearers") is not True:
+            failures.append("distinct_bearers")
+
+    return failures
+
+
+def preflight_cross_secret_failures(payload: dict[str, Any], missing: list[Any], invalid: list[Any]) -> list[str]:
+    cross = payload.get("cross_secret_bearers")
+    if not isinstance(cross, dict):
+        return ["missing"]
+
+    failures: list[str] = []
+    expected_sources = list(BEARER_SHAPE_REQUIRED_SOURCES)
+    expected_source_set = set(expected_sources)
+    required_sources, required_ok = list_of_strings(cross.get("required_sources"))
+    present_sources, present_ok = list_of_strings(cross.get("present_sources"))
+    missing_sources, missing_ok = list_of_strings(cross.get("missing_sources"))
+    duplicate_groups, duplicate_ok = list_of_string_lists(cross.get("duplicate_source_groups"))
+
+    if not required_ok or required_sources != expected_sources:
+        failures.append("required_sources")
+    if not present_ok or not ordered_subset(present_sources, expected_sources):
+        failures.append("present_sources")
+    if not missing_ok:
+        failures.append("missing_sources_type")
+    elif missing_sources != [source for source in expected_sources if source not in set(present_sources)]:
+        failures.append("missing_sources")
+    if set(present_sources) - expected_source_set:
+        failures.append("present_source_unknown")
+    if len(set(present_sources)) != len(present_sources):
+        failures.append("present_sources_duplicate")
+
+    expected_count = cross.get("expected_sources")
+    provided_count = cross.get("provided_sources")
+    distinct_count = cross.get("distinct_bearer_count")
+    if not is_plain_int(expected_count) or expected_count != len(expected_sources):
+        failures.append("expected_sources")
+    if not is_plain_int(provided_count) or provided_count != len(present_sources):
+        failures.append("provided_sources")
+    if not is_plain_int(distinct_count) or distinct_count < 0 or distinct_count > len(present_sources):
+        failures.append("distinct_bearer_count")
+    if not isinstance(cross.get("distinct_bearers"), bool):
+        failures.append("distinct_bearers_type")
+
+    duplicate_notes: list[str] = []
+    if not duplicate_ok:
+        failures.append("duplicate_source_groups_type")
+    else:
+        for index, group in enumerate(duplicate_groups):
+            if len(group) < 2:
+                failures.append(f"duplicate_group:{index}")
+                continue
+            if any(source not in expected_source_set for source in group):
+                failures.append(f"duplicate_group_unknown:{index}")
+                continue
+            duplicate_notes.append("/".join(group))
+
+    invalid_names = invalid_input_names(invalid)
+    cross_invalid_reported = "PANTHEON_BFF_LIVE_EVIDENCE_BEARERS" in invalid_names
+    if duplicate_notes and not cross_invalid_reported:
+        failures.append("duplicate_groups_without_invalid")
+    if cross_invalid_reported and not duplicate_notes:
+        failures.append("duplicate_groups_missing")
+
+    ready = not missing and not invalid
+    if ready:
+        if present_sources != expected_sources:
+            failures.append(f"present_sources:{len(present_sources)}/{len(expected_sources)}")
+        if missing_sources:
+            failures.append("missing_sources_ready")
+        if cross.get("distinct_bearers") is not True:
+            failures.append("distinct_bearers")
+        if distinct_count != len(expected_sources):
+            failures.append(f"distinct_bearer_count:{distinct_count}/{len(expected_sources)}")
+        if duplicate_notes:
+            failures.append("duplicate_source_groups")
+
+    return failures
+
+
+def preflight_bearer_shape_failures(payload: dict[str, Any], missing: list[Any], invalid: list[Any]) -> list[str]:
+    shape = payload.get("bearer_shape")
+    if not isinstance(shape, dict):
+        return ["missing"]
+
+    failures: list[str] = []
+    expected_sources = list(BEARER_SHAPE_REQUIRED_SOURCES)
+    expected_source_set = set(expected_sources)
+    required_sources, required_ok = list_of_strings(shape.get("required_sources"))
+    checked_sources, checked_ok = list_of_strings(shape.get("checked_sources"))
+    valid_sources, valid_ok = list_of_strings(shape.get("valid_sources"))
+
+    if not required_ok or required_sources != expected_sources:
+        failures.append("required_sources")
+    if not checked_ok:
+        failures.append("checked_sources_type")
+    if not valid_ok:
+        failures.append("valid_sources_type")
+
+    min_length = shape.get("min_length")
+    if (
+        isinstance(min_length, bool)
+        or not isinstance(min_length, (int, float))
+        or min_length < MIN_BEARER_SHAPE_TOKEN_LENGTH
+    ):
+        failures.append("min_length")
+    if shape.get("placeholder_values_rejected") is not True:
+        failures.append("placeholder_values_rejected")
+
+    invalid_sources = shape.get("invalid_sources")
+    invalid_source_notes: list[str] = []
+    if not isinstance(invalid_sources, list):
+        failures.append("invalid_sources_type")
+    else:
+        for index, item in enumerate(invalid_sources):
+            if not isinstance(item, dict):
+                failures.append(f"invalid_sources[{index}]")
+                continue
+            source = item.get("source")
+            reason = item.get("reason")
+            if not isinstance(source, str) or source not in expected_source_set:
+                failures.append(f"invalid_source:{index}")
+                continue
+            if not isinstance(reason, str) or not reason:
+                failures.append(f"invalid_reason:{source}")
+                continue
+            invalid_source_notes.append(f"{source}={reason}")
+
+    shape_invalid_reported = "PANTHEON_BFF_LIVE_EVIDENCE_BEARER_SHAPE" in invalid_input_names(invalid)
+    if invalid_source_notes and not shape_invalid_reported:
+        failures.append("invalid_sources_without_invalid")
+    if shape_invalid_reported and not invalid_source_notes:
+        failures.append("invalid_missing_sources")
+
+    ready = not missing and not invalid
+    if ready:
+        if checked_sources != expected_sources:
+            failures.append(f"checked_sources:{len(checked_sources)}/{len(expected_sources)}")
+        if valid_sources != expected_sources:
+            failures.append(f"valid_sources:{len(valid_sources)}/{len(expected_sources)}")
+        if invalid_source_notes:
+            failures.append("invalid_sources")
+
+    return failures
+
+
+def preflight_bearer_hash_failures(payload: dict[str, Any], missing: list[Any], invalid: list[Any]) -> list[str]:
+    hashes = payload.get("bearer_source_hashes")
+    if not isinstance(hashes, dict):
+        return ["missing"] if not missing and not invalid else []
+
+    failures: list[str] = []
+    expected_sources = list(BEARER_SHAPE_REQUIRED_SOURCES)
+    expected_source_set = set(expected_sources)
+    for source, digest in hashes.items():
+        if not isinstance(source, str) or source not in expected_source_set:
+            failures.append(f"unknown_source:{source}")
+            continue
+        if not isinstance(digest, str) or not BEARER_HASH_RE.fullmatch(digest):
+            failures.append(f"hash:{source}")
+
+    ready = not missing and not invalid
+    if ready:
+        present_sources = [source for source in expected_sources if source in hashes]
+        if present_sources != expected_sources:
+            failures.append(f"sources:{len(present_sources)}/{len(expected_sources)}")
+    return failures
+
+
 def preflight_item(root: Path) -> dict[str, str]:
     file_path = find_file(root, PREFLIGHT_JSON_NAME)
     if not file_path:
@@ -189,6 +553,8 @@ def preflight_item(root: Path) -> dict[str, str]:
         provenance_failures.append("ref")
     if not GIT_SHA_RE.fullmatch(sha):
         provenance_failures.append("sha")
+    provenance_failures.extend(preflight_run_provenance_failures(payload))
+    provenance_failures.extend(summary_run_provenance_failures(root, payload))
     if provenance_failures:
         return status_item(
             "fail",
@@ -205,6 +571,46 @@ def preflight_item(root: Path) -> dict[str, str]:
         )
     missing = payload.get("missing") if isinstance(payload.get("missing"), list) else []
     invalid = payload.get("invalid") if isinstance(payload.get("invalid"), list) else []
+    rbac_matrix_failures = preflight_rbac_matrix_failures(payload, missing, invalid)
+    if rbac_matrix_failures:
+        return status_item(
+            "fail",
+            "Strict preflight RBAC matrix evidence is valid",
+            evidence=rel(file_path, root),
+            note="rbac_matrix:" + ",".join(rbac_matrix_failures[:8]),
+        )
+    approval_race_token_failures = preflight_approval_race_token_failures(payload, missing, invalid)
+    if approval_race_token_failures:
+        return status_item(
+            "fail",
+            "Strict preflight approval-race token evidence is valid",
+            evidence=rel(file_path, root),
+            note="approval_race_tokens:" + ",".join(approval_race_token_failures[:8]),
+        )
+    cross_secret_failures = preflight_cross_secret_failures(payload, missing, invalid)
+    if cross_secret_failures:
+        return status_item(
+            "fail",
+            "Strict preflight cross-secret bearer evidence is valid",
+            evidence=rel(file_path, root),
+            note="cross_secret_bearers:" + ",".join(cross_secret_failures[:8]),
+        )
+    bearer_shape_failures = preflight_bearer_shape_failures(payload, missing, invalid)
+    if bearer_shape_failures:
+        return status_item(
+            "fail",
+            "Strict preflight bearer-shape evidence is valid",
+            evidence=rel(file_path, root),
+            note="bearer_shape:" + ",".join(bearer_shape_failures[:8]),
+        )
+    bearer_hash_failures = preflight_bearer_hash_failures(payload, missing, invalid)
+    if bearer_hash_failures:
+        return status_item(
+            "fail",
+            "Strict preflight bearer source hashes are valid",
+            evidence=rel(file_path, root),
+            note="bearer_source_hashes:" + ",".join(bearer_hash_failures[:8]),
+        )
     if missing or invalid:
         missing_text = ",".join(str(item) for item in missing)
         invalid_text = ",".join(str(item.get("name") or item) for item in invalid)
@@ -217,6 +623,164 @@ def preflight_item(root: Path) -> dict[str, str]:
     return status_item("pass", "Strict preflight is not blocking live probes", evidence=rel(file_path, root))
 
 
+def preflight_run_provenance_failures(payload: dict[str, Any]) -> list[str]:
+    run = payload.get("strict_live_evidence_run")
+    if not isinstance(run, dict):
+        return ["strict_live_evidence_run"]
+    failures: list[str] = []
+    for key in REQUIRED_STRICT_RUN_KEYS:
+        if not str(run.get(key) or ""):
+            failures.append(f"strict_live_evidence_run.{key}")
+    expected = {
+        "github_environment": str(payload.get("github_environment") or ""),
+        "ref": str(payload.get("ref") or ""),
+        "sha": str(payload.get("sha") or ""),
+    }
+    for key, value in expected.items():
+        if str(run.get(key) or "") != value and f"strict_live_evidence_run.{key}" not in failures:
+            failures.append(f"strict_live_evidence_run.{key}")
+    return failures
+
+
+def summary_run_provenance_failures(root: Path, payload: dict[str, Any]) -> list[str]:
+    summary_file = find_file(root, SUMMARY_JSON_NAME)
+    summary = read_json(summary_file) if summary_file else None
+    if not isinstance(summary, dict):
+        return []
+    run_url = str(summary.get("runUrl") or "")
+    if not run_url:
+        return []
+    match = re.search(r"/actions/runs/([0-9]+)(?:\b|/|\?|#|\Z)", run_url)
+    if not match:
+        return ["summary.runUrl"]
+    run = payload.get("strict_live_evidence_run") if isinstance(payload.get("strict_live_evidence_run"), dict) else {}
+    if str(run.get("github_run_id") or "") != match.group(1):
+        return ["summary.runUrl"]
+    return []
+
+
+def preflight_payload(root: Path) -> dict[str, Any] | None:
+    file_path = find_file(root, PREFLIGHT_JSON_NAME)
+    payload = read_json(file_path) if file_path else None
+    return payload if isinstance(payload, dict) else None
+
+
+def normalized_url(value: Any) -> str:
+    return str(value or "").strip().rstrip("/")
+
+
+def preflight_bearer_source_hashes(root: Path) -> dict[str, str]:
+    preflight = preflight_payload(root)
+    hashes = preflight.get("bearer_source_hashes") if isinstance(preflight, dict) else None
+    if not isinstance(hashes, dict):
+        return {}
+    expected_sources = set(BEARER_SHAPE_REQUIRED_SOURCES)
+    return {
+        source: digest
+        for source, digest in hashes.items()
+        if isinstance(source, str)
+        and source in expected_sources
+        and isinstance(digest, str)
+        and BEARER_HASH_RE.fullmatch(digest)
+    }
+
+
+def auth_source_preflight_check(root: Path, payload: dict[str, Any]) -> tuple[bool, str]:
+    source = payload.get("auth_source") if isinstance(payload.get("auth_source"), dict) else {}
+    kind = str(source.get("kind") or "")
+    digest = str(source.get("sha256_12") or "")
+    expected = preflight_bearer_source_hashes(root).get("smoke")
+    digest_ok = bool(BEARER_HASH_RE.fullmatch(digest))
+    preflight_link = bool(expected and digest == expected)
+    ok = kind == "provided_bearer" and digest_ok and preflight_link
+    return ok, f"authSource:{kind or 'missing'} smokeHash:{digest_ok} preflightSmokeLink:{preflight_link}"
+
+
+def strict_run_provenance_check(root: Path, payload: dict[str, Any]) -> tuple[bool, str]:
+    preflight = preflight_payload(root)
+    if not isinstance(preflight, dict):
+        return False, "runProvenance:preflight-missing"
+    run = payload.get("strict_live_evidence_run")
+    failures: list[str] = []
+    if not isinstance(run, dict):
+        failures.append("strict_live_evidence_run")
+        run = {}
+
+    preflight_run = (
+        preflight.get("strict_live_evidence_run")
+        if isinstance(preflight.get("strict_live_evidence_run"), dict)
+        else {}
+    )
+    expected = {
+        "github_environment": str(preflight.get("github_environment") or ""),
+        "ref": str(preflight.get("ref") or ""),
+        "sha": str(preflight.get("sha") or ""),
+    }
+    for key in (*REQUIRED_STRICT_RUN_KEYS, *OPTIONAL_STRICT_RUN_KEYS):
+        value = str(preflight_run.get(key) or "")
+        if value:
+            expected[key] = value
+
+    for key in REQUIRED_STRICT_RUN_KEYS:
+        if not expected.get(key):
+            failures.append(f"preflight.{key}")
+        if not str(run.get(key) or ""):
+            failures.append(key)
+
+    for key, value in expected.items():
+        if value and str(run.get(key) or "") != value and key not in failures:
+            failures.append(key)
+
+    preflight_url = normalized_url(preflight.get("target_url"))
+    payload_url = normalized_url(payload.get("target_url"))
+    if not preflight_url or payload_url != preflight_url:
+        failures.append("target_url")
+
+    if failures:
+        unique = list(dict.fromkeys(failures))
+        return False, "runProvenance:" + ",".join(unique[:8])
+    return True, "runProvenance:match targetUrl:match"
+
+
+def allowed_current_run_artifact_path(path: Path, root: Path) -> bool:
+    parts = path.relative_to(root).parts
+    if len(parts) == 1:
+        return True
+    if parts[0] == "bff-live-evidence-current-run":
+        return True
+    return len(parts) >= 4 and parts[:3] == (".lovable", "audits", "current-run")
+
+
+def artifact_manifest(root: Path) -> dict[str, Any]:
+    files = list_files(root)
+    entries: list[dict[str, Any]] = []
+    total_bytes = 0
+    for path in files:
+        size = path.stat().st_size
+        total_bytes += size
+        parts = path.relative_to(root).parts
+        forbidden_audit_scope = any(part.lower() in FORBIDDEN_AUDIT_DIR_NAMES for part in parts[:-1])
+        entries.append(
+            {
+                "path": rel(path, root),
+                "bytes": size,
+                "current_run_allowed": allowed_current_run_artifact_path(path, root),
+                "forbidden_audit_scope": forbidden_audit_scope,
+                "oversized": size > MAX_CURRENT_RUN_ARTIFACT_FILE_BYTES,
+            }
+        )
+    return {
+        "file_count": len(files),
+        "total_bytes": total_bytes,
+        "limits": {
+            "max_files": MAX_CURRENT_RUN_ARTIFACT_FILES,
+            "max_total_bytes": MAX_CURRENT_RUN_ARTIFACT_BYTES,
+            "max_file_bytes": MAX_CURRENT_RUN_ARTIFACT_FILE_BYTES,
+        },
+        "files": entries,
+    }
+
+
 def artifact_scope_item(root: Path, summary: Any) -> dict[str, str]:
     files = list_files(root)
     forbidden = [
@@ -224,14 +788,42 @@ def artifact_scope_item(root: Path, summary: Any) -> dict[str, str]:
         for path in files
         if any(part.lower() in FORBIDDEN_AUDIT_DIR_NAMES for part in path.relative_to(root).parts[:-1])
     ]
-    summary_status, summary_note = summary_check_status(summary, "current_run_only")
+    out_of_scope = [
+        rel(path, root)
+        for path in files
+        if not allowed_current_run_artifact_path(path, root)
+    ]
     if forbidden:
         return status_item("fail", CHECK_LABELS["current_run_only"], note="forbidden audit paths: " + ",".join(forbidden[:5]))
+    if out_of_scope:
+        return status_item("fail", CHECK_LABELS["current_run_only"], note="outside current-run scope: " + ",".join(out_of_scope[:5]))
+    if len(files) > MAX_CURRENT_RUN_ARTIFACT_FILES:
+        return status_item(
+            "fail",
+            CHECK_LABELS["current_run_only"],
+            note=f"current-run artifact file count {len(files)}/{MAX_CURRENT_RUN_ARTIFACT_FILES}",
+        )
+    file_sizes = [(path, path.stat().st_size) for path in files]
+    oversized = [rel(path, root) for path, size in file_sizes if size > MAX_CURRENT_RUN_ARTIFACT_FILE_BYTES]
+    if oversized:
+        return status_item(
+            "fail",
+            CHECK_LABELS["current_run_only"],
+            note="oversized current-run files: " + ",".join(oversized[:5]),
+        )
+    total_bytes = sum(size for _path, size in file_sizes)
+    if total_bytes > MAX_CURRENT_RUN_ARTIFACT_BYTES:
+        return status_item(
+            "fail",
+            CHECK_LABELS["current_run_only"],
+            note=f"current-run artifact bytes {total_bytes}/{MAX_CURRENT_RUN_ARTIFACT_BYTES}",
+        )
+    summary_status, summary_note = summary_check_status(summary, "current_run_only")
     if summary_status == "pass":
         return status_item("pass", CHECK_LABELS["current_run_only"], note=summary_note)
     if isinstance(summary, dict):
         return status_item(summary_status, CHECK_LABELS["current_run_only"], note=summary_note)
-    return status_item("pass", CHECK_LABELS["current_run_only"], note=f"{len(files)} artifact file(s); no historical/archive paths")
+    return status_item("pass", CHECK_LABELS["current_run_only"], note=f"{len(files)} artifact file(s); current-run scope only")
 
 
 def secret_leak_item(root: Path) -> dict[str, str]:
@@ -260,6 +852,27 @@ def secret_leak_item(root: Path) -> dict[str, str]:
     return status_item("pass", "Current-run artifact does not contain raw secret material")
 
 
+def dry_run_request_header_ok(item: dict[str, Any]) -> bool:
+    headers = item.get("request_headers") if isinstance(item.get("request_headers"), dict) else {}
+    return item.get("method") == "POST" and headers.get("X-Dry-Run") == "1"
+
+
+def canonical_error_envelope_shape_ok(item: Any) -> bool:
+    if not isinstance(item, dict) or item.get("error_envelope") is not True:
+        return False
+    shape = item.get("error_envelope_shape")
+    if not isinstance(shape, dict):
+        return False
+    return (
+        shape.get("ok") is True
+        and shape.get("location") == "error"
+        and shape.get("code_present") is True
+        and shape.get("message_present") is True
+        and shape.get("meta_correlation_id_present") is True
+        and shape.get("outer_detail_wrapper") is False
+    )
+
+
 def dry_run_detail_check(dry_run: list[Any]) -> tuple[bool, str]:
     expected_kind_counts = {
         "dry_run_preview_meta": 2,
@@ -270,6 +883,10 @@ def dry_run_detail_check(dry_run: list[Any]) -> tuple[bool, str]:
     meta_kinds = {"dry_run_preview_meta", "dry_run_command_meta"}
     not_found_codes = {"RESOURCE_NOT_FOUND", "OBJECT_NOT_FOUND", "NOT_FOUND"}
     kind_counts = {kind: 0 for kind in expected_kind_counts}
+    seen_meta: dict[str, dict[str, Any]] = {}
+    seen_readbacks: dict[str, dict[str, Any]] = {}
+    seen_validations: set[str] = set()
+    dry_run_request_links = 0
     failures: list[str] = []
 
     for index, item in enumerate(dry_run):
@@ -290,18 +907,49 @@ def dry_run_detail_check(dry_run: list[Any]) -> tuple[bool, str]:
         else:
             failures.append(f"{index}:unexpected-kind:{kind or 'missing'}")
             continue
+        family = str(item.get("family") or "")
+        method = str(item.get("method") or "")
+        path = str(item.get("path") or "")
+        status = safe_int(item.get("status"))
 
         if kind in meta_kinds:
+            spec = DRY_RUN_META_EXPECTATIONS.get(family)
+            if not spec:
+                failures.append(f"{index}:unexpected-meta-family:{family or 'missing'}")
+            else:
+                seen_meta[family] = item
+                if method != spec["method"] or path != spec["path"] or status != spec["status"]:
+                    failures.append(f"{index}:meta-request-link")
+                if kind != spec["kind"]:
+                    failures.append(f"{index}:meta-kind-link")
             if check.get("dryRun") is not True:
                 failures.append(f"{index}:dryRun")
             if check.get("durable") is not False:
                 failures.append(f"{index}:durable")
             if check.get("liveCapitalSideEffects") is not False:
                 failures.append(f"{index}:liveCapitalSideEffects")
+            if dry_run_request_header_ok(item):
+                dry_run_request_links += 1
+            else:
+                failures.append(f"{index}:dry-run-request-header")
+            if spec and spec["readback_family"] and not check.get("target_id_sha256_12"):
+                failures.append(f"{index}:meta-target-hash")
         elif kind == "readback_not_persisted":
+            parent_family = DRY_RUN_READBACK_FAMILIES.get(family)
+            if not parent_family:
+                failures.append(f"{index}:unexpected-readback-family:{family or 'missing'}")
+            else:
+                seen_readbacks[parent_family] = item
+                spec = DRY_RUN_META_EXPECTATIONS[parent_family]
+                if method != "GET" or not path.startswith(str(spec["readback_path_prefix"])) or status != 404:
+                    failures.append(f"{index}:readback-request-link")
+                if check.get("target_family") != parent_family:
+                    failures.append(f"{index}:readback-target-family")
             error_code = str(check.get("error_code") or item.get("error_code") or "")
             if item.get("error_envelope") is not True:
                 failures.append(f"{index}:readback-error-envelope")
+            if not canonical_error_envelope_shape_ok(item):
+                failures.append(f"{index}:readback-error-shape")
             if error_code not in not_found_codes:
                 failures.append(f"{index}:readback-error-code")
             if "target_id" in check:
@@ -309,18 +957,68 @@ def dry_run_detail_check(dry_run: list[Any]) -> tuple[bool, str]:
             if not check.get("target_id_sha256_12"):
                 failures.append(f"{index}:target-id-hash")
         elif kind == "validation_rejected_before_persistence":
+            spec = DRY_RUN_VALIDATION_EXPECTATIONS.get(family)
+            if not spec:
+                failures.append(f"{index}:unexpected-validation-family:{family or 'missing'}")
+            else:
+                seen_validations.add(family)
+                if method != spec["method"] or path != spec["path"] or status != spec["status"]:
+                    failures.append(f"{index}:validation-request-link")
             error_code = str(check.get("error_code") or item.get("error_code") or "")
             if item.get("error_envelope") is not True:
                 failures.append(f"{index}:validation-error-envelope")
+            if not canonical_error_envelope_shape_ok(item):
+                failures.append(f"{index}:validation-error-shape")
             if error_code != "VALIDATION_FAILED":
                 failures.append(f"{index}:validation-error-code")
+            if dry_run_request_header_ok(item):
+                dry_run_request_links += 1
+            else:
+                failures.append(f"{index}:dry-run-request-header")
+
+    for family, spec in DRY_RUN_META_EXPECTATIONS.items():
+        if family not in seen_meta:
+            failures.append(f"missing-meta:{family}")
+        readback_family = str(spec["readback_family"] or "")
+        if not readback_family:
+            continue
+        if family not in seen_readbacks:
+            failures.append(f"missing-readback:{family}")
+            continue
+        meta_check = seen_meta.get(family, {}).get("side_effect_check")
+        if not isinstance(meta_check, dict):
+            meta_check = {}
+        readback_check = seen_readbacks[family].get("side_effect_check")
+        if not isinstance(readback_check, dict):
+            readback_check = {}
+        meta_target_hash = str(meta_check.get("target_id_sha256_12") or "")
+        readback_target_hash = str(readback_check.get("target_id_sha256_12") or "")
+        if not meta_target_hash or meta_target_hash != readback_target_hash:
+            failures.append(f"readback-target-link:{family}")
+
+    for family in DRY_RUN_VALIDATION_EXPECTATIONS:
+        if family not in seen_validations:
+            failures.append(f"missing-validation:{family}")
 
     kind_note = ",".join(f"{kind}:{kind_counts[kind]}/{expected}" for kind, expected in expected_kind_counts.items())
     count_ok = len(dry_run) == 7
     kinds_ok = all(kind_counts[kind] == expected for kind, expected in expected_kind_counts.items())
-    detail_ok = count_ok and kinds_ok and not failures
+    meta_ok = set(seen_meta) == set(DRY_RUN_META_EXPECTATIONS)
+    readback_ok = set(seen_readbacks) == set(DRY_RUN_READBACK_FAMILIES.values())
+    validation_ok = seen_validations == set(DRY_RUN_VALIDATION_EXPECTATIONS)
+    expected_dry_run_requests = len(DRY_RUN_META_EXPECTATIONS) + len(DRY_RUN_VALIDATION_EXPECTATIONS)
+    request_ok = dry_run_request_links == expected_dry_run_requests
+    detail_ok = count_ok and kinds_ok and meta_ok and readback_ok and validation_ok and request_ok and not failures
     failure_note = ";failures:" + ",".join(failures[:8]) if failures else ""
-    return detail_ok, f"dryRunDetails:{len(dry_run)}/7 kinds:{kind_note}{failure_note}"
+    return (
+        detail_ok,
+        f"dryRunDetails:{len(dry_run)}/7 kinds:{kind_note} "
+        f"metaLinks:{len(seen_meta)}/{len(DRY_RUN_META_EXPECTATIONS)} "
+        f"readbackLinks:{len(seen_readbacks)}/{len(DRY_RUN_READBACK_FAMILIES)} "
+        f"validationLinks:{len(seen_validations)}/{len(DRY_RUN_VALIDATION_EXPECTATIONS)} "
+        f"dryRunRequests:{dry_run_request_links}/{expected_dry_run_requests}"
+        f"{failure_note}",
+    )
 
 
 def auth_json_item(root: Path, summary: Any, key: str, raw_ok: bool, raw_note: str) -> dict[str, str]:
@@ -366,15 +1064,26 @@ def rbac_source_hashes(payload: dict[str, Any]) -> tuple[dict[str, str], bool, s
     return hashes, distinct_ok, cases_note
 
 
-def rbac_detail_check(payload: dict[str, Any], rbac_matrix: list[Any], summary: dict[str, Any]) -> tuple[bool, str]:
+def rbac_detail_check(
+    payload: dict[str, Any],
+    rbac_matrix: list[Any],
+    summary: dict[str, Any],
+    preflight_hashes: dict[str, str],
+) -> tuple[bool, str]:
     expected_keys = rbac_expected_keys()
+    not_found_codes = {"RESOURCE_NOT_FOUND", "OBJECT_NOT_FOUND", "NOT_FOUND"}
     source_hashes, source_ok, source_note = rbac_source_hashes(payload)
     actual_keys: set[tuple[str, str, str]] = set()
     ok_count = 0
     detail_links = 0
+    request_links = 0
     bearer_links = 0
+    preflight_bearer_links = 0
+    allowed_read_statuses = 0
+    allowed_write_statuses = 0
     write_items = 0
     write_side_effect_proofs = 0
+    write_readback_proofs = 0
     write_marker_links = 0
     read_denials = 0
     write_denials = 0
@@ -390,6 +1099,9 @@ def rbac_detail_check(payload: dict[str, Any], rbac_matrix: list[Any], summary: 
         operation = str(item.get("rbac_operation") or "")
         resource = str(item.get("rbac_resource") or "")
         family = str(item.get("family") or "")
+        method = str(item.get("method") or "")
+        path = str(item.get("path") or "")
+        status = safe_int(item.get("status"))
         key = (label, operation, resource)
         if key in expected_keys:
             actual_keys.add(key)
@@ -402,38 +1114,101 @@ def rbac_detail_check(payload: dict[str, Any], rbac_matrix: list[Any], summary: 
             if item.get("auth_case_kind") != "anonymous" or item.get("request_bearer_sha256_12"):
                 failures.append(f"{index}:anonymous-auth-link")
         elif label in source_hashes:
-            if item.get("auth_case_kind") == "provided_bearer" and item.get("request_bearer_sha256_12") == source_hashes[label]:
+            source_hash = source_hashes[label]
+            if item.get("auth_case_kind") == "provided_bearer" and item.get("request_bearer_sha256_12") == source_hash:
                 bearer_links += 1
             else:
                 failures.append(f"{index}:bearer-link")
+            if preflight_hashes.get(f"rbac:{label}") == source_hash:
+                preflight_bearer_links += 1
+            else:
+                failures.append(f"{index}:preflight-bearer-link")
 
         error_code = str(item.get("error_code") or "")
-        if operation == "read" and label not in RBAC_READ_ALLOWED:
-            if item.get("error_envelope") is True and error_code in RBAC_DENIED_ERROR_CODES:
+        if operation == "read":
+            spec = RBAC_READ_EXPECTATIONS.get(resource)
+            if spec and method == spec["method"] and path == spec["path"]:
+                request_links += 1
+            else:
+                failures.append(f"{index}:rbac-request-link")
+            if label in RBAC_READ_ALLOWED:
+                if status == 200 and item.get("error_envelope") is not True:
+                    allowed_read_statuses += 1
+                else:
+                    failures.append(f"{index}:read-allowed-status")
+            elif (
+                canonical_error_envelope_shape_ok(item)
+                and error_code in RBAC_DENIED_ERROR_CODES
+                and status in ({401, 403} if label == "anonymous" else {403})
+            ):
                 read_denials += 1
             else:
                 failures.append(f"{index}:read-denial-envelope")
+            continue
+
         if operation != "write":
             continue
 
         write_items += 1
+        spec = RBAC_WRITE_EXPECTATIONS.get(resource)
+        if spec and method == spec["method"] and path == spec["path"]:
+            request_links += 1
+        else:
+            failures.append(f"{index}:rbac-request-link")
         check = item.get("side_effect_check") if isinstance(item.get("side_effect_check"), dict) else {}
         marker_hash = str(item.get("request_marker_sha256_12") or "")
         if check.get("ok") is True:
             if label in RBAC_WRITE_ALLOWED:
-                proof_ok = (
+                if status != 200 or item.get("error_envelope") is True:
+                    failures.append(f"{index}:write-allowed-status")
+                meta_ok = (
                     check.get("kind") == "rbac_dry_run_write_meta"
                     and check.get("dryRun") is True
                     and check.get("durable") is False
                     and check.get("liveCapitalSideEffects") is False
                     and item.get("error_envelope") is not True
+                    and status == 200
                 )
+                if meta_ok:
+                    allowed_write_statuses += 1
+                readback_ok = True
+                if resource in RBAC_WRITE_READBACK_RESOURCES:
+                    readback = check.get("readback_not_persisted")
+                    if not isinstance(readback, dict):
+                        readback = {}
+                    readback_kind = str(readback.get("kind") or "")
+                    if resource == "agora-note":
+                        readback_ok = (
+                            readback_kind == "list_readback_not_persisted"
+                            and readback.get("ok") is True
+                            and int(readback.get("status") or 0) == 200
+                            and safe_int(readback.get("absent_checks")) >= 1
+                            and bool(readback.get("target_id_sha256_12"))
+                        )
+                    else:
+                        readback_ok = (
+                            readback_kind == "readback_not_persisted"
+                            and readback.get("ok") is True
+                            and int(readback.get("status") or 0) == 404
+                            and canonical_error_envelope_shape_ok(readback)
+                            and str(readback.get("error_code") or "") in not_found_codes
+                            and bool(readback.get("target_id_sha256_12"))
+                        )
+                    if readback_ok:
+                        write_readback_proofs += 1
+                    else:
+                        failures.append(f"{index}:write-readback-proof")
+                proof_ok = meta_ok and readback_ok
             else:
+                denied_statuses = {401, 403} if label == "anonymous" else {403}
+                if status not in denied_statuses:
+                    failures.append(f"{index}:write-denial-status")
                 denied_code = str(check.get("error_code") or item.get("error_code") or "")
                 proof_ok = (
                     check.get("kind") == "authorization_rejected_before_persistence"
-                    and item.get("error_envelope") is True
+                    and canonical_error_envelope_shape_ok(item)
                     and denied_code in RBAC_DENIED_ERROR_CODES
+                    and status in denied_statuses
                 )
                 if proof_ok:
                     write_denials += 1
@@ -449,17 +1224,25 @@ def rbac_detail_check(payload: dict[str, Any], rbac_matrix: list[Any], summary: 
     expected_read_denials = (len(RBAC_LABELS) - len(RBAC_READ_ALLOWED)) * len(RBAC_READ_RESOURCES)
     expected_write_denials = (len(RBAC_LABELS) - len(RBAC_WRITE_ALLOWED)) * len(RBAC_WRITE_RESOURCES)
     expected_write_items = len(RBAC_LABELS) * len(RBAC_WRITE_RESOURCES)
+    expected_write_readbacks = len(RBAC_WRITE_ALLOWED) * len(RBAC_WRITE_READBACK_RESOURCES)
+    expected_allowed_reads = len(RBAC_READ_ALLOWED) * len(RBAC_READ_RESOURCES)
+    expected_allowed_writes = len(RBAC_WRITE_ALLOWED) * len(RBAC_WRITE_RESOURCES)
     detail_ok = (
         len(rbac_matrix) == len(expected_keys)
         and safe_int(summary.get("rbac_matrix_probes") or len(rbac_matrix)) >= len(expected_keys)
         and ok_count == len(expected_keys)
         and matrix_coverage == len(expected_keys)
         and detail_links == len(expected_keys)
+        and request_links == len(expected_keys)
         and source_ok
         and bearer_links == expected_non_anonymous
+        and preflight_bearer_links == expected_non_anonymous
+        and allowed_read_statuses == expected_allowed_reads
+        and allowed_write_statuses == expected_allowed_writes
         and read_denials == expected_read_denials
         and write_items == expected_write_items
         and write_side_effect_proofs == expected_write_items
+        and write_readback_proofs == expected_write_readbacks
         and write_marker_links == expected_write_items
         and write_denials == expected_write_denials
         and not failures
@@ -467,14 +1250,16 @@ def rbac_detail_check(payload: dict[str, Any], rbac_matrix: list[Any], summary: 
     failure_note = ";failures:" + ",".join(failures[:8]) if failures else ""
     note = (
         f"rbac:{ok_count}/{len(expected_keys)} matrixCoverage:{matrix_coverage}/{len(expected_keys)} "
-        f"detailLinks:{detail_links}/{len(expected_keys)} {source_note} "
-        f"bearerLinks:{bearer_links}/{expected_non_anonymous} readDenials:{read_denials}/{expected_read_denials} "
+        f"detailLinks:{detail_links}/{len(expected_keys)} requestLinks:{request_links}/{len(expected_keys)} {source_note} "
+        f"bearerLinks:{bearer_links}/{expected_non_anonymous} preflightBearerLinks:{preflight_bearer_links}/{expected_non_anonymous} "
+        f"readAllowed:{allowed_read_statuses}/{expected_allowed_reads} "
+        f"writeAllowed:{allowed_write_statuses}/{expected_allowed_writes} readDenials:{read_denials}/{expected_read_denials} "
         f"writeSideEffectProofs:{write_side_effect_proofs}/{expected_write_items} "
+        f"writeReadbackProofs:{write_readback_proofs}/{expected_write_readbacks} "
         f"writeMarkerLinks:{write_marker_links}/{expected_write_items} writeDenials:{write_denials}/{expected_write_denials}"
         f"{failure_note}"
     )
     return detail_ok, note
-
 
 def race_token_hashes(race: dict[str, Any]) -> tuple[dict[str, str], bool, str]:
     source = race.get("token_source") if isinstance(race.get("token_source"), dict) else {}
@@ -500,7 +1285,74 @@ def extracted_value(result: dict[str, Any], path: tuple[str, ...]) -> Any:
     return extracted.get(".".join(path))
 
 
-def approval_race_detail_check(race: dict[str, Any]) -> tuple[bool, str]:
+def timing_number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def race_concurrency_detail(race: dict[str, Any], results: list[Any]) -> tuple[bool, str, list[str]]:
+    concurrency = race.get("concurrency") if isinstance(race.get("concurrency"), dict) else {}
+    failures: list[str] = []
+    if not concurrency:
+        return False, "raceTiming:missing", ["race-timing-missing"]
+    if concurrency.get("timing_proof") != RACE_TIMING_PROOF:
+        failures.append("race-timing-proof")
+    if concurrency.get("concurrent") is not True:
+        failures.append("race-concurrent")
+    if safe_int(concurrency.get("actor_count")) != 2:
+        failures.append("race-actor-count")
+
+    actor_timings: list[tuple[str, float, float]] = []
+    for index, item in enumerate(results):
+        if not isinstance(item, dict):
+            continue
+        actor = str(item.get("actor_label") or "")
+        timing = item.get("race_timing") if isinstance(item.get("race_timing"), dict) else {}
+        start_ms = timing_number(timing.get("start_ms"))
+        end_ms = timing_number(timing.get("end_ms"))
+        duration_ms = timing_number(timing.get("duration_ms"))
+        if actor not in {"a", "b"}:
+            failures.append(f"{index}:timing-actor")
+            continue
+        if start_ms is None or end_ms is None or duration_ms is None:
+            failures.append(f"{index}:timing-missing")
+            continue
+        if start_ms < 0 or end_ms < start_ms or duration_ms < 0:
+            failures.append(f"{index}:timing-window")
+            continue
+        if abs((end_ms - start_ms) - duration_ms) > RACE_TIMING_LINK_TOLERANCE_MS:
+            failures.append(f"{index}:timing-duration-link")
+        actor_timings.append((actor, start_ms, end_ms))
+
+    if len(actor_timings) != 2 or {actor for actor, _start, _end in actor_timings} != {"a", "b"}:
+        failures.append("race-timing-actors")
+        return False, f"raceTiming:{len(actor_timings)}/2", failures
+
+    starts = [start for _actor, start, _end in actor_timings]
+    ends = [end for _actor, _start, end in actor_timings]
+    start_skew_ms = max(starts) - min(starts)
+    overlap_ms = min(ends) - max(starts)
+    if start_skew_ms > RACE_MAX_START_SKEW_MS:
+        failures.append("timing-start-skew")
+    if overlap_ms < 0:
+        failures.append("timing-overlap")
+
+    recorded_start_skew = timing_number(concurrency.get("start_skew_ms"))
+    recorded_overlap = timing_number(concurrency.get("overlap_ms"))
+    if recorded_start_skew is None or abs(recorded_start_skew - start_skew_ms) > RACE_TIMING_LINK_TOLERANCE_MS:
+        failures.append("timing-start-skew-link")
+    if recorded_overlap is None or abs(recorded_overlap - overlap_ms) > RACE_TIMING_LINK_TOLERANCE_MS:
+        failures.append("timing-overlap-link")
+
+    note = (
+        f"raceTiming:{len(actor_timings)}/2 concurrent:{concurrency.get('concurrent')} "
+        f"startSkewMs:{start_skew_ms:.1f}/{RACE_MAX_START_SKEW_MS:.0f} overlapMs:{overlap_ms:.1f}"
+    )
+    return not failures, note, failures
+
+
+def approval_race_detail_check(race: dict[str, Any], preflight_hashes: dict[str, str]) -> tuple[bool, str]:
     source_hashes, source_ok, source_note = race_token_hashes(race)
     results = as_list(race.get("results"))
     target_hash = str(race.get("target_id_sha256_12") or "")
@@ -512,10 +1364,13 @@ def approval_race_detail_check(race: dict[str, Any]) -> tuple[bool, str]:
     idempotency_hashes: list[str] = []
     target_links = 0
     bearer_links = 0
+    preflight_bearer_links = 0
     accepted_count = 0
     safe_error_count = 0
     transport_failures = 0
     failures: list[str] = []
+    timing_ok, timing_note, timing_failures = race_concurrency_detail(race, results)
+    failures.extend(timing_failures)
 
     for index, item in enumerate(results):
         if not isinstance(item, dict):
@@ -538,6 +1393,10 @@ def approval_race_detail_check(race: dict[str, Any]) -> tuple[bool, str]:
             bearer_links += 1
         else:
             failures.append(f"{index}:bearer-link")
+        if actor in source_hashes and preflight_hashes.get(f"approval_race:{actor}") == source_hashes[actor]:
+            preflight_bearer_links += 1
+        else:
+            failures.append(f"{index}:preflight-bearer-link")
         idempotency_hash = str(item.get("request_idempotency_key_sha256_12") or "")
         if idempotency_hash:
             idempotency_hashes.append(idempotency_hash)
@@ -578,26 +1437,29 @@ def approval_race_detail_check(race: dict[str, Any]) -> tuple[bool, str]:
         and actor_labels == {"a", "b"}
         and target_links == 2
         and bearer_links == 2
+        and preflight_bearer_links == 2
         and accepted_count == 1
         and safe_error_count == 1
         and transport_failures == 0
         and race.get("duplicate_winners") is False
         and idempotency_distinct
         and top_counts_ok
+        and timing_ok
         and not failures
     )
     failure_note = ";failures:" + ",".join(failures[:8]) if failures else ""
     note = (
         f"approvalResults:{len(results)}/2 actors:{len(actor_labels)}/2 targetLinks:{target_links}/2 "
-        f"bearerLinks:{bearer_links}/2 accepted:{accepted_count}/1 safeErrors:{safe_error_count}/1 "
+        f"bearerLinks:{bearer_links}/2 preflightBearerLinks:{preflight_bearer_links}/2 "
+        f"accepted:{accepted_count}/1 safeErrors:{safe_error_count}/1 "
         f"transportFailures:{transport_failures}/0 duplicateWinners:{race.get('duplicate_winners')} "
         f"idempotencyDistinct:{idempotency_distinct} topCounts:{top_counts_ok} "
-        f"family:{family_ok} method:{method_ok} path:{path_ok} {source_note}{failure_note}"
+        f"{timing_note} family:{family_ok} method:{method_ok} path:{path_ok} {source_note}{failure_note}"
     )
     return detail_ok, note
 
 
-def two_man_race_detail_check(race: dict[str, Any]) -> tuple[bool, str]:
+def two_man_race_detail_check(race: dict[str, Any], preflight_hashes: dict[str, str]) -> tuple[bool, str]:
     source_hashes, source_ok, source_note = race_token_hashes(race)
     results = as_list(race.get("results"))
     target_hash = str(race.get("target_id_sha256_12") or "")
@@ -611,11 +1473,14 @@ def two_man_race_detail_check(race: dict[str, Any]) -> tuple[bool, str]:
     command_ids: list[str] = []
     target_links = 0
     bearer_links = 0
+    preflight_bearer_links = 0
     accepted_count = 0
     replayed_count = 0
     replay_proofs = 0
     transport_failures = 0
     failures: list[str] = []
+    timing_ok, timing_note, timing_failures = race_concurrency_detail(race, results)
+    failures.extend(timing_failures)
 
     for index, item in enumerate(results):
         if not isinstance(item, dict):
@@ -636,6 +1501,10 @@ def two_man_race_detail_check(race: dict[str, Any]) -> tuple[bool, str]:
             bearer_links += 1
         else:
             failures.append(f"{index}:bearer-link")
+        if actor in source_hashes and preflight_hashes.get(f"approval_race:{actor}") == source_hashes[actor]:
+            preflight_bearer_links += 1
+        else:
+            failures.append(f"{index}:preflight-bearer-link")
         idempotency_hash = str(item.get("request_idempotency_key_sha256_12") or "")
         if idempotency_hash:
             idempotency_hashes.append(idempotency_hash)
@@ -688,6 +1557,7 @@ def two_man_race_detail_check(race: dict[str, Any]) -> tuple[bool, str]:
         and actor_labels == {"a", "b"}
         and target_links == 2
         and bearer_links == 2
+        and preflight_bearer_links == 2
         and accepted_count == 2
         and replayed_count == 0
         and replay_proofs == 2
@@ -696,16 +1566,18 @@ def two_man_race_detail_check(race: dict[str, Any]) -> tuple[bool, str]:
         and distinct_signatures
         and distinct_commands
         and top_counts_ok
+        and timing_ok
         and not failures
     )
     failure_note = ";failures:" + ",".join(failures[:8]) if failures else ""
     note = (
         f"twoManResults:{len(results)}/2 actors:{len(actor_labels)}/2 targetLinks:{target_links}/2 "
-        f"bearerLinks:{bearer_links}/2 accepted:{accepted_count}/2 replayed:{replayed_count}/0 "
+        f"bearerLinks:{bearer_links}/2 preflightBearerLinks:{preflight_bearer_links}/2 "
+        f"accepted:{accepted_count}/2 replayed:{replayed_count}/0 "
         f"replayProofs:{replay_proofs}/2 sharedIdempotency:{shared_idempotency} "
         f"distinctSignatures:{len(signature_hashes)}/2 distinctCommands:{len(set(command_ids))}/2 "
         f"transportFailures:{transport_failures}/0 topCounts:{top_counts_ok} "
-        f"family:{family_ok} method:{method_ok} path:{path_ok} {source_note}{failure_note}"
+        f"{timing_note} family:{family_ok} method:{method_ok} path:{path_ok} {source_note}{failure_note}"
     )
     return detail_ok, note
 
@@ -735,27 +1607,30 @@ def evaluate_auth_json(root: Path) -> tuple[Any, dict[str, tuple[bool, str]]]:
     dry_run_count = int(summary.get("dry_run_probes") or len(dry_run))
     approval_count = int(summary.get("approval_race_probes") or int(bool(approval_race)))
     two_man_count = int(summary.get("two_man_race_probes") or int(bool(two_man_race)))
-    rbac_detail_ok, rbac_detail_note = rbac_detail_check(payload, rbac_matrix, summary)
+    preflight_hashes = preflight_bearer_source_hashes(root)
+    rbac_detail_ok, rbac_detail_note = rbac_detail_check(payload, rbac_matrix, summary, preflight_hashes)
     dry_run_detail_ok, dry_run_detail_note = dry_run_detail_check(dry_run)
-    approval_detail_ok, approval_detail_note = approval_race_detail_check(approval_race)
-    two_man_detail_ok, two_man_detail_note = two_man_race_detail_check(two_man_race)
-    base = strict and includes
+    approval_detail_ok, approval_detail_note = approval_race_detail_check(approval_race, preflight_hashes)
+    two_man_detail_ok, two_man_detail_note = two_man_race_detail_check(two_man_race, preflight_hashes)
+    provenance_ok, provenance_note = strict_run_provenance_check(root, payload)
+    auth_source_ok, auth_source_note = auth_source_preflight_check(root, payload)
+    base = strict and includes and provenance_ok and auth_source_ok
     return payload, {
         "rbac_matrix": (
             base and rbac_detail_ok,
-            f"strict:{strict} includes:{includes} {rbac_detail_note}",
+            f"strict:{strict} includes:{includes} {provenance_note} {auth_source_note} {rbac_detail_note}",
         ),
         "dry_run_no_side_effects": (
             base and dry_run_count >= 7 and dry_run_detail_ok and summary.get("live_capital_side_effects") is False,
-            f"strict:{strict} includes:{includes} dryRun:{dry_run_count}/7 {dry_run_detail_note} sideEffects:{summary.get('live_capital_side_effects')}",
+            f"strict:{strict} includes:{includes} {provenance_note} {auth_source_note} dryRun:{dry_run_count}/7 {dry_run_detail_note} sideEffects:{summary.get('live_capital_side_effects')}",
         ),
         "approval_race": (
             base and approval_count == 1 and summary.get("approval_race_bounded") is True and approval_detail_ok,
-            f"strict:{strict} includes:{includes} approvalRace:{approval_count}/1 bounded:{summary.get('approval_race_bounded') is True} {approval_detail_note}",
+            f"strict:{strict} includes:{includes} {provenance_note} {auth_source_note} approvalRace:{approval_count}/1 bounded:{summary.get('approval_race_bounded') is True} {approval_detail_note}",
         ),
         "two_man_race": (
             base and two_man_count == 1 and summary.get("two_man_race_operator_scoped") is True and two_man_detail_ok,
-            f"strict:{strict} includes:{includes} twoManRace:{two_man_count}/1 operatorScoped:{summary.get('two_man_race_operator_scoped') is True} {two_man_detail_note}",
+            f"strict:{strict} includes:{includes} {provenance_note} {auth_source_note} twoManRace:{two_man_count}/1 operatorScoped:{summary.get('two_man_race_operator_scoped') is True} {two_man_detail_note}",
         ),
     }
 
@@ -778,13 +1653,14 @@ def as_list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
 
 
-def sse_auth_source_check(payload: dict[str, Any]) -> tuple[bool, str, bool]:
+def sse_auth_source_check(payload: dict[str, Any], preflight_hashes: dict[str, str]) -> tuple[bool, str, bool]:
     source = payload.get("auth_source") if isinstance(payload.get("auth_source"), dict) else {}
     kind = str(source.get("kind") or "")
     token_hash = str(source.get("token_sha256_12") or "")
-    token_hash_ok = bool(re.fullmatch(r"[0-9a-f]{12}", token_hash, re.IGNORECASE))
-    ok = kind == "provided_bearer" and token_hash_ok
-    return ok, f"authSource:{kind or 'missing'} tokenHash:{token_hash_ok}", token_hash_ok
+    token_hash_ok = bool(BEARER_HASH_RE.fullmatch(token_hash))
+    preflight_link = bool(token_hash_ok and preflight_hashes.get("smoke") == token_hash)
+    ok = kind == "provided_bearer" and token_hash_ok and preflight_link
+    return ok, f"authSource:{kind or 'missing'} tokenHash:{token_hash_ok} preflightSmokeLink:{preflight_link}", token_hash_ok
 
 
 def sse_request_used_bearer_auth(item: Any) -> bool:
@@ -794,10 +1670,61 @@ def sse_request_used_bearer_auth(item: Any) -> bool:
     return headers.get("Authorization") == "present" and headers.get("Cookie") == "absent"
 
 
-def sse_attempts_have_lineage(attempts: list[Any]) -> bool:
-    if not attempts:
+def sse_request_used_cookie_auth(item: Any) -> bool:
+    if not isinstance(item, dict):
         return False
-    for attempt in attempts:
+    headers = item.get("request_headers") if isinstance(item.get("request_headers"), dict) else {}
+    return headers.get("Authorization") == "absent" and headers.get("Cookie") == "present"
+
+
+def sse_request_used_mode_auth(item: Any, mode: str) -> bool:
+    if mode == "bearer_polyfill":
+        return sse_request_used_bearer_auth(item)
+    if mode == "cookie_session":
+        return sse_request_used_cookie_auth(item)
+    return False
+
+
+def sse_soak_observed_seconds(item: Any) -> float:
+    if not isinstance(item, dict):
+        return 0.0
+    timeline = item.get("timeline") if isinstance(item.get("timeline"), dict) else {}
+    observed_ms_source = (
+        timeline.get("observed_duration_ms")
+        if "observed_duration_ms" in timeline
+        else item.get("duration_ms")
+    )
+    observed_ms = safe_float(observed_ms_source)
+    if observed_ms > 0:
+        return observed_ms / 1000.0
+    return safe_float(timeline.get("observed_duration_seconds"))
+
+
+def sse_attempt_url_matches_channel(url_path: Any, expected_channel: str) -> bool:
+    text = str(url_path or "")
+    if not text:
+        return False
+    try:
+        parsed = urllib.parse.urlparse(text)
+    except Exception:
+        return False
+    query = urllib.parse.parse_qs(parsed.query)
+    return parsed.path == "/bff/events/stream" and query.get("channel") == [expected_channel]
+
+
+def sse_attempts_have_lineage(
+    attempts: list[Any],
+    *,
+    mode: str,
+    cursor_ids: list[str],
+    expected_ids: list[str],
+    observed_ids: list[str],
+    channel: str,
+    min_attempts: int,
+) -> bool:
+    if len(attempts) < min_attempts or len(cursor_ids) < min_attempts:
+        return False
+    for index, attempt in enumerate(attempts[:min_attempts]):
         if not isinstance(attempt, dict):
             return False
         lineage = attempt.get("lineage_checks")
@@ -805,76 +1732,186 @@ def sse_attempts_have_lineage(attempts: list[Any]) -> bool:
             return False
         if any(value is not True for value in lineage.values()):
             return False
-        expected = str(attempt.get("expected_replayed_event_id") or "")
-        observed = str(attempt.get("observed_replayed_event_id") or "")
-        cursor = str(attempt.get("cursor_event_id") or "")
+        cursor = cursor_ids[index]
+        expected = expected_ids[index] if index < len(expected_ids) else ""
+        observed = observed_ids[index] if index < len(observed_ids) else ""
+        request_headers = attempt.get("request_headers") if isinstance(attempt.get("request_headers"), dict) else {}
+        response_headers = attempt.get("response_headers") if isinstance(attempt.get("response_headers"), dict) else {}
+        if attempt.get("mode") != mode:
+            return False
         if not cursor or not expected or observed != expected:
+            return False
+        if index > 0 and cursor != expected_ids[index - 1]:
+            return False
+        if attempt.get("cursor_event_id") != cursor:
+            return False
+        if attempt.get("expected_replayed_event_id") != expected or attempt.get("observed_replayed_event_id") != observed:
+            return False
+        if request_headers.get("Last-Event-ID") != cursor:
+            return False
+        if not sse_request_used_mode_auth(attempt, mode):
+            return False
+        if response_headers.get("X-SSE-Channel") != channel or response_headers.get("X-SSE-Replay-Supported") != "true":
+            return False
+        if not sse_attempt_url_matches_channel(attempt.get("url_path"), channel):
             return False
         if attempt.get("ok") is not True or attempt.get("replayed_expected_event") is not True:
             return False
     return True
 
 
-def sse_detail_check(payload: dict[str, Any]) -> tuple[bool, str]:
-    soak = payload.get("soak") if isinstance(payload.get("soak"), dict) else {}
-    bearer_soak = soak.get("bearer_polyfill") if isinstance(soak.get("bearer_polyfill"), dict) else {}
-    blocks = bearer_soak.get("blocks") if isinstance(bearer_soak.get("blocks"), dict) else {}
-    reconnect = payload.get("reconnect_sequence") if isinstance(payload.get("reconnect_sequence"), dict) else {}
-    bearer_reconnect = reconnect.get("bearer_polyfill") if isinstance(reconnect.get("bearer_polyfill"), dict) else {}
-    attempts = as_list(bearer_reconnect.get("attempts"))
-    expected_ids = [str(item) for item in as_list(bearer_reconnect.get("expected_event_ids")) if item]
-    observed_ids = [str(item) for item in as_list(bearer_reconnect.get("observed_event_ids")) if item]
+def sse_mode_detail(
+    *,
+    soak: dict[str, Any],
+    reconnect: dict[str, Any],
+    mode: str,
+    channel: str,
+    min_heartbeats: int,
+    min_reconnect_attempts: int,
+    min_soak_seconds: float,
+) -> dict[str, Any]:
+    mode_soak = soak.get(mode) if isinstance(soak.get(mode), dict) else {}
+    blocks = mode_soak.get("blocks") if isinstance(mode_soak.get("blocks"), dict) else {}
+    mode_reconnect = reconnect.get(mode) if isinstance(reconnect.get(mode), dict) else {}
+    attempts = as_list(mode_reconnect.get("attempts"))
+    expected_ids = [str(item) for item in as_list(mode_reconnect.get("expected_event_ids")) if item]
+    observed_ids = [str(item) for item in as_list(mode_reconnect.get("observed_event_ids")) if item]
+    cursor_ids = [str(item) for item in as_list(mode_reconnect.get("cursor_event_ids")) if item]
     soak_duplicates = as_list(blocks.get("duplicate_event_ids"))
-    reconnect_duplicates = as_list(bearer_reconnect.get("duplicate_event_ids"))
-    soak_missing = as_list(bearer_soak.get("missing_expected_event_ids"))
-    reconnect_missing = as_list(bearer_reconnect.get("missing_expected_event_ids"))
+    reconnect_duplicates = as_list(mode_reconnect.get("duplicate_event_ids"))
+    soak_missing = as_list(mode_soak.get("missing_expected_event_ids"))
+    reconnect_missing = as_list(mode_reconnect.get("missing_expected_event_ids"))
+    heartbeat_count = safe_int(blocks.get("heartbeat_count"))
+    soak_duration_seconds = sse_soak_observed_seconds(mode_soak)
+    attempt_count = safe_int(mode_reconnect.get("attempt_count") or len(attempts))
+    attempt_details_ok = attempt_count >= min_reconnect_attempts and len(attempts) >= min_reconnect_attempts
+    attempt_lineage_ok = sse_attempts_have_lineage(
+        attempts,
+        mode=mode,
+        cursor_ids=cursor_ids,
+        expected_ids=expected_ids,
+        observed_ids=observed_ids,
+        channel=channel,
+        min_attempts=min_reconnect_attempts,
+    )
+    observed_unique_count = len(set(observed_ids))
+    observed_sequence_ok = (
+        len(observed_ids) >= min_reconnect_attempts
+        and observed_unique_count == len(observed_ids)
+        and len(expected_ids) >= min_reconnect_attempts
+        and expected_ids[: len(observed_ids)] == observed_ids
+    )
+    auth_count = sum(1 for attempt in attempts if sse_request_used_mode_auth(attempt, mode))
+    return {
+        "mode": mode,
+        "soak_ok": mode_soak.get("ok") is True,
+        "soak_auth_ok": sse_request_used_mode_auth(mode_soak, mode),
+        "heartbeat_count": heartbeat_count,
+        "soak_duration_seconds": soak_duration_seconds,
+        "soak_duration_ok": soak_duration_seconds >= min_soak_seconds,
+        "duplicates": len(soak_duplicates) + len(reconnect_duplicates),
+        "missing_replay": len(soak_missing) + len(reconnect_missing),
+        "reconnect_ok": mode_reconnect.get("ok") is True,
+        "attempt_count": attempt_count,
+        "attempt_details_ok": attempt_details_ok,
+        "attempt_auth_count": auth_count,
+        "attempt_auth_ok": attempt_count >= min_reconnect_attempts and auth_count >= min_reconnect_attempts,
+        "attempt_lineage_ok": attempt_lineage_ok,
+        "observed_count": len(observed_ids),
+        "observed_sequence_ok": observed_sequence_ok,
+        "cursors_advanced": mode_reconnect.get("cursors_advanced") is True,
+    }
+
+def sse_detail_check(root: Path, payload: dict[str, Any]) -> tuple[bool, str]:
+    soak = payload.get("soak") if isinstance(payload.get("soak"), dict) else {}
+    reconnect = payload.get("reconnect_sequence") if isinstance(payload.get("reconnect_sequence"), dict) else {}
+    requirements = (
+        payload.get("strict_live_evidence_requirements")
+        if isinstance(payload.get("strict_live_evidence_requirements"), dict)
+        else {}
+    )
+    channel = str(payload.get("channel") or "approval")
 
     strict = payload.get("strict_live_evidence") is True
     seconds = safe_float(soak.get("seconds"))
-    min_heartbeats = max(1, safe_int(soak.get("min_heartbeats") or bearer_soak.get("min_heartbeats")))
-    heartbeat_count = safe_int(blocks.get("heartbeat_count"))
-    attempt_count = safe_int(bearer_reconnect.get("attempt_count") or len(attempts))
-    attempt_details_ok = attempt_count >= 5 and len(attempts) >= 5
-    attempt_lineage_ok = sse_attempts_have_lineage(attempts)
-    observed_sequence_ok = len(observed_ids) >= 5 and observed_ids == expected_ids
-    cursors_advanced = bearer_reconnect.get("cursors_advanced") is True
-    duplicates = len(soak_duplicates) + len(reconnect_duplicates)
-    missing_replay = len(soak_missing) + len(reconnect_missing)
-    bearer_soak_ok = bearer_soak.get("ok") is True
-    bearer_reconnect_ok = bearer_reconnect.get("ok") is True
-    auth_source_ok, auth_source_note, _token_hash_ok = sse_auth_source_check(payload)
-    soak_bearer_auth_ok = sse_request_used_bearer_auth(bearer_soak)
-    bearer_attempt_auth_count = sum(1 for attempt in attempts if sse_request_used_bearer_auth(attempt))
-    bearer_attempt_auth_ok = attempt_count >= 5 and bearer_attempt_auth_count >= 5
+    min_soak_seconds = max(75.0, safe_float(requirements.get("min_soak_seconds")))
+    min_heartbeats = max(
+        STRICT_LIVE_SSE_MIN_HEARTBEATS,
+        safe_int(requirements.get("min_heartbeats")),
+        safe_int(soak.get("min_heartbeats")),
+    )
+    min_reconnect_attempts = max(
+        5,
+        safe_int(requirements.get("min_reconnect_attempts")),
+        safe_int(requirements.get("requested_reconnect_attempts")),
+    )
+
+    mode_details = {
+        mode: sse_mode_detail(
+            soak=soak,
+            reconnect=reconnect,
+            mode=mode,
+            channel=channel,
+            min_heartbeats=min_heartbeats,
+            min_reconnect_attempts=min_reconnect_attempts,
+            min_soak_seconds=min_soak_seconds,
+        )
+        for mode in ("cookie_session", "bearer_polyfill")
+    }
+    cookie_detail = mode_details["cookie_session"]
+    bearer_detail = mode_details["bearer_polyfill"]
+
+    heartbeat_count = min(detail["heartbeat_count"] for detail in mode_details.values())
+    soak_duration_seconds = min(detail["soak_duration_seconds"] for detail in mode_details.values())
+    soak_duration_ok = all(detail["soak_duration_ok"] for detail in mode_details.values())
+    attempt_count = min(detail["attempt_count"] for detail in mode_details.values())
+    attempt_details_ok = all(detail["attempt_details_ok"] for detail in mode_details.values())
+    attempt_lineage_ok = all(detail["attempt_lineage_ok"] for detail in mode_details.values())
+    observed_count = min(detail["observed_count"] for detail in mode_details.values())
+    observed_sequence_ok = all(detail["observed_sequence_ok"] for detail in mode_details.values())
+    cursors_advanced = all(detail["cursors_advanced"] for detail in mode_details.values())
+    duplicates = sum(detail["duplicates"] for detail in mode_details.values())
+    missing_replay = sum(detail["missing_replay"] for detail in mode_details.values())
+    soak_ok = all(detail["soak_ok"] for detail in mode_details.values())
+    reconnect_ok = all(detail["reconnect_ok"] for detail in mode_details.values())
+    preflight_hashes = preflight_bearer_source_hashes(root)
+    auth_source_ok, auth_source_note, _token_hash_ok = sse_auth_source_check(payload, preflight_hashes)
+    provenance_ok, provenance_note = strict_run_provenance_check(root, payload)
 
     detail_ok = (
         strict
+        and provenance_ok
         and auth_source_ok
-        and seconds >= 75
-        and bearer_soak_ok
-        and soak_bearer_auth_ok
+        and seconds >= min_soak_seconds
+        and soak_duration_ok
+        and soak_ok
+        and cookie_detail["soak_auth_ok"]
+        and bearer_detail["soak_auth_ok"]
         and heartbeat_count >= min_heartbeats
         and duplicates == 0
         and missing_replay == 0
-        and bearer_reconnect_ok
-        and attempt_count >= 5
+        and reconnect_ok
+        and attempt_count >= min_reconnect_attempts
         and attempt_details_ok
-        and bearer_attempt_auth_ok
+        and cookie_detail["attempt_auth_ok"]
+        and bearer_detail["attempt_auth_ok"]
         and attempt_lineage_ok
         and observed_sequence_ok
         and cursors_advanced
     )
     note = (
-        f"strict:{strict} {auth_source_note} soak:{seconds:g}/75 "
-        f"soakBearerAuth:{soak_bearer_auth_ok} heartbeat:{heartbeat_count}/{min_heartbeats} "
-        f"reconnect:{attempt_count}/5 attemptDetails:{attempt_details_ok} "
-        f"bearerAttemptAuth:{bearer_attempt_auth_count}/5 attemptLineage:{attempt_lineage_ok} "
-        f"observed:{len(observed_ids)}/5 observedSequence:{observed_sequence_ok} duplicates:{duplicates} "
-        f"missingReplay:{missing_replay} cursorsAdvanced:{cursors_advanced} "
-        f"soakOk:{bearer_soak_ok} reconnectOk:{bearer_reconnect_ok}"
+        f"strict:{strict} {provenance_note} {auth_source_note} soak:{seconds:g}/{min_soak_seconds:g} "
+        f"soakDuration:{soak_duration_seconds:g}/{min_soak_seconds:g} "
+        f"soakCookieAuth:{cookie_detail['soak_auth_ok']} soakBearerAuth:{bearer_detail['soak_auth_ok']} "
+        f"heartbeat:{heartbeat_count}/{min_heartbeats} reconnect:{attempt_count}/{min_reconnect_attempts} "
+        f"attemptDetails:{attempt_details_ok} "
+        f"cookieAttemptAuth:{cookie_detail['attempt_auth_count']}/{min_reconnect_attempts} "
+        f"bearerAttemptAuth:{bearer_detail['attempt_auth_count']}/{min_reconnect_attempts} "
+        f"attemptLineage:{attempt_lineage_ok} observed:{observed_count}/{min_reconnect_attempts} "
+        f"observedSequence:{observed_sequence_ok} duplicates:{duplicates} missingReplay:{missing_replay} "
+        f"cursorsAdvanced:{cursors_advanced} soakOk:{soak_ok} reconnectOk:{reconnect_ok}"
     )
     return detail_ok, note
-
 
 def sse_item(root: Path, summary: Any) -> dict[str, str]:
     summary_status, summary_note = summary_check_status(summary, "sse_reconnect_soak")
@@ -883,7 +1920,7 @@ def sse_item(root: Path, summary: Any) -> dict[str, str]:
     payload = read_json(file_path) if file_path else None
     if not isinstance(payload, dict):
         return status_item(summary_status, CHECK_LABELS["sse_reconnect_soak"], evidence=evidence, note=summary_note or "SSE JSON missing")
-    raw_ok, raw_note = sse_detail_check(payload)
+    raw_ok, raw_note = sse_detail_check(root, payload)
     if summary_status != "pass":
         return status_item(summary_status, CHECK_LABELS["sse_reconnect_soak"], evidence=evidence, note=summary_note or raw_note)
     if not raw_ok:
@@ -912,6 +1949,7 @@ def verify(root: Path) -> dict[str, Any]:
         "artifact_dir": str(root),
         "overall": overall,
         "criteria": criteria,
+        "artifact_manifest": artifact_manifest(root),
         "summary_file": rel(summary_file, root) if summary_file else "",
     }
 

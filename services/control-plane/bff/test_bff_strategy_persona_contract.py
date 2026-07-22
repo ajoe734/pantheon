@@ -13,10 +13,12 @@ Covers:
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
 
+import pytest
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -24,10 +26,71 @@ sys.path.insert(0, os.path.dirname(__file__))
 import main as bff_main
 from action_catalog import get_catalog_entry
 from models import CommandType
+from persona_provisioning import MemoryPersonaProvisioningStore
 from read_store import ReadSurfaceStore
+from test_persona_provisioning_coordinator import FakeOwnerTransport, _schedule_receipt
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
 HEADERS = {"Authorization": OPERATOR_TOKEN}
+
+
+@pytest.fixture(autouse=True)
+def mock_external_services(monkeypatch):
+    transport = FakeOwnerTransport()
+    monkeypatch.setattr(bff_main, "_PERSONA_PROVISIONING_STORE", MemoryPersonaProvisioningStore())
+    monkeypatch.setattr(bff_main, "_PersonaOwnerHttpTransport", lambda: transport)
+    monkeypatch.setattr(bff_main, "_register_persona_cron_required", _schedule_receipt)
+    # Mock create_capital_binding
+    monkeypatch.setattr(bff_main, "create_capital_binding", lambda payload: {"status": "created"})
+    
+    # Mock _post_json to do nothing and return empty dict
+    monkeypatch.setattr(bff_main, "_post_json", lambda *args, **kwargs: {})
+    
+    # Mock _get_json to raise urllib.error.HTTPError for 404 (not found) by default
+    import urllib.error
+    from io import BytesIO
+    fp = BytesIO(b"")
+    mock_404 = urllib.error.HTTPError("url", 404, "Not Found", {}, fp)
+    monkeypatch.setattr(bff_main, "_get_json", lambda *args, **kwargs: (_ for _ in ()).throw(mock_404))
+    
+    # Mock _runtime_manager_client
+    class MockRuntimeManagerClient:
+        def deploy(self, request):
+            binding_id = (
+                request.get("persona_capital_binding_id")
+                or request.get("binding_id")
+                or request.get("runtime_binding_id")
+                or "test-binding"
+            )
+            bff_main.read_store.create_runtime_binding(
+                runtime_id=request.get("runtime_id", "test-runtime"),
+                name=request.get("metadata", {}).get("name", "test"),
+                persona_id=request.get("metadata", {}).get("persona_id", "test"),
+                binding_id=binding_id,
+                deployment_plan_id=request.get("plan_id", "test-plan"),
+                runtime_kind="paper",
+                actor_id="test",
+                created_at=bff_main.utc_now(),
+                params=request.get("metadata", {}),
+                state=request.get("state") or "running",
+            )
+            return bff_main.read_store.get_runtime_binding(binding_id)
+            
+        def get(self, binding_id):
+            return bff_main.read_store.get_runtime_binding(binding_id)
+            
+        def list_all(self):
+            return list((bff_main.read_store._ensure_local_overlay_records("runtime_bindings") or {}).values())
+
+        def list_by_plan(self, plan_id):
+            return [
+                binding
+                for binding in self.list_all()
+                if binding.get("plan_id") == plan_id
+            ]
+            
+    mock_client = MockRuntimeManagerClient()
+    monkeypatch.setattr(bff_main, "_runtime_manager_client", lambda: mock_client)
 
 
 def _error(resp):
@@ -45,9 +108,11 @@ def _fresh_client(td: str) -> TestClient:
         os.path.join(td, "read_surfaces.json"),
         allow_local_snapshot_fallback=True,
     )
+    bff_main.command_store = bff_main.CommandStore(os.path.join(td, "commands.jsonl"))
     bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
     bff_main._STRATEGY_BFF_OVERLAY.clear()
     bff_main._PERSONA_BFF_OVERLAY.clear()
+    bff_main._COMMAND_AUTH_CONTEXT.clear()
     return TestClient(bff_main.app)
 
 
@@ -182,7 +247,7 @@ def test_bff_strategies_actions_use_final_envelope_and_precondition() -> None:
             ok = client.post(
                 f"/bff/actions/strategy/{strategy_id}/edit",
                 json={"reason": "operator review"},
-                headers={**HEADERS, "Idempotency-Key": "strategy-action-001"},
+                headers={**HEADERS, "Idempotency-Key": f"strategy-action-{strategy_id}"},
             )
             assert ok.status_code == 202, ok.text
             assert get_catalog_entry(CommandType.STRATEGY_ACTION.value) is not None
@@ -284,23 +349,262 @@ def test_bff_personas_create_then_subresources_round_trip() -> None:
                 headers={**HEADERS, "Idempotency-Key": "create-persona-001"},
             )
             assert create.status_code == 201, create.text
-            persona_id = create.json()["data"]["id"]
+            create_body = create.json()
+            created = create_body["data"]
+            persona_id = created["id"]
+            assert created["state"] == "provisioning"
+            assert created["capitalMode"] == "paper"
+            assert created["deploymentStage"] == "paper"
+            assert created["paperLedgerId"].startswith("paper-ledger-")
+            assert "capitalPoolId" not in created
+            assert "runtimeId" not in created
+            assert "runtimeBindingId" not in created
+            assert create_body["meta"]["create_flow"] == "durable_owner_coordinated_provisioning"
+            assert create_body["meta"]["paper_ledger_id"] == created["paperLedgerId"]
+            assert create_body["meta"]["live_capital_side_effects"] is False
+            assert create_body["meta"]["human_review_required_for_live"] is True
 
             bff_main._PERSONA_BFF_OVERLAY.clear()
             bff_main.read_store = ReadSurfaceStore(
                 os.path.join(td, "read_surfaces.json"),
                 allow_local_snapshot_fallback=False,
             )
+            binding_id = "rb-macro-macro-authoritative"
+            runtime_id = "runtime-macro-macro-authoritative"
+            persona_capital_binding_id = create_body["meta"]["persona_capital_binding_id"]
+            persisted = bff_main.read_store.get_persona(persona_id)
+            assert persisted is not None
+            capital_pool_id = persisted["metadata"]["internal_paper_capital_pool_id"]
+            tenant_id = persisted["metadata"]["tenant_id"]
+            bff_main.read_store.create_runtime_binding(
+                runtime_id=runtime_id,
+                name="Macro Macro paper runtime",
+                persona_id=persona_id,
+                binding_id=binding_id,
+                deployment_plan_id=created["deploymentPlanId"],
+                runtime_kind="paper",
+                actor_id="test",
+                created_at=bff_main.utc_now(),
+                params={
+                    "persona_capital_binding_id": persona_capital_binding_id,
+                    "capital_pool_id": capital_pool_id,
+                },
+                state="running",
+            )
+            authoritative_binding = {
+                "binding_id": binding_id,
+                "runtime_id": runtime_id,
+                "plan_id": created["deploymentPlanId"],
+                "persona_capital_binding_id": persona_capital_binding_id,
+                "capital_pool_id": capital_pool_id,
+                "deployment_mode": "paper",
+                "state": "running",
+                "status": "running",
+                "metadata": {
+                    "persona_id": persona_id,
+                    "tenant_id": tenant_id,
+                },
+            }
+
+            class ExactRuntimeManagerClient:
+                def get(self, requested_binding_id):
+                    return (
+                        authoritative_binding
+                        if requested_binding_id == binding_id
+                        else None
+                    )
+
+                def list_all(self):
+                    return [authoritative_binding]
+
+                def list_by_plan(self, requested_plan_id):
+                    return (
+                        [authoritative_binding]
+                        if requested_plan_id == created["deploymentPlanId"]
+                        else []
+                    )
+
+            bff_main._runtime_manager_client = lambda: ExactRuntimeManagerClient()
+            worker_session = {
+                "session_id": "session-1",
+                "runtime_id": runtime_id,
+                "binding_id": binding_id,
+                "capital_pool_id": capital_pool_id,
+                "status": "running",
+                "active": True,
+                "last_heartbeat_at": bff_main.utc_now(),
+            }
+            bff_main.read_store.list_authoritative_paper_runtime_monitoring_sessions = (
+                lambda: [worker_session]
+            )
+            projection = {
+                "plan_id": created["deploymentPlanId"],
+                "deployment_saga_id": create_body["meta"]["deployment_saga_id"],
+                "deployment_saga_status": "completed",
+                "deployment_saga_progress": {"progress_status": "completed"},
+                "runtime_binding_id": binding_id,
+                "runtime_id": runtime_id,
+                "runtime_binding": authoritative_binding,
+            }
+            bff_main._get_json = lambda *_args, **_kwargs: projection
+            bff_main._register_persona_cron_required = lambda *_args, **_kwargs: {
+                "authoritative_readback": {
+                    "persona_id": persona_id,
+                    "workflow_id": "pantheon.persona.first-evaluation",
+                    "registered": True,
+                    "runtime_id": runtime_id,
+                    "runtime_binding_id": binding_id,
+                    "capital_pool_id": capital_pool_id,
+                    "persona_capital_binding_id": persona_capital_binding_id,
+                    "job_id": f"job-{persona_id}",
+                    "job_name": f"pantheon-first-evaluation-{persona_id}",
+                    "request_id": (
+                        f"persona-provisioning:{persona_id}:"
+                        "pantheon.persona.first-evaluation"
+                    ),
+                    "schedule": {"kind": "cron", "expr": "*/15 * * * *"},
+                    "session_target": persona_id,
+                    "observed_at": bff_main.utc_now(),
+                }
+            }
+
             detail = client.get(f"/bff/personas/{persona_id}", headers=HEADERS)
             assert detail.status_code == 200, detail.text
             assert detail.json()["data"]["id"] == persona_id
+            assert detail.json()["data"]["state"] == "provisioning"
+            reconciled = client.post(
+                f"/bff/personas/{persona_id}/provisioning/reconcile",
+                headers=HEADERS,
+            )
+            assert reconciled.status_code == 200, reconciled.text
+            detail = client.get(f"/bff/personas/{persona_id}", headers=HEADERS)
+            assert detail.json()["data"]["state"] == "paper_running"
+            assert detail.json()["data"]["capitalMode"] == "paper"
+            assert detail.json()["data"]["runtimeId"] == runtime_id
 
-            for subpath in ("route-policy", "activity", "evaluations", "memory", "audit"):
+            fleet = client.get(f"/bff/management/persona-fleet?persona={persona_id}", headers=HEADERS)
+            assert fleet.status_code == 200, fleet.text
+            rows = {item["persona_id"]: item for item in fleet.json()["data"]["items"]}
+            row = rows[persona_id]
+            assert row["state"] == "paper_running"
+            assert row["capital_mode"] == "paper"
+            assert row["paper_ledger_id"] == created["paperLedgerId"]
+            assert row["paper_ledger"]["is_isolated"] is True
+            assert row["capital_pool_id"] is None
+            assert row["runtime_id"] == runtime_id
+            assert row["runtime_binding_id"] == binding_id
+            assert row["runtime_binding"]["state"] == "running"
+            assert row["deployment_stage"] == "paper"
+
+            for subpath in ("route-policy", "runtime-profile", "activity", "evaluations", "memory", "audit"):
                 resp = client.get(f"/bff/personas/{persona_id}/{subpath}", headers=HEADERS)
                 assert resp.status_code == 200, f"{subpath}: {resp.text}"
                 body = resp.json()
                 assert "data" in body or "items" in body
                 assert "meta" in body
+
+            stored = bff_main.read_store.get_persona(persona_id)
+            reconcile = stored["metadata"]["openclaw_agent_reconcile"]
+            assert reconcile["status"] == "pending"
+            assert reconcile["reason"] == "persona_created"
+            assert reconcile["agent_id"] == persona_id
+            assert reconcile["model_id"] == f"openclaw/{persona_id}"
+            assert reconcile["workspace_ref"].endswith(f"/{persona_id}")
+            assert reconcile["model_routing"]["status"] == "ready"
+            assert reconcile["consumer"] == "scripts/openclaw-sync-persona-agents.py"
+        finally:
+            bff_main.read_store = original
+
+
+def test_bff_persona_runtime_profile_exposes_route_policy_model_contract() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            create = client.post(
+                "/bff/personas",
+                json={"name": "Runtime Persona", "archetype": "macro"},
+                headers={**HEADERS, "Idempotency-Key": "create-persona-runtime-profile"},
+            )
+            assert create.status_code == 201, create.text
+            persona_id = create.json()["data"]["id"]
+
+            def route_policy(pid: str):
+                assert pid == persona_id
+                return {
+                    "personaId": pid,
+                    "model_routing": {
+                        "mode": "hard_pin",
+                        "model": "openai/gpt-5.5",
+                    },
+                }
+
+            bff_main.read_store.get_route_policy_for_persona = route_policy
+            resp = client.get(f"/bff/personas/{persona_id}/runtime-profile", headers=HEADERS)
+            assert resp.status_code == 200, resp.text
+            data = resp.json()["data"]
+            assert data["persona_id"] == persona_id
+            assert data["workspace_ref"].endswith(f"/{persona_id}")
+            assert data["model_routing"]["mode"] == "hard_pin"
+            assert data["model_routing"]["status"] == "ready"
+            assert data["model_routing"]["primary_model"] == "openai/gpt-5.5"
+            assert data["model_routing"]["fallback_models"] == []
+            assert data["memory_policy"]["source"] == "canonical_persona_memory_plane"
+            assert data["memory_policy"]["cache_mutation_policy"] == "memory_bridge_only"
+            assert data["memory_policy"]["direct_session_writes"] is False
+
+            payload = json.dumps(data)
+            for forbidden in ("api_key", "secret", "token", "credential", "oauth"):
+                assert forbidden not in payload.lower()
+        finally:
+            bff_main.read_store = original
+
+
+def test_bff_persona_runtime_profile_fails_closed_for_unknown_model_ref() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            create = client.post(
+                "/bff/personas",
+                json={"name": "Invalid Runtime Persona", "archetype": "macro"},
+                headers={**HEADERS, "Idempotency-Key": "create-persona-invalid-runtime-profile"},
+            )
+            assert create.status_code == 201, create.text
+            persona_id = create.json()["data"]["id"]
+
+            bff_main.read_store.get_route_policy_for_persona = lambda pid: {
+                "personaId": pid,
+                "model_routing": {"mode": "preferred_pool_model", "model": "vendor/unknown"},
+            }
+
+            resp = client.get(f"/bff/personas/{persona_id}/runtime-profile", headers=HEADERS)
+            assert resp.status_code == 200, resp.text
+            routing = resp.json()["data"]["model_routing"]
+            assert routing["status"] == "degraded"
+            assert routing["primary_model"] is None
+            assert routing["fallback_models"] == []
+            assert routing["blocked_reason"] == "unknown_model_ref"
+            assert routing["invalid_refs"] == ["vendor/unknown"]
+        finally:
+            bff_main.read_store = original
+
+
+def test_bff_personas_create_rejects_initial_live_or_canary_mode() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+            for mode in ("live", "canary"):
+                response = client.post(
+                    "/bff/personas",
+                    json={"name": f"{mode.title()} Persona", "initialMode": mode},
+                    headers={**HEADERS, "Idempotency-Key": f"create-persona-{mode}"},
+                )
+                assert response.status_code == 422, response.text
+                err = _error(response)
+                assert err["code"] == "VALIDATION_FAILED"
+                assert err["details"]["precondition_failed"] == "capital_mode"
         finally:
             bff_main.read_store = original
 
@@ -335,6 +639,15 @@ def test_bff_personas_patch_persists_without_snapshot_fallback() -> None:
             assert detail.json()["data"]["name"] == "Persistent Persona"
             assert detail.json()["data"]["risk"] == "high"
             assert detail.json()["meta"]["surfaces"]["persona_detail"]["source"] == "bff_local_dev_store"
+
+            stored = bff_main.read_store.get_persona(persona_id)
+            reconcile = stored["metadata"]["openclaw_agent_reconcile"]
+            assert reconcile["status"] == "pending"
+            assert reconcile["reason"] == "persona_updated"
+            assert reconcile["agent_id"] == persona_id
+            assert reconcile["model_id"] == f"openclaw/{persona_id}"
+            assert reconcile["workspace_ref"].endswith(f"/{persona_id}")
+            assert reconcile["model_routing"]["status"] == "ready"
         finally:
             bff_main.read_store = original
 
@@ -362,7 +675,7 @@ def test_bff_personas_actions_route_through_command_envelope() -> None:
             ok = client.post(
                 f"/bff/actions/persona/{persona_id}/retire",
                 json={"reason": "decommission"},
-                headers={**HEADERS, "Idempotency-Key": "persona-action-001"},
+                headers={**HEADERS, "Idempotency-Key": f"persona-action-{persona_id}"},
             )
             assert ok.status_code == 202, ok.text
             assert get_catalog_entry(CommandType.PERSONA_ACTION.value) is not None

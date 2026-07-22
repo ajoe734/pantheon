@@ -1,0 +1,34 @@
+{
+  "_schema_note": "Governance ThresholdEvaluator schema (services/control-plane/governance/evolution_decision.py ThresholdSnapshot). This file is live config only: edit it (or point EVOCHAIN_THRESHOLD_SWEEP_CONFIG_PATH at an override) to retune values, no image rebuild required.",
+  "_field_notes": {
+    "enabled": "Threshold is skipped entirely (fail-closed) when false. Use this to gate a metric off until its threshold_value/baseline is governance-approved.",
+    "telemetry_event_type": "Must be one of the services/telemetry/telemetry_event.schema.json event_type enum values; the worker admits a schema-valid derived event of this type through telemetry ingest before citing it in an incident.",
+    "ratio_baseline_key": "Optional. When set, the observed summary_field value is treated as a raw metric that must be divided by a per-artifact baseline (services/evolution/config/threshold_sweep_baselines.json, keyed by artifact_id -> {ratio_baseline_key: value}) before comparison, so threshold_value is compared against a unit-consistent multiple. When null, summary_field is compared directly (an absolute threshold)."
+  },
+  "thresholds": [
+    {
+      "metric_name": "rolling_drawdown_multiple",
+      "signal_type": "performance_degradation",
+      "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.1; docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/EVOLOOP-005-governed-baselines.md#governance-decision",
+      "summary_field": "drawdown",
+      "ratio_baseline_key": "expected_drawdown",
+      "telemetry_event_type": "drawdown_snapshot",
+      "comparator": "gt",
+      "threshold_value": 1.25,
+      "window": "paper-daily-sweep",
+      "enabled": true
+    },
+    {
+      "metric_name": "rolling_pnl_floor",
+      "signal_type": "performance_degradation",
+      "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md section 7.1 (drawdown-derived policy; absolute PnL floor is an operator-tunable placeholder pending capital-scale calibration)",
+      "summary_field": "pnl",
+      "ratio_baseline_key": null,
+      "telemetry_event_type": "pnl_snapshot",
+      "comparator": "lt",
+      "threshold_value": -500.0,
+      "window": "paper-daily-sweep",
+      "enabled": false
+    }
+  ]
+}

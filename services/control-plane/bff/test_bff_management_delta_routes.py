@@ -123,24 +123,25 @@ def test_sentinel_pulse_composes_findings_and_interventions(monkeypatch) -> None
     data = body["data"]
 
     assert data["id"] == "management-sentinel-pulse"
-    assert body["items"] == body["findings"] == data["findings"]
-    assert data["items"] == body["items"]
-    assert data["interventions"] == body["interventions"]
+    assert set(body) == {"data", "page_info", "meta"}
+    assert "items" not in body
+    assert "findings" not in body
+    assert "summary" not in body
     assert body["page_info"] == {"next_page_token": None, "total": 1, "page_size": 5}
 
-    finding = body["items"][0]
-    assert finding["findingId"] == "finding-critical"
+    finding = data["items"][0]
+    assert finding["finding_id"] == "finding-critical"
     assert finding["severity"] == "critical"
-    assert finding["sourceRefs"]["runtimeId"] == "runtime-alpha"
+    assert finding["source_refs"]["runtime_id"] == "runtime-alpha"
     assert finding["links"]["finding"] == "/bff/v5/sentinel/findings/finding-critical"
 
-    assert body["interventions"][0]["interventionId"] == "intv-critical"
-    assert body["summary"]["findingCount"] == 1
-    assert body["summary"]["activeFindingCount"] == 1
-    assert body["summary"]["criticalFindingCount"] == 1
-    assert body["summary"]["pendingInterventionCount"] == 1
-    assert body["summary"]["highestSeverity"] == "critical"
-    assert body["summary"]["policy"] == "read_only_sentinel_pulse"
+    assert data["related"]["interventions"][0]["intervention_id"] == "intv-critical"
+    assert data["summary"]["finding_count"] == 1
+    assert data["summary"]["active_finding_count"] == 1
+    assert data["summary"]["critical_finding_count"] == 1
+    assert data["summary"]["pending_intervention_count"] == 1
+    assert data["summary"]["highest_severity"] == "critical"
+    assert data["summary"]["policy"] == "read_only_sentinel_pulse"
     assert body["meta"]["surfaces"]["management_sentinel_pulse"]["source"] == "bff_composed"
     assert body["meta"]["surfaces"]["sentinel_findings"]["source"] == "canonical"
     assert body["meta"]["surfaces"]["v5_interventions"]["source"] == "canonical"
@@ -185,31 +186,31 @@ def test_persona_league_heatmap() -> None:
             body = response.json()
             data = body["data"]
 
-            assert set(body) >= {"data", "meta"}
-            assert body["items"] == data["rows"]
-            assert body["rows"] == data["rows"]
-            assert body["buckets"] == data["buckets"]
-            assert body["cells"] == data["cells"]
+            assert set(body) == {"data", "page_info", "meta"}
+            rows = data["items"]
+            buckets = data["buckets"]
+            cells = [cell for row in rows for cell in row["cells"]]
             assert len(data["buckets"]) == 3
-            assert body["summary"]["bucket"] == "day"
-            assert body["summary"]["cellCount"] == len(body["rows"]) * len(body["buckets"])
+            assert data["summary"]["bucket"] == "day"
+            assert data["summary"]["cell_count"] == len(rows) * len(buckets)
             assert body["meta"]["policy"] == "read_only_governance_advisory"
             assert body["meta"]["surfaces"]["persona_league_heatmap"]["status"] in {"ok", "degraded"}
             assert "GET /bff/management/persona-league" in body["meta"]["composition_sources"]
+            assert len(cells) == data["summary"]["cell_count"]
 
-            alpha = next(row for row in body["rows"] if row["personaId"] == "persona-alpha")
+            alpha = next(row for row in rows if row["persona_id"] == "persona-alpha")
             assert len(alpha["cells"]) == 3
             latest_cell = alpha["cells"][-1]
-            assert isinstance(latest_cell["compositeScore"], (int, float))
-            assert latest_cell["score"] == latest_cell["compositeScore"]
-            assert latest_cell["overallScore"] == latest_cell["compositeScore"]
-            assert latest_cell["formulaVersion"] == "pm12-default-v1"
+            assert isinstance(latest_cell["composite_score"], (int, float))
+            assert latest_cell["score"] == latest_cell["composite_score"]
+            assert latest_cell["overall_score"] == latest_cell["composite_score"]
+            assert latest_cell["formula_version"] == "pm12-default-v1"
             assert set(latest_cell["components"]) >= {
-                "overallScore",
-                "pnlScore",
-                "riskScore",
-                "executionScore",
-                "activityScore",
+                "overall_score",
+                "pnl_score",
+                "risk_score",
+                "execution_score",
+                "activity_score",
             }
         finally:
             bff_main.read_store = original
@@ -312,26 +313,32 @@ def test_incident_timeline_returns_chronological_bucketed_incidents(monkeypatch)
     data = body["data"]
 
     assert data["id"] == "management-incident-timeline"
-    assert body["items"] == body["rows"] == body["incidents"] == body["events"] == data["items"]
-    assert data["rows"] == data["incidents"] == data["events"] == body["items"]
-    assert [item["incident_id"] for item in body["items"]] == [
+    assert set(body) == {"data", "page_info", "meta"}
+    assert set(data) == {"id", "items", "summary", "severity_buckets"}
+    assert [item["incident_id"] for item in data["items"]] == [
         "inc-delta-low",
         "inc-delta-medium",
         "inc-delta-high",
     ]
-    assert [item["sequence"] for item in body["items"]] == [1, 2, 3]
-    assert body["items"][2]["severity_bucket"] == "high"
-    assert body["items"][2]["lineage_ref"] == "artifact-alpha@v1"
-    assert body["items"][2]["sourceRefs"]["runtimeIds"] == ["runtime-alpha"]
-    assert body["items"][2]["links"]["incident"] == "/bff/incidents/inc-delta-high"
+    assert [item["sequence"] for item in data["items"]] == [1, 2, 3]
+    assert data["items"][2]["severity_bucket"] == "high"
+    assert data["items"][2]["lineage_ref"] == "artifact-alpha@v1"
+    assert data["items"][2]["source_refs"]["runtime_ids"] == ["runtime-alpha"]
+    assert data["items"][2]["links"]["incident"] == "/bff/incidents/inc-delta-high"
+    assert "sourceRefs" not in data["items"][2]
+    assert "incidentId" not in data["items"][2]
+    assert "severityBucket" not in data["items"][2]
+    assert "capitalPool" not in data["items"][2]["links"]
 
-    assert body["severityBuckets"] == {"high": 1, "medium": 1, "low": 1}
-    assert body["summary"]["severityBuckets"] == body["severityBuckets"]
-    assert body["summary"]["incident_count"] == 3
-    assert body["summary"]["active_incident_count"] == 2
-    assert body["summary"]["resolved_incident_count"] == 1
-    assert body["summary"]["first_incident_at"] == "2026-05-24T07:00:00Z"
-    assert body["summary"]["latest_incident_at"] == "2026-05-24T09:15:00Z"
+    assert data["severity_buckets"] == {"high": 1, "medium": 1, "low": 1}
+    assert data["summary"]["severity_buckets"] == data["severity_buckets"]
+    assert data["summary"]["incident_count"] == 3
+    assert data["summary"]["active_incident_count"] == 2
+    assert data["summary"]["resolved_incident_count"] == 1
+    assert data["summary"]["first_incident_at"] == "2026-05-24T07:00:00Z"
+    assert data["summary"]["latest_incident_at"] == "2026-05-24T09:15:00Z"
+    assert "incidentCount" not in data["summary"]
+    assert "severityBuckets" not in data["summary"]
     assert body["page_info"] == {"next_page_token": None, "total": 3, "page_size": 10}
     assert body["meta"]["surfaces"]["incident_timeline"]["source"] == "bff_composed"
     assert body["meta"]["surfaces"]["incidents"]["source"] == "service_store"
@@ -350,9 +357,9 @@ def test_incident_timeline_filters_by_runtime(monkeypatch) -> None:
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["summary"]["incident_count"] == 1
-    assert body["items"][0]["incident_id"] == "inc-delta-low"
-    assert body["severityBuckets"] == {"high": 0, "medium": 0, "low": 1}
+    assert body["data"]["summary"]["incident_count"] == 1
+    assert body["data"]["items"][0]["incident_id"] == "inc-delta-low"
+    assert body["data"]["severity_buckets"] == {"high": 0, "medium": 0, "low": 1}
 
 
 def test_incident_timeline_requires_auth(monkeypatch) -> None:
@@ -440,22 +447,28 @@ def test_loop_throughput_reports_queue_depth_lag_and_rate(monkeypatch) -> None:
     data = body["data"]
 
     assert data["id"] == "management-loop-throughput"
-    assert body["items"] == body["rows"] == body["loops"] == data["items"]
-    assert data["rows"] == data["loops"] == body["items"]
+    assert set(body) == {"data", "page_info", "meta"}
+    assert set(data) == {"id", "items", "summary", "metrics"}
     assert body["page_info"] == {"next_page_token": None, "total": 3, "page_size": 10}
-    assert body["summary"] == data["summary"] == body["metrics"]
-    assert body["summary"]["loop_count"] == 3
-    assert body["summary"]["queue_depth"] == 1
-    assert body["summary"]["active_loop_count"] == 1
-    assert body["summary"]["completed_loop_count"] == 1
-    assert body["summary"]["runs_per_minute"] == 0.375
-    assert body["summary"]["max_queue_lag_seconds"] == 120.0
-    assert body["summary"]["average_queue_lag_seconds"] == 120.0
-    assert body["summary"]["by_status"] == {"completed": 1, "running": 1, "queued": 1}
-    assert body["items"][0]["loop_run_id"] == "loop-completed"
-    assert body["items"][0]["queue_lag_seconds"] == 120.0
-    assert body["items"][0]["duration_seconds"] == 240.0
-    assert body["items"][0]["links"]["loop_run"] == "/bff/v5/loop-runs/loop-completed"
+    assert data["summary"] == data["metrics"]
+    assert data["summary"]["loop_count"] == 3
+    assert data["summary"]["queue_depth"] == 1
+    assert data["summary"]["active_loop_count"] == 1
+    assert data["summary"]["completed_loop_count"] == 1
+    assert data["summary"]["runs_per_minute"] == 0.375
+    assert data["summary"]["max_queue_lag_seconds"] == 120.0
+    assert data["summary"]["average_queue_lag_seconds"] == 120.0
+    assert data["summary"]["by_status"] == {"completed": 1, "running": 1, "queued": 1}
+    assert data["items"][0]["loop_run_id"] == "loop-completed"
+    assert data["items"][0]["queue_lag_seconds"] == 120.0
+    assert data["items"][0]["duration_seconds"] == 240.0
+    assert data["items"][0]["links"]["loop_run"] == "/bff/v5/loop-runs/loop-completed"
+    assert "loopRunId" not in data["items"][0]
+    assert "queueLagSeconds" not in data["items"][0]
+    assert "sourceRefs" not in data["items"][0]
+    assert "loopRun" not in data["items"][0]["links"]
+    assert "loopCount" not in data["summary"]
+    assert "byStatus" not in data["summary"]
     assert body["meta"]["surfaces"]["loop_throughput"]["source"] == "bff_composed"
     assert body["meta"]["surfaces"]["loop_runs"]["source"] == "service_store"
     assert body["meta"]["policy"] == "read_only_loop_throughput"
@@ -467,8 +480,8 @@ def test_loop_throughput_reports_queue_depth_lag_and_rate(monkeypatch) -> None:
         params={"status": "queued"},
     )
     assert queued.status_code == 200, queued.text
-    assert queued.json()["summary"]["queue_depth"] == 1
-    assert queued.json()["items"][0]["loop_run_id"] == "loop-queued"
+    assert queued.json()["data"]["summary"]["queue_depth"] == 1
+    assert queued.json()["data"]["items"][0]["loop_run_id"] == "loop-queued"
 
 
 def test_loop_throughput_cors_preflight_and_openapi(monkeypatch) -> None:
@@ -591,29 +604,40 @@ def test_hiq_backlog_composes_open_hiq_interventions_and_findings(monkeypatch) -
         assert response.status_code == 200, response.text
         body = response.json()
         data = body["data"]
-        ids = {item["source_id"] for item in body["items"]}
+        items = data["items"]
+        summary = data["summary"]
+        ids = {item["source_id"] for item in items}
 
         assert data["id"] == "management-hiq-backlog"
-        assert body["items"] == body["rows"] == body["backlog"] == data["items"]
+        assert set(body.keys()) == {"data", "page_info", "meta"}
+        assert "rows" not in data
+        assert "backlog" not in data
         assert ids == {"intv-hiq-critical", "intv-risk-high", "sf-hiq-open-high"}
-        assert body["summary"]["backlog_count"] == 3
-        assert body["summary"]["intervention_count"] == 2
-        assert body["summary"]["sentinel_finding_count"] == 1
-        assert body["summary"]["by_kind"]["hiq_sentinel"] == 2
-        assert body["summary"]["by_kind"]["risk_breach"] == 1
+        assert summary["backlog_count"] == 3
+        assert summary["intervention_count"] == 2
+        assert summary["sentinel_finding_count"] == 1
+        assert summary["by_kind"]["hiq_sentinel"] == 2
+        assert summary["by_kind"]["risk_breach"] == 1
         assert body["meta"]["policy"] == "read_only_hiq_backlog"
         assert body["meta"]["surfaces"]["hiq_backlog"]["source"] == "bff_composed"
         assert "GET /bff/v5/interventions" in body["meta"]["composition_sources"]
         assert "GET /bff/v5/sentinel/findings" in body["meta"]["composition_sources"]
         assert "GET /bff/management/human-inbox" in body["meta"]["composition_sources"]
 
-        intervention = next(item for item in body["items"] if item["source_id"] == "intv-hiq-critical")
+        intervention = next(item for item in items if item["source_id"] == "intv-hiq-critical")
         assert intervention["priority"] == "critical"
         assert intervention["links"]["source"] == "/bff/v5/interventions/intv-hiq-critical"
-        assert intervention["links"]["humanInbox"] == (
+        assert intervention["links"]["human_inbox"] == (
             "/bff/management/human-inbox/intervention:intv-hiq-critical"
         )
-        assert intervention["allowedActions"]["canRemediate"] is True
+        assert intervention["allowed_actions"]["canRemediate"] is True
+        assert "humanInbox" not in intervention["links"]
+        assert "allowedActions" not in intervention
+        assert "backlogId" not in intervention
+        assert "sourceType" not in intervention
+        assert "sourceRefs" not in intervention
+        assert "sourceRecord" not in intervention
+        assert "source_record" not in intervention
     finally:
         bff_main.read_store = original_store
         bff_main._V5_INTERVENTIONS_STORE.clear()
@@ -637,8 +661,8 @@ def test_hiq_backlog_filters_and_requires_auth(monkeypatch) -> None:
 
         assert response.status_code == 200, response.text
         body = response.json()
-        assert body["summary"]["backlog_count"] == 1
-        assert body["items"][0]["source_id"] == "intv-hiq-critical"
+        assert body["data"]["summary"]["backlog_count"] == 1
+        assert body["data"]["items"][0]["source_id"] == "intv-hiq-critical"
     finally:
         bff_main.read_store = original_store
         bff_main._V5_INTERVENTIONS_STORE.clear()
@@ -759,22 +783,33 @@ def test_intervention_stream_returns_recent_persona_events(monkeypatch) -> None:
         assert response.status_code == 200, response.text
         body = response.json()
         data = body["data"]
+        items = data["items"]
+        summary = data["summary"]
 
         assert data["id"] == "management-intervention-stream"
-        assert body["items"] == body["rows"] == body["events"] == body["stream"] == data["items"]
-        assert [item["intervention_id"] for item in body["items"]] == [
+        assert set(body.keys()) == {"data", "page_info", "meta"}
+        assert "rows" not in data
+        assert "events" not in data
+        assert "stream" not in data
+        assert all("eventId" not in item for item in items)
+        assert all("eventSource" not in item for item in items)
+        assert all("sourceRefs" not in item for item in items)
+        assert all("streamSequence" not in item for item in items)
+        assert [item["intervention_id"] for item in items] == [
             "intv-alpha",
             "intv-alpha",
             "intv-beta",
         ]
-        assert [item["stream_sequence"] for item in body["items"]] == [1, 2, 3]
-        assert body["summary"]["event_count"] == 3
-        assert body["summary"]["intervention_count"] == 2
-        assert body["summary"]["persona_count"] == 2
-        assert body["summary"]["by_persona"]["persona-alpha"] == 2
-        assert body["summary"]["by_persona"]["persona-beta"] == 1
-        assert body["summary"]["window_hours"] == 24
-        assert body["summary"]["latest_at"] == "2026-05-24T11:10:00Z"
+        assert [item["stream_sequence"] for item in items] == [1, 2, 3]
+        assert all("sourceRecord" not in item for item in items)
+        assert all("source_record" not in item for item in items)
+        assert summary["event_count"] == 3
+        assert summary["intervention_count"] == 2
+        assert summary["persona_count"] == 2
+        assert summary["by_persona"]["persona-alpha"] == 2
+        assert summary["by_persona"]["persona-beta"] == 1
+        assert summary["window_hours"] == 24
+        assert summary["latest_at"] == "2026-05-24T11:10:00Z"
         assert body["meta"]["policy"] == "read_only_intervention_stream"
         assert body["meta"]["surfaces"]["intervention_stream"]["source"] == "bff_composed"
         assert "GET /bff/v5/interventions" in body["meta"]["composition_sources"]
@@ -802,9 +837,9 @@ def test_intervention_stream_filters_and_requires_auth(monkeypatch) -> None:
 
         assert response.status_code == 200, response.text
         body = response.json()
-        assert body["summary"]["event_count"] == 1
-        assert body["items"][0]["intervention_id"] == "intv-beta"
-        assert body["items"][0]["persona_id"] == "persona-beta"
+        assert body["data"]["summary"]["event_count"] == 1
+        assert body["data"]["items"][0]["intervention_id"] == "intv-beta"
+        assert body["data"]["items"][0]["persona_id"] == "persona-beta"
     finally:
         bff_main.read_store = original_store
         bff_main._V5_INTERVENTIONS_STORE.clear()
@@ -860,19 +895,19 @@ def test_quarterly_ranking_drilldown_returns_persona_contribution_breakdown() ->
             body = response.json()
             data = body["data"]
 
-            assert data["personaId"] == "persona-alpha"
+            assert data["persona_id"] == "persona-alpha"
             assert data["quarter"] == "2026-Q1"
-            assert data["quarterWindow"]["startAt"] == "2026-01-01T00:00:00Z"
-            assert data["quarterWindow"]["endExclusiveAt"] == "2026-04-01T00:00:00Z"
-            assert data["rankingItem"]["personaId"] == "persona-alpha"
-            assert body["rankingItem"] == data["rankingItem"]
-            assert body["contributionBreakdown"] == data["contributionBreakdown"]
-            assert body["summary"]["personaId"] == "persona-alpha"
+            assert data["quarter_window"]["start_at"] == "2026-01-01T00:00:00Z"
+            assert data["quarter_window"]["end_exclusive_at"] == "2026-04-01T00:00:00Z"
+            assert data["ranking_item"]["persona_id"] == "persona-alpha"
+            assert "rankingItem" not in body
+            assert "contributionBreakdown" not in body
+            assert body["summary"]["persona_id"] == "persona-alpha"
             assert body["summary"]["quarter"] == "2026-Q1"
-            assert body["summary"]["componentCount"] == 4
-            assert body["summary"]["rankedCount"] >= 1
-            assert body["summary"]["totalWeightedContribution"] == data["summary"]["totalWeightedContribution"]
-            assert body["meta"]["correlationId"] == "corr-bff-management-delta"
+            assert body["summary"]["component_count"] == 4
+            assert body["summary"]["ranked_count"] >= 1
+            assert body["summary"]["total_weighted_contribution"] == data["summary"]["total_weighted_contribution"]
+            assert "correlationId" not in body["meta"]
             assert body["meta"]["policy"] == "read_only_governance_advisory"
             assert body["meta"]["surfaces"]["quarterly_ranking_drilldown"]["status"] in {"ok", "degraded"}
             assert "GET /bff/management/quarterly-ranking" in body["meta"]["composition_sources"]
@@ -882,8 +917,8 @@ def test_quarterly_ranking_drilldown_returns_persona_contribution_breakdown() ->
             assert contribution_keys == {"pnl", "risk", "execution", "activity"}
             for row in data["contributions"]:
                 assert row["basis"] == "component_score_x_formula_weight"
-                assert row["weightedContribution"] == row["weighted_contribution"]
-                assert 0 <= row["contributionShare"] <= 1
+                assert row["weighted_contribution"] >= 0
+                assert 0 <= row["contribution_share"] <= 1
         finally:
             bff_main.read_store = original
 
@@ -912,8 +947,21 @@ def test_quarterly_ranking_drilldown_accepts_cors_preflight() -> None:
 def test_governance_ledger_unifies_approval_intervention_and_override_sources() -> None:
     with tempfile.TemporaryDirectory() as td:
         original = bff_main.read_store
+        original_interventions = list(bff_main._V5_INTERVENTIONS_STORE)
         try:
             client = _fresh_client(td)
+            bff_main._V5_INTERVENTIONS_STORE.clear()
+            bff_main._V5_INTERVENTIONS_STORE.append(
+                {
+                    "intervention_id": "intv-ledger-001",
+                    "kind": "hiq_sentinel",
+                    "status": "pending",
+                    "target_type": "Runtime",
+                    "target_id": "runtime-ledger-001",
+                    "triggered_at": "2026-05-24T13:30:00Z",
+                    "description": "Ledger intervention fixture.",
+                }
+            )
             bff_main.read_store._data.setdefault("governance_audit_events", []).append(
                 {
                     "entry_id": "audit-override-001",
@@ -934,32 +982,40 @@ def test_governance_ledger_unifies_approval_intervention_and_override_sources() 
             response = client.get(
                 "/bff/management/governance-ledger",
                 headers=HEADERS,
-                params={"page_size": 20},
+                params={"page_size": 200},
             )
 
             assert response.status_code == 200, response.text
             body = response.json()
             data = body["data"]
+            items = data["items"]
+            summary = data["summary"]
 
             assert data["id"] == "management-governance-ledger"
-            assert body["items"] == body["entries"] == data["entries"]
-            assert body["ledger"] == body["items"]
-            assert body["summary"] == data["summary"]
-            assert body["page_info"]["total"] == body["summary"]["ledger_count"]
-            assert body["page_info"]["page_size"] == 20
-            assert body["summary"]["approval_count"] >= 1
-            assert body["summary"]["intervention_count"] >= 1
-            assert body["summary"]["override_count"] == 1
-            assert body["summary"]["by_source_type"]["override"] == 1
-            assert body["summary"]["policy"] == "read_only_governance_ledger"
+            assert set(body.keys()) == {"data", "page_info", "meta"}
+            assert "entries" not in data
+            assert "ledger" not in data
+            assert body["page_info"]["total"] == summary["ledger_count"]
+            assert body["page_info"]["page_size"] == 200
+            assert summary["approval_count"] >= 1
+            assert summary["intervention_count"] >= 1
+            assert summary["override_count"] == 1
+            assert summary["by_source_type"]["override"] == 1
+            assert summary["policy"] == "read_only_governance_ledger"
             assert body["meta"]["policy"] == "read_only_governance_ledger"
             assert body["meta"]["surfaces"]["governance_ledger"]["source"] == "bff_composed"
             assert "GET /bff/audit" in body["meta"]["composition_sources"]
             assert "GET /bff/approvals" in body["meta"]["composition_sources"]
             assert "GET /bff/v5/interventions" in body["meta"]["composition_sources"]
-            assert any(item["source_type"] == "approval" for item in body["items"])
-            assert any(item["source_type"] == "intervention" for item in body["items"])
-            assert any(item["source_type"] == "override" for item in body["items"])
+            assert any(item["source_type"] == "approval" for item in items)
+            assert any(item["source_type"] == "intervention" for item in items)
+            assert any(item["source_type"] == "override" for item in items)
+            assert all("ledgerId" not in item for item in items)
+            assert all("sourceType" not in item for item in items)
+            assert all("eventType" not in item for item in items)
+            assert all("evidenceRefs" not in item for item in items)
+            assert all("sourceRecord" not in item for item in items)
+            assert all("source_record" not in item for item in items)
 
             override = client.get(
                 "/bff/management/governance-ledger",
@@ -968,10 +1024,12 @@ def test_governance_ledger_unifies_approval_intervention_and_override_sources() 
             )
             assert override.status_code == 200, override.text
             override_body = override.json()
-            assert override_body["summary"]["ledger_count"] == 1
-            assert override_body["items"][0]["event_type"] == "ManualRiskOverride"
+            assert override_body["data"]["summary"]["ledger_count"] == 1
+            assert override_body["data"]["items"][0]["event_type"] == "ManualRiskOverride"
         finally:
             bff_main.read_store = original
+            bff_main._V5_INTERVENTIONS_STORE.clear()
+            bff_main._V5_INTERVENTIONS_STORE.extend(original_interventions)
 
 
 def test_governance_ledger_cors_preflight_and_openapi() -> None:
@@ -1017,18 +1075,120 @@ def test_cost_attribution_success() -> None:
             body = response.json()
             data = body["data"]
 
+            assert set(body) == {"data", "page_info", "meta"}
             assert data["id"] == "management-cost-attribution"
-            assert body["items"] == body["rows"] == data["rows"]
-            assert body["attributions"] == body["items"]
-            assert body["summary"] == data["summary"]
+            assert set(data) >= {"items", "summary"}
+            assert "rows" not in data
+            assert "attributions" not in data
             assert body["page_info"]["page_size"] == 20
-            assert body["summary"]["policy"] == "read_only_cost_attribution"
+            assert data["summary"]["policy"] == "read_only_cost_attribution"
             assert body["meta"]["policy"] == "read_only_cost_attribution"
             assert "cost_attribution" in body["meta"]["surfaces"]
             assert body["meta"]["surfaces"]["cost_attribution"]["source"] == "bff_composed"
             assert "GET /bff/capital-pools" in body["meta"]["composition_sources"]
-            assert "row_count" in body["summary"]
-            assert "total_cost" in body["summary"]
+            assert "row_count" in data["summary"]
+            assert "total_cost" in data["summary"]
+            assert "rowCount" not in data["summary"]
+            assert "totalCost" not in data["summary"]
+            if data["items"]:
+                row = data["items"][0]
+                assert "cost_id" in row
+                assert "capital_pool_id" in row
+                assert "source_refs" in row
+                assert "costId" not in row
+                assert "capitalPoolId" not in row
+                assert "sourceRefs" not in row
+                assert "capitalPool" not in row["links"]
+                assert "performanceAttribution" not in row["links"]
+        finally:
+            bff_main.read_store = original
+
+
+def test_cost_attribution_pages_groups_before_row_projection(monkeypatch) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td, fallback=False)
+            sources = {
+                "runtime_bindings": [{"runtime_id": "runtime-a"}],
+                "deployment_plans": [],
+                "bindings": [],
+                "capital_pools": [
+                    {"pool_id": "pool-a", "name": "Pool A", "risk_budget": 100.0},
+                    {"pool_id": "pool-b", "name": "Pool B", "risk_budget": 100.0},
+                    {"pool_id": "pool-c", "name": "Pool C", "risk_budget": 100.0},
+                ],
+                "personas": [],
+                "strategies": [],
+                "plans_by_id": {},
+                "bindings_by_id": {},
+                "pools_by_id": {
+                    "pool-a": {"pool_id": "pool-a", "name": "Pool A", "risk_budget": 100.0},
+                    "pool-b": {"pool_id": "pool-b", "name": "Pool B", "risk_budget": 100.0},
+                    "pool-c": {"pool_id": "pool-c", "name": "Pool C", "risk_budget": 100.0},
+                },
+                "personas_by_id": {},
+                "strategies_by_id": {},
+                "telemetry_by_runtime_id": {"runtime-a": {"runtime_id": "runtime-a"}},
+            }
+            facts = [
+                {
+                    "runtime_id": "runtime-a",
+                    "capital_pool_id": "pool-a",
+                    "persona_id": "persona-a",
+                    "strategy_id": "strategy-a",
+                    "total_trades": 1,
+                    "notional": 1000.0,
+                    "avg_slippage_bps": 1.0,
+                    "exposure": 100.0,
+                    "telemetry_available": True,
+                },
+                {
+                    "runtime_id": "runtime-b",
+                    "capital_pool_id": "pool-b",
+                    "persona_id": "persona-b",
+                    "strategy_id": "strategy-b",
+                    "total_trades": 1,
+                    "notional": 2000.0,
+                    "avg_slippage_bps": 1.0,
+                    "exposure": 200.0,
+                    "telemetry_available": True,
+                },
+                {
+                    "runtime_id": "runtime-c",
+                    "capital_pool_id": "pool-c",
+                    "persona_id": "persona-c",
+                    "strategy_id": "strategy-c",
+                    "total_trades": 1,
+                    "notional": 3000.0,
+                    "avg_slippage_bps": 1.0,
+                    "exposure": 300.0,
+                    "telemetry_available": True,
+                },
+            ]
+            projected_fact_counts: list[int] = []
+            original_rows = bff_main._management_cost_attribution_rows
+
+            def tracking_rows(projected_facts: list[dict[str, Any]], projected_sources: dict[str, Any]):
+                projected_fact_counts.append(len(projected_facts))
+                return original_rows(projected_facts, projected_sources)
+
+            monkeypatch.setattr(bff_main, "_pm12_performance_attribution_sources", lambda: sources)
+            monkeypatch.setattr(bff_main, "_pm12_performance_attribution_facts", lambda _sources, _period: facts)
+            monkeypatch.setattr(bff_main, "_management_cost_attribution_rows", tracking_rows)
+
+            response = client.get(
+                "/bff/management/cost-attribution",
+                headers=HEADERS,
+                params={"page_size": 1},
+            )
+
+            assert response.status_code == 200, response.text
+            body = response.json()
+            assert body["data"]["summary"]["row_count"] == 3
+            assert body["data"]["summary"]["returned_row_count"] == 1
+            assert body["page_info"] == {"next_page_token": "1", "total": 3, "page_size": 1}
+            assert projected_fact_counts == [1]
         finally:
             bff_main.read_store = original
 
@@ -1048,7 +1208,7 @@ def test_cost_attribution_filter_by_persona() -> None:
             assert response.status_code == 200, response.text
             body = response.json()
             assert body["page_info"]["total"] == 0
-            assert body["items"] == []
+            assert body["data"]["items"] == []
         finally:
             bff_main.read_store = original
 
@@ -1073,5 +1233,54 @@ def test_cost_attribution_cors_preflight_and_openapi() -> None:
             schema = client.get("/openapi.json").json()
             assert "/bff/management/cost-attribution" in schema["paths"]
             assert "get" in schema["paths"]["/bff/management/cost-attribution"]
+        finally:
+            bff_main.read_store = original
+
+
+def test_persona_league_and_quarterly_ranking_normalization() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            client = _fresh_client(td)
+
+            # Test Quarterly Ranking normalization
+            response = client.get(
+                "/bff/management/quarterly-ranking",
+                headers=HEADERS,
+                params={"quarter": "2026-Q1"},
+            )
+            assert response.status_code == 200, response.text
+            body = response.json()
+            data = body["data"]
+            assert "items" in data
+            for item in data["items"]:
+                assert "period" in item
+                assert item["period"] == "quarter"
+                assert "criteria" in item
+                assert "governance_state" in item
+                assert "eligible" in item
+                assert "exclusion_reason" in item or item["exclusion_reason"] is None
+                assert "evidence_coverage" in item
+                assert "source_confidence" in item
+
+            # Test Persona League Rankings normalization
+            response = client.get(
+                "/bff/management/persona-league/rankings",
+                headers=HEADERS,
+            )
+            assert response.status_code == 200, response.text
+            body = response.json()
+            data = body["data"]
+            assert "items" in data
+            for block in data["items"]:
+                assert "items" in block
+                for item in block["items"]:
+                    assert "period" in item
+                    assert item["period"] == "short_cycle"
+                    assert "criteria" in item
+                    assert "eligible" in item
+                    assert "exclusion_reason" in item or item["exclusion_reason"] is None
+                    assert "evidence_coverage" in item
+                    assert "source_confidence" in item
         finally:
             bff_main.read_store = original

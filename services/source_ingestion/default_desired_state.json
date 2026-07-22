@@ -1,0 +1,30 @@
+{
+  "authority": "deployment://source-ingest/default-public-market-requirement",
+  "personas": [
+    {
+      "created_at": "2026-07-14T00:00:00Z",
+      "lifecycle_state": "research_only",
+      "mandate": "Maintain a credential-free official Taiwan market reference feed for governed research.",
+      "name": "Source Ingest Public Market Baseline",
+      "persona_id": "persona-source-ingest-public-market",
+      "required_data_sources": [
+        {
+          "cadence": "daily",
+          "connector_candidates": [
+            "tw-twse-tpex-official-market"
+          ],
+          "dataset": "tw_price_daily",
+          "market": "TW",
+          "policy_gates": [
+            "require_connector_approved",
+            "require_schedule_active",
+            "require_source_health_ok",
+            "no_live_capital"
+          ],
+          "source_class": "live_pull"
+        }
+      ]
+    }
+  ],
+  "schema_version": "source_ingest_desired_state.v1"
+}

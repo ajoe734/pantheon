@@ -1,0 +1,140 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-EVO-001",
+  "archived_at": "2026-06-27T15:32:28Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-EVO-001",
+    "title": "Create postmortem drafts from resolved incidents",
+    "summary_zh": "新增 incident-to-postmortem draft worker，讓 resolved incident 不再掉進手動 backlog。",
+    "phase": "Global Loop Autopilot / Wave 5 Postmortem Evolution",
+    "owner": "Codex2",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "LOOP-AUTO-TEL-004"
+    ],
+    "artifacts": [
+      "services/incidents",
+      "services/postmortems",
+      "docs/deployment/evidence"
+    ],
+    "acceptance": [
+      "Resolved incident creates or updates a postmortem draft",
+      "Draft links telemetry reconciliation and incident evidence",
+      "Duplicate resolved events do not create duplicate drafts"
+    ],
+    "next": "Owner finalized closeout after PR #2453 merged into dev at 52b91a73e33b65b87bb8c2574a163897cc3ce881; pytest rerun 104 passed.",
+    "last_update": "2026-06-27T15:32:28Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+    "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+    "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+    "proof_required": [
+      "unit tests",
+      "contract tests",
+      "local service smoke",
+      "restart or replay evidence when worker or runtime behavior changes"
+    ],
+    "non_goals": [
+      "No live-capital execution",
+      "No approval gate bypass",
+      "No panel-only closure",
+      "No seed fixture as live proof"
+    ],
+    "dispatch_rules": [
+      "idempotent duplicate ticks and duplicate events",
+      "operator-visible truth projection required",
+      "maturity cannot rise above collected evidence",
+      "repo workflow closure required before done"
+    ],
+    "loop_ids": [
+      "evolution"
+    ],
+    "current_maturity": "api-only",
+    "target_maturity": "reconciled",
+    "desired_state_sources": [
+      "resolved IncidentCase"
+    ],
+    "actual_state_sources": [
+      "Postmortem draft"
+    ],
+    "wave_id": "Wave 5 Postmortem Evolution",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過",
+      "104 tests passed; idempotency, evidence linkage, draft merge, and status gate all verified",
+      "Returning to Codex2 for owner finalization"
+    ],
+    "review_file": "docs/deployment/evidence/loop-auto-evo-001/review_claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-27T15:32:28Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-evo-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOOP-AUTO-EVO-001",
+      "git_clean_required": false,
+      "commit": "b1f4aaf6ddfab6787b50f11d666db2efa3605350",
+      "commit_subject": "LOOP-AUTO-EVO-001: finalize closeout evidence",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task closeout evidence, reviewer approval artifact, and task brief review-approved handoff record.",
+        "Not changing": "resolved incident consumer behavior, postmortem route semantics, downstream evolution proposal bridge, or live-capital behavior.",
+        "Composes with": "merged implementation PR #2450 and LOOP-AUTO-EVO-002 postmortem-to-evolution proposal bridge.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "LOOP-AUTO-EVO-001",
+        "Reviewer": "Claude2",
+        "Verified": "python3 -m pytest services/incident/test_incident.py services/postmortems/test_main_routes.py (104 passed in 15.60s)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LOOP-AUTO-EVO-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "52b91a73e33b65b87bb8c2574a163897cc3ce881",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-EVO-001",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-06-27T15:10:17Z",
+      "resolved_at": "2026-06-27T15:10:30Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-EVO-001",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Implementation merged in PR #2450 at f5d076a8a40449bc11878d7931d8f20dcd4d6bf3. Please review resolved IncidentCase to idempotent Postmortem draft generation before owner closeout.",
+      "status": "done",
+      "created_at": "2026-06-27T15:19:55Z",
+      "resolved_at": "2026-06-27T15:23:06Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-EVO-001",
+      "from": "Claude2",
+      "to": "Codex2",
+      "message": "Review approved: resolved-incident-to-postmortem-draft consumer is correct and idempotent. 104 tests passed. Returning to Codex2 for closeout.",
+      "status": "done",
+      "created_at": "2026-06-27T15:23:06Z",
+      "resolved_at": "2026-06-27T15:32:29Z"
+    }
+  ],
+  "blockers": []
+}

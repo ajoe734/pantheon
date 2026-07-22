@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "MGMT-OPS-003-GAP-004-MOBILE-HUMAN-INBOX-FIX-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-07-12T01:16:30Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-OPS-003-GAP-004-MOBILE-HUMAN-INBOX-FIX-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare MGMT-OPS-003-GAP-004-MOBILE-HUMAN-INBOX-FIX BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-OPS-003-GAP-004-MOBILE-HUMAN-INBOX-FIX，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "MGMT-OPS-003 Hosted Gap / Wave 2 mobile repair",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "MGMT-OPS-003-GAP-001",
+      "MGMT-OPS-003-GAP-002",
+      "MGMT-OPS-003-GAP-003"
+    ],
+    "artifacts": [
+      "support/sidecars/MGMT-OPS-003-GAP-004-MOBILE-HUMAN-INBOX-FIX/MGMT-OPS-003-GAP-004-MOBILE-HUMAN-INBOX-FIX-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "PR #3330 merged as 8d8f55aafcf2978c6018b4f05a267cdcf3dcbf11. Support-only BFF/frontend handoff packet and Codex2 review are durable; focused Human Inbox BFF suite passed (5 tests). Canonical/runtime layers unchanged; parent owner decides absorption and repair.",
+    "last_update": "2026-07-12T01:16:30Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-OPS-003-GAP-004-MOBILE-HUMAN-INBOX-FIX",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：evidence boundary、query-gap claims、mobile strict fail-closed handoff 與 canonical non-mutation 均符合 sidecar scope。",
+      "Parent owner 仍須決定吸收範圍並完成 frontend repair、deployment 與雙 viewport hosted evidence。"
+    ],
+    "review_file": "support/reviews/MGMT-OPS-003-GAP-004-MOBILE-HUMAN-INBOX-FIX-SIDECAR-BFF-HANDOFF-codex2-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T01:16:30Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-ops-003-gap-004-mobile-human-inbox-fix-sidecar-bff-handoff",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-OPS-003-GAP-004-MOBILE-HUMAN-INBOX-FIX-SIDECAR-BFF-HANDOFF",
+      "git_clean_required": false,
+      "commit": "337be0e12549103b20205b9b07a54c31bef6ea9d",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/MGMT-OPS-003-GAP-004-MOBILE-HUMAN-INBOX-FIX-SIDECAR-BFF-HANDOFF",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-OPS-003-GAP-004-MOBILE-HUMAN-INBOX-FIX-SIDECAR-BFF-HANDOFF",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "8d8f55aafcf2978c6018b4f05a267cdcf3dcbf11",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-OPS-003-GAP-004-MOBILE-HUMAN-INBOX-FIX-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only BFF/frontend handoff packet ready at support/sidecars/MGMT-OPS-003-GAP-004-MOBILE-HUMAN-INBOX-FIX/MGMT-OPS-003-GAP-004-MOBILE-HUMAN-INBOX-FIX-SIDECAR-BFF-HANDOFF.md; commit 8b9e59ab7. Verify evidence boundary, query-gap claims, fail-closed mobile handoff, and canonical non-mutation.",
+      "status": "done",
+      "created_at": "2026-07-12T01:11:42Z",
+      "resolved_at": "2026-07-12T01:13:33Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-004-MOBILE-HUMAN-INBOX-FIX-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved at 596068b49; 5 Human Inbox BFF contract tests passed. Return to Codex for PR finalization and parent handoff.",
+      "status": "done",
+      "created_at": "2026-07-12T01:13:33Z",
+      "resolved_at": "2026-07-12T01:16:31Z"
+    }
+  ],
+  "blockers": []
+}

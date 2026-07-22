@@ -108,13 +108,164 @@ class PostgresJsonOwnerStore:
         with self._connect() as conn:
             conn.execute(
                 f"""
-                INSERT INTO {self.table} (record_id, payload)
-                VALUES (%s, %s::jsonb)
-                ON CONFLICT (record_id)
-                DO UPDATE SET payload = EXCLUDED.payload, updated_at = now()
+                INSERT INTO {self.table} (record_id, payload, updated_at)
+                VALUES (%s, %s::jsonb, now())
+                ON CONFLICT (record_id) DO UPDATE SET
+                    payload = EXCLUDED.payload,
+                    updated_at = EXCLUDED.updated_at
                 """,
                 (record_id, json.dumps(payload, ensure_ascii=True, sort_keys=True)),
             )
+
+    def compare_and_set(
+        self,
+        record_id: str,
+        expected_payload: Optional[Dict[str, Any]],
+        payload: Dict[str, Any],
+    ) -> tuple[bool, Optional[Dict[str, Any]]]:
+        """Atomically replace one row only when its JSONB snapshot matches.
+
+        ``expected_payload=None`` means the row must not exist.  Existing-row
+        updates use JSONB equality in the ``UPDATE`` predicate, so competing
+        service instances cannot both commit from the same stale snapshot.
+        The returned payload is the durable canonical value after the attempt.
+        """
+
+        if not record_id:
+            raise ValueError("record_id is required")
+        if self.read_only:
+            raise PermissionError(
+                f"{self.table_name} is read-only for this store; "
+                f"writes must go through {self.owner_service}"
+            )
+        encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True)
+        with self._connect() as conn:
+            if expected_payload is None:
+                cursor = conn.execute(
+                    f"""
+                    INSERT INTO {self.table} (record_id, payload, updated_at)
+                    VALUES (%s, %s::jsonb, now())
+                    ON CONFLICT (record_id) DO NOTHING
+                    RETURNING payload
+                    """,
+                    (record_id, encoded),
+                )
+            else:
+                cursor = conn.execute(
+                    f"""
+                    UPDATE {self.table}
+                    SET payload = %s::jsonb, updated_at = now()
+                    WHERE record_id = %s AND payload = %s::jsonb
+                    RETURNING payload
+                    """,
+                    (
+                        encoded,
+                        record_id,
+                        json.dumps(expected_payload, ensure_ascii=True, sort_keys=True),
+                    ),
+                )
+            row = self._fetch_one(cursor)
+            if row is not None:
+                canonical = row[0] if isinstance(row, tuple) else row.get("payload")
+                return True, self._decode_payload(canonical)
+
+            current_cursor = conn.execute(
+                f"SELECT payload FROM {self.table} WHERE record_id = %s",
+                (record_id,),
+            )
+            current_row = self._fetch_one(current_cursor)
+            if current_row is None:
+                return False, None
+            current = (
+                current_row[0]
+                if isinstance(current_row, tuple)
+                else current_row.get("payload")
+            )
+            return False, self._decode_payload(current)
+
+    def delete_if_matches(self, record_id: str, expected_payload: Dict[str, Any]) -> bool:
+        """Delete one row only if it is still the supplied canonical snapshot."""
+
+        if not record_id:
+            raise ValueError("record_id is required")
+        if self.read_only:
+            raise PermissionError(
+                f"{self.table_name} is read-only for this store; "
+                f"writes must go through {self.owner_service}"
+            )
+        with self._connect() as conn:
+            cursor = conn.execute(
+                f"""
+                DELETE FROM {self.table}
+                WHERE record_id = %s AND payload = %s::jsonb
+                RETURNING payload
+                """,
+                (
+                    record_id,
+                    json.dumps(expected_payload, ensure_ascii=True, sort_keys=True),
+                ),
+            )
+            return self._fetch_one(cursor) is not None
+
+    def insert_if_absent(
+        self,
+        record_id: str,
+        payload: Dict[str, Any],
+        *,
+        unique_fields: tuple[str, ...] = (),
+    ) -> tuple[bool, Dict[str, Any]]:
+        """Atomically insert a record or return its identity collision.
+
+        ``unique_fields`` defines an optional composite identity in addition to
+        ``record_id``.  Delivery inboxes use it to reserve an idempotency key
+        even when a divergent replay supplies a different event ID.  The table
+        lock keeps the read/decision/write sequence in one transaction; normal
+        ``put`` writers acquire a conflicting row-exclusive table lock.
+        """
+
+        if not record_id:
+            raise ValueError("record_id is required")
+        if self.read_only:
+            raise PermissionError(
+                f"{self.table_name} is read-only for this store; "
+                f"writes must go through {self.owner_service}"
+            )
+        fields = tuple(str(field).strip() for field in unique_fields)
+        if any(not field for field in fields):
+            raise ValueError("unique_fields must contain non-empty field names")
+        missing = [field for field in fields if field not in payload]
+        if missing:
+            raise ValueError(f"payload missing unique fields: {missing}")
+
+        with self._connect() as conn:
+            conn.execute(f"LOCK TABLE {self.table} IN SHARE ROW EXCLUSIVE MODE")
+            direct_cursor = conn.execute(
+                f"SELECT payload FROM {self.table} WHERE record_id = %s",
+                (record_id,),
+            )
+            direct_row = self._fetch_one(direct_cursor)
+            if direct_row is not None:
+                existing = direct_row[0] if isinstance(direct_row, tuple) else direct_row.get("payload")
+                return False, dict(self._decode_payload(existing) or {})
+
+            if fields:
+                cursor = conn.execute(f"SELECT payload FROM {self.table} ORDER BY updated_at ASC")
+                for row in cursor.fetchall():
+                    existing = row[0] if isinstance(row, tuple) else row.get("payload")
+                    decoded = self._decode_payload(existing)
+                    if decoded is not None and all(decoded.get(field) == payload.get(field) for field in fields):
+                        return False, dict(decoded)
+
+            conn.execute(
+                f"""
+                INSERT INTO {self.table} (record_id, payload)
+                VALUES (%s, %s::jsonb)
+                ON CONFLICT (record_id)
+                DO NOTHING
+                """,
+                (record_id, json.dumps(payload, ensure_ascii=True, sort_keys=True)),
+            )
+        return True, dict(payload)
 
     def get(self, record_id: str) -> Optional[Dict[str, Any]]:
         with self._connect() as conn:

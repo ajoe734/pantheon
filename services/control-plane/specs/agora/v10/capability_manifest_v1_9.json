@@ -1,0 +1,134 @@
+{
+  "manifest_version": "1.9",
+  "extends": "v1.8",
+  "description": "Contract-first reset for daily, strict-operator Persona interaction. It replaces the prior assumption that deterministic simulator output or a bounded write-proof is a daily Persona product, without rewriting historical evidence.",
+  "schema_bundle_index": "services/control-plane/specs/agora/bundle_index.v1_9.json",
+  "openapi_ref": "services/control-plane/openapi/agora_v1_9.openapi.yaml",
+  "capabilities": [
+    {
+      "id": "persona_interaction_daily_contract",
+      "name": "agora.persona.interaction.daily.v1",
+      "version": "1.0",
+      "description": "Durable queued/running/completed/degraded/failed interactions with immutable human request, typed source context, per-Persona invocation, independent opinion, synthesis, partial failure, and readback.",
+      "schemas": [
+        "InteractionContextSnapshot",
+        "ImmutableHumanRequest",
+        "PersonaParticipantSnapshot",
+        "ProviderInvocation",
+        "TypedPersonaOpinion",
+        "InteractionSynthesis",
+        "InteractionSubmitRequestV2",
+        "InteractionResource"
+      ],
+      "routes": [
+        "GET /bff/agora/interactions",
+        "POST /bff/agora/interactions",
+        "GET /bff/agora/interactions/{interaction_id}",
+        "GET /bff/agora/interactions/{interaction_id}/timeline",
+        "POST /bff/agora/interactions/{interaction_id}:retry",
+        "POST /bff/agora/interactions:recover",
+        "GET /bff/agora/interactions/{interaction_id}/stream"
+      ],
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "persona_provider_content_contract",
+      "name": "agora.persona.provider_content.v1",
+      "version": "1.0",
+      "description": "Each production opinion is independently correlated to the selected Persona/version and OpenClaw request/response; canned templates, keyword branches, magic topics, fixtures, and simulators are forbidden.",
+      "schemas": ["ProviderInvocation", "ProductionContentProvenance", "TypedPersonaOpinion"],
+      "routes": [
+        "GET /bff/agora/interactions/{interaction_id}"
+      ],
+      "implementation_status": "implemented"
+    },
+    {
+      "id": "persona_recommended_measure_governance_contract",
+      "name": "agora.persona.recommended_measure.governance.v1",
+      "version": "1.0",
+      "description": "Provider-authored structured measures become governed candidates; operator modify/accept-for-review/reject/defer/cancel decisions remain distinct from authoritative validation and formal approval.",
+      "schemas": [
+        "RecommendedMeasure",
+        "CandidateFromMeasureRequest",
+        "CandidateDecisionRequest",
+        "CandidateDecisionRecord",
+        "AuthoritativeValidationRequest",
+        "AuthoritativeValidationReceipt",
+        "FormalApprovalReceipt"
+      ],
+      "routes": [
+        "POST /bff/agora/interactions/{interaction_id}/recommended-measures/{measure_id}/candidates",
+        "GET /bff/agora/proposals/{proposal_id}/candidate",
+        "GET /bff/agora/proposals/{proposal_id}/candidate-decisions",
+        "POST /bff/agora/proposals/{proposal_id}/candidate-decisions",
+        "POST /bff/agora/proposals/{proposal_id}/validations",
+        "GET /bff/agora/proposals/{proposal_id}/validations/{validation_receipt_id}",
+        "GET /bff/agora/proposals/{proposal_id}/review-readiness",
+        "POST /bff/agora/proposals/{proposal_id}/formal-approvals/{approval_decision_id}:link",
+        "GET /bff/agora/proposals/{proposal_id}/formal-approvals/{approval_decision_id}"
+      ],
+      "implementation_status": "implemented"
+    }
+  ],
+  "required_definition_checksums": [
+    "AuthorityBoundary",
+    "EvidenceRef",
+    "InteractionContextSnapshot",
+    "ImmutableHumanRequest",
+    "PersonaParticipantSnapshot",
+    "ProviderInvocation",
+    "ProductionContentProvenance",
+    "RecommendedMeasure",
+    "TypedPersonaOpinion",
+    "InteractionSynthesis",
+    "InteractionSubmitRequestV2",
+    "InteractionResource",
+    "CandidateFromMeasureRequest",
+    "CandidateDecisionRequest",
+    "CandidateDecisionRecord",
+    "AuthoritativeValidationRequest",
+    "AuthoritativeValidationReceipt",
+    "FormalApprovalReceipt"
+  ],
+  "production_content_policy": {
+    "content_origin": "selected_persona_provider_response",
+    "provider_kind": "openclaw",
+    "independent_invocation_per_selected_persona": true,
+    "request_response_correlation_required": true,
+    "canned_template_allowed": false,
+    "keyword_branch_allowed": false,
+    "magic_topic_trigger_allowed": false,
+    "simulation_allowed": false,
+    "fixture_allowed": false,
+    "forged_opinion_on_provider_failure_allowed": false
+  },
+  "storage_ownership": {
+    "interaction_request": "agora_interaction_postgres",
+    "provider_invocation": "agora_interaction_postgres",
+    "persona_opinion": "agora_interaction_postgres",
+    "synthesis": "agora_interaction_postgres",
+    "interaction_outbox": "agora_interaction_postgres",
+    "workshop_timeline": "workshop_projection_not_authority",
+    "candidate_revision": "agora_governance_postgres",
+    "candidate_decision": "agora_governance_postgres",
+    "validation_receipt": "canonical_validation_service",
+    "formal_approval": "canonical_approval_decision_store",
+    "persona_identity_version": "persona_registry",
+    "provider_response": "openclaw_provider_provenance_not_business_authority",
+    "frontend": "cache_only_no_authority"
+  },
+  "safety_boundary": {
+    "interaction_execution_authority": "none",
+    "accept_for_review_is_formal_approval": false,
+    "formal_approval_executes_target": false,
+    "direct_order_route": false,
+    "broker_call": false,
+    "capital_binding": false,
+    "runtime_binding_write": false,
+    "lifecycle_promotion": false,
+    "policy_mutation": false,
+    "memory_mutation": false,
+    "persona_self_approval": false
+  },
+  "note": "PINT-013 implements the durable interaction and provider-content route family. Recommended-measure governance routes remain contract_only until their owning task merges. Hosted availability still requires deployment proof."
+}

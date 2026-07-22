@@ -13,10 +13,10 @@ Two failure modes this guards against, both seen in production:
    (the deploy sync stops), so merged code never goes live.
 
 NOT every live != repo difference is drift. Some live overrides are
-legitimate and environment-specific (e.g. `coordination.enabled` is off
-because this host has no `front-ai-trading-system` sibling checkout that the
-coordination mirror requires). Those live on an allowlist and are reported as
-informational, never auto-fixed.
+legitimate and environment-specific. Those live on an allowlist and are
+reported as informational, never auto-fixed. Coordination is intentionally
+not allowlisted: its active mirror uses `execute-plans`, while stale legacy
+frontend packets are packet-local skips and cannot stop the supervisor loop.
 """
 from __future__ import annotations
 
@@ -32,19 +32,23 @@ CRITICAL_FLAGS: tuple[str, ...] = (
     "chair_review.enabled",
     "worker_reassignment.enabled",
     "ready_dispatcher.enabled",
+    "ready_dispatcher.require_explicit_provider_accounts",
+    "ready_dispatcher.allow_legacy_provider_account_aliases",
+    "ready_dispatcher.max_concurrent_per_account",
     "coordination.enabled",
     "github_bus.enabled",
     "watchdog.enabled",
+    "supervisor.observe_worker_commit_progress",
+    "supervisor.lease_requires_work_progress",
+    "worker_runtime.worker_lease_seconds",
+    "worker_runtime.work_progress_stale_seconds",
+    "task_state_store.mode",
 )
 
 # Paths where live is ALLOWED to diverge from repo for legitimate
 # environment reasons. Reported as info, never counted as drift, never fixed.
 DEFAULT_INTENTIONAL_OVERRIDES: frozenset[str] = frozenset(
     {
-        # coordination mirror requires a sibling front-ai-trading-system
-        # checkout that is absent on supervisor-only hosts; enabling it there
-        # crashes every scan.
-        "coordination.enabled",
         # GitHub event bus is intentionally off on hosts without the relay
         # wired up.
         "github_bus.enabled",
@@ -81,16 +85,21 @@ def find_drift(
 
     drift: non-allowlisted critical flag where repo != live (actionable).
     intentional: allowlisted flag where repo != live (informational).
-    missing: flag absent from one or both configs (informational).
+    missing: flag absent from the repo config (informational). A repo-owned flag
+    missing from live is actionable drift so --fix can provision it.
     """
     drift, intentional, missing = [], [], []
     for path in critical_flags:
         repo_val = get_dotted(repo_cfg, path)
         live_val = get_dotted(live_cfg, path)
-        if repo_val is _SENTINEL or live_val is _SENTINEL:
+        if repo_val is _SENTINEL:
             missing.append({"path": path,
-                            "repo": None if repo_val is _SENTINEL else repo_val,
+                            "repo": None,
                             "live": None if live_val is _SENTINEL else live_val})
+            continue
+        if live_val is _SENTINEL:
+            record = {"path": path, "repo": repo_val, "live": None}
+            (intentional if path in overrides else drift).append(record)
             continue
         if repo_val == live_val:
             continue

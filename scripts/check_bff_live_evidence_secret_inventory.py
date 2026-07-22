@@ -15,7 +15,7 @@ from write_bff_live_evidence_preflight import REQUIRED_SECRET_ENV_VARS
 DEFAULT_REPOSITORY = "ajoe734/pantheon"
 DEFAULT_ENVIRONMENTS = ("dev", "staging-live")
 DEFAULT_BFF_BASE_URLS = {
-    "dev": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+    "dev": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
     "staging-live": "https://pantheon-lupin-staging-bff.104.155.223.192.sslip.io",
 }
 

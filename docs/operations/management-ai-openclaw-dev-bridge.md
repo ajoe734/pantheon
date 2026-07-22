@@ -10,8 +10,12 @@ auto-worker execution.
 
 - Backend/BFF repo: `ajoe734/pantheon`
 - Frontend repo: `ajoe734/execute-plans`
-- Active dev FE: `https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io`
-- Active dev BFF: `https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io`
+- Active dev FE: `https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io`
+- Active dev BFF: `https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io`
+
+The URLs above are the 2026-07-19 replacement dev target. The runtime proof
+below is historical evidence from the retired `35.201.239.38` host and must not
+be reused as proof for the replacement VM.
 
 Do not use `front-ai-trading-system` for current frontend development. Do not
 use Lovable publish state as the dev frontend host or acceptance source. Lovable
@@ -212,7 +216,7 @@ frontend code.
 The supervisor owns packet draining. The configured dev inbox should point at:
 
 ```text
-/home/lupin/code/pantheon/.orchestrator/assistant-dev-packets
+/home/lupin/pantheon/.orchestrator/assistant-dev-packets
 ```
 
 Expected directories:

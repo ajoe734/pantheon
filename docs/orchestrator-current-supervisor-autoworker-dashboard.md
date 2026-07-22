@@ -4,7 +4,7 @@ Status date: 2026-04-28
 
 ## 2026-05-03 Local Runtime Addendum
 
-The local `/home/lupin/code/pantheon` supervisor is temporarily running with an
+The local `/home/lupin/pantheon` supervisor is temporarily running with an
 execution-only guard while blueprint execution tasks drain. The guard lives in
 `.orchestrator/config.local.json` and sets `coordination.enabled=false`,
 `github_bus.enabled=false`, and `chair_review.enabled=false`.

@@ -1,0 +1,163 @@
+{
+  "version": 1,
+  "task_id": "SRCLIVE-002",
+  "archived_at": "2026-06-28T12:15:15Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SRCLIVE-002",
+    "title": "US 研究源全接齊 (stooq/sec/finra/fred/polygon/alphavantage)",
+    "summary_zh": "persona-us-equity 目前只宣告 ibkr(broker,已 read_ok),沒有任何研究級資料源。要把所有已存在的 US 研究連接器全部接上(不做 MVP):免 key(AuthType.NONE)四個 us-stooq-daily-ohlcv / us-sec-edgar-filings / us-finra-short-sale / us-fred-macro 全部活到 read_ok;需 key(AuthType.API_KEY)兩個 us-polygon-daily-ohlcv / us-alpha-vantage-daily-ohlcv 也要把連接器與對照接好,在沒有 secret 時誠實顯示 credential_unavailable(附 reason 與所需 secret_ref),嚴禁隱藏或假綠。工作:(1) 在 BFF _SOURCE_PROVIDER_CONNECTOR_CANDIDATES 加六個 provider_key→connector_id 對照(stooq/sec_edgar/finra/fred/polygon/alphavantage,provider_key 命名需與 persona data_sources 宣告一致);(2) 在 read_store.py persona data_sources 產生器替 persona-us-equity 宣告這六個來源(source_class 標 research_grade/official_reference,order_capable=false);(3) 在 source-ingest active_universe 為四個免 key 連接器加 SourceUpdateRule 並觸發 ingest run;(4) 兩個 key-gated 標 credential_unavailable + 所需 secret_ref;(5) runbook。ibkr 維持不動。\n\n[設計規則] 唯讀疊加層 _overlay_source_health_truth 是真相來源:provider 翻 read_ok 的唯一合法路徑是(1) BFF _SOURCE_PROVIDER_CONNECTOR_CANDIDATES 有 provider_key→connector_id 對照,且(2) source-ingest /api/source-ingest/health-usage-snapshot 回報該 connector status:ok。嚴禁硬寫 read_ok 或假綠;沒有即時健康就誠實顯示 credential_unavailable / read_unavailable 並附 reason。",
+    "phase": "EPIC SRCLIVE / Phase 1",
+    "owner": "Claude2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/read_store.py",
+      "services/source_ingestion/connectors/us_public.py",
+      "services/source_ingestion/connectors/us_paid_broker.py",
+      "services/source_ingestion/active_universe.py",
+      "docs/05/srclive/us-activation-runbook.md"
+    ],
+    "acceptance": [
+      "persona-us-equity 面板出現 7 個 chip:ibkr + stooq/sec/finra/fred = read_ok(5 綠)",
+      "polygon/alphavantage = credential_unavailable (附 secret_ref);live curl 證明;BFF 對照與 read_store 宣告對齊;runbook 歸檔"
+    ],
+    "next": "Owner closeout: PR #2514 merged into dev 2026-06-28 (merge commit fc74b25c). Six US research sources wired for persona-us-equity: stooq/sec_edgar/finra/fred (read_unavailable→read_ok via health overlay) and polygon/alphavantage (credential_unavailable+secret_ref). ibkr unchanged. Runbook archived at docs/05/srclive/us-activation-runbook.md. Verified: pytest services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py -> 14 passed; pytest services/source_ingestion -> 574 passed, 1 skipped.",
+    "last_update": "2026-06-28T12:15:15Z",
+    "auto_created_by": "orchestrator:srclive-20260628",
+    "review_notes_zh": [
+      "審查通過：PR #2514 已於 2026-06-28 merge 到 dev，merge commit fc74b25cacc504ea4b35de6b9561a5072c2c30ea；SRCLIVE-002 的六個 US provider_key 對照、persona-us-equity data_sources、key-gated credential_unavailable/secret_ref、overlay read_ok 真相路徑與 runbook 均已檢查，ibkr broker read_ok 未被改動。驗證：pytest services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py -> 14 passed；pytest services/source_ingestion -> 574 passed, 1 skipped。"
+    ],
+    "review_file": "docs/05/srclive/us-activation-runbook.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-28T12:15:15Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/srclive-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SRCLIVE-002",
+      "git_clean_required": false,
+      "commit": "d0fec4a9acfb48b376197f9bc5302713a432934f",
+      "commit_subject": "SRCLIVE-002: merge origin/dev (SRCLIVE-004 sidecar closeout)",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude2",
+        "Task-ID": "SRCLIVE-002",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/SRCLIVE-002",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "98cdbc7430e04525d76739bb57c8708f7dbef775",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SRCLIVE-002",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "PR #2514 ready for review. Changes: (1) 6 US provider_key→connector_id in BFF _SOURCE_PROVIDER_CONNECTOR_CANDIDATES (stooq/sec_edgar/finra/fred/polygon/alphavantage); (2) 6 research data sources declared for persona-us-equity US market — 4 no-key sources default read_unavailable and flip to read_ok via _overlay_source_health_truth health overlay when source-ingest reports connector status:ok; 2 key-gated show credential_unavailable with secret_ref field; (3) _provider_truth extended with optional secret_ref param; (4) active_universe SourceUpdateRules already existed for 4 no-key connectors — no new rules added; (5) runbook at docs/05/srclive/us-activation-runbook.md. ibkr unchanged.",
+      "status": "done",
+      "created_at": "2026-06-28T10:24:18Z",
+      "resolved_at": "2026-06-28T10:31:32Z"
+    },
+    {
+      "task_id": "SRCLIVE-002",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review blocked: registry-only source-ingest connector truth currently overwrites no-health defaults; preserve read_unavailable/credential_unavailable until health-usage-snapshot reports connector status ok, then refresh PR #2514.",
+      "status": "done",
+      "created_at": "2026-06-28T10:31:32Z",
+      "resolved_at": "2026-06-28T10:31:32Z"
+    },
+    {
+      "task_id": "SRCLIVE-002",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Fix applied: _overlay_source_health_truth now preserves read_unavailable/credential_unavailable when registry has a connector entry but health-usage-snapshot has no live data (source_health_available=False). The only path to read_ok is confirmed live health from the snapshot. Runbook updated to match. Commit 30341c06 on task/SRCLIVE-002. Ready for Codex review.",
+      "status": "done",
+      "created_at": "2026-06-28T10:35:40Z",
+      "resolved_at": "2026-06-28T10:40:46Z"
+    },
+    {
+      "task_id": "SRCLIVE-002",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review returned to Claude2: PR #2514 now includes 30341c06, but two issues remain before approval. (1) Key-gated source-ingest health with metadata credential_status=credential_unavailable is still projected as source_health_degraded; polygon/alphavantage without secrets must stay credential_unavailable with reason and secret_ref until health.status=ok. Add/fix overlay logic and a focused regression probe/test. (2) git diff --check origin/dev...HEAD fails on docs/05/srclive/us-activation-runbook.md lines 3-6 trailing whitespace. Focused pytest passed locally: python3 -m pytest services/control-plane/bff/test_pathreon_market_persona_fleet_contract.py services/control-plane/bff/test_loop_auto_bff004_cross_loop_drill.py -q.",
+      "status": "done",
+      "created_at": "2026-06-28T10:40:46Z",
+      "resolved_at": "2026-06-28T10:40:47Z"
+    },
+    {
+      "task_id": "SRCLIVE-002",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "All reviewer issues addressed: (1) credential_unavailable overlay fixed — elif branch prevents source_health_degraded from overwriting credential_unavailable when health != ok; two regression tests added and passing; (2) runbook trailing whitespace cleared; git diff --check origin/dev...HEAD clean. 18 pytest passed. PR #2514 ready for re-review.",
+      "status": "done",
+      "created_at": "2026-06-28T10:45:24Z",
+      "resolved_at": "2026-06-28T10:48:32Z"
+    },
+    {
+      "task_id": "SRCLIVE-002",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Re-review behavior passes, but PR #2514 is merge-conflicted with current dev after SRCLIVE-003; GitHub reports mergeable=CONFLICTING/DIRTY. Local verification passed (git diff --check origin/dev...HEAD clean; focused pytest 18 passed; Branch CI green). Owner must merge/rebase dev, preserve both coingecko and SRCLIVE-002 US provider maps/tests, rerun checks, then hand back for review.",
+      "status": "done",
+      "created_at": "2026-06-28T10:48:32Z",
+      "resolved_at": "2026-06-28T10:48:32Z"
+    },
+    {
+      "task_id": "SRCLIVE-002",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Merged origin/dev (SRCLIVE-003 CoinGecko) into task/SRCLIVE-002; resolved conflicts in main.py _SOURCE_PROVIDER_CONNECTOR_CANDIDATES (both US research and CoinGecko entries preserved) and test_pathreon_market_persona_fleet_contract.py (all 3 tests: credential_unavailable probe, upgrade-on-health-ok, CoinGecko overlay). Branch now clean: 14 BFF contract tests pass, 546 source ingestion tests pass, git diff --check origin/dev...HEAD clean. PR #2514 force-updated; ready for re-review.",
+      "status": "done",
+      "created_at": "2026-06-28T10:58:36Z",
+      "resolved_at": "2026-06-28T11:02:56Z"
+    },
+    {
+      "task_id": "SRCLIVE-002",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Codex review approved. Verified BFF/source-ingest tests and source-health overlay semantics; PR #2514 is functionally approved, with latest-dev refresh noted for owner closeout if required.",
+      "status": "done",
+      "created_at": "2026-06-28T11:02:56Z",
+      "resolved_at": "2026-06-28T11:07:53Z"
+    },
+    {
+      "task_id": "SRCLIVE-002",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "PR #2514 merged into dev (2026-06-28). Implementation complete: 6 US provider_key->connector_id entries added to BFF _SOURCE_PROVIDER_CONNECTOR_CANDIDATES, 6 research data-source declarations added to persona-us-equity in read_store.py, credential_unavailable with secret_ref for key-gated sources (polygon/alphavantage), DEFAULT_SOURCE_UPDATE_RULES already contained the 4 no-key SourceUpdateRules. 14 BFF persona/fleet contract tests pass, 546 source_ingestion tests pass. Review notes already present in task from prior session. Please formally approve to allow done closeout.",
+      "status": "done",
+      "created_at": "2026-06-28T11:18:14Z",
+      "resolved_at": "2026-06-28T12:08:58Z"
+    },
+    {
+      "task_id": "SRCLIVE-002",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review approved. Owner Claude2 may finalize SRCLIVE-002 closeout from review_approved to done after confirming merged dev state.",
+      "status": "done",
+      "created_at": "2026-06-28T12:08:58Z",
+      "resolved_at": "2026-06-28T12:15:16Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,27 @@
+{
+  "bundle_version": "1.5",
+  "extends": {
+    "bundle_path": "services/control-plane/specs/agora/bundle_index.v1_4.json",
+    "bundle_version": "1.4",
+    "bundle_index_sha256": "0d052751a394dd3851facadfcb816ebe66927dcadaf1997007beecd121da6074"
+  },
+  "files": {
+    "specs/agora/trading_room_workspace.schema.json": "c810e4aa01303fa877a90f6062fd5f64f5078a7144bacb433bf2089cdd5ace0e",
+    "specs/agora/v6/capability_manifest_v1_5.json": "712ec646ec032cd0fbcc4cdc4f94df34a7ccfecfe5bf54e7f069df7b056c7f97"
+  },
+  "openapi": {
+    "path": "services/control-plane/openapi/agora_v1_5.openapi.yaml",
+    "sha256": "bb61d901a4ff3778630390b8fbe3db0a38e45278d7ab6fbd199dc39b8b005a1e"
+  },
+  "required_definition_checksums": {
+    "TradingRoomWorkspaceProposal": "280655b1dabb861436bf7a5aad2f707d6be7a6e51c077324cd2edd834e52b8db",
+    "TradingRoomWidgetSpec": "66873948e5e92e5a56c5fb8e02074744f07748d74ee3b093e38fb9c8439d65e5",
+    "WidgetRevisionProposal": "789047106e192b4ba73099f2bda0bddb473f37cb1691590dda7b9e0345b9c4d6"
+  },
+  "contract_refs": {
+    "source_design_packet": "docs/04/agora_design_pack_dynui_2026-06-28/source-map-and-gap-map.md",
+    "backend_workspace_contract": "services/control-plane/specs/agora/trading_room_workspace.schema.json",
+    "backend_routes": "services/control-plane/bff/agora/trading_room/router.py"
+  },
+  "note": "Additive V11 dynamic Trading Room OpenAPI/schema bundle for TradingRoomWorkspaceProposal, TradingRoomWidgetSpec, WidgetRevisionProposal, workspace editing, versions, and rollback. The surface remains request-only and schema/allowlist validated."
+}

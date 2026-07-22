@@ -1,0 +1,72 @@
+{
+  "captured_at": "2026-07-15T00:11:25Z",
+  "duration_ms": 5.921,
+  "label": "positive-terminal-binding",
+  "request": {
+    "body": null,
+    "headers": {
+      "Authorization": "Bearer <redacted>"
+    },
+    "method": "GET",
+    "started_at": "2026-07-15T00:11:25Z",
+    "url": "http://127.0.0.1:18081/api/runtime-bindings/rb-a1300e9ad5a74ff999cd8bb3e508d7b4"
+  },
+  "response": {
+    "payload": {
+      "artifact_id": "artifact-loop-prod-dep-20260715001015",
+      "artifact_version": "1.14.1015",
+      "binding_id": "rb-a1300e9ad5a74ff999cd8bb3e508d7b4",
+      "capital_pool_id": "pool-rescue-0260531-6f175c5c",
+      "deployment_mode": "paper",
+      "effective_at": "2026-07-15T00:10:26Z",
+      "execution_mode": "paper",
+      "metadata": {
+        "authoritative_loader_attestation": {
+          "allowed_deployment_scope": "paper",
+          "approval_actor_id": "loop-prod-dep-001-risk-owner",
+          "approval_decision_id": "approval-loop-prod-dep-20260715001015",
+          "approval_decision_sha256": "sha256:1c89352d553920ac5b11398beb33d758575d68bc57576ed72a3d316c7d041082",
+          "approval_proof_url": "http://governance:8082/api/governance/approvals/approval-loop-prod-dep-20260715001015",
+          "artifact_checksum": "sha256:93785cda87b79560ff9a503825db071983f5b34ee0ba3557466ea867bbecce89",
+          "artifact_id": "artifact-loop-prod-dep-20260715001015",
+          "artifact_version": "1.14.1015",
+          "authority": "canonical_deployment_registry_governance_capital",
+          "capital_admissibility_proof_url": "http://capital:8092/api/bindings/admissibility?persona_id=persona-20260531-6f175c5c&capital_pool_id=pool-rescue-0260531-6f175c5c&target_stage=paper",
+          "capital_admissibility_sha256": "sha256:d7c12e60d81725a6e08c6cd1bab664dba682e0aafe788507bf477893e1887883",
+          "capital_pool_id": "pool-rescue-0260531-6f175c5c",
+          "capital_pool_proof_url": "http://capital:8092/api/capital-pools/pool-rescue-0260531-6f175c5c",
+          "capital_pool_sha256": "sha256:50b0a072a60abb135fef39efdca2a3a37df1ec1fda16067e850e174021a4da6a",
+          "deployment_plan_authority_sha256": "sha256:13674d434eeaff00b7b02b0ed92b1215c0b5faada5a633bbb3d3f7e50191f0ae",
+          "deployment_plan_binding_id": null,
+          "deployment_plan_current_stage": "none",
+          "deployment_plan_runtime_lifecycle": {},
+          "deployment_plan_sha256": "sha256:a57c55ea408b04fb02ecec2d705e69a8a1591859b3bb93656fbfda7f4e0fe0e7",
+          "deployment_proof_url": "http://deployment:8095/api/deployment/plans/plan-loop-prod-dep-20260715001015",
+          "persona_binding_proof_url": "http://capital:8092/api/bindings/pcb-rescue-0260531-6f175c5c",
+          "persona_capital_binding_id": "pcb-rescue-0260531-6f175c5c",
+          "persona_capital_binding_sha256": "sha256:8e7868ee8eb1d9f90202f59c1ed18d8fe7e877149b71f5431cb49a7de350b6d4",
+          "persona_capital_binding_status": "active",
+          "plan_id": "plan-loop-prod-dep-20260715001015",
+          "plan_status": "approved",
+          "registry_deployment_stage": "none",
+          "registry_entry_sha256": "sha256:5c87032cb7d814b5d8e74c520acac97990f794c3dfaa1c2f120774bbfd4c795d",
+          "registry_proof_url": "http://registry:8087/api/registry/strategy-artifacts/artifact-loop-prod-dep-20260715001015",
+          "registry_view_sha256": "sha256:b98bbdd23402448f6460462a30ba6d70455d4ccce18b931d790740e6016ea471",
+          "single_runtime_enforced": true,
+          "sponsor_persona_id": "persona-20260531-6f175c5c",
+          "status": "passed",
+          "strategy_id": "tw_session_momentum",
+          "target_stage": "paper",
+          "verified_at": "2026-07-15T00:10:26.619816Z"
+        },
+        "source_task_id": "LOOP-PROD-DEP-001",
+        "strategy_id": "tw_session_momentum"
+      },
+      "persona_capital_binding_id": "pcb-rescue-0260531-6f175c5c",
+      "plan_id": "plan-loop-prod-dep-20260715001015",
+      "runtime_id": "runtime-loop-prod-dep-20260715001015",
+      "status": "active"
+    },
+    "status": 200
+  }
+}

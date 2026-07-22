@@ -8,7 +8,7 @@
 # Manual invocation: bash scripts/shioaji-restart-with-env.sh
 set -euo pipefail
 
-REPO="/home/lupin/code/pantheon"
+REPO="/home/lupin/pantheon"
 ENV_FILE="$REPO/env/.env.shioaji"
 LOG_DIR="$REPO/.orchestrator/logs"
 VENV_PYTHON="$REPO/.venv-shioaji/bin/python"

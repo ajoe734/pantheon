@@ -6,8 +6,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/workspace:/workspace/services/training-session
 
-COPY services/training-session/requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+COPY services/training-session/requirements.txt /tmp/training-session-requirements.txt
+COPY services/research/vectorbt/requirements.txt /tmp/vectorbt-requirements.txt
+RUN pip install --no-cache-dir \
+    -r /tmp/training-session-requirements.txt \
+    -r /tmp/vectorbt-requirements.txt
 
 COPY . /workspace
 

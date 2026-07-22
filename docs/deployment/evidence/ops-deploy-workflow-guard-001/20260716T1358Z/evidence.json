@@ -1,0 +1,57 @@
+{
+  "schema_version": "1.0",
+  "task_id": "OPS-DEPLOY-WORKFLOW-GUARD-001",
+  "captured_at": "2026-07-16T13:58:00Z",
+  "context": "Pantheon-only proof rerun after PR #3753 merged reconciliation-drift store repair",
+  "workflow_states_after_failure": {
+    "ajoe734/pantheon#269991390": "active",
+    "ajoe734/execute-plans#292028803": "active"
+  },
+  "repair_pr_before_run": {
+    "number": 3753,
+    "merge_commit": "d55a0caf7772ceb15b7914fe74856929f96d0283",
+    "merged_at": "2026-07-16T13:51:36Z"
+  },
+  "pantheon_proof_run": {
+    "repo": "ajoe734/pantheon",
+    "workflow_id": 269991390,
+    "run_id": 29504052626,
+    "url": "https://github.com/ajoe734/pantheon/actions/runs/29504052626",
+    "event": "workflow_dispatch",
+    "head_branch": "dev",
+    "head_sha": "d55a0caf7772ceb15b7914fe74856929f96d0283",
+    "created_at": "2026-07-16T13:52:19Z",
+    "updated_at": "2026-07-16T13:53:31Z",
+    "status": "completed",
+    "conclusion": "failure",
+    "failed_job": {
+      "job_id": 87640103826,
+      "name": "Deploy dev under shared environment lease",
+      "failed_step": "Start identity-bound lease heartbeat",
+      "deploy_step": "skipped",
+      "key_log_lines": [
+        "Acquire shared dev environment lease: success",
+        "Start identity-bound lease heartbeat: failure",
+        "environment lease lost: remote dev environment lease immutable field leaseId changed from '3ea2ac79-f0c9-4d52-a6d6-64545537c936' to '3e7589ba-4812-4ebe-98f0-cbc831653379'",
+        "Deploy dev VM stack under lease: skipped",
+        "Process completed with exit code 75."
+      ]
+    }
+  },
+  "repeat_pattern": {
+    "previous_run_same_failure": {
+      "run_id": 29503675321,
+      "head_sha": "9637455aa55638d518bde8f31fb3827ba0ec8471",
+      "failed_step": "Start identity-bound lease heartbeat",
+      "key_log_line": "environment lease lost: remote dev environment lease immutable field leaseId changed from '3e7589ba-4812-4ebe-98f0-cbc831653379' to '5121f427-fb02-4049-b186-7b1029c7c862'"
+    },
+    "previous_run_reached_deploy_guard": {
+      "run_id": 29502896049,
+      "head_sha": "aae333959e0566759a4e7eb955f860d280fa5e3d",
+      "verified_lease_id": "5121f427-fb02-4049-b186-7b1029c7c862",
+      "note": "This earlier run reached Deploy dev VM stack under lease, so the new failure is specific to immediate post-acquire heartbeat startup verification."
+    }
+  },
+  "diagnosis": "The initial verify immediately after acquire can read the previous GitHub Contents API lease document and fail closed as lease loss. A bounded retry is appropriate only for this initial post-acquire visibility check; deploy-step guard verification remains strict.",
+  "next_action": "Merge bounded initial verify retry and rerun only the Pantheon proof."
+}

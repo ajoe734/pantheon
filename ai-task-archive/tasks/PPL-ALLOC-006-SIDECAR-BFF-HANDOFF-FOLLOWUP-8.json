@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+  "archived_at": "2026-07-11T09:00:22Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+    "title": "Prepare PPL-ALLOC-006 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 PPL-ALLOC-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Persona Promotion Allocation / Wave 2 frontend workbench",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "PPL-ALLOC-003",
+      "PPL-ALLOC-004"
+    ],
+    "artifacts": [
+      "support/sidecars/PPL-ALLOC-006/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-8.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout finalized: approved support-only BFF/frontend handoff packet delivered in PR #3150 (merge a4c27e8db), task closeout record delivered in PR #3158 (merge 89b52f937f48f4d5c5273ebb73dd64ba253d9cc1); Branch CI Gate, Orchestrator Sync, and smoke acceptance passed; approved artifact and review record present; no canonical/runtime/frontend mutation.",
+    "last_update": "2026-07-11T09:00:22Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "PPL-ALLOC-006",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：修正後的 packet 已正確區分 unmerged execute-plans PR #251 與 origin/dev，emergency-actions 分頁維持唯讀且明確歸屬 PPL-ALLOC-008；PR #3150 已合併，checks 全綠",
+      "後續：parent owner 可將殘留項目轉為正式 follow-up task"
+    ],
+    "review_file": "support/reviews/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-8-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T09:00:22Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ppl-alloc-006-sidecar-bff-handoff-followup-8",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+      "git_clean_required": false,
+      "commit": "d89befa0770364d9e0569005ef8fe7d9481d1dc9",
+      "commit_subject": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-8: sync dev",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task branch synchronization for closeout.",
+        "Not changing": "approved support packet or canonical/runtime/frontend implementation.",
+        "Composes with": "current origin/dev before PR #3158 merge.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+        "Reviewer": "Claude",
+        "Verified": "prior PR checks passed; merge conflict check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "89b52f937f48f4d5c5273ebb73dd64ba253d9cc1",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Post-merge absorption audit committed at 576274a9f; please review the observed parent absorption, applied-readback fail-closed gate, and unavailable emergency-action boundary.",
+      "status": "done",
+      "created_at": "2026-07-11T08:18:39Z",
+      "resolved_at": "2026-07-11T08:32:37Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Changes requested (see support/reviews/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-8-review-claude.md, commit 7cf7d5451, PR #3150): the packet blends unmerged execute-plans branch task/PPL-ALLOC-006-workbench (RealRankingPanel fix) with an absence claim about that same branch's emergency-actions tab, which does exist there (read-only, backed by EmergencyActionsPanel.tsx). Fix the Delivery Evidence / Absorption Verdict to attribute both claims consistently to one inspected state, then hand back for re-review.",
+      "status": "done",
+      "created_at": "2026-07-11T08:32:37Z",
+      "resolved_at": "2026-07-11T08:32:37Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Addressed review commit 7cf7d5451 in b50fb87f7: packet now consistently attributes RealRankingPanel and the read-only emergency-actions tab to unmerged execute-plans PR #251, distinguishes origin/dev, and preserves the no-mutation PPL-ALLOC-008 gate. PR #3150 updated; please re-review.",
+      "status": "done",
+      "created_at": "2026-07-11T08:34:37Z",
+      "resolved_at": "2026-07-11T08:56:06Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-8",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Approved in review commit 08eb33e8e (merged via PR #3150): revised packet correctly attributes RealRankingPanel and the read-only emergency-actions tab to unmerged execute-plans PR #251, distinguishes origin/dev, and preserves the no-mutation PPL-ALLOC-008 gate. Returning to owner Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-07-11T08:56:06Z",
+      "resolved_at": "2026-07-11T09:00:23Z"
+    }
+  ],
+  "blockers": []
+}

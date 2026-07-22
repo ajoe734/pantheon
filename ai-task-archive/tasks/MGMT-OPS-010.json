@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "task_id": "MGMT-OPS-010",
+  "archived_at": "2026-07-10T11:02:13Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-OPS-010",
+    "title": "Hosted click-map regression for Persona Fleet links",
+    "summary_zh": "完整點驗 Persona Fleet 連出去的頁面，特別是最近 mutation 到 Evolution Journal：formal、fallback、missing-data 三條路都要有 hosted evidence，不能只看有畫面就算正常。",
+    "phase": "Management Console Operations / Mutation Evolution Wave 2 hosted regression",
+    "owner": "Antigravity",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "MGMT-OPS-009"
+    ],
+    "artifacts": [
+      "execute-plans:e2e",
+      "execute-plans:test-results",
+      "docs/bff/execution-tasks/2026-07-10-persona-fleet-mutation-evolution-gap/MGMT-OPS-010-hosted-click-map-regression.md"
+    ],
+    "acceptance": [
+      "hosted evidence proves persona-20260528-04688755 fallback path has no mutation:nan and no date-as-action field",
+      "click-map catches target pages that render but show wrong content",
+      "smoke is repeatable against the dev FE/BFF management target",
+      "unavailable formal mutation source is recorded as an explicit diagnostic"
+    ],
+    "next": "Successfully added click-map regression test e2e/24-persona-fleet-click-map.spec.ts and gathered evidence screenshots",
+    "last_update": "2026-07-10T11:02:13Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_persona_fleet_mutation_evolution_gap_2026-07-10",
+    "auto_generated": true,
+    "source_ref": {
+      "doc": "docs/04/pantheon_management_console_mutation_evolution_gap_2026-07-10/PERSONA_FLEET_MUTATION_EVOLUTION_GAP.md",
+      "packet": "docs/bff/execution-tasks/2026-07-10-persona-fleet-mutation-evolution-gap/INDEX.md",
+      "extends": "docs/bff/execution-tasks/2026-07-07-management-console-operations-workflow/INDEX.md",
+      "trigger": "2026-07-10 Persona Fleet recent mutation links open Evolution Journal fallback with mutation:nan",
+      "focus_persona": "persona-20260528-04688755"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "helper_kind": "persona_fleet_mutation_evolution_gap_execution_slice",
+    "wave": 2,
+    "fleet_lane": "hosted-fleet-click-map",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-10T11:02:13Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-ops-010",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-OPS-010",
+      "git_clean_required": false,
+      "commit": "48f9772633c09ffa6d86adb0389db9fcad5eed9b",
+      "commit_subject": "MGMT-OPS-010: correct reviewer metadata in task brief (#3080)",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Antigravity",
+        "Task-ID": "MGMT-OPS-010",
+        "Reviewer": "Codex",
+        "Verified": "npx playwright test e2e/24-persona-fleet-click-map.spec.ts",
+        "Co-authored-by": "pantheon-release-bot <pantheon-release-bot@users.noreply.github.com>"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-OPS-010",
+      "ahead": 2,
+      "behind": 1,
+      "push_status": "diverged",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "48f9772633c09ffa6d86adb0389db9fcad5eed9b",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-OPS-010",
+      "from": "Antigravity",
+      "to": "Codex",
+      "message": "Please review the click-map regression test and gathered evidence screenshots",
+      "status": "done",
+      "created_at": "2026-07-10T10:58:28Z",
+      "resolved_at": "2026-07-10T10:58:35Z"
+    },
+    {
+      "task_id": "MGMT-OPS-010",
+      "from": "Codex",
+      "to": "Antigravity",
+      "message": "Approving click-map regression test and gathered evidence",
+      "status": "done",
+      "created_at": "2026-07-10T10:58:35Z",
+      "resolved_at": "2026-07-10T11:02:14Z"
+    }
+  ],
+  "blockers": []
+}

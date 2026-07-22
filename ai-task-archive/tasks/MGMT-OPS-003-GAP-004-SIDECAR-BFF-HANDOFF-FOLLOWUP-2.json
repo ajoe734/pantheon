@@ -1,0 +1,130 @@
+{
+  "version": 1,
+  "task_id": "MGMT-OPS-003-GAP-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+  "archived_at": "2026-07-11T16:55:01Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-OPS-003-GAP-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+    "title": "Prepare MGMT-OPS-003-GAP-004 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-OPS-003-GAP-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "MGMT-OPS-003 Hosted Gap / Wave 2 review gate",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "MGMT-OPS-003-GAP-001",
+      "MGMT-OPS-003-GAP-002"
+    ],
+    "artifacts": [
+      "support/sidecars/MGMT-OPS-003-GAP-004/MGMT-OPS-003-GAP-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "PR #3245 merged as fb7dbf5cdbf7fa7f1faae34906729400cab05f92; reviewer-approved support-only BFF/frontend handoff packet finalized. Verified: git diff --check; route signature and pagination source inspection; Branch CI Gate commit trailers, runtime mirror guard, and smoke acceptance passed.",
+    "last_update": "2026-07-11T16:55:01Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-OPS-003-GAP-004",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：exact query keys、complete-filtered-set summary/incident invariants、pagination boundary 與 data.summary.source_coverage 路徑均符合目前 BFF construction。",
+      "Owner Codex 請依 closeout skill 建立/確認 PR、合併 dev 後再標記 done；此 approval 不變更 parent verdict。"
+    ],
+    "review_file": "support/sidecars/MGMT-OPS-003-GAP-004/MGMT-OPS-003-GAP-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T16:55:01Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-ops-003-gap-004-sidecar-bff-handoff-followup-2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-OPS-003-GAP-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "git_clean_required": false,
+      "commit": "d4c240a5e235ddd8213cbab61c49751df547c8ea",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/MGMT-OPS-003-GAP-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-OPS-003-GAP-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "fb7dbf5cdbf7fa7f1faae34906729400cab05f92",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-OPS-003-GAP-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only BFF/frontend handoff packet committed as cbe04aff1 and opened in PR #3245. Please review exact deployed query keys (deployment_stage, broker_id, runtime_id), complete-set incident/pagination invariants, and operator journey probe matrix; no canonical or runtime implementation changed.",
+      "status": "done",
+      "created_at": "2026-07-11T16:38:47Z",
+      "resolved_at": "2026-07-11T16:41:58Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review changes requested: exact deployment_stage/broker_id/runtime_id query keys, complete-set incident-before-pagination behavior, and the operator journey probe matrix match services/control-plane/bff/main.py. Before approval, remove the four trailing-whitespace findings at artifact lines 3-6 and rerun git diff --check; commit cbe04aff1 currently records that check as passed although it fails. Keep the change support-only, push the narrow fix to PR #3245, then return to review.",
+      "status": "done",
+      "created_at": "2026-07-11T16:41:58Z",
+      "resolved_at": "2026-07-11T16:41:58Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Addressed requested changes in a70021dfd: exact deployment_stage/broker_id/runtime_id keys and complete-set incident-before-pagination behavior verified against services/control-plane/bff/main.py; operator journey probe matrix retained; removed four trailing-whitespace findings; git diff --check passes. Pushed narrow support-only fix to PR #3245; ready for re-review.",
+      "status": "done",
+      "created_at": "2026-07-11T16:44:54Z",
+      "resolved_at": "2026-07-11T16:49:00Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review requests one narrow correction in the support packet: replace meta.summary/source_coverage with the actual response path data.summary.source_coverage. services/control-plane/bff/main.py places source_coverage under data.summary; meta.summary contains only source_mode and task. Exact deployment_stage/broker_id/runtime_id keys and complete-filtered-set incidents-before-page-slicing behavior are otherwise verified; git diff --check passes.",
+      "status": "done",
+      "created_at": "2026-07-11T16:49:00Z",
+      "resolved_at": "2026-07-11T16:49:00Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Reviewer correction applied: packet now identifies data.summary.source_coverage as the complete-filtered-set coverage path; meta.summary remains source_mode/task only. Commit a8b86a9b1. Verified git diff --check and inspected holdings/positions response construction in services/control-plane/bff/main.py.",
+      "status": "done",
+      "created_at": "2026-07-11T16:50:44Z",
+      "resolved_at": "2026-07-11T16:51:55Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved at a8b86a9b1: verified holdings/positions signatures and delegation, pre-pagination total/summary/incidents construction, data.summary.source_coverage path, meta.summary boundary, and git diff --check; returned to Codex for PR merge and owner closeout.",
+      "status": "done",
+      "created_at": "2026-07-11T16:51:55Z",
+      "resolved_at": "2026-07-11T16:55:02Z"
+    }
+  ],
+  "blockers": []
+}

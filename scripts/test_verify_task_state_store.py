@@ -1,0 +1,61 @@
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import verify_task_state_store as verifier
+
+ORCHESTRATOR = Path(__file__).resolve().parents[1] / ".orchestrator"
+sys.path.insert(0, str(ORCHESTRATOR))
+
+from rewrite.task_state_store import append_state_commit
+
+
+def test_verifier_reports_projection_parity(tmp_path: Path, capsys) -> None:
+    status = {"tasks": [{"id": "STATE-001", "status": "todo"}]}
+    status_file = tmp_path / "ai-status.json"
+    event_log = tmp_path / "events.jsonl"
+    status_file.write_text(json.dumps(status), encoding="utf-8")
+    append_state_commit(event_log, status, source="test")
+
+    result = verifier.main(
+        ["--event-log", str(event_log), "--status-file", str(status_file), "--json"]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert result == 0
+    assert payload["ok"] is True
+    assert payload["event_count"] == 1
+
+
+def test_verifier_returns_integrity_exit_for_projection_mismatch(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    status_file = tmp_path / "ai-status.json"
+    event_log = tmp_path / "events.jsonl"
+    status_file.write_text('{"tasks": []}\n', encoding="utf-8")
+    append_state_commit(
+        event_log,
+        {"tasks": [{"id": "STATE-002", "status": "todo"}]},
+        source="test",
+    )
+
+    result = verifier.main(
+        ["--event-log", str(event_log), "--status-file", str(status_file), "--json"]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert result == 2
+    assert payload["ok"] is False
+
+
+def test_verifier_requires_configured_event_log(capsys) -> None:
+    result = verifier.main(["--event-log", "", "--json"])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert result == 3
+    assert "not configured" in payload["error"]

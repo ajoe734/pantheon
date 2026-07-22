@@ -1,0 +1,126 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-TR-002",
+  "archived_at": "2026-06-22T13:32:01Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-TR-002",
+    "title": "Candidate review and entry/position/exit queues",
+    "summary_zh": "依 SD §12.2/§12.3 與 A2 score components 做 CandidateReviewDrawer + entry/add/reduce/exit 佇列卡;候選分數須顯示 A2 多 component(不可只顯示單一數字);裝示產生 governed TradingIntent(經 AG-BE-TR-002),不從 UI 直接下單。 【有疑問一定要提出,不要自己亂做】動工前先讀完引用的設計稿(SD 對應章節 + docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure/ + canonical services/control-plane/specs/agora/*.schema.json / openapi/agora_v1.openapi.yaml / capability_manifest.json)。只要遇到任何疑問、不確定、設計稿沒寫到、與既有 code 對不上、依賴不清、無法重現或衝突,一律 STOP,用 blocker(或向 reviewer handoff)把問題具體寫出來並等待澄清,絕對不可自行臆測、補洞、繞過或先做再說。可動工的部分必須與引用 spec/schema 逐欄位一致:不得自創 schema/欄位/評分/widget/route、不得擴張 capability allowlist、不得讓 Agora 直接下單/綁資金/寫 RuntimeBinding。 【UI 一律照設計稿,不要自己發想】凡與畫面有關(頁面、route、layout、component、widget、chart、互動、文案、樣式)必須嚴格依 SD §9/§10/§11/§12/§23 的 IA/版面/元件規格、design-closure A3 widget_registry/chart grammar,以及 V10/V11 視覺參考實作;沿用既有 design tokens 與共用元件,不得自創畫面、元件、版面、route 或自由發揮樣式。設計稿沒涵蓋到的畫面或互動,先開 blocker 問清楚再做。",
+    "phase": "EPIC AGORA-FE / Phase 4",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "AG-FE-TR-001",
+      "AG-BE-CP-001",
+      "AG-XR-OPENAPI-004"
+    ],
+    "artifacts": [
+      "execute-plans/src/agora/components/CandidateReviewDrawer.tsx",
+      "execute-plans/src/agora/components/TradeDecisionCard.tsx"
+    ],
+    "acceptance": [
+      "候選審查與進出場佇列符合設計;score 顯示 A2 components;裝示走 governed intent;附 UI 測試;【驗收】實作與引用 spec/schema 逐欄位一致,無自創欄位/route/enum;遇疑問須先開 blocker 澄清而非自行實作;自行臆測或偏離設計稿一律不通過",
+      "無自創欄位/route/enum",
+      "偏離設計稿即不通過"
+    ],
+    "next": "CandidateReviewDrawer + TradeDecisionCard with A2 score components, governed TradingIntent via BFF (candidatePool.ts + tradingRoom.ts), If-Match/Idempotency-Key/X-Request-Id headers. 118 vitest tests green. PR #2270 merged into dev.",
+    "last_update": "2026-06-22T13:32:01Z",
+    "auto_created_by": "dispatch_agora_wave_u1_phase3_4_2026-06-20",
+    "review_notes_zh": [
+      "Codex re-review approved: candidatePool and tradingRoom mutation paths now forward If-Match, Idempotency-Key, and X-Request-Id; CandidateReviewDrawer and TradingRoomPage pass captured ETags; focused vitest 118 tests and build:agora pass. PR #2270 checks are green but branch is BEHIND and owner must refresh before closeout."
+    ],
+    "review_file": ".orchestrator/reviews/AG-FE-TR-002-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-22T13:32:01Z",
+      "repository_id": "execute_plans",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-tr-002/execute-plans",
+      "repository_slug": "ajoe734/execute-plans",
+      "branch": "task/AG-FE-TR-002",
+      "git_clean_required": false,
+      "commit": "e4d1b38ad242a2b0fb32de99da0a1a66d41809a1",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-FE-TR-002",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-TR-002",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "48b254a403a39f8036dbbf4ea5e98643c24f6209",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-TR-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implementation complete: CandidateReviewDrawer (A2 multi-component score decomposition, candidate decisions via AG-BE-CP-001) + TradeDecisionCard (D2 fields with confidence≠probability distinction, EV breakdown, governed TradingIntent via AG-BE-TR-002, no direct order route). 50/50 UI tests pass. BFF clients in execute-plans/src/lib/bff-v1/agora/. Ready for review.",
+      "status": "done",
+      "created_at": "2026-06-22T12:42:50Z",
+      "resolved_at": "2026-06-22T12:46:47Z"
+    },
+    {
+      "task_id": "AG-FE-TR-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review failed: CandidateReviewDrawer and TradeDecisionCard call mutating BFF routes without required If-Match/Idempotency-Key headers; TradeDecisionCard/decideOnEvent also omits required X-Request-Id. AG-BE-CP-001 and AG-BE-TR-002 routes reject these writes, so candidate decisions and trader decisions fail despite unit tests. Please wire etag/request-id/idempotency through the clients/components and add tests that assert the headers.",
+      "status": "done",
+      "created_at": "2026-06-22T12:46:47Z",
+      "resolved_at": "2026-06-22T12:46:47Z"
+    },
+    {
+      "task_id": "AG-FE-TR-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Header fix complete: If-Match/Idempotency-Key wired through candidatePool.ts+CandidateReviewDrawer; X-Request-Id/If-Match/Idempotency-Key wired through tradingRoom.ts+TradeDecisionCard+TradingRoomPage. New BFF client tests (candidatePool.test.ts, tradingRoom.test.ts) assert all headers. All 116 targeted tests pass. PR #2270 updated. Ready for re-review.",
+      "status": "done",
+      "created_at": "2026-06-22T13:02:34Z",
+      "resolved_at": "2026-06-22T13:06:58Z"
+    },
+    {
+      "task_id": "AG-FE-TR-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Re-review requested changes: candidatePool/CandidateReviewDrawer still omit required X-Request-Id for v1.4 candidate score/review mutations; TradingRoomPage expanded detail still omits If-Match from decideOnEvent despite v1.3 requiring If-Match/Idempotency-Key/X-Request-Id. Targeted Vitest 116 passed, but tests miss these contract assertions. PR #2270 must fix and update stale dev base before re-review.",
+      "status": "done",
+      "created_at": "2026-06-22T13:06:58Z",
+      "resolved_at": "2026-06-22T13:06:58Z"
+    },
+    {
+      "task_id": "AG-FE-TR-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "All reviewer-requested changes applied: X-Request-Id added to candidatePool v1.4 mutations (reviewCandidateMember + triggerCandidatePoolScore), CandidateReviewDrawer now passes requestId, TradingRoomPage DecisionEventDetailPanel now passes ifMatch from listDecisionEvents ETag. Tests now assert all three headers (If-Match/Idempotency-Key/X-Request-Id) for every mutation. 118 tests pass. PR #2270 pushed and ready for re-review.",
+      "status": "done",
+      "created_at": "2026-06-22T13:13:36Z",
+      "resolved_at": "2026-06-22T13:17:07Z"
+    },
+    {
+      "task_id": "AG-FE-TR-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved after header-contract re-review; owner may refresh PR #2270 and finalize after merge.",
+      "status": "done",
+      "created_at": "2026-06-22T13:17:07Z",
+      "resolved_at": "2026-06-22T13:32:03Z"
+    }
+  ],
+  "blockers": []
+}

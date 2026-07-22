@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "task_id": "MGMT-LOAD-006-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-07-01T11:59:55Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-LOAD-006-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare MGMT-LOAD-006 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-LOAD-006，整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "MGMT Console Load Gap / Wave 3 release gate",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "MGMT-LOAD-001",
+      "MGMT-LOAD-002",
+      "MGMT-LOAD-004"
+    ],
+    "artifacts": [
+      "support/sidecars/MGMT-LOAD-006/MGMT-LOAD-006-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout blocked: sidecar task is review_approved in task brief and PR #2686 merged, but no active ai-status row exists for scripts/ai-status.sh done.",
+    "last_update": "2026-07-01T11:59:55Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-LOAD-006",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Support-only handoff packet 已核實所有引用數據與檔案來源，範圍僅限支援性 artifact，未觸及 canonical truth，核准並交回 owner 收尾。"
+    ],
+    "review_file": "/tmp/mgmt-load-006-sidecar-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-01T11:59:55Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-load-006-sidecar-bff-handoff",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-LOAD-006-SIDECAR-BFF-HANDOFF",
+      "git_clean_required": false,
+      "commit": "eee706af42c6d2dddada8867a0713154c10a4ec9",
+      "commit_subject": "Merge pull request #2686 from ajoe734/task/MGMT-LOAD-006-SIDECAR-BFF-HANDOFF",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "MGMT-LOAD-006-SIDECAR-BFF-HANDOFF": "add packet"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-LOAD-006-SIDECAR-BFF-HANDOFF",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "7618c726975dbec5e8ae9e8ae8d9f258ab515ab8",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-LOAD-006-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Support-only BFF/frontend handoff packet committed and PR #2686 opened with auto-merge enabled; please review support/sidecars/MGMT-LOAD-006/MGMT-LOAD-006-SIDECAR-BFF-HANDOFF.md.",
+      "status": "done",
+      "created_at": "2026-07-01T11:54:13Z",
+      "resolved_at": "2026-07-01T11:56:37Z"
+    },
+    {
+      "task_id": "MGMT-LOAD-006-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Approved: scope is support-only (2 files, no canonical truth touched), all cited evidence numbers verified against source docs, residual items correctly framed as open, not closed.",
+      "status": "done",
+      "created_at": "2026-07-01T11:56:37Z",
+      "resolved_at": "2026-07-01T11:59:56Z"
+    }
+  ],
+  "blockers": []
+}

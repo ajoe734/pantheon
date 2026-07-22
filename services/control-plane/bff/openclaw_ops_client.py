@@ -7,12 +7,16 @@ payloads for BFF projection and command facades.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from typing import Any, Dict, Optional
+
+from services.persona.runtime_profile import build_persona_runtime_profile
 
 
 OPENCLAW_ADAPTER_BASE_URL_ENVS = (
@@ -20,6 +24,12 @@ OPENCLAW_ADAPTER_BASE_URL_ENVS = (
     "PANTHEON_OPENCLAW_ADAPTER_URL",
     "OPENCLAW_GATEWAY_ADAPTER_URL",
 )
+OPENCLAW_ADAPTER_SERVICE_TOKEN_ENV = "PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN"
+OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED_ENV = (
+    "PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED"
+)
+OPENCLAW_ADAPTER_ASSISTANT_PREFIX = "/api/openclaw-adapter/assistant"
+OPENCLAW_ADAPTER_AGENT_PREFIX = "/api/openclaw-adapter/agents"
 
 
 class OpenClawOpsClientError(RuntimeError):
@@ -87,6 +97,13 @@ def _assistant_reauth_timeout_seconds() -> float:
         return 30.0
 
 
+def _truthy_env(name: str, *, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _safe_json(raw: str) -> Dict[str, Any]:
     if not raw:
         return {}
@@ -99,17 +116,76 @@ def _safe_json(raw: str) -> Dict[str, Any]:
     return {"data": loaded}
 
 
+def _validated_servant_admission(persona: Dict[str, Any], persona_id: str) -> str:
+    """Verify the BFF-owned pre-sync admission claim against canonical IDs."""
+
+    metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
+    tenant_id = str(metadata.get("tenant_id") or metadata.get("tenantId") or "").strip()
+    agora_user_id = str(
+        metadata.get("agora_user_id") or metadata.get("agoraUserId") or ""
+    ).strip()
+    persona_class = str(
+        metadata.get("persona_class") or persona.get("archetype") or ""
+    ).strip()
+    authority = str(metadata.get("execution_authority") or "").strip()
+    capabilities = metadata.get("interaction_capabilities")
+    snapshot_id = str(metadata.get("capability_snapshot_id") or "").strip()
+    source_idempotency_key = str(
+        persona.get("_agent_sync_idempotency_key") or ""
+    ).strip()
+
+    expected_persona_digest = hashlib.sha256(
+        f"{tenant_id}\0{agora_user_id}\0agora_servant".encode("utf-8")
+    ).hexdigest()[:20]
+    expected_persona_id = f"agora-servant-{expected_persona_digest}"
+    expected_snapshot_digest = hashlib.sha256(
+        f"{persona_id}\0persona_opinion".encode("utf-8")
+    ).hexdigest()[:20]
+    expected_snapshot_id = f"cap-servant-{expected_snapshot_digest}"
+
+    valid = (
+        bool(tenant_id)
+        and bool(agora_user_id)
+        and persona_id == expected_persona_id
+        and persona_class == "agora_servant"
+        and authority == "none"
+        and capabilities == ["persona_opinion"]
+        and snapshot_id == expected_snapshot_id
+        and bool(source_idempotency_key)
+    )
+    if not valid:
+        raise OpenClawOpsClientError(
+            "Persona does not carry an exact canonical Agora servant admission claim.",
+            status_code=503,
+            error_code="OPENCLAW_AGENT_ADMISSION_INVALID",
+        )
+    return source_idempotency_key
+
+
 class OpenClawOpsClient:
     def __init__(
         self,
         *,
         base_url: Optional[str] = None,
         timeout_seconds: Optional[float] = None,
+        service_token: Optional[str] = None,
+        service_auth_required: Optional[bool] = None,
     ) -> None:
         raw = base_url if base_url is not None else _base_url_from_env()
         self._base_url = raw.rstrip("/") if raw else ""
         self._timeout = timeout_seconds if timeout_seconds is not None else _timeout_seconds()
         self._timeout_explicit = timeout_seconds is not None
+        token = (
+            os.getenv(OPENCLAW_ADAPTER_SERVICE_TOKEN_ENV, "")
+            if service_token is None
+            else service_token
+        )
+        self._service_token = str(token or "").strip()
+        self._service_auth_required = (
+            _truthy_env(OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED_ENV)
+            if service_auth_required is None
+            else bool(service_auth_required)
+        )
 
     @property
     def configured(self) -> bool:
@@ -124,6 +200,87 @@ class OpenClawOpsClient:
 
     def get_upstream_status(self) -> Dict[str, Any]:
         return self._request("GET", "/api/openclaw-adapter/upstream/status")
+
+    def ensure_agora_servant_agent(self, persona: Dict[str, Any]) -> Dict[str, Any]:
+        """Reconcile one governed, no-authority servant through the adapter."""
+        profile = build_persona_runtime_profile(persona)
+        persona_id = profile.persona_id
+        source_idempotency_key = _validated_servant_admission(persona, persona_id)
+        idempotency_key = str(
+            uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"pantheon:agora-servant-agent:{persona_id}:{source_idempotency_key}",
+            )
+        )
+        payload = self._request(
+            "POST",
+            f"{OPENCLAW_ADAPTER_AGENT_PREFIX}/ensure",
+            body={
+                "persona_registry_ref": f"persona:{persona_id}",
+                "workspace_ref": profile.workspace_ref,
+                "capability_snapshot": {
+                    "allowed_capabilities": ["persona_opinion"],
+                    "persona_class": "agora_servant",
+                },
+            },
+            headers={
+                "Idempotency-Key": idempotency_key,
+                "X-Request-Id": str(uuid.uuid4()),
+            },
+            expected_status={200, 201},
+            timeout_seconds=max(self._timeout, 135.0),
+        )
+        agent = payload.get("agent")
+        if not isinstance(agent, dict):
+            raise OpenClawOpsClientError(
+                "OpenClaw adapter agent ensure returned no agent projection.",
+                status_code=503,
+                error_code="OPENCLAW_AGENT_SYNC_INVALID_RESPONSE",
+                payload=payload,
+            )
+        return agent
+
+    def ensure_persona_opinion_agent(
+        self,
+        admission: Dict[str, Any],
+        *,
+        persona_profile: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Admit one frozen Persona snapshot to an advice-only OpenClaw agent."""
+
+        # Identity is frozen by the BFF admission builder.  Do not rebuild it
+        # from a mutable Registry projection here: that would create a TOCTOU
+        # window between admission and agent reconciliation.
+        payload = dict(admission)
+        idempotency_key = str(
+            uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                "pantheon:persona-opinion-agent:"
+                f"{admission.get('agent_id')}:{admission.get('capability_snapshot_id')}",
+            )
+        )
+        response = self._request(
+            "POST",
+            f"{OPENCLAW_ADAPTER_AGENT_PREFIX}/persona-opinion/ensure",
+            body=payload,
+            headers={
+                "Idempotency-Key": idempotency_key,
+                "X-Request-Id": str(uuid.uuid4()),
+            },
+            expected_status={200, 201},
+            timeout_seconds=max(self._timeout, 135.0),
+        )
+        agent = response.get("agent")
+        if not isinstance(agent, dict) or str(agent.get("agent_id") or "") != str(
+            admission.get("agent_id") or ""
+        ):
+            raise OpenClawOpsClientError(
+                "OpenClaw adapter returned a mismatched Persona opinion agent.",
+                status_code=503,
+                error_code="OPENCLAW_PERSONA_AGENT_INVALID_RESPONSE",
+                payload=response,
+            )
+        return response
 
     def list_lifecycle_sessions(
         self,
@@ -239,18 +396,38 @@ class OpenClawOpsClient:
         trace_id: Optional[str] = None,
         messages: Optional[list[Dict[str, Any]]] = None,
         attachments: Optional[list[Dict[str, Any]]] = None,
+        agent_id: Optional[str] = None,
+        persona_admission: Optional[Dict[str, Any]] = None,
+        idempotency_key: Optional[str] = None,
     ) -> Dict[str, Any]:
         normalized = str(provider or "").strip().lower()
         headers: Dict[str, str] = {"X-Operator-Id": operator_id}
         if trace_id:
             headers["X-Trace-Id"] = trace_id
         if normalized in {"openclaw", "openclaw_agent"}:
+            if (agent_id is None) != (persona_admission is None):
+                raise OpenClawOpsClientError(
+                    "agent_id and persona_admission must be supplied together.",
+                    status_code=422,
+                    error_code="OPENCLAW_PERSONA_ADMISSION_REQUIRED",
+                )
+            if persona_admission is not None and not str(idempotency_key or "").strip():
+                raise OpenClawOpsClientError(
+                    "idempotency_key is required for a governed Persona invocation.",
+                    status_code=422,
+                    error_code="OPENCLAW_PERSONA_IDEMPOTENCY_REQUIRED",
+                )
+            if idempotency_key:
+                headers["Idempotency-Key"] = str(idempotency_key).strip()
             body: Dict[str, Any] = {
                 "mode": mode,
                 "prompt": prompt,
                 "context_pack": context_pack,
                 "metadata": metadata or {},
             }
+            if agent_id is not None:
+                body["agent_id"] = agent_id
+                body["persona_admission"] = persona_admission
             if messages is not None:
                 body["messages"] = messages
             if attachments is not None:
@@ -336,6 +513,7 @@ class OpenClawOpsClient:
         if session_user:
             md.setdefault("session_user", session_user)
         body = {"mode": mode, "prompt": prompt, "context_pack": context_pack, "metadata": md}
+        path = "/api/openclaw-adapter/assistant/providers/openclaw/invoke/stream"
         headers = {
             "X-Operator-Id": operator_id,
             "Content-Type": "application/json",
@@ -343,8 +521,9 @@ class OpenClawOpsClient:
         }
         if trace_id:
             headers["X-Trace-Id"] = trace_id
+        headers.update(self._assistant_service_headers(path))
         request = urllib.request.Request(
-            f"{self._base_url}/api/openclaw-adapter/assistant/providers/openclaw/invoke/stream",
+            f"{self._base_url}{path}",
             data=json.dumps(body).encode("utf-8"),
             headers=headers,
             method="POST",
@@ -458,6 +637,42 @@ class OpenClawOpsClient:
             headers={"X-Operator-Id": operator_id},
         )
 
+    def submit_assistant_provider_reauth_code(
+        self,
+        *,
+        provider: str = "claude",
+        session_id: str,
+        code: str,
+        operator_id: str,
+        trace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        normalized = str(provider or "claude").strip().lower()
+        headers: Dict[str, str] = {
+            "X-Operator-Id": operator_id,
+            "X-Assistant-Mode": "user",
+            "X-Operator-Role": "operator",
+        }
+        if trace_id:
+            headers["X-Trace-Id"] = trace_id
+        return self._request(
+            "POST",
+            (
+                f"/api/openclaw-adapter/assistant/providers/{urllib.parse.quote(normalized)}"
+                f"/reauth/{urllib.parse.quote(session_id)}/code"
+            ),
+            body={
+                "provider": normalized,
+                "code": code,
+                "mode": "user",
+                "operator_role": "operator",
+                "confirmed": True,
+                "control_mode": {"active": False, "mode": "user", "activation_id": None},
+            },
+            headers=headers,
+            expected_status={200},
+            timeout_seconds=_assistant_reauth_timeout_seconds(),
+        )
+
     def create_session(
         self,
         *,
@@ -552,12 +767,48 @@ class OpenClawOpsClient:
     def list_assistant_providers(self, *, auth_probe: bool = False) -> Dict[str, Any]:
         """Return readiness metadata for all assistant providers."""
         query = {"auth_probe": "true"} if auth_probe else None
-        return self._request("GET", "/api/openclaw-adapter/assistant/providers", query=query)
+        return self._request(
+            "GET",
+            "/api/openclaw-adapter/assistant/providers",
+            query=query,
+            timeout_seconds=self._assistant_timeout_seconds() if auth_probe else None,
+        )
+
+    def register_assistant_provider(
+        self,
+        payload: Dict[str, Any],
+        *,
+        operator_id: str,
+        trace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Register assistant provider metadata through the OpenClaw gateway adapter."""
+        headers: Dict[str, str] = {"X-Operator-Id": operator_id}
+        if trace_id:
+            headers["X-Trace-Id"] = trace_id
+        operator_role = str(payload.get("operator_role") or payload.get("operatorRole") or "").strip()
+        if operator_role:
+            headers["X-Operator-Role"] = operator_role
+        mode = str(payload.get("mode") or "").strip()
+        if mode:
+            headers["X-Assistant-Mode"] = mode
+        return self._request(
+            "POST",
+            "/api/openclaw-adapter/assistant/providers",
+            body=payload,
+            headers=headers,
+            expected_status={201},
+            timeout_seconds=self._assistant_timeout_seconds(),
+        )
 
     def get_assistant_readiness(self, provider: str = "codex", *, auth_probe: bool = False) -> Dict[str, Any]:
         """Return readiness metadata for an assistant provider."""
         query = {"auth_probe": "true"} if auth_probe else None
-        return self._request("GET", f"/api/openclaw-adapter/assistant/readiness/{provider}", query=query)
+        return self._request(
+            "GET",
+            f"/api/openclaw-adapter/assistant/readiness/{provider}",
+            query=query,
+            timeout_seconds=self._assistant_timeout_seconds() if auth_probe else None,
+        )
 
     def invoke_assistant(
         self,
@@ -603,6 +854,36 @@ class OpenClawOpsClient:
             return self._timeout
         return _assistant_provider_timeout_seconds()
 
+    def _assistant_service_headers(self, path: str) -> Dict[str, str]:
+        """Return BFF-to-adapter auth headers for assistant-only routes.
+
+        The service token is never sent to unrelated adapter surfaces.  A
+        strict deployment with a missing token is a local configuration error,
+        so fail before opening a socket instead of relying on an adapter-side
+        denial after potentially expensive request preparation.
+        """
+
+        normalized_path = str(path or "").rstrip("/")
+        is_assistant_path = (
+            normalized_path == OPENCLAW_ADAPTER_ASSISTANT_PREFIX
+            or normalized_path.startswith(f"{OPENCLAW_ADAPTER_ASSISTANT_PREFIX}/")
+        )
+        is_agent_path = (
+            normalized_path == OPENCLAW_ADAPTER_AGENT_PREFIX
+            or normalized_path.startswith(f"{OPENCLAW_ADAPTER_AGENT_PREFIX}/")
+        )
+        if not is_assistant_path and not is_agent_path:
+            return {}
+        if self._service_token:
+            return {"X-Pantheon-Service-Token": self._service_token}
+        if self._service_auth_required:
+            raise OpenClawOpsClientError(
+                "OpenClaw adapter assistant service authentication is required, but the BFF service token is not configured.",
+                status_code=503,
+                error_code="OPENCLAW_ADAPTER_SERVICE_AUTH_MISCONFIGURED",
+            )
+        return {}
+
     def _request(
         self,
         method: str,
@@ -637,6 +918,9 @@ class OpenClawOpsClient:
             request_headers["Content-Type"] = "application/json"
         if headers:
             request_headers.update(headers)
+        # Apply the trusted service credential last so a caller-provided header
+        # cannot replace the BFF-owned token.
+        request_headers.update(self._assistant_service_headers(path))
 
         data = json.dumps(body).encode("utf-8") if body is not None else None
         request = urllib.request.Request(

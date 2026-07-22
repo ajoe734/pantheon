@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+  "archived_at": "2026-06-27T20:05:24Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+    "title": "Prepare LOOP-AUTO-BFF-004 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 LOOP-AUTO-BFF-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Global Loop Autopilot / Wave 7 BFF Operator Truth",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "LOOP-AUTO-SRC-004",
+      "LOOP-AUTO-RT-005",
+      "LOOP-AUTO-DEP-004",
+      "LOOP-AUTO-TEL-005",
+      "LOOP-AUTO-KNOW-006",
+      "LOOP-AUTO-BFF-003"
+    ],
+    "artifacts": [
+      "support/sidecars/LOOP-AUTO-BFF-004/LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-6.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: FOLLOWUP-6 packet approved by Claude2; live state reconciliation confirms EVO-005 still blocked (FOLLOWUP-4 §2 path); brief and review artifacts committed; PR #2488 merged into dev.",
+    "last_update": "2026-06-27T20:05:24Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "LOOP-AUTO-BFF-004",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：EVO-005 live state 獨立確認 blocked/Claude2/Claude，與 FOLLOWUP-6 §1.2 描述完全一致",
+      "FOLLOWUP-5 §3 Gemini2 路徑正確 superseded",
+      "dep status table 準確（7/8 done，EVO-005 唯一阻塞）",
+      "Action plan §3/§8 指令正確，與現有 review evidence 一致",
+      "Drill 1 unblocked 路徑正確標示"
+    ],
+    "review_file": ".orchestrator/task-reviews/loop_auto_bff_004_sidecar_bff_handoff_followup_6_review_claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-27T20:05:24Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-bff-004-sidecar-bff-handoff-followup-6",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "git_clean_required": false,
+      "commit": "7f8b6514ddd4adf15b381c35da9fc788a18435ea",
+      "commit_subject": "LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-6: closeout",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task brief and Claude2 review document for FOLLOWUP-6 sidecar packet.",
+        "Not changing": "L1 canonical policy, ai-status.json, loop registry, BFF implementation.",
+        "Composes with": "support/sidecars/LOOP-AUTO-BFF-004/LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-6.md (committed in 1779b5c6).",
+        "Verification": "scope matches task artifacts only; no canonical files changed.",
+        "LLM-Agent": "Claude",
+        "Task-ID": "LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+        "Reviewer": "Claude2",
+        "Verified": "git status --short shows only these two task-scoped untracked files; no canonical files staged."
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "ba21b467d3be1118be12b173c797d7fd52711e0c",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "FOLLOWUP-6 packet committed (1779b5c6): live state audit shows EVO-005 still blocked (Claude2/Claude), not reassigned to Gemini2 as FOLLOWUP-5 described. Packet reconciles the discrepancy, reaffirms FOLLOWUP-4 §2 unblock sequence, and provides corrected go/no-go checklist and action plan. Artifact: support/sidecars/LOOP-AUTO-BFF-004/LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-6.md",
+      "status": "done",
+      "created_at": "2026-06-27T19:58:52Z",
+      "resolved_at": "2026-06-27T20:02:09Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Review complete — live state audit confirms packet accuracy; EVO-005 confirmed blocked/Claude2/Claude; FOLLOWUP-5 §3 supersession correct; returning to Claude for finalization",
+      "status": "done",
+      "created_at": "2026-06-27T20:02:09Z",
+      "resolved_at": "2026-06-27T20:05:26Z"
+    }
+  ],
+  "blockers": []
+}

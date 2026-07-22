@@ -37,10 +37,24 @@ def _first_endpoint(method: str, path: str):
     return None
 
 
+def _matching_endpoints(method: str, path: str) -> list[str]:
+    return [
+        route.endpoint.__name__
+        for route in bff_main.app.routes
+        if isinstance(route, Route) and route.path == path and method in (route.methods or ())
+    ]
+
+
 def test_duplicate_routes_resolve_to_intended_handler() -> None:
     for (method, path), expected in EXPECTED_WINNERS.items():
         got = _first_endpoint(method, path)
         assert got == expected, f"{method} {path} resolved to {got}, expected {expected} (generic alias is shadowing)"
+
+
+def test_management_persona_league_has_single_registered_handler() -> None:
+    assert _matching_endpoints("GET", "/bff/management/persona-league") == [
+        "bff_management_persona_league",
+    ]
 
 
 def test_no_static_route_shadowed_by_earlier_param_route() -> None:

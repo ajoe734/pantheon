@@ -138,6 +138,39 @@ class AsyncBatchWriter:
         self._total_retried = 0
         self._total_dlq = 0
         self._batches_flushed = 0
+        self._last_write_attempt_ts: Optional[float] = None
+        self._last_successful_write_ts: Optional[float] = None
+        self._last_failed_write_ts: Optional[float] = None
+        self._last_dlq_ts: Optional[float] = None
+        self._last_batch_size = 0
+        self._last_error: Optional[str] = None
+
+    @staticmethod
+    def _iso_from_epoch(ts: Optional[float]) -> Optional[str]:
+        if ts is None:
+            return None
+        return datetime.fromtimestamp(ts, timezone.utc).isoformat().replace("+00:00", "Z")
+
+    @staticmethod
+    def _age_seconds(ts: Optional[float]) -> Optional[float]:
+        if ts is None:
+            return None
+        return round(max(0.0, time.time() - ts), 3)
+
+    def _mark_write_attempt(self, batch_size: int) -> None:
+        self._last_write_attempt_ts = time.time()
+        self._last_batch_size = batch_size
+
+    def _mark_write_success(self) -> None:
+        self._last_successful_write_ts = time.time()
+        self._last_error = None
+
+    def _mark_write_failure(self, error: object) -> None:
+        self._last_failed_write_ts = time.time()
+        self._last_error = str(error)
+
+    def _mark_dlq_write(self) -> None:
+        self._last_dlq_ts = time.time()
 
     @staticmethod
     def _default_partition_key(event: dict[str, Any]) -> str:
@@ -215,6 +248,8 @@ class AsyncBatchWriter:
                             tags=[TAG_BUFFER_OVERFLOW],
                             reason="Backpressure delay requeue failed: buffer remained full",
                         )
+                        self._mark_write_failure("Backpressure delay requeue failed: buffer remained full")
+                        self._mark_dlq_write()
                         self._total_dlq += 1
                         self._total_failed += 1
                     continue
@@ -262,15 +297,18 @@ class AsyncBatchWriter:
 
         for attempt in range(self._max_retries + 1):
             try:
+                self._mark_write_attempt(len(batch))
                 result = await self._write_fn(batch)
 
                 if result.success:
                     self._total_written += result.count
+                    self._mark_write_success()
                     if self._backpressure:
                         self._backpressure.record_write(success=True)
                     return
 
                 # Write failed
+                self._mark_write_failure(result.error or "write failed")
                 if self._backpressure:
                     self._backpressure.record_write(success=False)
 
@@ -283,6 +321,7 @@ class AsyncBatchWriter:
                             reason=f"Non-retryable write failure: {result.error}",
                             original_attempt_count=attempt + 1,
                         )
+                        self._mark_dlq_write()
                         self._total_dlq += 1
                     self._total_failed += len(batch)
                     return
@@ -305,11 +344,13 @@ class AsyncBatchWriter:
                             reason=f"Write failed after {self._max_retries} retries: {result.error}",
                             original_attempt_count=self._max_retries + 1,
                         )
+                        self._mark_dlq_write()
                         self._total_dlq += 1
                     self._total_failed += len(batch)
                     return
 
             except Exception as e:
+                self._mark_write_failure(e)
                 if self._backpressure:
                     self._backpressure.record_write(success=False)
 
@@ -329,6 +370,7 @@ class AsyncBatchWriter:
                             reason=f"Write exception after {self._max_retries} retries: {e}",
                             original_attempt_count=self._max_retries + 1,
                         )
+                        self._mark_dlq_write()
                         self._total_dlq += 1
                     self._total_failed += len(batch)
                     log.error(
@@ -348,4 +390,14 @@ class AsyncBatchWriter:
             "batch_size": self._batch_size,
             "batch_interval": self._batch_interval,
             "max_retries": self._max_retries,
+            "last_batch_size": self._last_batch_size,
+            "last_write_attempt_at": self._iso_from_epoch(self._last_write_attempt_ts),
+            "last_successful_write_at": self._iso_from_epoch(self._last_successful_write_ts),
+            "last_failed_write_at": self._iso_from_epoch(self._last_failed_write_ts),
+            "last_dlq_at": self._iso_from_epoch(self._last_dlq_ts),
+            "seconds_since_last_write_attempt": self._age_seconds(self._last_write_attempt_ts),
+            "seconds_since_last_successful_write": self._age_seconds(self._last_successful_write_ts),
+            "seconds_since_last_failed_write": self._age_seconds(self._last_failed_write_ts),
+            "seconds_since_last_dlq": self._age_seconds(self._last_dlq_ts),
+            "last_error": self._last_error,
         }

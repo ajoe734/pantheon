@@ -1,0 +1,2430 @@
+{
+  "actor": {
+    "agent": "Codex2",
+    "roles": [
+      "operator"
+    ],
+    "subject": "pantheon-dev-proof-loop-prod-per-001-29655287111-1",
+    "token_written": false
+  },
+  "calls": {
+    "deployment_plan_detail": {
+      "completed_at": "2026-07-18T18:11:05.247844Z",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "json": {
+        "data": {
+          "approval_decision": {
+            "actor_role": "automated_gate",
+            "created_at": "2026-07-18T18:08:57Z",
+            "created_by": "pantheon-persona-provisioner",
+            "decided_at": "2026-07-18T18:08:57Z",
+            "decision_id": "apv-persona-paper-artifact-4c3acf7ce6a81522b71c",
+            "decision_type": null,
+            "deployment_ref": {},
+            "evidence_refs": [
+              {
+                "ref_id": "artifact-persona-paper-4c3acf7ce6a81522b71c",
+                "ref_type": "registry_entry"
+              }
+            ],
+            "expires_at": null,
+            "id": "apv-persona-paper-artifact-4c3acf7ce6a81522b71c",
+            "outcome": "approved",
+            "owner_user_id": "pantheon-dev-proof-loop-prod-per-001-29655287111-1",
+            "proposal_content_digest": "7c5306c192580ccb995b531c2bcb4b050de69878227f2416bc55b46b67995692",
+            "proposal_id": "persona-provisioning-forward-artifact-4c3acf7ce6a81522b71c",
+            "proposal_revision": 1,
+            "rationale": "Low-risk internal paper Persona admission",
+            "reviewer": "pantheon-persona-provisioner",
+            "revoked_at": null,
+            "risk_level": "low",
+            "state": "decided",
+            "submitted_at": "2026-07-18T18:08:57Z",
+            "target_id": "artifact-persona-paper-4c3acf7ce6a81522b71c",
+            "target_type": "registry_entry",
+            "target_version": "1.0.0",
+            "tenant_id": "pantheon-dev",
+            "validation_result_digest": "d70fa98383fa8874d7885830ec2dc8800dcba3e6de7de9127fa139d55e0a9627"
+          },
+          "approval_decision_id": "apv-persona-paper-artifact-4c3acf7ce6a81522b71c",
+          "approval_ref": {
+            "approval_decision_id": "apv-persona-paper-artifact-4c3acf7ce6a81522b71c",
+            "href": "/bff/approvals/apv-persona-paper-artifact-4c3acf7ce6a81522b71c"
+          },
+          "artifact_id": "artifact-persona-paper-4c3acf7ce6a81522b71c",
+          "artifact_version": "1.0.0",
+          "binding_ids": [
+            "rb-84513a1140e64430a66cf699d7e7e7de"
+          ],
+          "blocked_reason": null,
+          "capital_pool_id": "pool-persona-paper-4c3acf7ce6a81522b71c",
+          "current_stage": "paper",
+          "deployment_saga_id": "deployment-saga-plan-persona-paper-4c3acf7ce6a81522b71c",
+          "deployment_saga_status": "completed",
+          "dlq_count": 0,
+          "id": "plan-persona-paper-4c3acf7ce6a81522b71c",
+          "plan_id": "plan-persona-paper-4c3acf7ce6a81522b71c",
+          "retry_state": [
+            {
+              "blocked_reason": null,
+              "delivery_attempts": 0,
+              "dlq_at": null,
+              "event_id": "deployment-saga-plan-persona-paper-4c3acf7ce6a81522b71c-evt-0001",
+              "event_type": "runtime.binding.requested",
+              "last_attempt_at": null,
+              "last_error": null,
+              "last_replayed_at": null,
+              "next_retry_at": null,
+              "replay_count": 0,
+              "retry_policy": {},
+              "sequence_no": 1,
+              "status": "published"
+            },
+            {
+              "blocked_reason": null,
+              "delivery_attempts": 1,
+              "dlq_at": null,
+              "event_id": "deployment-saga-plan-persona-paper-4c3acf7ce6a81522b71c-evt-0002",
+              "event_type": "runtime.load.requested",
+              "last_attempt_at": "2026-07-18T18:09:13Z",
+              "last_error": "event_id=deployment-saga-plan-persona-paper-4c3acf7ce6a81522b71c-evt-0002 error=paper fleet post-state is not running yet: expected one fleet worker for binding_id='rb-84513a1140e64430a66cf699d7e7e7de', found 0",
+              "last_replayed_at": null,
+              "next_retry_at": null,
+              "replay_count": 0,
+              "retry_policy": {
+                "consumer_name": "deployment-outbox-consumer",
+                "max_attempts": 3,
+                "retry_delay_seconds": 30,
+                "retryable": true
+              },
+              "sequence_no": 2,
+              "status": "published"
+            },
+            {
+              "blocked_reason": null,
+              "delivery_attempts": 0,
+              "dlq_at": null,
+              "event_id": "deployment-saga-plan-persona-paper-4c3acf7ce6a81522b71c-evt-0003",
+              "event_type": "deployment.saga.completed",
+              "last_attempt_at": null,
+              "last_error": null,
+              "last_replayed_at": null,
+              "next_retry_at": null,
+              "replay_count": 0,
+              "retry_policy": {},
+              "sequence_no": 3,
+              "status": "published"
+            }
+          ],
+          "runtime_binding_id": "rb-84513a1140e64430a66cf699d7e7e7de",
+          "saga_progress": {
+            "blocked_reason": null,
+            "completed_steps": [
+              "binding_requested",
+              "runtime_load_requested",
+              "runtime_active"
+            ],
+            "current_step": "runtime_active",
+            "dlq_count": 0,
+            "pending_event_count": 0,
+            "plan_id": "plan-persona-paper-4c3acf7ce6a81522b71c",
+            "progress_status": "completed",
+            "retry_policy": {
+              "max_attempts": 3,
+              "retry_delay_seconds": 30,
+              "retryable": true
+            },
+            "retry_state": [
+              {
+                "blocked_reason": null,
+                "delivery_attempts": 0,
+                "dlq_at": null,
+                "event_id": "deployment-saga-plan-persona-paper-4c3acf7ce6a81522b71c-evt-0001",
+                "event_type": "runtime.binding.requested",
+                "last_attempt_at": null,
+                "last_error": null,
+                "last_replayed_at": null,
+                "next_retry_at": null,
+                "replay_count": 0,
+                "retry_policy": {},
+                "sequence_no": 1,
+                "status": "published"
+              },
+              {
+                "blocked_reason": null,
+                "delivery_attempts": 1,
+                "dlq_at": null,
+                "event_id": "deployment-saga-plan-persona-paper-4c3acf7ce6a81522b71c-evt-0002",
+                "event_type": "runtime.load.requested",
+                "last_attempt_at": "2026-07-18T18:09:13Z",
+                "last_error": "event_id=deployment-saga-plan-persona-paper-4c3acf7ce6a81522b71c-evt-0002 error=paper fleet post-state is not running yet: expected one fleet worker for binding_id='rb-84513a1140e64430a66cf699d7e7e7de', found 0",
+                "last_replayed_at": null,
+                "next_retry_at": null,
+                "replay_count": 0,
+                "retry_policy": {
+                  "consumer_name": "deployment-outbox-consumer",
+                  "max_attempts": 3,
+                  "retry_delay_seconds": 30,
+                  "retryable": true
+                },
+                "sequence_no": 2,
+                "status": "published"
+              },
+              {
+                "blocked_reason": null,
+                "delivery_attempts": 0,
+                "dlq_at": null,
+                "event_id": "deployment-saga-plan-persona-paper-4c3acf7ce6a81522b71c-evt-0003",
+                "event_type": "deployment.saga.completed",
+                "last_attempt_at": null,
+                "last_error": null,
+                "last_replayed_at": null,
+                "next_retry_at": null,
+                "replay_count": 0,
+                "retry_policy": {},
+                "sequence_no": 3,
+                "status": "published"
+              }
+            ],
+            "saga_id": "deployment-saga-plan-persona-paper-4c3acf7ce6a81522b71c",
+            "saga_status": "completed"
+          },
+          "saga_progress_status": "completed",
+          "stage": "paper",
+          "stage_truth": {
+            "approval": {
+              "available": true,
+              "decision_state": "decided",
+              "failure": false,
+              "reviewer": "pantheon-persona-provisioner",
+              "source_dataset": "approval_decisions",
+              "source_id": "apv-persona-paper-artifact-4c3acf7ce6a81522b71c",
+              "stage": "approval",
+              "status": "approved"
+            },
+            "binding": {
+              "artifact_id": "artifact-persona-paper-4c3acf7ce6a81522b71c",
+              "artifact_version": "1.0.0",
+              "available": true,
+              "deployment_stage": "paper",
+              "failure": false,
+              "runtime_id": "rt-d58dbd57",
+              "source_dataset": "runtime_bindings",
+              "source_id": "rb-84513a1140e64430a66cf699d7e7e7de",
+              "stage": "binding",
+              "status": "active"
+            },
+            "plan": {
+              "available": true,
+              "current_stage": "paper",
+              "failure": false,
+              "source_dataset": "deployment_plans",
+              "source_id": "plan-persona-paper-4c3acf7ce6a81522b71c",
+              "stage": "plan",
+              "status": "executed",
+              "target_stage": "paper",
+              "transition_type": "activate"
+            },
+            "runtime_fleet": {
+              "active": true,
+              "available": true,
+              "deployment_stage": "paper",
+              "failure": false,
+              "last_heartbeat_at": "2026-07-18T18:10:57Z",
+              "runtime_binding_id": "rb-84513a1140e64430a66cf699d7e7e7de",
+              "runtime_id": "rt-d58dbd57",
+              "source_dataset": "paper_runtime_monitoring_sessions",
+              "source_id": "prmon-rb-84513a1140e64430a66cf699d7e7e7de-f9bb5879",
+              "stage": "runtime_fleet",
+              "status": "active"
+            },
+            "saga": {
+              "available": true,
+              "current_step": "runtime_active",
+              "dlq_count": 0,
+              "failure": false,
+              "pending_event_count": 0,
+              "saga_status": "completed",
+              "source_dataset": "deployment_sagas",
+              "source_id": "deployment-saga-plan-persona-paper-4c3acf7ce6a81522b71c",
+              "stage": "saga",
+              "status": "completed"
+            }
+          },
+          "stages": [],
+          "status": "executed",
+          "submitted_at": "2026-07-18T18:08:58Z",
+          "target_stage": "paper",
+          "transition_type": "activate"
+        },
+        "meta": {
+          "snapshot_at": "2026-07-18T18:11:04Z",
+          "surfaces": {
+            "approval_stage": {
+              "source": "canonical",
+              "status": "ok"
+            },
+            "binding_stage": {
+              "source": "service_client",
+              "status": "ok"
+            },
+            "deployment_plan_detail": {
+              "source": "service_client",
+              "status": "ok"
+            },
+            "deployment_stage_truth": {
+              "source": "bff_composed",
+              "status": "ok"
+            },
+            "plan_stage": {
+              "source": "service_client",
+              "status": "ok"
+            },
+            "runtime_fleet_stage": {
+              "source": "service_client",
+              "status": "ok"
+            },
+            "saga_stage": {
+              "source": "canonical",
+              "status": "ok"
+            }
+          }
+        }
+      },
+      "method": "GET",
+      "ok": true,
+      "started_at": "2026-07-18T18:11:04.414162Z",
+      "status": 200,
+      "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/api/v1/deployment-plans/plan-persona-paper-4c3acf7ce6a81522b71c"
+    },
+    "negative_create_live_capital": {
+      "completed_at": "2026-07-18T18:08:55.950528Z",
+      "headers": {
+        "content-type": "application/json",
+        "x-correlation-id": "loop-prod-per-001-38c211225e6263aa"
+      },
+      "json": {
+        "error": {
+          "code": "VALIDATION_FAILED",
+          "details": {
+            "precondition_failed": "capital_mode",
+            "reason": "New Personas start in paper trading only. Canary/live capital requires a Human Inbox promotion review.",
+            "suggestion": "Create the Persona in paper mode, then request promotion review after evidence is ready."
+          },
+          "i18nKey": "errors.VALIDATION_FAILED",
+          "message": "Initial Persona capital mode must be paper",
+          "retryable": false,
+          "userActionable": true
+        },
+        "meta": {
+          "correlationId": "loop-prod-per-001-38c211225e6263aa"
+        }
+      },
+      "method": "POST",
+      "ok": false,
+      "started_at": "2026-07-18T18:08:55.251681Z",
+      "status": 422,
+      "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/personas"
+    },
+    "negative_create_without_auth": {
+      "completed_at": "2026-07-18T18:08:54.549661Z",
+      "headers": {
+        "content-type": "application/json",
+        "x-correlation-id": "loop-prod-per-001-e0d1834b3820a672"
+      },
+      "json": {
+        "error": {
+          "code": "AUTH_REQUIRED",
+          "details": {
+            "precondition_failed": null,
+            "reason": "401",
+            "suggestion": "Re-authenticate with a valid JWT bearer token"
+          },
+          "i18nKey": "errors.AUTH_REQUIRED",
+          "message": "Unauthorized: missing Bearer token",
+          "retryable": false,
+          "userActionable": true
+        },
+        "meta": {
+          "correlationId": "loop-prod-per-001-e0d1834b3820a672"
+        }
+      },
+      "method": "POST",
+      "ok": false,
+      "started_at": "2026-07-18T18:08:53.890894Z",
+      "status": 401,
+      "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/personas"
+    },
+    "negative_create_wrong_tenant": {
+      "completed_at": "2026-07-18T18:08:55.251550Z",
+      "headers": {
+        "content-type": "application/json",
+        "x-correlation-id": "loop-prod-per-001-c74e62eef8b5490c"
+      },
+      "json": {
+        "error": {
+          "code": "FORBIDDEN",
+          "details": {
+            "allowedTenantIds": [
+              "pantheon-dev"
+            ],
+            "precondition_failed": "tenant_scope",
+            "reason": "Requested tenant is outside the caller tenant scope",
+            "suggestion": "Switch to an allowed tenant or request access from an administrator",
+            "tenantId": "tenant-other"
+          },
+          "i18nKey": "errors.FORBIDDEN",
+          "message": "Tenant access denied",
+          "retryable": false,
+          "userActionable": false
+        },
+        "meta": {
+          "correlationId": "loop-prod-per-001-c74e62eef8b5490c"
+        }
+      },
+      "method": "POST",
+      "ok": false,
+      "started_at": "2026-07-18T18:08:54.549785Z",
+      "status": 403,
+      "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/personas"
+    },
+    "persona_capabilities": {
+      "completed_at": "2026-07-18T18:11:06.536960Z",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "json": {
+        "data": {
+          "effectiveSkills": [],
+          "effectiveTools": [],
+          "effectiveWorkflows": [],
+          "generatedAt": null,
+          "personaId": "persona-1078f601d489f0baeb88",
+          "restrictions": [],
+          "snapshotId": null,
+          "sourceRefs": []
+        },
+        "meta": {
+          "snapshot_at": "2026-07-18T18:11:06Z",
+          "surfaces": {
+            "persona_capabilities": {
+              "source": "service_store",
+              "status": "ok"
+            }
+          }
+        }
+      },
+      "method": "GET",
+      "ok": true,
+      "started_at": "2026-07-18T18:11:05.877416Z",
+      "status": 200,
+      "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/personas/persona-1078f601d489f0baeb88/capabilities"
+    },
+    "persona_create": {
+      "attempt": 1,
+      "completed_at": "2026-07-18T18:09:39.443458Z",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "json": {
+        "data": {
+          "archetype": "market-neutral-scout",
+          "assetClasses": [],
+          "capitalMode": "paper",
+          "currentWork": null,
+          "dataSourceStatus": {
+            "connectorHealth": [],
+            "connector_health": [],
+            "liveSourceConnectorIds": [],
+            "live_ingestion_enabled": false,
+            "live_source_connector_ids": [],
+            "order_side_effects_allowed": false,
+            "provider_count": 0,
+            "provider_status_counts": {},
+            "provider_statuses": {},
+            "requiredSourceHealth": [
+              {
+                "cadence": null,
+                "connectorCandidates": [],
+                "connector_candidates": [],
+                "dataset": null,
+                "healthSource": "unbound",
+                "health_source": "unbound",
+                "market": "US",
+                "selectedConnectorId": null,
+                "selected_connector_id": null,
+                "sourceClass": null,
+                "sourceHealthAvailable": false,
+                "source_class": null,
+                "source_health_available": false
+              }
+            ],
+            "required_source_health": [
+              {
+                "cadence": null,
+                "connectorCandidates": [],
+                "connector_candidates": [],
+                "dataset": null,
+                "healthSource": "unbound",
+                "health_source": "unbound",
+                "market": "US",
+                "selectedConnectorId": null,
+                "selected_connector_id": null,
+                "sourceClass": null,
+                "sourceHealthAvailable": false,
+                "source_class": null,
+                "source_health_available": false
+              }
+            ],
+            "sourceHealthSource": "static_metadata",
+            "source_health_source": "static_metadata",
+            "state": "paper_readback_pending",
+            "staticSourceLabels": [],
+            "static_source_labels": []
+          },
+          "dataSources": [],
+          "deploymentPlanId": "plan-persona-paper-4c3acf7ce6a81522b71c",
+          "deploymentStage": "paper",
+          "evidenceRefs": [
+            "evidence://persona-create/persona-1078f601d489f0baeb88/request",
+            "evidence://persona-create/persona-1078f601d489f0baeb88/capital-binding",
+            "evidence://persona-create/persona-1078f601d489f0baeb88/deployment-saga"
+          ],
+          "governanceRequired": true,
+          "id": "persona-1078f601d489f0baeb88",
+          "labelKey": "persona.persona-1078f601d489f0baeb88",
+          "legacyPaperCapitalPoolId": "pool-persona-paper-4c3acf7ce6a81522b71c",
+          "lifecycleStatus": "provisioning",
+          "mandate": "Hosted paper provisioning proof for LOOP-PROD-PER-001.",
+          "marketScope": [],
+          "name": "LOOP-PROD-PER-001 hosted proof 20260718T180855Z-ece8dd8f",
+          "oodaStage": null,
+          "owner": "pantheon-dev-proof-loop-prod-per-001-29655287111-1",
+          "paperLedger": {
+            "benchmark_budget": null,
+            "id": "paper-ledger-4c3acf7ce6a81522b71c",
+            "is_isolated": true,
+            "mode": "paper",
+            "persona_id": "persona-1078f601d489f0baeb88"
+          },
+          "paperLedgerId": "paper-ledger-4c3acf7ce6a81522b71c",
+          "recommendedGovernanceAction": "none",
+          "requiredDataSources": [
+            {
+              "market": "US",
+              "mode": "paper",
+              "source": "market_data"
+            }
+          ],
+          "risk": "low",
+          "riskFlags": [],
+          "routedStrategies": 0,
+          "sourceHealthBindings": [
+            {
+              "cadence": null,
+              "connectorCandidates": [],
+              "connector_candidates": [],
+              "dataset": null,
+              "healthSource": "unbound",
+              "health_source": "unbound",
+              "market": "US",
+              "selectedConnectorId": null,
+              "selected_connector_id": null,
+              "sourceClass": null,
+              "sourceHealthAvailable": false,
+              "source_class": null,
+              "source_health_available": false
+            }
+          ],
+          "state": "provisioning",
+          "strategyFamily": "paper-evaluation",
+          "successRate": 0.0,
+          "tenantId": "pantheon-dev",
+          "traits": {
+            "decision_style": "evidence_first",
+            "hard_rules": [
+              "paper_only"
+            ],
+            "instruments": [
+              "SPY"
+            ],
+            "persona_voice": "concise",
+            "risk_appetite": "low",
+            "time_horizon": "intraday"
+          },
+          "updatedAt": "2026-07-18T18:08:56.474491Z"
+        },
+        "meta": {
+          "approval_decision_id": "apv-persona-paper-4c3acf7ce6a81522b71c",
+          "authoritative_receipt_steps": [
+            "approval_decided",
+            "approval_proposed",
+            "approval_reviewed",
+            "baseline_approval_decided",
+            "baseline_approval_proposed",
+            "baseline_approval_reviewed",
+            "baseline_strategy_artifact_approval_decided",
+            "baseline_strategy_artifact_approval_proposed",
+            "baseline_strategy_artifact_approval_reviewed",
+            "baseline_strategy_artifact_approved",
+            "baseline_strategy_artifact_candidate",
+            "baseline_strategy_spec_approved",
+            "baseline_strategy_spec_candidate",
+            "capital_pool",
+            "deployment_dispatch",
+            "deployment_plan",
+            "first_evaluation_schedule",
+            "persona_capital_binding_active",
+            "persona_capital_binding_created",
+            "provisioning_readback_started_at",
+            "strategy_artifact_approval_decided",
+            "strategy_artifact_approval_proposed",
+            "strategy_artifact_approval_reviewed",
+            "strategy_artifact_approved",
+            "strategy_artifact_candidate",
+            "strategy_spec_approved",
+            "strategy_spec_candidate"
+          ],
+          "capital_mode": "paper",
+          "create_flow": "durable_owner_coordinated_provisioning",
+          "deployment_plan_id": "plan-persona-paper-4c3acf7ce6a81522b71c",
+          "deployment_saga_id": "deployment-saga-plan-persona-paper-4c3acf7ce6a81522b71c",
+          "dispatch_admitted": true,
+          "first_evaluation_workflow_id": "pantheon.persona.first-evaluation",
+          "human_review_required_for_live": true,
+          "legacy_paper_capital_pool_id": "pool-persona-paper-4c3acf7ce6a81522b71c",
+          "live_capital_side_effects": false,
+          "ooda_loop_status": "open",
+          "ooda_packet_id": "ooda-0535be02b9a4",
+          "paper_ledger_id": "paper-ledger-4c3acf7ce6a81522b71c",
+          "persona_capital_binding_id": "pcb-persona-paper-4c3acf7ce6a81522b71c",
+          "provisioning_state": "provisioning",
+          "provisioning_step": "schedule_registered",
+          "registry_id": "reg-strategy-spec-persona-4c3acf7ce6a81522b71c",
+          "runtime_binding_id": null,
+          "runtime_id": null,
+          "snapshot_at": "2026-07-18T18:08:56Z"
+        }
+      },
+      "method": "POST",
+      "ok": true,
+      "retry_attempts": [
+        {
+          "attempt": 1,
+          "completed_at": "2026-07-18T18:09:39.443458Z",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "json": {
+            "data": {
+              "archetype": "market-neutral-scout",
+              "assetClasses": [],
+              "capitalMode": "paper",
+              "currentWork": null,
+              "dataSourceStatus": {
+                "connectorHealth": [],
+                "connector_health": [],
+                "liveSourceConnectorIds": [],
+                "live_ingestion_enabled": false,
+                "live_source_connector_ids": [],
+                "order_side_effects_allowed": false,
+                "provider_count": 0,
+                "provider_status_counts": {},
+                "provider_statuses": {},
+                "requiredSourceHealth": [
+                  {
+                    "cadence": null,
+                    "connectorCandidates": [],
+                    "connector_candidates": [],
+                    "dataset": null,
+                    "healthSource": "unbound",
+                    "health_source": "unbound",
+                    "market": "US",
+                    "selectedConnectorId": null,
+                    "selected_connector_id": null,
+                    "sourceClass": null,
+                    "sourceHealthAvailable": false,
+                    "source_class": null,
+                    "source_health_available": false
+                  }
+                ],
+                "required_source_health": [
+                  {
+                    "cadence": null,
+                    "connectorCandidates": [],
+                    "connector_candidates": [],
+                    "dataset": null,
+                    "healthSource": "unbound",
+                    "health_source": "unbound",
+                    "market": "US",
+                    "selectedConnectorId": null,
+                    "selected_connector_id": null,
+                    "sourceClass": null,
+                    "sourceHealthAvailable": false,
+                    "source_class": null,
+                    "source_health_available": false
+                  }
+                ],
+                "sourceHealthSource": "static_metadata",
+                "source_health_source": "static_metadata",
+                "state": "paper_readback_pending",
+                "staticSourceLabels": [],
+                "static_source_labels": []
+              },
+              "dataSources": [],
+              "deploymentPlanId": "plan-persona-paper-4c3acf7ce6a81522b71c",
+              "deploymentStage": "paper",
+              "evidenceRefs": [
+                "evidence://persona-create/persona-1078f601d489f0baeb88/request",
+                "evidence://persona-create/persona-1078f601d489f0baeb88/capital-binding",
+                "evidence://persona-create/persona-1078f601d489f0baeb88/deployment-saga"
+              ],
+              "governanceRequired": true,
+              "id": "persona-1078f601d489f0baeb88",
+              "labelKey": "persona.persona-1078f601d489f0baeb88",
+              "legacyPaperCapitalPoolId": "pool-persona-paper-4c3acf7ce6a81522b71c",
+              "lifecycleStatus": "provisioning",
+              "mandate": "Hosted paper provisioning proof for LOOP-PROD-PER-001.",
+              "marketScope": [],
+              "name": "LOOP-PROD-PER-001 hosted proof 20260718T180855Z-ece8dd8f",
+              "oodaStage": null,
+              "owner": "pantheon-dev-proof-loop-prod-per-001-29655287111-1",
+              "paperLedger": {
+                "benchmark_budget": null,
+                "id": "paper-ledger-4c3acf7ce6a81522b71c",
+                "is_isolated": true,
+                "mode": "paper",
+                "persona_id": "persona-1078f601d489f0baeb88"
+              },
+              "paperLedgerId": "paper-ledger-4c3acf7ce6a81522b71c",
+              "recommendedGovernanceAction": "none",
+              "requiredDataSources": [
+                {
+                  "market": "US",
+                  "mode": "paper",
+                  "source": "market_data"
+                }
+              ],
+              "risk": "low",
+              "riskFlags": [],
+              "routedStrategies": 0,
+              "sourceHealthBindings": [
+                {
+                  "cadence": null,
+                  "connectorCandidates": [],
+                  "connector_candidates": [],
+                  "dataset": null,
+                  "healthSource": "unbound",
+                  "health_source": "unbound",
+                  "market": "US",
+                  "selectedConnectorId": null,
+                  "selected_connector_id": null,
+                  "sourceClass": null,
+                  "sourceHealthAvailable": false,
+                  "source_class": null,
+                  "source_health_available": false
+                }
+              ],
+              "state": "provisioning",
+              "strategyFamily": "paper-evaluation",
+              "successRate": 0.0,
+              "tenantId": "pantheon-dev",
+              "traits": {
+                "decision_style": "evidence_first",
+                "hard_rules": [
+                  "paper_only"
+                ],
+                "instruments": [
+                  "SPY"
+                ],
+                "persona_voice": "concise",
+                "risk_appetite": "low",
+                "time_horizon": "intraday"
+              },
+              "updatedAt": "2026-07-18T18:08:56.474491Z"
+            },
+            "meta": {
+              "approval_decision_id": "apv-persona-paper-4c3acf7ce6a81522b71c",
+              "authoritative_receipt_steps": [
+                "approval_decided",
+                "approval_proposed",
+                "approval_reviewed",
+                "baseline_approval_decided",
+                "baseline_approval_proposed",
+                "baseline_approval_reviewed",
+                "baseline_strategy_artifact_approval_decided",
+                "baseline_strategy_artifact_approval_proposed",
+                "baseline_strategy_artifact_approval_reviewed",
+                "baseline_strategy_artifact_approved",
+                "baseline_strategy_artifact_candidate",
+                "baseline_strategy_spec_approved",
+                "baseline_strategy_spec_candidate",
+                "capital_pool",
+                "deployment_dispatch",
+                "deployment_plan",
+                "first_evaluation_schedule",
+                "persona_capital_binding_active",
+                "persona_capital_binding_created",
+                "provisioning_readback_started_at",
+                "strategy_artifact_approval_decided",
+                "strategy_artifact_approval_proposed",
+                "strategy_artifact_approval_reviewed",
+                "strategy_artifact_approved",
+                "strategy_artifact_candidate",
+                "strategy_spec_approved",
+                "strategy_spec_candidate"
+              ],
+              "capital_mode": "paper",
+              "create_flow": "durable_owner_coordinated_provisioning",
+              "deployment_plan_id": "plan-persona-paper-4c3acf7ce6a81522b71c",
+              "deployment_saga_id": "deployment-saga-plan-persona-paper-4c3acf7ce6a81522b71c",
+              "dispatch_admitted": true,
+              "first_evaluation_workflow_id": "pantheon.persona.first-evaluation",
+              "human_review_required_for_live": true,
+              "legacy_paper_capital_pool_id": "pool-persona-paper-4c3acf7ce6a81522b71c",
+              "live_capital_side_effects": false,
+              "ooda_loop_status": "open",
+              "ooda_packet_id": "ooda-0535be02b9a4",
+              "paper_ledger_id": "paper-ledger-4c3acf7ce6a81522b71c",
+              "persona_capital_binding_id": "pcb-persona-paper-4c3acf7ce6a81522b71c",
+              "provisioning_state": "provisioning",
+              "provisioning_step": "schedule_registered",
+              "registry_id": "reg-strategy-spec-persona-4c3acf7ce6a81522b71c",
+              "runtime_binding_id": null,
+              "runtime_id": null,
+              "snapshot_at": "2026-07-18T18:08:56Z"
+            }
+          },
+          "method": "POST",
+          "ok": true,
+          "started_at": "2026-07-18T18:08:55.950707Z",
+          "status": 201,
+          "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/personas"
+        }
+      ],
+      "started_at": "2026-07-18T18:08:55.950707Z",
+      "status": 201,
+      "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/personas"
+    },
+    "persona_create_idempotency_retry": {
+      "attempt": 1,
+      "completed_at": "2026-07-18T18:09:53.709517Z",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "json": {
+        "data": {
+          "archetype": "market-neutral-scout",
+          "assetClasses": [],
+          "capitalMode": "paper",
+          "currentWork": null,
+          "dataSourceStatus": {
+            "connectorHealth": [],
+            "connector_health": [],
+            "liveSourceConnectorIds": [],
+            "live_ingestion_enabled": false,
+            "live_source_connector_ids": [],
+            "order_side_effects_allowed": false,
+            "provider_count": 0,
+            "provider_status_counts": {},
+            "provider_statuses": {},
+            "requiredSourceHealth": [
+              {
+                "cadence": null,
+                "connectorCandidates": [],
+                "connector_candidates": [],
+                "dataset": null,
+                "healthSource": "unbound",
+                "health_source": "unbound",
+                "market": "US",
+                "selectedConnectorId": null,
+                "selected_connector_id": null,
+                "sourceClass": null,
+                "sourceHealthAvailable": false,
+                "source_class": null,
+                "source_health_available": false
+              }
+            ],
+            "required_source_health": [
+              {
+                "cadence": null,
+                "connectorCandidates": [],
+                "connector_candidates": [],
+                "dataset": null,
+                "healthSource": "unbound",
+                "health_source": "unbound",
+                "market": "US",
+                "selectedConnectorId": null,
+                "selected_connector_id": null,
+                "sourceClass": null,
+                "sourceHealthAvailable": false,
+                "source_class": null,
+                "source_health_available": false
+              }
+            ],
+            "sourceHealthSource": "static_metadata",
+            "source_health_source": "static_metadata",
+            "state": "paper_readback_pending",
+            "staticSourceLabels": [],
+            "static_source_labels": []
+          },
+          "dataSources": [],
+          "deploymentPlanId": "plan-persona-paper-4c3acf7ce6a81522b71c",
+          "deploymentStage": "paper",
+          "evidenceRefs": [
+            "evidence://persona-create/persona-1078f601d489f0baeb88/request",
+            "evidence://persona-create/persona-1078f601d489f0baeb88/capital-binding",
+            "evidence://persona-create/persona-1078f601d489f0baeb88/deployment-saga"
+          ],
+          "governanceRequired": true,
+          "id": "persona-1078f601d489f0baeb88",
+          "labelKey": "persona.persona-1078f601d489f0baeb88",
+          "legacyPaperCapitalPoolId": "pool-persona-paper-4c3acf7ce6a81522b71c",
+          "lifecycleStatus": "provisioning",
+          "mandate": "Hosted paper provisioning proof for LOOP-PROD-PER-001.",
+          "marketScope": [],
+          "name": "LOOP-PROD-PER-001 hosted proof 20260718T180855Z-ece8dd8f",
+          "oodaStage": null,
+          "owner": "pantheon-dev-proof-loop-prod-per-001-29655287111-1",
+          "paperLedger": {
+            "benchmark_budget": null,
+            "id": "paper-ledger-4c3acf7ce6a81522b71c",
+            "is_isolated": true,
+            "mode": "paper",
+            "persona_id": "persona-1078f601d489f0baeb88"
+          },
+          "paperLedgerId": "paper-ledger-4c3acf7ce6a81522b71c",
+          "recommendedGovernanceAction": "none",
+          "requiredDataSources": [
+            {
+              "market": "US",
+              "mode": "paper",
+              "source": "market_data"
+            }
+          ],
+          "risk": "low",
+          "riskFlags": [],
+          "routedStrategies": 0,
+          "sourceHealthBindings": [
+            {
+              "cadence": null,
+              "connectorCandidates": [],
+              "connector_candidates": [],
+              "dataset": null,
+              "healthSource": "unbound",
+              "health_source": "unbound",
+              "market": "US",
+              "selectedConnectorId": null,
+              "selected_connector_id": null,
+              "sourceClass": null,
+              "sourceHealthAvailable": false,
+              "source_class": null,
+              "source_health_available": false
+            }
+          ],
+          "state": "provisioning",
+          "strategyFamily": "paper-evaluation",
+          "successRate": 0.0,
+          "tenantId": "pantheon-dev",
+          "traits": {
+            "decision_style": "evidence_first",
+            "hard_rules": [
+              "paper_only"
+            ],
+            "instruments": [
+              "SPY"
+            ],
+            "persona_voice": "concise",
+            "risk_appetite": "low",
+            "time_horizon": "intraday"
+          },
+          "updatedAt": "2026-07-18T18:09:41Z"
+        },
+        "meta": {
+          "approval_decision_id": "apv-persona-paper-4c3acf7ce6a81522b71c",
+          "authoritative_receipt_steps": [
+            "approval_decided",
+            "approval_proposed",
+            "approval_reviewed",
+            "baseline_approval_decided",
+            "baseline_approval_proposed",
+            "baseline_approval_reviewed",
+            "baseline_strategy_artifact_approval_decided",
+            "baseline_strategy_artifact_approval_proposed",
+            "baseline_strategy_artifact_approval_reviewed",
+            "baseline_strategy_artifact_approved",
+            "baseline_strategy_artifact_candidate",
+            "baseline_strategy_spec_approved",
+            "baseline_strategy_spec_candidate",
+            "capital_pool",
+            "deployment_dispatch",
+            "deployment_plan",
+            "first_evaluation_schedule",
+            "persona_capital_binding_active",
+            "persona_capital_binding_created",
+            "provisioning_readback_started_at",
+            "strategy_artifact_approval_decided",
+            "strategy_artifact_approval_proposed",
+            "strategy_artifact_approval_reviewed",
+            "strategy_artifact_approved",
+            "strategy_artifact_candidate",
+            "strategy_spec_approved",
+            "strategy_spec_candidate"
+          ],
+          "capital_mode": "paper",
+          "create_flow": "durable_owner_coordinated_provisioning",
+          "deployment_plan_id": "plan-persona-paper-4c3acf7ce6a81522b71c",
+          "deployment_saga_id": "deployment-saga-plan-persona-paper-4c3acf7ce6a81522b71c",
+          "dispatch_admitted": true,
+          "first_evaluation_workflow_id": "pantheon.persona.first-evaluation",
+          "human_review_required_for_live": true,
+          "legacy_paper_capital_pool_id": "pool-persona-paper-4c3acf7ce6a81522b71c",
+          "live_capital_side_effects": false,
+          "ooda_loop_status": "open",
+          "ooda_packet_id": "ooda-5d61e40978ab",
+          "paper_ledger_id": "paper-ledger-4c3acf7ce6a81522b71c",
+          "persona_capital_binding_id": "pcb-persona-paper-4c3acf7ce6a81522b71c",
+          "provisioning_state": "provisioning",
+          "provisioning_step": "schedule_registered",
+          "registry_id": "reg-strategy-spec-persona-4c3acf7ce6a81522b71c",
+          "runtime_binding_id": null,
+          "runtime_id": null,
+          "snapshot_at": "2026-07-18T18:09:40Z"
+        }
+      },
+      "method": "POST",
+      "ok": true,
+      "retry_attempts": [
+        {
+          "attempt": 1,
+          "completed_at": "2026-07-18T18:09:53.709517Z",
+          "headers": {
+            "content-type": "application/json"
+          },
+          "json": {
+            "data": {
+              "archetype": "market-neutral-scout",
+              "assetClasses": [],
+              "capitalMode": "paper",
+              "currentWork": null,
+              "dataSourceStatus": {
+                "connectorHealth": [],
+                "connector_health": [],
+                "liveSourceConnectorIds": [],
+                "live_ingestion_enabled": false,
+                "live_source_connector_ids": [],
+                "order_side_effects_allowed": false,
+                "provider_count": 0,
+                "provider_status_counts": {},
+                "provider_statuses": {},
+                "requiredSourceHealth": [
+                  {
+                    "cadence": null,
+                    "connectorCandidates": [],
+                    "connector_candidates": [],
+                    "dataset": null,
+                    "healthSource": "unbound",
+                    "health_source": "unbound",
+                    "market": "US",
+                    "selectedConnectorId": null,
+                    "selected_connector_id": null,
+                    "sourceClass": null,
+                    "sourceHealthAvailable": false,
+                    "source_class": null,
+                    "source_health_available": false
+                  }
+                ],
+                "required_source_health": [
+                  {
+                    "cadence": null,
+                    "connectorCandidates": [],
+                    "connector_candidates": [],
+                    "dataset": null,
+                    "healthSource": "unbound",
+                    "health_source": "unbound",
+                    "market": "US",
+                    "selectedConnectorId": null,
+                    "selected_connector_id": null,
+                    "sourceClass": null,
+                    "sourceHealthAvailable": false,
+                    "source_class": null,
+                    "source_health_available": false
+                  }
+                ],
+                "sourceHealthSource": "static_metadata",
+                "source_health_source": "static_metadata",
+                "state": "paper_readback_pending",
+                "staticSourceLabels": [],
+                "static_source_labels": []
+              },
+              "dataSources": [],
+              "deploymentPlanId": "plan-persona-paper-4c3acf7ce6a81522b71c",
+              "deploymentStage": "paper",
+              "evidenceRefs": [
+                "evidence://persona-create/persona-1078f601d489f0baeb88/request",
+                "evidence://persona-create/persona-1078f601d489f0baeb88/capital-binding",
+                "evidence://persona-create/persona-1078f601d489f0baeb88/deployment-saga"
+              ],
+              "governanceRequired": true,
+              "id": "persona-1078f601d489f0baeb88",
+              "labelKey": "persona.persona-1078f601d489f0baeb88",
+              "legacyPaperCapitalPoolId": "pool-persona-paper-4c3acf7ce6a81522b71c",
+              "lifecycleStatus": "provisioning",
+              "mandate": "Hosted paper provisioning proof for LOOP-PROD-PER-001.",
+              "marketScope": [],
+              "name": "LOOP-PROD-PER-001 hosted proof 20260718T180855Z-ece8dd8f",
+              "oodaStage": null,
+              "owner": "pantheon-dev-proof-loop-prod-per-001-29655287111-1",
+              "paperLedger": {
+                "benchmark_budget": null,
+                "id": "paper-ledger-4c3acf7ce6a81522b71c",
+                "is_isolated": true,
+                "mode": "paper",
+                "persona_id": "persona-1078f601d489f0baeb88"
+              },
+              "paperLedgerId": "paper-ledger-4c3acf7ce6a81522b71c",
+              "recommendedGovernanceAction": "none",
+              "requiredDataSources": [
+                {
+                  "market": "US",
+                  "mode": "paper",
+                  "source": "market_data"
+                }
+              ],
+              "risk": "low",
+              "riskFlags": [],
+              "routedStrategies": 0,
+              "sourceHealthBindings": [
+                {
+                  "cadence": null,
+                  "connectorCandidates": [],
+                  "connector_candidates": [],
+                  "dataset": null,
+                  "healthSource": "unbound",
+                  "health_source": "unbound",
+                  "market": "US",
+                  "selectedConnectorId": null,
+                  "selected_connector_id": null,
+                  "sourceClass": null,
+                  "sourceHealthAvailable": false,
+                  "source_class": null,
+                  "source_health_available": false
+                }
+              ],
+              "state": "provisioning",
+              "strategyFamily": "paper-evaluation",
+              "successRate": 0.0,
+              "tenantId": "pantheon-dev",
+              "traits": {
+                "decision_style": "evidence_first",
+                "hard_rules": [
+                  "paper_only"
+                ],
+                "instruments": [
+                  "SPY"
+                ],
+                "persona_voice": "concise",
+                "risk_appetite": "low",
+                "time_horizon": "intraday"
+              },
+              "updatedAt": "2026-07-18T18:09:41Z"
+            },
+            "meta": {
+              "approval_decision_id": "apv-persona-paper-4c3acf7ce6a81522b71c",
+              "authoritative_receipt_steps": [
+                "approval_decided",
+                "approval_proposed",
+                "approval_reviewed",
+                "baseline_approval_decided",
+                "baseline_approval_proposed",
+                "baseline_approval_reviewed",
+                "baseline_strategy_artifact_approval_decided",
+                "baseline_strategy_artifact_approval_proposed",
+                "baseline_strategy_artifact_approval_reviewed",
+                "baseline_strategy_artifact_approved",
+                "baseline_strategy_artifact_candidate",
+                "baseline_strategy_spec_approved",
+                "baseline_strategy_spec_candidate",
+                "capital_pool",
+                "deployment_dispatch",
+                "deployment_plan",
+                "first_evaluation_schedule",
+                "persona_capital_binding_active",
+                "persona_capital_binding_created",
+                "provisioning_readback_started_at",
+                "strategy_artifact_approval_decided",
+                "strategy_artifact_approval_proposed",
+                "strategy_artifact_approval_reviewed",
+                "strategy_artifact_approved",
+                "strategy_artifact_candidate",
+                "strategy_spec_approved",
+                "strategy_spec_candidate"
+              ],
+              "capital_mode": "paper",
+              "create_flow": "durable_owner_coordinated_provisioning",
+              "deployment_plan_id": "plan-persona-paper-4c3acf7ce6a81522b71c",
+              "deployment_saga_id": "deployment-saga-plan-persona-paper-4c3acf7ce6a81522b71c",
+              "dispatch_admitted": true,
+              "first_evaluation_workflow_id": "pantheon.persona.first-evaluation",
+              "human_review_required_for_live": true,
+              "legacy_paper_capital_pool_id": "pool-persona-paper-4c3acf7ce6a81522b71c",
+              "live_capital_side_effects": false,
+              "ooda_loop_status": "open",
+              "ooda_packet_id": "ooda-5d61e40978ab",
+              "paper_ledger_id": "paper-ledger-4c3acf7ce6a81522b71c",
+              "persona_capital_binding_id": "pcb-persona-paper-4c3acf7ce6a81522b71c",
+              "provisioning_state": "provisioning",
+              "provisioning_step": "schedule_registered",
+              "registry_id": "reg-strategy-spec-persona-4c3acf7ce6a81522b71c",
+              "runtime_binding_id": null,
+              "runtime_id": null,
+              "snapshot_at": "2026-07-18T18:09:40Z"
+            }
+          },
+          "method": "POST",
+          "ok": true,
+          "started_at": "2026-07-18T18:09:39.443597Z",
+          "status": 201,
+          "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/personas"
+        }
+      ],
+      "started_at": "2026-07-18T18:09:39.443597Z",
+      "status": 201,
+      "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/personas"
+    },
+    "persona_evaluations": {
+      "completed_at": "2026-07-18T18:11:07.149529Z",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "json": {
+        "data": [],
+        "items": [],
+        "meta": {
+          "snapshot_at": "2026-07-18T18:11:07Z",
+          "surfaces": {
+            "persona_evaluations": {
+              "source": "bff_local_dev_store",
+              "status": "ok"
+            }
+          },
+          "total": 0
+        },
+        "page_info": {
+          "next_page_token": null,
+          "total": 0
+        }
+      },
+      "method": "GET",
+      "ok": true,
+      "started_at": "2026-07-18T18:11:06.537116Z",
+      "status": 200,
+      "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/personas/persona-1078f601d489f0baeb88/evaluations"
+    },
+    "persona_runtime_profile": {
+      "completed_at": "2026-07-18T18:11:05.877316Z",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "json": {
+        "data": {
+          "memory_policy": {
+            "cache_mutation_policy": "memory_bridge_only",
+            "canonical_store": "services.memory.persona_memory_store.PersonaMemoryStore",
+            "direct_session_writes": false,
+            "materialization": "openclaw_workspace_cache",
+            "read_endpoint": "GET /api/memory/retrieve?scope=persona",
+            "source": "canonical_persona_memory_plane",
+            "workspace_files": [
+              "SOUL.md",
+              "MEMORY.md",
+              "USER.md",
+              "memory/"
+            ],
+            "writeback_endpoint": "POST /api/memory/writebacks/persona"
+          },
+          "model_routing": {
+            "blocked_reason": null,
+            "fallback_models": [
+              "anthropic/claude-sonnet-4-6",
+              "openai/gpt-5.5"
+            ],
+            "invalid_refs": [],
+            "mode": "pool_default",
+            "primary_model": "anthropic/claude-opus-4-8",
+            "provider_pool_refs": [
+              "openclaw_provider_pool:anthropic/claude-opus-4-8",
+              "openclaw_provider_pool:anthropic/claude-sonnet-4-6",
+              "openclaw_provider_pool:openai/gpt-5.5"
+            ],
+            "reason": "pool_default",
+            "requested_models": [],
+            "selected_provider_pool_ref": "openclaw_provider_pool:anthropic/claude-opus-4-8",
+            "status": "ready"
+          },
+          "persona_id": "persona-1078f601d489f0baeb88",
+          "source_refs": [
+            {
+              "ref": "persona:persona-1078f601d489f0baeb88",
+              "surface": "persona_registry"
+            },
+            {
+              "ref": "persona_route_policy:persona-1078f601d489f0baeb88",
+              "status": "missing",
+              "surface": "persona_route_policy"
+            },
+            {
+              "ref": "services.memory.persona_memory_store.PersonaMemoryStore",
+              "surface": "memory_store"
+            },
+            {
+              "ref": "/home/node/.openclaw/workspaces/persona-1078f601d489f0baeb88",
+              "surface": "openclaw_workspace"
+            }
+          ],
+          "sync_generation": 1,
+          "workspace_ref": "/home/node/.openclaw/workspaces/persona-1078f601d489f0baeb88"
+        },
+        "meta": {
+          "snapshot_at": "2026-07-18T18:11:05Z",
+          "surfaces": {
+            "persona_runtime_profile": {
+              "source": "bff_local_dev_store",
+              "status": "ok"
+            }
+          }
+        }
+      },
+      "method": "GET",
+      "ok": true,
+      "started_at": "2026-07-18T18:11:05.247991Z",
+      "status": 200,
+      "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/personas/persona-1078f601d489f0baeb88/runtime-profile"
+    },
+    "readyz": {
+      "completed_at": "2026-07-18T18:08:53.890754Z",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "json": {
+        "dependencies": {
+          "deployment": {
+            "status": "ok",
+            "url": "http://deployment:8095"
+          },
+          "governance": {
+            "status": "ok",
+            "url": "http://governance:8082"
+          },
+          "runtime_manager": {
+            "status": "ok",
+            "url": "http://runtime-manager:8081"
+          }
+        },
+        "details": {
+          "data_dir": "/data/bff",
+          "version": "0.2.0"
+        },
+        "live": true,
+        "metrics": {
+          "service_up": 1
+        },
+        "ready": true,
+        "service": "operator-bff",
+        "status": "ok",
+        "timestamp": "2026-07-18T18:08:53Z"
+      },
+      "method": "GET",
+      "ok": true,
+      "started_at": "2026-07-18T18:08:52.411663Z",
+      "status": 200,
+      "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/readyz"
+    },
+    "runtime_binding_detail": {
+      "completed_at": "2026-07-18T18:11:03.609516Z",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "json": {
+        "data": {
+          "artifact_id": "artifact-persona-paper-4c3acf7ce6a81522b71c",
+          "artifact_version": "1.0.0",
+          "binding_id": "rb-84513a1140e64430a66cf699d7e7e7de",
+          "capital_pool_id": "pool-persona-paper-4c3acf7ce6a81522b71c",
+          "created_at": null,
+          "created_by": null,
+          "deployment_mode": "paper",
+          "deployment_plan": {
+            "approval_decision_id": "apv-persona-paper-artifact-4c3acf7ce6a81522b71c",
+            "approval_ref": {
+              "approval_decision_id": "apv-persona-paper-artifact-4c3acf7ce6a81522b71c",
+              "href": "/bff/approvals/apv-persona-paper-artifact-4c3acf7ce6a81522b71c"
+            },
+            "artifact_id": "artifact-persona-paper-4c3acf7ce6a81522b71c",
+            "artifact_version": "1.0.0",
+            "binding_ids": [
+              "rb-84513a1140e64430a66cf699d7e7e7de"
+            ],
+            "blocked_reason": null,
+            "capital_pool_id": "pool-persona-paper-4c3acf7ce6a81522b71c",
+            "current_stage": "paper",
+            "deployment_saga_id": "deployment-saga-plan-persona-paper-4c3acf7ce6a81522b71c",
+            "deployment_saga_status": "completed",
+            "dlq_count": 0,
+            "id": "plan-persona-paper-4c3acf7ce6a81522b71c",
+            "plan_id": "plan-persona-paper-4c3acf7ce6a81522b71c",
+            "retry_state": [
+              {
+                "blocked_reason": null,
+                "delivery_attempts": 0,
+                "dlq_at": null,
+                "event_id": "deployment-saga-plan-persona-paper-4c3acf7ce6a81522b71c-evt-0001",
+                "event_type": "runtime.binding.requested",
+                "last_attempt_at": null,
+                "last_error": null,
+                "last_replayed_at": null,
+                "next_retry_at": null,
+                "replay_count": 0,
+                "retry_policy": {},
+                "sequence_no": 1,
+                "status": "published"
+              },
+              {
+                "blocked_reason": null,
+                "delivery_attempts": 1,
+                "dlq_at": null,
+                "event_id": "deployment-saga-plan-persona-paper-4c3acf7ce6a81522b71c-evt-0002",
+                "event_type": "runtime.load.requested",
+                "last_attempt_at": "2026-07-18T18:09:13Z",
+                "last_error": "event_id=deployment-saga-plan-persona-paper-4c3acf7ce6a81522b71c-evt-0002 error=paper fleet post-state is not running yet: expected one fleet worker for binding_id='rb-84513a1140e64430a66cf699d7e7e7de', found 0",
+                "last_replayed_at": null,
+                "next_retry_at": null,
+                "replay_count": 0,
+                "retry_policy": {
+                  "consumer_name": "deployment-outbox-consumer",
+                  "max_attempts": 3,
+                  "retry_delay_seconds": 30,
+                  "retryable": true
+                },
+                "sequence_no": 2,
+                "status": "published"
+              },
+              {
+                "blocked_reason": null,
+                "delivery_attempts": 0,
+                "dlq_at": null,
+                "event_id": "deployment-saga-plan-persona-paper-4c3acf7ce6a81522b71c-evt-0003",
+                "event_type": "deployment.saga.completed",
+                "last_attempt_at": null,
+                "last_error": null,
+                "last_replayed_at": null,
+                "next_retry_at": null,
+                "replay_count": 0,
+                "retry_policy": {},
+                "sequence_no": 3,
+                "status": "published"
+              }
+            ],
+            "runtime_binding_id": "rb-84513a1140e64430a66cf699d7e7e7de",
+            "saga_progress": {
+              "blocked_reason": null,
+              "completed_steps": [
+                "binding_requested",
+                "runtime_load_requested",
+                "runtime_active"
+              ],
+              "current_step": "runtime_active",
+              "dlq_count": 0,
+              "pending_event_count": 0,
+              "plan_id": "plan-persona-paper-4c3acf7ce6a81522b71c",
+              "progress_status": "completed",
+              "retry_policy": {
+                "max_attempts": 3,
+                "retry_delay_seconds": 30,
+                "retryable": true
+              },
+              "retry_state": [
+                {
+                  "blocked_reason": null,
+                  "delivery_attempts": 0,
+                  "dlq_at": null,
+                  "event_id": "deployment-saga-plan-persona-paper-4c3acf7ce6a81522b71c-evt-0001",
+                  "event_type": "runtime.binding.requested",
+                  "last_attempt_at": null,
+                  "last_error": null,
+                  "last_replayed_at": null,
+                  "next_retry_at": null,
+                  "replay_count": 0,
+                  "retry_policy": {},
+                  "sequence_no": 1,
+                  "status": "published"
+                },
+                {
+                  "blocked_reason": null,
+                  "delivery_attempts": 1,
+                  "dlq_at": null,
+                  "event_id": "deployment-saga-plan-persona-paper-4c3acf7ce6a81522b71c-evt-0002",
+                  "event_type": "runtime.load.requested",
+                  "last_attempt_at": "2026-07-18T18:09:13Z",
+                  "last_error": "event_id=deployment-saga-plan-persona-paper-4c3acf7ce6a81522b71c-evt-0002 error=paper fleet post-state is not running yet: expected one fleet worker for binding_id='rb-84513a1140e64430a66cf699d7e7e7de', found 0",
+                  "last_replayed_at": null,
+                  "next_retry_at": null,
+                  "replay_count": 0,
+                  "retry_policy": {
+                    "consumer_name": "deployment-outbox-consumer",
+                    "max_attempts": 3,
+                    "retry_delay_seconds": 30,
+                    "retryable": true
+                  },
+                  "sequence_no": 2,
+                  "status": "published"
+                },
+                {
+                  "blocked_reason": null,
+                  "delivery_attempts": 0,
+                  "dlq_at": null,
+                  "event_id": "deployment-saga-plan-persona-paper-4c3acf7ce6a81522b71c-evt-0003",
+                  "event_type": "deployment.saga.completed",
+                  "last_attempt_at": null,
+                  "last_error": null,
+                  "last_replayed_at": null,
+                  "next_retry_at": null,
+                  "replay_count": 0,
+                  "retry_policy": {},
+                  "sequence_no": 3,
+                  "status": "published"
+                }
+              ],
+              "saga_id": "deployment-saga-plan-persona-paper-4c3acf7ce6a81522b71c",
+              "saga_status": "completed"
+            },
+            "saga_progress_status": "completed",
+            "stage": "paper",
+            "stages": [],
+            "status": "executed",
+            "submitted_at": "2026-07-18T18:08:58Z",
+            "target_stage": "paper",
+            "transition_type": "activate"
+          },
+          "deployment_plan_id": "plan-persona-paper-4c3acf7ce6a81522b71c",
+          "deployment_stage": null,
+          "effective_at": "2026-07-18T18:09:02Z",
+          "execution_mode": "paper",
+          "id": "rb-84513a1140e64430a66cf699d7e7e7de",
+          "metadata": {
+            "authoritative_loader_attestation": {
+              "allowed_deployment_scope": "paper",
+              "approval_actor_id": "pantheon-persona-provisioner",
+              "approval_decision_id": "apv-persona-paper-artifact-4c3acf7ce6a81522b71c",
+              "approval_decision_sha256": "sha256:5005ae5a0d4cf4f3e6379f821a2c0938d1954d90b5de7a19809529543ee78ca5",
+              "approval_proof_url": "http://governance:8082/api/governance/approvals/apv-persona-paper-artifact-4c3acf7ce6a81522b71c",
+              "artifact_checksum": "sha256:db1382a76ee7cab27f500244e21d275d6e3788bb52d5f44982bb4ccc78521e17",
+              "artifact_id": "artifact-persona-paper-4c3acf7ce6a81522b71c",
+              "artifact_version": "1.0.0",
+              "authority": "canonical_deployment_registry_governance_capital",
+              "capital_admissibility_proof_url": "http://capital:8092/api/bindings/admissibility?persona_id=persona-1078f601d489f0baeb88&capital_pool_id=pool-persona-paper-4c3acf7ce6a81522b71c&target_stage=paper",
+              "capital_admissibility_sha256": "sha256:79c39edbbe1063712c2e0e59691e77ac088783edf7d40a2c603fb3e681edb150",
+              "capital_pool_id": "pool-persona-paper-4c3acf7ce6a81522b71c",
+              "capital_pool_proof_url": "http://capital:8092/api/capital-pools/pool-persona-paper-4c3acf7ce6a81522b71c",
+              "capital_pool_sha256": "sha256:9c854a91731dd4ca68bec1c2aa713df9ad0f3eb0c58bd75ca47c353c2559e5c5",
+              "deployment_plan_authority_sha256": "sha256:b6b48bcbcf47c4f2348f52cc2e606fab5c2e9b02a8a32322e28f097f96986742",
+              "deployment_plan_binding_id": null,
+              "deployment_plan_current_stage": "none",
+              "deployment_plan_runtime_lifecycle": {},
+              "deployment_plan_sha256": "sha256:c28f1988f6ef5541602e2c92daa94f0c781365506be66ed8509dd4e0ce5148fe",
+              "deployment_proof_url": "http://deployment:8095/api/deployment/plans/plan-persona-paper-4c3acf7ce6a81522b71c",
+              "persona_binding_proof_url": "http://capital:8092/api/bindings/pcb-persona-paper-4c3acf7ce6a81522b71c",
+              "persona_capital_binding_id": "pcb-persona-paper-4c3acf7ce6a81522b71c",
+              "persona_capital_binding_sha256": "sha256:ea49eb0ce2e1942726a9628aa5cece03a84eb9ae4a52a01b51dc0d613a907356",
+              "persona_capital_binding_status": "active",
+              "plan_id": "plan-persona-paper-4c3acf7ce6a81522b71c",
+              "plan_status": "approved",
+              "registry_deployment_stage": "none",
+              "registry_entry_sha256": "sha256:3a90b69a60da89a7583156d2e58e0435d8fb262a209dd3dae022215212105a82",
+              "registry_proof_url": "http://registry:8087/api/registry/strategy-artifacts/artifact-persona-paper-4c3acf7ce6a81522b71c",
+              "registry_view_sha256": "sha256:b1766d3bbae9720b4ddf805d1e6129f334782e19e4dcb857b6807736a1802e6e",
+              "single_runtime_enforced": true,
+              "sponsor_persona_id": "persona-1078f601d489f0baeb88",
+              "status": "passed",
+              "strategy_id": "strategy-persona-4c3acf7ce6a81522b71c",
+              "target_stage": "paper",
+              "verified_at": "2026-07-18T18:09:02.393337Z"
+            },
+            "deployment_outbox_event_id": "deployment-saga-plan-persona-paper-4c3acf7ce6a81522b71c-evt-0001",
+            "deployment_saga_id": "deployment-saga-plan-persona-paper-4c3acf7ce6a81522b71c",
+            "deployment_trace_id": "persona-provisioning:4c3acf7ce6a81522b71c",
+            "execution_context": "paper",
+            "persona_capital_binding_id": "pcb-persona-paper-4c3acf7ce6a81522b71c",
+            "persona_id": "persona-1078f601d489f0baeb88",
+            "provisioning_request_hash": "7c5306c192580ccb995b531c2bcb4b050de69878227f2416bc55b46b67995692",
+            "requested_by": "pantheon-dev-proof-loop-prod-per-001-29655287111-1",
+            "rollback_approval_decision_id": "apv-persona-paper-artifact-baseline-4c3acf7ce6a81522b71c",
+            "rollback_registry_id": "artifact-persona-paper-baseline-4c3acf7ce6a81522b71c",
+            "rollback_semantics": "zero_capital_safe_stop",
+            "rollback_strategy_spec_registry_id": "reg-strategy-spec-persona-baseline-4c3acf7ce6a81522b71c",
+            "strategy_artifact_id": "artifact-persona-paper-4c3acf7ce6a81522b71c",
+            "strategy_id": "strategy-persona-4c3acf7ce6a81522b71c",
+            "strategy_spec_registry_id": "reg-strategy-spec-persona-4c3acf7ce6a81522b71c",
+            "tenant_id": "pantheon-dev"
+          },
+          "name": null,
+          "params": {},
+          "persona_capital_binding_id": "pcb-persona-paper-4c3acf7ce6a81522b71c",
+          "persona_id": "persona-1078f601d489f0baeb88",
+          "plan_id": "plan-persona-paper-4c3acf7ce6a81522b71c",
+          "retired_at": null,
+          "rollback_action_type": null,
+          "rollback_parent": null,
+          "runtime_binding_id": "rb-84513a1140e64430a66cf699d7e7e7de",
+          "runtime_id": "rt-d58dbd57",
+          "runtime_kind": null,
+          "state": "active",
+          "status": "active",
+          "tenantId": "pantheon-dev",
+          "tenant_id": "pantheon-dev",
+          "updated_at": null
+        },
+        "meta": {
+          "snapshot_at": "2026-07-18T18:11:03Z",
+          "surfaces": {
+            "runtime_binding_detail": {
+              "source": "service_client",
+              "status": "ok"
+            }
+          }
+        }
+      },
+      "method": "GET",
+      "ok": true,
+      "started_at": "2026-07-18T18:11:02.728576Z",
+      "status": 200,
+      "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/api/v1/runtime-bindings/rb-84513a1140e64430a66cf699d7e7e7de"
+    },
+    "runtime_status": {
+      "completed_at": "2026-07-18T18:11:04.414054Z",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "json": {
+        "data": {
+          "artifact_id": "artifact-persona-paper-4c3acf7ce6a81522b71c",
+          "artifact_version": "1.0.0",
+          "binding_id": "rb-84513a1140e64430a66cf699d7e7e7de",
+          "capital_pool_id": "pool-persona-paper-4c3acf7ce6a81522b71c",
+          "created_at": null,
+          "created_by": null,
+          "deployment_mode": "paper",
+          "deployment_plan_id": "plan-persona-paper-4c3acf7ce6a81522b71c",
+          "deployment_stage": null,
+          "effective_at": "2026-07-18T18:09:02Z",
+          "execution_mode": "paper",
+          "id": "rb-84513a1140e64430a66cf699d7e7e7de",
+          "metadata": {
+            "authoritative_loader_attestation": {
+              "allowed_deployment_scope": "paper",
+              "approval_actor_id": "pantheon-persona-provisioner",
+              "approval_decision_id": "apv-persona-paper-artifact-4c3acf7ce6a81522b71c",
+              "approval_decision_sha256": "sha256:5005ae5a0d4cf4f3e6379f821a2c0938d1954d90b5de7a19809529543ee78ca5",
+              "approval_proof_url": "http://governance:8082/api/governance/approvals/apv-persona-paper-artifact-4c3acf7ce6a81522b71c",
+              "artifact_checksum": "sha256:db1382a76ee7cab27f500244e21d275d6e3788bb52d5f44982bb4ccc78521e17",
+              "artifact_id": "artifact-persona-paper-4c3acf7ce6a81522b71c",
+              "artifact_version": "1.0.0",
+              "authority": "canonical_deployment_registry_governance_capital",
+              "capital_admissibility_proof_url": "http://capital:8092/api/bindings/admissibility?persona_id=persona-1078f601d489f0baeb88&capital_pool_id=pool-persona-paper-4c3acf7ce6a81522b71c&target_stage=paper",
+              "capital_admissibility_sha256": "sha256:79c39edbbe1063712c2e0e59691e77ac088783edf7d40a2c603fb3e681edb150",
+              "capital_pool_id": "pool-persona-paper-4c3acf7ce6a81522b71c",
+              "capital_pool_proof_url": "http://capital:8092/api/capital-pools/pool-persona-paper-4c3acf7ce6a81522b71c",
+              "capital_pool_sha256": "sha256:9c854a91731dd4ca68bec1c2aa713df9ad0f3eb0c58bd75ca47c353c2559e5c5",
+              "deployment_plan_authority_sha256": "sha256:b6b48bcbcf47c4f2348f52cc2e606fab5c2e9b02a8a32322e28f097f96986742",
+              "deployment_plan_binding_id": null,
+              "deployment_plan_current_stage": "none",
+              "deployment_plan_runtime_lifecycle": {},
+              "deployment_plan_sha256": "sha256:c28f1988f6ef5541602e2c92daa94f0c781365506be66ed8509dd4e0ce5148fe",
+              "deployment_proof_url": "http://deployment:8095/api/deployment/plans/plan-persona-paper-4c3acf7ce6a81522b71c",
+              "persona_binding_proof_url": "http://capital:8092/api/bindings/pcb-persona-paper-4c3acf7ce6a81522b71c",
+              "persona_capital_binding_id": "pcb-persona-paper-4c3acf7ce6a81522b71c",
+              "persona_capital_binding_sha256": "sha256:ea49eb0ce2e1942726a9628aa5cece03a84eb9ae4a52a01b51dc0d613a907356",
+              "persona_capital_binding_status": "active",
+              "plan_id": "plan-persona-paper-4c3acf7ce6a81522b71c",
+              "plan_status": "approved",
+              "registry_deployment_stage": "none",
+              "registry_entry_sha256": "sha256:3a90b69a60da89a7583156d2e58e0435d8fb262a209dd3dae022215212105a82",
+              "registry_proof_url": "http://registry:8087/api/registry/strategy-artifacts/artifact-persona-paper-4c3acf7ce6a81522b71c",
+              "registry_view_sha256": "sha256:b1766d3bbae9720b4ddf805d1e6129f334782e19e4dcb857b6807736a1802e6e",
+              "single_runtime_enforced": true,
+              "sponsor_persona_id": "persona-1078f601d489f0baeb88",
+              "status": "passed",
+              "strategy_id": "strategy-persona-4c3acf7ce6a81522b71c",
+              "target_stage": "paper",
+              "verified_at": "2026-07-18T18:09:02.393337Z"
+            },
+            "deployment_outbox_event_id": "deployment-saga-plan-persona-paper-4c3acf7ce6a81522b71c-evt-0001",
+            "deployment_saga_id": "deployment-saga-plan-persona-paper-4c3acf7ce6a81522b71c",
+            "deployment_trace_id": "persona-provisioning:4c3acf7ce6a81522b71c",
+            "execution_context": "paper",
+            "persona_capital_binding_id": "pcb-persona-paper-4c3acf7ce6a81522b71c",
+            "persona_id": "persona-1078f601d489f0baeb88",
+            "provisioning_request_hash": "7c5306c192580ccb995b531c2bcb4b050de69878227f2416bc55b46b67995692",
+            "requested_by": "pantheon-dev-proof-loop-prod-per-001-29655287111-1",
+            "rollback_approval_decision_id": "apv-persona-paper-artifact-baseline-4c3acf7ce6a81522b71c",
+            "rollback_registry_id": "artifact-persona-paper-baseline-4c3acf7ce6a81522b71c",
+            "rollback_semantics": "zero_capital_safe_stop",
+            "rollback_strategy_spec_registry_id": "reg-strategy-spec-persona-baseline-4c3acf7ce6a81522b71c",
+            "strategy_artifact_id": "artifact-persona-paper-4c3acf7ce6a81522b71c",
+            "strategy_id": "strategy-persona-4c3acf7ce6a81522b71c",
+            "strategy_spec_registry_id": "reg-strategy-spec-persona-4c3acf7ce6a81522b71c",
+            "tenant_id": "pantheon-dev"
+          },
+          "name": null,
+          "params": {},
+          "persona_capital_binding_id": "pcb-persona-paper-4c3acf7ce6a81522b71c",
+          "persona_id": "persona-1078f601d489f0baeb88",
+          "plan_id": "plan-persona-paper-4c3acf7ce6a81522b71c",
+          "retired_at": null,
+          "rollback_action_type": null,
+          "rollback_parent": null,
+          "runtime_binding_id": "rb-84513a1140e64430a66cf699d7e7e7de",
+          "runtime_id": "rt-d58dbd57",
+          "runtime_kind": null,
+          "state": "active",
+          "status": "active",
+          "tenantId": "pantheon-dev",
+          "tenant_id": "pantheon-dev",
+          "updated_at": null
+        },
+        "meta": {
+          "snapshot_at": "2026-07-18T18:11:04Z",
+          "surfaces": {
+            "runtime_status": {
+              "source": "service_client",
+              "status": "ok"
+            }
+          }
+        }
+      },
+      "method": "GET",
+      "ok": true,
+      "started_at": "2026-07-18T18:11:03.609616Z",
+      "status": 200,
+      "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/api/v1/runtimes/rt-d58dbd57/status"
+    },
+    "version": {
+      "completed_at": "2026-07-18T18:08:52.411525Z",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "json": {
+        "build_time": "2026-07-18T18:05:25Z",
+        "commit": "060b2eb999c6ccbb3ce50153c747127c0deafc33",
+        "config_posture": {
+          "assistant_kernel_enabled": true,
+          "auth_mode": "strict",
+          "auth_stub": false,
+          "dev_login_enabled": true,
+          "mfa_required": false
+        },
+        "environment": "dev",
+        "image_digest": "unknown",
+        "service": "operator-bff",
+        "source_commit_known": true,
+        "source_commit_sha": "060b2eb999c6ccbb3ce50153c747127c0deafc33",
+        "version": "0.2.0"
+      },
+      "method": "GET",
+      "ok": true,
+      "started_at": "2026-07-18T18:08:51.372489Z",
+      "status": 200,
+      "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/version"
+    }
+  },
+  "checks": [
+    {
+      "details": {
+        "audience": "bff-operators",
+        "issuer": "pantheon-dev"
+      },
+      "name": "jwt.minted_in_memory",
+      "recorded_at": "2026-07-18T18:08:51.372069Z",
+      "status": "pass"
+    },
+    {
+      "details": {
+        "build_time": "2026-07-18T18:05:25Z",
+        "expected_source_commit_sha": "060b2eb999c6ccbb3ce50153c747127c0deafc33",
+        "observed_source_commit_sha": "060b2eb999c6ccbb3ce50153c747127c0deafc33"
+      },
+      "name": "deployment_identity.exact_sha",
+      "recorded_at": "2026-07-18T18:08:52.411571Z",
+      "status": "pass"
+    },
+    {
+      "details": {
+        "config_posture": {
+          "assistant_kernel_enabled": true,
+          "auth_mode": "strict",
+          "auth_stub": false,
+          "dev_login_enabled": true,
+          "mfa_required": false
+        }
+      },
+      "name": "auth_posture.strict_no_stub",
+      "recorded_at": "2026-07-18T18:08:52.411576Z",
+      "status": "pass"
+    },
+    {
+      "details": {
+        "dependencies": {
+          "deployment": {
+            "status": "ok",
+            "url": "http://deployment:8095"
+          },
+          "governance": {
+            "status": "ok",
+            "url": "http://governance:8082"
+          },
+          "runtime_manager": {
+            "status": "ok",
+            "url": "http://runtime-manager:8081"
+          }
+        },
+        "ready": true
+      },
+      "name": "readyz.dependencies_ok",
+      "recorded_at": "2026-07-18T18:08:53.890803Z",
+      "status": "pass"
+    },
+    {
+      "details": {
+        "reason": "401",
+        "status": 401
+      },
+      "name": "security.create_requires_auth",
+      "recorded_at": "2026-07-18T18:08:54.549711Z",
+      "status": "pass"
+    },
+    {
+      "details": {
+        "reason": "Requested tenant is outside the caller tenant scope",
+        "status": 403
+      },
+      "name": "security.create_rejects_cross_tenant",
+      "recorded_at": "2026-07-18T18:08:55.251602Z",
+      "status": "pass"
+    },
+    {
+      "details": {
+        "reason": "New Personas start in paper trading only. Canary/live capital requires a Human Inbox promotion review.",
+        "status": 422
+      },
+      "name": "security.create_rejects_live_capital",
+      "recorded_at": "2026-07-18T18:08:55.950579Z",
+      "status": "pass"
+    },
+    {
+      "details": {
+        "persona_id": "persona-1078f601d489f0baeb88",
+        "runtimeBindingId": null,
+        "runtimeId": null,
+        "state": "provisioning",
+        "status": 201
+      },
+      "name": "persona.create_initial_state_provisioning",
+      "recorded_at": "2026-07-18T18:09:39.443508Z",
+      "status": "pass"
+    },
+    {
+      "details": {
+        "duplicate_persona_id": "persona-1078f601d489f0baeb88",
+        "persona_id": "persona-1078f601d489f0baeb88",
+        "state": "provisioning",
+        "status": 201
+      },
+      "name": "persona.duplicate_retry_converges",
+      "recorded_at": "2026-07-18T18:09:53.709564Z",
+      "status": "pass"
+    },
+    {
+      "details": {
+        "deploymentPlanId": "plan-persona-paper-4c3acf7ce6a81522b71c",
+        "reconcile_meta": {
+          "authoritative_readback": {
+            "available": true,
+            "first_evaluation_schedule": {
+              "capital_pool_id": "pool-persona-paper-4c3acf7ce6a81522b71c",
+              "job_id": "69083430-dfa4-4046-9fb1-a1dd822c1d6b",
+              "job_name": "pantheon-pantheon-persona-first-evaluation-persona--21824cec",
+              "persona_capital_binding_id": "pcb-persona-paper-4c3acf7ce6a81522b71c",
+              "persona_id": "persona-1078f601d489f0baeb88",
+              "registered": true,
+              "request_id": "persona-provisioning:persona-1078f601d489f0baeb88:pantheon.persona.first-evaluation",
+              "runtime_binding_id": "rb-84513a1140e64430a66cf699d7e7e7de",
+              "runtime_id": "rt-d58dbd57",
+              "workflow_id": "pantheon.persona.first-evaluation"
+            },
+            "observed_at": "2026-07-18T18:10:47Z",
+            "paper_worker": {
+              "last_heartbeat_at": "2026-07-18T18:09:45Z",
+              "runtime_binding_id": "rb-84513a1140e64430a66cf699d7e7e7de",
+              "runtime_id": "rt-d58dbd57",
+              "session_id": "prmon-rb-84513a1140e64430a66cf699d7e7e7de-f9bb5879",
+              "status": "running"
+            },
+            "runtime_binding": {
+              "plan_id": "plan-persona-paper-4c3acf7ce6a81522b71c",
+              "runtime_binding_id": "rb-84513a1140e64430a66cf699d7e7e7de",
+              "runtime_id": "rt-d58dbd57",
+              "status": "active"
+            }
+          },
+          "degraded_dependencies": [],
+          "lifecycle_state": "paper_running",
+          "reconciled_by": "persona_provisioning_controller",
+          "snapshot_at": "2026-07-18T18:11:01Z",
+          "status": "ok"
+        },
+        "runtimeBindingId": "rb-84513a1140e64430a66cf699d7e7e7de",
+        "runtimeId": "rt-d58dbd57",
+        "state": "paper_running"
+      },
+      "name": "persona.reconcile_terminal_paper_running",
+      "recorded_at": "2026-07-18T18:11:02.728502Z",
+      "status": "pass"
+    },
+    {
+      "details": {
+        "artifact_id": "artifact-persona-paper-4c3acf7ce6a81522b71c",
+        "deployment_mode": "paper",
+        "runtime_binding_id": "rb-84513a1140e64430a66cf699d7e7e7de",
+        "runtime_id": "rt-d58dbd57",
+        "status": 200
+      },
+      "name": "runtime_binding.authoritative_readback",
+      "recorded_at": "2026-07-18T18:11:05.247916Z",
+      "status": "pass"
+    },
+    {
+      "details": {
+        "runtime_binding_id": "rb-84513a1140e64430a66cf699d7e7e7de",
+        "runtime_id": "rt-d58dbd57",
+        "status": 200
+      },
+      "name": "runtime_status.authoritative_readback",
+      "recorded_at": "2026-07-18T18:11:05.247921Z",
+      "status": "pass"
+    },
+    {
+      "details": {
+        "artifact_id": "artifact-persona-paper-4c3acf7ce6a81522b71c",
+        "binding_artifact_id": "artifact-persona-paper-4c3acf7ce6a81522b71c",
+        "deployment_plan_id": "plan-persona-paper-4c3acf7ce6a81522b71c",
+        "status": 200
+      },
+      "name": "deployment_plan.uses_strategy_artifact",
+      "recorded_at": "2026-07-18T18:11:05.247925Z",
+      "status": "pass"
+    },
+    {
+      "details": {
+        "capabilities_status": 200,
+        "create_meta_workflow_id": "pantheon.persona.first-evaluation",
+        "effective_workflows": [],
+        "evaluations_status": 200,
+        "reconcile_meta": {
+          "authoritative_readback": {
+            "available": true,
+            "first_evaluation_schedule": {
+              "capital_pool_id": "pool-persona-paper-4c3acf7ce6a81522b71c",
+              "job_id": "69083430-dfa4-4046-9fb1-a1dd822c1d6b",
+              "job_name": "pantheon-pantheon-persona-first-evaluation-persona--21824cec",
+              "persona_capital_binding_id": "pcb-persona-paper-4c3acf7ce6a81522b71c",
+              "persona_id": "persona-1078f601d489f0baeb88",
+              "registered": true,
+              "request_id": "persona-provisioning:persona-1078f601d489f0baeb88:pantheon.persona.first-evaluation",
+              "runtime_binding_id": "rb-84513a1140e64430a66cf699d7e7e7de",
+              "runtime_id": "rt-d58dbd57",
+              "workflow_id": "pantheon.persona.first-evaluation"
+            },
+            "observed_at": "2026-07-18T18:10:47Z",
+            "paper_worker": {
+              "last_heartbeat_at": "2026-07-18T18:09:45Z",
+              "runtime_binding_id": "rb-84513a1140e64430a66cf699d7e7e7de",
+              "runtime_id": "rt-d58dbd57",
+              "session_id": "prmon-rb-84513a1140e64430a66cf699d7e7e7de-f9bb5879",
+              "status": "running"
+            },
+            "runtime_binding": {
+              "plan_id": "plan-persona-paper-4c3acf7ce6a81522b71c",
+              "runtime_binding_id": "rb-84513a1140e64430a66cf699d7e7e7de",
+              "runtime_id": "rt-d58dbd57",
+              "status": "active"
+            }
+          },
+          "degraded_dependencies": [],
+          "lifecycle_state": "paper_running",
+          "reconciled_by": "persona_provisioning_controller",
+          "snapshot_at": "2026-07-18T18:11:01Z",
+          "status": "ok"
+        },
+        "runtime_profile_status": 200,
+        "schedule_meta": {
+          "capital_pool_id": "pool-persona-paper-4c3acf7ce6a81522b71c",
+          "job_id": "69083430-dfa4-4046-9fb1-a1dd822c1d6b",
+          "job_name": "pantheon-pantheon-persona-first-evaluation-persona--21824cec",
+          "persona_capital_binding_id": "pcb-persona-paper-4c3acf7ce6a81522b71c",
+          "persona_id": "persona-1078f601d489f0baeb88",
+          "registered": true,
+          "request_id": "persona-provisioning:persona-1078f601d489f0baeb88:pantheon.persona.first-evaluation",
+          "runtime_binding_id": "rb-84513a1140e64430a66cf699d7e7e7de",
+          "runtime_id": "rt-d58dbd57",
+          "workflow_id": "pantheon.persona.first-evaluation"
+        },
+        "workflow_id": "pantheon.persona.first-evaluation"
+      },
+      "name": "first_evaluation_schedule.readback_gated_final_state",
+      "recorded_at": "2026-07-18T18:11:07.149583Z",
+      "status": "pass"
+    }
+  ],
+  "final_persona": {
+    "detail": {
+      "completed_at": "2026-07-18T18:11:02.728434Z",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "json": {
+        "data": {
+          "archetype": "market-neutral-scout",
+          "assetClasses": [],
+          "capitalMode": "paper",
+          "currentWork": null,
+          "dataSourceStatus": {
+            "connectorHealth": [],
+            "connector_health": [],
+            "liveSourceConnectorIds": [],
+            "live_ingestion_enabled": false,
+            "live_source_connector_ids": [],
+            "order_side_effects_allowed": false,
+            "provider_count": 0,
+            "provider_status_counts": {},
+            "provider_statuses": {},
+            "requiredSourceHealth": [
+              {
+                "cadence": null,
+                "connectorCandidates": [],
+                "connector_candidates": [],
+                "dataset": null,
+                "healthSource": "unbound",
+                "health_source": "unbound",
+                "market": "US",
+                "selectedConnectorId": null,
+                "selected_connector_id": null,
+                "sourceClass": null,
+                "sourceHealthAvailable": false,
+                "source_class": null,
+                "source_health_available": false
+              }
+            ],
+            "required_source_health": [
+              {
+                "cadence": null,
+                "connectorCandidates": [],
+                "connector_candidates": [],
+                "dataset": null,
+                "healthSource": "unbound",
+                "health_source": "unbound",
+                "market": "US",
+                "selectedConnectorId": null,
+                "selected_connector_id": null,
+                "sourceClass": null,
+                "sourceHealthAvailable": false,
+                "source_class": null,
+                "source_health_available": false
+              }
+            ],
+            "sourceHealthSource": "static_metadata",
+            "source_health_source": "static_metadata",
+            "state": "paper_readback_pending",
+            "staticSourceLabels": [],
+            "static_source_labels": []
+          },
+          "dataSources": [],
+          "deploymentPlanId": "plan-persona-paper-4c3acf7ce6a81522b71c",
+          "deploymentStage": "paper",
+          "evidenceRefs": [
+            "evidence://persona-create/persona-1078f601d489f0baeb88/request",
+            "evidence://persona-create/persona-1078f601d489f0baeb88/capital-binding",
+            "evidence://persona-create/persona-1078f601d489f0baeb88/deployment-saga"
+          ],
+          "governanceRequired": true,
+          "id": "persona-1078f601d489f0baeb88",
+          "labelKey": "persona.persona-1078f601d489f0baeb88",
+          "legacyPaperCapitalPoolId": "pool-persona-paper-4c3acf7ce6a81522b71c",
+          "lifecycleStatus": "paper_running",
+          "mandate": "Hosted paper provisioning proof for LOOP-PROD-PER-001.",
+          "marketScope": [],
+          "name": "LOOP-PROD-PER-001 hosted proof 20260718T180855Z-ece8dd8f",
+          "oodaStage": null,
+          "owner": "pantheon-dev-proof-loop-prod-per-001-29655287111-1",
+          "paperLedger": {
+            "benchmark_budget": null,
+            "id": "paper-ledger-4c3acf7ce6a81522b71c",
+            "is_isolated": true,
+            "mode": "paper",
+            "persona_id": "persona-1078f601d489f0baeb88"
+          },
+          "paperLedgerId": "paper-ledger-4c3acf7ce6a81522b71c",
+          "recommendedGovernanceAction": "none",
+          "requiredDataSources": [
+            {
+              "market": "US",
+              "mode": "paper",
+              "source": "market_data"
+            }
+          ],
+          "risk": "low",
+          "riskFlags": [],
+          "routedStrategies": 0,
+          "runtimeBindingId": "rb-84513a1140e64430a66cf699d7e7e7de",
+          "runtimeId": "rt-d58dbd57",
+          "sourceHealthBindings": [
+            {
+              "cadence": null,
+              "connectorCandidates": [],
+              "connector_candidates": [],
+              "dataset": null,
+              "healthSource": "unbound",
+              "health_source": "unbound",
+              "market": "US",
+              "selectedConnectorId": null,
+              "selected_connector_id": null,
+              "sourceClass": null,
+              "sourceHealthAvailable": false,
+              "source_class": null,
+              "source_health_available": false
+            }
+          ],
+          "state": "paper_running",
+          "strategyFamily": "paper-evaluation",
+          "successRate": 0.0,
+          "tenantId": "pantheon-dev",
+          "traits": {
+            "decision_style": "evidence_first",
+            "hard_rules": [
+              "paper_only"
+            ],
+            "instruments": [
+              "SPY"
+            ],
+            "persona_voice": "concise",
+            "risk_appetite": "low",
+            "time_horizon": "intraday"
+          },
+          "updatedAt": "2026-07-18T18:09:41Z"
+        },
+        "meta": {
+          "snapshot_at": "2026-07-18T18:11:02Z",
+          "surfaces": {
+            "persona_detail": {
+              "source": "bff_local_dev_store",
+              "status": "ok"
+            }
+          }
+        }
+      },
+      "method": "GET",
+      "ok": true,
+      "started_at": "2026-07-18T18:11:01.954803Z",
+      "status": 200,
+      "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/personas/persona-1078f601d489f0baeb88"
+    },
+    "reconcile": {
+      "completed_at": "2026-07-18T18:11:01.954717Z",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "json": {
+        "data": {
+          "archetype": "market-neutral-scout",
+          "assetClasses": [],
+          "capitalMode": "paper",
+          "currentWork": null,
+          "dataSourceStatus": {
+            "connectorHealth": [],
+            "connector_health": [],
+            "liveSourceConnectorIds": [],
+            "live_ingestion_enabled": false,
+            "live_source_connector_ids": [],
+            "order_side_effects_allowed": false,
+            "provider_count": 0,
+            "provider_status_counts": {},
+            "provider_statuses": {},
+            "requiredSourceHealth": [
+              {
+                "cadence": null,
+                "connectorCandidates": [],
+                "connector_candidates": [],
+                "dataset": null,
+                "healthSource": "unbound",
+                "health_source": "unbound",
+                "market": "US",
+                "selectedConnectorId": null,
+                "selected_connector_id": null,
+                "sourceClass": null,
+                "sourceHealthAvailable": false,
+                "source_class": null,
+                "source_health_available": false
+              }
+            ],
+            "required_source_health": [
+              {
+                "cadence": null,
+                "connectorCandidates": [],
+                "connector_candidates": [],
+                "dataset": null,
+                "healthSource": "unbound",
+                "health_source": "unbound",
+                "market": "US",
+                "selectedConnectorId": null,
+                "selected_connector_id": null,
+                "sourceClass": null,
+                "sourceHealthAvailable": false,
+                "source_class": null,
+                "source_health_available": false
+              }
+            ],
+            "sourceHealthSource": "static_metadata",
+            "source_health_source": "static_metadata",
+            "state": "paper_readback_pending",
+            "staticSourceLabels": [],
+            "static_source_labels": []
+          },
+          "dataSources": [],
+          "deploymentPlanId": "plan-persona-paper-4c3acf7ce6a81522b71c",
+          "deploymentStage": "paper",
+          "evidenceRefs": [
+            "evidence://persona-create/persona-1078f601d489f0baeb88/request",
+            "evidence://persona-create/persona-1078f601d489f0baeb88/capital-binding",
+            "evidence://persona-create/persona-1078f601d489f0baeb88/deployment-saga"
+          ],
+          "governanceRequired": true,
+          "id": "persona-1078f601d489f0baeb88",
+          "labelKey": "persona.persona-1078f601d489f0baeb88",
+          "legacyPaperCapitalPoolId": "pool-persona-paper-4c3acf7ce6a81522b71c",
+          "lifecycleStatus": "paper_running",
+          "mandate": "Hosted paper provisioning proof for LOOP-PROD-PER-001.",
+          "marketScope": [],
+          "name": "LOOP-PROD-PER-001 hosted proof 20260718T180855Z-ece8dd8f",
+          "oodaStage": null,
+          "owner": "pantheon-dev-proof-loop-prod-per-001-29655287111-1",
+          "paperLedger": {
+            "benchmark_budget": null,
+            "id": "paper-ledger-4c3acf7ce6a81522b71c",
+            "is_isolated": true,
+            "mode": "paper",
+            "persona_id": "persona-1078f601d489f0baeb88"
+          },
+          "paperLedgerId": "paper-ledger-4c3acf7ce6a81522b71c",
+          "recommendedGovernanceAction": "none",
+          "requiredDataSources": [
+            {
+              "market": "US",
+              "mode": "paper",
+              "source": "market_data"
+            }
+          ],
+          "risk": "low",
+          "riskFlags": [],
+          "routedStrategies": 0,
+          "runtimeBindingId": "rb-84513a1140e64430a66cf699d7e7e7de",
+          "runtimeId": "rt-d58dbd57",
+          "sourceHealthBindings": [
+            {
+              "cadence": null,
+              "connectorCandidates": [],
+              "connector_candidates": [],
+              "dataset": null,
+              "healthSource": "unbound",
+              "health_source": "unbound",
+              "market": "US",
+              "selectedConnectorId": null,
+              "selected_connector_id": null,
+              "sourceClass": null,
+              "sourceHealthAvailable": false,
+              "source_class": null,
+              "source_health_available": false
+            }
+          ],
+          "state": "paper_running",
+          "strategyFamily": "paper-evaluation",
+          "successRate": 0.0,
+          "tenantId": "pantheon-dev",
+          "traits": {
+            "decision_style": "evidence_first",
+            "hard_rules": [
+              "paper_only"
+            ],
+            "instruments": [
+              "SPY"
+            ],
+            "persona_voice": "concise",
+            "risk_appetite": "low",
+            "time_horizon": "intraday"
+          },
+          "updatedAt": "2026-07-18T18:09:41Z"
+        },
+        "meta": {
+          "authoritative_readback": {
+            "available": true,
+            "first_evaluation_schedule": {
+              "capital_pool_id": "pool-persona-paper-4c3acf7ce6a81522b71c",
+              "job_id": "69083430-dfa4-4046-9fb1-a1dd822c1d6b",
+              "job_name": "pantheon-pantheon-persona-first-evaluation-persona--21824cec",
+              "persona_capital_binding_id": "pcb-persona-paper-4c3acf7ce6a81522b71c",
+              "persona_id": "persona-1078f601d489f0baeb88",
+              "registered": true,
+              "request_id": "persona-provisioning:persona-1078f601d489f0baeb88:pantheon.persona.first-evaluation",
+              "runtime_binding_id": "rb-84513a1140e64430a66cf699d7e7e7de",
+              "runtime_id": "rt-d58dbd57",
+              "workflow_id": "pantheon.persona.first-evaluation"
+            },
+            "observed_at": "2026-07-18T18:10:47Z",
+            "paper_worker": {
+              "last_heartbeat_at": "2026-07-18T18:09:45Z",
+              "runtime_binding_id": "rb-84513a1140e64430a66cf699d7e7e7de",
+              "runtime_id": "rt-d58dbd57",
+              "session_id": "prmon-rb-84513a1140e64430a66cf699d7e7e7de-f9bb5879",
+              "status": "running"
+            },
+            "runtime_binding": {
+              "plan_id": "plan-persona-paper-4c3acf7ce6a81522b71c",
+              "runtime_binding_id": "rb-84513a1140e64430a66cf699d7e7e7de",
+              "runtime_id": "rt-d58dbd57",
+              "status": "active"
+            }
+          },
+          "degraded_dependencies": [],
+          "lifecycle_state": "paper_running",
+          "reconciled_by": "persona_provisioning_controller",
+          "snapshot_at": "2026-07-18T18:11:01Z",
+          "status": "ok"
+        }
+      },
+      "method": "POST",
+      "ok": true,
+      "started_at": "2026-07-18T18:11:01.283120Z",
+      "status": 200,
+      "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/personas/persona-1078f601d489f0baeb88/provisioning/reconcile"
+    }
+  },
+  "generated_at": "2026-07-18T18:08:51.371918Z",
+  "identity": {
+    "github_run_url": "https://github.com/ajoe734/pantheon/actions/runs/29655287111",
+    "run_id": "29655287111-1"
+  },
+  "persona_request": {
+    "idempotency_key": "loop-prod-per-001-hosted-20260718T180855Z-ece8dd8f",
+    "name": "LOOP-PROD-PER-001 hosted proof 20260718T180855Z-ece8dd8f",
+    "payload": {
+      "archetype": "market-neutral-scout",
+      "mandate": "Hosted paper provisioning proof for LOOP-PROD-PER-001.",
+      "name": "LOOP-PROD-PER-001 hosted proof 20260718T180855Z-ece8dd8f",
+      "requiredDataSources": [
+        {
+          "market": "US",
+          "mode": "paper",
+          "source": "market_data"
+        }
+      ],
+      "risk": "low",
+      "strategyFamily": "paper-evaluation",
+      "traits": {
+        "decision_style": "evidence_first",
+        "hard_rules": [
+          "paper_only"
+        ],
+        "instruments": [
+          "SPY"
+        ],
+        "persona_voice": "concise",
+        "risk_appetite": "low",
+        "time_horizon": "intraday"
+      }
+    }
+  },
+  "polls": [
+    {
+      "attempt": 1,
+      "deploymentPlanId": "plan-persona-paper-4c3acf7ce6a81522b71c",
+      "detail_status": 200,
+      "observed_at": "2026-07-18T18:10:56.282860Z",
+      "reconcile_meta": {},
+      "reconcile_status": null,
+      "runtimeBindingId": "rb-84513a1140e64430a66cf699d7e7e7de",
+      "runtimeId": "rt-d58dbd57",
+      "state": "provisioning"
+    },
+    {
+      "attempt": 2,
+      "deploymentPlanId": "plan-persona-paper-4c3acf7ce6a81522b71c",
+      "detail_status": 200,
+      "observed_at": "2026-07-18T18:11:02.728478Z",
+      "reconcile_meta": {
+        "authoritative_readback": {
+          "available": true,
+          "first_evaluation_schedule": {
+            "capital_pool_id": "pool-persona-paper-4c3acf7ce6a81522b71c",
+            "job_id": "69083430-dfa4-4046-9fb1-a1dd822c1d6b",
+            "job_name": "pantheon-pantheon-persona-first-evaluation-persona--21824cec",
+            "persona_capital_binding_id": "pcb-persona-paper-4c3acf7ce6a81522b71c",
+            "persona_id": "persona-1078f601d489f0baeb88",
+            "registered": true,
+            "request_id": "persona-provisioning:persona-1078f601d489f0baeb88:pantheon.persona.first-evaluation",
+            "runtime_binding_id": "rb-84513a1140e64430a66cf699d7e7e7de",
+            "runtime_id": "rt-d58dbd57",
+            "workflow_id": "pantheon.persona.first-evaluation"
+          },
+          "observed_at": "2026-07-18T18:10:47Z",
+          "paper_worker": {
+            "last_heartbeat_at": "2026-07-18T18:09:45Z",
+            "runtime_binding_id": "rb-84513a1140e64430a66cf699d7e7e7de",
+            "runtime_id": "rt-d58dbd57",
+            "session_id": "prmon-rb-84513a1140e64430a66cf699d7e7e7de-f9bb5879",
+            "status": "running"
+          },
+          "runtime_binding": {
+            "plan_id": "plan-persona-paper-4c3acf7ce6a81522b71c",
+            "runtime_binding_id": "rb-84513a1140e64430a66cf699d7e7e7de",
+            "runtime_id": "rt-d58dbd57",
+            "status": "active"
+          }
+        },
+        "degraded_dependencies": [],
+        "lifecycle_state": "paper_running",
+        "reconciled_by": "persona_provisioning_controller",
+        "snapshot_at": "2026-07-18T18:11:01Z",
+        "status": "ok"
+      },
+      "reconcile_status": 200,
+      "runtimeBindingId": "rb-84513a1140e64430a66cf699d7e7e7de",
+      "runtimeId": "rt-d58dbd57",
+      "state": "paper_running"
+    }
+  ],
+  "result": {
+    "deployment_plan_id": "plan-persona-paper-4c3acf7ce6a81522b71c",
+    "persona_id": "persona-1078f601d489f0baeb88",
+    "runtime_binding_id": "rb-84513a1140e64430a66cf699d7e7e7de",
+    "runtime_id": "rt-d58dbd57",
+    "status": "passed",
+    "strategy_artifact_id": "artifact-persona-paper-4c3acf7ce6a81522b71c"
+  },
+  "schema_version": 1,
+  "target": {
+    "base_url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+    "expected_source_commit_sha": "060b2eb999c6ccbb3ce50153c747127c0deafc33",
+    "tenant_id": "pantheon-dev"
+  },
+  "task_id": "LOOP-PROD-PER-001"
+}

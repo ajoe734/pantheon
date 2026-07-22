@@ -1,0 +1,117 @@
+{
+  "version": 1,
+  "task_id": "SRCLIVE-004-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-06-28T12:26:04Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SRCLIVE-004-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare SRCLIVE-004 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 SRCLIVE-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC SRCLIVE / Phase 2",
+    "owner": "Claude2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "SRCLIVE-003"
+    ],
+    "artifacts": [
+      "support/sidecars/SRCLIVE-004/SRCLIVE-004-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout finalized: support-only BFF and frontend handoff packet durably committed (62098631) and merged into dev via PR #2523. Reviewed and approved by Codex. Artifact at support/sidecars/SRCLIVE-004/SRCLIVE-004-SIDECAR-BFF-HANDOFF.md covers BFF query surfaces, provider mapping state, persona acceptance matrix, contract-test cases, e2e verifier shape, and frontend boundary rules. No canonical truth or runtime code was changed.",
+    "last_update": "2026-06-28T12:26:04Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SRCLIVE-004",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Support-only packet scope verified: only sidecar handoff artifact and task-scoped brief are involved",
+      "No L1 canonical truth, BFF runtime/source-ingest code, registry/governance implementation, or frontend code was changed by this sidecar",
+      "Packet gives usable SRCLIVE-004 parent handoff for BFF overlay contract cases, e2e verifier shape, frontend BFF-only boundary, and dependency blockers; SRCLIVE-002 has since advanced to review but remains not-done dependency baseline"
+    ],
+    "review_file": "support/sidecars/SRCLIVE-004/SRCLIVE-004-SIDECAR-BFF-HANDOFF.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-28T12:26:04Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/code/pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "retired/watchdog-flock-liveness-local-state-20260611",
+      "git_clean_required": false,
+      "commit": "49dbfcb3f14824fed45ca2169507c099afeba40d",
+      "commit_subject": "SRCLIVE-004-SIDECAR-BFF-HANDOFF: state closeout",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude2",
+        "Task-ID": "SRCLIVE-004-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 8,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SRCLIVE-004-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Sidecar BFF/frontend handoff packet committed and merged via PR #2521 (commit a89947e7ab9ea013020706988303e78022b96d50, merge 9f8f653c3966f8e92c4c1c1e8c1be3c31405048a); GitHub Commit trailers, Runtime mirror guard, Forward to orchestrator, and Smoke acceptance passed. Ready for Codex review; support-only, no canonical/runtime/source-ingest/frontend changes from this sidecar.",
+      "status": "done",
+      "created_at": "2026-06-28T10:59:15Z",
+      "resolved_at": "2026-06-28T11:01:59Z"
+    },
+    {
+      "task_id": "SRCLIVE-004-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: support-only BFF/frontend handoff packet is scoped correctly and usable for parent SRCLIVE-004; returning to Codex2 for owner finalization.",
+      "status": "done",
+      "created_at": "2026-06-28T11:01:59Z",
+      "resolved_at": "2026-06-28T11:02:36Z"
+    },
+    {
+      "task_id": "SRCLIVE-004-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Auto-reassigned ownership from Codex2 to Claude2 after repeated Codex2 terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-06-28T11:02:36Z",
+      "resolved_at": "2026-06-28T11:06:55Z"
+    },
+    {
+      "task_id": "SRCLIVE-004-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "State reconciliation needed: Codex formally approved at 2026-06-28T11:01:59Z (logged in ai-activity-log.jsonl) but ai-status.json was not updated before the worker was superseded. The handoff packet is published at support/sidecars/SRCLIVE-004/SRCLIVE-004-SIDECAR-BFF-HANDOFF.md (PR #2521) and the closeout commit is at 62098631 (PR #2523, now merged). Please re-run approve to reconcile canonical state so the owner can mark done.",
+      "status": "done",
+      "created_at": "2026-06-28T11:08:57Z",
+      "resolved_at": "2026-06-28T12:05:52Z"
+    },
+    {
+      "task_id": "SRCLIVE-004-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review approval reconciled after prior logged approval: support-only packet is published in PR #2521 and closeout commit 62098631 is merged via PR #2523; owner Claude2 may finalize done.",
+      "status": "done",
+      "created_at": "2026-06-28T12:05:52Z",
+      "resolved_at": "2026-06-28T12:26:04Z"
+    }
+  ],
+  "blockers": []
+}

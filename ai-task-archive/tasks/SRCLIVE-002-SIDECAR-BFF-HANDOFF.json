@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "task_id": "SRCLIVE-002-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-06-28T10:36:54Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "SRCLIVE-002-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare SRCLIVE-002 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 SRCLIVE-002，整理 BFF query gap、operator journey 與 frontend handoff materials；只輸出 support artifact，不改 canonical truth。",
+    "phase": "EPIC SRCLIVE / Phase 1",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/SRCLIVE-002/SRCLIVE-002-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Merged PR #2515 into dev at 98ef819a0e325506646f6b15ab2463909765f708; sidecar BFF/frontend handoff packet finalized with closeout-captured review note.",
+    "last_update": "2026-06-28T10:36:54Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "SRCLIVE-002",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：7/7 reviewer checklist 項目全部 PASS；僅支援性 artifact，無 canonical/runtime 改動",
+      "後續：owner Codex 負責 closeout，包含 task brief dirty state 與 done 收尾"
+    ],
+    "review_file": "support/sidecars/SRCLIVE-002/SRCLIVE-002-SIDECAR-BFF-HANDOFF-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-28T10:36:54Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/srclive-002-sidecar-bff-handoff",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SRCLIVE-002-SIDECAR-BFF-HANDOFF",
+      "git_clean_required": false,
+      "commit": "1629c302ed0f9dead4c8d875e8e14b529b4ed9ea",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/SRCLIVE-002-SIDECAR-BFF-HANDOFF",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/SRCLIVE-002-SIDECAR-BFF-HANDOFF",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "98ef819a0e325506646f6b15ab2463909765f708",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "SRCLIVE-002-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Sidecar BFF/frontend handoff packet committed and pushed in draft PR #2515 (05ab8df20744c3126a2c631604078e7e225b5920); GitHub checks passed. Ready for Claude2 review; support-only, no canonical/runtime changes.",
+      "status": "done",
+      "created_at": "2026-06-28T10:26:48Z",
+      "resolved_at": "2026-06-28T10:30:34Z"
+    },
+    {
+      "task_id": "SRCLIVE-002-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Sidecar packet APPROVED: all 7 reviewer checklist items pass; support artifact only, canonical truth untouched. Returned to owner Codex for closeout.",
+      "status": "done",
+      "created_at": "2026-06-28T10:30:34Z",
+      "resolved_at": "2026-06-28T10:36:55Z"
+    }
+  ],
+  "blockers": []
+}

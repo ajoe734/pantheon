@@ -26,6 +26,7 @@ class CapitalPoolBody(BaseModel):
     single_runtime_enforced: bool = True
     updated_at: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    idempotent_replay: bool = False
 
 
 class RiskPolicyBody(BaseModel):
@@ -108,6 +109,7 @@ class PersonaCapitalBindingBody(BaseModel):
     binding_id: str
     persona_id: str
     capital_pool_id: str
+    capital_sleeve_id: Optional[str] = None
     role: str
     allowed_deployment_scope: str
     status: str
@@ -120,11 +122,14 @@ class PersonaCapitalBindingBody(BaseModel):
     updated_at: Optional[str] = None
     created_by: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    idempotent_replay: bool = False
 
 
 class CreateCapitalPoolRequest(BaseModel):
     actor_id: str
     actor_role: str
+    idempotency_key: Optional[str] = None
+    request_hash: Optional[str] = None
     pool_id: Optional[str] = None
     name: str
     owner_id: str
@@ -147,9 +152,12 @@ class UpdateCapitalPoolStatusRequest(BaseModel):
 class CreateBindingRequest(BaseModel):
     actor_id: str
     actor_role: str
+    idempotency_key: Optional[str] = None
+    request_hash: Optional[str] = None
     binding_id: Optional[str] = None
     persona_id: str
     capital_pool_id: str
+    capital_sleeve_id: Optional[str] = None
     role: str
     allowed_deployment_scope: str
     mandate: Optional[str] = None
@@ -196,3 +204,186 @@ class WriteAuthorityEntry(BaseModel):
 class WriteAuthorityResponse(BaseModel):
     matrix: List[WriteAuthorityEntry]
     description: str
+
+
+class RebalanceAllocationLine(BaseModel):
+    ranking_snapshot_id: str = Field(min_length=1)
+    allocation_evaluation_id: str = Field(min_length=1)
+    allocation_line_digest: str = Field(min_length=1)
+    allocation_policy_version: str = Field(min_length=1)
+    persona_id: str
+    stage: str
+    capital_scope: str = "pool"
+    capital_pool_id: Optional[str] = None
+    capital_sleeve_id: Optional[str] = None
+    current_weight: float
+    target_weight: float
+    delta: Optional[float] = None
+    cap_reasons: List[str] = Field(default_factory=list)
+    evidence_refs: List[str] = Field(default_factory=list)
+
+
+class CreateRebalanceRequest(BaseModel):
+    actor_id: str
+    actor_role: str
+    idempotency_key: str
+    request_hash: str
+    rebalance_id: Optional[str] = None
+    capital_pool_id: str
+    ranking_snapshot_id: str = Field(min_length=1)
+    allocation_evaluation_id: str = Field(min_length=1)
+    allocation_policy_version: str = Field(min_length=1)
+    reason: str = ""
+    lines: List[RebalanceAllocationLine]
+    simulation: Dict[str, Any] = Field(default_factory=dict)
+    constraints: Dict[str, Any] = Field(default_factory=dict)
+    rollback_target: Dict[str, Any] = Field(default_factory=dict)
+    audit_refs: List[str] = Field(default_factory=list)
+
+
+class ApplyRebalanceRequest(BaseModel):
+    actor_id: str
+    actor_role: str
+    idempotency_key: str
+    request_hash: str
+    command_id: str
+    approval_ref: Optional[str] = None
+    receipt_ref: Optional[str] = None
+    audit_ref: Optional[str] = None
+
+
+class AllocationBody(BaseModel):
+    allocation_id: str
+    capital_pool_id: str
+    persona_id: str
+    capital_scope: str
+    binding_id: Optional[str] = None
+    current_weight: float
+    target_weight: float
+    allocation_version: int
+    binding_state: str
+    capital_sleeve_id: Optional[str] = None
+    stage: Optional[str] = None
+    containment_state: Optional[str] = None
+    last_rebalance_id: Optional[str] = None
+    updated_at: str
+    authoritative_capital_readback: bool = True
+    canonical_write_authority: str = "capital_service"
+
+
+class AllocationListResponse(BaseModel):
+    items: List[AllocationBody]
+    count: int
+    snapshot_at: str
+    source: str = "capital_service"
+    authoritative_capital_readback: bool = True
+
+
+class RebalanceBody(BaseModel):
+    id: str
+    rebalance_id: str
+    capital_pool_id: str
+    status: str
+    applied: bool
+    lines: List[Dict[str, Any]]
+    reason: str = ""
+    ranking_snapshot_id: Optional[str] = None
+    allocation_evaluation_id: Optional[str] = None
+    allocation_policy_version: Optional[str] = None
+    simulation: Dict[str, Any] = Field(default_factory=dict)
+    constraints: Dict[str, Any] = Field(default_factory=dict)
+    rollback_target: Dict[str, Any] = Field(default_factory=dict)
+    audit_refs: List[str] = Field(default_factory=list)
+    approval_ref: Optional[str] = None
+    apply_command_id: Optional[str] = None
+    apply_receipt_ref: Optional[str] = None
+    apply_audit_ref: Optional[str] = None
+    apply_receipt: Optional[Dict[str, Any]] = None
+    applied_at: Optional[str] = None
+    failure: Optional[Dict[str, Any]] = None
+    request_hash: str
+    created_at: str
+    updated_at: str
+    created_by: str
+    canonical_write_authority: str = "capital_service"
+    persistence_mode: str = "owner_store"
+
+
+class RebalanceApplyReceipt(BaseModel):
+    status: str
+    rebalance_id: str
+    capital_pool_id: str
+    command_id: str
+    approval_ref: Optional[str] = None
+    receipt_ref: str
+    audit_ref: str
+    request_hash: str
+    payload_hash: str
+    applied_at: str
+    allocation_readback: List[AllocationBody]
+    authoritative_capital_readback: bool
+    authoritative_capital_state_applied: bool
+    live_capital_side_effects: bool
+    canonical_write_authority: str
+    audit_delivery_status: str = "pending"
+    audit_delivery_attempts: int = 0
+    audit_delivery_error: Optional[str] = None
+    audit_event_id: Optional[str] = None
+    audit_delivered_at: Optional[str] = None
+    idempotent_replay: bool = False
+
+
+class CreateContainmentRequest(BaseModel):
+    actor_id: str
+    actor_role: str
+    idempotency_key: str
+    request_hash: str
+    persona_id: str
+    action: str
+    trigger: str
+    evidence_refs: List[str]
+    containment_id: Optional[str] = None
+    capital_pool_id: Optional[str] = None
+    current_weight: Optional[float] = None
+    target_weight: Optional[float] = None
+    target_stage: Optional[str] = None
+    allocation_increase: bool = False
+    command_id: Optional[str] = None
+    approval_ref: Optional[str] = None
+    two_man_signature_id: Optional[str] = None
+    receipt_ref: Optional[str] = None
+    audit_ref: Optional[str] = None
+
+
+class ContainmentBody(BaseModel):
+    containment_id: str
+    persona_id: str
+    action: str
+    state: str
+    containment_state: str
+    status: str
+    trigger: str
+    evidence_refs: List[str]
+    baseline_weight: float
+    current_weight: float
+    target_weight: float
+    command_id: str
+    receipt_ref: str
+    audit_ref: str
+    request_hash: str
+    payload_hash: str
+    executed_at: str
+    capital_pool_id: Optional[str] = None
+    approval_ref: Optional[str] = None
+    two_man_signature_id: Optional[str] = None
+    authoritative_containment_readback: bool
+    authoritative_capital_readback: bool
+    authoritative_capital_state_applied: bool
+    live_capital_side_effects: bool
+    canonical_write_authority: str
+    audit_delivery_status: str = "pending"
+    audit_delivery_attempts: int = 0
+    audit_delivery_error: Optional[str] = None
+    audit_event_id: Optional[str] = None
+    audit_delivered_at: Optional[str] = None
+    idempotent_replay: bool = False

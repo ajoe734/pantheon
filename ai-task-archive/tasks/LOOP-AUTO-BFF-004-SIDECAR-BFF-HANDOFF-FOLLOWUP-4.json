@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+  "archived_at": "2026-06-27T19:43:34Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+    "title": "Prepare LOOP-AUTO-BFF-004 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 LOOP-AUTO-BFF-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Global Loop Autopilot / Wave 7 BFF Operator Truth",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "LOOP-AUTO-SRC-004",
+      "LOOP-AUTO-RT-005",
+      "LOOP-AUTO-DEP-004",
+      "LOOP-AUTO-TEL-005",
+      "LOOP-AUTO-KNOW-006",
+      "LOOP-AUTO-BFF-003"
+    ],
+    "artifacts": [
+      "support/sidecars/LOOP-AUTO-BFF-004/LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-4.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: sidecar packet (9937d334) + Claude2 review (0475e456) + task brief committed; PR #2486 merged to dev; dependency status refresh and EVO-005 unblock sequence delivered as support artifact for parent LOOP-AUTO-BFF-004",
+    "last_update": "2026-06-27T19:43:34Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "LOOP-AUTO-BFF-004",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：FOLLOWUP-4 status refresh packet 核實",
+      "依賴項 6 of 7 完成，EVO-005 blocked 原因分析正確",
+      "EVO-005 3 步驟解鎖序列技術上正確",
+      "預演驗證指令欄位名稱與先前 packet 一致",
+      "Sidecar scope 限制完全符合"
+    ],
+    "review_file": "support/sidecars/LOOP-AUTO-BFF-004/LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-4-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-27T19:43:34Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-bff-004-sidecar-bff-handoff-followup-4",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "git_clean_required": false,
+      "commit": "6a234d66b85d2f852e35032614c5cc5861deb5df",
+      "commit_subject": "LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-4: closeout",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task brief artifact for FOLLOWUP-4 sidecar packet",
+        "Not changing": "L1 policy files, ai-status.json, loop registry, BFF impl",
+        "Composes with": "parent task LOOP-AUTO-BFF-004 final evidence absorption",
+        "LLM-Agent": "Claude",
+        "Task-ID": "LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+        "Reviewer": "Claude2",
+        "Verified": "n/a; support artifact only — no tests applicable"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "7f65e8bb26a253d8b93e059e99bfc88d207aea07",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "FOLLOWUP-4 packet ready for review. Key contents: dependency status refresh (6 of 7 BFF-004 deps now done), EVO-005 process gap analysis and 3-step unblock sequence, updated surface gap registry (SG-001 through SG-006 likely resolved; SG-007 pending EVO-005), revised go/no-go checklist, pre-drill surface verification commands, updated risk register. PR #2486 open with auto-merge.",
+      "status": "done",
+      "created_at": "2026-06-27T19:33:22Z",
+      "resolved_at": "2026-06-27T19:39:20Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-BFF-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-4",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Review complete — FOLLOWUP-4 packet approved; dependency status accurate, EVO-005 unblock sequence correct, verification commands aligned; returning to Claude for closeout",
+      "status": "done",
+      "created_at": "2026-06-27T19:39:20Z",
+      "resolved_at": "2026-06-27T19:43:36Z"
+    }
+  ],
+  "blockers": []
+}

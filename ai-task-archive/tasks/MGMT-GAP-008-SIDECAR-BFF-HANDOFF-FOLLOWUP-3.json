@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "task_id": "MGMT-GAP-008-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+  "archived_at": "2026-07-01T11:47:39Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-GAP-008-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+    "title": "Prepare MGMT-GAP-008 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-GAP-008，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "MGMT Console Production Gap / Batch 2.5 detail render honesty",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "MGMT-GAP-002",
+      "MGMT-GAP-003"
+    ],
+    "artifacts": [
+      "support/sidecars/MGMT-GAP-008/MGMT-GAP-008-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner finalized reviewed support packet after PR #2684 merged to dev at 41831106e3016984819d8a5b6a8346d904bb9623; checks passed: Commit trailers, Runtime mirror guard, Smoke acceptance.",
+    "last_update": "2026-07-01T11:47:39Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-GAP-008",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Verified sourced claims (PR #133 merged 225765a8, PR #135 open/clean/unreviewed, Pantheon PR #2669 open) and confirmed PR #2684 diff is scoped to only the support artifact file. Packet meets acceptance: support-only, no canonical truth edits, clear reviewer-focus/handoff for parent MGMT-GAP-008 closeout.",
+      "Approved; returning to owner Codex for finalization."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-01T11:47:39Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-gap-008-sidecar-bff-handoff-followup-3",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-GAP-008-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "git_clean_required": false,
+      "commit": "a188f45dcec156a0df97eb806f16b1938215bd19",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/MGMT-GAP-008-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-GAP-008-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "41831106e3016984819d8a5b6a8346d904bb9623",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-GAP-008-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Follow-up 3 support packet is ready for review at support/sidecars/MGMT-GAP-008/MGMT-GAP-008-SIDECAR-BFF-HANDOFF-FOLLOWUP-3.md; Pantheon PR #2684 is open with auto-merge enabled and waiting on GitHub checks/merge.",
+      "status": "done",
+      "created_at": "2026-07-01T11:41:38Z",
+      "resolved_at": "2026-07-01T11:42:40Z"
+    },
+    {
+      "task_id": "MGMT-GAP-008-SIDECAR-BFF-HANDOFF-FOLLOWUP-3",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Reviewed follow-up 3 packet: sourced claims verified against live PR state (execute-plans #133 merged, #135 open/clean/unreviewed, Pantheon #2669 open), PR #2684 scoped to the support artifact only. Approved and returned to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-07-01T11:42:40Z",
+      "resolved_at": "2026-07-01T11:47:40Z"
+    }
+  ],
+  "blockers": []
+}

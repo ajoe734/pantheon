@@ -18,6 +18,7 @@ Paper-only by construction:
 """
 from __future__ import annotations
 
+import json
 import unittest
 import uuid
 from datetime import datetime, timezone
@@ -56,6 +57,32 @@ class _FakeTelemetryEmitter:
     def __init__(self) -> None:
         self.enabled = True
         self.events: list[dict[str, Any]] = []
+
+    def build_event(
+        self,
+        event_type: str,
+        metrics: dict[str, Any],
+        metadata: dict[str, Any] | None = None,
+        *,
+        event_id: str | None = None,
+        created_at: str | None = None,
+    ) -> dict[str, Any]:
+        event_metrics = dict(metrics)
+        stamp_key = "pnl_as_of" if event_type == "pnl_snapshot" else "drawdown_as_of"
+        stamp = event_metrics.pop(stamp_key, None)
+        return {
+            "event_id": event_id,
+            "event_type": event_type,
+            "created_at": created_at,
+            "binding_id": (metadata or {}).get("runtime_binding_id"),
+            stamp_key: stamp,
+            "metrics": event_metrics,
+            "metadata": dict(metadata or {}),
+        }
+
+    def emit_payload(self, payload: dict[str, Any]) -> bool:
+        self.events.append(json.loads(json.dumps(payload)))
+        return True
 
     def emit(self, event_type: str, metrics: dict[str, Any], metadata: dict[str, Any] | None = None) -> bool:
         self.events.append({"event_type": event_type, "metrics": metrics, "metadata": metadata or {}})

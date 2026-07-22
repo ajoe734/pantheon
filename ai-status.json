@@ -1,9 +1,9 @@
 {
   "project": "pantheon",
-  "sprint": "2026-07-02-persona-paper-live-gap",
-  "sprint_started_at": "2026-07-02T00:00:00Z",
-  "objective": "Implement the paper-first persona lifecycle: create persona directly into paper runtime, evaluate paper cohorts, require human approval for canary, live, and quarterly allocation changes, and enforce automatic risk guardrails that can pause, reduce, risk-off, or freeze immediately.",
-  "updated_at": "2026-07-02T15:41:44Z",
+  "sprint": "2026-06-09-mpos-full-loop-gap-closure",
+  "sprint_started_at": "2026-06-09T00:00:00Z",
+  "objective": "Close the remaining multi-persona OODA gaps: prove Persona A/B/C research-to-proposal packets, run approved AllocationPolicyArtifact through DeploymentPlan RuntimeBinding paper LEAN telemetry, enforce consultation and homogeneity/correlation gates before LEAN, and write Learn feedback back to persona or sponsor memory while live broker authority remains fail-closed.",
+  "updated_at": "2026-07-12T21:15:39Z",
   "canonical_document_layers": {
     "L0 Collaboration & State": [
       "AI_COLLABORATION_GUIDE.md",
@@ -94,14 +94,11 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "waiting",
-      "current_task_ids": [
-        "PPLG-002",
-        "PPLG-005"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "task/LSP-002-V2",
-      "next": "Assignment created",
-      "last_update": "2026-06-02T13:10:43Z"
+      "next": "",
+      "last_update": "2026-07-11T18:40:13Z"
     },
     {
       "name": "Gemini",
@@ -115,7 +112,7 @@
       "current_task_ids": [],
       "branch": "feat/gemini-research-runtime",
       "next": "",
-      "last_update": "2026-06-02T01:20:16Z"
+      "last_update": "2026-07-11T22:56:04Z"
     },
     {
       "name": "Codex",
@@ -125,14 +122,13 @@
         "schema",
         "acceptance"
       ],
-      "status": "reviewing",
+      "status": "blocked",
       "current_task_ids": [
-        "PPLG-001",
-        "PPLG-006"
+        "PPL-ALLOC-007"
       ],
-      "branch": "task/ASST-OCGW-001",
-      "next": "Risk guardrail evaluator now emits pause/reduce/risk_off/frozen events with incident evidence, no promotion/allocation authority, and human-review resume markers for risk_off/frozen. Validation: pytest capital risk policy, persona paper/live schema, fleet contract regressions.",
-      "last_update": "2026-07-02T15:41:44Z"
+      "branch": "task/OCLAW-PMEM-004",
+      "next": "execute-plans task branch contains uncommitted PPL-ALLOC-006 nextAction adapter work plus unrelated hosted audit/test artifacts; durable task state also still assigns Antigravity/Codex2 todo, conflicting with Codex dispatch. Previous owner/supervisor must reconcile ownership and cleanly preserve or remove prior-task changes before redispatch.",
+      "last_update": "2026-07-11T16:13:16Z"
     },
     {
       "name": "Codex2",
@@ -142,14 +138,11 @@
         "schema",
         "acceptance"
       ],
-      "status": "waiting",
-      "current_task_ids": [
-        "PPLG-003",
-        "PPLG-007"
-      ],
-      "branch": "task/ASST-OCGW-004",
-      "next": "Assignment created",
-      "last_update": "2026-06-02T03:56:50Z"
+      "status": "idle",
+      "current_task_ids": [],
+      "branch": "task/OCLAW-PMEM-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-13",
+      "next": "",
+      "last_update": "2026-07-12T00:37:02Z"
     },
     {
       "name": "Copilot",
@@ -163,7 +156,7 @@
       "current_task_ids": [],
       "branch": "feat/grok-research-critique",
       "next": "",
-      "last_update": "2026-06-09T15:28:07Z"
+      "last_update": "2026-07-11T11:18:50Z"
     },
     {
       "name": "Claude2",
@@ -172,13 +165,11 @@
         "control-plane",
         "governance-review"
       ],
-      "status": "waiting",
-      "current_task_ids": [
-        "PPLG-004"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "feat/claude2-execution-control",
-      "next": "Assignment created",
-      "last_update": "2026-06-02T04:46:37Z"
+      "next": "",
+      "last_update": "2026-07-11T22:58:45Z"
     },
     {
       "name": "Gemini2",
@@ -188,13 +179,11 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "waiting",
-      "current_task_ids": [
-        "PPLG-008"
-      ],
+      "status": "idle",
+      "current_task_ids": [],
       "branch": "bff-luv-fe-006-dev-deploy",
-      "next": "Assignment created",
-      "last_update": "2026-06-01T00:47:46Z",
+      "next": "",
+      "last_update": "2026-07-07T13:40:53Z",
       "last_action_at": "2026-05-20T11:29:47Z",
       "last_action_note": "Manual ai-status sync by Claude: cleared ['LOVABLE-STRICT-PUBLISH', 'OSS-QUANTLIB-V2-001'] after push-auth failure."
     },
@@ -219,11 +208,13 @@
         "runtime-packaging",
         "worker-ops"
       ],
-      "status": "idle",
-      "current_task_ids": [],
+      "status": "ready",
+      "current_task_ids": [
+        "TJ-E2E-012"
+      ],
       "branch": "feat/antigravity-research-runtime",
-      "next": "",
-      "last_update": null
+      "next": "Auto-reassigned TJ-E2E-012 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); reviewer Human/Ops -> Claude.",
+      "last_update": "2026-07-11T22:59:09Z"
     },
     {
       "name": "Antigravity2",
@@ -237,248 +228,304 @@
       "current_task_ids": [],
       "branch": "feat/antigravity2-research-runtime",
       "next": "",
-      "last_update": null
+      "last_update": "2026-07-11T22:55:18Z"
     }
   ],
   "tasks": [
     {
-      "id": "PPLG-001",
-      "title": "Canonical persona paper/live state and contract alignment",
-      "summary_zh": "鎖定 paper-first persona lifecycle, schema, endpoint contract, 舊 onboarding spec supersession。建立完成必須是 paper runtime 或 setup_failed。",
-      "phase": "EPIC PPLG / contracts",
-      "owner": "Codex",
+      "id": "MGMT-GAP-001",
+      "title": "Management route and IA cleanup",
+      "summary_zh": "清除 management console 真重複入口: control-room-legacy 不再 render 舊 ControlRoom; deployment/deployment/:id 改 canonical deployments redirect; 收斂一級 nav 中非 production 的 studios/empty registry/loop 子頁。",
+      "phase": "MGMT Console Production Gap / Batch 1 route IA",
+      "owner": "Codex2",
       "reviewer": "Claude",
-      "status": "review",
+      "status": "done",
       "depends_on": [],
       "artifacts": [
-        "docs/04/pantheon_persona_paper_live_gap_2026-07-02/GAP_AND_EXECUTION_PLAN.md",
-        "docs/bff/execution-tasks/2026-07-02-persona-paper-live-gap/PPLG-001-canonical-state-contract.md",
-        "services/control-plane/bff/BFF_API_CONTRACT.md",
-        "services/control-plane/bff/tests"
+        "frontend-checkout:src/App.tsx",
+        "frontend-checkout:src/management/ManagementLayout.tsx",
+        "frontend-checkout:e2e",
+        "docs/04/pantheon_management_console_gap_2026-06-30"
       ],
       "acceptance": [
-        "contract docs state create-to-paper invariant;paper canary live share one cohort competition model with competition_track;canary live quarterly require human decision;automatic guardrails cannot promote or increase allocation;schema/contract tests cover enums"
+        "control-room-legacy 不再 render 舊頁; deployment singular routes redirect; nav 收斂或每項有 production readiness; route tests + hosted probe 綠"
       ],
-      "next": "Canonical persona paper/live schema, BFF endpoint contract, old wizard supersession, and schema regression tests are ready for review.",
-      "last_update": "2026-07-02T15:29:04Z",
-      "source_packet": "docs/04/pantheon_persona_paper_live_gap_2026-07-02/GAP_AND_EXECUTION_PLAN.md",
-      "task_packet_dir": "docs/bff/execution-tasks/2026-07-02-persona-paper-live-gap",
-      "dispatch_sprint": "2026-07-02-persona-paper-live-gap",
-      "task_class": "persona_paper_live_gap",
-      "auto_created_by": "dispatch_persona_paper_live_gap_2026-07-02",
+      "next": "Closed by execute-plans PR #120; deployed commit 6218e67d4119bcfc663681935d2a98e5af73e55a verified on pantheon-dev-fe.",
+      "last_update": "2026-06-30T14:45:55Z",
+      "source_ref": {
+        "doc": "docs/04/pantheon_management_console_gap_2026-06-30/README.md",
+        "archive": "docs/04/pantheon_management_console_gap_2026-06-30/archive/live-audit-2026-06-30.md",
+        "reaudit": "docs/04/pantheon_management_console_gap_2026-06-30/archive/full-reaudit-addendum-2026-07-01.md",
+        "route_control_reaudit": "docs/04/pantheon_management_console_gap_2026-06-30/archive/route-control-reaudit-2026-07-01.md",
+        "route_control_raw": "docs/04/pantheon_management_console_gap_2026-06-30/archive/route-control-reaudit-2026-07-01.json",
+        "packet": "docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md"
+      },
+      "completion_evidence": {
+        "implementation_repo": "ajoe734/execute-plans",
+        "implementation_pr": "https://github.com/ajoe734/execute-plans/pull/120",
+        "implementation_commit": "806f53fe5e9ac6e0e909621ba0c13b775679adc7",
+        "merge_commit": "6218e67d4119bcfc663681935d2a98e5af73e55a",
+        "dev_deploy_run": "https://github.com/ajoe734/execute-plans/actions/runs/28452499928",
+        "dev_integration_gate_run": "https://github.com/ajoe734/execute-plans/actions/runs/28452500411",
+        "deployment_json": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/deployment.json",
+        "deployed_at": "20260630T143840Z",
+        "bff_healthz": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/healthz",
+        "hosted_probe": [
+          "/management/control-room-legacy -> /management/cockpit",
+          "/management/deployment -> /management/deployments",
+          "/management/deployment/dep-9?tab=events -> /management/deployments/dep-9?tab=events",
+          "primary nav excludes /management/studios/formula, /management/studios/skill-sandbox, /management/loops/research, /management/loops/execution, /management/loops/optimization; /management/loops remains"
+        ]
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "batch": 1,
+      "fleet_lane": "frontend-route-ia",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_management_console_gap_2026-06-30",
       "auto_generated": true
     },
     {
-      "id": "PPLG-002",
-      "title": "Idempotent create-to-paper persona launch workflow",
-      "summary_zh": "實作 POST /bff/management/personas/paper-launch，一次完成 persona、paper pool binding、paper plan、paper approval、RuntimeBinding、paper runtime startup。",
-      "phase": "EPIC PPLG / paper launch",
-      "owner": "Claude",
-      "reviewer": "Codex",
-      "status": "todo",
-      "depends_on": [
-        "PPLG-001"
-      ],
-      "artifacts": [
-        "docs/04/pantheon_persona_paper_live_gap_2026-07-02/GAP_AND_EXECUTION_PLAN.md",
-        "docs/bff/execution-tasks/2026-07-02-persona-paper-live-gap/PPLG-002-paper-launch-orchestrator.md",
-        "services/control-plane/bff",
-        "services/control-plane/governance",
-        "services/control-plane/bff/tests"
-      ],
-      "acceptance": [
-        "same idempotency key replays safely;different payload conflicts;happy path reaches paper runtime;failed step records retryable repair state;no live pool binding during create"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-07-02T13:47:50Z",
-      "source_packet": "docs/04/pantheon_persona_paper_live_gap_2026-07-02/GAP_AND_EXECUTION_PLAN.md",
-      "task_packet_dir": "docs/bff/execution-tasks/2026-07-02-persona-paper-live-gap",
-      "dispatch_sprint": "2026-07-02-persona-paper-live-gap",
-      "task_class": "persona_paper_live_gap",
-      "auto_created_by": "dispatch_persona_paper_live_gap_2026-07-02",
-      "auto_generated": true
-    },
-    {
-      "id": "PPLG-003",
-      "title": "Persona Fleet readiness projection and payload cleanup",
-      "summary_zh": "補 Fleet readiness/competition projection 並移除重複大 payload，讓 row 在同一 cohort 顯示 paper challengers、canary challengers、live incumbents。",
-      "phase": "EPIC PPLG / fleet read model",
-      "owner": "Codex2",
-      "reviewer": "Claude2",
-      "status": "todo",
-      "depends_on": [
-        "PPLG-001"
-      ],
-      "artifacts": [
-        "docs/04/pantheon_persona_paper_live_gap_2026-07-02/GAP_AND_EXECUTION_PLAN.md",
-        "docs/bff/execution-tasks/2026-07-02-persona-paper-live-gap/PPLG-003-fleet-readiness-read-model.md",
-        "services/control-plane/bff",
-        "services/control-plane/bff/tests/test_bff_b3_persona_fleet.py"
-      ],
-      "acceptance": [
-        "fleet default includes paper challengers canary challengers and live incumbents in one competition projection;mode filters do not create hidden separate datasets;payload materially smaller;contract tests cover row shape"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-07-02T13:48:00Z",
-      "source_packet": "docs/04/pantheon_persona_paper_live_gap_2026-07-02/GAP_AND_EXECUTION_PLAN.md",
-      "task_packet_dir": "docs/bff/execution-tasks/2026-07-02-persona-paper-live-gap",
-      "dispatch_sprint": "2026-07-02-persona-paper-live-gap",
-      "task_class": "persona_paper_live_gap",
-      "auto_created_by": "dispatch_persona_paper_live_gap_2026-07-02",
-      "auto_generated": true
-    },
-    {
-      "id": "PPLG-004",
-      "title": "Paper eligibility and unified competition ranking engine",
-      "summary_zh": "實作 paper hard gates、promotion_score、paper/canary/live 同 cohort ranking 與 recommendation packet；系統只推薦，不批准實盤。",
-      "phase": "EPIC PPLG / evaluation ranking",
+      "id": "MGMT-GAP-003",
+      "title": "BFF management DTO contract hardening",
+      "summary_zh": "為 /bff/management/data-sources、permissions、memory-governance、consult-rules、/bff/lineage、/bff/workflows、/bff/hooks、/bff/knowledge 補齊 DTO 契約、degraded envelope、OpenAPI schema 與 contract tests。",
+      "phase": "MGMT Console Production Gap / Batch 2 BFF contracts",
       "owner": "Claude2",
       "reviewer": "Codex",
-      "status": "todo",
-      "depends_on": [
-        "PPLG-001"
-      ],
+      "status": "done",
+      "depends_on": [],
       "artifacts": [
-        "docs/04/pantheon_persona_paper_live_gap_2026-07-02/GAP_AND_EXECUTION_PLAN.md",
-        "docs/bff/execution-tasks/2026-07-02-persona-paper-live-gap/PPLG-004-paper-evaluation-ranking.md",
-        "services/evaluation",
-        "services/optimizer-svc",
-        "services/control-plane/bff/tests"
+        "services/control-plane/bff",
+        "docs/04/pantheon_management_console_gap_2026-06-30"
       ],
       "acceptance": [
-        "ranking snapshots include paper challengers canary challengers and live incumbents in one cohort result;eligible rows expose score components gates percentile evidence;recommendation cannot start canary/live without human decision;tests cover threshold and overrides"
+        "所有端點 OpenAPI + contract test + hosted curl 200; 空資料為明確 degraded/unavailable 而不是 ambiguous []"
       ],
-      "next": "Assignment created",
-      "last_update": "2026-07-02T13:48:10Z",
-      "source_packet": "docs/04/pantheon_persona_paper_live_gap_2026-07-02/GAP_AND_EXECUTION_PLAN.md",
-      "task_packet_dir": "docs/bff/execution-tasks/2026-07-02-persona-paper-live-gap",
-      "dispatch_sprint": "2026-07-02-persona-paper-live-gap",
-      "task_class": "persona_paper_live_gap",
-      "auto_created_by": "dispatch_persona_paper_live_gap_2026-07-02",
+      "next": "Closed by PR #2649; dev BFF deploy run 28485593169 and hosted authenticated curl prove OpenAPI schemas plus 200 envelopes for all eight endpoints.",
+      "last_update": "2026-07-01T00:49:18Z",
+      "source_ref": {
+        "doc": "docs/04/pantheon_management_console_gap_2026-06-30/README.md",
+        "archive": "docs/04/pantheon_management_console_gap_2026-06-30/archive/live-audit-2026-06-30.md",
+        "reaudit": "docs/04/pantheon_management_console_gap_2026-06-30/archive/full-reaudit-addendum-2026-07-01.md",
+        "route_control_reaudit": "docs/04/pantheon_management_console_gap_2026-06-30/archive/route-control-reaudit-2026-07-01.md",
+        "route_control_raw": "docs/04/pantheon_management_console_gap_2026-06-30/archive/route-control-reaudit-2026-07-01.json",
+        "packet": "docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md"
+      },
+      "completion_evidence": {
+        "implementation_repo": "ajoe734/pantheon",
+        "implementation_pr": "https://github.com/ajoe734/pantheon/pull/2649",
+        "implementation_commit": "8600ccc3f3a4b1d926e99223d92fbe207ca9c4b0",
+        "merge_commit": "0f3fc3ff60ad408d390f36244d3f9f465372457c",
+        "dev_branch_ci_run": "https://github.com/ajoe734/pantheon/actions/runs/28485525251",
+        "dev_orchestrator_sync_run": "https://github.com/ajoe734/pantheon/actions/runs/28485525242",
+        "dev_bff_deploy_run": "https://github.com/ajoe734/pantheon/actions/runs/28485593169",
+        "bff_healthz": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/healthz",
+        "openapi_components": [
+          "SurfaceState",
+          "PageInfo",
+          "ManagementListMeta",
+          "ManagementRecordsEnvelope",
+          "DataSourcesEnvelope",
+          "LineageEnvelope"
+        ],
+        "hosted_curl": [
+          "/bff/management/data-sources 200 meta.status=ok surface.data_sources=ok/service_client returned=13 total=13",
+          "/bff/management/permissions 200 meta.status=unavailable surface.governance_permissions=unavailable/missing returned=0 total=0",
+          "/bff/management/memory-governance 200 meta.status=unavailable surface.memory_governance_rules=unavailable/missing returned=0 total=0",
+          "/bff/management/consult-rules 200 meta.status=unavailable surface.consult_rules=unavailable/missing returned=0 total=0",
+          "/bff/lineage 200 meta.status=degraded surface.lineage=degraded/service_client returned=0 total=0",
+          "/bff/workflows 200 meta.status=unavailable surface.workflow_templates=unavailable/missing returned=0 total=0",
+          "/bff/hooks 200 meta.status=unavailable surface.hook_registry=unavailable/missing returned=0 total=0",
+          "/bff/knowledge 200 meta.status=ok surface.knowledge_inbox=ok/bff_composed returned=8 total=8"
+        ]
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "batch": 2,
+      "fleet_lane": "bff-contract",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_management_console_gap_2026-06-30",
       "auto_generated": true
     },
     {
-      "id": "PPLG-005",
-      "title": "Human review workflows for canary live and quarterly ranking",
-      "summary_zh": "實作 promotion/canary/live/quarterly/replacement/resume human review，所有真錢資金進出與季度重排都需人審。",
-      "phase": "EPIC PPLG / human review",
+      "id": "MGMT-GAP-002",
+      "title": "Frontend canonical management read wiring",
+      "summary_zh": "將 Data Sources、permissions、memory、consult、lineage、workflows、hooks、ranking 改接 canonical management endpoints；移除 strict live seed/mock 偽裝。",
+      "phase": "MGMT Console Production Gap / Batch 2 FE canonical reads",
       "owner": "Claude",
-      "reviewer": "Codex2",
-      "status": "todo",
+      "reviewer": "Codex",
+      "status": "done",
       "depends_on": [
-        "PPLG-004"
+        "MGMT-GAP-003"
       ],
       "artifacts": [
-        "docs/04/pantheon_persona_paper_live_gap_2026-07-02/GAP_AND_EXECUTION_PLAN.md",
-        "docs/bff/execution-tasks/2026-07-02-persona-paper-live-gap/PPLG-005-human-review-workflows.md",
-        "services/control-plane/governance",
-        "services/control-plane/bff/tests"
+        "frontend-checkout:src/lib/bff-v1",
+        "frontend-checkout:src/management",
+        "frontend-checkout:e2e",
+        "docs/04/pantheon_management_console_gap_2026-06-30"
       ],
       "acceptance": [
-        "paper recommendation alone cannot create canary/live;quarterly proposal cannot rebalance without human decision;resume risk_off/frozen requires approval;approve/reject/expired tests pass"
+        "hosted browser probe 捕捉每頁 intended endpoint; success/degraded 測試綠; 無 seed/mock 被顯示為 live truth"
       ],
-      "next": "Assignment created",
-      "last_update": "2026-07-02T13:48:22Z",
-      "source_packet": "docs/04/pantheon_persona_paper_live_gap_2026-07-02/GAP_AND_EXECUTION_PLAN.md",
-      "task_packet_dir": "docs/bff/execution-tasks/2026-07-02-persona-paper-live-gap",
-      "dispatch_sprint": "2026-07-02-persona-paper-live-gap",
-      "task_class": "persona_paper_live_gap",
-      "auto_created_by": "dispatch_persona_paper_live_gap_2026-07-02",
-      "auto_generated": true
+      "next": "Closed by execute-plans PR #124 and PR #126; dev deploy 28490060564 and FE-BFF gate 28490060533 passed at 41551e32432c7a7963716f9f197ee31f5fdd48a8.",
+      "last_update": "2026-07-01T04:56:00Z",
+      "source_ref": {
+        "doc": "docs/04/pantheon_management_console_gap_2026-06-30/README.md",
+        "archive": "docs/04/pantheon_management_console_gap_2026-06-30/archive/live-audit-2026-06-30.md",
+        "reaudit": "docs/04/pantheon_management_console_gap_2026-06-30/archive/full-reaudit-addendum-2026-07-01.md",
+        "route_control_reaudit": "docs/04/pantheon_management_console_gap_2026-06-30/archive/route-control-reaudit-2026-07-01.md",
+        "route_control_raw": "docs/04/pantheon_management_console_gap_2026-06-30/archive/route-control-reaudit-2026-07-01.json",
+        "packet": "docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "batch": 2,
+      "fleet_lane": "frontend-bff-integration",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_management_console_gap_2026-06-30",
+      "auto_generated": true,
+      "terminal_outcome": "completed",
+      "review_file": "docs/04/pantheon_management_console_gap_2026-06-30/archive/MGMT-GAP-002-closeout-2026-07-01.md",
+      "review_notes_zh": [
+        "execute-plans PR #124 已合併 canonical management reads，PR #126 已補最終部署狀態。",
+        "dev FE deploy 28490060564 與 FE-BFF Integration Gate 28490060533 均為 success。",
+        "mock-mode 完整重盤點 70/70 management routes rendered；此任務只關閉 canonical read wiring，不關閉 durable writes 或 studios production depth。"
+      ],
+      "external_delivery": {
+        "repository_id": "execute_plans",
+        "repository_slug": "ajoe734/execute-plans",
+        "primary_pr": "https://github.com/ajoe734/execute-plans/pull/124",
+        "primary_merge_commit": "0f92b069a2523eaac8224629054dfd99db878538",
+        "status_pr": "https://github.com/ajoe734/execute-plans/pull/126",
+        "status_merge_commit": "41551e32432c7a7963716f9f197ee31f5fdd48a8",
+        "dev_fe_deploy_run": "28490060564",
+        "dev_fe_bff_integration_gate_run": "28490060533",
+        "hosted_deployment_commit": "41551e32432c7a7963716f9f197ee31f5fdd48a8",
+        "route_audit": "70/70 management routes rendered in mock-mode; 106 source route lines and 53 nav entries inventoried",
+        "archive_doc": "docs/04/pantheon_management_console_gap_2026-06-30/archive/MGMT-GAP-002-closeout-2026-07-01.md"
+      }
     },
     {
-      "id": "PPLG-006",
-      "title": "Automatic risk guardrails and incident review evidence",
-      "summary_zh": "實作虧損、drawdown、exposure、slippage、order/data/runtime/policy/correlation guardrails，可自動 pause/reduce/risk_off/freeze 並建立事件審核。",
-      "phase": "EPIC PPLG / risk guardrails",
+      "id": "PPL-ALLOC-007",
+      "title": "Binding visibility and route prune",
+      "summary_zh": "修 Persona Fleet / Capital 顯示不同 persona 綁定到不同 paper ledger 或 real sleeve；legacy/diagnostic 頁面不再搶主流程。",
+      "phase": "Persona Promotion Allocation / Wave 2 IA and binding visibility",
       "owner": "Codex",
-      "reviewer": "Claude2",
-      "status": "review",
+      "reviewer": "Claude",
+      "status": "blocked",
       "depends_on": [
-        "PPLG-001"
+        "PPL-ALLOC-003",
+        "PPL-ALLOC-006"
       ],
       "artifacts": [
-        "docs/04/pantheon_persona_paper_live_gap_2026-07-02/GAP_AND_EXECUTION_PLAN.md",
-        "docs/bff/execution-tasks/2026-07-02-persona-paper-live-gap/PPLG-006-risk-guardrails-incident-review.md",
-        "services/capital",
-        "services/runtime-manager",
-        "services/incident",
-        "services/control-plane/bff/tests"
+        "execute-plans:src/management",
+        "execute-plans:src/App.tsx",
+        "execute-plans:e2e"
       ],
       "acceptance": [
-        "loss/drawdown/policy/data/runtime triggers act immediately;each action records incident and trace;guardrails cannot promote or increase allocation;resume requires human review"
+        "capital/persona pages show distinct binding identity; legacy routes redirect; ranking/readiness pages are diagnostics/readiness only"
       ],
-      "next": "Risk guardrail evaluator now emits pause/reduce/risk_off/frozen events with incident evidence, no promotion/allocation authority, and human-review resume markers for risk_off/frozen. Validation: pytest capital risk policy, persona paper/live schema, fleet contract regressions.",
-      "last_update": "2026-07-02T15:41:44Z",
-      "source_packet": "docs/04/pantheon_persona_paper_live_gap_2026-07-02/GAP_AND_EXECUTION_PLAN.md",
-      "task_packet_dir": "docs/bff/execution-tasks/2026-07-02-persona-paper-live-gap",
-      "dispatch_sprint": "2026-07-02-persona-paper-live-gap",
-      "task_class": "persona_paper_live_gap",
-      "auto_created_by": "dispatch_persona_paper_live_gap_2026-07-02",
-      "auto_generated": true
+      "next": "execute-plans task branch contains uncommitted PPL-ALLOC-006 nextAction adapter work plus unrelated hosted audit/test artifacts; durable task state also still assigns Antigravity/Codex2 todo, conflicting with Codex dispatch. Previous owner/supervisor must reconcile ownership and cleanly preserve or remove prior-task changes before redispatch.",
+      "last_update": "2026-07-11T16:13:16Z",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_persona_promotion_allocation_2026-07-07",
+      "auto_generated": true,
+      "source_ref": {
+        "doc": "docs/04/pantheon_persona_promotion_allocation_gap_2026-07-07/PERSONA_PROMOTION_ALLOCATION_GAP_SPEC.md",
+        "packet": "docs/bff/execution-tasks/2026-07-07-persona-promotion-allocation-gap/INDEX.md",
+        "extends": "docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/PERSONA_PROMOTION_GOVERNANCE_GAP_SPEC.md",
+        "prior_closeout": "docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/archive/PPL-GOV-007-PRODUCTION-CLOSEOUT-2026-07-05.md"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "helper_kind": "persona_promotion_allocation_execution_slice",
+      "wave": 2,
+      "fleet_lane": "fe-binding-visibility-route-prune",
+      "waiting_for": "Antigravity"
     },
     {
-      "id": "PPLG-007",
-      "title": "Frontend Create Paper Persona and unified Fleet UX",
-      "summary_zh": "更新 Persona Registry/Fleet：主要 CTA 是建立 Paper Persona，row action 依狀態顯示，研究/模擬/正式只控制命令上下文，不拆開 paper/live 競爭視圖。",
-      "phase": "EPIC PPLG / frontend UX",
-      "owner": "Codex2",
+      "id": "PPL-ALLOC-009",
+      "title": "Closeout and dev publish",
+      "summary_zh": "彙整所有任務 PR、測試、merge、dev publish 與 hosted smoke，證明 create->paper、paper->real review、real allocation、emergency containment 閉環。",
+      "phase": "Persona Promotion Allocation / Wave 3 closeout",
+      "owner": "Antigravity",
       "reviewer": "Claude",
       "status": "todo",
       "depends_on": [
-        "PPLG-002",
-        "PPLG-003",
-        "PPLG-005"
+        "PPL-ALLOC-002",
+        "PPL-ALLOC-003",
+        "PPL-ALLOC-004",
+        "PPL-ALLOC-005",
+        "PPL-ALLOC-006",
+        "PPL-ALLOC-007",
+        "PPL-ALLOC-008"
       ],
       "artifacts": [
-        "docs/04/pantheon_persona_paper_live_gap_2026-07-02/GAP_AND_EXECUTION_PLAN.md",
-        "docs/bff/execution-tasks/2026-07-02-persona-paper-live-gap/PPLG-007-frontend-paper-persona-flow.md"
+        "docs/04/pantheon_persona_promotion_allocation_gap_2026-07-07/archive",
+        "services/control-plane/bff",
+        "execute-plans:src"
       ],
       "acceptance": [
-        "primary create reaches paper_running or setup_failed;mode selector does not hide paper challengers from live incumbent comparison;row actions match concrete states;eligible shows promotion review;canary/live show approval evidence;e2e covers no canary without approval"
+        "all child tasks done or reviewed superseded; hosted smoke proves full path; closeout records PRs",
+        "SHAs",
+        "deployed commits",
+        "validation",
+        "residual risks"
       ],
-      "next": "Assignment created",
-      "last_update": "2026-07-02T13:48:46Z",
-      "source_packet": "docs/04/pantheon_persona_paper_live_gap_2026-07-02/GAP_AND_EXECUTION_PLAN.md",
-      "task_packet_dir": "docs/bff/execution-tasks/2026-07-02-persona-paper-live-gap",
-      "dispatch_sprint": "2026-07-02-persona-paper-live-gap",
-      "task_class": "persona_paper_live_gap",
-      "auto_created_by": "dispatch_persona_paper_live_gap_2026-07-02",
-      "auto_generated": true
+      "next": "Auto-reassigned PPL-ALLOC-009 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Antigravity.",
+      "last_update": "2026-07-11T03:00:40Z",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_persona_promotion_allocation_2026-07-07",
+      "auto_generated": true,
+      "source_ref": {
+        "doc": "docs/04/pantheon_persona_promotion_allocation_gap_2026-07-07/PERSONA_PROMOTION_ALLOCATION_GAP_SPEC.md",
+        "packet": "docs/bff/execution-tasks/2026-07-07-persona-promotion-allocation-gap/INDEX.md",
+        "extends": "docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/PERSONA_PROMOTION_GOVERNANCE_GAP_SPEC.md",
+        "prior_closeout": "docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/archive/PPL-GOV-007-PRODUCTION-CLOSEOUT-2026-07-05.md"
+      },
+      "delivery_layer": "primary",
+      "mutates_canonical": true,
+      "helper_kind": "persona_promotion_allocation_execution_slice",
+      "wave": 3,
+      "fleet_lane": "production-closeout"
     },
     {
-      "id": "PPLG-008",
-      "title": "End-to-end release gate and fleet closeout",
-      "summary_zh": "建立完整驗證包：create->paper runtime->evaluation->human review->canary/live/quarterly/risk-off 全流程證據。",
-      "phase": "EPIC PPLG / verification",
-      "owner": "Gemini2",
-      "reviewer": "Codex",
+      "title": "Hosted acceptance and closeout",
+      "summary_zh": "依 Trade Journey E2E gap 規格執行：Hosted acceptance and closeout。",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
       "status": "todo",
+      "phase": "Trade Journey E2E / Wave 5",
+      "next": "Auto-reassigned TJ-E2E-012 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); reviewer Human/Ops -> Claude.",
+      "source_ref": {
+        "doc": "docs/04/pantheon_trade_journey_e2e_observability_gap_2026-07-11/TRADE_JOURNEY_E2E_OBSERVABILITY_GAP.md",
+        "packet": "docs/bff/execution-tasks/2026-07-11-trade-journey-e2e/TJ-E2E-012-hosted-acceptance-closeout.md",
+        "target_repo": "pantheon+execute-plans",
+        "merge_target": "dev"
+      },
+      "metadata": {
+        "wave": 5,
+        "fleet_lane": "hosted-acceptance-closeout",
+        "target_repo": "pantheon+execute-plans"
+      },
+      "created_at": "2026-07-11T22:58:28.902157+00:00",
+      "id": "TJ-E2E-012",
       "depends_on": [
-        "PPLG-002",
-        "PPLG-003",
-        "PPLG-004",
-        "PPLG-005",
-        "PPLG-006",
-        "PPLG-007"
+        "TJ-E2E-001",
+        "TJ-E2E-002",
+        "TJ-E2E-003",
+        "TJ-E2E-004",
+        "TJ-E2E-005",
+        "TJ-E2E-006",
+        "TJ-E2E-007",
+        "TJ-E2E-008",
+        "TJ-E2E-009",
+        "TJ-E2E-010",
+        "TJ-E2E-011"
       ],
-      "artifacts": [
-        "docs/04/pantheon_persona_paper_live_gap_2026-07-02/GAP_AND_EXECUTION_PLAN.md",
-        "docs/bff/execution-tasks/2026-07-02-persona-paper-live-gap/PPLG-008-e2e-release-gate.md",
-        "tests/e2e",
-        "docs/deployment/evidence"
-      ],
-      "acceptance": [
-        "e2e proves create to paper runtime;mode selector changes command affordances without splitting competition datasets;recommendation cannot start canary without approval;quarterly cannot execute without approval;risk_off interrupts immediately;closeout maps every spec requirement"
-      ],
-      "next": "Assignment created",
-      "last_update": "2026-07-02T13:48:57Z",
-      "source_packet": "docs/04/pantheon_persona_paper_live_gap_2026-07-02/GAP_AND_EXECUTION_PLAN.md",
-      "task_packet_dir": "docs/bff/execution-tasks/2026-07-02-persona-paper-live-gap",
-      "dispatch_sprint": "2026-07-02-persona-paper-live-gap",
-      "task_class": "persona_paper_live_gap",
-      "auto_created_by": "dispatch_persona_paper_live_gap_2026-07-02",
-      "auto_generated": true
+      "last_update": "2026-07-11T22:59:09Z",
+      "task_class": "execution",
+      "auto_created_by": "dispatch_trade_journey_e2e_2026-07-11"
     }
   ],
   "handoffs": [
@@ -492,23 +539,41 @@
       "resolved_at": "2026-04-17T12:39:53Z"
     },
     {
-      "task_id": "PPLG-001",
+      "task_id": "PPL-ALLOC-009",
       "from": "Codex",
-      "to": "Claude",
-      "message": "Canonical persona paper/live schema, BFF endpoint contract, old wizard supersession, and schema regression tests are ready for review.",
+      "to": "Antigravity",
+      "message": "Auto-reassigned PPL-ALLOC-009 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Antigravity.",
       "status": "pending",
-      "created_at": "2026-07-02T15:29:04Z"
+      "created_at": "2026-07-11T03:00:40Z"
     },
     {
-      "task_id": "PPLG-006",
-      "from": "Codex",
-      "to": "Claude2",
-      "message": "Risk guardrail evaluator now emits pause/reduce/risk_off/frozen events with incident evidence, no promotion/allocation authority, and human-review resume markers for risk_off/frozen. Validation: pytest capital risk policy, persona paper/live schema, fleet contract regressions.",
+      "task_id": "PPL-ALLOC-007",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned PPL-ALLOC-007 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); reviewer Codex2 -> Claude.",
+      "status": "done",
+      "created_at": "2026-07-11T03:07:46Z",
+      "resolved_at": "2026-07-11T16:05:44Z"
+    },
+    {
+      "task_id": "TJ-E2E-012",
+      "from": "Human/Ops",
+      "to": "Claude",
+      "message": "Auto-reassigned TJ-E2E-012 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); reviewer Human/Ops -> Claude.",
       "status": "pending",
-      "created_at": "2026-07-02T15:41:44Z"
+      "created_at": "2026-07-11T22:59:09Z"
     }
   ],
-  "blockers": [],
+  "blockers": [
+    {
+      "task_id": "PPL-ALLOC-007",
+      "owner": "Codex",
+      "waiting_for": "Antigravity",
+      "message": "execute-plans task branch contains uncommitted PPL-ALLOC-006 nextAction adapter work plus unrelated hosted audit/test artifacts; durable task state also still assigns Antigravity/Codex2 todo, conflicting with Codex dispatch. Previous owner/supervisor must reconcile ownership and cleanly preserve or remove prior-task changes before redispatch.",
+      "status": "open",
+      "created_at": "2026-07-11T16:13:16Z"
+    }
+  ],
   "workload": {
     "Claude": 5,
     "Claude2": 5,
@@ -526,19 +591,37 @@
       "total": 2,
       "active": 0,
       "blocked": 0,
-      "done": 0,
+      "done": 1,
       "review": 0,
       "review_approved": 0,
-      "todo": 2
+      "todo": 0
     },
     "Claude2": {
       "total": 1,
       "active": 0,
       "blocked": 0,
+      "done": 1,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 0
+    },
+    "Antigravity": {
+      "total": 2,
+      "active": 0,
+      "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 1
+      "todo": 2
+    },
+    "Antigravity2": {
+      "total": 0,
+      "active": 0,
+      "blocked": 0,
+      "done": 0,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 0
     },
     "Antigravity": {
       "total": 0,
@@ -568,31 +651,40 @@
       "todo": 0
     },
     "Gemini2": {
-      "total": 1,
+      "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 1
+      "todo": 0
     },
     "Codex": {
-      "total": 2,
-      "active": 2,
-      "blocked": 0,
+      "total": 1,
+      "active": 1,
+      "blocked": 1,
       "done": 0,
       "review": 2,
       "review_approved": 0,
       "todo": 0
     },
     "Codex2": {
-      "total": 2,
+      "total": 1,
+      "active": 0,
+      "blocked": 0,
+      "done": 1,
+      "review": 0,
+      "review_approved": 0,
+      "todo": 0
+    },
+    "Copilot": {
+      "total": 0,
       "active": 0,
       "blocked": 0,
       "done": 0,
       "review": 0,
       "review_approved": 0,
-      "todo": 2
+      "todo": 0
     },
     "Copilot": {
       "total": 0,

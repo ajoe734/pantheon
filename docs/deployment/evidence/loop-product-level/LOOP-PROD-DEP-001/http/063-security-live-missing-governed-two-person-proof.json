@@ -1,0 +1,43 @@
+{
+  "captured_at": "2026-07-15T00:11:38Z",
+  "duration_ms": 2.756,
+  "label": "security-live-missing-governed-two-person-proof",
+  "request": {
+    "body": {
+      "allowed_deployment_scope": "live",
+      "approval_decision_id": "approval-loop-prod-dep-20260715001015",
+      "artifact_id": "artifact-loop-prod-dep-20260715001015",
+      "artifact_version": "1.14.1015",
+      "capital_pool_id": "pool-rescue-0260531-6f175c5c",
+      "loader_checks_passed": true,
+      "persona_capital_binding_id": "pcb-rescue-0260531-6f175c5c",
+      "persona_capital_binding_status": "active",
+      "plan_id": "plan-loop-prod-dep-20260715001015",
+      "plan_status": "executed",
+      "promotion_gate": {
+        "canary_observation_ref": "caller-authored",
+        "operator_approval_ref": "caller-authored",
+        "risk_owner_approval_ref": "caller-authored"
+      },
+      "runtime_id": "live-runtime-loop-prod-dep-20260715001015",
+      "sponsor_persona_id": "persona-20260531-6f175c5c",
+      "strategy_id": "tw_session_momentum",
+      "target_stage": "live"
+    },
+    "headers": {
+      "Authorization": "Bearer <redacted>"
+    },
+    "method": "POST",
+    "started_at": "2026-07-15T00:11:38Z",
+    "url": "http://127.0.0.1:18081/api/runtimes/deploy"
+  },
+  "response": {
+    "payload": {
+      "error": {
+        "code": "DEPLOY_AUTHORITY_REJECTED",
+        "message": "new RuntimeBinding admission supports paper only; canary/live requires an authoritative target-bound MFA/two-person promotion verifier"
+      }
+    },
+    "status": 422
+  }
+}

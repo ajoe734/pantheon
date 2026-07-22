@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import gzip
+import hashlib
 import json
 import os
 import re
@@ -9,10 +10,12 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from threading import local
+from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
 try:
@@ -23,15 +26,41 @@ except ModuleNotFoundError:  # pragma: no cover - exercised only in lean supervi
 YAML_ERROR_TYPES = (yaml.YAMLError,) if yaml is not None else ()
 
 ROOT = Path(__file__).resolve().parents[1]
-STATUS_ROOT = (
-    Path(os.path.expanduser(os.environ["PANTHEON_STATUS_ROOT"])).resolve()
-    if os.environ.get("PANTHEON_STATUS_ROOT")
-    else ROOT
+STATUS_ROOT_ENV = "PANTHEON_STATUS_ROOT"
+STATUS_COMMAND_ROOT_ENV = "PANTHEON_COMMAND_ROOT"
+STATUS_COMMAND_SHA_ENV = "PANTHEON_COMMAND_RUNTIME_SHA"
+STATUS_COMMAND_REMOTE_ENV = "PANTHEON_COMMAND_REMOTE"
+STATUS_COMMAND_BASE_REF_ENV = "PANTHEON_COMMAND_BASE_REF"
+TASK_STATE_STORE_MODE_ENV = "PANTHEON_TASK_STATE_STORE_MODE"
+TASK_STATE_EVENT_LOG_ENV = "PANTHEON_TASK_STATE_EVENT_LOG"
+LEGACY_STATUS_COMMAND_ROOT_ENV = "PANTHEON_STATUS_COMMAND_ROOT"
+LEGACY_STATUS_COMMAND_SHA_ENV = "PANTHEON_STATUS_COMMAND_SHA"
+LEGACY_STATUS_COMMAND_REMOTE_ENV = "PANTHEON_STATUS_COMMAND_REMOTE"
+LEGACY_STATUS_COMMAND_BASE_REF_ENV = "PANTHEON_STATUS_COMMAND_BASE_REF"
+AUTO_WORKER_ENV_MARKERS = (
+    "ORCH_RUN_ID",
+    "PANTHEON_WORKTREE_ROOT",
+    "ORCH_WORKSPACE_PATH",
 )
+
+
+def _status_root_env_value() -> str:
+    return str(os.environ.get(STATUS_ROOT_ENV) or "").strip()
+
+
+def _resolve_status_root_from_env() -> Path:
+    raw = _status_root_env_value()
+    if raw:
+        return Path(os.path.expanduser(raw)).resolve()
+    return ROOT
+
+
+STATUS_ROOT = _resolve_status_root_from_env()
 ORCHESTRATOR_DIR = ROOT / ".orchestrator"
 if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
 
+import task_archive as task_archive_module
 from task_archive import (
     ARCHIVE_TASKS_DIR,
     DEFAULT_RECENT_LIMIT as DEFAULT_ARCHIVE_RECENT_LIMIT,
@@ -54,12 +83,45 @@ from multi_repo_registry import (
     task_artifact_repository_ids,
     task_primary_repository_id,
 )
-from runtime_state import load_runtime_state
+from runtime_state import (
+    activity_audit_lock_file,
+    canonical_task_state_lock_file,
+    load_runtime_state_snapshot,
+    runtime_state_lock,
+)
+from rewrite.task_state_store import append_state_commit, load_events, project_latest_state
+from common import (
+    ActivityAuditInvariantError,
+    DuplicateActivityJSONKeyError,
+    activity_audit_invariant_error,
+    activity_audit_lock_path,
+    activity_audit_source_paths_unlocked,
+    append_activity_log_entries_unlocked,
+    canonical_task_state_lock_path,
+    durable_write_bytes,
+    prepare_activity_audit_unlocked,
+    read_activity_log_tail_bytes,
+    read_regular_file_bytes,
+    rotate_activity_log_unlocked,
+    strict_activity_json_loads,
+    validated_activity_event_digests_unlocked,
+)
+
+# Derived dashboard rendering intentionally uses an atomic projection-only
+# reader. Canonical mutation/admission callers must use runtime_state's locked
+# APIs instead; taking a runtime lock here while task-state is held would
+# reverse the global runtime -> task -> audit order.
+load_runtime_state = load_runtime_state_snapshot
 
 STATUS_FILE = STATUS_ROOT / "ai-status.json"
 LOG_FILE = STATUS_ROOT / "ai-activity-log.jsonl"
 LOG_ROTATE_MAX_BYTES = int(os.environ.get("AI_STATUS_LOG_ROTATE_MAX_BYTES", str(5 * 1024 * 1024)))
 LOG_ROTATE_KEEP_LINES = int(os.environ.get("AI_STATUS_LOG_ROTATE_KEEP_LINES", "1000"))
+STATUS_ACTIVITY_OUTBOX_KEY = "status_activity_outbox"
+STATUS_ACTIVITY_OUTBOX_SCHEMA_VERSION = 1
+STATUS_ARCHIVE_OUTBOX_KEY = "status_archive_outbox"
+STATUS_ARCHIVE_OUTBOX_SCHEMA_VERSION = 1
+_ACTIVITY_TRANSACTION_LOCAL = local()
 CURRENT_WORK_FILE = STATUS_ROOT / "current-work.md"
 DOCS_SITE_DIR = STATUS_ROOT / "docs-site"
 CONFIG_FILE = ROOT / ".orchestrator" / "config.json"
@@ -70,6 +132,688 @@ DASHBOARD_BUNDLE_FILE = STATUS_ROOT / "dashboard-bundle.json"
 DEFAULT_PLANNING_README = "docs/02-architecture/consensus/phase1/README.md"
 DEFAULT_PLANNING_SESSION_FILE = "docs/02-architecture/consensus/phase1/planning-session.json"
 DEFAULT_PLANNING_CHECKLIST_FILE = "docs/02-architecture/consensus/phase1/pantheon-backend-completion-checklist.md"
+
+
+def configure_status_root_paths(status_root: str | Path) -> Path:
+    """Bind every governed status/archive/audit path to one root."""
+
+    global STATUS_ROOT
+    global STATUS_FILE, LOG_FILE, CURRENT_WORK_FILE, DOCS_SITE_DIR
+    global PLANNING_STATE_FILE, ORCHESTRATOR_STATE_FILE, APPROVAL_QUEUE_FILE
+    global DASHBOARD_BUNDLE_FILE, ARCHIVE_TASKS_DIR
+
+    root = Path(status_root).expanduser().resolve()
+    STATUS_ROOT = root
+    STATUS_FILE = root / "ai-status.json"
+    LOG_FILE = root / "ai-activity-log.jsonl"
+    CURRENT_WORK_FILE = root / "current-work.md"
+    DOCS_SITE_DIR = root / "docs-site"
+    PLANNING_STATE_FILE = root / ".orchestrator" / "planning-state.json"
+    ORCHESTRATOR_STATE_FILE = root / ".orchestrator" / "state.json"
+    APPROVAL_QUEUE_FILE = root / ".orchestrator" / "approval-queue.json"
+    DASHBOARD_BUNDLE_FILE = root / "dashboard-bundle.json"
+
+    task_archive_module.STATUS_ROOT = root
+    task_archive_module.STATUS_FILE = STATUS_FILE
+    task_archive_module.ARCHIVE_DIR = root / "ai-task-archive"
+    task_archive_module.ARCHIVE_TASKS_DIR = task_archive_module.ARCHIVE_DIR / "tasks"
+    task_archive_module.ARCHIVE_INDEX_FILE = task_archive_module.ARCHIVE_DIR / "index.json"
+    ARCHIVE_TASKS_DIR = task_archive_module.ARCHIVE_TASKS_DIR
+    return root
+
+
+configure_status_root_paths(STATUS_ROOT)
+
+
+def _auto_worker_requires_explicit_status_root() -> bool:
+    return any(str(os.environ.get(marker) or "").strip() for marker in AUTO_WORKER_ENV_MARKERS)
+
+
+def _worker_workspace_root() -> Path | None:
+    roots: list[tuple[str, Path]] = []
+    for env_name in ("PANTHEON_WORKTREE_ROOT", "ORCH_WORKSPACE_PATH"):
+        raw = str(os.environ.get(env_name) or "").strip()
+        if not raw:
+            continue
+        expanded = Path(os.path.expanduser(raw))
+        if not expanded.is_absolute():
+            raise RuntimeError(f"{env_name} must be an absolute path when set")
+        symlink_component = _first_symlink_component(expanded)
+        if symlink_component is not None:
+            raise RuntimeError(
+                f"{env_name} cannot include a symlink component: {symlink_component}"
+            )
+        roots.append((env_name, expanded.resolve()))
+    if not roots:
+        return None
+    first_name, first_root = roots[0]
+    for env_name, root in roots[1:]:
+        if root != first_root:
+            raise RuntimeError(
+                f"{first_name} and {env_name} disagree on delivery worktree root: "
+                f"{first_root} != {root}"
+            )
+    return first_root
+
+
+def _first_symlink_component(path: Path) -> Path | None:
+    if ".." in path.parts:
+        raise RuntimeError(f"Path contains parent directory references (..): {path}")
+    current = Path(path.anchor)
+    parts = path.parts[1:] if path.is_absolute() else path.parts
+    for part in parts:
+        current = current / part
+        try:
+            if current.is_symlink():
+                return current
+            if not current.exists() and not current.is_symlink():
+                return None
+        except OSError:
+            return current
+    return None
+
+
+
+def _status_root_from_runtime_path(raw: str, *, label: str) -> Path:
+    path = Path(os.path.expanduser(raw))
+    if not path.is_absolute():
+        raise RuntimeError(f"{label} must be absolute when set")
+    symlink_comp = _first_symlink_component(path)
+    if symlink_comp is not None:
+        raise RuntimeError(f"{label} path contains a symlink component: {symlink_comp}")
+    if path.is_symlink():
+        raise RuntimeError(f"{label} cannot be a symlink: {path}")
+    resolved = path.resolve()
+    parent = resolved.parent
+    if (
+        parent.name not in {"status", "heartbeats"}
+        or parent.parent.name != "worker-runtime"
+        or parent.parent.parent.name != ".orchestrator"
+    ):
+        raise RuntimeError(
+            f"{label} is not under .orchestrator/worker-runtime: {resolved}"
+        )
+    return parent.parent.parent.parent.resolve()
+
+
+def _supervisor_expected_status_root() -> Path | None:
+    roots: list[Path] = []
+    for env_name in ("ORCH_RUNNER_STATUS_PATH", "ORCH_HEARTBEAT_PATH"):
+        raw = str(os.environ.get(env_name) or "").strip()
+        if not raw:
+            continue
+        root = _status_root_from_runtime_path(raw, label=env_name)
+        if root not in roots:
+            roots.append(root)
+    if len(roots) > 1:
+        raise RuntimeError(
+            "ORCH_RUNNER_STATUS_PATH and ORCH_HEARTBEAT_PATH disagree on "
+            f"the supervisor coordination root: {roots[0]} != {roots[1]}"
+        )
+    return roots[0] if roots else None
+
+
+def _git_toplevel(path: Path) -> Path | None:
+    proc = subprocess.run(
+        ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None
+    top = proc.stdout.strip()
+    if not top:
+        return None
+    return Path(top).resolve()
+
+
+def _git_stdout(path: Path, args: list[str]) -> str:
+    proc = subprocess.run(
+        ["git", "-C", str(path), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "git command failed").strip()
+        raise RuntimeError(detail)
+    return proc.stdout.strip()
+
+
+def _normalize_github_repo_slug(value: str | None) -> str:
+    candidate = str(value or "").strip()
+    if not candidate:
+        return ""
+    if candidate.endswith(".git"):
+        candidate = candidate[:-4]
+    for prefix in (
+        "git@github.com:",
+        "ssh://git@github.com/",
+        "https://github.com/",
+        "http://github.com/",
+    ):
+        if candidate.startswith(prefix):
+            candidate = candidate[len(prefix) :]
+            break
+    return candidate.strip("/")
+
+
+def _command_env(primary: str, legacy: str, default: str = "") -> str:
+    return str(os.environ.get(primary) or os.environ.get(legacy) or default).strip()
+
+
+def validate_status_command_runtime_binding() -> None:
+    """Ensure auto-worker status commands run from the installed command root."""
+
+    raw_root = _command_env(STATUS_COMMAND_ROOT_ENV, LEGACY_STATUS_COMMAND_ROOT_ENV)
+    if not raw_root:
+        if _auto_worker_requires_explicit_status_root():
+            raise RuntimeError(
+                "PANTHEON_COMMAND_ROOT is required for auto-worker status commands"
+            )
+        return
+
+    expanded_root = Path(os.path.expanduser(raw_root))
+    if not expanded_root.is_absolute():
+        raise RuntimeError(f"{STATUS_COMMAND_ROOT_ENV} must be an absolute path")
+    symlink_component = _first_symlink_component(expanded_root)
+    if symlink_component is not None:
+        raise RuntimeError(
+            f"{STATUS_COMMAND_ROOT_ENV} cannot include a symlink component: {symlink_component}"
+        )
+    command_root = expanded_root.resolve()
+    if not command_root.exists() or not command_root.is_dir():
+        raise RuntimeError(
+            f"{STATUS_COMMAND_ROOT_ENV} does not exist or is not a directory: {command_root}"
+        )
+    if _git_toplevel(command_root) != command_root:
+        raise RuntimeError(f"{STATUS_COMMAND_ROOT_ENV} must be a git repository root: {command_root}")
+
+    source_sha = _git_stdout(command_root, ["rev-parse", "HEAD"])
+    expected_sha = _command_env(STATUS_COMMAND_SHA_ENV, LEGACY_STATUS_COMMAND_SHA_ENV)
+    if not expected_sha:
+        raise RuntimeError("PANTHEON_COMMAND_RUNTIME_SHA is required for auto-worker status commands")
+    if source_sha != expected_sha:
+        raise RuntimeError(
+            f"PANTHEON_COMMAND_RUNTIME_SHA mismatch: command root is {source_sha}, expected {expected_sha}"
+        )
+
+    current_root = ROOT.resolve()
+    if current_root != command_root:
+        raise RuntimeError(
+            "auto-worker status command must execute the installed command runtime: "
+            f"running {current_root}, expected {command_root}"
+        )
+
+    expected_remote = _normalize_github_repo_slug(
+        _command_env(STATUS_COMMAND_REMOTE_ENV, LEGACY_STATUS_COMMAND_REMOTE_ENV, "ajoe734/pantheon")
+    )
+    remote_url = _git_stdout(command_root, ["remote", "get-url", "origin"])
+    actual_remote = _normalize_github_repo_slug(remote_url)
+    if expected_remote and actual_remote != expected_remote:
+        raise RuntimeError(
+            f"{STATUS_COMMAND_ROOT_ENV} remote mismatch: {actual_remote or remote_url} != {expected_remote}"
+        )
+
+    base_ref = _command_env(STATUS_COMMAND_BASE_REF_ENV, LEGACY_STATUS_COMMAND_BASE_REF_ENV, "origin/dev") or "origin/dev"
+    _git_stdout(command_root, ["rev-parse", "--verify", base_ref])
+    proc = subprocess.run(
+        ["git", "-C", str(command_root), "merge-base", "--is-ancestor", source_sha, base_ref],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()
+        suffix = f": {detail}" if detail else ""
+        raise RuntimeError(
+            f"{STATUS_COMMAND_ROOT_ENV} source SHA {source_sha} is not merged into {base_ref}{suffix}"
+        )
+
+
+def status_command_metadata() -> dict[str, Any] | None:
+    raw_root = _command_env(STATUS_COMMAND_ROOT_ENV, LEGACY_STATUS_COMMAND_ROOT_ENV)
+    raw_sha = _command_env(STATUS_COMMAND_SHA_ENV, LEGACY_STATUS_COMMAND_SHA_ENV)
+    if not raw_root and not raw_sha:
+        return None
+    delivery_root = _worker_workspace_root()
+    payload: dict[str, Any] = {
+        "command_root": str(Path(os.path.expanduser(raw_root)).resolve()) if raw_root else None,
+        "source_sha": raw_sha or None,
+        "base_ref": _command_env(STATUS_COMMAND_BASE_REF_ENV, LEGACY_STATUS_COMMAND_BASE_REF_ENV) or None,
+        "remote": _normalize_github_repo_slug(
+            _command_env(STATUS_COMMAND_REMOTE_ENV, LEGACY_STATUS_COMMAND_REMOTE_ENV)
+        ),
+        "status_root": str(STATUS_ROOT),
+        "delivery_root": str(delivery_root) if delivery_root is not None else None,
+        "wrapper_root": str(os.environ.get("PANTHEON_STATUS_COMMAND_WRAPPER_ROOT") or "").strip() or None,
+    }
+    return {key: value for key, value in payload.items() if value not in (None, "")}
+
+
+TASK_ID_COMMAND_ARG_INDEX: dict[str, int] = {
+    "assign": 0,
+    "start": 0,
+    "progress": 0,
+    "note": 0,
+    "reopen": 0,
+    "handoff": 0,
+    "blocker": 0,
+    "done": 0,
+    "restore_approved": 0,
+    "reconcile_merged_done": 0,
+    "supersede": 0,
+    "approve": 0,
+}
+ACTIVE_WORKER_LEASE_STATUSES = {
+    "running",
+    "started",
+    "waiting_approval",
+    "suspended_approval",
+    "manual_pending",
+    "retry_backoff",
+    "stalled",
+    "fallback",
+}
+
+
+def _parse_utc_timestamp(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def _metadata_path(value: Any, *, label: str) -> Path:
+    text = str(value or "").strip()
+    if not text:
+        raise RuntimeError(f"{label} is required for active status command lease validation")
+    path = Path(os.path.expanduser(text))
+    if not path.is_absolute():
+        raise RuntimeError(f"{label} must be an absolute path")
+    symlink_component = _first_symlink_component(path)
+    if symlink_component is not None:
+        raise RuntimeError(f"{label} cannot include a symlink component: {symlink_component}")
+    return path.resolve()
+
+
+def _worker_status_command_runtime(worker: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    direct = worker.get("status_command_runtime")
+    if isinstance(direct, Mapping):
+        return direct
+    metadata = worker.get("metadata")
+    if isinstance(metadata, Mapping) and isinstance(metadata.get("status_command_runtime"), Mapping):
+        return metadata["status_command_runtime"]
+    snapshot = worker.get("request_snapshot")
+    if isinstance(snapshot, Mapping):
+        snapshot_metadata = snapshot.get("metadata")
+        if isinstance(snapshot_metadata, Mapping) and isinstance(snapshot_metadata.get("status_command_runtime"), Mapping):
+            return snapshot_metadata["status_command_runtime"]
+    return None
+
+
+def _worker_metadata_value(worker: Mapping[str, Any], key: str) -> Any:
+    value = worker.get(key)
+    if value not in (None, ""):
+        return value
+    snapshot = worker.get("request_snapshot")
+    if isinstance(snapshot, Mapping):
+        metadata = snapshot.get("metadata")
+        if isinstance(metadata, Mapping):
+            value = metadata.get(key)
+            if value not in (None, ""):
+                return value
+    return None
+
+
+def _command_task_id(command: str, args: list[str]) -> str | None:
+    index = TASK_ID_COMMAND_ARG_INDEX.get(command)
+    if index is None or len(args) <= index:
+        return None
+    return str(args[index] or "").strip() or None
+
+
+def _find_worker_worktree_lease(
+    runtime_state: Mapping[str, Any],
+    *,
+    worker: Mapping[str, Any],
+    task_id: str | None,
+    workspace_root: Path | None,
+    status_root: Path,
+) -> tuple[str, Mapping[str, Any]] | None:
+    raw_leases = (
+        runtime_state.get("worker_worktrees", {})
+        if isinstance(runtime_state.get("worker_worktrees"), Mapping)
+        else {}
+    ).get("leases", {})
+    if not isinstance(raw_leases, Mapping):
+        return None
+    snapshot = worker.get("request_snapshot")
+    metadata = snapshot.get("metadata") if isinstance(snapshot, Mapping) else None
+    workspace_task_id = ""
+    if isinstance(metadata, Mapping):
+        workspace_task_id = str(metadata.get("workspace_task_id") or "").strip()
+    workspace_task_id = workspace_task_id or str(task_id or "").strip()
+    if workspace_task_id and isinstance(raw_leases.get(workspace_task_id), Mapping):
+        return workspace_task_id, raw_leases[workspace_task_id]
+    for key, candidate in raw_leases.items():
+        if not isinstance(candidate, Mapping):
+            continue
+        if task_id and str(candidate.get("task_id") or "").strip() not in {"", task_id}:
+            continue
+        try:
+            candidate_status_root = _metadata_path(candidate.get("status_root"), label="worker_worktrees lease status_root")
+        except RuntimeError:
+            continue
+        if candidate_status_root != status_root:
+            continue
+        if workspace_root is not None:
+            try:
+                candidate_path = _metadata_path(candidate.get("path"), label="worker_worktrees lease path")
+            except RuntimeError:
+                continue
+            if candidate_path != workspace_root:
+                continue
+        return str(key), candidate
+    return None
+
+
+def normalize_logical_actor(name: str | None) -> str:
+    if not name:
+        return ""
+    trimmed = str(name).strip()
+    slot_id = trimmed.lower().replace("-", "_")
+    slot_match = re.fullmatch(r"codex([12])_[1-4]", slot_id)
+    if slot_match:
+        return "codex" if slot_match.group(1) == "1" else "codex2"
+    return canonical_agent_name(trimmed).casefold()
+
+
+def validate_active_status_command_lease(command: str, args: list[str]) -> None:
+    """Validate the supervisor-issued worker lease before canonical mutation."""
+
+    run_id = str(os.environ.get("ORCH_RUN_ID") or "").strip()
+    actor = current_actor()
+
+    is_auto_worker = False
+    canonical_actor = canonical_agent_name(actor)
+    if canonical_actor and canonical_actor.lower() not in {"human", "human/ops", "ops"}:
+        is_auto_worker = True
+
+    if not run_id:
+        if is_auto_worker:
+            task_id = args[0] if args else ""
+            is_reviewer = False
+            if task_id:
+                try:
+                    if STATUS_FILE.exists():
+                        status_data = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
+                        tasks = status_data.get("tasks", [])
+                        for t in tasks:
+                            if t.get("id") == task_id:
+                                rev = str(t.get("reviewer") or "").strip()
+                                if rev and normalize_logical_actor(actor) == normalize_logical_actor(rev):
+                                    is_reviewer = True
+                                    break
+                except Exception:
+                    pass
+            if is_reviewer and command in {"reopen", "approve", "note"}:
+                pass
+            else:
+                raise RuntimeError(f"status command lease required for auto worker: {actor}")
+        return
+
+    config = load_config()
+    runtime_state = load_runtime_state_snapshot(config)
+    workers = runtime_state.get("workers", {})
+    if not isinstance(workers, Mapping):
+        raise RuntimeError("central runtime state has no worker records")
+    worker = workers.get(run_id)
+    if not isinstance(worker, Mapping):
+        raise RuntimeError(f"active status command lease not found for ORCH_RUN_ID={run_id}")
+
+    # Bind lease to normalized logical actor
+    worker_actor = normalize_worker_actor(dict(worker))
+    if worker_actor:
+        normalized_actor = normalize_logical_actor(actor)
+        normalized_worker_agent = normalize_logical_actor(worker_actor)
+        if normalized_actor != normalized_worker_agent:
+            raise RuntimeError(
+                f"status command lease AI identity mismatch: actor {actor} (normalized: {normalized_actor}) != worker actor {worker_actor} (normalized: {normalized_worker_agent})"
+            )
+
+    status = str(worker.get("status") or "").strip()
+    if status not in ACTIVE_WORKER_LEASE_STATUSES:
+        raise RuntimeError(
+            f"active status command lease for ORCH_RUN_ID={run_id} is not running: {status or 'missing'}"
+        )
+    expires_at = _parse_utc_timestamp(worker.get("lease_expires_at"))
+    if expires_at is None:
+        raise RuntimeError(f"active status command lease for ORCH_RUN_ID={run_id} has no lease_expires_at")
+    if datetime.now(timezone.utc) > expires_at:
+        raise RuntimeError(f"active status command lease for ORCH_RUN_ID={run_id} is expired")
+
+    command_task_id = _command_task_id(command, args)
+    env_task_id = str(os.environ.get("ORCH_TASK_ID") or "").strip()
+    worker_task_id = str(worker.get("task_id") or "").strip()
+    expected_task_id = command_task_id or env_task_id
+    if command_task_id and env_task_id and command_task_id != env_task_id:
+        raise RuntimeError(
+            f"status command task mismatch: argv task {command_task_id} != ORCH_TASK_ID {env_task_id}"
+        )
+    if worker_task_id and expected_task_id and worker_task_id != expected_task_id:
+        raise RuntimeError(
+            f"status command task mismatch: worker task {worker_task_id} != command task {expected_task_id}"
+        )
+    if worker_task_id and not expected_task_id:
+        raise RuntimeError(
+            f"status command task identity is required for worker task {worker_task_id}"
+        )
+
+    status_root = STATUS_ROOT.resolve()
+    worker_status_root = _metadata_path(
+        _worker_metadata_value(worker, "status_root"),
+        label="worker status_root",
+    )
+    if worker_status_root != status_root:
+        raise RuntimeError(
+            f"status command root mismatch: worker status_root {worker_status_root} != {status_root}"
+        )
+
+    workspace_root = _worker_workspace_root()
+    worker_workspace_raw = _worker_metadata_value(worker, "workspace_path")
+    if workspace_root is not None:
+        worker_workspace = _metadata_path(worker_workspace_raw, label="worker workspace_path")
+        if worker_workspace != workspace_root:
+            raise RuntimeError(
+                f"status command workspace mismatch: worker workspace {worker_workspace} != {workspace_root}"
+            )
+
+    runtime_metadata = status_command_metadata() or {}
+    issued_runtime = _worker_status_command_runtime(worker)
+    if not isinstance(issued_runtime, Mapping):
+        raise RuntimeError(f"active status command lease for ORCH_RUN_ID={run_id} has no issued command runtime")
+    issued_root = _metadata_path(issued_runtime.get("command_root"), label="issued command_root")
+    running_root = _metadata_path(runtime_metadata.get("command_root"), label="running command_root")
+    if issued_root != running_root:
+        raise RuntimeError(
+            f"status command runtime root mismatch: issued {issued_root} != running {running_root}"
+        )
+    issued_sha = str(issued_runtime.get("source_sha") or "").strip()
+    running_sha = str(runtime_metadata.get("source_sha") or "").strip()
+    if not issued_sha or issued_sha != running_sha:
+        raise RuntimeError(
+            f"status command runtime SHA mismatch: issued {issued_sha or 'missing'} != running {running_sha or 'missing'}"
+        )
+
+    lease_match = _find_worker_worktree_lease(
+        runtime_state,
+        worker=worker,
+        task_id=worker_task_id or expected_task_id,
+        workspace_root=workspace_root,
+        status_root=status_root,
+    )
+    if lease_match is None:
+        raise RuntimeError(f"active worktree lease not found for ORCH_RUN_ID={run_id}")
+    lease_key, lease = lease_match
+    if worker_task_id and str(lease.get("task_id") or "").strip() not in {"", worker_task_id}:
+        raise RuntimeError(
+            f"worktree lease task mismatch for {lease_key}: {lease.get('task_id')} != {worker_task_id}"
+        )
+    lease_status_root = _metadata_path(lease.get("status_root"), label="worktree lease status_root")
+    if lease_status_root != status_root:
+        raise RuntimeError(
+            f"worktree lease status root mismatch for {lease_key}: {lease_status_root} != {status_root}"
+        )
+    if workspace_root is not None:
+        lease_path = _metadata_path(lease.get("path"), label="worktree lease path")
+        if lease_path != workspace_root:
+            raise RuntimeError(
+                f"worktree lease path mismatch for {lease_key}: {lease_path} != {workspace_root}"
+            )
+
+
+def _path_parent_under_root(path: Path, root: Path) -> bool:
+    try:
+        path.parent.resolve().relative_to(root)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _existing_path_is_symlink(path: Path) -> bool:
+    try:
+        return path.is_symlink()
+    except OSError:
+        return True
+
+
+def _validate_directory_no_symlinks_recursive(directory: Path, label: str) -> None:
+    if directory.is_symlink():
+        raise RuntimeError(f"PANTHEON_STATUS_ROOT {label} directory cannot be a symlink: {directory}")
+    if not directory.exists() or not directory.is_dir():
+        return
+    for dirpath, dirnames, filenames in os.walk(directory):
+        for dirname in dirnames:
+            p = Path(dirpath) / dirname
+            if p.is_symlink():
+                raise RuntimeError(f"PANTHEON_STATUS_ROOT {label} component cannot be a symlink: {p}")
+        for filename in filenames:
+            p = Path(dirpath) / filename
+            if p.is_symlink():
+                raise RuntimeError(f"PANTHEON_STATUS_ROOT {label} leaf cannot be a symlink: {p}")
+
+
+def validate_status_root_binding() -> None:
+    """Fail closed before any governed status command can hit a stale worktree."""
+
+    raw_root = _status_root_env_value()
+    if not raw_root:
+        if _auto_worker_requires_explicit_status_root():
+            raise RuntimeError(
+                "PANTHEON_STATUS_ROOT is required for auto workers running outside "
+                "the supervisor coordination root"
+            )
+        return
+
+    expanded_root = Path(os.path.expanduser(raw_root))
+    if not expanded_root.is_absolute():
+        raise RuntimeError("PANTHEON_STATUS_ROOT must be an absolute path")
+    symlink_component = _first_symlink_component(expanded_root)
+    if symlink_component is not None:
+        raise RuntimeError(
+            f"PANTHEON_STATUS_ROOT cannot include a symlink component: {symlink_component}"
+        )
+
+    root = expanded_root.resolve()
+    if root != STATUS_ROOT:
+        raise RuntimeError(
+            f"PANTHEON_STATUS_ROOT binding mismatch: env resolves to {root}, "
+            f"module is bound to {STATUS_ROOT}"
+        )
+    if not root.exists() or not root.is_dir():
+        raise RuntimeError(f"PANTHEON_STATUS_ROOT does not exist or is not a directory: {root}")
+
+    workspace_root = _worker_workspace_root()
+    if workspace_root is not None and root == workspace_root:
+        raise RuntimeError(
+            "PANTHEON_STATUS_ROOT must point at the supervisor coordination "
+            "root, not the isolated task worktree"
+        )
+    expected_root = _supervisor_expected_status_root()
+    if expected_root is not None and root != expected_root:
+        raise RuntimeError(
+            "PANTHEON_STATUS_ROOT does not match the supervisor runtime "
+            f"coordination root: {root} != {expected_root}"
+        )
+
+    git_root = _git_toplevel(root)
+    if git_root != root:
+        raise RuntimeError(
+            f"PANTHEON_STATUS_ROOT must be a git repository root: {root}"
+        )
+    if not STATUS_FILE.exists() or not STATUS_FILE.is_file():
+        raise RuntimeError(
+            f"PANTHEON_STATUS_ROOT is missing required ai-status.json: {STATUS_FILE}"
+        )
+    symlink_comp_status = _first_symlink_component(STATUS_FILE)
+    if symlink_comp_status is not None:
+        raise RuntimeError(f"ai-status.json cannot be a symlink: {STATUS_FILE} (contains symlink component: {symlink_comp_status})")
+    if _existing_path_is_symlink(STATUS_FILE):
+        raise RuntimeError(f"ai-status.json cannot be a symlink: {STATUS_FILE}")
+
+    for label, path in {
+        "activity_log": LOG_FILE,
+        "current_work": CURRENT_WORK_FILE,
+        "docs_site": DOCS_SITE_DIR,
+        "dashboard_bundle": DASHBOARD_BUNDLE_FILE,
+        "planning_state": PLANNING_STATE_FILE,
+        "orchestrator_state": ORCHESTRATOR_STATE_FILE,
+        "approval_queue": APPROVAL_QUEUE_FILE,
+        "archive_dir": task_archive_module.ARCHIVE_DIR,
+        "archive_tasks_dir": task_archive_module.ARCHIVE_TASKS_DIR,
+        "archive_index": task_archive_module.ARCHIVE_INDEX_FILE,
+        "task_state_lock": canonical_task_state_lock_path(STATUS_FILE),
+        "activity_audit_lock": activity_audit_lock_path(LOG_FILE),
+        "docs_site_ai_status": DOCS_SITE_DIR / "ai-status.json",
+        "docs_site_current_work": DOCS_SITE_DIR / "current-work.md",
+        "docs_site_dashboard_bundle": DOCS_SITE_DIR / "dashboard-bundle.json",
+        "docs_site_orchestrator_state": DOCS_SITE_DIR / "orchestrator-state.json",
+        "docs_site_approval_queue": DOCS_SITE_DIR / "approval-queue.json",
+        "docs_site_planning_state": DOCS_SITE_DIR / "planning-state.json",
+        "docs_site_ai_activity_log": DOCS_SITE_DIR / "ai-activity-log.jsonl",
+    }.items():
+        if not _path_parent_under_root(Path(path), root):
+            raise RuntimeError(
+                f"PANTHEON_STATUS_ROOT path binding for {label} escapes root: {path}"
+            )
+        symlink_comp = _first_symlink_component(Path(path))
+        if symlink_comp is not None:
+            raise RuntimeError(
+                f"PANTHEON_STATUS_ROOT path binding for {label} cannot be a symlink: {path} (contains symlink component: {symlink_comp})"
+            )
+        if _existing_path_is_symlink(Path(path)):
+            raise RuntimeError(
+                f"PANTHEON_STATUS_ROOT path binding for {label} cannot be a symlink: {path}"
+            )
+
+    for path, label in (
+        (root / "ai-task-archive", "task archive"),
+        (root / "archive" / "logs", "activity rotation archive"),
+        (root / ".orchestrator" / "logs" / "activity-log-archive", "legacy activity archive"),
+        (root / ".orchestrator" / "logs" / "activity-rotation", "activity rotation"),
+        (root / ".orchestrator" / "worker-runtime", "worker runtime"),
+    ):
+        symlink_comp = _first_symlink_component(path)
+        if symlink_comp is not None:
+            raise RuntimeError(f"PANTHEON_STATUS_ROOT {label} component cannot be a symlink: {symlink_comp}")
+        _validate_directory_no_symlinks_recursive(path, label)
+
+    assert_task_archive_root_binding()
 
 KNOWN_AGENTS = {
     "Claude": {
@@ -583,63 +1327,88 @@ def default_state() -> dict[str, Any]:
 
 
 def load_state() -> dict[str, Any]:
-    if not STATUS_FILE.exists() or STATUS_FILE.read_text(encoding="utf-8").strip() == "":
+    store_mode = str(os.environ.get(TASK_STATE_STORE_MODE_ENV) or "").strip().lower()
+    if store_mode == "authoritative":
+        event_path = _task_state_event_path(store_mode)
+        events = load_events(event_path)
+        if not events:
+            raise SystemExit(
+                "Authoritative task-state journal is empty; refusing ai-status.json fallback."
+            )
+        state = project_latest_state(events)
+        if not isinstance(state, dict) or not state:
+            raise SystemExit("Authoritative task-state projection is not a non-empty object.")
+        sync_canonical_document_metadata(state)
+        normalize_state_agents(state)
+        return state
+    try:
+        payload = read_regular_file_bytes(
+            STATUS_FILE,
+            source="canonical status state",
+        )
+    except FileNotFoundError:
         return default_state()
-    state = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
+    if not payload.strip():
+        raise SystemExit(f"Refusing to initialize from empty status file: {STATUS_FILE}")
+    state = json.loads(payload.decode("utf-8", errors="strict"))
     sync_canonical_document_metadata(state)
     normalize_state_agents(state)
     return state
 
 
+@contextmanager
+def canonical_task_state_lock(*, shared: bool = False, nonblocking: bool = False):
+    with canonical_task_state_lock_file(
+        STATUS_FILE,
+        shared=shared,
+        nonblocking=nonblocking,
+    ):
+        yield
+
+
 def load_logs() -> list[dict[str, Any]]:
-    if not LOG_FILE.exists():
+    payload = read_activity_log_tail_bytes(LOG_FILE, max_lines=None)
+    if payload is None:
         return []
     logs: list[dict[str, Any]] = []
-    for line_no, line in enumerate(LOG_FILE.read_text(encoding="utf-8").splitlines(), start=1):
+    for line_no, line in enumerate(
+        payload.decode("utf-8", errors="strict").splitlines(),
+        start=1,
+    ):
         line = line.strip()
         if not line:
             continue
         try:
-            logs.append(json.loads(line))
+            entry = strict_activity_json_loads(line)
+        except DuplicateActivityJSONKeyError as exc:
+            raise RuntimeError(
+                f"ai-activity-log.jsonl line {line_no} contains {exc}"
+            ) from exc
         except json.JSONDecodeError as exc:
             print(
                 f"Warning: skipping malformed ai-activity-log.jsonl line {line_no}: {exc}",
                 file=sys.stderr,
             )
+            continue
+        if not isinstance(entry, dict):
+            raise RuntimeError(
+                f"ai-activity-log.jsonl line {line_no} is not an object row"
+            )
+        logs.append(entry)
     return logs
 
 
 def load_log_tail_lines(max_lines: int = 5000) -> list[str]:
-    if not LOG_FILE.exists():
-        return []
     try:
-        with LOG_FILE.open("rb") as handle:
-            handle.seek(0, os.SEEK_END)
-            file_size = handle.tell()
-            block_size = 1 << 16
-            buffer = bytearray()
-            line_count = 0
-            position = file_size
-            while position > 0 and line_count <= max_lines:
-                read_size = min(block_size, position)
-                position -= read_size
-                handle.seek(position)
-                chunk = handle.read(read_size)
-                buffer[0:0] = chunk
-                line_count = buffer.count(b"\n")
-            tail = bytes(buffer)
-        if line_count > max_lines:
-            split_at = -1
-            extra = line_count - max_lines
-            for _ in range(extra):
-                split_at = tail.find(b"\n", split_at + 1)
-                if split_at == -1:
-                    break
-            if split_at != -1:
-                tail = tail[split_at + 1 :]
-        return tail.decode("utf-8", errors="replace").splitlines()
+        payload = read_activity_log_tail_bytes(
+            LOG_FILE,
+            max_lines=max_lines,
+        )
     except OSError:
         return []
+    if payload is None:
+        return []
+    return payload.decode("utf-8", errors="replace").splitlines()
 
 
 def load_planning_state() -> dict[str, Any] | None:
@@ -685,6 +1454,19 @@ def load_config() -> dict[str, Any]:
                 "provider_capabilities": str(STATUS_ROOT / ".orchestrator" / "provider_capabilities.json"),
             }
         )
+    delivery_root = _worker_workspace_root()
+    if delivery_root is not None:
+        coordination = payload.setdefault("coordination", {})
+        if isinstance(coordination, dict):
+            repositories = coordination.setdefault("repositories", {})
+            if isinstance(repositories, dict):
+                pantheon_repo = repositories.setdefault("pantheon", {})
+                if isinstance(pantheon_repo, dict):
+                    pantheon_repo["local_path"] = str(delivery_root)
+                    pantheon_repo.setdefault(
+                        "repo",
+                        str(((payload.get("github_bus") or {}).get("repo")) or "ajoe734/pantheon"),
+                    )
     return payload
 
 
@@ -738,6 +1520,12 @@ def build_dispatch_policy_summary(config: dict[str, Any]) -> dict[str, Any]:
     claim_idle_work = bool_config_setting(helper_claim, "claim_idle_work", False)
     helper_claim_enabled = bool_config_setting(helper_claim, "enabled", True)
     worker_self_claim_enabled = bool_config_setting(worker_self_claim, "enabled", False)
+    account_cap_key = (
+        "max_concurrent_per_account"
+        if "max_concurrent_per_account" in ready_dispatcher
+        else "max_concurrent_per_quota_group"
+    )
+    account_caps = int_mapping_config_setting(ready_dispatcher, account_cap_key)
     return {
         "mode": "worker_self_claim" if worker_self_claim_enabled else ("idle_worker_claim" if helper_claim_enabled and claim_idle_work else "supervisor_owned_dispatch"),
         "worker_self_claim_enabled": worker_self_claim_enabled,
@@ -750,7 +1538,9 @@ def build_dispatch_policy_summary(config: dict[str, Any]) -> dict[str, Any]:
         "max_dispatches_per_tick": int_config_setting(ready_dispatcher, "max_dispatches_per_tick", 4),
         "max_tasks_per_agent": optional_int_config_setting(ready_dispatcher, "max_tasks_per_agent"),
         "max_tasks_per_agent_by_agent": int_mapping_config_setting(ready_dispatcher, "max_tasks_per_agent_by_agent"),
-        "max_concurrent_per_quota_group": int_mapping_config_setting(ready_dispatcher, "max_concurrent_per_quota_group"),
+        "max_concurrent_per_account": account_caps,
+        # Deprecated dashboard compatibility alias; source configs use account.
+        "max_concurrent_per_quota_group": account_caps,
         "sidecar_only_agents": ready_dispatcher.get("sidecar_only_agents") or [],
         "disabled_agents": ready_dispatcher.get("disabled_agents") or [],
     }
@@ -824,13 +1614,22 @@ def recent_helper_claims(limit: int = 8, max_scan_lines: int = 5000) -> list[dic
         if not stripped:
             continue
         try:
-            entry = json.loads(stripped)
+            entry = strict_activity_json_loads(stripped)
+        except DuplicateActivityJSONKeyError as exc:
+            raise RuntimeError(
+                "ai-activity-log.jsonl tail line "
+                f"-{line_no} contains {exc}"
+            ) from exc
         except json.JSONDecodeError as exc:
             print(
                 f"Warning: skipping malformed ai-activity-log.jsonl tail line -{line_no}: {exc}",
                 file=sys.stderr,
             )
             continue
+        if not isinstance(entry, dict):
+            raise RuntimeError(
+                f"ai-activity-log.jsonl tail line -{line_no} is not an object row"
+            )
         if str(entry.get("type") or "") != "task_helper_claimed":
             continue
         claims.append(
@@ -849,6 +1648,15 @@ def recent_helper_claims(limit: int = 8, max_scan_lines: int = 5000) -> list[dic
 
 
 def save_state(state: dict[str, Any]) -> None:
+    store_mode = str(os.environ.get(TASK_STATE_STORE_MODE_ENV) or "").strip().lower()
+    if store_mode == "authoritative":
+        event_path = _task_state_event_path(store_mode)
+        source = (
+            str(os.environ.get("ORCH_RUN_ID") or "").strip()
+            or str(os.environ.get("AI_NAME") or "").strip()
+            or "ai-status"
+        )
+        append_state_commit(event_path, state, source=source)
     serialized = json.dumps(state, indent=2, ensure_ascii=False) + "\n"
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=STATUS_FILE.parent, delete=False) as handle:
         handle.write(serialized)
@@ -856,6 +1664,48 @@ def save_state(state: dict[str, Any]) -> None:
         os.fsync(handle.fileno())
         temp_path = Path(handle.name)
     os.replace(temp_path, STATUS_FILE)
+    _fsync_directory(STATUS_FILE.parent)
+    if STATUS_FILE.read_text(encoding="utf-8") != serialized:
+        raise RuntimeError("canonical task-state readback mismatch")
+    if store_mode == "shadow":
+        _append_task_state_shadow(state)
+
+
+def _task_state_event_path(mode: str) -> Path:
+    raw_path = str(os.environ.get(TASK_STATE_EVENT_LOG_ENV) or "").strip()
+    if not raw_path:
+        raise SystemExit(f"{TASK_STATE_EVENT_LOG_ENV} is required in {mode} mode")
+    event_path = Path(os.path.expanduser(raw_path))
+    if not event_path.is_absolute():
+        raise SystemExit(f"{TASK_STATE_EVENT_LOG_ENV} must be an absolute path")
+    return event_path
+
+
+def _append_task_state_shadow(state: dict[str, Any]) -> None:
+    if str(os.environ.get(TASK_STATE_STORE_MODE_ENV) or "").strip().lower() != "shadow":
+        return
+    try:
+        event_path = _task_state_event_path("shadow")
+        source = (
+            str(os.environ.get("ORCH_RUN_ID") or "").strip()
+            or str(os.environ.get("AI_NAME") or "").strip()
+            or "ai-status"
+        )
+        append_state_commit(event_path, state, source=source)
+    except Exception as exc:
+        # Shadow mode cannot make the incumbent canonical write unavailable.
+        print(f"Warning: task-state shadow append failed: {exc}", file=sys.stderr)
+
+
+def _fsync_directory(path: Path) -> None:
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def ensure_sprint_started_at(state: dict[str, Any]) -> None:
@@ -889,7 +1739,8 @@ def count_terminal_since(threshold_iso: str | None) -> tuple[int, int]:
         return (0, 0)
     for path in ARCHIVE_TASKS_DIR.glob("*.json"):
         try:
-            snapshot = json.loads(path.read_text(encoding="utf-8"))
+            text = task_archive_module.read_task_archive_file_safe(path)
+            snapshot = json.loads(text)
         except (OSError, json.JSONDecodeError):
             continue
         archived_at_raw = str(snapshot.get("archived_at") or "").strip()
@@ -921,22 +1772,86 @@ def task_archive_recent_limit() -> int:
     return DEFAULT_ARCHIVE_RECENT_LIMIT
 
 
+def assert_task_archive_root_binding() -> None:
+    expected_status = STATUS_FILE.expanduser().resolve()
+    expected_archive = expected_status.parent / "ai-task-archive"
+    bindings = {
+        "STATUS_FILE": task_archive_module.STATUS_FILE.expanduser().resolve(),
+        "ARCHIVE_DIR": task_archive_module.ARCHIVE_DIR.expanduser().resolve(),
+        "ARCHIVE_TASKS_DIR": task_archive_module.ARCHIVE_TASKS_DIR.expanduser().resolve(),
+        "ARCHIVE_INDEX_FILE": task_archive_module.ARCHIVE_INDEX_FILE.expanduser().resolve(),
+    }
+    expected = {
+        "STATUS_FILE": expected_status,
+        "ARCHIVE_DIR": expected_archive,
+        "ARCHIVE_TASKS_DIR": expected_archive / "tasks",
+        "ARCHIVE_INDEX_FILE": expected_archive / "index.json",
+    }
+    if bindings != expected:
+        raise RuntimeError(
+            "task archive/status root binding mismatch; refusing split task-state locks"
+        )
+
+
 def archive_terminal_task_from_state(state: dict[str, Any], task: dict[str, Any], *, archived_at: str | None = None) -> dict[str, Any]:
+    assert_task_archive_root_binding()
     task_id = str(task.get("id") or "").strip()
     if not task_id:
         raise SystemExit("Cannot archive a task without an id")
     related_handoffs = [deepcopy(handoff) for handoff in state.get("handoffs", []) if handoff.get("task_id") == task_id]
     related_blockers = [deepcopy(blocker) for blocker in state.get("blockers", []) if blocker.get("task_id") == task_id]
-    snapshot = archive_task_snapshot(
-        deepcopy(task),
-        handoffs=related_handoffs,
-        blockers=related_blockers,
-        archived_at=archived_at,
-        recent_limit=task_archive_recent_limit(),
-    )
-    state["tasks"] = [item for item in state.get("tasks", []) if item.get("id") != task_id]
-    state["handoffs"] = [handoff for handoff in state.get("handoffs", []) if handoff.get("task_id") != task_id]
-    state["blockers"] = [blocker for blocker in state.get("blockers", []) if blocker.get("task_id") != task_id]
+    existing = archived_task_snapshot(task_id)
+    snapshot = {
+        "version": 1,
+        "task_id": task_id,
+        "archived_at": archived_at
+        or (
+            str(existing.get("archived_at") or "").strip()
+            if isinstance(existing, dict)
+            else ""
+        )
+        or iso_now(),
+        "terminal_status": "done",
+        "terminal_outcome": terminal_outcome_for(task) or "completed",
+        "task": deepcopy(task),
+        "handoffs": related_handoffs,
+        "blockers": related_blockers,
+    }
+    _validate_status_archive_snapshot(snapshot)
+    if existing is not None:
+        _validate_status_archive_snapshot(existing)
+        if is_terminal_task(task):
+            if _canonical_json_sha256(existing) != _canonical_json_sha256(snapshot):
+                raise RuntimeError(
+                    f"existing archive snapshot conflicts with terminal task: {task_id}"
+                )
+        snapshot = deepcopy(existing)
+
+    pending = state.get(STATUS_ARCHIVE_OUTBOX_KEY)
+    snapshots: list[dict[str, Any]] = []
+    if pending not in (None, {}, []):
+        snapshots = list(_validate_status_archive_outbox(pending)["snapshots"])
+    same_task = [
+        item
+        for item in snapshots
+        if str(item.get("task_id") or "") == task_id
+    ]
+    if same_task and any(
+        _canonical_json_sha256(item) != _canonical_json_sha256(snapshot)
+        for item in same_task
+    ):
+        raise RuntimeError(f"archive outbox payload conflict: {task_id}")
+    if not same_task:
+        snapshots.append(snapshot)
+    state[STATUS_ARCHIVE_OUTBOX_KEY] = {
+        "schema_version": STATUS_ARCHIVE_OUTBOX_SCHEMA_VERSION,
+        "transaction_id": "ai-status-archive-tx-"
+        + _canonical_json_sha256(snapshots),
+        "snapshots": snapshots,
+    }
+    # Retain the terminal row and its references until the archive and rebuilt
+    # index are durable. Recovery removes them in the same final status write
+    # that clears this outbox, so readers never observe a vanished task.
     return snapshot
 
 
@@ -947,8 +1862,6 @@ def archive_terminal_tasks_in_state(state: dict[str, Any], *, archived_at: str |
             continue
         snapshot = archive_terminal_task_from_state(state, task, archived_at=archived_at)
         archived_ids.append(str(snapshot.get("task_id") or task.get("id") or ""))
-    if archived_ids:
-        rebuild_archive_index(recent_limit=task_archive_recent_limit())
     return [task_id for task_id in archived_ids if task_id]
 
 
@@ -957,9 +1870,15 @@ def prune_archived_active_tasks(state: dict[str, Any]) -> list[str]:
 
     pruned_ids: list[str] = []
     remaining_tasks: list[dict[str, Any]] = []
-    for task in state.get("tasks", []):
+    for task in list(state.get("tasks", [])):
         task_id = str(task.get("id") or "").strip()
-        if task_id and archived_task_snapshot(task_id):
+        existing = archived_task_snapshot(task_id) if task_id else None
+        if existing:
+            archive_terminal_task_from_state(
+                state,
+                task,
+                archived_at=str(existing.get("archived_at") or "").strip() or None,
+            )
             pruned_ids.append(task_id)
             continue
         remaining_tasks.append(task)
@@ -973,58 +1892,354 @@ def prune_archived_active_tasks(state: dict[str, Any]) -> list[str]:
     return pruned_ids
 
 
-def maybe_rotate_activity_log(path: Path | None = None) -> Path | None:
-    """Archive + truncate ai-activity-log.jsonl when it exceeds LOG_ROTATE_MAX_BYTES.
+def _canonical_json_sha256(value: Any) -> str:
+    payload = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
-    Returns the gzipped archive path on rotation, None when no rotation happened.
-    The active log file is rewritten in place (same inode), so concurrent
-    append-mode writers see the truncated file rather than a stale handle.
-    """
+
+def _activity_event(entry: dict[str, Any]) -> dict[str, Any]:
+    event = deepcopy(entry)
+    command_metadata = status_command_metadata()
+    if command_metadata and "status_command" not in event:
+        event["status_command"] = command_metadata
+    if not str(event.get("event_id") or "").strip():
+        event["event_id"] = "ai-status-event-" + _canonical_json_sha256(event)
+    return event
+
+
+@contextmanager
+def buffer_activity_events():
+    previous = getattr(_ACTIVITY_TRANSACTION_LOCAL, "events", None)
+    events: list[dict[str, Any]] = []
+    _ACTIVITY_TRANSACTION_LOCAL.events = events
+    try:
+        yield events
+    finally:
+        if previous is None:
+            try:
+                delattr(_ACTIVITY_TRANSACTION_LOCAL, "events")
+            except AttributeError:
+                pass
+        else:
+            _ACTIVITY_TRANSACTION_LOCAL.events = previous
+
+
+def _maybe_rotate_activity_log_unlocked(log_path: Path) -> Path | None:
+    """Durably rotate through the shared restart-recoverable intent protocol."""
+
+    return rotate_activity_log_unlocked(
+        log_path,
+        max_bytes=LOG_ROTATE_MAX_BYTES,
+        keep_lines=LOG_ROTATE_KEEP_LINES,
+        archive_dir=log_path.parent / "archive" / "logs",
+    )
+
+
+def maybe_rotate_activity_log(path: Path | None = None) -> Path | None:
     log_path = path if path is not None else LOG_FILE
-    if LOG_ROTATE_MAX_BYTES <= 0:
-        return None
-    try:
-        size = log_path.stat().st_size
-    except FileNotFoundError:
-        return None
-    except OSError:
-        return None
-    if size <= LOG_ROTATE_MAX_BYTES:
-        return None
-    archive_dir = log_path.parent / "archive" / "logs"
-    try:
-        archive_dir.mkdir(parents=True, exist_ok=True)
-    except OSError:
-        return None
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H%MZ")
-    archive_path = archive_dir / f"{log_path.name}-{timestamp}.gz"
-    try:
-        data = log_path.read_bytes()
-    except OSError:
-        return None
-    if LOG_ROTATE_KEEP_LINES > 0:
-        lines = data.splitlines(keepends=True)
-        keep = b"".join(lines[-LOG_ROTATE_KEEP_LINES:])
-    else:
-        keep = b""
-    try:
-        with gzip.open(archive_path, "wb") as dst:
-            dst.write(data)
-    except OSError:
-        return None
-    try:
-        # Rewriting via write_bytes truncates the existing inode (O_TRUNC),
-        # so any open append-mode handle still writes to this same file.
-        log_path.write_bytes(keep)
-    except OSError:
-        return None
-    return archive_path
+    with activity_audit_lock_file(log_path, shared=False, nonblocking=False):
+        return _maybe_rotate_activity_log_unlocked(log_path)
+
+
+def _append_log_unlocked(entry: dict[str, Any]) -> None:
+    _append_logs_unlocked([entry])
+
+
+def _append_logs_unlocked(entries: list[dict[str, Any]]) -> None:
+    append_activity_log_entries_unlocked(
+        LOG_FILE,
+        entries,
+        rotate_bytes=LOG_ROTATE_MAX_BYTES,
+        keep_lines=LOG_ROTATE_KEEP_LINES,
+    )
 
 
 def append_log(entry: dict[str, Any]) -> None:
-    maybe_rotate_activity_log()
-    with LOG_FILE.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    event = _activity_event(entry)
+    buffer = getattr(_ACTIVITY_TRANSACTION_LOCAL, "events", None)
+    if isinstance(buffer, list):
+        buffer.append(event)
+        return
+    with activity_audit_lock_file(LOG_FILE, shared=False, nonblocking=False):
+        _append_log_unlocked(event)
+
+
+def _activity_audit_sources() -> list[Path]:
+    return activity_audit_source_paths_unlocked(LOG_FILE)
+
+
+def _activity_event_index_unlocked(event_ids: set[str]) -> dict[str, str]:
+    try:
+        prepare_activity_audit_unlocked(LOG_FILE)
+        return validated_activity_event_digests_unlocked(LOG_FILE, event_ids)
+    except ActivityAuditInvariantError:
+        raise
+    except RuntimeError as exc:
+        raise activity_audit_invariant_error(
+            exc,
+            log_path=LOG_FILE,
+            operation="status_outbox_recovery",
+        ) from exc
+
+
+def _active_activity_event_digests_unlocked(
+    event_ids: set[str],
+) -> dict[str, str]:
+    """Look for a just-appended outbox transaction in a bounded active tail."""
+
+    payload = read_activity_log_tail_bytes(
+        LOG_FILE,
+        max_lines=max(64, len(event_ids) * 8),
+    )
+    result: dict[str, str] = {}
+    for line_number, raw_line in enumerate((payload or b"").splitlines(), start=1):
+        if not raw_line.strip():
+            continue
+        try:
+            entry = strict_activity_json_loads(
+                raw_line.decode("utf-8", errors="strict")
+            )
+        except (
+            UnicodeError,
+            json.JSONDecodeError,
+            DuplicateActivityJSONKeyError,
+        ) as exc:
+            raise ActivityAuditInvariantError(
+                "active activity tail is unreadable",
+                invariant="activity_tail_json",
+                evidence={
+                    "log_path": str(LOG_FILE),
+                    "tail_line_number": line_number,
+                    "error_type": type(exc).__name__,
+                },
+            ) from exc
+        if not isinstance(entry, dict):
+            raise ActivityAuditInvariantError(
+                "active activity tail row is not an object",
+                invariant="activity_tail_json",
+                evidence={
+                    "log_path": str(LOG_FILE),
+                    "tail_line_number": line_number,
+                },
+            )
+        event_id = str(entry.get("event_id") or "")
+        if event_id not in event_ids:
+            continue
+        digest = _canonical_json_sha256(entry)
+        existing = result.get(event_id)
+        if existing is not None and existing != digest:
+            raise RuntimeError(f"activity outbox payload conflict: {event_id}")
+        result[event_id] = digest
+    return result
+
+
+def _validate_status_archive_outbox(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != {
+        "schema_version",
+        "transaction_id",
+        "snapshots",
+    }:
+        raise RuntimeError("status archive outbox schema is not exact")
+    snapshots = value.get("snapshots")
+    if (
+        value.get("schema_version") != STATUS_ARCHIVE_OUTBOX_SCHEMA_VERSION
+        or not isinstance(snapshots, list)
+        or not snapshots
+        or any(not _status_archive_snapshot_is_valid(snapshot) for snapshot in snapshots)
+        or len({str(snapshot["task_id"]) for snapshot in snapshots})
+        != len(snapshots)
+    ):
+        raise RuntimeError("status archive outbox contract is invalid")
+    expected_id = "ai-status-archive-tx-" + _canonical_json_sha256(snapshots)
+    if value.get("transaction_id") != expected_id:
+        raise RuntimeError("status archive outbox digest mismatch")
+    return value
+
+
+def _status_archive_snapshot_is_valid(snapshot: Any) -> bool:
+    if not isinstance(snapshot, dict) or set(snapshot) != {
+        "version",
+        "task_id",
+        "archived_at",
+        "terminal_status",
+        "terminal_outcome",
+        "task",
+        "handoffs",
+        "blockers",
+    }:
+        return False
+    task = snapshot.get("task")
+    return bool(
+        snapshot.get("version") == 1
+        and snapshot.get("terminal_status") == "done"
+        and str(snapshot.get("task_id") or "").strip()
+        and str(snapshot.get("archived_at") or "").strip()
+        and isinstance(task, dict)
+        and task.get("id") == snapshot.get("task_id")
+        and task.get("status") == "done"
+        and snapshot.get("terminal_outcome") == terminal_outcome_for(task)
+        and isinstance(snapshot.get("handoffs"), list)
+        and isinstance(snapshot.get("blockers"), list)
+    )
+
+
+def _validate_status_archive_snapshot(snapshot: Any) -> dict[str, Any]:
+    if not _status_archive_snapshot_is_valid(snapshot):
+        raise RuntimeError("status archive snapshot contract is invalid")
+    return snapshot
+
+
+def _status_archive_fault(point: str) -> None:
+    if str(os.environ.get("LOOP_TEST_ARCHIVE_SIGKILL_AFTER") or "").strip() == point:
+        os.kill(os.getpid(), 9)
+
+
+def recover_status_archive_outbox(state: dict[str, Any]) -> bool:
+    pending = state.get(STATUS_ARCHIVE_OUTBOX_KEY)
+    if pending in (None, {}, []):
+        return False
+    assert_task_archive_root_binding()
+    pending = _validate_status_archive_outbox(pending)
+    for expected in pending["snapshots"]:
+        actual = archive_task_snapshot(
+            deepcopy(expected["task"]),
+            handoffs=deepcopy(expected["handoffs"]),
+            blockers=deepcopy(expected["blockers"]),
+            archived_at=str(expected["archived_at"]),
+            recent_limit=task_archive_recent_limit(),
+        )
+        if _canonical_json_sha256(actual) != _canonical_json_sha256(expected):
+            raise RuntimeError(
+                f"status archive outbox readback mismatch: {expected['task_id']}"
+            )
+    rebuild_archive_index(recent_limit=task_archive_recent_limit())
+    _status_archive_fault("rebuild")
+    archived_ids = {str(item["task_id"]) for item in pending["snapshots"]}
+    active_by_id = {
+        str(task.get("id") or ""): task
+        for task in state.get("tasks", [])
+        if isinstance(task, dict)
+    }
+    for expected in pending["snapshots"]:
+        task_id = str(expected["task_id"])
+        active = active_by_id.get(task_id)
+        if active is not None and _canonical_json_sha256(active) != _canonical_json_sha256(
+            expected["task"]
+        ):
+            raise RuntimeError(
+                f"active terminal task changed during archive recovery: {task_id}"
+            )
+    state["tasks"] = [
+        task
+        for task in state.get("tasks", [])
+        if str(task.get("id") or "") not in archived_ids
+    ]
+    state["handoffs"] = [
+        handoff
+        for handoff in state.get("handoffs", [])
+        if str(handoff.get("task_id") or "") not in archived_ids
+    ]
+    state["blockers"] = [
+        blocker
+        for blocker in state.get("blockers", [])
+        if str(blocker.get("task_id") or "") not in archived_ids
+    ]
+    state[STATUS_ARCHIVE_OUTBOX_KEY] = None
+    save_state(state)
+    return True
+
+
+def _validate_status_activity_outbox(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != {
+        "schema_version",
+        "transaction_id",
+        "events",
+    }:
+        raise RuntimeError("status activity outbox schema is not exact")
+    events = value.get("events")
+    if (
+        value.get("schema_version") != STATUS_ACTIVITY_OUTBOX_SCHEMA_VERSION
+        or not isinstance(events, list)
+        or not events
+        or any(
+            not isinstance(event, dict)
+            or not isinstance(event.get("event_id"), str)
+            or not event["event_id"]
+            or event["event_id"] != event["event_id"].strip()
+            for event in events
+        )
+        or len({str(event["event_id"]) for event in events}) != len(events)
+    ):
+        raise RuntimeError("status activity outbox contract is invalid")
+    expected_id = "ai-status-tx-" + _canonical_json_sha256(events)
+    if value.get("transaction_id") != expected_id:
+        raise RuntimeError("status activity outbox digest mismatch")
+    return value
+
+
+def recover_status_activity_outbox(
+    state: dict[str, Any],
+    *,
+    known_unappended: bool = False,
+) -> bool:
+    pending = state.get(STATUS_ACTIVITY_OUTBOX_KEY)
+    if pending in (None, {}, []):
+        return False
+    pending = _validate_status_activity_outbox(pending)
+    pending_event_ids = {str(event["event_id"]) for event in pending["events"]}
+    with activity_audit_lock_file(LOG_FILE, shared=False, nonblocking=False):
+        existing = (
+            {}
+            if known_unappended
+            else _activity_event_index_unlocked(pending_event_ids)
+        )
+        missing: list[dict[str, Any]] = []
+        for event in pending["events"]:
+            event_id = str(event["event_id"])
+            digest = _canonical_json_sha256(event)
+            if event_id in existing:
+                if existing[event_id] != digest:
+                    raise RuntimeError(
+                        f"activity outbox payload conflict: {event_id}"
+                    )
+                continue
+            missing.append(event)
+            existing[event_id] = digest
+        _append_logs_unlocked(missing)
+        final = _active_activity_event_digests_unlocked(pending_event_ids)
+        if set(final) != pending_event_ids:
+            final = _activity_event_index_unlocked(pending_event_ids)
+        if any(
+            final.get(str(event["event_id"])) != _canonical_json_sha256(event)
+            for event in pending["events"]
+        ):
+            raise RuntimeError("status activity outbox append/readback mismatch")
+        state[STATUS_ACTIVITY_OUTBOX_KEY] = None
+        save_state(state)
+    return True
+
+
+def commit_state_with_activity_outbox(
+    state: dict[str, Any],
+    events: list[dict[str, Any]],
+) -> None:
+    if events:
+        state[STATUS_ACTIVITY_OUTBOX_KEY] = {
+            "schema_version": STATUS_ACTIVITY_OUTBOX_SCHEMA_VERSION,
+            "transaction_id": "ai-status-tx-" + _canonical_json_sha256(events),
+            "events": deepcopy(events),
+        }
+    save_state(state)
+    if state.get(STATUS_ARCHIVE_OUTBOX_KEY) not in (None, {}, []):
+        _status_archive_fault("pending_status")
+    recover_status_archive_outbox(state)
+    if events:
+        recover_status_activity_outbox(state, known_unappended=True)
 
 
 def ensure_agent(name: str) -> dict[str, Any]:
@@ -1316,6 +2531,62 @@ def commit_subject_skips_trailer_check(subject: str) -> str | None:
     return None
 
 
+LOOP_AUTOPILOT_NON_GOALS = {
+    "No panel-only closure",
+    "No seed fixture as live proof",
+    "No approval gate bypass",
+}
+
+# Phrases in review notes or completion messages that signal a fixture/seed-only or
+# panel-only closure.  Matches are case-insensitive substrings.
+_FIXTURE_ONLY_SIGNALS = (
+    "fixture only",
+    "fixture-only",
+    "fixture_only",
+    "seed only",
+    "seed-only",
+    "seed_only",
+    "seed fixture as proof",
+    "seed fixture as live",
+    "fixture as live proof",
+    "panel only",
+    "panel-only",
+    "panel_only",
+    "panel copy",
+    "route only",
+    "route-only",
+    "route_only",
+)
+
+
+def is_loop_autopilot_task(task: dict[str, Any]) -> bool:
+    """Return True when the task carries loop-autopilot guardrail requirements.
+
+    A task qualifies when it has a non-empty ``loop_ids`` list, or when its
+    ``non_goals`` list overlaps with the canonical LOOP_AUTOPILOT_NON_GOALS set.
+    """
+    if task.get("loop_ids"):
+        return True
+    non_goals: list[str] = task.get("non_goals") or []
+    return bool(set(non_goals) & LOOP_AUTOPILOT_NON_GOALS)
+
+
+def validate_loop_completion_claim(task: dict[str, Any]) -> None:
+    """Gate the done transition for loop-autopilot tasks.
+
+    Raises SystemExit with a descriptive message when the task's evidence
+    fields are insufficient to support the done claim.
+    """
+    import loop_done_guardrail
+    gaps = loop_done_guardrail.check_task(task)
+    if gaps:
+        task_id = task.get("id", "?")
+        raise SystemExit(
+            f"Loop task {task_id} done claim rejected:\n" +
+            "\n".join(f"  ✗ {gap}" for gap in gaps)
+        )
+
+
 def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str, Any]:
     settings = delivery_gate_settings()
     commit_rules = commit_convention_settings()
@@ -1360,6 +2631,9 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
         "branch": branch,
         "git_clean_required": settings["require_git_clean"],
     }
+    command_metadata = status_command_metadata()
+    if command_metadata:
+        delivery["status_command_runtime"] = command_metadata
     if repository_fallback is not None:
         delivery["repository_fallback"] = repository_fallback
 
@@ -3304,6 +4578,15 @@ def build_dashboard_bundle(
     bff_consol_archived_ids: list[str] = []
     if ARCHIVE_TASKS_DIR.exists():
         for path in ARCHIVE_TASKS_DIR.glob("BFF-CONSOL-*.json"):
+            try:
+                st = os.lstat(path)
+                import stat
+                if stat.S_ISLNK(st.st_mode):
+                    raise RuntimeError(f"archive-leaf cannot be a symlink: {path}")
+                if not stat.S_ISREG(st.st_mode):
+                    continue
+            except OSError:
+                continue
             stem = path.stem
             if stem.endswith("-SIDECAR-BFF-HANDOFF") or stem.endswith("-SIDECAR-ACCEPTANCE") or stem.endswith("-SIDECAR-REVIEW"):
                 continue
@@ -3398,34 +4681,11 @@ DASHBOARD_LOG_TAIL_LINES = 5000
 
 
 def _mirror_log_tail(source: Path, target: Path, max_lines: int) -> None:
-    if not source.exists():
-        return
     try:
-        with source.open("rb") as handle:
-            handle.seek(0, os.SEEK_END)
-            file_size = handle.tell()
-            block_size = 1 << 16
-            buffer = bytearray()
-            line_count = 0
-            position = file_size
-            while position > 0 and line_count <= max_lines:
-                read_size = min(block_size, position)
-                position -= read_size
-                handle.seek(position)
-                chunk = handle.read(read_size)
-                buffer[0:0] = chunk
-                line_count = buffer.count(b"\n")
-            tail = bytes(buffer)
-        if line_count > max_lines:
-            split_at = -1
-            extra = line_count - max_lines
-            for _ in range(extra):
-                split_at = tail.find(b"\n", split_at + 1)
-                if split_at == -1:
-                    break
-            if split_at != -1:
-                tail = tail[split_at + 1 :]
-        target.write_bytes(tail)
+        tail = read_activity_log_tail_bytes(source, max_lines=max_lines)
+        if tail is None:
+            return
+        durable_write_bytes(target, tail)
     except OSError:
         return
 
@@ -3479,6 +4739,7 @@ def sync_docs_site(state: dict[str, Any]) -> None:
 
 
 def sync_all(state: dict[str, Any]) -> None:
+    assert_task_archive_root_binding()
     sync_canonical_document_metadata(state)
     normalize_state_agents(state)
     prune_archived_active_tasks(state)
@@ -3488,7 +4749,15 @@ def sync_all(state: dict[str, Any]) -> None:
     recompute_workload(state)
     ensure_sprint_started_at(state)
     state["updated_at"] = iso_now()
-    save_state(state)
+    buffered = getattr(_ACTIVITY_TRANSACTION_LOCAL, "events", None)
+    events = list(buffered) if isinstance(buffered, list) else []
+    commit_state_with_activity_outbox(state, events)
+    refresh_derived_status_views(state)
+
+
+def refresh_derived_status_views(state: dict[str, Any]) -> None:
+    """Refresh projections after canonical state and audit are durable."""
+
     logs = load_logs()
     write_current_work(state, logs)
     write_dashboard_bundle(state)
@@ -3579,7 +4848,109 @@ def normalize_handoffs(state: dict[str, Any]) -> None:
             )
 
 
-def command_assign(state: dict[str, Any], args: list[str]) -> None:
+def _bridge_assignment_from_metadata(
+    metadata: dict[str, Any],
+    *,
+    task_id: str,
+    owner: str,
+    reviewer: str,
+    title: str | None,
+) -> dict[str, Any] | None:
+    bridge = metadata.get("dev_bridge")
+    if bridge is None:
+        return None
+    if not isinstance(bridge, dict):
+        raise SystemExit("TASK_METADATA_JSON.dev_bridge must be an object")
+    packet_id = str(bridge.get("packet_id") or "").strip()
+    packet_digest = str(bridge.get("packet_digest") or "").strip()
+    expected_hash = str(bridge.get("task_spec_hash") or "").strip()
+    spec = bridge.get("task_spec")
+    if (
+        not packet_id
+        or not re.fullmatch(r"[0-9a-f]{64}", packet_digest)
+        or not expected_hash
+        or not isinstance(spec, dict)
+    ):
+        raise SystemExit(
+            "TASK_METADATA_JSON.dev_bridge requires packet_id, a SHA-256 packet_digest, "
+            "task_spec_hash, and task_spec"
+        )
+
+    conversation_id = bridge.get("conversation_id")
+    source_turn_ids = bridge.get("source_turn_ids")
+    documents = bridge.get("documents")
+    if not isinstance(conversation_id, str) or not conversation_id.strip():
+        raise SystemExit("Bridge assignment conversation_id is required")
+    if not isinstance(source_turn_ids, list) or any(
+        not isinstance(item, str) for item in source_turn_ids
+    ):
+        raise SystemExit("Bridge assignment source_turn_ids must be a string list")
+    if not isinstance(documents, list) or any(
+        not isinstance(item, dict) for item in documents
+    ):
+        raise SystemExit("Bridge assignment documents must be an object list")
+    if any(
+        not isinstance(item.get("path"), str) or not item["path"].strip()
+        for item in documents
+    ):
+        raise SystemExit("Bridge assignment documents entries require a non-empty path")
+
+    required_text = {
+        "id": task_id,
+        "owner": owner,
+        "reviewer": reviewer,
+    }
+    normalized_spec = deepcopy(spec)
+    for field, expected in required_text.items():
+        actual = str(spec.get(field) or "").strip()
+        if field in {"owner", "reviewer"}:
+            actual = canonical_agent_name(actual)
+        if actual != expected:
+            raise SystemExit(
+                f"Bridge assignment {field} mismatch: command={expected!r} metadata={actual!r}"
+            )
+        normalized_spec[field] = actual
+    spec_title = str(spec.get("title") or "").strip()
+    if not spec_title:
+        raise SystemExit("Bridge assignment task_spec.title is required")
+    if title and spec_title != title:
+        raise SystemExit(
+            f"Bridge assignment title mismatch: command={title!r} metadata={spec_title!r}"
+        )
+    normalized_spec["title"] = spec_title
+
+    for field in ("depends_on", "artifacts", "acceptance"):
+        value = spec.get(field)
+        if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+            raise SystemExit(f"Bridge assignment task_spec.{field} must be a string list")
+        normalized_spec[field] = list(value)
+    for field in ("phase", "summary"):
+        value = spec.get(field)
+        if value is not None and not isinstance(value, str):
+            raise SystemExit(f"Bridge assignment task_spec.{field} must be a string or null")
+        normalized_spec[field] = value
+
+    encoded = json.dumps(
+        normalized_spec,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+    actual_hash = hashlib.sha256(encoded).hexdigest()
+    if actual_hash != expected_hash:
+        raise SystemExit("Bridge assignment task_spec_hash does not match task_spec")
+    normalized_bridge = deepcopy(bridge)
+    normalized_bridge["packet_id"] = packet_id
+    normalized_bridge["packet_digest"] = packet_digest
+    normalized_bridge["conversation_id"] = conversation_id.strip()
+    normalized_bridge["source_turn_ids"] = list(source_turn_ids)
+    normalized_bridge["documents"] = deepcopy(documents)
+    normalized_bridge["task_spec"] = normalized_spec
+    metadata["dev_bridge"] = normalized_bridge
+    return normalized_bridge
+
+
+def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
     from wave_guards import WaveGuardError, check_wave_assign
 
     if len(args) < 3:
@@ -3597,6 +4968,27 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
     if owner == reviewer:
         raise SystemExit("Reviewer cannot equal owner")
 
+    bridge = _bridge_assignment_from_metadata(
+        metadata,
+        task_id=task_id,
+        owner=owner,
+        reviewer=reviewer,
+        title=title,
+    )
+    if bridge is not None:
+        spec = bridge["task_spec"]
+        title = spec["title"]
+        summary_zh = spec.get("summary")
+        phase = spec.get("phase") or "Unassigned"
+        depends_on = list(spec.get("depends_on") or [])
+        artifacts = list(spec.get("artifacts") or [])
+        acceptance = list(spec.get("acceptance") or [])
+    else:
+        phase = os.environ.get("TASK_PHASE", "Unassigned")
+        depends_on = parse_csv_env("TASK_DEPENDS_ON")
+        artifacts = parse_csv_env("TASK_ARTIFACTS")
+        acceptance = parse_csv_env("TASK_ACCEPTANCE")
+
     task = get_task(state, task_id)
     timestamp = iso_now()
     if task is None:
@@ -3608,19 +5000,39 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
             "id": task_id,
             "title": title,
             "summary_zh": summary_zh,
-            "phase": os.environ.get("TASK_PHASE", "Unassigned"),
+            "phase": phase,
             "owner": owner,
             "reviewer": reviewer,
             "status": "todo",
-            "depends_on": parse_csv_env("TASK_DEPENDS_ON"),
-            "artifacts": parse_csv_env("TASK_ARTIFACTS"),
-            "acceptance": parse_csv_env("TASK_ACCEPTANCE"),
+            "depends_on": depends_on,
+            "artifacts": artifacts,
+            "acceptance": acceptance,
             "next": "Assignment created",
             "last_update": timestamp,
         }
         task.update(metadata)
         state["tasks"].append(task)
     else:
+        if bridge is not None:
+            existing_bridge = task.get("dev_bridge")
+            if not isinstance(existing_bridge, dict):
+                raise SystemExit(
+                    f"Bridge assignment conflict: task {task_id} already exists without bridge provenance"
+                )
+            existing_packet = str(existing_bridge.get("packet_id") or "").strip()
+            existing_digest = str(existing_bridge.get("packet_digest") or "").strip()
+            existing_hash = str(existing_bridge.get("task_spec_hash") or "").strip()
+            if (
+                existing_packet == bridge["packet_id"]
+                and existing_digest == bridge["packet_digest"]
+                and existing_hash == bridge["task_spec_hash"]
+                and existing_bridge == bridge
+            ):
+                return False
+            raise SystemExit(
+                f"Bridge assignment conflict: task {task_id} is already bound to "
+                f"packet={existing_packet!r} digest={existing_digest!r} spec={existing_hash!r}"
+            )
         task["owner"] = owner
         task["reviewer"] = reviewer
         if title:
@@ -3678,7 +5090,7 @@ def command_progress(state: dict[str, Any], args: list[str]) -> None:
     if task.get("owner") != actor:
         raise SystemExit(f"Only the owner ({task.get('owner')}) can progress {task_id}")
     timestamp = iso_now()
-    if task["status"] in {"todo", "review_approved"}:
+    if task["status"] == "todo":
         task["status"] = "in_progress"
     task["last_update"] = timestamp
     task["next"] = message
@@ -3844,6 +5256,320 @@ def command_restore_approved(state: dict[str, Any], args: list[str]) -> None:
     )
 
 
+def _required_reconcile_env(name: str) -> str:
+    value = str(os.environ.get(name) or "").strip()
+    if not value:
+        raise SystemExit(f"{name} is required for reconcile_merged_done")
+    return value
+
+
+def _validated_git_root(raw_root: str, *, label: str) -> Path:
+    candidate = Path(os.path.expanduser(raw_root))
+    if not candidate.is_absolute():
+        raise SystemExit(f"{label} must be an absolute path")
+    symlink_component = _first_symlink_component(candidate)
+    if symlink_component is not None:
+        raise SystemExit(f"{label} cannot include a symlink component: {symlink_component}")
+    root = candidate.resolve()
+    if not root.is_dir() or _git_toplevel(root) != root:
+        raise SystemExit(f"{label} must be a git repository root: {root}")
+    return root
+
+
+def _merged_commit(
+    repository_root: Path,
+    raw_commit: str,
+    target_ref: str,
+    *,
+    label: str,
+) -> tuple[str, str]:
+    commit = run_git_command(
+        ["rev-parse", "--verify", f"{raw_commit}^{{commit}}"],
+        cwd=repository_root,
+        failure_message=f"Cannot reconcile task: {label} commit is unavailable.",
+    )
+    target_sha = run_git_command(
+        ["rev-parse", "--verify", target_ref],
+        cwd=repository_root,
+        failure_message=f"Cannot reconcile task: {label} target ref {target_ref} is unavailable.",
+    )
+    if not git_command_succeeds(
+        ["merge-base", "--is-ancestor", commit, target_ref],
+        cwd=repository_root,
+    ):
+        raise SystemExit(
+            f"Cannot reconcile task: {label} commit {commit} is not merged into {target_ref}."
+        )
+    return commit, target_sha
+
+
+def _verified_reviewer_reassignment(
+    task: dict[str, Any],
+    *,
+    evidence_reviewer: str,
+    current_reviewer: str,
+) -> dict[str, Any]:
+    """Return the exact canonical reassignment that explains reviewer drift."""
+
+    try:
+        payload = read_regular_file_bytes(
+            LOG_FILE,
+            source="canonical reviewer reassignment evidence",
+        )
+    except FileNotFoundError as exc:
+        raise SystemExit(
+            "Cannot reconcile task: canonical reviewer differs from merged evidence and "
+            "the activity audit is unavailable."
+        ) from exc
+
+    task_id = str(task.get("id") or "").strip()
+    owner = canonical_agent_name(task.get("owner"))
+    task_last_update = str(task.get("last_update") or "").strip()
+    task_next = str(task.get("next") or "").strip()
+    for raw_line in payload.splitlines():
+        if not raw_line.strip():
+            continue
+        event = strict_activity_json_loads(raw_line)
+        if not isinstance(event, dict):
+            continue
+        if (
+            event.get("type") == "task_reassigned"
+            and str(event.get("task_id") or "").strip() == task_id
+            and canonical_agent_name(event.get("old_owner")) == owner
+            and canonical_agent_name(event.get("new_owner")) == owner
+            and canonical_agent_name(event.get("old_reviewer")) == evidence_reviewer
+            and canonical_agent_name(event.get("new_reviewer")) == current_reviewer
+            and str(event.get("ts") or "").strip() == task_last_update
+            and str(event.get("message") or "").strip() == task_next
+        ):
+            return {
+                "event_id": str(event.get("event_id") or "").strip() or None,
+                "ts": task_last_update,
+                "old_reviewer": evidence_reviewer,
+                "new_reviewer": current_reviewer,
+                "message": task_next,
+            }
+    raise SystemExit(
+        "Cannot reconcile task: merged evidence does not bind the canonical reviewer metadata "
+        "and no exact task_reassigned audit event explains the drift."
+    )
+
+
+def validate_merged_done_evidence(task: dict[str, Any]) -> dict[str, Any]:
+    """Validate immutable, dev-merged review and delivery evidence.
+
+    This recovery path is intentionally stricter than the normal owner closeout:
+    it is only for an already-delivered task whose canonical row lost the
+    review-approved transition.  Both the review artifact and the delivered
+    commit must already be reachable from their respective dev refs.
+    """
+
+    task_id = str(task.get("id") or "").strip()
+    owner = canonical_agent_name(task.get("owner"))
+    reviewer = canonical_agent_name(task.get("reviewer"))
+    if not task_id or not owner or not reviewer or owner == reviewer:
+        raise SystemExit("Cannot reconcile task: task owner/reviewer metadata is invalid.")
+
+    raw_evidence_file = _required_reconcile_env("RECONCILE_EVIDENCE_FILE")
+    evidence_rel = Path(raw_evidence_file)
+    if evidence_rel.is_absolute() or ".." in evidence_rel.parts:
+        raise SystemExit("RECONCILE_EVIDENCE_FILE must be a repository-relative path without '..'.")
+    evidence_path = ROOT / evidence_rel
+    symlink_component = _first_symlink_component(evidence_path)
+    if symlink_component is not None:
+        raise SystemExit(
+            f"RECONCILE_EVIDENCE_FILE cannot include a symlink component: {symlink_component}"
+        )
+    evidence_path = evidence_path.resolve()
+    try:
+        evidence_path.relative_to(ROOT.resolve())
+    except ValueError as exc:
+        raise SystemExit("RECONCILE_EVIDENCE_FILE escapes the command repository.") from exc
+    if not evidence_path.is_file():
+        raise SystemExit(f"RECONCILE_EVIDENCE_FILE is not a regular file: {evidence_path}")
+    evidence_posix = evidence_rel.as_posix()
+    if not git_command_succeeds(
+        ["ls-files", "--error-unmatch", "--", evidence_posix],
+        cwd=ROOT,
+    ):
+        raise SystemExit("Cannot reconcile task: evidence file is not tracked by Pantheon git.")
+
+    evidence_target_ref = str(
+        os.environ.get("RECONCILE_EVIDENCE_TARGET_REF") or "origin/dev"
+    ).strip()
+    evidence_commit, evidence_target_sha = _merged_commit(
+        ROOT,
+        _required_reconcile_env("RECONCILE_EVIDENCE_COMMIT"),
+        evidence_target_ref,
+        label="evidence",
+    )
+    evidence_at_commit = run_git_command(
+        ["show", f"{evidence_commit}:{evidence_posix}"],
+        cwd=ROOT,
+        failure_message=(
+            "Cannot reconcile task: evidence file is absent from the supplied evidence commit."
+        ),
+    )
+    evidence_text = evidence_path.read_text(encoding="utf-8")
+    if evidence_text.rstrip("\n") != evidence_at_commit.rstrip("\n"):
+        raise SystemExit(
+            "Cannot reconcile task: working evidence file differs from the supplied merged commit."
+        )
+
+    required_lines = {
+        "task": rf"^# Task Brief:\s*{re.escape(task_id)}\s*$",
+        "status": r"^- Status:\s*review_approved\s*$",
+        "owner": rf"^- Owner:\s*{re.escape(owner)}\s*$",
+    }
+    missing = [
+        label
+        for label, pattern in required_lines.items()
+        if re.search(pattern, evidence_text, flags=re.MULTILINE) is None
+    ]
+    if missing:
+        raise SystemExit(
+            "Cannot reconcile task: merged evidence does not bind the canonical "
+            f"{', '.join(missing)} metadata."
+        )
+    evidence_reviewer_match = re.search(
+        r"^- Reviewer:\s*(?P<reviewer>.+?)\s*$",
+        evidence_text,
+        flags=re.MULTILINE,
+    )
+    evidence_reviewer = canonical_agent_name(
+        evidence_reviewer_match.group("reviewer") if evidence_reviewer_match else ""
+    )
+    if not evidence_reviewer or evidence_reviewer == owner:
+        raise SystemExit(
+            "Cannot reconcile task: merged evidence has invalid independent reviewer metadata."
+        )
+    reviewer_reassignment = None
+    if evidence_reviewer != reviewer:
+        reviewer_reassignment = _verified_reviewer_reassignment(
+            task,
+            evidence_reviewer=evidence_reviewer,
+            current_reviewer=reviewer,
+        )
+
+    config = load_config()
+    repository_id = task_primary_repository_id(config, task)
+    repository_slug_value = repository_slug(config, repository_id)
+    if repository_id is None or not repository_slug_value:
+        raise SystemExit("Cannot reconcile task: a single delivery repository is required.")
+    requested_slug = _normalize_github_repo_slug(
+        _required_reconcile_env("RECONCILE_DELIVERY_REPOSITORY")
+    )
+    expected_slug = _normalize_github_repo_slug(repository_slug_value)
+    if requested_slug != expected_slug:
+        raise SystemExit(
+            "Cannot reconcile task: delivery repository does not match task artifacts "
+            f"({requested_slug} != {expected_slug})."
+        )
+    delivery_root = _validated_git_root(
+        _required_reconcile_env("RECONCILE_DELIVERY_ROOT"),
+        label="RECONCILE_DELIVERY_ROOT",
+    )
+    actual_slug = _normalize_github_repo_slug(
+        run_git_command(
+            ["remote", "get-url", "origin"],
+            cwd=delivery_root,
+            failure_message="Cannot reconcile task: delivery origin remote is unavailable.",
+        )
+    )
+    if actual_slug != expected_slug:
+        raise SystemExit(
+            "Cannot reconcile task: delivery checkout origin does not match task artifacts "
+            f"({actual_slug} != {expected_slug})."
+        )
+    delivery_target_ref = str(
+        os.environ.get("RECONCILE_DELIVERY_TARGET_REF") or "origin/dev"
+    ).strip()
+    delivery_commit, delivery_target_sha = _merged_commit(
+        delivery_root,
+        _required_reconcile_env("RECONCILE_DELIVERY_COMMIT"),
+        delivery_target_ref,
+        label="delivery",
+    )
+    if expected_slug not in evidence_text or delivery_commit not in evidence_text:
+        raise SystemExit(
+            "Cannot reconcile task: merged review evidence does not cite the verified "
+            "delivery repository and full commit."
+        )
+
+    return {
+        "recorded_at": iso_now(),
+        "reconciled_from_merged_evidence": True,
+        "repository_id": repository_id,
+        "repository_slug": expected_slug,
+        "repository_path": str(delivery_root),
+        "commit": delivery_commit,
+        "merge_target_ref": delivery_target_ref,
+        "merge_target_sha": delivery_target_sha,
+        "head_merged_to_target": True,
+        "review_evidence": {
+            "file": evidence_posix,
+            "commit": evidence_commit,
+            "merge_target_ref": evidence_target_ref,
+            "merge_target_sha": evidence_target_sha,
+            "owner": owner,
+            "reviewer": evidence_reviewer,
+            "canonical_reviewer": reviewer,
+            "status": "review_approved",
+            **(
+                {"reviewer_reassignment": reviewer_reassignment}
+                if reviewer_reassignment is not None
+                else {}
+            ),
+        },
+    }
+
+
+def command_reconcile_merged_done(state: dict[str, Any], args: list[str]) -> None:
+    if len(args) < 2:
+        raise SystemExit("Usage: reconcile_merged_done <task-id> <message>")
+    task_id, message = args[0], args[1]
+    actor = current_actor()
+    ensure_agent(actor)
+    if actor != "Human/Ops":
+        raise SystemExit("Only Human/Ops can reconcile an already-merged task to done")
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown task: {task_id}")
+    if str(task.get("status") or "") not in {
+        "todo",
+        "in_progress",
+        "blocked",
+        "review",
+        "review_approved",
+    }:
+        raise SystemExit(
+            f"{task_id} cannot be reconciled from status {task.get('status') or 'missing'}"
+        )
+
+    delivery = validate_merged_done_evidence(task)
+    timestamp = iso_now()
+    delivery["recorded_at"] = timestamp
+    task["status"] = "done"
+    task["terminal_outcome"] = "completed"
+    task["last_update"] = timestamp
+    task["next"] = message
+    task["delivery"] = delivery
+    task.pop("waiting_for", None)
+    mark_blockers_resolved(state, task_id)
+    mark_handoffs_done(state, task_id)
+    archive_terminal_task_from_state(state, task, archived_at=timestamp)
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": actor,
+            "type": "reconcile_merged_done",
+            "task_id": task_id,
+            "message": message,
+            "delivery": delivery,
+        }
+    )
+
+
 def command_done(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: done <task-id> <message>")
@@ -3857,6 +5583,11 @@ def command_done(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"Only the owner ({task.get('owner')}) can finalize {task_id} to done")
     if task.get("status") != "review_approved":
         raise SystemExit(f"{task_id} must be review_approved before it can move to done")
+    # Allow owner to supply review evidence at done time when reviewer did not set it.
+    done_review_file = os.environ.get("REVIEW_FILE", "").strip()
+    if done_review_file and not task.get("review_file"):
+        task["review_file"] = done_review_file
+    validate_loop_completion_claim(task)
     timestamp = iso_now()
     delivery = collect_done_delivery_metadata(task, actor)
     delivery["recorded_at"] = timestamp
@@ -4015,6 +5746,21 @@ def command_show(state: dict[str, Any], args: list[str]) -> None:
     )
 
 
+def _emit_fail_closed(error: ActivityAuditInvariantError) -> None:
+    print(
+        json.dumps(
+            {
+                "status": "fail_closed",
+                "diagnostic": error.diagnostic,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ),
+        file=sys.stderr,
+    )
+
+
 def command_wave(state: dict[str, Any], args: list[str]) -> None:
     """wave open <wave-id> | wave close | wave freeze"""
     from wave_guards import (  # lazy: only needed for this command
@@ -4083,7 +5829,9 @@ def command_wave(state: dict[str, Any], args: list[str]) -> None:
 
 
 def main(argv: list[str]) -> int:
-    state = load_state()
+    validate_status_command_runtime_binding()
+    validate_status_root_binding()
+
     command = argv[1] if len(argv) > 1 else "sync"
     args = argv[2:]
 
@@ -4102,6 +5850,7 @@ def main(argv: list[str]) -> int:
         "blocker": command_blocker,
         "done": command_done,
         "restore_approved": command_restore_approved,
+        "reconcile_merged_done": command_reconcile_merged_done,
         "supersede": command_supersede,
         "approve": command_approve,
         "archive_migrate": command_archive_migrate,
@@ -4109,20 +5858,133 @@ def main(argv: list[str]) -> int:
         "wave": command_wave,
     }
 
+    if command == "recover":
+        if args:
+            raise SystemExit("Usage: recover")
+        try:
+            with canonical_task_state_lock(shared=False, nonblocking=True):
+                state = load_state()
+                pending_planes = [
+                    key
+                    for key in (
+                        STATUS_ARCHIVE_OUTBOX_KEY,
+                        STATUS_ACTIVITY_OUTBOX_KEY,
+                    )
+                    if state.get(key) not in (None, {}, [])
+                ]
+                try:
+                    archive_recovered = recover_status_archive_outbox(state)
+                    activity_recovered = recover_status_activity_outbox(state)
+                    if archive_recovered or activity_recovered:
+                        refresh_derived_status_views(state)
+                except ActivityAuditInvariantError:
+                    raise
+                except RuntimeError as exc:
+                    raise ActivityAuditInvariantError(
+                        "canonical status recovery failed integrity checks",
+                        invariant="status_recovery_integrity",
+                        evidence={
+                            "command": command,
+                            "pending_planes": pending_planes,
+                            "error": str(exc),
+                        },
+                    ) from exc
+        except BlockingIOError:
+            _emit_fail_closed(
+                ActivityAuditInvariantError(
+                    "canonical task-state lock is busy",
+                    invariant="status_task_lock_busy",
+                    evidence={
+                        "command": command,
+                        "lock_path": str(canonical_task_state_lock_path(STATUS_FILE)),
+                    },
+                )
+            )
+            return 75
+        except ActivityAuditInvariantError as exc:
+            _emit_fail_closed(exc)
+            return 2
+        print(
+            json.dumps(
+                {
+                    "status": (
+                        "recovered"
+                        if archive_recovered or activity_recovered
+                        else "no_pending_recovery"
+                    ),
+                    "archive_outbox_recovered": archive_recovered,
+                    "activity_outbox_recovered": activity_recovered,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            )
+        )
+        return 0
+
     if command in read_only_commands:
-        read_only_commands[command](state, args)
+        # Read-only commands must never join the writer convoy or mutate
+        # recovery state. Writers/supervisor own outbox recovery; a reader
+        # reports a bounded fail-closed diagnostic instead.
+        try:
+            with canonical_task_state_lock(shared=True, nonblocking=True):
+                state = load_state()
+                pending_planes = [
+                    key
+                    for key in (
+                        STATUS_ARCHIVE_OUTBOX_KEY,
+                        STATUS_ACTIVITY_OUTBOX_KEY,
+                    )
+                    if state.get(key) not in (None, {}, [])
+                ]
+                if pending_planes:
+                    raise ActivityAuditInvariantError(
+                        "canonical status recovery is pending",
+                        invariant="status_recovery_pending",
+                        evidence={"pending_planes": pending_planes},
+                    )
+                read_only_commands[command](state, args)
+        except BlockingIOError as exc:
+            _emit_fail_closed(
+                ActivityAuditInvariantError(
+                    "canonical task-state lock is busy",
+                    invariant="status_task_lock_busy",
+                    evidence={
+                        "command": command,
+                        "lock_path": str(canonical_task_state_lock_path(STATUS_FILE)),
+                    },
+                )
+            )
+            return 75
+        except ActivityAuditInvariantError as exc:
+            _emit_fail_closed(exc)
+            return 2
         return 0
 
     if command not in commands:
         raise SystemExit(f"Unknown command: {command}")
 
-    state_before = deepcopy(state)
-    commands[command](state, args)
-    try:
-        sync_all(state)
-    except Exception:
-        save_state(state_before)
-        raise
+    def run_mutation() -> None:
+        state = load_state()
+        recover_status_archive_outbox(state)
+        recover_status_activity_outbox(state)
+        with buffer_activity_events():
+            command_result = commands[command](state, args)
+            if command_result is False:
+                return
+            sync_all(state)
+
+    if str(os.environ.get("ORCH_RUN_ID") or "").strip():
+        config = load_config()
+        with runtime_state_lock(config, shared=True):
+            validate_active_status_command_lease(command, args)
+            with canonical_task_state_lock(shared=False):
+                run_mutation()
+        return 0
+
+    with canonical_task_state_lock(shared=False):
+        validate_active_status_command_lease(command, args)
+        run_mutation()
     return 0
 
 

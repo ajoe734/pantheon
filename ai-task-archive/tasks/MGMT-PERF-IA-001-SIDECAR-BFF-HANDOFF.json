@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "task_id": "MGMT-PERF-IA-001-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-07-11T07:09:25Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-PERF-IA-001-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare MGMT-PERF-IA-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-PERF-IA-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Management Performance Ranking IA / Wave 0 frontend routes",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/MGMT-PERF-IA-001/MGMT-PERF-IA-001-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: support-only BFF/frontend handoff packet verified, PR #3096 merged to dev at ccd86dd58a447b307e7c2fe257907c19f3d3d700; required CI checks passed; no canonical, runtime, or frontend implementation changed.",
+    "last_update": "2026-07-11T07:09:25Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-PERF-IA-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：BFF route 對照與 contract test 存在性已核實 (portfolio-book/exposure/holdings/positions, performance-attribution 及 by-persona/by-strategy/by-pool, persona-league, quarterly-ranking 皆存在於 services/control-plane/bff/main.py)；diff 範圍僅限單一 support sidecar 檔案，未變更 canonical/BFF/runtime/frontend；git diff --check 通過。",
+      "後續：待 parent MGMT-PERF-IA-001 owner 決定是否吸收，並注意 MGMT-PERF-IA-002 尚未解決的 shared identity/time/snapshot/filter 契約缺口。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T07:09:25Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-perf-ia-001-sidecar-bff-handoff",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-PERF-IA-001-SIDECAR-BFF-HANDOFF",
+      "git_clean_required": false,
+      "commit": "002b83ff7f4543b6f3b3ba2efe8da2937e546e70",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/MGMT-PERF-IA-001-SIDECAR-BFF-HANDOFF",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-PERF-IA-001-SIDECAR-BFF-HANDOFF",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "ccd86dd58a447b307e7c2fe257907c19f3d3d700",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-PERF-IA-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only BFF/frontend handoff packet ready for review at d91cfb55f; aligned owner, context vocabulary, and Performance exposure tab with MGMT-PERF-IA-001/002 and route migration matrix. Verified git diff --check and inspected BFF route registrations; no canonical/runtime/frontend changes.",
+      "status": "done",
+      "created_at": "2026-07-11T06:41:14Z",
+      "resolved_at": "2026-07-11T07:06:49Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: cited BFF routes and contract tests verified to exist; diff scoped to the single support sidecar artifact only; no canonical/runtime/frontend changes. Returned to owner Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-07-11T07:06:49Z",
+      "resolved_at": "2026-07-11T07:09:26Z"
+    }
+  ],
+  "blockers": []
+}

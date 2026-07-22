@@ -105,6 +105,13 @@ services:
       GOVERNANCE_STORE_DSN: ${GOVERNANCE_STORE_DSN:-}
       GOVERNANCE_AUDIT_BACKEND: ${GOVERNANCE_AUDIT_BACKEND:-postgres}
       GOVERNANCE_AUDIT_DSN: ${GOVERNANCE_AUDIT_DSN:-}
+      PANTHEON_GOVERNANCE_AUTH_MODE: ${PANTHEON_GOVERNANCE_AUTH_MODE:-strict}
+      PANTHEON_GOVERNANCE_JWT_SECRET: ${PANTHEON_BFF_JWT_SECRET:-}
+      PANTHEON_GOVERNANCE_JWT_ISSUER: ${PANTHEON_BFF_JWT_ISSUER:-}
+      PANTHEON_GOVERNANCE_JWT_AUDIENCE: ${PANTHEON_BFF_JWT_AUDIENCE:-}
+      PANTHEON_GOVERNANCE_ROLE_CLAIMS: ${PANTHEON_BFF_ROLE_CLAIMS:-roles,role}
+      PANTHEON_GOVERNANCE_MFA_CLAIMS: ${PANTHEON_BFF_MFA_CLAIMS:-amr,acr,mfa,mfa_verified}
+      PANTHEON_GOVERNANCE_MFA_VALUES: ${PANTHEON_BFF_MFA_VALUES:-true,1,yes,mfa,otp,totp,webauthn}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
       PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
       PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
@@ -189,6 +196,9 @@ services:
       PORT: "8090"
       INCIDENTS_DATA_DIR: /data/incidents
       PANTHEON_TELEMETRY_URL: http://telemetry:8083
+      PANTHEON_RUNTIME_MANAGER_URL: ${PANTHEON_RUNTIME_MANAGER_URL:-}
+      PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-}
+      POSTMORTEMS_URL: http://postmortems:8091
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-production}
       PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
@@ -227,6 +237,9 @@ services:
       POSTMORTEMS_DATA_DIR: /data/incidents
       INCIDENTS_DATA_DIR: /data/incidents
       PANTHEON_TELEMETRY_URL: http://telemetry:8083
+      PANTHEON_RUNTIME_MANAGER_URL: ${PANTHEON_RUNTIME_MANAGER_URL:-}
+      PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-}
+      EVOLUTION_URL: http://evolution:8093
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-production}
       # Hard-enforce Postgres in staging/prod; override to dev only for local dev rollback.
@@ -261,9 +274,23 @@ services:
     build:
       context: .
       dockerfile: services/control-plane/bff/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
     restart: unless-stopped
     environment:
       BFF_DATA_DIR: /data/bff
+      AGORA_WORKSHOP_STORE_BACKEND: ${AGORA_WORKSHOP_STORE_BACKEND:-postgres}
+      AGORA_WORKSHOP_STORE_DSN: ${AGORA_WORKSHOP_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      AGORA_WORKSHOP_STORE_SCHEMA: ${AGORA_WORKSHOP_STORE_SCHEMA:-agora}
+      AGORA_DASHBOARD_STORE_BACKEND: ${AGORA_DASHBOARD_STORE_BACKEND:-postgres}
+      AGORA_DASHBOARD_STORE_DSN: ${AGORA_DASHBOARD_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      AGORA_DASHBOARD_STORE_SCHEMA: ${AGORA_DASHBOARD_STORE_SCHEMA:-agora}
+      AGORA_RESEARCH_STORE_BACKEND: ${AGORA_RESEARCH_STORE_BACKEND:-postgres}
+      AGORA_RESEARCH_STORE_DSN: ${AGORA_RESEARCH_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      AGORA_RESEARCH_STORE_SCHEMA: ${AGORA_RESEARCH_STORE_SCHEMA:-agora_research}
+      AGORA_TRADING_ROOM_STORE_BACKEND: ${AGORA_TRADING_ROOM_STORE_BACKEND:-postgres}
+      AGORA_TRADING_ROOM_STORE_DSN: ${AGORA_TRADING_ROOM_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      AGORA_TRADING_ROOM_STORE_SCHEMA: ${AGORA_TRADING_ROOM_STORE_SCHEMA:-agora}
       PANTHEON_STATUS_ROOT: ${PANTHEON_STATUS_ROOT_CONTAINER:-/workspace/status-root}
       BFF_READ_SURFACE_STATE: ${BFF_READ_SURFACE_STATE:-fresh}
       PANTHEON_BFF_ALLOW_LOCAL_SNAPSHOT_FALLBACK: "false"
@@ -298,6 +325,12 @@ services:
       PANTHEON_INTERNAL_API_URL: ${PANTHEON_INTERNAL_API_URL:-}
       PANTHEON_RUNTIME_MANAGER_URL: ${PANTHEON_RUNTIME_MANAGER_URL:-}
       PANTHEON_RUNTIME_MANAGER_TOKEN: ${PANTHEON_RUNTIME_MANAGER_TOKEN:-}
+      # Production persona provisioning must use the authoritative adapter RPC
+      # boundary.  An empty URL would make the cron registrar fall back to its
+      # non-authoritative dry-run runtime, so fail compose rendering instead.
+      PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL: ${PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL:?set a nonblank reachable OpenClaw gateway adapter URL}
+      PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:?set the reviewed OpenClaw adapter service token}
+      PANTHEON_PAPER_FLEET_RECONCILER_URL: ${PANTHEON_PAPER_FLEET_RECONCILER_URL:-}
       PANTHEON_GOVERNANCE_APPROVAL_API_URL: http://governance:8082
       PANTHEON_DEPLOYMENT_API_URL: http://deployment:8095
       PANTHEON_CAPITAL_API_URL: http://capital:8092
@@ -308,8 +341,15 @@ services:
       PANTHEON_LINEAGE_READ_URL: http://lineage-read:8094
       PANTHEON_MEMORY_API_URL: http://memory:8086
       PANTHEON_REGISTRY_URL: http://registry:8087
+      PANTHEON_REGISTRY_API_URL: ${PANTHEON_REGISTRY_API_URL:-http://registry:8087}
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_PERSONA_PROVISIONING_STORE_BACKEND: ${PANTHEON_PERSONA_PROVISIONING_STORE_BACKEND:-postgres}
+      PANTHEON_PERSONA_PROVISIONING_STORE_DSN: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_PERSONA_PROVISIONING_STORE_SCHEMA: ${PANTHEON_PERSONA_PROVISIONING_STORE_SCHEMA:-bff}
       MANAGEMENT_AI_STORE_BACKEND: ${MANAGEMENT_AI_STORE_BACKEND:-postgres}
+      PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_BACKEND: ${PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_BACKEND:-postgres}
+      PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_DSN: ${PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      PANTHEON_TRADE_JOURNEY_CLOCK_DRIFT_SECONDS: ${PANTHEON_TRADE_JOURNEY_CLOCK_DRIFT_SECONDS:-5}
       MANAGEMENT_AI_STORE_SCHEMA: ${MANAGEMENT_AI_STORE_SCHEMA:-management_ai}
       MANAGEMENT_AI_STORE_DSN: ${MANAGEMENT_AI_STORE_DSN:-}
       MANAGEMENT_AI_DATABASE_URL: ${MANAGEMENT_AI_DATABASE_URL:-postgresql://pantheon_management_ai:pantheon_management_ai_dev@postgres:5432/pantheon}
@@ -325,9 +365,13 @@ services:
         condition: service_healthy
       deployment:
         condition: service_healthy
+      capital:
+        condition: service_healthy
       incidents:
         condition: service_healthy
       postmortems:
+        condition: service_healthy
+      registry:
         condition: service_healthy
       postgres:
         condition: service_healthy
@@ -588,11 +632,16 @@ services:
       PORT: "8093"
       EVOLUTION_DATA_DIR: /data/evolution
       INCIDENT_DATA_DIR: /data/incidents
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      INCIDENT_STORE_BACKEND: ${INCIDENT_STORE_BACKEND:-postgres}
+      POSTMORTEM_STORE_BACKEND: ${POSTMORTEM_STORE_BACKEND:-postgres}
     volumes:
       - evolution-data:/data/evolution
       - incident-data:/data/incidents
     depends_on:
       incidents:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     ports:
       - "${EVOLUTION_PORT:-38093}:8093"
@@ -676,6 +725,9 @@ volumes:
   lineage-data:
   minio-data:
   nats-data:
+  # Required when docker-compose.staging-full.yml adds the external adapter
+  # service; extends does not import top-level volume declarations.
+  openclaw-adapter-data:
   postgres-data:
   promotion-data:
   reconciliation-drift-data:

@@ -1,9 +1,9 @@
 # APP-002 Frontend View-State Matrix
 
-**Parent Task**: APP-002 — Define operator-facing deployment, incident, and evolution surfaces  
-**Created by**: Copilot  
-**Date**: 2026-04-10  
-**Status**: Design artifact (APP-002 support)  
+**Parent Task**: APP-002 — Define operator-facing deployment, incident, and evolution surfaces
+**Created by**: Copilot
+**Date**: 2026-04-10
+**Status**: Design artifact (APP-002 support)
 
 > This is a support artifact derived from DEGRADED_OPERATOR_PATH.md and BFF_API_CONTRACT.md. It defines how each operator screen should display data, enable/disable buttons, and reconcile with real-time updates based on staleness and degradation state.
 
@@ -163,7 +163,7 @@ From DEGRADED_OPERATOR_PATH.md §3.2, all read surfaces report one of five state
   ⚠️ Unable to verify incident status. Possible scenarios:
      • System is healthy (no incidents)
      • Or: monitoring is degraded and incidents exist but are unverified
-  
+
   Use CLI to verify: pantheon-admin incident list
   Or refresh when BFF is available
 ```
@@ -333,20 +333,20 @@ async function submitApproval() {
     target: { type: "DeploymentPlan", id: plan_id },
     action: "approve"
   }
-  
+
   // Step 2: Show UI feedback
   showSpinner("Approval submitted...")
-  
+
   // Step 3: Poll or subscribe to command status
   let status = "submitted"
   while (status !== "executed" && status !== "failed") {
     // Option A: Poll (simple but slower)
     const result = await GET /api/v1/operator/commands/{receipt.command_id}
     status = result.status
-    
+
     // Option B: SSE subscription (recommended, real-time)
     // (see SSE setup below)
-    
+
     if (status === "executed") {
       // Step 4: Read updated state from main surface
       const updated = await GET /api/v1/operator/deployment-review/{plan_id}
@@ -523,7 +523,7 @@ Runtime Binding: {id}
 Runtime Binding: Unknown
   ⚠️  Unable to verify current state
   Last check: 15:00:30 UTC
-  
+
   Options:
     1. Wait for service recovery and [Refresh]
     2. Use admin CLI: pantheon-admin runtime show {binding_id}
@@ -533,14 +533,14 @@ Runtime Binding: Unknown
 
 ## 8. Acceptance Criteria for APP-002
 
-✅ All three operator screens (deployment, incident, evolution) have defined view-state matrices  
-✅ Button gating rules are explicit based on data staleness  
-✅ SSE reconciliation logic is specified  
-✅ Degradation banner decision tree is clear  
-✅ "Never show none" rule is enforced  
-✅ Read-after-write flow handles network outages  
-✅ EVO-004 dependency is called out (separate review/execute until spec lands)  
-✅ No canonical truth is modified — pure UI specification  
+✅ All three operator screens (deployment, incident, evolution) have defined view-state matrices
+✅ Button gating rules are explicit based on data staleness
+✅ SSE reconciliation logic is specified
+✅ Degradation banner decision tree is clear
+✅ "Never show none" rule is enforced
+✅ Read-after-write flow handles network outages
+✅ EVO-004 dependency is called out (separate review/execute until spec lands)
+✅ No canonical truth is modified — pure UI specification
 
 ---
 

@@ -1,0 +1,125 @@
+{
+  "expected_deployment_sha": "93c50da6d67560f7035025879af08dfc3197fb76",
+  "observed_at": "2026-07-20T02:24:51Z",
+  "outcome": "passed",
+  "proof": {
+    "events": [
+      {
+        "causal_parent_event_id": "signal:bb42c2f0-250f-5def-9be9-cab5425bc94e",
+        "event_id": "818a6bff-d35a-466a-aec4-653c215a830a",
+        "event_type": "signal_generation",
+        "ingested_seq": 39844,
+        "producer": "execution.paper_runtime",
+        "reconciliation_evaluation_id": "",
+        "sequence_no": 1
+      },
+      {
+        "causal_parent_event_id": "818a6bff-d35a-466a-aec4-653c215a830a",
+        "event_id": "a9f3a05f-0088-5752-825b-a346738e4e00",
+        "event_type": "trade_decision",
+        "ingested_seq": 39845,
+        "producer": "execution.paper_runtime",
+        "reconciliation_evaluation_id": "",
+        "sequence_no": 2
+      },
+      {
+        "causal_parent_event_id": "a9f3a05f-0088-5752-825b-a346738e4e00",
+        "event_id": "9b249493-cf31-567a-8165-7724bc638862",
+        "event_type": "risk_evaluation",
+        "ingested_seq": 39848,
+        "producer": "execution.paper_runtime",
+        "reconciliation_evaluation_id": "",
+        "sequence_no": 3
+      },
+      {
+        "causal_parent_event_id": "9b249493-cf31-567a-8165-7724bc638862",
+        "event_id": "c1496a2c-123a-5a1a-9c73-8c5d4cc1e10a",
+        "event_type": "order_submitted",
+        "ingested_seq": 39849,
+        "producer": "execution.paper_runtime",
+        "reconciliation_evaluation_id": "",
+        "sequence_no": 4
+      },
+      {
+        "causal_parent_event_id": "c1496a2c-123a-5a1a-9c73-8c5d4cc1e10a",
+        "event_id": "2552c931-ccf0-5a92-b700-d9fc644c6fe5",
+        "event_type": "order_accepted",
+        "ingested_seq": 39850,
+        "producer": "execution.paper_runtime",
+        "reconciliation_evaluation_id": "",
+        "sequence_no": 5
+      },
+      {
+        "causal_parent_event_id": "2552c931-ccf0-5a92-b700-d9fc644c6fe5",
+        "event_id": "428bb3ec-e78d-411a-afa9-549d7c5bbb3b",
+        "event_type": "paper_fill_simulated",
+        "ingested_seq": 39851,
+        "producer": "execution.paper_runtime",
+        "reconciliation_evaluation_id": "",
+        "sequence_no": 6
+      },
+      {
+        "causal_parent_event_id": "428bb3ec-e78d-411a-afa9-549d7c5bbb3b",
+        "event_id": "8efe473e-0fcc-514f-9a8c-880bbd15a078",
+        "event_type": "position_snapshot",
+        "ingested_seq": 39852,
+        "producer": "execution.paper_runtime",
+        "reconciliation_evaluation_id": "",
+        "sequence_no": 7
+      },
+      {
+        "causal_parent_event_id": "8efe473e-0fcc-514f-9a8c-880bbd15a078",
+        "event_id": "e5d86410-86a4-571c-a404-36474f872011",
+        "event_type": "reconciliation_failed",
+        "ingested_seq": 39855,
+        "producer": "reconciliation-drift.scheduled",
+        "reconciliation_evaluation_id": "rdeval-sched-loop-prod-tel-002-run-rb-d4a79ff-rb-d4a79ff7e2e94f188f63e-9eb355541d81524a",
+        "sequence_no": 8
+      }
+    ],
+    "identity": {
+      "artifact_id": "artifact-persona-paper-62d653ee9ec999e736ec",
+      "artifact_version": "1.0.0",
+      "binding_id": "rb-d4a79ff7e2e94f188f63e87a38b347a5",
+      "capital_pool_id": "pool-persona-paper-62d653ee9ec999e736ec",
+      "environment": "paper",
+      "journey_id": "tj_87e1e3ea-e8d3-42e8-a5b2-26f8b021a651",
+      "loop_run_id": "lr-run-rb-d4a79ff7e2e94f188f63e87a38b347a5-2026-07-20T02:24:39Z-1",
+      "persona_capital_binding_id": "pcb-persona-paper-62d653ee9ec999e736ec",
+      "persona_id": "persona-2a7212decacfd284ac92",
+      "plan_id": "plan-persona-paper-62d653ee9ec999e736ec",
+      "run_id": "run-rb-d4a79ff7e2e94f188f63e87a38b347a5-2026-07-20T02:24:39Z-1",
+      "runtime_id": "rt-1b52fc7d",
+      "signal_id": "bb42c2f0-250f-5def-9be9-cab5425bc94e",
+      "strategy_id": "smoke-strategy",
+      "tenant_id": "tenant-dev",
+      "trace_id": "683b89f2-852d-454a-98ba-b6ca5726c93a"
+    },
+    "projection": {
+      "accepted_live": true,
+      "checkpoint": 39855,
+      "deployment_sha": "93c50da6d67560f7035025879af08dfc3197fb76",
+      "generation": 1470,
+      "generation_name": "g000000001470-4cf4b70f8859",
+      "journey_id": "tj_87e1e3ea-e8d3-42e8-a5b2-26f8b021a651",
+      "loop_run_id": "lr-run-rb-d4a79ff7e2e94f188f63e87a38b347a5-2026-07-20T02:24:39Z-1",
+      "loop_status": "completed_with_variance",
+      "mode": "live",
+      "status": "ready",
+      "truth_level": "canonical_live"
+    },
+    "source": {
+      "baseline_high_watermark": 39833,
+      "candidate_max_ingested_seq": 39855,
+      "read_only": true,
+      "source_high_watermark": 39855,
+      "store": "telemetry_events"
+    }
+  },
+  "redaction": {
+    "dsn_included": false,
+    "payloads_included": false
+  },
+  "schema_version": "pantheon.loop-prod-tel-002-hosted-proof.v1",
+  "task_id": "LOOP-PROD-TEL-002"
+}

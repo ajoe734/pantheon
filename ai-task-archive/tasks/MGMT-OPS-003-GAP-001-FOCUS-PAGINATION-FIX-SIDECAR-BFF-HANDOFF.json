@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "task_id": "MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-07-12T11:19:07Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "MGMT-OPS-003 Hosted Gap / Wave 0 linked-page repair",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX/MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "PR #3406 merged into dev at 8554b21a537b4411743251c5bbe232aaa3d163a2; support-only BFF/frontend focus pagination handoff finalized. Verified git diff --check, source route signature, Commit trailers, Runtime mirror guard, and Smoke acceptance; canonical/runtime/frontend layers unchanged.",
+    "last_update": "2026-07-12T11:19:07Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T11:19:07Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-ops-003-gap-001-focus-pagination-fix-sidecar-bff-handoff",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX-SIDECAR-BFF-HANDOFF",
+      "git_clean_required": false,
+      "commit": "dffaf6959e81ac757c7d974ae067b4bc8f298887",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX-SIDECAR-BFF-HANDOFF",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX-SIDECAR-BFF-HANDOFF",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "8554b21a537b4411743251c5bbe232aaa3d163a2",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Support-only BFF/frontend focus pagination packet committed at ae877b5c5; ready for review. Canonical/runtime/frontend layers unchanged.",
+      "status": "done",
+      "created_at": "2026-07-12T10:27:21Z",
+      "resolved_at": "2026-07-12T11:16:11Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Approved: support-only handoff accurately records existing persona-fleet q/page_size/page_token boundary, frontend composition rules, operator journey, acceptance matrix, and prior hosted evidence; canonical/runtime/frontend layers unchanged. Verified git diff --check and source route signature.",
+      "status": "done",
+      "created_at": "2026-07-12T11:16:11Z",
+      "resolved_at": "2026-07-12T11:19:08Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "task_id": "TJ-E2E-003-SIDECAR-REVIEW",
+  "archived_at": "2026-07-12T01:09:39Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "TJ-E2E-003-SIDECAR-REVIEW",
+    "title": "Prepare TJ-E2E-003 review packet and evidence summary",
+    "summary_zh": "平行支援 TJ-E2E-003，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
+    "phase": "Trade Journey E2E / Wave 1",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "TJ-E2E-001",
+      "TJ-E2E-002"
+    ],
+    "artifacts": [
+      "support/sidecars/TJ-E2E-003/TJ-E2E-003-SIDECAR-REVIEW.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Support-only review packet merged via PR #3329 at 685c465cec8d5ed528f44a2be6750ecfbd01c542; focused correlation propagation verification: 79 passed. Parent acceptance remains owned by TJ-E2E-003.",
+    "last_update": "2026-07-12T01:09:39Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "TJ-E2E-003",
+    "helper_kind": "review_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T01:09:39Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/tj-e2e-003-sidecar-review",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/TJ-E2E-003-SIDECAR-REVIEW",
+      "git_clean_required": false,
+      "commit": "4eb13bbb857b8f8aa7ab9cf9a01b04e36d0cb360",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/TJ-E2E-003-SIDECAR-REVIEW",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/TJ-E2E-003-SIDECAR-REVIEW",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "685c465cec8d5ed528f44a2be6750ecfbd01c542",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "TJ-E2E-003-SIDECAR-REVIEW",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Support-only review packet committed at 44facda6c; focused correlation propagation suite passed (115 tests). Parent remains blocked on the real SubmitTaiwanBrokerOrder HTTP broker/paper-simulation path dropping client_order_id and correlation_envelope; use support/sidecars/TJ-E2E-003/TJ-E2E-003-SIDECAR-REVIEW.md as the evidence index.",
+      "status": "done",
+      "created_at": "2026-07-12T01:02:31Z",
+      "resolved_at": "2026-07-12T01:05:54Z"
+    },
+    {
+      "task_id": "TJ-E2E-003-SIDECAR-REVIEW",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Support-only packet correctly identifies the production paper broker HTTP path gap and preserves the parent acceptance boundary; reviewed commit 44facda6c.",
+      "status": "done",
+      "created_at": "2026-07-12T01:05:54Z",
+      "resolved_at": "2026-07-12T01:09:40Z"
+    }
+  ],
+  "blockers": []
+}

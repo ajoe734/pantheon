@@ -32,6 +32,7 @@ from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 
 _SERVANT_CAPABILITY = "agora.servant.v1"
 _SERVANT_SESSION_CAPABILITY = "agora.session.v1"
+_PERSONA_OPINION_CAPABILITY = "persona_opinion"
 _SERVANT_POLICY_REFS = [
     "docs/04/pantheon_agora_cross_repo_2026-06-20/contract-closure/03_servant_and_workshop_contracts.md",
 ]
@@ -179,6 +180,11 @@ def _stable_servant_persona_id(*, tenant_id: str, agora_user_id: str) -> str:
     return f"agora-servant-{digest}"
 
 
+def _stable_servant_capability_snapshot_id(*, persona_id: str) -> str:
+    digest = hashlib.sha256(f"{persona_id}\0persona_opinion".encode("utf-8")).hexdigest()[:20]
+    return f"cap-servant-{digest}"
+
+
 def _allowed_agora_capabilities(scope: Any) -> list[str]:
     allowed = set(AGORA_CAPABILITIES)
     capabilities = []
@@ -228,6 +234,7 @@ def _base_servant_metadata(
     scope: Any,
     capability_summary: ServantCapabilitySummary,
     policy: AgoraServantPolicy,
+    capability_snapshot_id: str,
     now: str,
     existing: Optional[Mapping[str, Any]] = None,
     sync_result: Optional[Mapping[str, Any]] = None,
@@ -243,6 +250,11 @@ def _base_servant_metadata(
             "owner_scope": "user_private",
             "visibility_scope": "private",
             "memory_scope": "private_user",
+            "deployment_stage": "paper",
+            "environment_ceiling": "paper",
+            "interaction_capabilities": [_PERSONA_OPINION_CAPABILITY],
+            "capability_snapshot_id": capability_snapshot_id,
+            "execution_authority": "none",
             "capability_summary": capability_summary.model_dump(),
             "policy": policy.model_dump(),
             "policy_refs": list(_SERVANT_POLICY_REFS),
@@ -335,7 +347,9 @@ def _create_servant_persona(
         actor_id=scope.operator_id,
         created_at=now,
         archetype="agora_servant",
-        lifecycle_state="active",
+        # Admission is completed only after the OpenClaw identity sync and the
+        # explicit capability snapshot both succeed.
+        lifecycle_state="draft",
         risk_level="low",
         mandate="user_private_agora_servant",
         strategy_family="agora_servant",
@@ -360,13 +374,15 @@ def _update_servant_persona(
     update_persona = getattr(read_store, "update_persona", None)
     if not callable(update_persona):
         raise RuntimeError("read store does not support persona update")
+    current_status = _servant_status(existing)
+    lifecycle_state = current_status if current_status in {"suspended", "retired"} else "paper_only"
     updated = update_persona(
         persona_id,
         name=str(existing.get("name") or "Agora Servant"),
         actor_id=scope.operator_id,
         updated_at=now,
         archetype=None,
-        lifecycle_state=_servant_status(existing),
+        lifecycle_state=lifecycle_state,
         risk_level=str(_metadata(existing).get("risk_level") or "low"),
         metadata=metadata,
     )
@@ -648,6 +664,7 @@ def create_servant_router(
     *,
     extract_identity: Callable[..., Any],
     require_read_role: Callable[..., None],
+    require_write_role: Callable[..., None],
     bff_error: Callable[..., HTTPException],
     utc_now: Callable[[], str],
     get_read_store: Callable[[], Any],
@@ -666,6 +683,7 @@ def create_servant_router(
         """Provision or reconcile the user-private Agora servant persona."""
         identity = extract_identity(authorization)
         require_read_role(identity)
+        require_write_role(identity)
         _require_header(idempotency_key, "Idempotency-Key", bff_error)
         request_id = _require_header(x_request_id, "X-Request-Id", bff_error)
         try:
@@ -691,10 +709,14 @@ def create_servant_router(
         )
         policy = AgoraServantPolicy()
         capability_summary = _capability_summary(scope, existing)
+        capability_snapshot_id = _stable_servant_capability_snapshot_id(
+            persona_id=persona_id,
+        )
         metadata = _base_servant_metadata(
             scope=scope,
             capability_summary=capability_summary,
             policy=policy,
+            capability_snapshot_id=capability_snapshot_id,
             now=now,
             existing=existing,
         )
@@ -718,7 +740,9 @@ def create_servant_router(
             )
 
         try:
-            sync_result = sync_servant_agent(persona)
+            sync_persona = _json_clone(persona)
+            sync_persona["_agent_sync_idempotency_key"] = str(idempotency_key)
+            sync_result = sync_servant_agent(sync_persona)
         except Exception as exc:  # noqa: BLE001
             from models import ErrorCode
 
@@ -730,10 +754,35 @@ def create_servant_router(
                 precondition_failed="openclaw_agent_sync",
             ) from exc
 
+        upsert_capability_snapshot = getattr(
+            read_store,
+            "upsert_persona_capability_snapshot",
+            None,
+        )
+        if not callable(upsert_capability_snapshot):
+            raise RuntimeError("read store does not support Persona capability snapshot writes")
+        upsert_capability_snapshot(
+            snapshot_id=capability_snapshot_id,
+            persona_id=str(persona.get("persona_id") or persona.get("id") or persona_id),
+            capabilities=[_PERSONA_OPINION_CAPABILITY],
+            generated_at=now,
+            source_refs=[
+                f"persona:{persona.get('persona_id') or persona.get('id') or persona_id}",
+                "policy:agora-servant-paper-opinion",
+            ],
+            metadata={
+                "tenant_id": scope.tenant_id,
+                "agora_user_id": scope.user_id,
+                "environment_ceiling": "paper",
+                "execution_authority": "none",
+            },
+        )
+
         metadata = _base_servant_metadata(
             scope=scope,
             capability_summary=capability_summary,
             policy=policy,
+            capability_snapshot_id=capability_snapshot_id,
             now=now,
             existing=persona,
             sync_result=sync_result,

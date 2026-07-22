@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-TR-001-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-06-22T10:53:29Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-TR-001-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare AG-FE-TR-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-FE-TR-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 4",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-FE-SW-001",
+      "AG-BE-TR-001",
+      "AG-XR-OPENAPI-004"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-TR-001/AG-FE-TR-001-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: sidecar BFF and frontend handoff packet for AG-FE-TR-001. All 9 v1.3 operationIds mapped, 3 TypeScript interfaces verified field-for-field against v4 schemas, safety constraints confirmed, operator journey documented. No canonical truth modified. PR #2253 merged into dev. Task artifact at support/sidecars/AG-FE-TR-001/AG-FE-TR-001-SIDECAR-BFF-HANDOFF.md.",
+    "last_update": "2026-06-22T10:53:29Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-TR-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過，所有驗收條件已達成",
+      "後續追蹤：EvidenceRef 是否 export 由 AG-FE-TR-001 實作方決定；streamTradingRoom 回傳型別請與現有 SSE 模式對齊；三項觀察不影響此 sidecar 交付"
+    ],
+    "review_file": "support/sidecars/AG-FE-TR-001/AG-FE-TR-001-SIDECAR-BFF-HANDOFF-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-22T10:53:29Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-tr-001-sidecar-bff-handoff",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-TR-001-SIDECAR-BFF-HANDOFF",
+      "git_clean_required": false,
+      "commit": "70c56f52bad13b6768a4d5a109d7858c6b573568",
+      "commit_subject": "AG-FE-TR-001-SIDECAR-BFF-HANDOFF: record closeout evidence",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": ".orchestrator/task-briefs/ag_fe_tr_001_sidecar_bff_handoff.md — status",
+        "Not changing": "canonical L1 architecture docs, BFF runtime, registry/governance",
+        "Composes with": "AG-FE-TR-001 (parent task) — parent owner decides whether to absorb",
+        "Verification": "sidecar artifact confirmed present at",
+        "No canonical truth modified. Mutates_canonical_truth": "false.",
+        "LLM-Agent": "Claude2",
+        "Task-ID": "AG-FE-TR-001-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Claude",
+        "Verified": "artifact reviewed by Claude (review_approved); no runtime checks required for support-only packet"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-TR-001-SIDECAR-BFF-HANDOFF",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "a72389ab17885409f3889e4578ddae29445eb906",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-TR-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "BFF and frontend handoff packet complete. All AG-FE-TR-001 dependencies are done (AG-FE-SW-001, AG-BE-TR-001, AG-BE-CP-001, AG-XR-OPENAPI-004). Packet maps all 9 v1.3 operationIds to proposed tradingRoom.ts functions, provides verbatim TypeScript interfaces for TradingRoomAggregate/TradingDecisionEvent/GovernedIntentHandoff from v4 schemas, documents operator journey, and surfaces safety constraints. Anchor commits: 95487393 (packet), 93b82904 (task brief).",
+      "status": "done",
+      "created_at": "2026-06-22T10:46:06Z",
+      "resolved_at": "2026-06-22T10:50:03Z"
+    },
+    {
+      "task_id": "AG-FE-TR-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Packet reviewed: all 9 operationIds mapped, 3 TypeScript interfaces verified field-for-field against v4 schemas, safety constraints confirmed, operator journey complete. Returning to Claude2 for closeout.",
+      "status": "done",
+      "created_at": "2026-06-22T10:50:03Z",
+      "resolved_at": "2026-06-22T10:53:30Z"
+    }
+  ],
+  "blockers": []
+}

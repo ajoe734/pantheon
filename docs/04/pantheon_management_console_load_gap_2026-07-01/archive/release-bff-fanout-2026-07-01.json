@@ -1,0 +1,237 @@
+{
+  "probe": "MGMT-LOAD-001 BFF fanout concurrency baseline",
+  "probeTimestamp": "2026-07-01T18:02:20.246Z",
+  "bffBase": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+  "authTokenShape": "op-<id>:admin (dev stub-auth shape; not a production secret)",
+  "fanoutRoutes": [
+    "/health",
+    "/bff/management/evidence",
+    "/bff/management/shell-summary",
+    "/bff/alerts",
+    "/bff/approvals",
+    "/bff/jobs"
+  ],
+  "excludedFromFanout": [
+    "/bff/events/stream (long-lived SSE realtime stream; not a bounded request)"
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "wallClockMs": 396,
+      "results": [
+        {
+          "route": "/health",
+          "status": 200,
+          "ms": 134
+        },
+        {
+          "route": "/bff/management/evidence",
+          "status": 200,
+          "ms": 78
+        },
+        {
+          "route": "/bff/management/shell-summary",
+          "status": 200,
+          "ms": 78
+        },
+        {
+          "route": "/bff/alerts",
+          "status": 200,
+          "ms": 330
+        },
+        {
+          "route": "/bff/approvals",
+          "status": 200,
+          "ms": 73
+        },
+        {
+          "route": "/bff/jobs",
+          "status": 200,
+          "ms": 67
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "wallClockMs": 154,
+      "results": [
+        {
+          "route": "/health",
+          "status": 200,
+          "ms": 25
+        },
+        {
+          "route": "/bff/management/evidence",
+          "status": 200,
+          "ms": 34
+        },
+        {
+          "route": "/bff/management/shell-summary",
+          "status": 200,
+          "ms": 41
+        },
+        {
+          "route": "/bff/alerts",
+          "status": 200,
+          "ms": 151
+        },
+        {
+          "route": "/bff/approvals",
+          "status": 200,
+          "ms": 38
+        },
+        {
+          "route": "/bff/jobs",
+          "status": 200,
+          "ms": 37
+        }
+      ]
+    },
+    {
+      "round": 3,
+      "wallClockMs": 151,
+      "results": [
+        {
+          "route": "/health",
+          "status": 200,
+          "ms": 16
+        },
+        {
+          "route": "/bff/management/evidence",
+          "status": 200,
+          "ms": 25
+        },
+        {
+          "route": "/bff/management/shell-summary",
+          "status": 200,
+          "ms": 29
+        },
+        {
+          "route": "/bff/alerts",
+          "status": 200,
+          "ms": 150
+        },
+        {
+          "route": "/bff/approvals",
+          "status": 200,
+          "ms": 27
+        },
+        {
+          "route": "/bff/jobs",
+          "status": 200,
+          "ms": 24
+        }
+      ]
+    },
+    {
+      "round": 4,
+      "wallClockMs": 139,
+      "results": [
+        {
+          "route": "/health",
+          "status": 200,
+          "ms": 20
+        },
+        {
+          "route": "/bff/management/evidence",
+          "status": 200,
+          "ms": 25
+        },
+        {
+          "route": "/bff/management/shell-summary",
+          "status": 200,
+          "ms": 30
+        },
+        {
+          "route": "/bff/alerts",
+          "status": 200,
+          "ms": 138
+        },
+        {
+          "route": "/bff/approvals",
+          "status": 200,
+          "ms": 32
+        },
+        {
+          "route": "/bff/jobs",
+          "status": 200,
+          "ms": 28
+        }
+      ]
+    },
+    {
+      "round": 5,
+      "wallClockMs": 123,
+      "results": [
+        {
+          "route": "/health",
+          "status": 200,
+          "ms": 14
+        },
+        {
+          "route": "/bff/management/evidence",
+          "status": 200,
+          "ms": 21
+        },
+        {
+          "route": "/bff/management/shell-summary",
+          "status": 200,
+          "ms": 22
+        },
+        {
+          "route": "/bff/alerts",
+          "status": 200,
+          "ms": 122
+        },
+        {
+          "route": "/bff/approvals",
+          "status": 200,
+          "ms": 25
+        },
+        {
+          "route": "/bff/jobs",
+          "status": 200,
+          "ms": 16
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "/health": {
+      "count": 5,
+      "minMs": 14,
+      "maxMs": 134,
+      "p95Ms": 134
+    },
+    "/bff/management/evidence": {
+      "count": 5,
+      "minMs": 21,
+      "maxMs": 78,
+      "p95Ms": 78
+    },
+    "/bff/management/shell-summary": {
+      "count": 5,
+      "minMs": 22,
+      "maxMs": 78,
+      "p95Ms": 78
+    },
+    "/bff/alerts": {
+      "count": 5,
+      "minMs": 122,
+      "maxMs": 330,
+      "p95Ms": 330
+    },
+    "/bff/approvals": {
+      "count": 5,
+      "minMs": 25,
+      "maxMs": 73,
+      "p95Ms": 73
+    },
+    "/bff/jobs": {
+      "count": 5,
+      "minMs": 16,
+      "maxMs": 67,
+      "p95Ms": 67
+    }
+  }
+}

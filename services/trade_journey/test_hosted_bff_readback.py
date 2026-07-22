@@ -1,0 +1,290 @@
+from __future__ import annotations
+
+import json
+
+from services.trade_journey import hosted_bff_readback as readback
+from services.trade_journey.hosted_lifecycle_probe import EXPECTED_STAGES, SCHEMA_VERSION as SOURCE_SCHEMA
+from services.trade_journey.lifecycle_projector import STABLE_IDENTITY_FIELDS
+
+
+SHA = "a" * 40
+BASE_URL = "https://pantheon-dev-bff.example.test"
+IDENTITY = {
+    "tenant_id": "tenant-dev",
+    "environment": "paper",
+    "journey_id": "tj-hosted-001",
+    "run_id": "run-hosted-001",
+    "loop_run_id": "lr-hosted-001",
+    "signal_id": "signal-hosted-001",
+    "strategy_id": "strategy-hosted-001",
+    "runtime_id": "runtime-hosted-001",
+    "binding_id": "binding-hosted-001",
+    "capital_pool_id": "pool-hosted-001",
+    "persona_id": "persona-hosted-001",
+    "persona_capital_binding_id": "pcb-hosted-001",
+    "artifact_id": "artifact-hosted-001",
+    "artifact_version": "1.0.0",
+    "plan_id": "plan-hosted-001",
+    "trace_id": "trace-hosted-001",
+}
+EVENT_TYPES = [
+    "signal_generation",
+    "trade_decision",
+    "risk_evaluation",
+    "order_submitted",
+    "order_accepted",
+    "paper_fill_simulated",
+    "position_snapshot",
+    "reconciliation_completed",
+]
+EVENTS = [
+    {"event_id": f"canonical-{index}", "event_type": event_type, "ingested_seq": 100 + index, "sequence_no": index}
+    for index, event_type in enumerate(EVENT_TYPES, start=1)
+]
+CONTROLLER = {
+    "deployment_sha": SHA,
+    "generation": 12,
+    "checkpoint": 108,
+    "mode": "live",
+    "accepted_live": True,
+    "truth_level": "canonical_live",
+    "status": "ready",
+    "backlog": 0,
+}
+
+
+def _source_artifact():
+    return {
+        "schema_version": SOURCE_SCHEMA,
+        "task_id": "LOOP-PROD-TEL-002",
+        "outcome": "passed",
+        "expected_deployment_sha": SHA,
+        "proof": {
+            "source": {
+                "baseline_high_watermark": 100,
+                "source_high_watermark": 108,
+            },
+            "identity": dict(IDENTITY),
+            "events": list(EVENTS),
+            "projection": {
+                "generation": 12,
+                "deployment_sha": SHA,
+                "loop_status": "completed",
+            },
+        },
+    }
+
+
+class FakeClient:
+    def __init__(self, *, generation: int = 12) -> None:
+        self.generation = generation
+
+    def request(self, method, url, *, headers=None, payload=None):
+        auth = (headers or {}).get("Authorization")
+        if url.endswith("/bff/version"):
+            return readback.HttpResult(
+                200,
+                {
+                    "source_commit_sha": SHA,
+                    "source_commit_known": True,
+                    "environment": "dev",
+                    "config_posture": {
+                        "auth_stub": False,
+                        "auth_mode": "strict",
+                        "dev_login_enabled": True,
+                    },
+                },
+            )
+        if url.endswith("/bff/auth/dev-login"):
+            assert payload["client_secret"] == "client-secret"
+            return readback.HttpResult(
+                200,
+                {
+                    "access_token": "token-value",
+                    "token_type": "bearer",
+                    "expires_in": 900,
+                    "meta": {"identity": "operator"},
+                },
+            )
+        if auth != "Bearer token-value":
+            return readback.HttpResult(401, {"error": {"code": "AUTH_REQUIRED"}})
+        if "/bff/v5/loop-runs/" in url:
+            controller = dict(CONTROLLER, generation=self.generation)
+            return readback.HttpResult(
+                200,
+                {
+                    "data": {
+                        "id": IDENTITY["loop_run_id"],
+                        **IDENTITY,
+                        "source": "canonical_telemetry_lifecycle_projector",
+                        "status": "completed",
+                        "accepted_live": True,
+                        "projection_mode": "live",
+                        "deployment_sha": SHA,
+                    },
+                    "meta": {
+                        "surfaces": {
+                            "loop_run_detail": {
+                                "status": "ok",
+                                "source": "service_store",
+                                "truth_status": "formal",
+                                "projection_schema_version": "pantheon.loop-run-projection.v1",
+                                "projection_generation": self.generation,
+                                "controller": controller,
+                            }
+                        }
+                    },
+                },
+            )
+        if url.split("?", 1)[0].endswith("/evidence"):
+            by_stage = {
+                EXPECTED_STAGES[event["event_type"]]: {
+                    "event_ids": [
+                        f"{event['event_id']}:{EXPECTED_STAGES[event['event_type']]}"
+                    ]
+                }
+                for event in EVENTS
+            }
+            return readback.HttpResult(
+                200,
+                {"data": {"journey_id": IDENTITY["journey_id"], "by_stage": by_stage}},
+            )
+        controller = dict(CONTROLLER, generation=self.generation)
+        return readback.HttpResult(
+            200,
+            {
+                "data": {
+                    "journey_id": IDENTITY["journey_id"],
+                    "tenant_id": IDENTITY["tenant_id"],
+                    "environment": "paper",
+                    "status": "completed",
+                    "read_state": "formal",
+                    "event_count": 8,
+                },
+                "meta": {
+                    "read_state": "formal",
+                    "freshness": {
+                        "rebuild_status": "complete",
+                        "projector_owned": True,
+                        "projection_schema_version": "pantheon.trade-journey-projection.v1",
+                        "generation": self.generation,
+                        "accepted_live": True,
+                        "projection_mode": "live",
+                        "truth_level": "canonical_live",
+                        "controller": controller,
+                    },
+                },
+            },
+        )
+
+
+class MismatchedControllerClient(FakeClient):
+    def request(self, method, url, *, headers=None, payload=None):
+        result = super().request(method, url, headers=headers, payload=payload)
+        if (
+            "/bff/v5/loop-runs/" in url
+            and (headers or {}).get("Authorization") == "Bearer token-value"
+        ):
+            result.payload["meta"]["surfaces"]["loop_run_detail"]["controller"][
+                "generation"
+            ] = self.generation + 1
+        return result
+
+
+def test_authenticated_public_bff_readback_correlates_both_surfaces(tmp_path):
+    source = tmp_path / "source.json"
+    output = tmp_path / "readback.json"
+    source.write_text(json.dumps(_source_artifact()), encoding="utf-8")
+
+    code, artifact = readback.execute_readback(
+        source_path=source,
+        output=output,
+        expected_sha=SHA,
+        base_url=BASE_URL,
+        client_id="client-id",
+        client_secret="client-secret",
+        client=FakeClient(),
+    )
+
+    assert code == 0
+    assert artifact["outcome"] == "passed"
+    assert artifact["public_bff"]["trade_journey"]["correlated_event_count"] == 8
+    assert set(artifact["public_bff"]["auth"]["negative_statuses"].values()) == {401}
+    assert artifact["public_bff"]["cross_surface"] == {
+        "same_generation": True,
+        "same_controller": True,
+        "exact_event_ids": True,
+        "generation_advanced_since_source_proof": False,
+    }
+    raw = output.read_text(encoding="utf-8")
+    assert "token-value" not in raw
+    assert "client-secret" not in raw
+
+
+def test_readback_generation_mismatch_fails_with_redacted_artifact(tmp_path):
+    source = tmp_path / "source.json"
+    output = tmp_path / "readback.json"
+    source.write_text(json.dumps(_source_artifact()), encoding="utf-8")
+
+    code, artifact = readback.execute_readback(
+        source_path=source,
+        output=output,
+        expected_sha=SHA,
+        base_url=BASE_URL,
+        client_id="client-id",
+        client_secret="client-secret",
+        client=FakeClient(generation=11),
+    )
+
+    assert code == 1
+    assert artifact["failure"]["code"] == "bff_generation_mismatch"
+    assert "token-value" not in output.read_text(encoding="utf-8")
+    assert all(field in IDENTITY for field in STABLE_IDENTITY_FIELDS)
+
+
+def test_readback_accepts_monotonic_generation_advance_with_exact_events(tmp_path):
+    source = tmp_path / "source.json"
+    output = tmp_path / "readback.json"
+    source.write_text(json.dumps(_source_artifact()), encoding="utf-8")
+
+    code, artifact = readback.execute_readback(
+        source_path=source,
+        output=output,
+        expected_sha=SHA,
+        base_url=BASE_URL,
+        client_id="client-id",
+        client_secret="client-secret",
+        client=FakeClient(generation=13),
+    )
+
+    assert code == 0
+    assert artifact["outcome"] == "passed"
+    assert artifact["public_bff"]["loop_run"]["source_projection_generation"] == 12
+    assert artifact["public_bff"]["loop_run"]["projection_generation"] == 13
+    assert artifact["public_bff"]["trade_journey"]["projection_generation"] == 13
+    assert artifact["public_bff"]["cross_surface"] == {
+        "same_generation": True,
+        "same_controller": True,
+        "exact_event_ids": True,
+        "generation_advanced_since_source_proof": True,
+    }
+
+
+def test_readback_rejects_surface_controller_generation_mismatch(tmp_path):
+    source = tmp_path / "source.json"
+    output = tmp_path / "readback.json"
+    source.write_text(json.dumps(_source_artifact()), encoding="utf-8")
+
+    code, artifact = readback.execute_readback(
+        source_path=source,
+        output=output,
+        expected_sha=SHA,
+        base_url=BASE_URL,
+        client_id="client-id",
+        client_secret="client-secret",
+        client=MismatchedControllerClient(generation=13),
+    )
+
+    assert code == 1
+    assert artifact["failure"]["code"] == "bff_generation_mismatch"
+    assert "token-value" not in output.read_text(encoding="utf-8")

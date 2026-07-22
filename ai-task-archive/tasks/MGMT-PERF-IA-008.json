@@ -1,0 +1,176 @@
+{
+  "version": 1,
+  "task_id": "MGMT-PERF-IA-008",
+  "archived_at": "2026-07-12T14:39:21Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-PERF-IA-008",
+    "title": "Hosted acceptance and closeout",
+    "summary_zh": "彙整所有 PR、merge SHA、deploy、desktop/mobile smoke、legacy redirects 與 Human Review receipt，證明完整營運閉環。",
+    "phase": "Management Performance Ranking IA / Wave 3 closeout",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "MGMT-PERF-IA-001",
+      "MGMT-PERF-IA-002",
+      "MGMT-PERF-IA-003",
+      "MGMT-PERF-IA-004",
+      "MGMT-PERF-IA-005",
+      "MGMT-PERF-IA-006",
+      "MGMT-PERF-IA-007"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_management_performance_ranking_ia_gap_2026-07-11/archive",
+      "execute-plans:hosted-dev-evidence",
+      "services/control-plane/bff",
+      "docs/bff/execution-tasks/2026-07-11-management-performance-ranking-ia/MGMT-PERF-IA-008-hosted-acceptance-closeout.md"
+    ],
+    "acceptance": [
+      "all child tasks are merged or explicitly superseded with evidence",
+      "hosted dev proves canonical and legacy navigation on desktop and mobile",
+      "the full Fleet to Performance to Rankings to Governance to Review loop is proven",
+      "closeout records deployments residual risks and Human Ops verdict"
+    ],
+    "next": "PR #3435 merged to dev at 1e7d7c3946de914c33ede67f1965ad424121adda; hosted execute-plans revision 407d8227dc6508ad61a525d812199776f2db523b verified with integration gate 29195825381 and deploy 29195825522 successful; hosted frontend/BFF health HTTP 200; safe non-applied Human Review outcome recorded because VITE_BFF_REAL_WRITES=false.",
+    "last_update": "2026-07-12T14:39:21Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_management_performance_ranking_ia_2026-07-11",
+    "auto_generated": true,
+    "source_ref": {
+      "doc": "docs/04/pantheon_management_performance_ranking_ia_gap_2026-07-11/INDEX.md",
+      "packet": "docs/bff/execution-tasks/2026-07-11-management-performance-ranking-ia/INDEX.md",
+      "trigger": "2026-07-11 complete performance ranking page and menu information architecture audit",
+      "frontend_repo": "ajoe734/execute-plans",
+      "backend_repo": "ajoe734/pantheon"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "helper_kind": "management_performance_ranking_ia_execution_slice",
+    "wave": 3,
+    "fleet_lane": "hosted-acceptance-closeout",
+    "target_repo": "pantheon+execute-plans",
+    "review_notes_zh": [
+      "審查通過：PR #3435 為純文件更新，已驗證 execute-plans PR #272-274 合併、gate 29195825381 與 deploy 29195825522 均成功，deployment.json/health probe 均為 200，與文件內容一致",
+      "交還 owner Codex2 收尾"
+    ],
+    "review_file": "support/reviews/MGMT-PERF-IA-008-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T14:39:21Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-perf-ia-008",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-PERF-IA-008",
+      "git_clean_required": false,
+      "commit": "a2b2c81b91bed27085ba0626d46f3f5104e08015",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/MGMT-PERF-IA-008",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-PERF-IA-008",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "1e7d7c3946de914c33ede67f1965ad424121adda",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-PERF-IA-008",
+      "from": "Human/Ops",
+      "to": "Claude",
+      "message": "Auto-reassigned MGMT-PERF-IA-008 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); reviewer Human/Ops -> Claude.",
+      "status": "done",
+      "created_at": "2026-07-11T06:23:00Z",
+      "resolved_at": "2026-07-11T07:06:15Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-008",
+      "from": "Human/Ops",
+      "to": "Claude",
+      "message": "Auto-reassigned MGMT-PERF-IA-008 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); reviewer Human/Ops -> Claude.",
+      "status": "done",
+      "created_at": "2026-07-11T07:06:15Z",
+      "resolved_at": "2026-07-11T16:51:45Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-008",
+      "from": "Human/Ops",
+      "to": "Claude",
+      "message": "Auto-reassigned MGMT-PERF-IA-008 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); reviewer Human/Ops -> Claude.",
+      "status": "done",
+      "created_at": "2026-07-11T16:51:45Z",
+      "resolved_at": "2026-07-11T17:13:43Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-008",
+      "from": "Human/Ops",
+      "to": "Claude",
+      "message": "Auto-reassigned MGMT-PERF-IA-008 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); reviewer Human/Ops -> Claude.",
+      "status": "done",
+      "created_at": "2026-07-11T17:13:43Z",
+      "resolved_at": "2026-07-12T12:56:13Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-008",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-07-12T12:56:13Z",
+      "resolved_at": "2026-07-12T12:56:19Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-008",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review Pantheon PR #3418 and hosted closeout evidence. Dependencies 001-007 are archived done; execute-plans PR #271 is merged/deployed as e4217ee6. Hosted FE/BFF probes are HTTP 200; dev real writes are false, so the truthful receipt outcome is safely non-applied. Frontend post-merge integration run 29193642348 is still executing Playwright E2E; do not approve until its final result is recorded.",
+      "status": "done",
+      "created_at": "2026-07-12T13:09:58Z",
+      "resolved_at": "2026-07-12T13:26:16Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-008",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Blocking review: FE-BFF Integration Gate run 29193642348 (execute-plans PR #271, merged e4217ee6) completed with conclusion=failure at 2026-07-12T13:20:59Z, after this task's PR #3418 anchor commit already landed on Pantheon dev. Root cause is stale unit-test assertions, not a regression in production behavior: src/management/pages/oversight/PersonaFleetPage.test.tsx (lines 138, 447, 522) and PromotionAllocation.test.tsx (line 95) in execute-plans still assert pre-migration hrefs (/management/performance-attribution?dimension=persona..., /management/promotion-allocation?tab=paper-candidates...) and a bare human-inbox href, while current production code (personaFleetLinks.ts's legacy-to-canonical normalizer, PersonaLeague.tsx, QuarterlyRanking.tsx, _core.tsx's returnUrl context-preservation) already emits the canonical /management/performance?tab=attribution..., /management/rankings?tab=quarterly..., and ?returnUrl=... forms. Please push a follow-up execute-plans PR updating those 4 assertions to the current canonical hrefs, confirm the FE-BFF Integration Gate goes green on dev, then hand this back to review; hosted acceptance closeout cannot claim the full operator loop works while the required gate is red.",
+      "status": "done",
+      "created_at": "2026-07-12T13:26:16Z",
+      "resolved_at": "2026-07-12T13:26:16Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-008",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Review Pantheon PR #3435 / commit e639898d2 and execute-plans PRs #272-#274. Final deployed SHA 407d8227; integration gate 29195825381 and deploy 29195825522 succeeded, including aggregate hosted acceptance and Playwright.",
+      "status": "done",
+      "created_at": "2026-07-12T14:33:27Z",
+      "resolved_at": "2026-07-12T14:35:44Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-008",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Reviewed PR #3435 and execute-plans #272-274: hosted deployment SHA 407d8227, integration gate and deploy runs verified success, closeout doc accurate. Approved, returning to owner for finalization.",
+      "status": "done",
+      "created_at": "2026-07-12T14:35:44Z",
+      "resolved_at": "2026-07-12T14:39:23Z"
+    }
+  ],
+  "blockers": []
+}

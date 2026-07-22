@@ -13,9 +13,18 @@ if str(_CP_GOV) not in sys.path:
     sys.path.insert(0, str(_CP_GOV))
 
 from capital_pool import CapitalPool, CapitalPoolStore  # type: ignore
-from persona_capital_binding import PersonaCapitalBinding, PersonaCapitalBindingStore  # type: ignore
+from persona_capital_binding import (  # type: ignore
+    PersonaCapitalBinding,
+    PersonaCapitalBindingError,
+    PersonaCapitalBindingStore,
+)
 
 from services.foundation.postgres_json_store import PostgresJsonOwnerStore
+
+try:
+    from .allocation_store import AllocationAuthorityStore
+except ImportError:
+    from allocation_store import AllocationAuthorityStore  # type: ignore
 
 _UTC = datetime.timezone.utc
 
@@ -39,30 +48,35 @@ class PostgresCapitalPoolStore(CapitalPoolStore):
         self._refresh_from_postgres()
 
     def create(self, pool: CapitalPool) -> CapitalPool:
-        self._refresh_from_postgres()
-        return super().create(pool)
+        with self._lock:
+            self._refresh_from_postgres()
+            return super().create(pool)
 
     def get(self, pool_id: str) -> Optional[CapitalPool]:
-        self._refresh_from_postgres()
-        return super().get(pool_id)
+        with self._lock:
+            self._refresh_from_postgres()
+            return super().get(pool_id)
 
     def list(self, owner_id: Optional[str] = None, status: Optional[str] = None) -> list[CapitalPool]:
-        self._refresh_from_postgres()
-        return super().list(owner_id=owner_id, status=status)
+        with self._lock:
+            self._refresh_from_postgres()
+            return super().list(owner_id=owner_id, status=status)
 
     def update_status(self, pool_id: str, new_status: str) -> CapitalPool:
-        self._refresh_from_postgres()
-        return super().update_status(pool_id, new_status)
+        with self._lock:
+            self._refresh_from_postgres()
+            return super().update_status(pool_id, new_status)
 
     def _save(self) -> None:
         for pool in self._pools.values():
             self._records.put(pool.pool_id, pool.to_dict())
 
     def _refresh_from_postgres(self) -> None:
-        self._pools = {}
-        for record in self._records.list_all():
-            pool = CapitalPool.from_dict(record)
-            self._pools[pool.pool_id] = pool
+        with self._lock:
+            self._pools = {}
+            for record in self._records.list_all():
+                pool = CapitalPool.from_dict(record)
+                self._pools[pool.pool_id] = pool
 
 
 class PostgresPersonaCapitalBindingStore(PersonaCapitalBindingStore):
@@ -84,12 +98,14 @@ class PostgresPersonaCapitalBindingStore(PersonaCapitalBindingStore):
         self._refresh_from_postgres()
 
     def create(self, binding: PersonaCapitalBinding) -> PersonaCapitalBinding:
-        self._refresh_from_postgres()
-        return super().create(binding)
+        with self._lock:
+            self._refresh_from_postgres()
+            return super().create(binding)
 
     def get(self, binding_id: str) -> Optional[PersonaCapitalBinding]:
-        self._refresh_from_postgres()
-        return super().get(binding_id)
+        with self._lock:
+            self._refresh_from_postgres()
+            return super().get(binding_id)
 
     def list(
         self,
@@ -98,31 +114,41 @@ class PostgresPersonaCapitalBindingStore(PersonaCapitalBindingStore):
         status: Optional[str] = None,
         role: Optional[str] = None,
     ) -> list[PersonaCapitalBinding]:
-        self._refresh_from_postgres()
-        return super().list(
-            persona_id=persona_id,
-            capital_pool_id=capital_pool_id,
-            status=status,
-            role=role,
-        )
+        with self._lock:
+            self._refresh_from_postgres()
+            return super().list(
+                persona_id=persona_id,
+                capital_pool_id=capital_pool_id,
+                status=status,
+                role=role,
+            )
 
     def activate(self, binding_id: str, approval_decision_id: str) -> PersonaCapitalBinding:
-        self._refresh_from_postgres()
-        return super().activate(binding_id, approval_decision_id)
+        with self._lock:
+            self._refresh_from_postgres()
+            return super().activate(binding_id, approval_decision_id)
 
     def update_status(self, binding_id: str, new_status: str) -> PersonaCapitalBinding:
-        self._refresh_from_postgres()
-        return super().update_status(binding_id, new_status)
+        with self._lock:
+            self._refresh_from_postgres()
+            return super().update_status(binding_id, new_status)
 
     def _save(self) -> None:
         for binding in self._bindings.values():
             self._records.put(binding.binding_id, binding.to_dict())
 
     def _refresh_from_postgres(self) -> None:
-        self._bindings = {}
-        for record in self._records.list_all():
-            binding = PersonaCapitalBinding.from_dict(record)
-            self._bindings[binding.binding_id] = binding
+        with self._lock:
+            self._bindings = {}
+            for record in self._records.list_all():
+                binding = PersonaCapitalBinding.from_dict(record)
+                try:
+                    self._check_unique_capital_sleeve(binding, exclude_id=None)
+                except PersonaCapitalBindingError as exc:
+                    raise PersonaCapitalBindingError(
+                        "Postgres contains duplicate capital sleeve binding identity"
+                    ) from exc
+                self._bindings[binding.binding_id] = binding
 
 
 class JsonlCapitalAuditStore:
@@ -229,6 +255,24 @@ class PostgresCapitalAuditStore:
         return events
 
 
+class PostgresAllocationAuthorityStore(AllocationAuthorityStore):
+    """Postgres JSONB owner store for the atomic allocation aggregate."""
+
+    def __init__(
+        self,
+        dsn: str,
+        table: str = "capital.allocation_authority",
+        bootstrap: bool = True,
+    ) -> None:
+        records = PostgresJsonOwnerStore(
+            dsn=dsn,
+            table=table,
+            owner_service="capital-pool-svc",
+            bootstrap=bootstrap,
+        )
+        super().__init__(owner_store=records)
+
+
 def _capital_backend() -> str:
     return os.getenv("CAPITAL_STORE_BACKEND", "json").strip().lower()
 
@@ -284,4 +328,19 @@ def build_capital_audit_store(path: Path) -> JsonlCapitalAuditStore | PostgresCa
         dsn=dsn,
         table=os.getenv("CAPITAL_AUDIT_TABLE", "capital.audit_events"),
         bootstrap=_bootstrap_env("CAPITAL_AUDIT_BOOTSTRAP"),
+    )
+
+
+def build_allocation_authority_store(
+    path: Path,
+) -> AllocationAuthorityStore | PostgresAllocationAuthorityStore:
+    backend = _capital_backend()
+    if backend in ("", "json"):
+        return AllocationAuthorityStore(path=path)
+    if backend != "postgres":
+        raise ValueError("CAPITAL_STORE_BACKEND must be json or postgres")
+    return PostgresAllocationAuthorityStore(
+        dsn=_capital_dsn(),
+        table=os.getenv("CAPITAL_ALLOCATION_STORE_TABLE", "capital.allocation_authority"),
+        bootstrap=_bootstrap_env("CAPITAL_STORE_BOOTSTRAP"),
     )

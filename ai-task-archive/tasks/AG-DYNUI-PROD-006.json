@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "task_id": "AG-DYNUI-PROD-006",
+  "archived_at": "2026-07-04T19:33:14Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DYNUI-PROD-006",
+    "title": "Hosted Winner Branch E2E publish gate",
+    "summary_zh": "最後 production gate：用 hosted dev FE + live BFF 跑 Winner Branch V10-to-V11 E2E，覆蓋 Strategy Workshop、readiness、join Trading Room、proposal、accept、grid edit、widget revision、version history、rollback、desktop/mobile screenshots。",
+    "phase": "Agora DYNUI Production Gap / Hosted Acceptance",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-DYNUI-PROD-001",
+      "AG-DYNUI-PROD-002",
+      "AG-DYNUI-PROD-003",
+      "AG-DYNUI-PROD-004",
+      "AG-DYNUI-PROD-005"
+    ],
+    "artifacts": [
+      "execute-plans/tests/",
+      "execute-plans/playwright.config.ts",
+      "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/AG-DYNUI-PROD-006-hosted-e2e-publish-gate.md",
+      "/tmp/agora-dynui-prod-e2e-*.png",
+      "/tmp/agora-dynui-prod-e2e-*.json"
+    ],
+    "acceptance": [
+      "hosted E2E passes against dev FE and live BFF",
+      "screenshots do not show old empty Trading Desk shell",
+      "PR merge SHAs deploy run IDs and live probe artifacts are recorded before closeout",
+      "Do not rebuild from imagination or static screenshots.",
+      "Keep V10/V11 dynamic UI behavior: proposal, grid edit, widget revision, version history, rollback.",
+      "Use strict BFF contracts, auth, scope isolation, validators, and widget allowlists.",
+      "If the design source is missing or conflicts with code, raise a blocker with the exact file/contract.",
+      "Close only after branch, PR, checks, merge, deploy when needed, and hosted proof."
+    ],
+    "next": "Closeout verified: PR #2999 merged into dev (HEAD 36c687d10, ancestor of origin/dev), execute-plans PR #177 merged, Pantheon Dev FE Deploy run 28716752521 succeeded, hosted post-deploy E2E (desktop+mobile) re-run passed against live dev FE + BFF, evidence doc publish checklist fully checked off. No new task-scoped changes needed; only remaining worktree diff is the disposable untracked task-brief scratch file.",
+    "last_update": "2026-07-04T19:33:14Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_agora_dynui_production_gap_2026-07-03",
+    "source_ref": {
+      "archive": "docs/04/pantheon_agora_dynui_production_gap_2026-07-03/INDEX.md",
+      "packet": "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/INDEX.md",
+      "task_brief": "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/AG-DYNUI-PROD-006-hosted-e2e-publish-gate.md"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "fleet_lane": "agora-dynui-production-gap",
+    "review_notes_zh": [
+      "PR #177 已合併並重新獨立驗證 deploy run 與 hosted deployment.json 對得上 commit",
+      "兩張 08/09 截圖 md5 相同已查明是 version history 常駐 section 沒有動作、非造假",
+      "審查通過"
+    ],
+    "review_file": "/tmp/AG-DYNUI-PROD-006-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-04T19:33:14Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-dynui-prod-006",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-DYNUI-PROD-006",
+      "git_clean_required": false,
+      "repository_fallback": {
+        "from_repository_id": "execute_plans",
+        "missing_repository_path": "/tmp/pantheon-worker-worktrees/pantheon/execute-plans",
+        "reason": "non-Pantheon artifact repository local_path is unavailable; using Pantheon because the task also has Pantheon artifacts"
+      },
+      "commit": "36c687d109e5cadfd29a56d56f2e053bc2e9776e",
+      "commit_subject": "Merge pull request #2999 from ajoe734/task/AG-DYNUI-PROD-006",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "AG-DYNUI-PROD-006": "record hosted post-deploy E2E closeout evidence"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-DYNUI-PROD-006",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "36c687d109e5cadfd29a56d56f2e053bc2e9776e",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-DYNUI-PROD-006",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Hosted Winner Branch E2E publish gate implemented and verified: execute-plans PR #177 merged to dev (merge commit 2862e2a57c350335ae208aca2f9a203906dee2a2), Pantheon Dev FE Deploy run 28716752521 succeeded, and I independently re-verified https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/deployment.json currently serves that exact commit. Post-deploy hosted E2E (desktop+mobile) passed against live BFF with real per-run workshop IDs; 12 screenshots/viewport + disclosure JSON captured in /tmp. Full checklist and bug-fix writeup recorded in docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/AG-DYNUI-PROD-006-hosted-e2e-publish-gate.md (already committed on this branch, commit f14041c7c). Please review the evidence doc and PR #177 diff for review_approved.",
+      "status": "done",
+      "created_at": "2026-07-04T19:28:02Z",
+      "resolved_at": "2026-07-04T19:31:46Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-006",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Independently re-verified PR #177 merge, deploy run 28716752521, and live hosted deployment.json all match the reviewed commit; evidence doc and screenshots check out. Approved and returned to Claude for closeout.",
+      "status": "done",
+      "created_at": "2026-07-04T19:31:46Z",
+      "resolved_at": "2026-07-04T19:33:15Z"
+    }
+  ],
+  "blockers": []
+}

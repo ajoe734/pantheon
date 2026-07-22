@@ -47,8 +47,8 @@ Options:
   --help                    Show this message.
 
 Examples:
-  bash scripts/gcp_nonprod_baseline.sh --project-id pantheon-benjamin-20260528
-  bash scripts/gcp_nonprod_baseline.sh --project-id pantheon-benjamin-20260528 --dry-run
+  bash scripts/gcp_nonprod_baseline.sh --project-id pantheon-lupin-dev-20260719
+  bash scripts/gcp_nonprod_baseline.sh --project-id pantheon-lupin-dev-20260719 --dry-run
 EOF
 }
 
@@ -291,6 +291,11 @@ ensure_project_role "serviceAccount:${CLOUD_BUILD_SA}" "roles/cloudbuild.builds.
 ensure_project_role "serviceAccount:${CLOUD_BUILD_SA}" "roles/artifactregistry.writer"
 ensure_project_role "serviceAccount:${CLOUD_BUILD_SA}" "roles/storage.objectAdmin"
 ensure_project_role "serviceAccount:${CLOUD_BUILD_SA}" "roles/serviceusage.serviceUsageConsumer"
+# The nonprod workflow reaches the managed VM through `gcloud compute ssh`.
+# Instance Admin supplies the VM read and SSH-metadata permissions, while the
+# serviceAccountUser binding below limits VM-SA attachment to the existing
+# default compute identity.
+ensure_project_role "serviceAccount:${CLOUD_BUILD_SA}" "roles/compute.instanceAdmin.v1"
 
 run gcloud iam service-accounts add-iam-policy-binding "${COMPUTE_DEFAULT_SA}" \
   --project="${PROJECT_ID}" \

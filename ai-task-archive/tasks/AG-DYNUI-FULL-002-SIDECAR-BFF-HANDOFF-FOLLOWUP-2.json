@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "task_id": "AG-DYNUI-FULL-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+  "archived_at": "2026-07-05T12:32:34Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "id": "AG-DYNUI-FULL-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+    "title": "Prepare AG-DYNUI-FULL-002 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-DYNUI-FULL-002，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Agora DYNUI Full Production Recovery / Wave 1 workshop BFF",
+    "owner": "Antigravity",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "AG-DYNUI-FULL-001"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-DYNUI-FULL-002/AG-DYNUI-FULL-002-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Parent AG-DYNUI-FULL-002 is already review_approved; this auto-created support sidecar is superseded to avoid wasting Antigravity capacity.",
+    "last_update": "2026-07-05T12:32:34Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-DYNUI-FULL-002",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "superseded",
+    "superseded_by": "AG-DYNUI-FULL-002"
+  },
+  "handoffs": [],
+  "blockers": []
+}

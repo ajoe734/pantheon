@@ -1,6 +1,6 @@
 # Management AI Dev Kernel Control Mode
 
-Status date: 2026-06-11
+Status date: 2026-07-19
 
 ## Purpose
 
@@ -30,7 +30,7 @@ COMPOSE_PROJECT_NAME=pantheon
 COMPOSE_FILE=docker-compose.yml
 BFF_BASE_URL=http://127.0.0.1:18001
 BFF_AUTH_TOKEN=pantheon-dev-browser:admin,operator:mfa:assistant.kernel.debug,assistant.kernel.repair
-PANTHEON_STATUS_ROOT_HOST=/home/lupin/code/pantheon
+PANTHEON_STATUS_ROOT_HOST=/home/lupin/pantheon
 PANTHEON_STATUS_ROOT_CONTAINER=/workspace/status-root
 PANTHEON_ASSISTANT_KERNEL_ENABLED=true
 PANTHEON_BFF_STUB_CAPABILITIES=assistant.kernel.debug,assistant.kernel.repair
@@ -44,7 +44,7 @@ If that file is absent, it falls back to the repo root where the script is run.
 Manual equivalent:
 
 ```bash
-PANTHEON_STATUS_ROOT_HOST=/home/lupin/code/pantheon \
+PANTHEON_STATUS_ROOT_HOST=/home/lupin/pantheon \
 PANTHEON_ASSISTANT_KERNEL_ENABLED=true \
 PANTHEON_BFF_STUB_CAPABILITIES=assistant.kernel.debug,assistant.kernel.repair \
 docker compose -p pantheon up -d --no-deps --force-recreate operator-bff
@@ -161,7 +161,7 @@ scripts/smoke_management_ai_control_mode_queue.sh
 Optional overrides:
 
 ```env
-BFF_BASE_URL=https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io
+BFF_BASE_URL=https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io
 BFF_AUTH_TOKEN=pantheon-dev-browser:admin:mfa:assistant.kernel.debug,assistant.kernel.repair
 SESSION_ID=mgmt-ai-control-mode-smoke-manual
 TASK_OWNER=Codex
@@ -198,11 +198,15 @@ PANTHEON_ASSISTANT_CONTROL_PASSPHRASE=<existing-control-mode-passphrase> scripts
 Optional overrides:
 
 ```env
-BFF_BASE_URL=https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io
-BFF_AUTH_TOKEN=pantheon-dev-browser:admin:mfa:assistant.kernel.debug,assistant.kernel.repair
+BFF_BASE_URL=https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io
+# Prefer a dedicated MFA-positive operator identity in strict dev:
+MAI_BFF_CLIENT_ID=<dedicated-operator-client-id>
+MAI_BFF_CLIENT_SECRET=<dedicated-operator-client-secret>
+# Or inject an already-issued short-lived token:
+BFF_AUTH_TOKEN=<short-lived-operator-token>
 SESSION_ID=mgmt-ai-openclaw-repair-smoke-manual
 REPAIR_REPO_KEY=execute-plans
-REPAIR_MERGE_TARGET=dev
+REPAIR_MERGE_TARGET=main
 REPAIR_SCOPE=tmp/management-ai-openclaw-smoke
 TASK_OWNER=Codex
 TASK_REVIEWER=Claude
@@ -211,6 +215,8 @@ POLL_SECONDS=360
 
 The smoke verifies:
 
+- strict dev credentials are exchanged through `/bff/auth/dev-login` when a
+  short-lived bearer token was not supplied;
 - all Management AI/assistant POST requests include stable `Idempotency-Key`
   headers;
 - control mode activates as `kernel_repair`;

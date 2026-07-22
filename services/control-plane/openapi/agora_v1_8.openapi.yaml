@@ -1,0 +1,306 @@
+openapi: "3.1.0"
+info:
+  title: Pantheon Agora API v1.8 Extension
+  version: "1.8.0"
+  description: |
+    Additive Strategy Workshop live-operation extension over the frozen Agora
+    v1.7 contract bundle. It records that the six previously deferred
+    Strategy Workshop operation routes are implemented by durable command
+    receipts and authoritative downstream readback.
+
+    This file does not modify the frozen v1.1/v1.2 route promises. It narrows
+    the current availability truth: version, research, consultation, and
+    conclude writes require If-Match, Idempotency-Key, X-Request-Id, write role,
+    MFA proof, tenant scope, and canonical readback. Conclude only records final
+    workshop pointers; it does not deploy, submit orders, bind capital, or write
+    RuntimeBinding.
+  x-extends-contract: "services/control-plane/specs/agora/bundle_index.v1_7.json"
+  x-capability-manifest: "services/control-plane/specs/agora/v9/capability_manifest_v1_8.json"
+servers:
+  - url: "{bff_base}"
+    variables:
+      bff_base:
+        default: "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io"
+security:
+  - BearerAuth: []
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+  parameters:
+    WorkshopId:
+      name: workshop_id
+      in: path
+      required: true
+      schema: {type: string, minLength: 1}
+    VersionId:
+      name: version_id
+      in: path
+      required: true
+      schema: {type: string, minLength: 1}
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      schema: {type: string, minLength: 1}
+      description: Current workshop ETag in the form W/"workshop:{id}:v{lock_version}".
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: {type: string, minLength: 1}
+    XRequestId:
+      name: X-Request-Id
+      in: header
+      required: true
+      schema: {type: string, minLength: 1}
+    XMfaToken:
+      name: X-MFA-Token
+      in: header
+      required: true
+      schema: {type: string, minLength: 1}
+    XTenantId:
+      name: X-Tenant-Id
+      in: header
+      required: false
+      schema: {type: string, minLength: 1}
+  schemas:
+    WorkshopVersionCreateRequest:
+      $ref: "../specs/agora/v9/workshop_live_operations.schema.json#/definitions/WorkshopVersionCreateRequest"
+    WorkshopResearchRunRequest:
+      $ref: "../specs/agora/v9/workshop_live_operations.schema.json#/definitions/WorkshopResearchRunRequest"
+    WorkshopConsultationRequest:
+      $ref: "../specs/agora/v9/workshop_live_operations.schema.json#/definitions/WorkshopConsultationRequest"
+    WorkshopConcludeRequest:
+      $ref: "../specs/agora/v9/workshop_live_operations.schema.json#/definitions/WorkshopConcludeRequest"
+    WorkshopLiveOperationEnvelope:
+      $ref: "../specs/agora/v9/workshop_live_operations.schema.json#/definitions/WorkshopLiveOperationEnvelope"
+    VersionListEnvelope:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          required: [versions, selected_version_id, active_strategy_spec_registry_id]
+          properties:
+            versions:
+              type: array
+              items: {type: object}
+            selected_version_id: {type: ["string", "null"]}
+            active_strategy_spec_registry_id: {type: ["string", "null"]}
+          additionalProperties: true
+        meta:
+          type: object
+          required: [capability, audience, canonical_authority, etag, no_direct_action]
+          properties:
+            snapshot_at: {type: string}
+            capability: {const: "agora.workshop.v1"}
+            audience: {type: string}
+            request_id: {type: ["string", "null"]}
+            canonical_authority: {const: "strategy_registry"}
+            etag: {type: string}
+            no_direct_action:
+              $ref: "../specs/agora/v9/workshop_live_operations.schema.json#/definitions/NoDirectActionProof"
+          additionalProperties: true
+      additionalProperties: false
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: {type: string}
+            message: {type: string}
+            details: {type: object, additionalProperties: true}
+      additionalProperties: false
+  responses:
+    BadRequest:
+      description: Missing idempotency, request id, MFA proof, or invalid body
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+    Forbidden:
+      description: Role, tenant, two-person approval, or scope denied
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+    NotFound:
+      description: Workshop or version not found
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+    Conflict:
+      description: ETag, idempotency, terminal-state, approval, or downstream precondition conflict
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+paths:
+  /bff/agora/workshops/{workshop_id}/versions:
+    get:
+      operationId: listAgoraWorkshopVersions
+      summary: List canonical StrategySpec versions for a workshop
+      parameters:
+        - {$ref: "#/components/parameters/WorkshopId"}
+        - {$ref: "#/components/parameters/XTenantId"}
+      responses:
+        "200":
+          description: Version links plus authoritative StrategySpec readback
+          headers:
+            ETag: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/VersionListEnvelope"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "502":
+          description: Strategy Registry readback failed
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+    post:
+      operationId: createAgoraWorkshopVersion
+      summary: Create a Registry-owned immutable StrategySpec draft version
+      parameters:
+        - {$ref: "#/components/parameters/WorkshopId"}
+        - {$ref: "#/components/parameters/XTenantId"}
+        - {$ref: "#/components/parameters/IfMatch"}
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+        - {$ref: "#/components/parameters/XRequestId"}
+        - {$ref: "#/components/parameters/XMfaToken"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/WorkshopVersionCreateRequest"}
+      responses:
+        "201":
+          description: Version created; response carries durable command receipt and Strategy Registry readback
+          headers:
+            ETag: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/WorkshopLiveOperationEnvelope"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /bff/agora/workshops/{workshop_id}/versions/{version_id}/select:
+    post:
+      operationId: selectAgoraWorkshopVersion
+      summary: Select an existing workshop version as active
+      parameters:
+        - {$ref: "#/components/parameters/WorkshopId"}
+        - {$ref: "#/components/parameters/VersionId"}
+        - {$ref: "#/components/parameters/XTenantId"}
+        - {$ref: "#/components/parameters/IfMatch"}
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+        - {$ref: "#/components/parameters/XRequestId"}
+        - {$ref: "#/components/parameters/XMfaToken"}
+      responses:
+        "200":
+          description: Version selected; response carries durable command receipt and Strategy Registry readback
+          headers:
+            ETag: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/WorkshopLiveOperationEnvelope"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /bff/agora/workshops/{workshop_id}/research-runs:
+    post:
+      operationId: dispatchAgoraWorkshopResearchRun
+      summary: Dispatch a research-only run for the selected workshop version
+      description: Research dispatch is restricted to stub, handoff_only, or manual modes and requires a distinct approved decision.
+      parameters:
+        - {$ref: "#/components/parameters/WorkshopId"}
+        - {$ref: "#/components/parameters/XTenantId"}
+        - {$ref: "#/components/parameters/IfMatch"}
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+        - {$ref: "#/components/parameters/XRequestId"}
+        - {$ref: "#/components/parameters/XMfaToken"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/WorkshopResearchRunRequest"}
+      responses:
+        "202":
+          description: Research run admitted by canonical research orchestrator
+          headers:
+            ETag: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/WorkshopLiveOperationEnvelope"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503":
+          description: Canonical downstream operation failed or is degraded
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+  /bff/agora/workshops/{workshop_id}/consultations:
+    post:
+      operationId: openAgoraWorkshopConsultation
+      summary: Open an advisory or committee consultation for the selected version
+      parameters:
+        - {$ref: "#/components/parameters/WorkshopId"}
+        - {$ref: "#/components/parameters/XTenantId"}
+        - {$ref: "#/components/parameters/IfMatch"}
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+        - {$ref: "#/components/parameters/XRequestId"}
+        - {$ref: "#/components/parameters/XMfaToken"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/WorkshopConsultationRequest"}
+      responses:
+        "201":
+          description: Consultation opened with authoritative consultation service readback
+          headers:
+            ETag: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/WorkshopLiveOperationEnvelope"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503":
+          description: Consultation write was compensated or downstream service is unavailable
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+  /bff/agora/workshops/{workshop_id}/conclude:
+    post:
+      operationId: concludeAgoraWorkshop
+      summary: Conclude a workshop with an approved final StrategySpec version
+      description: Conclude stores final pointers and audit evidence only; it never deploys, submits orders, binds capital, or writes RuntimeBinding.
+      parameters:
+        - {$ref: "#/components/parameters/WorkshopId"}
+        - {$ref: "#/components/parameters/XTenantId"}
+        - {$ref: "#/components/parameters/IfMatch"}
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+        - {$ref: "#/components/parameters/XRequestId"}
+        - {$ref: "#/components/parameters/XMfaToken"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/WorkshopConcludeRequest"}
+      responses:
+        "200":
+          description: Workshop concluded with two-person proof and no direct action proof
+          headers:
+            ETag: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/WorkshopLiveOperationEnvelope"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409": {$ref: "#/components/responses/Conflict"}

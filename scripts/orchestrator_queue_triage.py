@@ -7,6 +7,8 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
+from canonical_writer_guard import assert_isolated_legacy_write_target
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_BACKUP = (
@@ -226,6 +228,10 @@ def write_replayable_jsonl(report: dict[str, Any], backup: Path, output: Path) -
         if event.get("event_id") in candidate_ids:
             event.pop("_source_line", None)
             lines.append(json.dumps(event, ensure_ascii=False, sort_keys=True))
+    assert_isolated_legacy_write_target(
+        output,
+        tool="orchestrator_queue_triage --replayable-jsonl",
+    )
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text("\n".join(lines) + ("\n" if lines else ""))
 

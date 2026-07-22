@@ -1,0 +1,152 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-EVO-003",
+  "archived_at": "2026-06-27T17:23:42Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-EVO-003",
+    "title": "Add evolution daily sweep worker",
+    "summary_zh": "新增 threshold/cooldown governed evolution daily sweep，補 missing decisions 並避免 active-decision 衝突。",
+    "phase": "Global Loop Autopilot / Wave 5 Postmortem Evolution",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "LOOP-AUTO-EVO-002"
+    ],
+    "artifacts": [
+      "services/evolution",
+      "docker-compose.yml",
+      "docs/deployment/evidence"
+    ],
+    "acceptance": [
+      "Daily sweep proposes missing decisions under threshold policy",
+      "Cooldown and active decision lock are enforced",
+      "Sweep exposes last success last failure and proposal count"
+    ],
+    "next": "Owner finalized: 3/3 acceptance criteria met (68/68 tests pass, restart:unless-stopped confirmed, sweep-status endpoint live). Anchor commit 7efa36b7 + closeout commit bbaf0796 squash-merged to dev via PR #2464 as ab027759.",
+    "last_update": "2026-06-27T17:23:42Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+    "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+    "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+    "proof_required": [
+      "unit tests",
+      "contract tests",
+      "local service smoke",
+      "restart or replay evidence when worker or runtime behavior changes"
+    ],
+    "non_goals": [
+      "No live-capital execution",
+      "No approval gate bypass",
+      "No panel-only closure",
+      "No seed fixture as live proof"
+    ],
+    "dispatch_rules": [
+      "idempotent duplicate ticks and duplicate events",
+      "operator-visible truth projection required",
+      "maturity cannot rise above collected evidence",
+      "repo workflow closure required before done"
+    ],
+    "loop_ids": [
+      "evolution"
+    ],
+    "current_maturity": "api-only",
+    "target_maturity": "scheduled",
+    "desired_state_sources": [
+      "evolution thresholds",
+      "drift snapshots",
+      "postmortem evidence"
+    ],
+    "actual_state_sources": [
+      "EvolutionDecision"
+    ],
+    "wave_id": "Wave 5 Postmortem Evolution",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：全部三項驗收標準達成，68 tests 通過，supervised scheduler 確認",
+      "後續：owner Claude 完成 closeout，maturity api-only → scheduled 已記錄"
+    ],
+    "review_file": "docs/deployment/evidence/loop-auto-evo-003/claude2-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-27T17:23:42Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-evo-003",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOOP-AUTO-EVO-003",
+      "git_clean_required": false,
+      "commit": "bbaf0796241c9dd5668fabd743cfd6d7f2a075d6",
+      "commit_subject": "LOOP-AUTO-EVO-003: closeout — add review and task brief artifacts",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude",
+        "Task-ID": "LOOP-AUTO-EVO-003",
+        "Reviewer": "Claude2",
+        "Verified": "python3 -m pytest services/evolution/test_evolution_service.py -v → 68 passed, 0 failed"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LOOP-AUTO-EVO-003",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync"
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-EVO-003",
+      "from": "Gemini",
+      "to": "Claude",
+      "message": "Auto-reassigned LOOP-AUTO-EVO-003 away from unavailable lane Gemini (disabled, sidecar-only, or auth-down); owner Gemini -> Claude.",
+      "status": "done",
+      "created_at": "2026-06-27T12:37:09Z",
+      "resolved_at": "2026-06-27T12:37:12Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-EVO-003",
+      "from": "Gemini",
+      "to": "Claude",
+      "message": "Auto-reassigned LOOP-AUTO-EVO-003 away from unavailable lane Gemini (disabled, sidecar-only, or auth-down); owner Gemini -> Claude.",
+      "status": "done",
+      "created_at": "2026-06-27T12:37:12Z",
+      "resolved_at": "2026-06-27T17:06:39Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-EVO-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Please review LOOP-AUTO-EVO-003: adds GET /api/evolution/sweep-status endpoint, _sweep_state tracking on POST /api/evolution/daily-sweep, sweep metrics in /livez health, restart:unless-stopped on evolution-daily-sweep-scheduler compose service. 68/68 tests pass. Evidence in docs/deployment/evidence/loop-auto-evo-003/sweep-worker-evidence.md",
+      "status": "done",
+      "created_at": "2026-06-27T17:11:22Z",
+      "resolved_at": "2026-06-27T17:16:26Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-EVO-003",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Chair reassigned review from Codex to Claude2: Codex1 quota-terminal until 2026-06-28T11:05 (confirmed by chair_review_approved_sidecars log at 16:48:43); task is status=review and cannot proceed. Claude2 is idle post-Chair-Review and capable of reviewing this task.",
+      "status": "done",
+      "created_at": "2026-06-27T17:16:26Z",
+      "resolved_at": "2026-06-27T17:19:00Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-EVO-003",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Review approved: all 3 acceptance criteria met, 68/68 tests pass, restart:unless-stopped confirmed. Returned to owner Claude for closeout.",
+      "status": "done",
+      "created_at": "2026-06-27T17:19:00Z",
+      "resolved_at": "2026-06-27T17:23:42Z"
+    }
+  ],
+  "blockers": []
+}

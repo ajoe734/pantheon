@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-TR-001-R2",
+  "archived_at": "2026-06-23T01:17:48Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-TR-001-R2",
+    "title": "Trading Room page + BFF client in execute-plans",
+    "summary_zh": "在 execute-plans 實作交易作戰室頁(原 AG-FE-TR-001 phantom):依 SD §10.4/§12.1 與 v1.3 trading_room_aggregate/decision schema 做 src/agora/pages/trading-room/TradingRoomPage.tsx(多策略 switcher、route /agora/trading-room/:strategyId)與 BFF client src/lib/bff-v1/agora/tradingRoom.ts(live strict、不直接 fetch);掛進 TradingDeskLayout(AG-FE-SW-001 已在 dev)。Agora 不下單(只呈現 + governed intent)。 【UI 嚴格照設計稿】依 SD §9-§12/§23 IA + docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure A3 widget_registry/chart grammar + contract-closure/05 page composition + design-closure-round2(v1.3 workshop_card/trading/research schema)實作;ChartSpec 對應 Recharts(metric/line/area/bar)+ ECharts(heatmap/network/sankey/candlestick/gauge);資料一律走 BFF client(src/lib/bff-v1/agora/*),頁面禁止直接 fetch;agent 產出只能是宣告式 spec,前端不得 eval 任意 code。設計稿沒涵蓋先 STOP 問。 【硬性交付規則 — 防 phantom】此為 execute-plans(前端 repo)交付任務。產出物必須**真的 commit 到 execute-plans repo、push、開 PR 到 execute-plans dev**;在檔案真的出現在 execute-plans origin/dev (經 merged PR)之前,**絕對不可把任務標 done**。只在 worktree、只在本地、PR 未 merge,一律**不算完成**。若無法 checkout 或 push 到 execute-plans(例如認證/路徑問題),立刻 STOP 開 blocker、寫清楚錯誤,**不可假裝完成**。",
+    "phase": "EPIC AGORA-FE / Redo-after-pathfix",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "execute-plans/src/agora/pages/trading-room/TradingRoomPage.tsx",
+      "execute-plans/src/lib/bff-v1/agora/tradingRoom.ts",
+      ".orchestrator/task-briefs/ag_fe_tr_001_r2.md"
+    ],
+    "acceptance": [
+      "execute-plans 上真實交付;【驗收】宣稱的檔案在 execute-plans origin/dev 上真實存在(merged);未 merge 不通過;UI 對齊設計稿、無自創 route/欄位"
+    ],
+    "next": "Owner finalized: TradingRoomPage.tsx and tradingRoom.ts in execute-plans (pantheon repo dev) via merged PR #2279; 54 tests pass, tsc clean; task brief synced via PR #2281",
+    "last_update": "2026-06-23T01:17:48Z",
+    "auto_created_by": "dispatch_agora_fe_redo_2026-06-23",
+    "review_notes_zh": [
+      "審查通過：R2 修正 MOCK_RECIPE 缺少 strategy_id 與 DashboardRecipeV2 型別標記，54 tests pass，tsc --noEmit 0 errors，PR #2279 已 merge，主交付物確認在 execute-plans dev 上存在。",
+      "後續：Claude2 作為 owner 執行 closeout finalization。"
+    ],
+    "review_file": "/tmp/ag-fe-tr-001-r2-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-23T01:17:48Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-tr-001-r2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-TR-001-R2",
+      "git_clean_required": false,
+      "repository_fallback": {
+        "from_repository_id": "execute_plans",
+        "missing_repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-sw-003/execute-plans",
+        "reason": "non-Pantheon artifact repository local_path is unavailable; using Pantheon because the task also has Pantheon artifacts"
+      },
+      "commit": "865ff39119f58550f5a838b111908b725948983d",
+      "commit_subject": "AG-FE-TR-001-R2: sync task brief to done",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude2",
+        "Task-ID": "AG-FE-TR-001-R2",
+        "Reviewer": "Claude",
+        "Verified": "PR #2279 merged to execute-plans dev; 54 tests pass; tsc clean"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-TR-001-R2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "32cc9b90083d6640fab725406b699d92d2d89ae5",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-TR-001-R2",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "R2 deliverables: (1) All core implementation (TradingRoomPage.tsx, tradingRoom.ts) was already in dev via AG-FE-TR-001/AG-FE-TR-002. (2) This R2 pass adds missing strategy_id to MOCK_RECIPE and adds DashboardRecipeV2 type annotation in TradingRoomPage.test.tsx — eliminates 2 TS2345 errors. 54 trading room tests pass. PR #2279 open with auto-merge. Please review the type fix and approve.",
+      "status": "done",
+      "created_at": "2026-06-23T00:56:24Z",
+      "resolved_at": "2026-06-23T01:00:56Z"
+    },
+    {
+      "task_id": "AG-FE-TR-001-R2",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Review approved: R2 type fix is correct and minimal; main deliverables confirmed on execute-plans dev (merged PR #2279); 54 tests pass; tsc clean. Returning to Claude2 for closeout finalization.",
+      "status": "done",
+      "created_at": "2026-06-23T01:00:56Z",
+      "resolved_at": "2026-06-23T01:17:50Z"
+    }
+  ],
+  "blockers": []
+}

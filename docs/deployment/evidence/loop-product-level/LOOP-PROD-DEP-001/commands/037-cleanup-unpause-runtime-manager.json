@@ -1,0 +1,20 @@
+{
+  "captured_at": "2026-07-15T00:09:44Z",
+  "command": [
+    "docker",
+    "compose",
+    "-p",
+    "pantheon",
+    "-f",
+    "/home/lupin/pantheon-ci-deploy/dev-root/docker-compose.yml",
+    "unpause",
+    "runtime-manager"
+  ],
+  "cwd": "/home/lupin/pantheon-ci-deploy/dev-root",
+  "duration_ms": 286.927,
+  "label": "cleanup-unpause-runtime-manager",
+  "returncode": 1,
+  "started_at": "2026-07-15T00:09:44Z",
+  "stderr": "Error response from daemon: Container 4d27573826cf37301f0755af0e0f0a37126a539e6a2a0fbcc771023f21fee174 is not paused\n",
+  "stdout": ""
+}

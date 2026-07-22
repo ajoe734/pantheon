@@ -9,7 +9,7 @@ from unittest.mock import patch
 from models import OpenClawRuntimePin
 from openclaw_client import OpenClawCronClient
 from service import CronOrchestrator, PromotionError
-from workflows import WORKFLOW_CATALOG
+from workflows import PERSONA_FIRST_EVALUATION_WORKFLOW_ID, WORKFLOW_CATALOG
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
@@ -243,7 +243,7 @@ class TestOpenClawGatewayTransport(unittest.TestCase):
             {
                 "prepared_at": "2026-04-16T19:00:00Z",
                 "request_id": "pantheon.ingest-1234",
-                "runtime": {"release_tag": "v2026.6.8"},
+                "runtime": {"release_tag": "v2026.7.1"},
                 "workflow": {
                     "workflow_id": "pantheon.ingest",
                     "upstream_entrypoint": "research.ingest",
@@ -274,7 +274,31 @@ class TestCronOrchestrator(unittest.TestCase):
         self.orchestrator = CronOrchestrator(client=client)
 
     def test_catalog_contains_required_workflows(self):
-        self.assertEqual(set(WORKFLOW_CATALOG), {"pantheon.ingest", "pantheon.review", "pantheon.retrain", "pantheon.deploy"})
+        self.assertEqual(
+            set(WORKFLOW_CATALOG),
+            {
+                "pantheon.ingest",
+                "pantheon.review",
+                "pantheon.retrain",
+                "pantheon.deploy",
+                PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+            },
+        )
+
+    def test_persona_first_evaluation_is_runnable_from_catalog(self):
+        result = self.orchestrator.run(
+            PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+            {"persona_id": "persona-eval-001"},
+        )
+
+        self.assertEqual(result.workflow_id, PERSONA_FIRST_EVALUATION_WORKFLOW_ID)
+        self.assertIsNone(result.handoff)
+        self.assertEqual(
+            result.dispatch_request["workflow"]["workflow_id"],
+            PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+        )
+        self.assertEqual(result.dispatch_request["payload"]["persona_id"], "persona-eval-001")
+        self.assertEqual(result.upstream_response["status"], "prepared")
 
     def test_ingest_produces_valid_handoff(self):
         result = self.orchestrator.run(

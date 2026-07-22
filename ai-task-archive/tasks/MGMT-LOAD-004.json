@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "task_id": "MGMT-LOAD-004",
+  "archived_at": "2026-07-01T11:43:45Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-LOAD-004",
+    "title": "Management route code splitting",
+    "summary_zh": "把 management route graph 拆成 lazy route clusters，讓 Evidence route 不再下載/解析整個 console；保留 direct navigation、redirect alias、chunk error handling。",
+    "phase": "MGMT Console Load Gap / Wave 1 FE route splitting",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "MGMT-GAP-001",
+      "MGMT-LOAD-001"
+    ],
+    "artifacts": [
+      "frontend-checkout:src/App.tsx",
+      "frontend-checkout:src/management",
+      "frontend-checkout:e2e",
+      "docs/bff/execution-tasks/2026-07-01-management-console-load-gap/MGMT-LOAD-004-management-route-code-split.md"
+    ],
+    "acceptance": [
+      "initial management JS gzip <= 800KB or approved exception; Evidence route chunk gzip <= 150KB excluding shared vendor; route smoke + hosted timing evidence archived"
+    ],
+    "next": "Closed after execute-plans PR #134 merged to dev at 255e60414e0ca36e29c1b2e39f0543d23d2eea80, Pantheon dev FE deploy run 28514407926 succeeded, hosted Evidence route-load five-sample p75 931 ms and p95 1203 ms passed, and Pantheon closeout PR #2683 merged at 89e37a174bb5f351151a515d18a463566891088a.",
+    "last_update": "2026-07-01T11:43:45Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_management_console_load_gap_2026-07-01",
+    "auto_generated": true,
+    "source_ref": {
+      "doc": "docs/04/pantheon_management_console_load_gap_2026-07-01/MANAGEMENT_CONSOLE_LOAD_GAP_SPEC.md",
+      "packet": "docs/bff/execution-tasks/2026-07-01-management-console-load-gap/INDEX.md",
+      "parent_packet": "docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "helper_parent": "MGMT-GAP-010",
+    "helper_kind": "load_gap_execution_slice",
+    "wave": 1,
+    "fleet_lane": "frontend-route-splitting",
+    "review_notes_zh": [
+      "Codex2 reviewer reran PR #134 head e2fdcf5240aa02af80d58d6b95b07a6caf7144ca: npm run build passed; npm run lint passed with 55 warnings and 0 errors; FRONTEND_BASE_URL=http://127.0.0.1:8081 npx playwright test e2e/19-route-split.spec.ts --project=chromium passed 3 tests.",
+      "Bundle budget verified from production build: dist/assets/index-CnqyqvrU.js gzip 269.76 kB <= 800 kB; dist/assets/evidence-CmKt7_be.js gzip 13.37 kB <= 150 kB excluding shared vendor/cache chunks. Route parity with origin/dev was checked and direct Evidence smoke avoided registry/v5/Agora route modules.",
+      "GitHub formal PR approval was blocked because gh is authenticated as the PR author account; reviewer evidence comment posted at https://github.com/ajoe734/execute-plans/pull/134#issuecomment-4853831186. Non-blocking evidence typo noted: table says entry gzip 269.76 kB while following paragraph says 214.75 kB; correct during owner closeout if touching the evidence doc."
+    ],
+    "review_file": "execute-plans:docs/testing/mgmt-load-004-route-split-evidence.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-01T11:43:45Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-load-004",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-LOAD-004",
+      "git_clean_required": false,
+      "commit": "a176a6c51535716ea6a8daec427a2052c4bb7c0e",
+      "commit_subject": "MGMT-LOAD-004: record hosted route-load closeout",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "Pantheon MGMT-LOAD-004 closeout artifact and hosted route-load evidence record.",
+        "Not changing": "execute-plans frontend code, Pantheon BFF/API behavior, OpenClaw adapter behavior.",
+        "Composes with": "execute-plans PR #134 merged at 255e60414e0ca36e29c1b2e39f0543d23d2eea80 and dev FE deploy run 28514407926.",
+        "- Hosted route-load probe": "five samples on /management/evidence; first row/empty state p75 931 ms, p95 1203 ms.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "MGMT-LOAD-004",
+        "Reviewer": "Codex2",
+        "Verified": "git diff --check; hosted route-load probe five samples p75 931 ms p95 1203 ms"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-LOAD-004",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "89e37a174bb5f351151a515d18a463566891088a",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-LOAD-004",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-07-01T10:31:51Z",
+      "resolved_at": "2026-07-01T10:31:57Z"
+    },
+    {
+      "task_id": "MGMT-LOAD-004",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "execute-plans PR #134 is ready for review: https://github.com/ajoe734/execute-plans/pull/134 . Head e2fdcf5240aa02af80d58d6b95b07a6caf7144ca, mergeable CLEAN, integration-gate passed. Local validation passed: npm run build; npm run lint (55 warnings, 0 errors); FRONTEND_BASE_URL=http://127.0.0.1:8081 npx playwright test e2e/19-route-split.spec.ts --project=chromium. Evidence doc updated at docs/testing/mgmt-load-004-route-split-evidence.md. Remaining before done: reviewer approval, merge to dev, Pantheon dev FE deploy, hosted route-load probe/deployment.json evidence appended.",
+      "status": "done",
+      "created_at": "2026-07-01T11:07:29Z",
+      "resolved_at": "2026-07-01T11:19:43Z"
+    },
+    {
+      "task_id": "MGMT-LOAD-004",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Codex2 review approved execute-plans PR #134 at e2fdcf5240aa02af80d58d6b95b07a6caf7144ca. Local reviewer validation passed: npm run build; npm run lint (55 warnings, 0 errors); FRONTEND_BASE_URL=http://127.0.0.1:8081 npx playwright test e2e/19-route-split.spec.ts --project=chromium (3 passed). Bundle budgets verified: initial entry gzip 269.76 kB <= 800 kB; Evidence chunk gzip 13.37 kB <= 150 kB. GitHub formal approval blocked by PR-author auth, so evidence comment was posted on PR #134. Owner closeout remains: merge to dev, deploy Pantheon dev FE, append hosted route-load/deployment.json evidence, then done.",
+      "status": "done",
+      "created_at": "2026-07-01T11:19:43Z",
+      "resolved_at": "2026-07-01T11:43:46Z"
+    }
+  ],
+  "blockers": []
+}

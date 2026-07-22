@@ -117,6 +117,13 @@ LINEAGE_READ_CORPUS_PATH
     the lineage read HTTP surface. Defaults to
     services/registry/lineage/lin001a_benchmark_corpus.json.
 
+    LIN-003: this same in-memory lineage graph is also the live write target
+    for accepted telemetry — every event ingest() accepts is admitted into it
+    immediately (along with its resolved RuntimeBinding, if not already a
+    graph node), so the lineage read routes below resolve newly-ingested
+    events without waiting for a corpus reload. See
+    docs/decisions/LIN-003-live-lineage-write-path.md.
+
 PANTHEON_RUNTIME_MANAGER_URL
     Base URL of the authoritative runtime-manager service
     (e.g. http://runtime-manager:8081).  When set, the ingest service wires
@@ -141,6 +148,7 @@ import threading
 import types
 import urllib.error
 import urllib.request
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -154,6 +162,7 @@ from .heartbeat_service import (
 from .ingest_svc import TelemetryIngestService, build_postgres_write_fn
 from .lineage_read import LineageReadService
 from .runtime_summary import RuntimeSummaryProjectionStore
+from .trade_episode_projection import TradeEpisodeProjectionStore
 from services.foundation.health import register_flask_health_routes
 from services.runtime_auth import resolve_runtime_manager_auth
 
@@ -168,6 +177,8 @@ log = logging.getLogger(__name__)
 
 _loop: asyncio.AbstractEventLoop | None = None
 _loop_thread: threading.Thread | None = None
+
+_DEFAULT_STARTUP_TIMEOUT_SECONDS = 180.0
 
 
 def _start_background_loop() -> asyncio.AbstractEventLoop:
@@ -188,6 +199,23 @@ def _run_async(coro, timeout: float = 30.0):
         raise RuntimeError("Background event loop not initialised")
     future = asyncio.run_coroutine_threadsafe(coro, _loop)
     return future.result(timeout=timeout)
+
+
+def _startup_timeout_seconds() -> float:
+    raw = os.getenv(
+        "TELEMETRY_STARTUP_TIMEOUT_SECONDS",
+        str(int(_DEFAULT_STARTUP_TIMEOUT_SECONDS)),
+    )
+    try:
+        timeout = float(raw)
+    except ValueError:
+        log.warning(
+            "Invalid TELEMETRY_STARTUP_TIMEOUT_SECONDS=%r; using %.0fs",
+            raw,
+            _DEFAULT_STARTUP_TIMEOUT_SECONDS,
+        )
+        return _DEFAULT_STARTUP_TIMEOUT_SECONDS
+    return max(1.0, timeout)
 
 
 # ---------------------------------------------------------------------------
@@ -261,6 +289,8 @@ _DEFAULT_STORAGE_DIR = "/tmp/pantheon/telemetry"
 _DEFAULT_LINEAGE_CORPUS_PATH = (
     Path(__file__).resolve().parent.parent / "registry" / "lineage" / "lin001a_benchmark_corpus.json"
 )
+_CANONICAL_TELEMETRY_TABLE = "telemetry_events"
+_REQUIRED_TELEMETRY_COLUMNS = ("event_id", "event_type", "created_at", "payload")
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -270,8 +300,133 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _build_service() -> TelemetryIngestService:
-    """Instantiate TelemetryIngestService with production Postgres and RuntimeBinding wiring."""
+def _split_table_name(table: str) -> tuple[str, str]:
+    if "." not in table:
+        return "public", table
+    schema, name = table.split(".", 1)
+    return schema or "public", name
+
+
+async def _probe_canonical_telemetry_table(
+    dsn: str,
+    table: str = _CANONICAL_TELEMETRY_TABLE,
+    timeout: float = 2.0,
+) -> dict[str, Any]:
+    """Verify the canonical telemetry_events table exists with required columns."""
+    schema_name, table_name = _split_table_name(table)
+    try:
+        import asyncpg  # type: ignore[import]
+    except ImportError:
+        return {
+            "status": "error",
+            "backend": "postgres",
+            "dsn_configured": True,
+            "table": table,
+            "table_exists": None,
+            "message": "asyncpg is not installed; telemetry Postgres readiness cannot be checked",
+        }
+
+    conn = None
+    try:
+        conn = await asyncpg.connect(dsn, timeout=timeout)
+        regclass = await conn.fetchval("SELECT to_regclass($1)", table)
+        if regclass is None:
+            return {
+                "status": "error",
+                "backend": "postgres",
+                "dsn_configured": True,
+                "table": table,
+                "table_exists": False,
+                "message": (
+                    "canonical telemetry table is missing; run scripts/db_migrate.sh "
+                    "before marking telemetry ready"
+                ),
+            }
+
+        rows = await conn.fetch(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = $1 AND table_name = $2
+            """,
+            schema_name,
+            table_name,
+        )
+        columns = {
+            str(row["column_name"] if isinstance(row, Mapping) else row[0])
+            for row in rows
+        }
+        missing_columns = [
+            column for column in _REQUIRED_TELEMETRY_COLUMNS if column not in columns
+        ]
+        if missing_columns:
+            return {
+                "status": "error",
+                "backend": "postgres",
+                "dsn_configured": True,
+                "table": table,
+                "table_exists": True,
+                "required_columns_present": False,
+                "missing_columns": missing_columns,
+                "message": (
+                    "canonical telemetry table is present but missing required columns; "
+                    "run scripts/db_migrate.sh"
+                ),
+            }
+
+        return {
+            "status": "ok",
+            "backend": "postgres",
+            "dsn_configured": True,
+            "table": table,
+            "table_exists": True,
+            "required_columns_present": True,
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "status": "error",
+            "backend": "postgres",
+            "dsn_configured": True,
+            "table": table,
+            "table_exists": None,
+            "message": str(exc),
+        }
+    finally:
+        if conn is not None:
+            await conn.close()
+
+
+def _canonical_telemetry_table_dependency() -> dict[str, Any]:
+    dsn = os.getenv("TELEMETRY_DB_DSN", "").strip()
+    if not dsn:
+        return {
+            "status": "ok",
+            "backend": "memory",
+            "dsn_configured": False,
+            "table": _CANONICAL_TELEMETRY_TABLE,
+            "table_exists": None,
+            "message": "TELEMETRY_DB_DSN is not set; memory-only dev sink active",
+        }
+    if _loop is None:
+        return {
+            "status": "error",
+            "backend": "postgres",
+            "dsn_configured": True,
+            "table": _CANONICAL_TELEMETRY_TABLE,
+            "table_exists": None,
+            "message": "background event loop is unavailable for telemetry Postgres readiness",
+        }
+    return _run_async(_probe_canonical_telemetry_table(dsn), timeout=3.0)
+
+
+def _build_service(lineage_write_store: LineageReadService | None = None) -> TelemetryIngestService:
+    """Instantiate TelemetryIngestService with production Postgres and RuntimeBinding wiring.
+
+    ``lineage_write_store`` wires the LIN-003 live lineage write path: when
+    provided, every accepted event is admitted into that lineage graph
+    immediately, so the deployed lineage read surface resolves it without a
+    corpus reload.
+    """
     db_dsn = os.getenv("TELEMETRY_DB_DSN", "")
     if db_dsn:
         write_fn = build_postgres_write_fn(dsn=db_dsn)
@@ -334,6 +489,19 @@ def _build_service() -> TelemetryIngestService:
         heartbeat_stale_after_seconds=heartbeat_stale_after,
     )
 
+    trade_episode_projections_path = os.getenv(
+        "TELEMETRY_TRADE_EPISODE_PROJECTION_STORE",
+        str(Path(storage_dir) / "trade_episode_projections.json"),
+    )
+    trade_episode_events_path = os.getenv(
+        "TELEMETRY_TRADE_EPISODE_EVENTS_STORE",
+        str(Path(storage_dir) / "trade_episode_events.json"),
+    )
+    trade_episode_projection_store = TradeEpisodeProjectionStore(
+        trade_episode_projections_path,
+        trade_episode_events_path,
+    )
+
     return TelemetryIngestService(
         schema_path=schema_path if Path(schema_path).exists() else None,
         storage_dir=storage_dir,
@@ -345,6 +513,8 @@ def _build_service() -> TelemetryIngestService:
         write_fn=write_fn,
         binding_store=binding_store,
         runtime_summary_store=runtime_summary_store,
+        trade_episode_projection_store=trade_episode_projection_store,
+        lineage_write_store=lineage_write_store,
         replay_dlq_on_start=replay_dlq_on_start,
         dlq_replay_tag_filter=dlq_replay_tag_filter,
     )
@@ -407,6 +577,11 @@ def _telemetry_metrics() -> dict[str, Any]:
     dlq_stats = stats.get("dead_letter_queue", {}) if isinstance(stats, dict) else {}
     buffer_stats = stats.get("buffer", {}) if isinstance(stats, dict) else {}
     startup_stats = stats.get("startup", {}) if isinstance(stats, dict) else {}
+    tag_counts = dlq_stats.get("tag_counts", {}) if isinstance(dlq_stats, dict) else {}
+    write_failure_dlq_entries = (
+        int(tag_counts.get("writer_error", 0) or 0)
+        + int(tag_counts.get("retry_exhausted", 0) or 0)
+    )
     return {
         "service_started": 1 if service_stats.get("started") else 0,
         "accepted_count": service_stats.get("total_ingested", 0),
@@ -418,6 +593,11 @@ def _telemetry_metrics() -> dict[str, Any]:
         "writer_total_retried": writer_stats.get("total_retried", 0),
         "writer_total_dlq": writer_stats.get("total_dlq", 0),
         "writer_batches_flushed": writer_stats.get("batches_flushed", 0),
+        "writer_failure_dlq_entries": write_failure_dlq_entries,
+        "writer_seconds_since_last_write_attempt": writer_stats.get("seconds_since_last_write_attempt"),
+        "writer_seconds_since_last_successful_write": writer_stats.get("seconds_since_last_successful_write"),
+        "writer_seconds_since_last_failed_write": writer_stats.get("seconds_since_last_failed_write"),
+        "writer_seconds_since_last_dlq": writer_stats.get("seconds_since_last_dlq"),
         "buffer_size": buffer_stats.get("size", 0),
         "buffer_capacity": buffer_stats.get("capacity", 0),
         "dlq_memory_entries": dlq_stats.get("memory_entries", 0),
@@ -437,10 +617,16 @@ def _telemetry_dependencies() -> dict[str, Any]:
             "message": str(exc),
         }
         dlq_payload: dict[str, Any] = {"status": "ok", "memory_entries": 0}
+        canonical_table_payload = _canonical_telemetry_table_dependency()
     else:
         writer_stats = stats.get("writer", {}) if isinstance(stats, dict) else {}
         service_stats = stats.get("service", {}) if isinstance(stats, dict) else {}
         dlq_stats = stats.get("dead_letter_queue", {}) if isinstance(stats, dict) else {}
+        tag_counts = dlq_stats.get("tag_counts", {}) if isinstance(dlq_stats, dict) else {}
+        write_failure_dlq_entries = (
+            int(tag_counts.get("writer_error", 0) or 0)
+            + int(tag_counts.get("retry_exhausted", 0) or 0)
+        )
         writer_running = bool(service_stats.get("started")) and bool(writer_stats.get("running"))
         writer_payload = {
             "status": "ok" if writer_running else "error",
@@ -450,6 +636,16 @@ def _telemetry_dependencies() -> dict[str, Any]:
             "total_retried": writer_stats.get("total_retried", 0),
             "total_dlq": writer_stats.get("total_dlq", 0),
             "batches_flushed": writer_stats.get("batches_flushed", 0),
+            "failure_dlq_entries": write_failure_dlq_entries,
+            "last_write_attempt_at": writer_stats.get("last_write_attempt_at"),
+            "last_successful_write_at": writer_stats.get("last_successful_write_at"),
+            "last_failed_write_at": writer_stats.get("last_failed_write_at"),
+            "last_dlq_at": writer_stats.get("last_dlq_at"),
+            "seconds_since_last_write_attempt": writer_stats.get("seconds_since_last_write_attempt"),
+            "seconds_since_last_successful_write": writer_stats.get("seconds_since_last_successful_write"),
+            "seconds_since_last_failed_write": writer_stats.get("seconds_since_last_failed_write"),
+            "seconds_since_last_dlq": writer_stats.get("seconds_since_last_dlq"),
+            "last_error": writer_stats.get("last_error"),
         }
         dlq_payload = {
             "status": "ok",
@@ -458,7 +654,9 @@ def _telemetry_dependencies() -> dict[str, Any]:
             "incident_fired": bool(dlq_stats.get("incident_fired")),
             "spill_path": dlq_stats.get("spill_path"),
             "tag_counts": dlq_stats.get("tag_counts", {}),
+            "write_failure_entries": write_failure_dlq_entries,
         }
+        canonical_table_payload = _canonical_telemetry_table_dependency()
 
     return {
         "runtime_manager": {
@@ -466,6 +664,7 @@ def _telemetry_dependencies() -> dict[str, Any]:
             "url": os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "").strip(),
         },
         "lineage_read": {"status": "ok" if _lineage_svc is not None else "degraded"},
+        "canonical_telemetry_table": canonical_table_payload,
         "telemetry_writer": writer_payload,
         "dead_letter_queue": dlq_payload,
     }
@@ -517,10 +716,14 @@ def startup():
     """Start the background event loop and the ingest service."""
     global _loop, _loop_thread, _svc, _lineage_svc
     _loop, _loop_thread = _start_background_loop()
-    _svc = _build_service()
+    # LIN-003: build the lineage service first so _build_service() can wire
+    # it as the ingest live-write target — accepted events become resolvable
+    # through the lineage read routes without a corpus reload.
     _lineage_svc = _build_lineage_service()
-    _run_async(_svc.start())
-    log.info("TelemetryIngestService started")
+    _svc = _build_service(lineage_write_store=_lineage_svc)
+    startup_timeout = _startup_timeout_seconds()
+    _run_async(_svc.start(), timeout=startup_timeout)
+    log.info("TelemetryIngestService started within %.0fs startup budget", startup_timeout)
 
 
 def shutdown():
@@ -702,6 +905,73 @@ def runtime_summary(runtime_id: str):
             }
         }), 404
     return jsonify(summary), 200
+
+
+@app.route("/api/telemetry/trade-episodes", methods=["GET"])
+def trade_episodes():
+    """Return trade episode projections with filters, sorting, and pagination."""
+    persona_id = request.args.get("persona_id")
+    cursor = request.args.get("cursor")
+    try:
+        limit = int(request.args.get("limit", "20"))
+    except ValueError:
+        limit = 20
+    environment = request.args.get("environment")
+    strategy_id = request.args.get("strategy_id")
+    instrument_id = request.args.get("instrument_id")
+    side = request.args.get("side")
+    status = request.args.get("status")
+    outcome = request.args.get("outcome")
+    reflection_state = request.args.get("reflection_state")
+    coverage_state = request.args.get("coverage_state")
+    start_time = request.args.get("start_time")
+    end_time = request.args.get("end_time")
+
+    svc = _get_service()
+    result = svc.list_trade_episode_projections(
+        persona_id=persona_id,
+        cursor=cursor,
+        limit=limit,
+        environment=environment,
+        strategy_id=strategy_id,
+        instrument_id=instrument_id,
+        side=side,
+        status=status,
+        outcome=outcome,
+        reflection_state=reflection_state,
+        coverage_state=coverage_state,
+        start_time=start_time,
+        end_time=end_time,
+    )
+    return jsonify(result), 200
+
+
+@app.route("/api/telemetry/trade-episodes/<trade_episode_id>", methods=["GET"])
+def trade_episode(trade_episode_id: str):
+    """Return a single trade episode projection, supporting as-of query parameters."""
+    as_of = request.args.get("as_of")
+    as_of_sequence_str = request.args.get("as_of_sequence")
+    as_of_sequence = None
+    if as_of_sequence_str is not None:
+        try:
+            as_of_sequence = int(as_of_sequence_str)
+        except ValueError:
+            return jsonify({"error": {"code": "INVALID_AS_OF_SEQUENCE", "message": "as_of_sequence must be an integer"}}), 400
+
+    svc = _get_service()
+    projection = svc.get_trade_episode_projection(
+        trade_episode_id,
+        as_of=as_of,
+        as_of_sequence=as_of_sequence,
+    )
+    if projection is None:
+        return jsonify({
+            "error": {
+                "code": "TRADE_EPISODE_NOT_FOUND",
+                "message": f"No trade episode projection found for {trade_episode_id}",
+            }
+        }), 404
+    return jsonify(projection), 200
 
 
 @app.route("/api/telemetry/dlq", methods=["GET"])

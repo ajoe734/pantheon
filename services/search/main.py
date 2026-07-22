@@ -157,6 +157,19 @@ class IndexRefreshBody(BaseModel):
     force_full: bool = False
 
 
+class SourceCompletionBody(BaseModel):
+    ingest_run_id: str
+    connector_id: str | None = None
+    source_type: str | None = None
+    trace_id: str | None = None
+    normalized_count: int = 0
+    source_ids: list[str] = Field(default_factory=list)
+    evidence_bundle_id: str | None = None
+    knowledge_object_ids: list[str] = Field(default_factory=list)
+    force_full: bool = False
+    materialize: bool = True
+
+
 def _result_detail(document: SearchDocumentBody) -> str:
     if document.content_ref:
         return document.content_ref
@@ -285,6 +298,63 @@ def create_app(
     pipeline_store = JsonlIndexPipelineStore(pipeline_store_path or PIPELINE_STORE_PATH, max_retention=retention_runs)
     sla_seconds = freshness_sla_seconds if freshness_sla_seconds is not None else FRESHNESS_SLA_SECONDS
     pipeline = IncrementalIndexPipeline(durable_repository, pipeline_store, freshness_sla_seconds=sla_seconds)
+
+    def _materialize_index_state(
+        *,
+        triggered_by: str = "manual_materialize",
+        trigger_ref: str | None = None,
+        source_completion: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        durable_repository.reload()
+        adapter = KeywordIndexAdapter(
+            durable_repository,
+            source_watermarks=_source_watermarks(durable_repository),
+            adapter_state="materialized",
+        )
+        state: dict[str, Any] = {
+            "materialized_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+            "triggered_by": triggered_by,
+            "trigger_ref": trigger_ref,
+            "indexed_object_count": len(durable_repository.list_knowledge_objects()),
+            "index": adapter.snapshot().to_dict(),
+            "evidence_store_path": str(durable_repository.path),
+        }
+        if source_completion is not None:
+            state["source_completion"] = dict(source_completion)
+        materialize_store.record_materialize(state)
+        return state
+
+    def _source_completion_truth(ingest_run_id: str) -> dict[str, Any]:
+        pipeline_store.reload()
+        materialize_store.reload()
+        runs = [
+            run
+            for run in pipeline_store.list_runs(limit=pipeline_store.max_retention)
+            if run.trigger_ref == ingest_run_id
+        ]
+        latest = runs[-1] if runs else None
+        materialized = materialize_store.get_last()
+        materialized_trigger_ref = materialized.get("trigger_ref") if materialized else None
+        freshness = pipeline.freshness_status()
+        index_refreshed = latest is not None
+        materialized_matches_completion = bool(materialized and materialized_trigger_ref == ingest_run_id)
+        return {
+            "schema_version": "source_search_completion_truth.v1",
+            "ingest_run_id": ingest_run_id,
+            "status": "refreshed" if index_refreshed else "missing_refresh",
+            "index_refreshed": index_refreshed,
+            "pipeline_run_id": latest.pipeline_run_id if latest else None,
+            "pipeline_triggered_by": latest.triggered_by if latest else None,
+            "pipeline_indexed_at": latest.indexed_at if latest else None,
+            "pipeline_indexed_count": latest.indexed_count if latest else None,
+            "freshness_status": freshness.get("status"),
+            "freshness_within_sla": bool(freshness.get("within_sla")),
+            "materialized": bool(materialized),
+            "materialized_at": materialized.get("materialized_at") if materialized else None,
+            "materialized_trigger_ref": materialized_trigger_ref,
+            "materialized_matches_completion": materialized_matches_completion,
+        }
+
     register_fastapi_health_routes(
         app,
         "pantheon-search",
@@ -358,6 +428,59 @@ def create_app(
             "total": pipeline_store.count_runs(),
             "retention_runs": pipeline_store.max_retention,
         }
+
+    @app.post("/api/search/index/source-completions")
+    def record_source_completion(body: SourceCompletionBody) -> dict[str, Any]:
+        """Record source ingest completion and reconcile search freshness/materialization truth."""
+        ingest_run_id = body.ingest_run_id.strip()
+        if not ingest_run_id:
+            raise HTTPException(status_code=400, detail="ingest_run_id is required")
+        completion = {
+            "schema_version": "source_ingest_completion.v1",
+            "ingest_run_id": ingest_run_id,
+            "connector_id": body.connector_id,
+            "source_type": body.source_type,
+            "trace_id": body.trace_id,
+            "normalized_count": body.normalized_count,
+            "source_ids": list(body.source_ids),
+            "evidence_bundle_id": body.evidence_bundle_id,
+            "knowledge_object_ids": list(body.knowledge_object_ids),
+        }
+        try:
+            snapshot = pipeline.run(
+                triggered_by="ingest_completion",
+                trigger_ref=ingest_run_id,
+                force_full=body.force_full,
+            )
+            pipeline_store.reload()
+            freshness = pipeline.freshness_status()
+            materialized = (
+                _materialize_index_state(
+                    triggered_by="ingest_completion",
+                    trigger_ref=ingest_run_id,
+                    source_completion=completion,
+                )
+                if body.materialize
+                else None
+            )
+            return {
+                "schema_version": "source_search_completion_refresh.v1",
+                "completion": completion,
+                "pipeline_snapshot": snapshot.to_dict(),
+                "freshness": freshness,
+                "materialized_index": materialized,
+                "truth": _source_completion_truth(ingest_run_id),
+            }
+        except EvidenceValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/search/index/source-completions/{ingest_run_id}")
+    def get_source_completion_truth(ingest_run_id: str) -> dict[str, Any]:
+        """Replay source-to-search refresh truth for a completed ingest run."""
+        ingest_run_id = ingest_run_id.strip()
+        if not ingest_run_id:
+            raise HTTPException(status_code=400, detail="ingest_run_id is required")
+        return {"truth": _source_completion_truth(ingest_run_id)}
 
     @app.post("/api/search/index/reload")
     def reload_index() -> dict[str, Any]:
@@ -462,20 +585,7 @@ def create_app(
     @app.post("/api/search/index/materialize")
     def materialize_index() -> dict[str, Any]:
         try:
-            durable_repository.reload()
-            adapter = KeywordIndexAdapter(
-                durable_repository,
-                source_watermarks=_source_watermarks(durable_repository),
-                adapter_state="materialized",
-            )
-            state: dict[str, Any] = {
-                "materialized_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
-                "indexed_object_count": len(durable_repository.list_knowledge_objects()),
-                "index": adapter.snapshot().to_dict(),
-                "evidence_store_path": str(durable_repository.path),
-            }
-            materialize_store.record_materialize(state)
-            return state
+            return _materialize_index_state()
         except EvidenceValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

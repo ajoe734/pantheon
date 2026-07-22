@@ -100,6 +100,15 @@
       "items": { "type": "string" },
       "description": "IDs of TelemetryEvents that triggered or are evidence for this incident."
     },
+    "reconciliation_ids": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "IDs of reconciliation records or DriftReports linked to this incident."
+    },
+    "incident_cluster_id": {
+      "type": "string",
+      "description": "Stable incident cluster used to dedupe repeated evidence for the same binding/runtime condition."
+    },
     "evidence_summary": {
       "type": "string",
       "description": "Human-readable summary of the evidence collected at time of incident creation."

@@ -29,9 +29,9 @@ from statistics import mean, pstdev
 from types import SimpleNamespace
 from typing import Any, Mapping, Sequence
 
-from services.broker.shioaji.adapter import ShioajiBrokerAdapter
-from services.broker.shioaji.facade import ShioajiSandboxFacade
-from services.broker.shioaji.sandbox_smoke import MockShioajiApi
+from services.broker.sinopac.adapter import ShioajiBrokerAdapter
+from services.broker.sinopac.facade import ShioajiSandboxFacade
+from services.broker.sinopac.sandbox_smoke import MockShioajiApi
 from services.execution.lean_runtime.smoke_algorithm import (
     SMOKE_STRATEGY_ID,
     SMOKE_VERSION,
@@ -12663,8 +12663,8 @@ def _run_shioaji_sandbox_lifecycle(
         "model_id": SHIOAJI_SANDBOX_LIFECYCLE_MODEL_ID,
         "status": "passed" if _shioaji_sandbox_result_is_usable(payload) else "failed",
         "run_mode": "mock_api_replay",
-        "adapter": "services.broker.shioaji.ShioajiBrokerAdapter",
-        "facade": "services.broker.shioaji.ShioajiSandboxFacade",
+        "adapter": "services.broker.sinopac.ShioajiBrokerAdapter",
+        "facade": "services.broker.sinopac.ShioajiSandboxFacade",
         "provider": payload["provider"],
         "environment": payload["environment"],
         "proof_boundary": payload["proof_boundary"],

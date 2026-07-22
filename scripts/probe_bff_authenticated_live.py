@@ -28,7 +28,20 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 
-DEFAULT_BASE_URL = "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io"
+DEFAULT_BASE_URL = "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io"
+
+
+def strict_live_evidence_run() -> dict[str, str]:
+    return {
+        "github_environment": os.environ.get("PANTHEON_LIVE_EVIDENCE_ENVIRONMENT", "").strip(),
+        "github_run_id": os.environ.get("GITHUB_RUN_ID", "").strip(),
+        "github_run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT", "").strip(),
+        "github_workflow": os.environ.get("GITHUB_WORKFLOW", "").strip(),
+        "github_job": os.environ.get("GITHUB_JOB", "").strip(),
+        "repository": os.environ.get("GITHUB_REPOSITORY", "").strip(),
+        "ref": (os.environ.get("GITHUB_REF") or os.environ.get("GITHUB_REF_NAME", "")).strip(),
+        "sha": os.environ.get("GITHUB_SHA", "").strip(),
+    }
 
 
 @dataclass(frozen=True)
@@ -45,6 +58,7 @@ class Probe:
     expect_error_envelope: bool = False
     allowed_error_codes: tuple[str, ...] = ()
     min_turn_count: int = 0
+    absent_item_values: tuple[tuple[tuple[str, ...], tuple[str, ...], str], ...] = ()
 
 
 READ_PROBES: tuple[Probe, ...] = (
@@ -200,6 +214,7 @@ RBAC_WRITE_PATHS: tuple[tuple[str, str, dict[str, Any]], ...] = (
     ("agora-note", "/bff/agora/notes", {"title": "", "body": "live dry-run RBAC matrix"}),
     ("intervention-claim", "/bff/v5/interventions/int-live-rbac-matrix/claim", {"reason": ""}),
 )
+RBAC_WRITE_READBACK_RESOURCES = {"strategy", "ranking-formula", "agora-note"}
 
 DENIED_ERROR_CODES = (
     "AUTH_REQUIRED",
@@ -234,6 +249,19 @@ def utc_now() -> str:
 
 def sha256_12(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
+
+
+def redacted_request_headers(headers: dict[str, str]) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "Authorization": "present" if headers.get("Authorization") else "absent",
+        "X-Dry-Run": headers.get("X-Dry-Run", "absent"),
+        "Idempotency-Key": "present" if headers.get("Idempotency-Key") else "absent",
+    }
+    if headers.get("Idempotency-Key"):
+        summary["Idempotency-Key-Sha256-12"] = sha256_12(headers["Idempotency-Key"])
+    if headers.get("Content-Type"):
+        summary["Content-Type"] = headers["Content-Type"]
+    return summary
 
 
 def role_list(value: str) -> list[str]:
@@ -337,6 +365,52 @@ def is_error_envelope(data: Any) -> bool:
     return bool(error_code_from(data))
 
 
+def error_envelope_shape(data: Any) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        return {
+            "ok": False,
+            "location": "missing",
+            "code_present": False,
+            "message_present": False,
+            "meta_correlation_id_present": False,
+            "outer_detail_wrapper": False,
+        }
+    detail = data.get("detail")
+    detail_error = detail.get("error") if isinstance(detail, dict) else None
+    top_error = data.get("error") if isinstance(data.get("error"), dict) else None
+    error = top_error if isinstance(top_error, dict) else detail_error if isinstance(detail_error, dict) else {}
+    meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
+    code_present = bool(str(error.get("code") or "").strip()) if isinstance(error, dict) else False
+    message_present = bool(str(error.get("message") or "").strip()) if isinstance(error, dict) else False
+    correlation_present = bool(str(meta.get("correlationId") or "").strip())
+    outer_detail_wrapper = isinstance(detail_error, dict)
+    location = "error" if isinstance(top_error, dict) else "detail.error" if outer_detail_wrapper else "missing"
+    return {
+        "ok": location == "error" and code_present and message_present and correlation_present and not outer_detail_wrapper,
+        "location": location,
+        "code_present": code_present,
+        "message_present": message_present,
+        "meta_correlation_id_present": correlation_present,
+        "outer_detail_wrapper": outer_detail_wrapper,
+    }
+
+
+def canonical_error_envelope_shape_ok_from_result(result: dict[str, Any]) -> bool:
+    if result.get("error_envelope") is not True:
+        return False
+    shape = result.get("error_envelope_shape")
+    if not isinstance(shape, dict):
+        return False
+    return (
+        shape.get("ok") is True
+        and shape.get("location") == "error"
+        and shape.get("code_present") is True
+        and shape.get("message_present") is True
+        and shape.get("meta_correlation_id_present") is True
+        and shape.get("outer_detail_wrapper") is False
+    )
+
+
 def body_summary(data: Any) -> dict[str, Any]:
     if isinstance(data, dict):
         summary: dict[str, Any] = {"type": "object", "keys": sorted(data.keys())[:20]}
@@ -369,19 +443,23 @@ def dry_run_meta_side_effect_check(result: dict[str, Any], *, kind: str) -> dict
     dry_run = _extracted_value(result, ("meta", "dryRun"))
     durable = _extracted_value(result, ("meta", "durable"))
     side_effects = _extracted_value(result, ("meta", "liveCapitalSideEffects"))
+    target_id = _extracted_value(result, ("data", "id"))
     ok = (
         result.get("ok") is True
         and dry_run is True
         and durable is False
         and side_effects is False
     )
-    return {
+    check = {
         "kind": kind,
         "ok": ok,
         "dryRun": dry_run,
         "durable": durable,
         "liveCapitalSideEffects": side_effects,
     }
+    if target_id:
+        check["target_id_sha256_12"] = sha256_12(str(target_id))
+    return check
 
 
 def readback_side_effect_check(
@@ -391,9 +469,10 @@ def readback_side_effect_check(
     target_id: str,
 ) -> dict[str, Any]:
     error_code = str(result.get("error_code") or "")
+    envelope_shape = result.get("error_envelope_shape") if isinstance(result.get("error_envelope_shape"), dict) else {}
     ok = (
         result.get("ok") is True
-        and result.get("error_envelope") is True
+        and canonical_error_envelope_shape_ok_from_result(result)
         and error_code in NOT_FOUND_ERROR_CODES
     )
     return {
@@ -401,7 +480,36 @@ def readback_side_effect_check(
         "ok": ok,
         "target_family": target_family,
         "target_id_sha256_12": sha256_12(str(target_id)),
+        "status": result.get("status"),
+        "error_envelope": result.get("error_envelope") is True,
+        "error_envelope_shape": envelope_shape,
         "error_code": error_code or None,
+    }
+
+
+def list_absence_side_effect_check(
+    result: dict[str, Any],
+    *,
+    target_family: str,
+    target_id: str,
+) -> dict[str, Any]:
+    checks = result.get("absent_item_checks") if isinstance(result.get("absent_item_checks"), list) else []
+    ok_checks = [check for check in checks if isinstance(check, dict) and check.get("ok") is True]
+    items_checked = sum(int(check.get("items_checked") or 0) for check in ok_checks)
+    ok = (
+        result.get("ok") is True
+        and int(result.get("status") or 0) == 200
+        and bool(checks)
+        and len(ok_checks) == len(checks)
+    )
+    return {
+        "kind": "list_readback_not_persisted",
+        "ok": ok,
+        "target_family": target_family,
+        "target_id_sha256_12": sha256_12(str(target_id)),
+        "status": result.get("status"),
+        "absent_checks": len(ok_checks),
+        "items_checked": items_checked,
     }
 
 
@@ -424,18 +532,25 @@ def rbac_write_side_effect_check(
     *,
     can_write: bool,
     marker: str,
+    readback_check: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if can_write:
         check = dry_run_meta_side_effect_check(result, kind="rbac_dry_run_write_meta")
+        if readback_check is not None:
+            check["readback_not_persisted"] = readback_check
+            check["ok"] = check["ok"] is True and readback_check.get("ok") is True
     else:
         error_code = str(result.get("error_code") or "")
+        envelope_shape = result.get("error_envelope_shape") if isinstance(result.get("error_envelope_shape"), dict) else {}
         check = {
             "kind": "authorization_rejected_before_persistence",
             "ok": (
                 result.get("ok") is True
-                and result.get("error_envelope") is True
+                and canonical_error_envelope_shape_ok_from_result(result)
                 and error_code in DENIED_ERROR_CODES
             ),
+            "error_envelope": result.get("error_envelope") is True,
+            "error_envelope_shape": envelope_shape,
             "error_code": error_code or None,
         }
     check["target_marker_sha256_12"] = sha256_12(marker)
@@ -581,9 +696,44 @@ def marker_payload(path: str, base: dict[str, Any], marker: str) -> dict[str, An
         payload["name"] = marker
     elif path == "/bff/agora/notes":
         payload["title"] = marker
+        payload["id"] = marker
     elif path.endswith("/claim"):
         payload["reason"] = marker
     return payload
+
+
+def rbac_write_readback_probe(resource: str, created_id: str) -> Probe | None:
+    quoted_id = urllib.parse.quote(str(created_id), safe="")
+    if resource == "strategy":
+        return Probe(
+            "GET",
+            f"/bff/strategies/{quoted_id}",
+            "rbac-write-strategy-readback-not-persisted",
+            expect_status={404},
+            expect_error_envelope=True,
+            allowed_error_codes=NOT_FOUND_ERROR_CODES,
+        )
+    if resource == "ranking-formula":
+        return Probe(
+            "GET",
+            f"/bff/ranking-formulas/{quoted_id}",
+            "rbac-write-ranking-formula-readback-not-persisted",
+            expect_status={404},
+            expect_error_envelope=True,
+            allowed_error_codes=NOT_FOUND_ERROR_CODES,
+        )
+    if resource == "agora-note":
+        return Probe(
+            "GET",
+            "/bff/agora/notes",
+            "rbac-write-agora-note-readback-not-persisted",
+            expect_status={200},
+            absent_item_values=(
+                (("items",), ("id",), str(created_id)),
+                (("items",), ("note_id",), str(created_id)),
+            ),
+        )
+    return None
 
 
 def request_json(
@@ -652,6 +802,28 @@ def request_json(
         actual = path_value(parsed, path)
         if actual != expected:
             missing_paths.append(f"{'.'.join(path)}={expected!r}")
+    absent_item_checks: list[dict[str, Any]] = []
+    for list_path, item_path, forbidden_value in probe.absent_item_values:
+        list_value = path_value(parsed, list_path, default=None)
+        target_hash = sha256_12(str(forbidden_value))
+        check: dict[str, Any] = {
+            "list_path": ".".join(list_path),
+            "item_path": ".".join(item_path),
+            "target_sha256_12": target_hash,
+        }
+        if isinstance(list_value, list):
+            found = any(
+                isinstance(item, dict)
+                and path_value(item, item_path, default=None) == forbidden_value
+                for item in list_value
+            )
+            check.update({"ok": not found, "found": found, "items_checked": len(list_value)})
+            if found:
+                missing_paths.append(f"absent_item:{'.'.join(list_path)}:{'.'.join(item_path)}:{target_hash}")
+        else:
+            check.update({"ok": False, "found": None, "items_checked": 0})
+            missing_paths.append(f"absent_item_list:{'.'.join(list_path)}")
+        absent_item_checks.append(check)
     if probe.min_turn_count:
         turns = None
         if isinstance(parsed, dict) and isinstance(parsed.get("data"), dict):
@@ -659,6 +831,7 @@ def request_json(
         if not isinstance(turns, list) or len(turns) < probe.min_turn_count:
             missing_paths.append(f"data.turns>={probe.min_turn_count}")
     error_code = error_code_from(parsed)
+    envelope_shape = error_envelope_shape(parsed)
     if probe.expect_error_envelope and not error_code:
         missing_paths.append("error.code")
     if probe.allowed_error_codes and error_code not in set(probe.allowed_error_codes):
@@ -678,6 +851,7 @@ def request_json(
         "duration_ms": round((time.time() - started) * 1000),
         "expected_status": sorted(probe.expect_status),
         "missing_required_paths": missing_paths,
+        "request_headers": redacted_request_headers(headers),
         "response_headers": {
             key: response_headers.get(key)
             for key in ("X-BFF-Api-Version", "X-Request-Id", "X-Correlation-Id")
@@ -688,10 +862,14 @@ def request_json(
         "error_code": error_code or None,
         "error_envelope": is_error_envelope(parsed),
     }
+    if error_code or probe.expect_error_envelope:
+        result["error_envelope_shape"] = envelope_shape
     if idempotency_key:
         result["request_idempotency_key_sha256_12"] = sha256_12(idempotency_key)
     if extracted:
         result["extracted"] = extracted
+    if absent_item_checks:
+        result["absent_item_checks"] = absent_item_checks
     if probe.family == "management-ai-multiturn" and isinstance(parsed, dict):
         data = parsed.get("data")
         if isinstance(data, dict):
@@ -699,6 +877,44 @@ def request_json(
             if isinstance(conversation, dict) and conversation.get("href"):
                 result["conversation_href"] = str(conversation["href"])
     return result
+
+
+def race_timing_entry(race_started_monotonic: float, request_started: float, request_finished: float) -> dict[str, float]:
+    start_ms = (request_started - race_started_monotonic) * 1000
+    end_ms = (request_finished - race_started_monotonic) * 1000
+    return {
+        "start_ms": round(start_ms, 3),
+        "end_ms": round(end_ms, 3),
+        "duration_ms": round(max(0.0, end_ms - start_ms), 3),
+    }
+
+
+def race_concurrency_summary(race_results: list[dict[str, Any]]) -> dict[str, Any]:
+    timings: list[dict[str, float]] = []
+    for result in race_results:
+        timing = result.get("race_timing") if isinstance(result.get("race_timing"), dict) else {}
+        start_ms = timing.get("start_ms")
+        end_ms = timing.get("end_ms")
+        if isinstance(start_ms, (int, float)) and not isinstance(start_ms, bool) and isinstance(end_ms, (int, float)) and not isinstance(end_ms, bool):
+            timings.append({"start_ms": float(start_ms), "end_ms": float(end_ms)})
+    if len(timings) != 2:
+        return {
+            "timing_proof": "monotonic_ms_relative_to_race_start",
+            "actor_count": len(timings),
+            "concurrent": False,
+            "missing_timing": True,
+        }
+    starts = [timing["start_ms"] for timing in timings]
+    ends = [timing["end_ms"] for timing in timings]
+    start_skew_ms = max(starts) - min(starts)
+    overlap_ms = min(ends) - max(starts)
+    return {
+        "timing_proof": "monotonic_ms_relative_to_race_start",
+        "actor_count": 2,
+        "start_skew_ms": round(start_skew_ms, 3),
+        "overlap_ms": round(overlap_ms, 3),
+        "concurrent": overlap_ms >= 0 and start_skew_ms <= 1000,
+    }
 
 
 def approval_race_tokens(args: argparse.Namespace, primary_token: str) -> tuple[str, str, dict[str, Any]]:
@@ -772,6 +988,7 @@ def build_approval_race_results(
 
     def run_one(index: int, bearer: str, actor_label: str) -> None:
         barrier.wait(timeout=timeout)
+        request_started = time.monotonic()
         result = request_json(
             base_url=base_url,
             probe=Probe(
@@ -789,8 +1006,10 @@ def build_approval_race_results(
             timeout=timeout,
             idempotency_prefix=f"{idempotency_prefix}-race-{actor_label}",
         )
+        request_finished = time.monotonic()
         result["actor_label"] = actor_label
         result["request_bearer_sha256_12"] = sha256_12(bearer)
+        result["race_timing"] = race_timing_entry(started_monotonic, request_started, request_finished)
         results[index] = result
 
     threads = [
@@ -798,6 +1017,7 @@ def build_approval_race_results(
         threading.Thread(target=run_one, args=(1, token_b, "b"), daemon=True),
     ]
     started = time.time()
+    started_monotonic = time.monotonic()
     for thread in threads:
         thread.start()
     for thread in threads:
@@ -823,12 +1043,14 @@ def build_approval_race_results(
     ]
     transport_failures = [result for result in race_results if int(result.get("status") or 0) == 0]
     duplicate_winners = len(accepted) > 1
+    concurrency = race_concurrency_summary(race_results)
     bounded = (
         len(race_results) == 2
         and not transport_failures
         and not duplicate_winners
         and len(accepted) == 1
         and len(safe_errors) == 1
+        and concurrency.get("concurrent") is True
     )
     return {
         "family": "approval-race",
@@ -843,6 +1065,7 @@ def build_approval_race_results(
         "accepted_count": len(accepted),
         "safe_error_count": len(safe_errors),
         "duplicate_winners": duplicate_winners,
+        "concurrency": concurrency,
         "token_source": token_source,
         "expectation": "one accepted decision plus one safe BffErrorEnvelope loser; two safe errors are not a live race proof",
         "results": race_results,
@@ -870,6 +1093,7 @@ def build_two_man_race_results(
 
     def run_one(index: int, bearer: str, actor_label: str) -> None:
         barrier.wait(timeout=timeout)
+        request_started = time.monotonic()
         signature_id = f"tms-live-{target_id}-{actor_label}-{stamp}"
         result = request_json(
             base_url=base_url,
@@ -896,10 +1120,12 @@ def build_two_man_race_results(
             timeout=timeout,
             idempotency_prefix=f"{idempotency_prefix}-two-man-race",
         )
+        request_finished = time.monotonic()
         result["actor_label"] = actor_label
         result["target_id_sha256_12"] = target_hash
         result["request_signature_id_sha256_12"] = sha256_12(signature_id)
         result["request_bearer_sha256_12"] = sha256_12(bearer)
+        result["race_timing"] = race_timing_entry(started_monotonic, request_started, request_finished)
         results[index] = result
 
     threads = [
@@ -907,6 +1133,7 @@ def build_two_man_race_results(
         threading.Thread(target=run_one, args=(1, token_b, "b"), daemon=True),
     ]
     started = time.time()
+    started_monotonic = time.monotonic()
     for thread in threads:
         thread.start()
     for thread in threads:
@@ -935,12 +1162,14 @@ def build_two_man_race_results(
             command_ids.append(str(command_id))
     distinct_command_ids = len(set(command_ids)) == len(command_ids) == len(accepted) == 2
     transport_failures = [result for result in race_results if int(result.get("status") or 0) == 0]
+    concurrency = race_concurrency_summary(race_results)
     operator_scoped = (
         len(race_results) == 2
         and not transport_failures
         and len(accepted) == 2
         and not replayed
         and distinct_command_ids
+        and concurrency.get("concurrent") is True
     )
     return {
         "family": "two-man-race",
@@ -956,6 +1185,7 @@ def build_two_man_race_results(
         "replayed_count": len(replayed),
         "distinct_command_ids": distinct_command_ids,
         "command_id_count": len(set(command_ids)),
+        "concurrency": concurrency,
         "token_source": token_source,
         "expectation": "two distinct operators share one idempotency key and both create independent two-man signatures without replay",
         "results": race_results,
@@ -1016,7 +1246,10 @@ def build_rbac_matrix_results(
                 f"rbac-write-{label}-{name}",
                 body=marker_payload(path, base_body, marker),
                 expect_status={200} if can_write else deny_status,
+                required_paths=(("data", "id"),) if can_write and name in RBAC_WRITE_READBACK_RESOURCES else (),
                 required_values=DRY_RUN_META_VALUES if can_write else (),
+                extract_paths=DRY_RUN_META_EXTRACT_PATHS
+                + ((("data", "id"),) if name in RBAC_WRITE_READBACK_RESOURCES else ()),
                 extra_headers=(("X-Dry-Run", "1"),),
                 expect_error_envelope=not can_write,
                 allowed_error_codes=() if can_write else DENIED_ERROR_CODES,
@@ -1035,11 +1268,37 @@ def build_rbac_matrix_results(
             if token_hash:
                 result["request_bearer_sha256_12"] = token_hash
             result["request_marker_sha256_12"] = marker_hash
+            readback_check: dict[str, Any] | None = None
+            created_id = _extracted_value(result, ("data", "id"))
+            if can_write and created_id:
+                readback_probe = rbac_write_readback_probe(name, str(created_id))
+                if readback_probe is not None:
+                    readback = request_json(
+                        base_url=base_url,
+                        probe=readback_probe,
+                        token=token,
+                        timeout=timeout,
+                        idempotency_prefix=idempotency_prefix,
+                    )
+                    if name == "agora-note":
+                        readback_check = list_absence_side_effect_check(
+                            readback,
+                            target_family=f"rbac-write-{name}",
+                            target_id=str(created_id),
+                        )
+                    else:
+                        readback_check = readback_side_effect_check(
+                            readback,
+                            target_family=f"rbac-write-{name}",
+                            target_id=str(created_id),
+                        )
             result["side_effect_check"] = rbac_write_side_effect_check(
                 result,
                 can_write=can_write,
                 marker=marker,
+                readback_check=readback_check,
             )
+            result.pop("extracted", None)
             results.append(result)
     return results, source
 
@@ -1315,6 +1574,7 @@ def main() -> int:
         "task_id": "BFF-LUV-AUTHED-LIVE-001",
         "generated_at": ts,
         "target_url": args.base_url.rstrip("/"),
+        "strict_live_evidence_run": strict_live_evidence_run(),
         "auth_source": auth_source,
         "rbac_auth_source": rbac_auth_source,
         "include_writes": args.include_writes,

@@ -21,7 +21,16 @@ import json
 import os
 import subprocess
 import sys
-from typing import Any, Dict, List, Mapping
+from typing import Any, Dict, List, Mapping, Optional
+
+try:
+    from integrations.openclaw.persona_agent_sync import build_persona_soul as _shared_build_soul
+    from integrations.openclaw.persona_memory_bridge import materialize_persona_memory_from_api as _shared_materialize_memory
+    from services.persona.runtime_profile import build_persona_runtime_profile as _shared_runtime_profile
+except Exception:  # noqa: BLE001 - script must stay self-contained in the gateway container
+    _shared_build_soul = None
+    _shared_materialize_memory = None
+    _shared_runtime_profile = None
 
 PERSONA_WORKSPACE_ROOT = "/home/node/.openclaw/workspaces"
 DEFAULT_PERSONA_MODEL = "anthropic/claude-opus-4-8"
@@ -32,9 +41,69 @@ def persona_id(p: Mapping[str, Any]) -> str:
     return str(p.get("persona_id") or p.get("id") or "").strip()
 
 
+def _mapping(value: Any) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _first_model_ref(source: Mapping[str, Any]) -> str:
+    for key in ("model", "model_ref", "modelRef", "primary_model", "primaryModel", "preferred_model", "preferredModel"):
+        value = str(source.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _fallback_runtime_profile(p: Mapping[str, Any]) -> Dict[str, Any]:
+    metadata = _mapping(p.get("metadata"))
+    runtime = _mapping(metadata.get("runtime_profile") or metadata.get("runtimeProfile"))
+    routing = _mapping(
+        metadata.get("model_routing")
+        or metadata.get("modelRouting")
+        or runtime.get("model_routing")
+        or runtime.get("modelRouting")
+    )
+    model = _first_model_ref(routing) or _first_model_ref(metadata) or _first_model_ref(p)
+    if model and model not in KNOWN_MODELS:
+        raise ValueError(
+            "persona_runtime_profile_model_routing_degraded "
+            f"reason=unknown_model_ref invalid_refs={model} "
+            "repair_action=fix_persona_route_policy_or_provider_pool"
+        )
+    workspace = (
+        p.get("workspace_ref")
+        or metadata.get("workspace_ref")
+        or _mapping(metadata.get("openclaw_agent")).get("workspace_ref")
+        or f"{PERSONA_WORKSPACE_ROOT}/{persona_id(p)}"
+    )
+    return {"model": model or DEFAULT_PERSONA_MODEL, "workspace": str(workspace), "sync_generation": 1}
+
+
+def runtime_profile(p: Mapping[str, Any]) -> Dict[str, Any]:
+    if _shared_runtime_profile is not None:
+        profile = _shared_runtime_profile(p).to_dict()
+        routing = profile.get("model_routing") or {}
+        if routing.get("status") != "ready" or not routing.get("primary_model"):
+            reason = routing.get("blocked_reason") or routing.get("reason") or "model_routing_degraded"
+            invalid = ",".join(routing.get("invalid_refs") or []) or "none"
+            raise ValueError(
+                "persona_runtime_profile_model_routing_degraded "
+                f"reason={reason} invalid_refs={invalid} "
+                "repair_action=fix_persona_route_policy_or_provider_pool"
+            )
+        return {
+            "model": str(routing["primary_model"]),
+            "workspace": str(profile["workspace_ref"]),
+            "sync_generation": int(profile.get("sync_generation") or 1),
+        }
+    return _fallback_runtime_profile(p)
+
+
 def resolve_model(p: Mapping[str, Any]) -> str:
-    pref = str(p.get("preferred_model") or p.get("model") or "").strip()
-    return pref if pref in KNOWN_MODELS else DEFAULT_PERSONA_MODEL
+    return runtime_profile(p)["model"]
+
+
+def resolve_workspace(p: Mapping[str, Any]) -> str:
+    return runtime_profile(p)["workspace"]
 
 
 TRAIT_FIELDS = ("instruments", "risk_appetite", "decision_style", "time_horizon", "hard_rules", "persona_voice")
@@ -61,6 +130,8 @@ def trait_value(p: Mapping[str, Any], key: str) -> str:
 
 
 def build_soul(p: Mapping[str, Any]) -> str:
+    if _shared_build_soul is not None:
+        return _shared_build_soul(p)
     pid = persona_id(p)
     name = str(p.get("name") or pid or "Persona").strip()
     mandate = str(p.get("mandate") or "").strip()
@@ -92,25 +163,56 @@ exactly which signal/market input you'd need. Never stall with filler.
 ## Hard guardrails
 - Paper unless a live capital binding is explicitly active (is_real_capital=false). No real orders on your own.
 - Stay inside your mandate. Be direct and quantitative — no 「在，老闆」 / NO_REPLY. Reply in 繁體中文 by default.
+
+## Memory
+MEMORY.md + memory/ + USER.md in this workspace are your durable memory. Read them; update MEMORY.md when something is worth keeping.
 """
 
 
-def existing_agent_ids() -> set[str]:
+def agent_model(agent: Mapping[str, Any]) -> str:
+    for key in ("model", "model_id", "modelId", "model_ref", "modelRef"):
+        value = str(agent.get(key) or "").strip()
+        if value:
+            return value
+    runtime = agent.get("runtime") if isinstance(agent.get("runtime"), Mapping) else {}
+    for key in ("model", "model_id", "modelRef"):
+        value = str(runtime.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def existing_agents() -> Dict[str, Dict[str, str]]:
     proc = subprocess.run(["openclaw", "agents", "list", "--json"], capture_output=True, text=True, timeout=60)
-    ids: set[str] = set()
+    existing: Dict[str, Dict[str, str]] = {}
     try:
         data = json.loads((proc.stdout or "").strip())
         agents = data.get("agents") if isinstance(data, dict) else data
-        for a in agents or []:
-            aid = a.get("id") if isinstance(a, dict) else a
-            if aid:
-                ids.add(str(aid))
+        for agent in agents or []:
+            if isinstance(agent, Mapping):
+                aid = str(agent.get("id") or agent.get("agent_id") or agent.get("agentId") or "").strip()
+                if not aid:
+                    continue
+                row = {"id": aid}
+                model = agent_model(agent)
+                if model:
+                    row["model"] = model
+                existing[aid] = row
+            elif agent:
+                aid = str(agent).strip()
+                existing[aid] = {"id": aid}
     except (ValueError, TypeError):
         for line in (proc.stdout or "").splitlines():
             line = line.strip()
             if line.startswith("- "):
-                ids.add(line[2:].split(" ")[0].strip())
-    return ids
+                aid = line[2:].split(" ")[0].strip()
+                if aid:
+                    existing[aid] = {"id": aid}
+    return existing
+
+
+def existing_agent_ids() -> set[str]:
+    return set(existing_agents())
 
 
 def write_soul(workspace: str, soul: str) -> None:
@@ -119,24 +221,84 @@ def write_soul(workspace: str, soul: str) -> None:
         fh.write(soul)
 
 
+def memory_api_url() -> str:
+    return (os.getenv("PANTHEON_MEMORY_API_URL") or os.getenv("PANTHEON_MEMORY_SERVICE_URL") or "").strip()
+
+
+def memory_actor_roles() -> List[str]:
+    raw = os.getenv("PANTHEON_MEMORY_ACTOR_ROLES", "operator")
+    roles = [part.strip() for part in raw.split(",") if part.strip()]
+    return roles or ["operator"]
+
+
+def materialize_memory_if_configured(pid: str, workspace: str) -> Optional[Dict[str, Any]]:
+    url = memory_api_url()
+    if not url:
+        return None
+    if _shared_materialize_memory is None:
+        raise RuntimeError("memory_bridge_module_unavailable")
+    result = _shared_materialize_memory(
+        memory_api_url=url,
+        persona_id=pid,
+        workspace=workspace,
+        actor_id=os.getenv("PANTHEON_MEMORY_ACTOR_ID", "openclaw-persona-sync"),
+        actor_roles=memory_actor_roles(),
+        session_id=os.getenv("PANTHEON_MEMORY_SESSION_ID") or f"openclaw-memory-sync-{pid}",
+        query=os.getenv(
+            "PANTHEON_OPENCLAW_MEMORY_QUERY",
+            "recent lessons, preferences, risks, and institutional context for this persona",
+        ),
+        limit=int(os.getenv("PANTHEON_OPENCLAW_MEMORY_LIMIT", "8")),
+        auth_token=os.getenv("PANTHEON_MEMORY_AUTH_TOKEN") or None,
+    )
+    return result.to_dict()
+
+
+def record_memory_materialization(report: Dict[str, Any], pid: str, workspace: str) -> None:
+    try:
+        result = materialize_memory_if_configured(pid, workspace)
+    except Exception as exc:  # noqa: BLE001
+        report["failed"].append({"persona_id": pid, "error": f"memory_materialization_failed: {exc}"[:300]})
+        return
+    if result is not None:
+        report["memory_materialized"].append(pid)
+
+
 def reconcile(personas: List[Mapping[str, Any]]) -> Dict[str, Any]:
-    report: Dict[str, Any] = {"created": [], "updated": [], "failed": []}
-    existing = existing_agent_ids()
+    report: Dict[str, Any] = {"created": [], "updated": [], "memory_materialized": [], "failed": []}
+    existing = existing_agents()
     for p in personas:
         pid = persona_id(p)
         if not pid:
             report["failed"].append({"persona_id": "?", "error": "no id"})
             continue
-        ws = f"{PERSONA_WORKSPACE_ROOT}/{pid}"
         try:
-            if pid in existing:
-                subprocess.run(["openclaw", "agents", "set-identity", pid, "--name", str(p.get("name") or pid)],
-                               capture_output=True, text=True, timeout=60)
+            profile = runtime_profile(p)
+            model = str(profile["model"])
+            ws = str(profile["workspace"])
+            current = existing.get(pid)
+            if current is not None:
+                current_model = str(current.get("model") or "").strip()
+                if current_model and current_model != model:
+                    report["failed"].append({
+                        "persona_id": pid,
+                        "error": "model_drift_update_unavailable",
+                        "current_model": current_model[:120],
+                        "desired_model": model[:120],
+                        "repair_action": "recreate_openclaw_agent_or_add_set_model_support",
+                    })
+                    continue
+                proc = subprocess.run(["openclaw", "agents", "set-identity", pid, "--name", str(p.get("name") or pid)],
+                                      capture_output=True, text=True, timeout=60)
+                if proc.returncode != 0:
+                    report["failed"].append({"persona_id": pid, "error": (proc.stderr or proc.stdout or "agents set-identity failed")[:300]})
+                    continue
                 write_soul(ws, build_soul(p))
                 report["updated"].append(pid)
+                record_memory_materialization(report, pid, ws)
             else:
                 proc = subprocess.run(
-                    ["openclaw", "agents", "add", pid, "--workspace", ws, "--model", resolve_model(p),
+                    ["openclaw", "agents", "add", pid, "--workspace", ws, "--model", model,
                      "--non-interactive", "--json"],
                     capture_output=True, text=True, timeout=90,
                 )
@@ -145,6 +307,7 @@ def reconcile(personas: List[Mapping[str, Any]]) -> Dict[str, Any]:
                     continue
                 write_soul(ws, build_soul(p))
                 report["created"].append(pid)
+                record_memory_materialization(report, pid, ws)
         except Exception as exc:  # noqa: BLE001
             report["failed"].append({"persona_id": pid, "error": str(exc)[:300]})
     report["counts"] = {k: len(v) for k, v in report.items() if isinstance(v, list)}

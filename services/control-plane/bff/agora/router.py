@@ -27,17 +27,31 @@ from .identity.scope import AgoraScopeResolutionError, resolve_agora_user_scope
 from .identity.router import create_identity_router
 from .servant.router import create_servant_router
 from .strategy_workshop.router import create_strategy_workshop_router
+from .strategy_workshop.operations import WorkshopCanonicalOperations
+from .strategy_workshop.store import make_workshop_store
 from .research.router import create_research_router
 from .trading_room.router import create_trading_room_router
 from .dashboard.router import create_dashboard_router
 from .shadow.router import create_shadow_router
 from .personalization.router import create_personalization_router
 from .management_projection.router import create_management_projection_router
+from .dataset_extraction.router import create_dataset_extraction_router
+from .interaction.router import create_interaction_router
+from .interaction.store import InteractionLifecycleStore
+from .governance.router import create_governance_router
+from .governance.store import ProposalStore
+from .candidate_decisions.adapters import (
+    CandidateBindingValidationAdapter,
+    ReadStoreApprovalAdapter,
+)
+from .candidate_decisions.router import create_candidate_decision_router
+from .candidate_decisions.service import CandidateDecisionService
+from .candidate_decisions.store import CandidateDecisionStore
 
 
 _CAPABILITY_MANIFEST_PATH = os.path.join(
     os.path.dirname(__file__),
-    "..", "..", "..", "specs", "agora", "capability_manifest.json",
+    "..", "..", "specs", "agora", "capability_manifest.json",
 )
 
 
@@ -67,16 +81,33 @@ def create_agora_router(
     *,
     extract_identity: Callable[..., Any],
     require_read_role: Callable[..., None],
+    require_write_role: Callable[..., None],
     bff_error: Callable[..., HTTPException],
     utc_now: Callable[[], str],
     get_read_store: Callable[[], Any],
     sync_servant_agent: Callable[[Dict[str, Any]], Dict[str, Any]],
+    canonical_context_ref_resolver: Optional[Callable[..., Any]] = None,
 ) -> APIRouter:
     """Return the Agora top-level APIRouter.
 
     Mount with:  app.include_router(create_agora_router(...))
     """
     router = APIRouter(tags=["agora"])
+    workshop_store = make_workshop_store()
+    workshop_canonical_operations = WorkshopCanonicalOperations(
+        approval_resolver=lambda decision_id: get_read_store().get_approval_decision(
+            decision_id
+        )
+    )
+    proposal_store = ProposalStore()
+    interaction_lifecycle = InteractionLifecycleStore.from_governance_store(proposal_store)
+    candidate_store = CandidateDecisionStore.from_governance_store(proposal_store)
+    candidate_service = CandidateDecisionService(
+        candidate_store,
+        interaction_store=interaction_lifecycle,
+        validation_adapter=CandidateBindingValidationAdapter(),
+        approval_store=ReadStoreApprovalAdapter(get_read_store),
+    )
 
     # ------------------------------------------------------------------ #
     # GET /bff/agora/me  — operator identity and capability scope (§18 envelope)
@@ -166,15 +197,43 @@ def create_agora_router(
     router.include_router(create_identity_router(**_kw))
     router.include_router(create_servant_router(
         **_kw,
+        require_write_role=require_write_role,
         get_read_store=get_read_store,
         sync_servant_agent=sync_servant_agent,
     ))
-    router.include_router(create_strategy_workshop_router(**_kw))
+    router.include_router(create_strategy_workshop_router(
+        **_kw,
+        require_write_role=require_write_role,
+        workshop_store=workshop_store,
+        canonical_operations=workshop_canonical_operations,
+    ))
     router.include_router(create_research_router(**_kw))
-    router.include_router(create_trading_room_router(**_kw))
+    router.include_router(create_trading_room_router(**_kw, workshop_store=workshop_store))
     router.include_router(create_dashboard_router(**_kw))
     router.include_router(create_shadow_router(**_kw))
     router.include_router(create_personalization_router(**_kw))
     router.include_router(create_management_projection_router(**_kw))
+    router.include_router(create_dataset_extraction_router(**_kw))
+    router.include_router(create_interaction_router(
+        **_kw,
+        require_write_role=require_write_role,
+        get_read_store=get_read_store,
+        workshop_store=workshop_store,
+        proposal_store=proposal_store,
+        interaction_store=interaction_lifecycle,
+        canonical_context_ref_resolver=canonical_context_ref_resolver,
+    ))
+    router.include_router(create_candidate_decision_router(
+        **_kw,
+        require_write_role=require_write_role,
+        service=candidate_service,
+    ))
+    router.include_router(create_governance_router(
+        **_kw,
+        require_write_role=require_write_role,
+        get_approval_decision=lambda approval_id: get_read_store().get_approval_decision(approval_id),
+        list_approval_decisions=lambda: get_read_store().list_approval_decisions(),
+        store=proposal_store,
+    ))
 
     return router

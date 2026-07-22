@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "task_id": "AG-DYNUI-FULL-007",
+  "archived_at": "2026-07-07T15:06:53Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "id": "AG-DYNUI-FULL-007",
+    "title": "Agora DYNUI production closeout and publish proof",
+    "summary_zh": "統整 FULL-001~006 的 PR、CI、deploy、live curl、browser screenshots、設計 parity；只有所有 production gate 都綠時才能關閉，否則建立 blocker 而不是 done。",
+    "phase": "Agora DYNUI Full Production Recovery / Wave 5 closeout",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "AG-DYNUI-FULL-006"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_agora_dynui_full_production_recovery_2026-07-05/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-05-agora-dynui-full-production-recovery/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-05-agora-dynui-full-production-recovery/AG-DYNUI-FULL-007-production-closeout.md",
+      "docs/bff/execution-tasks/2026-07-05-agora-dynui-full-production-closeout/AG-DYNUI-FULL-007-production-closeout.md",
+      "ai-task-archive/index.json"
+    ],
+    "acceptance": [
+      "all AG-DYNUI-FULL tasks are done or explicitly superseded with reviewer approval",
+      "final evidence includes design parity matrix and residual risk audit",
+      "live /trading-room aggregate has non-empty strategies after workflow proof",
+      "live /workshops/{id}/cards and /readiness return 200",
+      "hosted browser proof shows full flow without Failed to load Trading Room",
+      "execute-plans and Pantheon required checks are green",
+      "dev deploy SHAs are recorded for both frontend and BFF/runtime changes",
+      "no fixture-backed E2E is cited as production proof"
+    ],
+    "next": "Superseded by AG-DYNUI-FULL-007-BOARD-RECONCILE after PR #3043 split the remaining work into board/archive reconciliation and AG-DYNUI-FULL-008 design-parity maintenance. The stale todo row must not trigger a runtime rebuild. Live root direct mutation was blocked by a dirty retired checkout, so reconciliation is recorded through this reviewed archive patch.",
+    "last_update": "2026-07-07T15:06:53Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_agora_dynui_full_production_recovery_2026-07-05",
+    "auto_generated": true,
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "source_ref": {
+      "archive": "docs/04/pantheon_agora_dynui_full_production_recovery_2026-07-05/INDEX.md",
+      "packet": "docs/bff/execution-tasks/2026-07-05-agora-dynui-full-production-recovery/INDEX.md",
+      "reconciliation_packet": "docs/bff/execution-tasks/2026-07-05-agora-dynui-full-production-closeout/AG-DYNUI-FULL-007-production-closeout.md",
+      "production_inventory": "docs/bff/execution-tasks/2026-07-06-agora-srclive-production-inventory/INDEX.md"
+    },
+    "production_recovery_children": [
+      "AG-DYNUI-FULL-001",
+      "AG-DYNUI-FULL-002",
+      "AG-DYNUI-FULL-003",
+      "AG-DYNUI-FULL-004",
+      "AG-DYNUI-FULL-005",
+      "AG-DYNUI-FULL-006",
+      "AG-DYNUI-FULL-007"
+    ],
+    "wave": 5,
+    "fleet_lane": "agora-production-closeout",
+    "review_notes_zh": [
+      "The original AG-DYNUI-FULL-007 row is retired as a stale generic closeout row, not as new runtime work.",
+      "Current reconciliation ownership is AG-DYNUI-FULL-007-BOARD-RECONCILE; design-parity maintenance remains AG-DYNUI-FULL-008.",
+      "The live status root was dirty on branch retired/watchdog-flock-liveness-local-state-20260611, so direct board mutation was unsafe."
+    ],
+    "terminal_outcome": "superseded",
+    "delivery": {
+      "recorded_at": "2026-07-07T15:06:53Z",
+      "repository_id": "pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "commit": "aa2195e18e2b90f497ffb14a9ae7a7ebef8074f0",
+      "commit_subject": "Merge pull request #3043 from ajoe734/task/AG-DYNUI-SRCLIVE-TASKS-20260707",
+      "merge_target_branch": "dev",
+      "head_merged_to_target": true,
+      "related_prs": [
+        "https://github.com/ajoe734/pantheon/pull/3043"
+      ]
+    }
+  },
+  "handoffs": [],
+  "blockers": [
+    {
+      "task_id": "AG-DYNUI-FULL-007",
+      "owner": "Codex",
+      "waiting_for": "reviewed task-status patch",
+      "message": "Direct live-root board mutation was unsafe because /home/lupin/code/pantheon was on retired/watchdog-flock-liveness-local-state-20260611 with unrelated modified and untracked state. Reconciliation is performed through the clean AG-DYNUI-FULL-007-BOARD-RECONCILE task patch instead.",
+      "status": "resolved",
+      "created_at": "2026-07-07T15:06:53Z",
+      "resolved_at": "2026-07-07T15:06:53Z"
+    }
+  ]
+}

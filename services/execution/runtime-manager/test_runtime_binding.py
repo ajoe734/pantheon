@@ -298,6 +298,121 @@ class TestSingleRuntimeRule:
         assert store.get("rtb-001") is not None
         assert store.get("rtb-002") is not None
 
+
+class TestAtomicCutover:
+
+    def test_cutover_persists_child_and_retired_source_together(
+        self, store: RuntimeBindingStore
+    ) -> None:
+        source = _base(binding_id="rtb-source")
+        replacement = _base(
+            binding_id="rtb-child",
+            runtime_id="rt-child",
+            plan_id="plan-child",
+            artifact_id="art-child",
+            artifact_version="2.0.0",
+        )
+        store.create(source)
+
+        retired, child = store.cutover("rtb-source", replacement)
+
+        assert retired.status == RuntimeBindingStatus.RETIRED.value
+        assert child.status == RuntimeBindingStatus.ACTIVE.value
+        assert store.get_active_for_pool("pool-alpha") == child
+
+    def test_cutover_canonical_write_failure_is_restart_atomic(
+        self,
+        persisted_store: RuntimeBindingStore,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        source = _base(binding_id="rtb-source")
+        replacement = _base(
+            binding_id="rtb-child",
+            runtime_id="rt-child",
+            plan_id="plan-child",
+            artifact_id="art-child",
+            artifact_version="2.0.0",
+        )
+        persisted_store.create(source)
+        store_path = tmp_path / "bindings.json"
+        real_write = persisted_store._write_records
+
+        def interrupt_primary(path, records):
+            if path == store_path:
+                raise RuntimeError("injected primary snapshot failure")
+            return real_write(path, records)
+
+        monkeypatch.setattr(persisted_store, "_write_records", interrupt_primary)
+        with pytest.raises(RuntimeError, match="primary snapshot failure"):
+            persisted_store.cutover("rtb-source", replacement)
+
+        assert persisted_store.require("rtb-source").status == "active"
+        assert persisted_store.get("rtb-child") is None
+        restarted = RuntimeBindingStore(path=store_path)
+        assert restarted.require("rtb-source").status == "active"
+        assert restarted.get("rtb-child") is None
+
+    def test_cutover_rejects_an_unrelated_active_owner(
+        self, store: RuntimeBindingStore
+    ) -> None:
+        source = _base(binding_id="rtb-source")
+        unrelated = _base(binding_id="rtb-unrelated", runtime_id="rt-unrelated")
+        replacement = _base(binding_id="rtb-child", runtime_id="rt-child")
+        store.create(source, single_runtime_enforced=False)
+        store.create(unrelated, single_runtime_enforced=False)
+
+        with pytest.raises(RuntimeBindingError, match="another active"):
+            store.cutover("rtb-source", replacement)
+
+    def test_cutover_cannot_skip_pending_pause_state(self, store: RuntimeBindingStore) -> None:
+        source = _base(binding_id="rtb-source")
+        replacement = _base(binding_id="rtb-child", runtime_id="rt-child")
+        store.create(source)
+        store.transition_status("rtb-source", RuntimeBindingStatus.PENDING_PAUSE.value)
+
+        with pytest.raises(RuntimeBindingError, match="status machine"):
+            store.cutover("rtb-source", replacement)
+
+
+class TestPersistenceFailureAtomicity:
+
+    def test_create_save_failure_restores_in_memory_state(
+        self, store: RuntimeBindingStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            store,
+            "_save",
+            lambda: (_ for _ in ()).throw(RuntimeError("injected save failure")),
+        )
+
+        with pytest.raises(RuntimeError, match="injected save failure"):
+            store.create(_base(binding_id="rtb-create-failure"))
+
+        assert store.get("rtb-create-failure") is None
+
+    def test_transition_save_failure_restores_in_memory_state(
+        self, store: RuntimeBindingStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        binding = _base(binding_id="rtb-transition-failure")
+        store.create(binding)
+        monkeypatch.setattr(
+            store,
+            "_save",
+            lambda: (_ for _ in ()).throw(RuntimeError("injected save failure")),
+        )
+
+        with pytest.raises(RuntimeError, match="injected save failure"):
+            store.transition_status(
+                binding.binding_id,
+                RuntimeBindingStatus.PENDING_PAUSE.value,
+            )
+
+        assert store.require(binding.binding_id).status == "active"
+
+
+class TestSingleRuntimeQueries:
+
     def test_get_active_for_pool_returns_single(self, store: RuntimeBindingStore) -> None:
         b = _base(binding_id="rtb-001")
         store.create(b, single_runtime_enforced=True)
@@ -425,3 +540,85 @@ class TestPersistence:
         loaded = store2.get("rtb-001")
         assert loaded is not None
         assert loaded.status == "pending_pause"
+
+    def test_non_empty_store_writes_backup_snapshot(
+        self,
+        persisted_store: RuntimeBindingStore,
+        tmp_path: Path,
+    ) -> None:
+        b = _base(binding_id="rtb-001")
+        persisted_store.create(b, single_runtime_enforced=False)
+
+        backup_path = tmp_path / "bindings.json.bak"
+        assert backup_path.exists()
+
+        store2 = RuntimeBindingStore(path=backup_path)
+        loaded = store2.get("rtb-001")
+        assert loaded is not None
+        assert loaded.binding_id == b.binding_id
+
+    def test_existing_primary_store_backfills_missing_backup(
+        self,
+        persisted_store: RuntimeBindingStore,
+        tmp_path: Path,
+    ) -> None:
+        b = _base(binding_id="rtb-001")
+        persisted_store.create(b, single_runtime_enforced=False)
+
+        backup_path = tmp_path / "bindings.json.bak"
+        backup_path.unlink()
+
+        store2 = RuntimeBindingStore(path=tmp_path / "bindings.json")
+        loaded = store2.get("rtb-001")
+        assert loaded is not None
+        assert loaded.binding_id == b.binding_id
+        assert backup_path.exists()
+
+    def test_missing_primary_store_restores_from_backup(
+        self,
+        persisted_store: RuntimeBindingStore,
+        tmp_path: Path,
+    ) -> None:
+        b = _base(binding_id="rtb-001")
+        persisted_store.create(b, single_runtime_enforced=False)
+
+        store_path = tmp_path / "bindings.json"
+        store_path.unlink()
+
+        store2 = RuntimeBindingStore(path=store_path)
+        loaded = store2.get("rtb-001")
+        assert loaded is not None
+        assert loaded.binding_id == b.binding_id
+        assert store_path.exists()
+
+    def test_blank_primary_store_restores_from_backup(
+        self,
+        persisted_store: RuntimeBindingStore,
+        tmp_path: Path,
+    ) -> None:
+        b = _base(binding_id="rtb-001")
+        persisted_store.create(b, single_runtime_enforced=False)
+
+        store_path = tmp_path / "bindings.json"
+        store_path.write_text("", encoding="utf-8")
+
+        store2 = RuntimeBindingStore(path=store_path)
+        loaded = store2.get("rtb-001")
+        assert loaded is not None
+        assert loaded.binding_id == b.binding_id
+
+    def test_empty_array_primary_store_restores_from_backup(
+        self,
+        persisted_store: RuntimeBindingStore,
+        tmp_path: Path,
+    ) -> None:
+        b = _base(binding_id="rtb-001")
+        persisted_store.create(b, single_runtime_enforced=False)
+
+        store_path = tmp_path / "bindings.json"
+        store_path.write_text("[]\n", encoding="utf-8")
+
+        store2 = RuntimeBindingStore(path=store_path)
+        loaded = store2.get("rtb-001")
+        assert loaded is not None
+        assert loaded.binding_id == b.binding_id

@@ -248,6 +248,33 @@ class TestDeadLetterQueue(unittest.TestCase):
         finally:
             os.unlink(spill_path)
 
+    def test_load_from_large_spill_retains_only_recent_entries(self):
+        with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False) as f:
+            spill_path = f.name
+
+        try:
+            with open(spill_path, "w") as f:
+                for idx in range(5):
+                    entry = DeadLetterEntry(
+                        event=_make_event(event_id=f"loaded-{idx}"),
+                        tags=[TAG_POISON_EVENT],
+                        reason="poison",
+                    )
+                    f.write(entry.to_json() + "\n")
+
+            dlq = DeadLetterQueue(spill_path=spill_path, max_memory_entries=2)
+            count = dlq.load_from_spill()
+
+            self.assertEqual(count, 5)
+            entries = dlq.get_entries()
+            self.assertEqual([entry.event["event_id"] for entry in entries], ["loaded-3", "loaded-4"])
+            stats = dlq.stats()
+            self.assertEqual(stats["memory_entries"], 2)
+            self.assertEqual(stats["total_rejected"], 5)
+            self.assertEqual(stats["tag_counts"][TAG_POISON_EVENT], 2)
+        finally:
+            os.unlink(spill_path)
+
     def test_incident_threshold_fires(self):
         dlq = DeadLetterQueue(incident_threshold=3)
         for i in range(3):
@@ -448,6 +475,13 @@ class TestAsyncBatchWriter(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(writer._total_failed, 3)
         self.assertEqual(writer._total_dlq, 3)
+        stats = writer.stats()
+        self.assertEqual(stats["total_failed"], 3)
+        self.assertEqual(stats["total_dlq"], 3)
+        self.assertIsNotNone(stats["last_failed_write_at"])
+        self.assertIsNotNone(stats["last_dlq_at"])
+        self.assertIsNotNone(stats["seconds_since_last_failed_write"])
+        self.assertEqual(stats["last_error"], "db connection refused")
 
     async def test_retry_exhausted_to_dlq(self):
         buf = InMemoryBuffer(maxsize=100)
@@ -568,6 +602,9 @@ class TestAsyncBatchWriter(unittest.IsolatedAsyncioTestCase):
         await writer.stop(graceful=True)
 
         self.assertEqual(writer._total_written, 2)
+        stats = writer.stats()
+        self.assertIsNotNone(stats["last_successful_write_at"])
+        self.assertIsNotNone(stats["seconds_since_last_successful_write"])
 
     async def test_stats(self):
         buf = InMemoryBuffer(maxsize=100)
@@ -600,10 +637,34 @@ class TestPostgresWriteFn(unittest.IsolatedAsyncioTestCase):
     async def test_postgres_writer_passes_datetime_to_asyncpg(self):
         captured: dict[str, object] = {}
 
+        class FakeTransaction:
+            async def __aenter__(self):
+                captured["transaction_open"] = True
+
+            async def __aexit__(self, exc_type, exc, traceback):
+                captured["transaction_open"] = False
+                captured["transaction_committed"] = exc_type is None
+
         class FakeConnection:
-            async def executemany(self, query, rows):
+            def transaction(self):
+                return FakeTransaction()
+
+            async def fetchrow(self, query, *row):
                 captured["query"] = query
-                captured["rows"] = rows
+                captured["rows"] = [row]
+                return {"ingested_seq": 17}
+
+            async def fetchval(self, query, *row):
+                raise AssertionError("new rows must not run the duplicate equality query")
+
+            async def execute(self, query, *args):
+                if "pg_advisory_xact_lock" in query:
+                    captured["writer_lock_in_transaction"] = captured["transaction_open"]
+                    captured["writer_lock_args"] = args
+                else:
+                    captured["notify_query"] = query
+                    captured["notify_args"] = args
+                    captured["notify_in_transaction"] = captured["transaction_open"]
 
             async def close(self):
                 captured["closed"] = True
@@ -624,6 +685,17 @@ class TestPostgresWriteFn(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.success, result.error)
         self.assertEqual(captured["dsn"], "postgresql://example/db")
         self.assertTrue(captured["closed"])
+        self.assertTrue(captured["transaction_committed"])
+        self.assertTrue(captured["writer_lock_in_transaction"])
+        self.assertEqual(captured["writer_lock_args"], ("telemetry_events",))
+        self.assertTrue(captured["notify_in_transaction"])
+        self.assertEqual(captured["notify_query"], "SELECT pg_notify($1, $2)")
+        self.assertEqual(captured["notify_args"][0], "pantheon_lifecycle_events")
+        self.assertIn("RETURNING ingested_seq", captured["query"])
+        notification = json.loads(captured["notify_args"][1])
+        self.assertEqual(notification["inserted_count"], 1)
+        self.assertEqual(notification["first_ingested_seq"], 17)
+        self.assertEqual(notification["last_ingested_seq"], 17)
         rows = captured["rows"]
         self.assertEqual(len(rows), 1)
         self.assertIsInstance(rows[0][2], datetime)
@@ -631,6 +703,101 @@ class TestPostgresWriteFn(unittest.IsolatedAsyncioTestCase):
             rows[0][2],
             datetime(2026, 6, 6, 5, 16, 32, tzinfo=timezone.utc),
         )
+
+    async def test_postgres_writer_accepts_exact_duplicate_without_notify(self):
+        captured: dict[str, object] = {"notified": False}
+
+        class FakeTransaction:
+            async def __aenter__(self):
+                captured["transaction_open"] = True
+
+            async def __aexit__(self, exc_type, exc, traceback):
+                captured["transaction_open"] = False
+                captured["transaction_committed"] = exc_type is None
+
+        class FakeConnection:
+            def transaction(self):
+                return FakeTransaction()
+
+            async def fetchrow(self, query, *row):
+                return None
+
+            async def fetchval(self, query, *row):
+                captured["duplicate_query"] = query
+                return True
+
+            async def execute(self, query, *args):
+                if "pg_notify" in query:
+                    captured["notified"] = True
+
+            async def close(self):
+                captured["closed"] = True
+
+        async def connect(dsn):
+            return FakeConnection()
+
+        with patch.dict(sys.modules, {"asyncpg": types.SimpleNamespace(connect=connect)}):
+            result = await build_postgres_write_fn("postgresql://example/db")([
+                _make_event(event_id="postgres-exact-duplicate")
+            ])
+
+        self.assertTrue(result.success, result.error)
+        self.assertEqual(result.count, 0)
+        self.assertTrue(captured["transaction_committed"])
+        self.assertFalse(captured["notified"])
+        self.assertIn("payload = $4::jsonb", captured["duplicate_query"])
+        self.assertTrue(captured["closed"])
+
+    async def test_postgres_writer_rolls_back_conflicting_duplicate(self):
+        captured: dict[str, object] = {"notified": False, "fetchrow_calls": 0}
+
+        class FakeTransaction:
+            async def __aenter__(self):
+                captured["transaction_open"] = True
+
+            async def __aexit__(self, exc_type, exc, traceback):
+                captured["transaction_open"] = False
+                captured["transaction_committed"] = exc_type is None
+                captured["rolled_back"] = exc_type is not None
+
+        class FakeConnection:
+            def transaction(self):
+                return FakeTransaction()
+
+            async def fetchrow(self, query, *row):
+                captured["fetchrow_calls"] += 1
+                if captured["fetchrow_calls"] == 1:
+                    return {"ingested_seq": 18}
+                return None
+
+            async def fetchval(self, query, *row):
+                return False
+
+            async def execute(self, query, *args):
+                if "pg_notify" in query:
+                    captured["notified"] = True
+
+            async def close(self):
+                captured["closed"] = True
+
+        async def connect(dsn):
+            return FakeConnection()
+
+        with patch.dict(sys.modules, {"asyncpg": types.SimpleNamespace(connect=connect)}):
+            result = await build_postgres_write_fn("postgresql://example/db")(
+                [
+                    _make_event(event_id="postgres-new-before-conflict"),
+                    _make_event(event_id="postgres-conflicting-duplicate"),
+                ]
+            )
+
+        self.assertFalse(result.success)
+        self.assertFalse(result.retryable)
+        self.assertIn("conflicting duplicate event_id=postgres-conflicting-duplicate", result.error)
+        self.assertEqual(captured["fetchrow_calls"], 2)
+        self.assertTrue(captured["rolled_back"])
+        self.assertFalse(captured["notified"])
+        self.assertTrue(captured["closed"])
 
 
 class TestTelemetryIngestService(unittest.IsolatedAsyncioTestCase):
@@ -1023,6 +1190,26 @@ class TestIdempotentDeduplication(unittest.IsolatedAsyncioTestCase):
         await svc.stop(graceful=True)
         self.assertEqual(svc.stats()["service"]["total_ingested"], 5)
 
+    async def test_same_event_id_with_changed_created_at_is_rejected(self):
+        """created_at is immutable content, not a retry-time transport field."""
+        svc = TelemetryIngestService(batch_size=10, batch_interval=0.1)
+        await svc.start()
+
+        original = _make_event(event_id="dup-created-at")
+        self.assertTrue(await svc.ingest(original))
+        original["created_at"] = "2026-04-10T12:05:00Z"
+        self.assertFalse(await svc.ingest(original))
+
+        await svc.stop(graceful=True)
+        stats = svc.stats()["service"]
+        self.assertEqual(stats["total_ingested"], 1)
+        self.assertEqual(stats["total_rejected"], 1)
+        self.assertEqual(stats["total_duplicates"], 0)
+        self.assertIn(
+            "Content mismatch for duplicate event_id=dup-created-at",
+            svc.get_dlq_entries()[-1]["reason"],
+        )
+
 
 # ---------------------------------------------------------------------------
 # 9. Replay Policy Tests
@@ -1095,6 +1282,21 @@ class TestReplayPolicy(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(replayed, 1)
 
         await svc.stop(graceful=True)
+
+    async def test_replay_with_explicit_tag_filter_deduplicates_event_id(self):
+        """Explicit tag replay must still be idempotent by event_id."""
+        svc = TelemetryIngestService(batch_size=10, batch_interval=0.1)
+        await svc.start()
+
+        duplicate = _make_event(event_id="explicit-tag-dup")
+        svc._dlq.reject(duplicate, tags=[TAG_WRITER_ERROR], reason="first transient error")
+        svc._dlq.reject(dict(duplicate), tags=[TAG_WRITER_ERROR], reason="second transient error")
+
+        replayed = await svc.replay_dlq(tag_filter=TAG_WRITER_ERROR)
+        self.assertEqual(replayed, 1)
+
+        await svc.stop(graceful=True)
+        self.assertEqual(svc.stats()["writer"]["total_written"], 1)
 
     async def test_stats_includes_dedup_and_duplicate_counts(self):
         """Stats must expose dedup_tracked_ids and total_duplicates."""

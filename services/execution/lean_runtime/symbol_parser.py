@@ -7,8 +7,10 @@ Format contract (from signal_schema_v1.md §3.3, pending P2-002 full doc):
     "{TICKER}.{MARKET_CODE}"   — equities, forex, options
     "{TICKER}{QUOTE}"          — crypto (no dot separator, e.g. BTCUSDT on Binance)
 
-Taiwan venue symbols are intentionally excluded because they execute through
-the Shioaji adapter boundary, not LEAN Symbol.Create().
+Taiwan venue symbols are excluded from LEAN Symbol.Create() because they
+execute through the Shioaji broker boundary. executor._execute_taiwan() routes
+TW signals to algo.SubmitTaiwanBrokerOrder before this parser is reached, so a
+TW market code only surfaces here as a hard error if that routing is bypassed.
 """
 from __future__ import annotations
 

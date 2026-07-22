@@ -1,0 +1,45 @@
+{
+  "schema_version": "loop_prod_per_001.deploy_summary.v1",
+  "generated_at": "2026-07-18T18:11:09Z",
+  "task_id": "LOOP-PROD-PER-001",
+  "environment": "dev",
+  "public_bff_base_url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+  "accepted_evidence_cut": {
+    "hosted_probe_run_id": 29655287111,
+    "hosted_probe_job_id": 88108364773,
+    "hosted_probe_completed_at": "2026-07-18T18:11:09Z",
+    "hosted_probe_conclusion": "success",
+    "expected_source_commit_sha": "060b2eb999c6ccbb3ce50153c747127c0deafc33",
+    "observed_source_commit_sha": "060b2eb999c6ccbb3ce50153c747127c0deafc33",
+    "raw_probe_ref": "raw/20260718T181109Z-hosted-probe-pass.json"
+  },
+  "deploy_runs": [
+    {
+      "run_id": 29654625707,
+      "workflow": "Pantheon Nonprod Deploy",
+      "head_sha": "060b2eb999c6ccbb3ce50153c747127c0deafc33",
+      "created_at": "2026-07-18T17:48:18Z",
+      "completed_at": "2026-07-18T18:07:17Z",
+      "conclusion": "success",
+      "dev_stack_deploy_step": "success",
+      "public_bff_smoke_step": "success",
+      "shared_dev_environment_lease": "acquired_and_released_after_success",
+      "per_acceptance_use": "accepted_exact_sha_deploy_for_current_hosted_probe",
+      "job_id": 88107710277
+    }
+  ],
+  "latest_public_bff_observation": {
+    "observed_at": "2026-07-18T18:07:17Z",
+    "source_commit_sha": "060b2eb999c6ccbb3ce50153c747127c0deafc33",
+    "build_time": "2026-07-18T18:05:25Z",
+    "auth_mode": "strict",
+    "auth_stub": false,
+    "mfa_required": false,
+    "readyz_status": "ok",
+    "readyz_dependencies": [
+      "deployment",
+      "governance",
+      "runtime_manager"
+    ]
+  }
+}

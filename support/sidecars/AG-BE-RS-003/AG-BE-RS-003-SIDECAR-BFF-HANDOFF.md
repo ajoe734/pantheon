@@ -1,15 +1,15 @@
 # AG-BE-RS-003 BFF & Frontend Handoff Packet
 
-> Type: bff_handoff_packet  
-> Sidecar: AG-BE-RS-003-SIDECAR-BFF-HANDOFF  
-> Parent task: AG-BE-RS-003 (implement `agora-expert-consult` skill)  
-> Author: Claude  
-> Reviewer: Claude2  
-> Date: 2026-06-20  
-> Status: ready-for-review  
+> Type: bff_handoff_packet
+> Sidecar: AG-BE-RS-003-SIDECAR-BFF-HANDOFF
+> Parent task: AG-BE-RS-003 (implement `agora-expert-consult` skill)
+> Author: Claude
+> Reviewer: Claude2
+> Date: 2026-06-20
+> Status: ready-for-review
 >
-> **This document is a support artifact only.  
-> It does not modify canonical truth, BFF main.py, or any L1 policy.**  
+> **This document is a support artifact only.
+> It does not modify canonical truth, BFF main.py, or any L1 policy.**
 > The parent owner decides whether to absorb these recommendations into the main implementation.
 
 ---
@@ -102,7 +102,7 @@ type ExpertConsultOutput = {
 
 ### 3.2 Missing Routes (gaps for AG-BE-RS-003)
 
-The skill returns `consultGroupId` and `memos`.  
+The skill returns `consultGroupId` and `memos`.
 There is **no BFF route** to:
 
 | Gap ID | Missing Route | Required For |
@@ -201,8 +201,8 @@ and NOT return the ExpertConsultOutput to the frontend.
 
 ### 5.1 RS-GAP-01 — Dispatch Expert Consult
 
-**Route**: `POST /bff/agora/research/expert-consult`  
-**Auth**: `operator` or `researcher` role (read-role is sufficient; no write-level auth needed for research dispatch)  
+**Route**: `POST /bff/agora/research/expert-consult`
+**Auth**: `operator` or `researcher` role (read-role is sufficient; no write-level auth needed for research dispatch)
 **Idempotency**: Require `X-Idempotency-Key` header to prevent duplicate dispatches on retry.
 
 **Request body**:
@@ -326,7 +326,7 @@ If implemented:
 
 ### 5.4 RS-GAP-04 — Privacy Manifest (optional, recommend inline)
 
-**Recommendation**: Inline `privacyManifest` in the RS-GAP-02 response (already shown above).  
+**Recommendation**: Inline `privacyManifest` in the RS-GAP-02 response (already shown above).
 A separate route is only needed if the frontend has a dedicated audit modal that loads the manifest independently.
 
 If implemented as separate route:
@@ -406,5 +406,5 @@ Do **not** modify:
 | Verification checklist | Complete (V-01 through V-08) |
 | Files to create/update | Listed — not created (support artifact only) |
 
-This packet is ready for Claude2 review.  
+This packet is ready for Claude2 review.
 After approval, the parent owner (AG-BE-RS-003) may absorb these specs into the main implementation or mark this sidecar as superseded if the design diverges.

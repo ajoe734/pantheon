@@ -5,6 +5,9 @@ from typing import Any, Dict, Iterable
 
 
 MEMORY_RETRIEVE_ACTION = "memory.retrieve"
+LESSON_DECIDE_ACTION = "lesson.decide"
+LESSON_MERGE_ACTION = "lesson.merge"
+
 _INSTITUTIONAL_READ_ROLES = {
     "operator",
     "admin",
@@ -27,6 +30,13 @@ _PERSONA_OPERATOR_ROLES = {
     "admin",
     "reviewer",
     "auditor",
+}
+_LESSON_GOVERNANCE_ROLES = {
+    "operator",
+    "admin",
+    "reviewer",
+    "governance_reviewer",
+    "governance_committee",
 }
 _VALID_MEMORY_SCOPES = {"institutional", "persona", "both"}
 
@@ -59,7 +69,7 @@ def evaluate_authz_request(
     grants a cross-persona exception.
     """
 
-    if action != MEMORY_RETRIEVE_ACTION:
+    if action not in {MEMORY_RETRIEVE_ACTION, LESSON_DECIDE_ACTION, LESSON_MERGE_ACTION}:
         return _deny("unsupported_action")
     if not str(actor_id or "").strip():
         return _deny("missing_actor_id")
@@ -67,6 +77,11 @@ def evaluate_authz_request(
     roles = _normalized_roles(actor_roles)
     if not roles:
         return _deny("missing_actor_roles")
+
+    if action in {LESSON_DECIDE_ACTION, LESSON_MERGE_ACTION}:
+        if not roles.intersection(_LESSON_GOVERNANCE_ROLES):
+            return _deny("lesson_governance_role_denied")
+        return _allow("authorized")
 
     resource = resource or {}
     context = context or {}

@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "task_id": "MGMT-LOAD-007-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-07-01T17:58:25Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-LOAD-007-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare MGMT-LOAD-007 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-LOAD-007，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "MGMT Console Load Gap / Wave 4 closeout",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "MGMT-LOAD-006"
+    ],
+    "artifacts": [
+      "support/sidecars/MGMT-LOAD-007/MGMT-LOAD-007-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closed support-only BFF/FE handoff packet; PR #2716 delivered packet and PR #2717 finalized closeout records, merged at 445528d7572c005ea59191164725b5adf3ba5573; parent MGMT-LOAD-007 owner retains absorption/final gate disposition.",
+    "last_update": "2026-07-01T17:58:25Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-LOAD-007",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "MGMT-LOAD-007-SIDECAR-BFF-HANDOFF review approved: PR #2716 已合併到 dev at d6b8c781d9f5f89caa86369f6371730007d6f958；merge diff 僅限 .orchestrator/task-briefs/mgmt_load_007_sidecar_bff_handoff.md 與 support/sidecars/MGMT-LOAD-007/MGMT-LOAD-007-SIDECAR-BFF-HANDOFF.md。",
+      "Support packet 維持 support-only boundary，未更動 canonical truth、BFF/frontend runtime、CI、route registry 或 governance policy；artifact list 修正為 checked-in route-timing-2026-07-01.json，並清楚區分 stale red release gate、local BFF proof、hosted route-split precedent 與仍需 parent owner disposition 的 final hosted evidence。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-01T17:58:25Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-load-007-sidecar-bff-handoff",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-LOAD-007-SIDECAR-BFF-HANDOFF",
+      "git_clean_required": false,
+      "commit": "2b230fc7373ef81531ab06844923809202863619",
+      "commit_subject": "MGMT-LOAD-007-SIDECAR-BFF-HANDOFF: finalize closeout record",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped sidecar closeout records.",
+        "Not changing": "canonical truth, BFF/frontend runtime, release-gate implementation, CI configuration, route registry behavior, governance policy, or parent MGMT-LOAD-007 disposition.",
+        "Composes with": "PR #2716 merged support packet and MGMT-LOAD-007 parent owner absorption decision.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "MGMT-LOAD-007-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex",
+        "Verified": "git diff --check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-LOAD-007-SIDECAR-BFF-HANDOFF",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "445528d7572c005ea59191164725b5adf3ba5573",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-LOAD-007-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Support-only handoff packet is committed and PR #2713 is open: support/sidecars/MGMT-LOAD-007/MGMT-LOAD-007-SIDECAR-BFF-HANDOFF.md. Please review scope and decide whether the parent MGMT-LOAD-007 owner should absorb the artifact paths/residual-risk checklist.",
+      "status": "done",
+      "created_at": "2026-07-01T17:39:44Z",
+      "resolved_at": "2026-07-01T17:42:37Z"
+    },
+    {
+      "task_id": "MGMT-LOAD-007-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review returned: support packet otherwise stays support-only and PR #2713 is merged, but the exact artifact list names a missing baseline route-load JSON path: docs/04/pantheon_management_console_load_gap_2026-07-01/archive/route-load-baseline-2026-07-01.json. Actual checked-in baseline JSON is route-timing-2026-07-01.json; update the packet to use the existing path or remove the .json claim, then hand back to Codex for review.",
+      "status": "done",
+      "created_at": "2026-07-01T17:42:37Z",
+      "resolved_at": "2026-07-01T17:42:37Z"
+    },
+    {
+      "task_id": "MGMT-LOAD-007-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "PR #2716 merged into dev at d6b8c781d9f5f89caa86369f6371730007d6f958; baseline route-load artifact list now names route-timing-2026-07-01.json. Please review sidecar packet for support-only absorption.",
+      "status": "done",
+      "created_at": "2026-07-01T17:49:24Z",
+      "resolved_at": "2026-07-01T17:53:01Z"
+    },
+    {
+      "task_id": "MGMT-LOAD-007-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: support-only packet merged in PR #2716; Codex2 should finalize sidecar closeout, while MGMT-LOAD-007 parent owner decides whether to absorb the handoff packet.",
+      "status": "done",
+      "created_at": "2026-07-01T17:53:01Z",
+      "resolved_at": "2026-07-01T17:58:26Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,6 +1,6 @@
 # OpenClaw Integration — Pin and Adapter Boundary
 
-Last updated: 2026-06-16
+Last updated: 2026-07-21
 Owner: BP5-OSS-002 (Codex)
 Reviewer: Claude
 Status: governed runtime adapter realized
@@ -12,29 +12,38 @@ Canonical runtime contract: `OPENCLAW_RUNTIME_CONTRACT.md`
 | Field | Value |
 |---|---|
 | Repository | `https://github.com/openclaw/openclaw` |
-| Selected stable tag | `v2026.6.8` |
-| Selected commit | `8c802aa683510c7f7503597b54c3021733245e59` |
-| Release date | `2026-06-06` |
-| npm package | `openclaw@2026.6.8` |
-| Container image | `ghcr.io/openclaw/openclaw:2026.6.8` |
-| Container digest | `sha256:4826ca6157377e93463786d5c16852e34eede9f4bd4be55e3773cdc509762857` (multi-arch index) |
+| Selected stable tag | `v2026.7.1` |
+| Selected commit | `2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4` |
+| Release date | `2026-07-13` |
+| npm package | `openclaw@2026.7.1` |
+| Container image | `ghcr.io/openclaw/openclaw:2026.7.1` |
+| Container digest | `sha256:6a31d44b2944e7adcd2b582bf6fb463111264ebca97a0201795b799135bd102c` (multi-arch index) |
 | Website | `https://openclaw.ai` |
 | Docs | `https://docs.openclaw.ai` |
 
-## 2. Why This Pin Was Bumped to `v2026.6.8`
+## 2. Why This Pin Was Bumped to `v2026.7.1`
+
+**Current bump (2026-07-21):** `v2026.7.1` is the latest stable release and
+had completed Pantheon's 48-hour soak requirement. It keeps the OpenAI-compatible
+Gateway endpoints used by Management AI while adding the official native Codex
+app-server runtime, named multi-login OpenAI auth profiles, auth-profile
+rotation on Codex usage limits, canonical Google/Gemini CLI routing, stronger
+provider diagnostics, and more reliable CLI-session/fallback behavior. Pantheon
+also installs the Gemini CLI in its derived gateway image and registers the
+five-route shared model pool idempotently after each root deploy.
 
 **History:** The baseline was originally locked at `v2026.4.7` for `BP5-OSS-001` (2026-04-15) because:
 
 - `v2026.4.14` had not satisfied the 48-hour soak policy at that time
 - `v2026.4.15-beta.1` was a prerelease and ineligible for the governed baseline
 
-**Bump reason (2026-06-16, OPENCLAW-GOVERNED-BUMP-2026-6-6):**
+**Prior bump (2026-06-16, OPENCLAW-GOVERNED-BUMP-2026-6-6):**
 
 - `v2026.4.7` only provides a localhost-callback paste-back OAuth flow for OpenAI/Codex accounts, which is unusable on headless VMs
 - `v2026.6.8` adds `openclaw models auth login --provider openai --device-code` (ChatGPT device-code flow) — the correct headless path for subscription-account binding with zero API keys
 - auth mode is subscription OAuth (`openai/oauth`); no `OPENAI_API_KEY` required
 - dev environment already validated: `openai:lupinchen@cctech-support.com`, agent turn confirmed
-- model refs: `openai/gpt-5.5` + `plugins.entries.codex.enabled=true`; `openclaw doctor --fix` migrates config
+- model refs now include `openai/gpt-5.6-sol` and `openai/gpt-5.5` with `plugins.entries.codex.enabled=true`; `openclaw doctor --fix` migrates legacy config
 - multi-LLM personas also route to `anthropic/claude-opus-4-8` via Claude CLI subscription (the derived gateway image bakes the Claude CLI). For how personas reference the shared model pool, see [`model-pool-and-persona-routing.md`](./model-pool-and-persona-routing.md)
 
 Upgrade rule (for future bumps):
@@ -66,8 +75,8 @@ Rejected modes:
 
 Verified upstream surface:
 
-- the Git tag `v2026.6.8` resolves to commit `8c802aa683510c7f7503597b54c3021733245e59`
-- the GHCR image `ghcr.io/openclaw/openclaw:2026.6.8` is published and pullable
+- the Git tag `v2026.7.1` resolves to commit `2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4`
+- the GHCR image `ghcr.io/openclaw/openclaw:2026.7.1` is published and pullable
 - the container can execute `openclaw --help`
 - the container can execute `openclaw gateway --help`
 - the upstream Docker docs define a gateway process with HTTP health endpoints `/healthz` and `/readyz` once a configured gateway is running

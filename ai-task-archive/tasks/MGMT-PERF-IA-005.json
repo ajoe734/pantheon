@@ -1,0 +1,140 @@
+{
+  "version": 1,
+  "task_id": "MGMT-PERF-IA-005",
+  "archived_at": "2026-07-12T10:42:17Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-PERF-IA-005",
+    "title": "Governance Decisions consolidation",
+    "summary_zh": "把 Promotion Allocation 改成 Recommendations、Capital、Policy 的治理中心，移除內嵌排名並強制 Human Review 與 apply receipt。",
+    "phase": "Management Performance Ranking IA / Wave 1 Governance Decisions",
+    "owner": "Codex",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "depends_on": [
+      "MGMT-PERF-IA-001",
+      "MGMT-PERF-IA-002"
+    ],
+    "artifacts": [
+      "execute-plans:src/management/pages/oversight",
+      "execute-plans:src/lib",
+      "execute-plans:e2e",
+      "docs/bff/execution-tasks/2026-07-11-management-performance-ranking-ia/MGMT-PERF-IA-005-governance-decisions.md"
+    ],
+    "acceptance": [
+      "governance consumes immutable ranking snapshots without duplicate ranking tables",
+      "recommendation review approval and applied state are separate",
+      "capital access and rebalance mutations require governed apply receipts",
+      "legacy routes and hosted desktop mobile behavior are proven"
+    ],
+    "next": "Owner closeout complete: execute-plans PR #260 merged at 2026-07-12T10:19:10Z (delivered head 2954481ba3540bc2627eb379b70b401d40b3ef39; integration-gate SUCCESS); Pantheon closeout PR #3403 merged as e8bce05c76595b31ae5ee6681b90b9ca68168aeb; Antigravity approval retained.",
+    "last_update": "2026-07-12T10:42:17Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_management_performance_ranking_ia_2026-07-11",
+    "auto_generated": true,
+    "source_ref": {
+      "doc": "docs/04/pantheon_management_performance_ranking_ia_gap_2026-07-11/INDEX.md",
+      "packet": "docs/bff/execution-tasks/2026-07-11-management-performance-ranking-ia/INDEX.md",
+      "trigger": "2026-07-11 complete performance ranking page and menu information architecture audit",
+      "frontend_repo": "ajoe734/execute-plans",
+      "backend_repo": "ajoe734/pantheon"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "helper_kind": "management_performance_ranking_ia_execution_slice",
+    "wave": 1,
+    "fleet_lane": "governance-decisions",
+    "target_repo": "execute-plans",
+    "review_notes_zh": [
+      "審查通過",
+      "已確認：1) 移除內嵌的實體 live 排名表格，單一化 Rankings Center 職責；2) 推薦佇列與已套用操作分開，Recommendations 佇列只渲染 pending/review 的 inbox 項目；3) 資金與 access 等變更皆導向 Human Gate detail 以展示 decision history 與簽署歷史作為 receipts；4) 舊的 Promotion & Allocation 頁面舊連結依 tab parameter 自動 redirect 到對應 canonical center。"
+    ],
+    "review_file": "docs/reviews/2026-07-11-mgmt-perf-ia-005-antigravity-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T10:42:17Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-perf-ia-005",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-PERF-IA-005",
+      "git_clean_required": false,
+      "commit": "4f73903215c60ba521449456864c7e7957fc5b2d",
+      "commit_subject": "MGMT-PERF-IA-005: sync dev for closeout",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "MGMT-PERF-IA-005",
+        "Reviewer": "Antigravity",
+        "Verified": "execute-plans integration-gate SUCCESS; PR #260 merged",
+        "Cross-Dir": "yes"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-PERF-IA-005",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "e8bce05c76595b31ae5ee6681b90b9ca68168aeb",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-PERF-IA-005",
+      "from": "Claude",
+      "to": "Antigravity",
+      "message": "Implementation complete and pushed to task/MGMT-PERF-IA-005 in ajoe734/execute-plans (PR #260, mergeable, integration-gate CI passed 17m27s, no reviews yet). Governance Decisions recommendations/capital tabs now show a real read-only GovernanceDecisionQueue sourced from Human Inbox items; all 8 governance states derive from real BFF fields via governanceDecisionState.ts; no approve/reject/apply control anywhere (every decision links to Human Gate detail); embedded RealRankingPanel ranking table removed entirely (test asserts no <table> renders); legacy Promotion Allocation simplified to emergency-actions only with a moved notice; HumanGateDetail now renders signedAt + Decision History as apply-receipt evidence. Verified: npx tsc --noEmit (0 errors), eslint (0 errors), vitest touched suites 28/28 pass, full src/management+src/lib/bff-v1 suite 476/477 (1 pre-existing unrelated flake), npm run build succeeds. Please review PR https://github.com/ajoe734/execute-plans/pull/260 against the acceptance criteria (no competing ranking table, recommendation/applied separation, capital/access changes require review+receipt, legacy links land on governance tab).",
+      "status": "done",
+      "created_at": "2026-07-11T18:21:06Z",
+      "resolved_at": "2026-07-11T18:23:59Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-005",
+      "from": "Antigravity",
+      "to": "Claude",
+      "message": "Review approved and returned to the owner for finalization",
+      "status": "done",
+      "created_at": "2026-07-11T18:23:59Z",
+      "resolved_at": "2026-07-12T00:53:34Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-005",
+      "from": "Antigravity",
+      "to": "Codex",
+      "message": "Auto-reassigned ownership from Claude to Codex after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-07-12T00:53:35Z",
+      "resolved_at": "2026-07-12T01:00:29Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-005",
+      "from": "Antigravity",
+      "to": "Codex",
+      "message": "Restoring Antigravity approval after supervisor owner reconciliation: execute-plans PR #260 merged 2026-07-12T10:19:10Z; integration-gate succeeded; approved review notes remain attached.",
+      "status": "done",
+      "created_at": "2026-07-12T10:35:58Z",
+      "resolved_at": "2026-07-12T10:42:18Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "MGMT-PERF-IA-005",
+      "owner": "Codex",
+      "waiting_for": "Human/Ops",
+      "message": "execute-plans PR #260 is OPEN/CLEAN/MERGEABLE with integration-gate SUCCESS, but mergedAt is null, reviews are empty, and autoMergeRequest is null. Closeout requires human merge under frontend governance, followed by hosted desktop/mobile evidence; cannot run done before those acceptance requirements are satisfied.",
+      "status": "resolved",
+      "created_at": "2026-07-12T01:00:29Z",
+      "resolved_at": "2026-07-12T10:19:37Z"
+    }
+  ]
+}

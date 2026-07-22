@@ -1,13 +1,18 @@
 """Tests for the openclaw-gateway-adapter boundary service."""
 from __future__ import annotations
 
+import copy
 import importlib
+import json
 import os
 from pathlib import Path
 import sys
 import tempfile
+import threading
+import time
 import types
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -151,6 +156,646 @@ class TestHealthEndpoints(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
         self.assertIn("service", body)
+
+
+# ---------------------------------------------------------------------------
+# BFF-to-adapter assistant service authentication
+# ---------------------------------------------------------------------------
+
+
+class TestAssistantServiceAuthentication(unittest.TestCase):
+    def _auth_config(self, *, token: str, required: bool):
+        return patch.multiple(
+            adapter_main,
+            _ASSISTANT_SERVICE_TOKEN=token,
+            _ASSISTANT_SERVICE_AUTH_REQUIRED=required,
+        )
+
+    def test_configured_token_protects_provider_invoke_and_repair_prepare(self):
+        with (
+            self._auth_config(token="adapter-secret", required=True),
+            patch.object(adapter_main._CODEX_RUNTIME, "invoke") as codex_invoke,
+            patch.object(adapter_main._REPAIR_WORKFLOW, "prepare") as repair_prepare,
+        ):
+            provider_resp = client.post(
+                "/api/openclaw-adapter/assistant/providers/codex/invoke",
+                json={"mode": "kernel_debug", "prompt": "inspect"},
+                headers={"X-Operator-Id": "op-1"},
+            )
+            repair_resp = client.post(
+                "/api/openclaw-adapter/assistant/repair-worktrees/prepare",
+                json={
+                    "repo_key": "pantheon",
+                    "task_id": "SERVICE-AUTH-1",
+                    "declared_scope": ["services/openclaw-gateway-adapter"],
+                },
+                headers={"X-Operator-Id": "op-1"},
+            )
+
+        for response in (provider_resp, repair_resp):
+            self.assertEqual(response.status_code, 401, response.text)
+            self.assertEqual(response.json()["error_code"], "ASSISTANT_SERVICE_AUTH_DENIED")
+        codex_invoke.assert_not_called()
+        repair_prepare.assert_not_called()
+
+    def test_service_token_uses_constant_time_digest_comparison(self):
+        compare_digest = adapter_main.hmac.compare_digest
+        with (
+            self._auth_config(token="adapter-secret", required=True),
+            patch.object(adapter_main.hmac, "compare_digest", wraps=compare_digest) as compared,
+        ):
+            wrong_resp = client.get(
+                "/api/openclaw-adapter/assistant/credentials",
+                headers={"X-Pantheon-Service-Token": "wrong-secret"},
+            )
+            valid_resp = client.get(
+                "/api/openclaw-adapter/assistant/credentials",
+                headers={"X-Pantheon-Service-Token": "adapter-secret"},
+            )
+
+        self.assertEqual(wrong_resp.status_code, 401, wrong_resp.text)
+        self.assertEqual(valid_resp.status_code, 200, valid_resp.text)
+        self.assertEqual(compared.call_count, 2)
+        for compared_call in compared.call_args_list:
+            presented_digest, expected_digest = compared_call.args
+            self.assertIsInstance(presented_digest, bytes)
+            self.assertIsInstance(expected_digest, bytes)
+            self.assertEqual(len(presented_digest), 32)
+            self.assertEqual(len(expected_digest), 32)
+
+    def test_required_auth_without_token_fails_closed_and_degrades_readiness(self):
+        with (
+            self._auth_config(token="", required=True),
+            patch.object(adapter_main, "_probe_upstream", return_value={"reachable": True}),
+        ):
+            assistant_resp = client.get("/api/openclaw-adapter/assistant/credentials")
+            readiness_resp = client.get("/readyz")
+
+        self.assertEqual(assistant_resp.status_code, 503, assistant_resp.text)
+        self.assertEqual(
+            assistant_resp.json()["error_code"],
+            "ASSISTANT_SERVICE_AUTH_MISCONFIGURED",
+        )
+        self.assertEqual(readiness_resp.status_code, 503, readiness_resp.text)
+        self.assertEqual(
+            readiness_resp.json()["dependencies"]["assistant_service_auth"]["status"],
+            "error",
+        )
+
+    def test_service_token_does_not_guard_non_assistant_adapter_routes(self):
+        with (
+            self._auth_config(token="adapter-secret", required=True),
+            patch.object(
+                adapter_main,
+                "_probe_upstream",
+                return_value={"reachable": True, "http_status": 200},
+            ),
+        ):
+            resp = client.get("/api/openclaw-adapter/upstream/status")
+
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertTrue(resp.json()["reachable"])
+
+
+class TestCronServiceAuthentication(unittest.TestCase):
+    _CRON_CONTRACTS = {
+        "pantheon.ingest": {
+            "schedule": "0 */6 * * *",
+            "policy_id": "oc002.cron.ingest",
+            "upstream_entrypoint": "research.ingest",
+        },
+        "pantheon.review": {
+            "schedule": "15 7 * * 1-5",
+            "policy_id": "oc002.cron.review",
+            "upstream_entrypoint": "governance.review",
+        },
+        "pantheon.retrain": {
+            "schedule": "0 2 * * 1-5",
+            "policy_id": "oc002.cron.retrain",
+            "upstream_entrypoint": "learning.retrain",
+        },
+        "pantheon.deploy": {
+            "schedule": "*/15 * * * *",
+            "policy_id": "oc002.cron.deploy",
+            "upstream_entrypoint": "deployment.plan",
+        },
+        "pantheon.persona.first-evaluation": {
+            "schedule": "*/15 * * * *",
+            "policy_id": "oc002.cron.persona-first-evaluation",
+            "upstream_entrypoint": "evaluation.persona.first",
+        },
+    }
+
+    def _auth_config(self, *, token: str, required: bool = False):
+        return patch.multiple(
+            adapter_main,
+            _ASSISTANT_SERVICE_TOKEN=token,
+            _ASSISTANT_SERVICE_AUTH_REQUIRED=required,
+        )
+
+    def test_cron_proxy_rejects_missing_service_token(self):
+        with (
+            self._auth_config(token="cron-secret"),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_cron_call",
+            ) as gateway_call,
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/gateway/cron",
+                json={"method": "cron.list", "params": {"limit": 1}},
+            )
+
+        self.assertEqual(response.status_code, 401, response.text)
+        self.assertEqual(response.json()["error_code"], "CRON_SERVICE_AUTH_DENIED")
+        gateway_call.assert_not_called()
+
+    def test_cron_proxy_rejects_wrong_service_token(self):
+        with (
+            self._auth_config(token="cron-secret"),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_cron_call",
+            ) as gateway_call,
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/gateway/cron",
+                json={"method": "cron.list", "params": {"limit": 1}},
+                headers={"X-Pantheon-Service-Token": "wrong-secret"},
+            )
+
+        self.assertEqual(response.status_code, 401, response.text)
+        self.assertEqual(response.json()["error_code"], "CRON_SERVICE_AUTH_DENIED")
+        gateway_call.assert_not_called()
+
+    def test_cron_proxy_accepts_correct_service_token(self):
+        with (
+            self._auth_config(token="cron-secret"),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_cron_call",
+                return_value={"jobs": []},
+            ) as gateway_call,
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/gateway/cron",
+                json={"method": "cron.list", "params": {"limit": 1}},
+                headers={"X-Pantheon-Service-Token": "cron-secret"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["data"], {"jobs": []})
+        gateway_call.assert_called_once_with("cron.list", {"limit": 1})
+
+    def test_cron_proxy_fails_closed_when_token_is_not_configured(self):
+        with (
+            self._auth_config(token="", required=False),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_cron_call",
+            ) as gateway_call,
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/gateway/cron",
+                json={"method": "cron.list", "params": {"limit": 1}},
+            )
+
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(
+            response.json()["error_code"],
+            "CRON_SERVICE_AUTH_MISCONFIGURED",
+        )
+        gateway_call.assert_not_called()
+
+    @classmethod
+    def _persona_job(
+        cls,
+        *,
+        persona_id: str = "persona-1",
+        workflow_id: str = "pantheon.review",
+        name: str | None = None,
+    ):
+        contract = cls._CRON_CONTRACTS[workflow_id]
+        event = {
+            "kind": "pantheon.workflow.dispatch",
+            "persona_id": persona_id,
+            "workflow_id": workflow_id,
+            "request_id": f"persona-provisioning:{persona_id}:{workflow_id}",
+            "policy_id": contract["policy_id"],
+            "upstream_entrypoint": contract["upstream_entrypoint"],
+        }
+        if workflow_id == "pantheon.persona.first-evaluation":
+            event.update(
+                {
+                    "runtime_id": "runtime-1",
+                    "runtime_binding_id": "runtime-binding-1",
+                    "capital_pool_id": "pool-1",
+                    "persona_capital_binding_id": "capital-binding-1",
+                }
+            )
+        return {
+            "id": "job-persona-1",
+            "name": name
+            if name is not None
+            else adapter_main._canonical_persona_cron_job_name(workflow_id, persona_id),
+            "enabled": True,
+            "deleteAfterRun": False,
+            "schedule": {"kind": "cron", "expr": contract["schedule"]},
+            "sessionTarget": "main",
+            "wakeMode": "next-heartbeat",
+            "payload": {
+                "kind": "systemEvent",
+                "text": json.dumps(event),
+            },
+            "delivery": {"mode": "none"},
+        }
+
+    @staticmethod
+    def _replace_event(job, **changes):
+        event = json.loads(job["payload"]["text"])
+        event.update(changes)
+        job["payload"]["text"] = json.dumps(event)
+
+    def test_cron_add_rejects_non_persona_payload(self):
+        with (
+            self._auth_config(token="cron-secret"),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_cron_call",
+            ) as gateway_call,
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/gateway/cron",
+                json={"method": "cron.add", "params": {"name": "arbitrary"}},
+                headers={"X-Pantheon-Service-Token": "cron-secret"},
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        gateway_call.assert_not_called()
+
+    def test_cron_add_forwards_complete_persona_job(self):
+        params = self._persona_job()
+        params.pop("id")
+        with (
+            self._auth_config(token="cron-secret"),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_cron_call",
+                return_value={"id": "job-persona-1"},
+            ) as gateway_call,
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/gateway/cron",
+                json={"method": "cron.add", "params": params},
+                headers={"X-Pantheon-Service-Token": "cron-secret"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        gateway_call.assert_called_once_with("cron.add", params)
+
+    def test_cron_add_accepts_exact_five_workflow_catalog(self):
+        self.assertEqual(adapter_main._PERSONA_CRON_CATALOG, self._CRON_CONTRACTS)
+
+        for workflow_id in self._CRON_CONTRACTS:
+            with self.subTest(workflow_id=workflow_id):
+                params = self._persona_job(workflow_id=workflow_id)
+                params.pop("id")
+                self.assertTrue(adapter_main._is_well_formed_persona_cron_job(params))
+
+    def test_cron_add_accepts_openclaw_normalized_no_delivery_readback_shape(self):
+        params = self._persona_job()
+        params.pop("id")
+        params.pop("delivery")
+
+        self.assertTrue(adapter_main._is_well_formed_persona_cron_job(params))
+
+    def test_cron_add_rejects_noncanonical_persona_contract_fields(self):
+        invalid_jobs = {}
+
+        invalid_jobs["name"] = copy.deepcopy(self._persona_job())
+        invalid_jobs["name"]["name"] = "pantheon-pantheon-review-wrong-persona"
+
+        invalid_jobs["enabled"] = copy.deepcopy(self._persona_job())
+        invalid_jobs["enabled"]["enabled"] = False
+
+        invalid_jobs["delete_after_run"] = copy.deepcopy(self._persona_job())
+        invalid_jobs["delete_after_run"]["deleteAfterRun"] = True
+
+        invalid_jobs["schedule"] = copy.deepcopy(self._persona_job())
+        invalid_jobs["schedule"]["schedule"]["expr"] = "0 * * * *"
+
+        invalid_jobs["session_target"] = copy.deepcopy(self._persona_job())
+        invalid_jobs["session_target"]["sessionTarget"] = "persona-1"
+
+        invalid_jobs["wake_mode"] = copy.deepcopy(self._persona_job())
+        invalid_jobs["wake_mode"]["wakeMode"] = "now"
+
+        invalid_jobs["delivery"] = copy.deepcopy(self._persona_job())
+        invalid_jobs["delivery"]["delivery"] = {"mode": "announce"}
+
+        invalid_jobs["request_id"] = copy.deepcopy(self._persona_job())
+        self._replace_event(invalid_jobs["request_id"], request_id="request-random")
+
+        invalid_jobs["policy_id"] = copy.deepcopy(self._persona_job())
+        self._replace_event(invalid_jobs["policy_id"], policy_id="policy-review")
+
+        invalid_jobs["upstream_entrypoint"] = copy.deepcopy(self._persona_job())
+        self._replace_event(
+            invalid_jobs["upstream_entrypoint"],
+            upstream_entrypoint="persona.review",
+        )
+
+        invalid_jobs["unknown_workflow"] = copy.deepcopy(self._persona_job())
+        self._replace_event(
+            invalid_jobs["unknown_workflow"],
+            workflow_id="pantheon.arbitrary",
+            request_id="persona-provisioning:persona-1:pantheon.arbitrary",
+        )
+        invalid_jobs["unknown_workflow"]["name"] = (
+            "pantheon-pantheon-arbitrary-persona-1"
+        )
+
+        with (
+            self._auth_config(token="cron-secret"),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_cron_call",
+            ) as gateway_call,
+        ):
+            for field, params in invalid_jobs.items():
+                with self.subTest(field=field):
+                    params.pop("id")
+                    response = client.post(
+                        "/api/openclaw-adapter/gateway/cron",
+                        json={"method": "cron.add", "params": params},
+                        headers={"X-Pantheon-Service-Token": "cron-secret"},
+                    )
+
+                    self.assertEqual(response.status_code, 403, response.text)
+
+        gateway_call.assert_not_called()
+
+    def test_cron_list_hides_external_jobs_and_preserves_reserved_malformed_rows(self):
+        valid = self._persona_job()
+        external = self._persona_job(name="external-job")
+        malformed_reserved = {
+            "id": "job-malformed-1",
+            "name": "pantheon-malformed-orphan",
+            "payload": {"kind": "systemEvent", "text": "not-json"},
+        }
+        upstream_result = {
+            "jobs": [external, malformed_reserved, valid],
+            "hasMore": False,
+            "nextOffset": 3,
+        }
+        with (
+            self._auth_config(token="cron-secret"),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_cron_call",
+                return_value=upstream_result,
+            ) as gateway_call,
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/gateway/cron",
+                json={"method": "cron.list", "params": {"limit": 200, "offset": 0}},
+                headers={"X-Pantheon-Service-Token": "cron-secret"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(
+            response.json()["data"],
+            {
+                "jobs": [malformed_reserved, valid],
+                "hasMore": False,
+                "nextOffset": 3,
+            },
+        )
+        gateway_call.assert_called_once_with("cron.list", {"limit": 200, "offset": 0})
+
+    def test_cron_update_forwards_complete_canonical_patch(self):
+        current = self._persona_job()
+        patch_params = self._persona_job()
+        patch_params.pop("id")
+        calls = []
+
+        def gateway_call(method, params):
+            calls.append((method, params))
+            if method == "cron.list":
+                return {"jobs": [current]}
+            if method == "cron.update":
+                return {"updated": True}
+            raise AssertionError(method)
+
+        with (
+            self._auth_config(token="cron-secret"),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_cron_call",
+                side_effect=gateway_call,
+            ),
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/gateway/cron",
+                json={
+                    "method": "cron.update",
+                    "params": {"id": "job-persona-1", "patch": patch_params},
+                },
+                headers={"X-Pantheon-Service-Token": "cron-secret"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["data"], {"updated": True})
+        self.assertEqual(
+            calls,
+            [
+                ("cron.list", {"limit": 200, "offset": 0}),
+                (
+                    "cron.update",
+                    {"id": "job-persona-1", "patch": patch_params},
+                ),
+            ],
+        )
+
+    def test_cron_update_rejects_noncanonical_patch(self):
+        current = self._persona_job()
+        patch_params = copy.deepcopy(current)
+        patch_params.pop("id")
+        patch_params["schedule"]["expr"] = "0 * * * *"
+        calls = []
+
+        def gateway_call(method, params):
+            calls.append((method, params))
+            if method == "cron.list":
+                return {"jobs": [current]}
+            raise AssertionError("noncanonical update must not be forwarded")
+
+        with (
+            self._auth_config(token="cron-secret"),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_cron_call",
+                side_effect=gateway_call,
+            ),
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/gateway/cron",
+                json={
+                    "method": "cron.update",
+                    "params": {"id": "job-persona-1", "patch": patch_params},
+                },
+                headers={"X-Pantheon-Service-Token": "cron-secret"},
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertEqual([method for method, _ in calls], ["cron.list"])
+
+    def test_cron_update_rejects_persona_or_workflow_owner_mutation(self):
+        for owner_change, patch_job in (
+            ("persona", self._persona_job(persona_id="persona-2")),
+            ("workflow", self._persona_job(workflow_id="pantheon.deploy")),
+        ):
+            patch_job.pop("id")
+            calls = []
+
+            def gateway_call(method, params):
+                calls.append((method, params))
+                if method == "cron.list":
+                    return {"jobs": [self._persona_job()]}
+                raise AssertionError("owner-changing update must not be forwarded")
+
+            with (
+                self.subTest(owner_change=owner_change),
+                self._auth_config(token="cron-secret"),
+                patch.object(
+                    adapter_main._OPENCLAW_AGENT_PROVIDER,
+                    "gateway_cron_call",
+                    side_effect=gateway_call,
+                ),
+            ):
+                response = client.post(
+                    "/api/openclaw-adapter/gateway/cron",
+                    json={
+                        "method": "cron.update",
+                        "params": {"id": "job-persona-1", "patch": patch_job},
+                    },
+                    headers={"X-Pantheon-Service-Token": "cron-secret"},
+                )
+
+            self.assertEqual(response.status_code, 403, response.text)
+            self.assertEqual([method for method, _ in calls], ["cron.list"])
+
+    def test_cron_run_is_not_exposed_by_persona_proxy(self):
+        with (
+            self._auth_config(token="cron-secret"),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_cron_call",
+            ) as gateway_call,
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/gateway/cron",
+                json={"method": "cron.run", "params": {"id": "job-other"}},
+                headers={"X-Pantheon-Service-Token": "cron-secret"},
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        gateway_call.assert_not_called()
+
+    def test_cron_remove_is_fenced_to_persona_owned_namespace(self):
+        calls = []
+
+        def gateway_call(method, params):
+            calls.append((method, params))
+            if method == "cron.list":
+                return {"jobs": [self._persona_job(name="external-job")]}
+            raise AssertionError("destructive mutation must not be forwarded")
+
+        with (
+            self._auth_config(token="cron-secret"),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_cron_call",
+                side_effect=gateway_call,
+            ),
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/gateway/cron",
+                json={"method": "cron.remove", "params": {"id": "job-persona-1"}},
+                headers={"X-Pantheon-Service-Token": "cron-secret"},
+            )
+
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertEqual(
+            response.json()["error_code"],
+            "OPENCLAW_CRON_TARGET_FORBIDDEN",
+        )
+        self.assertEqual([method for method, _ in calls], ["cron.list"])
+
+    def test_cron_remove_forwards_verified_persona_owned_job(self):
+        calls = []
+
+        def gateway_call(method, params):
+            calls.append((method, params))
+            if method == "cron.list":
+                return {"jobs": [self._persona_job()]}
+            if method == "cron.remove":
+                return {"removed": True}
+            raise AssertionError(method)
+
+        with (
+            self._auth_config(token="cron-secret"),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_cron_call",
+                side_effect=gateway_call,
+            ),
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/gateway/cron",
+                json={"method": "cron.remove", "params": {"id": "job-persona-1"}},
+                headers={"X-Pantheon-Service-Token": "cron-secret"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["data"], {"removed": True})
+        self.assertEqual(
+            [method for method, _ in calls],
+            ["cron.list", "cron.remove"],
+        )
+
+    def test_cron_remove_allows_reserved_malformed_orphan_cleanup(self):
+        orphan = {
+            "id": "job-orphan-1",
+            "name": "pantheon-malformed-orphan",
+            "payload": {"kind": "systemEvent", "text": "not-json"},
+        }
+        calls = []
+
+        def gateway_call(method, params):
+            calls.append((method, params))
+            if method == "cron.list":
+                return {"jobs": [orphan]}
+            if method == "cron.remove":
+                return {"removed": True}
+            raise AssertionError(method)
+
+        with (
+            self._auth_config(token="cron-secret"),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_cron_call",
+                side_effect=gateway_call,
+            ),
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/gateway/cron",
+                json={"method": "cron.remove", "params": {"id": "job-orphan-1"}},
+                headers={"X-Pantheon-Service-Token": "cron-secret"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual([method for method, _ in calls], ["cron.list", "cron.remove"])
 
 
 # ---------------------------------------------------------------------------
@@ -448,15 +1093,15 @@ class TestCapabilities(unittest.TestCase):
                 json={
                     "reason": "expired",
                     "captureTimeoutSeconds": 3,
-                    "mode": "kernel_debug",
+                    "mode": "user",
                     "operator_role": "operator",
-                    "control_mode": {"active": True, "mode": "kernel_debug", "activation_id": "act-1"},
+                    "confirmed": True,
                 },
                 headers={
                     "X-Operator-Id": "op-1",
                     "X-Trace-Id": "trace-reauth-1",
                     "X-Operator-Role": "operator",
-                    "X-Assistant-Mode": "kernel_debug",
+                    "X-Assistant-Mode": "user",
                 },
             )
 
@@ -488,9 +1133,9 @@ class TestCapabilities(unittest.TestCase):
                 "/api/openclaw-adapter/assistant/providers/codex/reauth",
                 json={
                     "reason": "expired",
-                    "mode": "kernel_debug",
+                    "mode": "user",
                     "operator_role": "operator",
-                    "control_mode": {"active": True, "mode": "kernel_debug", "activation_id": "act-1"},
+                    "confirmed": True,
                 },
                 headers={"X-Operator-Id": "op-1", "X-Operator-Role": "operator"},
             )
@@ -529,6 +1174,182 @@ class TestCapabilities(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["data"]["status"], "completed")
         status.assert_called_once_with("codex_reauth_1")
+
+    def test_assistant_claude_reauth_starts_auth_login_flow(self):
+        fake_payload = {
+            "reauth_session_id": "claude_reauth_1",
+            "provider": "claude",
+            "status": "pending",
+            "verification_uri": "https://console.anthropic.com/login",
+            "user_code": "WXYZ-1234",
+            "credential_exchange": {
+                "bff_handles_credentials": False,
+                "frontend_handles_credentials": False,
+            },
+        }
+        bridge = adapter_main.ToolWorkflowBridge(
+            policy=adapter_main.ToolPolicy(
+                allowed_tools=[adapter_main.ASSISTANT_PROVIDER_REAUTH_TOOL_NAME]
+            ),
+            audit_log=adapter_main.BridgeAuditLog(path=tempfile.mktemp(suffix=".jsonl")),
+            trace_id_factory=lambda: "trace-claude-reauth-1",
+        )
+        with patch.object(
+            adapter_main._CLAUDE_PROVIDER,
+            "start_device_reauth",
+            return_value=fake_payload,
+        ) as start, patch.object(adapter_main, "_BRIDGE", bridge):
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/providers/claude/reauth",
+                json={
+                    "reason": "expired",
+                    "captureTimeoutSeconds": 3,
+                    "mode": "user",
+                    "operator_role": "operator",
+                    "confirmed": True,
+                },
+                headers={
+                    "X-Operator-Id": "op-1",
+                    "X-Trace-Id": "trace-claude-reauth-1",
+                    "X-Operator-Role": "operator",
+                    "X-Assistant-Mode": "user",
+                },
+            )
+
+        self.assertEqual(resp.status_code, 202)
+        body = resp.json()
+        self.assertEqual(body["status"], "ok")
+        self.assertEqual(body["data"]["provider"], "claude")
+        self.assertEqual(body["data"]["verification_uri"], "https://console.anthropic.com/login")
+        start.assert_called_once_with(
+            operator_id="op-1",
+            trace_id="trace-claude-reauth-1",
+            reason="expired",
+            capture_timeout_seconds=3,
+            poll_interval_seconds=None,
+            max_wait_seconds=None,
+        )
+
+    def test_assistant_claude_reauth_status_returns_session(self):
+        with patch.object(
+            adapter_main._CLAUDE_PROVIDER,
+            "reauth_status",
+            return_value={
+                "reauth_session_id": "claude_reauth_1",
+                "provider": "claude",
+                "status": "completed",
+                "readiness": {"ready": True},
+            },
+        ) as status:
+            resp = client.get(
+                "/api/openclaw-adapter/assistant/providers/claude/reauth/claude_reauth_1",
+                headers={"X-Operator-Id": "op-1"},
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["data"]["status"], "completed")
+        status.assert_called_once_with("claude_reauth_1")
+
+    def test_assistant_claude_reauth_code_defaults_to_user_mode(self):
+        fake_payload = {
+            "reauth_session_id": "claude_reauth_1",
+            "provider": "claude",
+            "status": "code_submitted",
+            "code_submitted_at": "2026-07-01T00:00:00Z",
+        }
+        bridge = adapter_main.ToolWorkflowBridge(
+            policy=adapter_main.ToolPolicy(
+                allowed_tools=[adapter_main.ASSISTANT_PROVIDER_REAUTH_TOOL_NAME]
+            ),
+            audit_log=adapter_main.BridgeAuditLog(path=tempfile.mktemp(suffix=".jsonl")),
+            trace_id_factory=lambda: "trace-claude-code-1",
+        )
+        with patch.object(
+            adapter_main._CLAUDE_PROVIDER,
+            "submit_reauth_code",
+            return_value=fake_payload,
+        ) as submit, patch.object(adapter_main, "_BRIDGE", bridge):
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/providers/claude/reauth/claude_reauth_1/code",
+                json={"provider": "claude", "code": "claude-oauth-code-123", "confirmed": True},
+                headers={"X-Operator-Id": "op-1", "X-Trace-Id": "trace-claude-code-1"},
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["data"]["status"], "code_submitted")
+        submit.assert_called_once_with(
+            "claude_reauth_1",
+            code="claude-oauth-code-123",
+            operator_id="op-1",
+        )
+        entries = bridge._audit.read()  # noqa: SLF001 - test asserts route admission audit.
+        self.assertEqual(entries[0]["request_type"], "assistant_provider_reauth_code")
+        self.assertEqual(entries[0]["mode"], "user")
+
+    def test_assistant_provider_registration_requires_bridge_allowlist(self):
+        bridge = adapter_main.ToolWorkflowBridge(
+            policy=adapter_main.ToolPolicy(allowed_tools=[]),
+            audit_log=adapter_main.BridgeAuditLog(path=tempfile.mktemp(suffix=".jsonl")),
+        )
+        with patch.object(adapter_main._PROVIDER_REGISTRY, "register") as register, patch.object(adapter_main, "_BRIDGE", bridge):
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/providers",
+                json={
+                    "provider": "gemini_cli",
+                    "providerName": "Gemini CLI",
+                    "mode": "kernel_debug",
+                    "operator_role": "operator",
+                    "control_mode": {"active": True, "mode": "kernel_debug", "activation_id": "act-1"},
+                },
+                headers={"X-Operator-Id": "op-1", "X-Operator-Role": "operator"},
+            )
+
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(resp.json()["error_code"], "BRIDGE_SKILL_DENIED")
+        register.assert_not_called()
+
+    def test_assistant_provider_registration_writes_metadata_only(self):
+        fake_payload = {
+            "provider": "gemini_cli",
+            "provider_name": "Gemini CLI",
+            "runtime": "external_llm",
+            "ready": False,
+            "status": "registered",
+            "reauth_supported": False,
+        }
+        bridge = adapter_main.ToolWorkflowBridge(
+            policy=adapter_main.ToolPolicy(
+                allowed_tools=[adapter_main.ASSISTANT_PROVIDER_REGISTER_TOOL_NAME]
+            ),
+            audit_log=adapter_main.BridgeAuditLog(path=tempfile.mktemp(suffix=".jsonl")),
+            trace_id_factory=lambda: "trace-register-1",
+        )
+        with patch.object(
+            adapter_main._PROVIDER_REGISTRY,
+            "register",
+            return_value=fake_payload,
+        ) as register, patch.object(adapter_main, "_BRIDGE", bridge):
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/providers",
+                json={
+                    "provider": "gemini_cli",
+                    "providerName": "Gemini CLI",
+                    "model": "gemini-2.5-pro",
+                    "mode": "kernel_debug",
+                    "operator_role": "operator",
+                    "control_mode": {"active": True, "mode": "kernel_debug", "activation_id": "act-1"},
+                },
+                headers={"X-Operator-Id": "op-1", "X-Trace-Id": "trace-register-1"},
+            )
+
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.json()["data"]["provider"], "gemini_cli")
+        register.assert_called_once()
+        args, kwargs = register.call_args
+        self.assertEqual(args[0]["provider"], "gemini_cli")
+        self.assertEqual(args[0]["model"], "gemini-2.5-pro")
+        self.assertEqual(kwargs["operator_id"], "op-1")
+        self.assertEqual(kwargs["trace_id"], "trace-register-1")
 
     def test_assistant_codex_invoke_passes_through_runtime(self):
         fake_result = types.SimpleNamespace(
@@ -721,6 +1542,809 @@ class TestCapabilities(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Session stubs
 # ---------------------------------------------------------------------------
+
+
+class TestGovernedServantAgentSync(unittest.TestCase):
+    _PERSONA_ID = "agora-servant-0123456789abcdefabcd"
+    _PAYLOAD = {
+        "persona_registry_ref": f"persona:{_PERSONA_ID}",
+        "workspace_ref": f"/home/node/.openclaw/workspaces/{_PERSONA_ID}",
+        "capability_snapshot": {
+            "allowed_capabilities": ["persona_opinion"],
+            "persona_class": "agora_servant",
+        },
+    }
+    _HEADERS = {
+        "X-Pantheon-Service-Token": "adapter-secret",
+        "Idempotency-Key": "3c1c6580-746b-5816-b246-f46e14367875",
+        "X-Request-Id": "request-agent-1",
+    }
+
+    def setUp(self):
+        self._temp_dir = tempfile.TemporaryDirectory()
+        self._db_patch = patch.object(
+            adapter_main,
+            "_OPENCLAW_AGENT_IDEMPOTENCY_DB",
+            Path(self._temp_dir.name) / "agent-ensure.sqlite3",
+        )
+        self._db_patch.start()
+
+    def tearDown(self):
+        self._db_patch.stop()
+        self._temp_dir.cleanup()
+
+    def _auth_config(self, *, token: str = "adapter-secret"):
+        return patch.multiple(
+            adapter_main,
+            _ASSISTANT_SERVICE_TOKEN=token,
+            _ASSISTANT_SERVICE_AUTH_REQUIRED=True,
+        )
+
+    def test_agent_ensure_requires_the_bff_service_token(self):
+        with self._auth_config():
+            response = client.post(
+                "/api/openclaw-adapter/agents/ensure",
+                json=self._PAYLOAD,
+                headers={
+                    "Idempotency-Key": self._HEADERS["Idempotency-Key"],
+                    "X-Request-Id": self._HEADERS["X-Request-Id"],
+                },
+            )
+
+        self.assertEqual(response.status_code, 401, response.text)
+        self.assertEqual(response.json()["error_code"], "AGENT_SERVICE_AUTH_DENIED")
+
+    def test_agent_ensure_reconciles_only_the_exact_governed_workspace(self):
+        expected = {
+            "status": "created",
+            "agent_id": self._PERSONA_ID,
+            "model_id": f"openclaw/{self._PERSONA_ID}",
+            "model": "anthropic/claude-opus-4-8",
+            "workspace_ref": self._PAYLOAD["workspace_ref"],
+        }
+        with (
+            self._auth_config(),
+            patch.object(
+                adapter_main,
+                "ensure_agora_servant_agent",
+                return_value=expected,
+            ) as ensure_agent,
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/agents/ensure",
+                json=self._PAYLOAD,
+                headers=self._HEADERS,
+            )
+
+        self.assertEqual(response.status_code, 201, response.text)
+        self.assertEqual(response.json()["agent"], expected)
+        persona = ensure_agent.call_args.args[0]
+        self.assertEqual(persona["persona_id"], self._PERSONA_ID)
+        self.assertEqual(persona["name"], "Agora Servant")
+        self.assertEqual(persona["traits"]["decision_style"], "operator-guided")
+        self.assertEqual(persona["metadata"]["execution_authority"], "none")
+
+    def test_agent_ensure_rejects_forbidden_capability_before_cli(self):
+        payload = copy.deepcopy(self._PAYLOAD)
+        payload["capability_snapshot"]["allowed_capabilities"] = [
+            "persona_opinion",
+            "capital-binding",
+        ]
+        with (
+            self._auth_config(),
+            patch.object(adapter_main, "ensure_agora_servant_agent") as ensure_agent,
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/agents/ensure",
+                json=payload,
+                headers=self._HEADERS,
+            )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(response.json()["error_code"], "AGENT_SYNC_POLICY_DENIED")
+        ensure_agent.assert_not_called()
+
+    def test_agent_ensure_rejects_non_exact_opinion_capability_before_cli(self):
+        payload = copy.deepcopy(self._PAYLOAD)
+        payload["capability_snapshot"]["allowed_capabilities"] = [
+            "persona-opinion",
+        ]
+        with (
+            self._auth_config(),
+            patch.object(adapter_main, "ensure_agora_servant_agent") as ensure_agent,
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/agents/ensure",
+                json=payload,
+                headers=self._HEADERS,
+            )
+
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertEqual(response.json()["error_code"], "AGENT_SYNC_POLICY_DENIED")
+        ensure_agent.assert_not_called()
+
+    def test_agent_ensure_replays_same_key_without_a_second_reconcile(self):
+        agent = {
+            "status": "created",
+            "agent_id": self._PERSONA_ID,
+            "workspace_ref": self._PAYLOAD["workspace_ref"],
+        }
+        with (
+            self._auth_config(),
+            patch.object(adapter_main, "ensure_agora_servant_agent", return_value=agent) as ensure,
+        ):
+            first = client.post(
+                "/api/openclaw-adapter/agents/ensure",
+                json=self._PAYLOAD,
+                headers=self._HEADERS,
+            )
+            replay_headers = {**self._HEADERS, "X-Request-Id": "request-agent-retry"}
+            replay = client.post(
+                "/api/openclaw-adapter/agents/ensure",
+                json=self._PAYLOAD,
+                headers=replay_headers,
+            )
+
+        self.assertEqual(first.status_code, 201, first.text)
+        self.assertEqual(replay.status_code, 201, replay.text)
+        self.assertEqual(replay.json(), first.json())
+        ensure.assert_called_once()
+
+    def test_agent_ensure_rejects_same_key_with_a_different_payload(self):
+        agent = {
+            "status": "created",
+            "agent_id": self._PERSONA_ID,
+            "workspace_ref": self._PAYLOAD["workspace_ref"],
+        }
+        changed = copy.deepcopy(self._PAYLOAD)
+        changed["workspace_ref"] = (
+            "/home/node/.openclaw/workspaces/agora-servant-fedcba9876543210fedc"
+        )
+        with (
+            self._auth_config(),
+            patch.object(adapter_main, "ensure_agora_servant_agent", return_value=agent) as ensure,
+        ):
+            first = client.post(
+                "/api/openclaw-adapter/agents/ensure",
+                json=self._PAYLOAD,
+                headers=self._HEADERS,
+            )
+            conflict = client.post(
+                "/api/openclaw-adapter/agents/ensure",
+                json=changed,
+                headers=self._HEADERS,
+            )
+
+        self.assertEqual(first.status_code, 201, first.text)
+        self.assertEqual(conflict.status_code, 409, conflict.text)
+        self.assertEqual(
+            conflict.json()["error_code"],
+            "AGENT_SYNC_IDEMPOTENCY_CONFLICT",
+        )
+        ensure.assert_called_once()
+
+    def test_agent_ensure_serializes_different_keys(self):
+        req = adapter_main.OpenClawAgentEnsureRequest.model_validate(self._PAYLOAD)
+        active = 0
+        max_active = 0
+        state_lock = threading.Lock()
+
+        def reconcile(_req):
+            nonlocal active, max_active
+            with state_lock:
+                active += 1
+                max_active = max(max_active, active)
+            time.sleep(0.05)
+            with state_lock:
+                active -= 1
+            return {"status": "created", "agent_id": self._PERSONA_ID}
+
+        def ensure(key):
+            return adapter_main._ensure_agent_idempotently(
+                req,
+                idempotency_key=key,
+                request_id=f"request-{key}",
+            )
+
+        with (
+            patch.object(adapter_main, "_sync_servant_agent", side_effect=reconcile),
+            ThreadPoolExecutor(max_workers=2) as executor,
+        ):
+            results = list(executor.map(ensure, ["key-a", "key-b"]))
+
+        self.assertEqual([result[0] for result in results], [201, 201])
+        self.assertEqual(max_active, 1)
+
+    def test_agent_cli_is_bound_to_the_gateway_state_dir(self):
+        completed = MagicMock(returncode=0, stdout='{"agents": []}', stderr="")
+        with patch.object(adapter_main.subprocess, "run", return_value=completed) as run:
+            result = adapter_main._gateway_state_agent_runner(
+                ["openclaw", "agents", "list", "--json"]
+            )
+
+        self.assertIs(result, completed)
+        self.assertEqual(
+            run.call_args.kwargs["env"]["OPENCLAW_STATE_DIR"],
+            "/home/node/.openclaw",
+        )
+        self.assertEqual(run.call_args.kwargs["env"]["HOME"], "/home/node")
+        self.assertEqual(run.call_args.kwargs["user"], 1000)
+        self.assertEqual(run.call_args.kwargs["group"], 1000)
+        self.assertFalse(run.call_args.kwargs["check"])
+
+    def test_agent_soul_writer_uses_the_gateway_owner(self):
+        completed = MagicMock(returncode=0, stdout="", stderr="")
+        with patch.object(adapter_main.subprocess, "run", return_value=completed) as run:
+            adapter_main._gateway_state_soul_writer(
+                f"/home/node/.openclaw/workspaces/{self._PERSONA_ID}",
+                "# governed soul",
+            )
+
+        self.assertEqual(run.call_args.kwargs["input"], "# governed soul")
+        self.assertEqual(run.call_args.kwargs["user"], 1000)
+        self.assertEqual(run.call_args.kwargs["group"], 1000)
+        self.assertEqual(run.call_args.kwargs["env"]["HOME"], "/home/node")
+
+    def _opinion_payload(self):
+        tenant_id = "tenant-alpha"
+        persona_id = "persona-alpha"
+        persona_version = "persona-alpha-v4"
+        snapshot_id = "snapshot-alpha-v9"
+        requested_environment = "paper"
+        agent_id = adapter_main._persona_opinion_agent_id(
+            tenant_id, persona_id, persona_version, snapshot_id, requested_environment
+        )
+        return {
+            "persona_id": persona_id,
+            "tenant_id": tenant_id,
+            "persona_version": persona_version,
+            "agent_id": agent_id,
+            "workspace_ref": f"/home/node/.openclaw/workspaces/{agent_id}",
+            "capability_snapshot_id": snapshot_id,
+            "allowed_capabilities": ["persona_opinion"],
+            "environment_ceiling": "paper",
+            "requested_environment": requested_environment,
+            "execution_authority": "none",
+            "display_name": "Alpha",
+            "mandate": "trend",
+            "archetype": "challenger",
+            "strategy_family": "momentum",
+            "traits": {"decision_style": "evidence-first"},
+        }
+
+    def test_live_agent_visibility_waits_through_deterministic_reload_lag(self):
+        agent_id = self._opinion_payload()["agent_id"]
+        registries = [[], [], [{"id": agent_id}]]
+        elapsed = [0.0]
+        sleeps = []
+
+        def sleep(seconds):
+            sleeps.append(seconds)
+            elapsed[0] += seconds
+
+        with patch.object(
+            adapter_main._OPENCLAW_AGENT_PROVIDER,
+            "gateway_agents_list",
+            side_effect=registries,
+        ) as listing:
+            visible = adapter_main._wait_for_live_persona_opinion_agent(
+                agent_id,
+                timeout_seconds=1.0,
+                poll_seconds=0.1,
+                clock=lambda: elapsed[0],
+                sleeper=sleep,
+            )
+
+        self.assertEqual(visible["id"], agent_id)
+        self.assertEqual(listing.call_count, 3)
+        self.assertEqual(sleeps, [0.1, 0.1])
+
+    def test_live_agent_visibility_threads_remaining_total_budget(self):
+        agent_id = self._opinion_payload()["agent_id"]
+        elapsed = [0.0]
+        probe_budgets = []
+
+        def listing(*, timeout_seconds):
+            probe_budgets.append(timeout_seconds)
+            elapsed[0] += 0.2
+            return [{"id": agent_id}] if len(probe_budgets) == 2 else []
+
+        def sleep(seconds):
+            elapsed[0] += seconds
+
+        with patch.object(
+            adapter_main._OPENCLAW_AGENT_PROVIDER,
+            "gateway_agents_list",
+            side_effect=listing,
+        ):
+            visible = adapter_main._wait_for_live_persona_opinion_agent(
+                agent_id,
+                timeout_seconds=1.0,
+                poll_seconds=0.1,
+                clock=lambda: elapsed[0],
+                sleeper=sleep,
+            )
+
+        self.assertEqual(visible["id"], agent_id)
+        self.assertEqual(probe_budgets, [1.0, 0.7])
+
+    def test_persona_ensure_timeout_is_typed_fail_closed_without_replay(self):
+        payload = self._opinion_payload()
+        agent = {"status": "created", "agent_id": payload["agent_id"]}
+        timeout_error = adapter_main.GatewayOpenClawProviderError(
+            "agents.list subprocess exceeded the remaining budget",
+            status_code=504,
+            error_code="OPENCLAW_GATEWAY_TIMEOUT",
+        )
+        with (
+            self._auth_config(),
+            patch.object(adapter_main, "_sync_persona_opinion_agent", return_value=agent),
+            patch.object(adapter_main, "_PERSONA_OPINION_AGENT_READY_TIMEOUT_SECONDS", 0.01),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_agents_list",
+                side_effect=timeout_error,
+            ),
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/agents/persona-opinion/ensure",
+                json=payload,
+                headers={**self._HEADERS, "Idempotency-Key": "persona-never-live"},
+            )
+
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(response.json()["error_code"], "PERSONA_OPINION_AGENT_NOT_READY")
+        self.assertTrue(response.json()["retryable"])
+        with adapter_main.sqlite3.connect(str(adapter_main._OPENCLAW_AGENT_IDEMPOTENCY_DB)) as connection:
+            replay_count = connection.execute(
+                "SELECT count(*) FROM agent_ensure_replays WHERE idempotency_key=?",
+                ("persona-never-live",),
+            ).fetchone()[0]
+            admission_table = connection.execute(
+                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='persona_opinion_admissions'"
+            ).fetchone()[0]
+            admission_count = (
+                connection.execute(
+                    "SELECT count(*) FROM persona_opinion_admissions WHERE agent_id=?",
+                    (payload["agent_id"],),
+                ).fetchone()[0]
+                if admission_table
+                else 0
+            )
+        self.assertEqual(replay_count, 0)
+        self.assertEqual(admission_count, 0)
+
+    def test_persona_ensure_cached_replay_still_requires_live_visibility(self):
+        payload = self._opinion_payload()
+        agent = {"status": "created", "agent_id": payload["agent_id"]}
+        calls = [0]
+
+        def live_registry(**_kwargs):
+            calls[0] += 1
+            if calls[0] == 1:
+                return [{"id": payload["agent_id"]}]
+            raise adapter_main.GatewayOpenClawProviderError(
+                "agents.list subprocess exceeded the remaining budget",
+                status_code=504,
+                error_code="OPENCLAW_GATEWAY_TIMEOUT",
+            )
+
+        with (
+            self._auth_config(),
+            patch.object(adapter_main, "_sync_persona_opinion_agent", return_value=agent) as sync,
+            patch.object(adapter_main, "_PERSONA_OPINION_AGENT_READY_TIMEOUT_SECONDS", 0.01),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_agents_list",
+                side_effect=live_registry,
+            ),
+        ):
+            headers = {**self._HEADERS, "Idempotency-Key": "persona-cached-visibility"}
+            first = client.post(
+                "/api/openclaw-adapter/agents/persona-opinion/ensure", json=payload, headers=headers,
+            )
+            replay = client.post(
+                "/api/openclaw-adapter/agents/persona-opinion/ensure",
+                json=payload,
+                headers={**headers, "X-Request-Id": "persona-cached-retry"},
+            )
+
+        self.assertEqual(first.status_code, 201, first.text)
+        self.assertEqual(replay.status_code, 503, replay.text)
+        self.assertEqual(replay.json()["error_code"], "PERSONA_OPINION_AGENT_NOT_READY")
+        sync.assert_called_once()
+        with adapter_main.sqlite3.connect(str(adapter_main._OPENCLAW_AGENT_IDEMPOTENCY_DB)) as connection:
+            replay_count = connection.execute(
+                "SELECT count(*) FROM agent_ensure_replays WHERE idempotency_key=?",
+                ("persona-cached-visibility",),
+            ).fetchone()[0]
+        self.assertEqual(replay_count, 1)
+
+    def test_persona_ensure_preserves_gateway_auth_error_without_replay(self):
+        payload = self._opinion_payload()
+        error = adapter_main.GatewayOpenClawProviderError(
+            "OpenClaw provider authorization expired.",
+            status_code=401,
+            error_code="OPENCLAW_OAUTH_EXPIRED",
+        )
+        with (
+            self._auth_config(),
+            patch.object(
+                adapter_main,
+                "_sync_persona_opinion_agent",
+                return_value={"status": "created", "agent_id": payload["agent_id"]},
+            ),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_agents_list",
+                side_effect=error,
+            ),
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/agents/persona-opinion/ensure",
+                json=payload,
+                headers={**self._HEADERS, "Idempotency-Key": "persona-auth-error"},
+            )
+
+        self.assertEqual(response.status_code, 401, response.text)
+        self.assertEqual(response.json()["error_code"], "OPENCLAW_OAUTH_EXPIRED")
+        self.assertFalse(response.json()["retryable"])
+        with adapter_main.sqlite3.connect(str(adapter_main._OPENCLAW_AGENT_IDEMPOTENCY_DB)) as connection:
+            replay_count = connection.execute(
+                "SELECT count(*) FROM agent_ensure_replays WHERE idempotency_key=?",
+                ("persona-auth-error",),
+            ).fetchone()[0]
+        self.assertEqual(replay_count, 0)
+
+    def test_persona_opinion_agent_requires_exact_frozen_admission(self):
+        payload = self._opinion_payload()
+        agent = {
+            "status": "created",
+            "agent_id": payload["agent_id"],
+            "workspace_ref": payload["workspace_ref"],
+        }
+        headers = {
+            **self._HEADERS,
+            "Idempotency-Key": "persona-opinion-agent-1",
+            "X-Request-Id": "persona-opinion-request-1",
+        }
+        with (
+            self._auth_config(),
+            patch.object(adapter_main, "_sync_persona_opinion_agent", return_value=agent) as sync,
+            patch.object(adapter_main, "_wait_for_live_persona_opinion_agent", return_value={}),
+        ):
+            accepted = client.post(
+                "/api/openclaw-adapter/agents/persona-opinion/ensure",
+                json=payload,
+                headers=headers,
+            )
+            changed = {**payload, "workspace_ref": "/home/node/.openclaw/workspaces/main"}
+            denied = client.post(
+                "/api/openclaw-adapter/agents/persona-opinion/ensure",
+                json=changed,
+                headers={**headers, "Idempotency-Key": "persona-opinion-agent-2"},
+            )
+
+        self.assertEqual(accepted.status_code, 201, accepted.text)
+        self.assertEqual(accepted.json()["execution_authority"], "none")
+        self.assertEqual(len(accepted.json()["admission_fingerprint"]), 64)
+        self.assertEqual(denied.status_code, 422, denied.text)
+        sync.assert_called_once()
+
+    def test_persona_identity_drift_conflicts_before_soul_reconciliation(self):
+        payload = self._opinion_payload()
+        agent = {
+            "status": "created",
+            "agent_id": payload["agent_id"],
+            "workspace_ref": payload["workspace_ref"],
+        }
+        with (
+            self._auth_config(),
+            patch.object(adapter_main, "_sync_persona_opinion_agent", return_value=agent) as sync,
+            patch.object(adapter_main, "_wait_for_live_persona_opinion_agent", return_value={}),
+        ):
+            accepted = client.post(
+                "/api/openclaw-adapter/agents/persona-opinion/ensure",
+                json=payload,
+                headers={**self._HEADERS, "Idempotency-Key": "identity-original"},
+            )
+            drifted = client.post(
+                "/api/openclaw-adapter/agents/persona-opinion/ensure",
+                json={**payload, "mandate": "silently changed mandate", "traits": {"risk": "changed"}},
+                headers={**self._HEADERS, "Idempotency-Key": "identity-drifted"},
+            )
+
+        self.assertEqual(accepted.status_code, 201, accepted.text)
+        self.assertEqual(drifted.status_code, 409, drifted.text)
+        sync.assert_called_once()
+
+    def test_two_fresh_persona_agents_run_with_runtime_tools_and_memory_denied(self):
+        runtime_agents = []
+        live_gateway_agents = []
+        written_souls = {}
+
+        def completed(*, stdout="", stderr="", returncode=0):
+            return MagicMock(stdout=stdout, stderr=stderr, returncode=returncode)
+
+        def fake_runtime(args):
+            if args[1:4] == ["agents", "list", "--json"]:
+                return completed(stdout=json.dumps({"agents": runtime_agents}))
+            if args[1:3] == ["agents", "add"]:
+                runtime_agents.append({
+                    "id": args[3],
+                    "workspace": args[args.index("--workspace") + 1],
+                    "model": args[args.index("--model") + 1],
+                })
+                return completed(stdout="{}")
+            if args[1:5] == ["config", "get", "agents.list", "--json"]:
+                return completed(stdout=json.dumps(runtime_agents))
+            if args[1:4] == ["config", "set", "agents.list"]:
+                runtime_agents[:] = json.loads(args[4])
+                return completed(stdout="ok")
+            if args[1:3] == ["agents", "set-identity"]:
+                return completed(stdout="ok")
+            return completed(returncode=1, stderr=f"unexpected command: {args}")
+
+        def fake_live_agents(**_kwargs):
+            live_gateway_agents[:] = copy.deepcopy(runtime_agents)
+            return copy.deepcopy(live_gateway_agents)
+
+        alpha = self._opinion_payload()
+        beta = {
+            **alpha,
+            "persona_id": "persona-beta",
+            "persona_version": "persona-beta-v2",
+            "capability_snapshot_id": "snapshot-beta-v2",
+            "display_name": "Beta",
+            "mandate": "mean reversion",
+            "archetype": "skeptic",
+            "strategy_family": "reversion",
+            "traits": {"decision_style": "contrarian"},
+        }
+        beta["agent_id"] = adapter_main._persona_opinion_agent_id(
+            beta["tenant_id"], beta["persona_id"], beta["persona_version"],
+            beta["capability_snapshot_id"], beta["requested_environment"],
+        )
+        beta["workspace_ref"] = f"/home/node/.openclaw/workspaces/{beta['agent_id']}"
+        provider_result = MagicMock()
+        provider_result.to_dict.return_value = {
+            "provider": "openclaw", "mode": "user", "status": "completed",
+            "output": {"json_events": []},
+        }
+
+        with (
+            self._auth_config(),
+            patch.object(adapter_main, "_gateway_state_agent_runner", side_effect=fake_runtime),
+            patch.object(adapter_main, "_gateway_state_soul_writer", side_effect=lambda workspace, soul: written_souls.__setitem__(workspace, soul)),
+            patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "gateway_agents_list", side_effect=fake_live_agents),
+            patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "invoke", return_value=provider_result) as invoke,
+        ):
+            for index, payload in enumerate((alpha, beta), start=1):
+                ensured = client.post(
+                    "/api/openclaw-adapter/agents/persona-opinion/ensure",
+                    json=payload,
+                    headers={**self._HEADERS, "Idempotency-Key": f"fresh-persona-{index}"},
+                )
+                self.assertEqual(ensured.status_code, 201, ensured.text)
+                admission = {
+                    key: payload[key]
+                    for key in adapter_main.PersonaOpinionInvocationAdmission.model_fields
+                }
+                invoked = client.post(
+                    "/api/openclaw-adapter/assistant/providers/openclaw/invoke",
+                    json={
+                        "mode": "user", "prompt": "Return governed opinion JSON",
+                        "metadata": {"allowed_tools": []}, "agent_id": payload["agent_id"],
+                        "persona_admission": admission,
+                    },
+                    headers={"X-Pantheon-Service-Token": "adapter-secret", "X-Operator-Id": "operator-1",
+                             "Idempotency-Key": f"persona-invoke-{index}"},
+                )
+                self.assertEqual(invoked.status_code, 200, invoked.text)
+
+            # Runtime config is the enforcement boundary.  If either tool or
+            # memory policy drifts after ensure, invocation must fail before
+            # the provider CLI is reached.
+            runtime_agents[0]["tools"]["deny"] = []
+            runtime_agents[0]["memorySearch"]["enabled"] = True
+            alpha_admission = {
+                key: alpha[key]
+                for key in adapter_main.PersonaOpinionInvocationAdmission.model_fields
+            }
+            denied = client.post(
+                "/api/openclaw-adapter/assistant/providers/openclaw/invoke",
+                json={
+                    "mode": "user", "prompt": "Attempt after policy drift",
+                    "metadata": {"allowed_tools": []}, "agent_id": alpha["agent_id"],
+                    "persona_admission": alpha_admission,
+                },
+                headers={"X-Pantheon-Service-Token": "adapter-secret", "X-Operator-Id": "operator-1",
+                         "Idempotency-Key": "persona-policy-drift"},
+            )
+            self.assertEqual(denied.status_code, 403, denied.text)
+
+        self.assertEqual({agent["id"] for agent in runtime_agents}, {alpha["agent_id"], beta["agent_id"]})
+        self.assertEqual(set(written_souls), {alpha["workspace_ref"], beta["workspace_ref"]})
+        # Restore the deliberate test drift before checking both ensured
+        # runtime projections.
+        runtime_agents[0].update(json.loads(json.dumps(adapter_main._PERSONA_OPINION_RUNTIME_POLICY)))
+        for agent in runtime_agents:
+            self.assertEqual(agent["tools"], {"allow": [], "deny": ["*"]})
+            self.assertEqual(agent["skills"], [])
+            self.assertFalse(agent["memorySearch"]["enabled"])
+            self.assertEqual(agent["memorySearch"]["sources"], [])
+            self.assertFalse(agent["memorySearch"]["experimental"]["sessionMemory"])
+            self.assertEqual(agent["contextInjection"], "never")
+        self.assertEqual(invoke.call_count, 2)
+        self.assertEqual(len({call.kwargs["session_id"] for call in invoke.call_args_list}), 2)
+        for call in invoke.call_args_list:
+            self.assertEqual(call.kwargs["metadata"]["allowed_tools"], [])
+            self.assertFalse(call.kwargs["metadata"]["persona_memory_mutated"])
+
+    def test_persona_provider_invocation_uses_only_previously_admitted_exact_agent(self):
+        payload = self._opinion_payload()
+        agent = {
+            "status": "created",
+            "agent_id": payload["agent_id"],
+            "workspace_ref": payload["workspace_ref"],
+        }
+        ensure_headers = {
+            **self._HEADERS,
+            "Idempotency-Key": "persona-opinion-agent-invoke",
+            "X-Request-Id": "persona-opinion-request-invoke",
+        }
+        invocation_admission = {
+            key: payload[key]
+            for key in (
+                "persona_id", "tenant_id", "persona_version", "agent_id", "workspace_ref",
+                "capability_snapshot_id", "allowed_capabilities",
+                "environment_ceiling", "requested_environment", "execution_authority",
+                "display_name", "mandate", "archetype", "strategy_family", "traits",
+            )
+        }
+        provider_result = MagicMock()
+        provider_result.to_dict.return_value = {
+            "provider": "openclaw",
+            "mode": "user",
+            "status": "completed",
+            "output": {"agent_id": payload["agent_id"], "json_events": []},
+        }
+        with (
+            self._auth_config(),
+            patch.object(adapter_main, "_sync_persona_opinion_agent", return_value=agent),
+            patch.object(adapter_main, "_assert_persona_opinion_runtime_policy", return_value={}),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_agents_list",
+                return_value=[{"id": payload["agent_id"]}],
+            ),
+            patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "invoke", return_value=provider_result) as invoke,
+        ):
+            ensured = client.post(
+                "/api/openclaw-adapter/agents/persona-opinion/ensure",
+                json=payload,
+                headers=ensure_headers,
+            )
+            invoked = client.post(
+                "/api/openclaw-adapter/assistant/providers/openclaw/invoke",
+                json={
+                    "mode": "user",
+                    "prompt": "Return opinion JSON",
+                    "context_pack": {},
+                    "metadata": {"allowed_tools": []},
+                    "agent_id": payload["agent_id"],
+                    "persona_admission": invocation_admission,
+                },
+                headers={
+                    "X-Pantheon-Service-Token": "adapter-secret",
+                    "X-Operator-Id": "operator-1",
+                    "Idempotency-Key": "persona-opinion-provider-invoke",
+                },
+            )
+
+        self.assertEqual(ensured.status_code, 201, ensured.text)
+        self.assertEqual(invoked.status_code, 200, invoked.text)
+        self.assertEqual(invoke.call_args.kwargs["agent_id"], payload["agent_id"])
+        self.assertEqual(invoke.call_args.kwargs["metadata"]["allowed_tools"], [])
+        self.assertEqual(invoke.call_args.kwargs["metadata"]["execution_authority"], "none")
+        self.assertFalse(invoke.call_args.kwargs["metadata"]["persona_memory_mutated"])
+        self.assertRegex(invoke.call_args.kwargs["session_id"], r"^pint-[0-9a-f]{32}$")
+
+    def test_persona_invoke_live_visibility_preflight_does_not_claim_ledger(self):
+        payload = self._opinion_payload()
+        agent = {"status": "created", "agent_id": payload["agent_id"]}
+        admission = {
+            key: payload[key]
+            for key in adapter_main.PersonaOpinionInvocationAdmission.model_fields
+        }
+        live_registries = [[{"id": payload["agent_id"]}], []]
+        with (
+            self._auth_config(),
+            patch.object(adapter_main, "_sync_persona_opinion_agent", return_value=agent),
+            patch.object(adapter_main, "_assert_persona_opinion_runtime_policy", return_value={}),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_agents_list",
+                side_effect=live_registries,
+            ) as listing,
+            patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "invoke") as invoke,
+        ):
+            ensured = client.post(
+                "/api/openclaw-adapter/agents/persona-opinion/ensure",
+                json=payload,
+                headers={**self._HEADERS, "Idempotency-Key": "persona-preflight-ensure"},
+            )
+            denied = client.post(
+                "/api/openclaw-adapter/assistant/providers/openclaw/invoke",
+                json={
+                    "mode": "user",
+                    "prompt": "Return opinion JSON",
+                    "metadata": {"allowed_tools": []},
+                    "agent_id": payload["agent_id"],
+                    "persona_admission": admission,
+                },
+                headers={
+                    "X-Pantheon-Service-Token": "adapter-secret",
+                    "X-Operator-Id": "operator-1",
+                    "Idempotency-Key": "persona-preflight-invoke",
+                },
+            )
+
+        self.assertEqual(ensured.status_code, 201, ensured.text)
+        self.assertEqual(denied.status_code, 503, denied.text)
+        self.assertEqual(denied.json()["error_code"], "PERSONA_OPINION_AGENT_NOT_READY")
+        self.assertEqual(listing.call_count, 2)
+        invoke.assert_not_called()
+        with adapter_main.sqlite3.connect(str(adapter_main._OPENCLAW_AGENT_IDEMPOTENCY_DB)) as connection:
+            table_count = connection.execute(
+                "SELECT count(*) FROM sqlite_master WHERE type='table' "
+                "AND name='persona_opinion_invocation_replays'"
+            ).fetchone()[0]
+        self.assertEqual(table_count, 0)
+
+    def test_persona_invocation_replays_terminal_and_fences_restart_in_doubt(self):
+        payload = self._opinion_payload()
+        admission = {
+            key: payload[key]
+            for key in adapter_main.PersonaOpinionInvocationAdmission.model_fields
+        }
+        request = adapter_main.AssistantProviderInvokeRequest(
+            mode="user",
+            prompt="Return the exact opinion",
+            agent_id=payload["agent_id"],
+            persona_admission=admission,
+            metadata={"allowed_tools": []},
+        )
+        calls = []
+
+        def completed():
+            calls.append("completed")
+            return {"status": "ok", "data": {"status": "completed", "output": {"request_id": "r1"}}}
+
+        first = adapter_main._invoke_persona_opinion_idempotently(
+            request, idempotency_key="invocation-terminal", invoke_fn=completed,
+        )
+        second = adapter_main._invoke_persona_opinion_idempotently(
+            request, idempotency_key="invocation-terminal", invoke_fn=completed,
+        )
+        self.assertEqual(first, second)
+        self.assertEqual(calls, ["completed"])
+
+        def crash_after_claim():
+            calls.append("crashed")
+            raise RuntimeError("adapter process died after upstream acceptance")
+
+        with self.assertRaises(RuntimeError):
+            adapter_main._invoke_persona_opinion_idempotently(
+                request, idempotency_key="invocation-in-doubt", invoke_fn=crash_after_claim,
+            )
+        with self.assertRaises(adapter_main._PersonaOpinionInvocationInDoubt):
+            adapter_main._invoke_persona_opinion_idempotently(
+                request,
+                idempotency_key="invocation-in-doubt",
+                invoke_fn=lambda: calls.append("must-not-run"),
+            )
+        self.assertNotIn("must-not-run", calls)
 
 
 class TestSessions(unittest.TestCase):
@@ -1270,6 +2894,157 @@ class TestOpenClawAssistantProvider(unittest.TestCase):
         body = resp.json()
         self.assertEqual(body["error_code"], "OPERATOR_REQUIRED")
 
+    def test_openclaw_kernel_debug_delegates_to_codex_read_only_runtime(self):
+        fake_result = types.SimpleNamespace(
+            provider="codex_cli",
+            mode="kernel_debug",
+            status="completed",
+            output={
+                "provider": "codex_cli",
+                "runtime": "openclaw_gateway_cli_mount",
+                "status": "completed",
+                "sandbox": "read-only",
+                "workspace_class": "read_only",
+                "json_events": [{"final": "debug complete"}],
+            },
+            redaction={"provider_invocation": {"enabled": True}},
+        )
+        with (
+            patch.object(adapter_main._CODEX_RUNTIME, "invoke", return_value=fake_result) as codex_invoke,
+            patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "invoke") as openclaw_invoke,
+        ):
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/providers/openclaw/invoke",
+                json={
+                    "mode": "kernel_debug",
+                    "prompt": "inspect the repository",
+                    "context_pack": {"context_pack_id": "ctx-debug"},
+                    "metadata": {"tenant_id": "tenant-alpha", "activation_id": "ctrl-debug"},
+                },
+                headers={"X-Operator-Id": "op-debug", "X-Trace-Id": "trace-debug"},
+            )
+
+        self.assertEqual(resp.status_code, 200, resp.text)
+        data = resp.json()["data"]
+        self.assertEqual(data["provider"], "codex_cli")
+        self.assertEqual(data["runtime"], "openclaw_gateway_cli_mount")
+        self.assertEqual(data["delegated_from"], "openclaw")
+        self.assertEqual(data["output"]["sandbox"], "read-only")
+        self.assertEqual(data["output"]["workspace_class"], "read_only")
+        self.assertEqual(data["output"]["delegation"]["to_provider"], "codex_cli")
+        request = codex_invoke.call_args.args[0]
+        self.assertEqual(request.provider, "codex_cli")
+        self.assertEqual(request.mode, "kernel_debug")
+        self.assertEqual(request.context_pack, {"context_pack_id": "ctx-debug"})
+        self.assertEqual(request.metadata["tenant_id"], "tenant-alpha")
+        self.assertEqual(request.metadata["activation_id"], "ctrl-debug")
+        self.assertEqual(request.metadata["operator_id"], "op-debug")
+        self.assertEqual(request.metadata["trace_id"], "trace-debug")
+        openclaw_invoke.assert_not_called()
+
+    def test_openclaw_kernel_repair_delegates_exact_metadata_to_codex_task_worktree(self):
+        repair_metadata = {
+            "task_id": "MGMT-AI-REPAIR-1",
+            "task_worktree": "/srv/pantheon-assistant/worktrees/pantheon/mgmt-ai-repair-1",
+            "declared_scope": ["services/control-plane/bff"],
+            "expected_branch": "task/MGMT-AI-REPAIR-1",
+            "remote": "origin",
+            "merge_target": "dev",
+            "repo_key": "pantheon",
+        }
+        fake_result = types.SimpleNamespace(
+            provider="codex_cli",
+            mode="kernel_repair",
+            status="completed",
+            output={
+                "provider": "codex_cli",
+                "runtime": "openclaw_gateway_cli_mount",
+                "status": "completed",
+                "sandbox": "workspace-write",
+                "workspace_class": "task_worktree",
+                "repair_workflow": {"task_id": "MGMT-AI-REPAIR-1", "clean": False},
+                "post_run_repair_workflow": {"task_id": "MGMT-AI-REPAIR-1", "clean": False},
+                "json_events": [{"final": "repair complete"}],
+            },
+            redaction={"provider_invocation": {"enabled": True}},
+        )
+        with (
+            patch.object(adapter_main._CODEX_RUNTIME, "invoke", return_value=fake_result) as codex_invoke,
+            patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "invoke") as openclaw_invoke,
+        ):
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/providers/openclaw/invoke",
+                json={
+                    "mode": "kernel_repair",
+                    "prompt": "write the sentinel",
+                    "metadata": repair_metadata,
+                },
+                headers={"X-Operator-Id": "op-repair", "X-Trace-Id": "trace-repair"},
+            )
+
+        self.assertEqual(resp.status_code, 200, resp.text)
+        data = resp.json()["data"]
+        self.assertEqual(data["provider"], "codex_cli")
+        self.assertEqual(data["runtime"], "openclaw_gateway_cli_mount")
+        self.assertEqual(data["delegated_from"], "openclaw")
+        self.assertEqual(data["output"]["sandbox"], "workspace-write")
+        self.assertEqual(data["output"]["workspace_class"], "task_worktree")
+        self.assertEqual(data["output"]["post_run_repair_workflow"]["task_id"], "MGMT-AI-REPAIR-1")
+        request = codex_invoke.call_args.args[0]
+        self.assertEqual(request.mode, "kernel_repair")
+        self.assertEqual(
+            {key: request.metadata[key] for key in repair_metadata},
+            repair_metadata,
+        )
+        self.assertEqual(request.metadata["operator_id"], "op-repair")
+        self.assertEqual(request.metadata["trace_id"], "trace-repair")
+        openclaw_invoke.assert_not_called()
+
+    def test_openclaw_kernel_debug_stream_delegates_to_codex_runtime(self):
+        fake_result = types.SimpleNamespace(
+            provider="codex_cli",
+            mode="kernel_debug",
+            status="completed",
+            output={
+                "provider": "codex_cli",
+                "runtime": "openclaw_gateway_cli_mount",
+                "sandbox": "read-only",
+                "workspace_class": "read_only",
+                "json_events": [{"final": "streamed debug answer"}],
+            },
+            redaction={"provider_invocation": {"enabled": True}},
+        )
+        with (
+            patch.object(adapter_main._CODEX_RUNTIME, "invoke", return_value=fake_result) as codex_invoke,
+            patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "stream") as openclaw_stream,
+        ):
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/providers/openclaw/invoke/stream",
+                json={
+                    "mode": "kernel_debug",
+                    "prompt": "inspect",
+                    "metadata": {"tenant_id": "tenant-alpha"},
+                },
+                headers={"X-Operator-Id": "op-debug", "X-Trace-Id": "trace-stream"},
+            )
+
+        self.assertEqual(resp.status_code, 200, resp.text)
+        events = [
+            json.loads(line.removeprefix("data: "))
+            for line in resp.text.splitlines()
+            if line.startswith("data: {")
+        ]
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["type"], "done")
+        self.assertEqual(events[0]["text"], "streamed debug answer")
+        self.assertEqual(events[0]["provider"], "codex_cli")
+        self.assertEqual(events[0]["sandbox"], "read-only")
+        self.assertEqual(events[0]["workspace_class"], "read_only")
+        request = codex_invoke.call_args.args[0]
+        self.assertEqual(request.metadata["tenant_id"], "tenant-alpha")
+        self.assertEqual(request.metadata["operator_id"], "op-debug")
+        openclaw_stream.assert_not_called()
+
     def test_openclaw_invoke_returns_completed_result_on_success(self):
         fake_response_body = {
             "status": "completed",
@@ -1296,7 +3071,10 @@ class TestOpenClawAssistantProvider(unittest.TestCase):
                 redaction={"provider_invocation": {"redacted_fields": 0}},
             )
 
-        with patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER.__class__, "invoke", fake_invoke):
+        with (
+            patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER.__class__, "invoke", fake_invoke),
+            patch.object(adapter_main._CODEX_RUNTIME, "invoke") as codex_invoke,
+        ):
             resp = client.post(
                 "/api/openclaw-adapter/assistant/providers/openclaw/invoke",
                 json={"prompt": "What is the portfolio status?", "mode": "user"},
@@ -1313,6 +3091,7 @@ class TestOpenClawAssistantProvider(unittest.TestCase):
         json_events = data["output"]["json_events"]
         self.assertEqual(len(json_events), 1)
         self.assertEqual(json_events[0]["item"]["text"], "OpenClaw agent answer.")
+        codex_invoke.assert_not_called()
 
     def test_openclaw_invoke_degrades_cleanly_on_gateway_error(self):
         from assistant_openclaw_provider import OpenClawProviderError as ProvError

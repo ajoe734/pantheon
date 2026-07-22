@@ -19,8 +19,21 @@ def test_render_systemd_service_points_at_repo_watchdog() -> None:
 
     assert "Description=Pantheon supervisor watchdog" in unit
     assert "Type=oneshot" in unit
+    assert "KillMode=process" in unit
     assert 'WorkingDirectory="/tmp/pantheon repo"' in unit
     assert 'ExecStart="/tmp/pantheon repo/scripts/run-supervisor-watchdog.sh" --restart' in unit
+
+
+def test_render_systemd_service_pins_explicit_live_config() -> None:
+    repo = Path("/tmp/pantheon repo")
+    config = Path("/tmp/pantheon runtime/live supervisor.json")
+
+    unit = render_systemd_service(repo, config)
+
+    assert (
+        'ExecStart="/tmp/pantheon repo/scripts/run-supervisor-watchdog.sh" '
+        '--restart --config "/tmp/pantheon runtime/live supervisor.json"'
+    ) in unit
 
 
 def test_render_systemd_timer_runs_every_minute() -> None:
@@ -34,12 +47,22 @@ def test_render_systemd_timer_runs_every_minute() -> None:
 
 
 def test_render_cron_line_is_idempotently_tagged() -> None:
-    repo = Path("/home/lupin/code/pantheon")
+    repo = Path("/home/lupin/pantheon")
 
     line = render_cron_line(repo)
 
-    assert line.startswith("* * * * * cd /home/lupin/code/pantheon")
+    assert line.startswith("* * * * * cd /home/lupin/pantheon")
     assert line.split("cd ", 1)[0].split() == ["*", "*", "*", "*", "*"]
     assert "scripts/run-supervisor-watchdog.sh --restart" in line
     assert ".orchestrator/logs/supervisor-watchdog-cron.log" in line
     assert line.endswith(CRON_TAG)
+
+
+def test_render_cron_line_pins_shell_quoted_live_config() -> None:
+    repo = Path("/home/lupin/pantheon dev")
+    config = Path("/home/lupin/pantheon runtime/live supervisor.json")
+
+    line = render_cron_line(repo, config)
+
+    assert "cd '/home/lupin/pantheon dev'" in line
+    assert "--config '/home/lupin/pantheon runtime/live supervisor.json'" in line

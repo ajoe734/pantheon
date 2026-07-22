@@ -1,0 +1,51 @@
+{
+  "task_id": "AG-DYNUI-FULL-004",
+  "generated_at": "2026-07-05T15:26:19.668Z",
+  "fe_base_url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io",
+  "bff_base_url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+  "auth_subject": "pantheon-dev-browser",
+  "tenant": "pantheon-dev",
+  "no_page_route_registered": true,
+  "deployment_commit": "4cce2d10f14abcc7af5f15638e0e0efa63885944",
+  "deployment_source_branch": "dev",
+  "workshop_id": "ce63ec2a-c5f1-4e41-8219-e410d22037c7",
+  "live_ready_strategy_count": 0,
+  "live_workshop_count": 1,
+  "live_readiness_highest_gate": null,
+  "screenshots": [
+    {
+      "name": "hosted-strategy-workshop-list.png",
+      "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/agora/strategy-workshop",
+      "title": "Pantheon Management Console",
+      "testId": "strategy-workshop-page-list"
+    },
+    {
+      "name": "hosted-workshop-session-not-ready.png",
+      "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/agora/strategy-workshop/ce63ec2a-c5f1-4e41-8219-e410d22037c7",
+      "title": "Pantheon Management Console",
+      "testId": "strategy-workshop-page-session"
+    },
+    {
+      "name": "hosted-trading-room-default-empty.png",
+      "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/agora/trading-room",
+      "title": "Pantheon Management Console",
+      "testId": "trading-room-default-entry"
+    }
+  ],
+  "request_count": 96,
+  "bff_request_urls": [
+    "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/agora/workshops",
+    "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/events/stream",
+    "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/agora/workshops/ce63ec2a-c5f1-4e41-8219-e410d22037c7",
+    "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/agora/workshops/ce63ec2a-c5f1-4e41-8219-e410d22037c7/completeness",
+    "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/agora/workshops/ce63ec2a-c5f1-4e41-8219-e410d22037c7/readiness",
+    "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/agora/workshops/ce63ec2a-c5f1-4e41-8219-e410d22037c7/cards",
+    "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/agora/workshops/ce63ec2a-c5f1-4e41-8219-e410d22037c7",
+    "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/bff/agora/workshops/ce63ec2a-c5f1-4e41-8219-e410d22037c7/stream",
+    "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/events/stream",
+    "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/agora/trading-room",
+    "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/agora/trading-room/decision-events",
+    "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/events/stream"
+  ],
+  "conclusion": "Hosted FE deployed the AG-DYNUI-FULL-004 merge SHA. Live BFF has zero browser-scoped ready strategies, so the Add to Trading Room CTA remains disabled and live CTA navigation cannot be exercised without fixtures; closeout is frontend-handoff partial and AG-DYNUI-FULL-005 remains open for live ready-strategy proof."
+}

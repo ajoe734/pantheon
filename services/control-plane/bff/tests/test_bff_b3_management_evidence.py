@@ -32,7 +32,8 @@ OPERATOR_HEADERS = {"Authorization": "Bearer op-b3:operator"}
 def _evidence_client() -> Iterator[TestClient]:
     tracked_env = {
         "PANTHEON_BFF_EVIDENCE_REF_STORE": os.environ.get("PANTHEON_BFF_EVIDENCE_REF_STORE"),
-        "PANTHEON_BFF_EVIDENCE_OPERATION_STORE": os.environ.get("PANTHEON_BFF_EVIDENCE_OPERATION_STORE"),
+        "PANTHEON_BFF_LIVE_EVIDENCE_VERIFY_JSON": os.environ.get("PANTHEON_BFF_LIVE_EVIDENCE_VERIFY_JSON"),
+        "PANTHEON_AUDIT_OUT_DIR": os.environ.get("PANTHEON_AUDIT_OUT_DIR"),
     }
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
@@ -62,6 +63,44 @@ def _evidence_client() -> Iterator[TestClient]:
                             "route_href": "/metrics/runtime-alpha/window",
                         },
                         "route_href": "/knowledge/evidence/evref-b3-metric-001",
+                        "overall": "pass",
+                        "artifact_manifest": {
+                            "file_count": 2,
+                            "total_bytes": 88,
+                            "limits": {
+                                "max_files": 32,
+                                "max_total_bytes": 8388608,
+                                "max_file_bytes": 4194304,
+                            },
+                            "files": [
+                                {
+                                    "path": "BFF-LIVE-EVIDENCE-PREFLIGHT.json",
+                                    "bytes": 44,
+                                    "current_run_allowed": True,
+                                    "forbidden_audit_scope": False,
+                                    "oversized": False,
+                                },
+                                {
+                                    "path": "release-gate-summary.json",
+                                    "bytes": 44,
+                                    "current_run_allowed": True,
+                                    "forbidden_audit_scope": False,
+                                    "oversized": False,
+                                },
+                            ],
+                        },
+                        "criteria": {
+                            "rbac_matrix": {
+                                "status": "pass",
+                                "label": "RBAC matrix",
+                                "note": "all role/path cases matched expected status",
+                            },
+                            "current_run_only": {
+                                "status": "pass",
+                                "label": "Current-run artifact scope",
+                                "note": "2 artifact file(s); current-run scope only",
+                            },
+                        },
                         "created_at": "2026-05-23T09:00:00Z",
                     },
                     "evref-b3-alert-001": {
@@ -156,7 +195,8 @@ def _evidence_client() -> Iterator[TestClient]:
             encoding="utf-8",
         )
         os.environ["PANTHEON_BFF_EVIDENCE_REF_STORE"] = str(evidence_store)
-        os.environ["PANTHEON_BFF_EVIDENCE_OPERATION_STORE"] = str(operation_store)
+        os.environ.pop("PANTHEON_BFF_LIVE_EVIDENCE_VERIFY_JSON", None)
+        os.environ.pop("PANTHEON_AUDIT_OUT_DIR", None)
         original_store = bff_main.read_store
         original_command_store = bff_main.command_store
         try:
@@ -164,8 +204,8 @@ def _evidence_client() -> Iterator[TestClient]:
                 os.path.join(td, "read_surfaces.json"),
                 allow_local_snapshot_fallback=True,
             )
-            bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
-            yield TestClient(bff_main.app)
+            with TestClient(bff_main.app) as client:
+                yield client
         finally:
             bff_main.read_store = original_store
             bff_main.command_store = original_command_store
@@ -190,104 +230,329 @@ def test_management_evidence_composes_explorer_envelope_with_filters() -> None:
 
         assert response.status_code == 200, response.text
         payload = response.json()
-        assert payload["data"] == payload["items"]
+        assert set(payload.keys()) == {"data", "page_info", "meta"}
+        items = payload["data"]["items"]
+        summary = payload["data"]["summary"]
+        facets = payload["data"]["facets"]
         assert payload["page_info"]["total"] == 1
-        assert payload["summary"]["totalEvidence"] == 1
-        assert payload["summary"]["returnedEvidence"] == 1
-        assert payload["summary"]["bySourceType"] == {"metric": 1}
-        assert payload["facets"]["credibilityTiers"] == {"primary": 1}
+        assert summary["total_evidence"] == 1
+        assert summary["returned_evidence"] == 1
+        assert summary["by_source_type"] == {"metric": 1}
+        assert facets["credibility_tiers"] == {"primary": 1}
         assert payload["meta"]["surfaces"]["management_evidence"]["source"] == "bff_composed"
         assert payload["meta"]["surfaces"]["evidence_refs"]["status"] in {"ok", "degraded"}
 
-        item = payload["items"][0]
+        item = items[0]
         assert item["id"] == "evref-b3-metric-001"
-        assert item["refId"] == "evref-b3-metric-001"
-        assert item["sourceType"] == "metric"
-        assert item["linkedObjectSummary"]["entity_ref"] == "exp-b3-alpha"
-        assert item["routeHref"] == "/knowledge/evidence/evref-b3-metric-001"
-        assert item["actionability"] == {
-            "state": "traceable",
-            "severity": "ok",
-            "reasons": [],
-            "can_trace": True,
-            "can_open_source": True,
-            "can_open_linked_object": True,
-        }
-        assert item["allowedActions"]["canOpenSource"] is True
-        assert item["allowedActions"]["canOpenLinkedObject"] is True
-        assert item["allowedActions"]["canInspectChain"] is True
-        assert item["allowedActions"]["canMarkStale"] is True
-        assert item["allowedActions"]["canRequestEvidence"] is True
-        assert item["allowedActions"]["canCreateDispositionTask"] is True
-        assert item["allowedActions"]["canAssignReviewer"] is True
-        assert item["allowedActions"]["canResolve"] is False
-        assert item["operation"]["status"] == "none"
+        assert item["ref_id"] == "evref-b3-metric-001"
+        assert item["source_type"] == "metric"
+        assert item["linked_object_summary"]["entity_ref"] == "exp-b3-alpha"
+        assert item["route_href"] == "/knowledge/evidence/evref-b3-metric-001"
         assert item["redacted"] is False
-        assert payload["summary"]["traceableEvidence"] == 1
-        assert payload["summary"]["needsAttentionEvidence"] == 0
-        assert payload["facets"]["actionabilityStates"] == {"traceable": 1}
-        assert payload["meta"]["performance"]["row_count"] == 1
-        assert payload["meta"]["performance"]["filtered_total"] == 1
-        assert payload["meta"]["performance"]["timings_ms"]["total"] >= 0
+        assert "refId" not in item
+        assert "sourceType" not in item
+        assert "linkedObjectSummary" not in item
+        assert "routeHref" not in item
 
 
-def test_management_evidence_marks_verified_but_untraceable_rows_as_unresolved() -> None:
+def test_management_evidence_preserves_artifact_manifest_from_store() -> None:
     with _evidence_client() as client:
         response = client.get(
-            "/bff/management/evidence?ref_id=evref-b3-producer-001",
+            "/bff/management/evidence?ref_id=evref-b3-metric-001",
             headers=ADMIN_HEADERS,
         )
 
         assert response.status_code == 200, response.text
         payload = response.json()
-        assert payload["summary"]["totalEvidence"] == 1
-        assert payload["summary"]["verifiedEvidence"] == 1
-        assert payload["summary"]["traceableEvidence"] == 0
-        assert payload["summary"]["unresolvedSourceEvidence"] == 1
-        assert payload["summary"]["needsAttentionEvidence"] == 1
-        assert payload["facets"]["actionabilityStates"] == {"unresolved_source": 1}
+        assert payload["page_info"]["total"] == 1
 
-        item = payload["items"][0]
-        assert item["id"] == "evref-b3-producer-001"
-        assert item["credibility"]["verified"] is True
-        assert item["actionability"]["state"] == "unresolved_source"
-        assert item["actionability"]["severity"] == "warning"
-        assert item["actionability"]["can_trace"] is False
-        assert item["actionability"]["can_open_source"] is False
-        assert item["actionability"]["can_open_linked_object"] is True
-        assert item["actionability"]["reasons"] == [
-            "missing_source_type",
-            "missing_source_ref",
-            "missing_link_type",
-            "resolved_link_unavailable",
+        item = payload["data"]["items"][0]
+        assert item["overall"] == "pass"
+        assert "artifactManifest" not in item
+        manifest = item["artifact_manifest"]
+        assert manifest["file_count"] == 2
+        assert manifest["total_bytes"] == 88
+        assert manifest["limits"]["max_files"] == 32
+        assert [entry["path"] for entry in manifest["files"]] == [
+            "BFF-LIVE-EVIDENCE-PREFLIGHT.json",
+            "release-gate-summary.json",
         ]
-        assert item["linkedObjectLink"] == {
-            "availability": "available",
-            "route_href": "/management/artifacts/rart-20260615-002",
-            "display_label": "TW momentum candidate artifact",
-            "entity_type": "artifact",
-            "entity_ref": "rart-20260615-002",
-        }
-        assert item["allowedActions"] == {
-            "canOpenSource": False,
-            "canOpenLinkedObject": True,
-            "canInspectChain": True,
-            "canMarkStale": True,
-            "canRequestEvidence": True,
-            "canCreateDispositionTask": True,
-            "canAssignReviewer": True,
-            "canResolve": False,
-        }
-        assert item["disabledActionReasons"]["canOpenSource"] == (
-            "Source link is unavailable or incomplete."
+        assert all(entry["current_run_allowed"] is True for entry in manifest["files"])
+        assert item["criteria"]["rbac_matrix"]["status"] == "pass"
+        assert item["criteria"]["current_run_only"]["note"] == "2 artifact file(s); current-run scope only"
+        assert "artifactManifest" not in item
+
+
+@contextmanager
+def _current_run_evidence_client(verifier_path: Path) -> Iterator[TestClient]:
+    tracked_env = {
+        "PANTHEON_BFF_EVIDENCE_REF_STORE": os.environ.get("PANTHEON_BFF_EVIDENCE_REF_STORE"),
+        "PANTHEON_BFF_LIVE_EVIDENCE_VERIFY_JSON": os.environ.get("PANTHEON_BFF_LIVE_EVIDENCE_VERIFY_JSON"),
+        "PANTHEON_AUDIT_OUT_DIR": os.environ.get("PANTHEON_AUDIT_OUT_DIR"),
+    }
+    os.environ.pop("PANTHEON_BFF_EVIDENCE_REF_STORE", None)
+    os.environ["PANTHEON_BFF_LIVE_EVIDENCE_VERIFY_JSON"] = str(verifier_path)
+    os.environ.pop("PANTHEON_AUDIT_OUT_DIR", None)
+    original_store = bff_main.read_store
+    try:
+        bff_main.read_store = ReadSurfaceStore(
+            str(verifier_path.parent / "read_surfaces.json"),
+            allow_local_snapshot_fallback=False,
         )
-        assert item["disabledActionReasons"]["canResolve"] == (
-            "No open evidence operation exists to resolve."
+        with TestClient(bff_main.app) as client:
+            yield client
+    finally:
+        bff_main.read_store = original_store
+        for key, value in tracked_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def _write_live_evidence_verifier(path: Path, *, manifest: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "task_id": "BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY",
+                "artifact_dir": str(path.parent),
+                "overall": "pass",
+                "artifact_manifest": manifest,
+                "criteria": {
+                    "rbac_matrix": {
+                        "status": "fail",
+                        "label": "RBAC matrix",
+                        "note": "missing bearer token secrets: PANTHEON_BFF_RBAC_TOKENS_JSON",
+                    },
+                    "current_run_only": {
+                        "status": "pass",
+                        "label": "Evidence written to `.lovable/audits/current-run`.",
+                        "note": "4 artifact file(s); current-run scope only",
+                    },
+                },
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_management_evidence_projects_current_run_verifier_when_store_missing(tmp_path: Path) -> None:
+    verifier_path = (
+        tmp_path
+        / ".lovable"
+        / "audits"
+        / "current-run"
+        / "BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY.json"
+    )
+    manifest = {
+        "file_count": 4,
+        "total_bytes": 128,
+        "limits": {
+            "max_files": 32,
+            "max_total_bytes": 8388608,
+            "max_file_bytes": 4194304,
+        },
+        "files": [
+            {
+                "path": "BFF-LIVE-EVIDENCE-PREFLIGHT.json",
+                "bytes": 32,
+                "current_run_allowed": True,
+                "forbidden_audit_scope": False,
+                "oversized": False,
+            },
+            {
+                "path": "BFF-LUV-AUTHED-LIVE-001-live-smoke.json",
+                "bytes": 32,
+                "current_run_allowed": True,
+                "forbidden_audit_scope": False,
+                "oversized": False,
+            },
+            {
+                "path": "BFF-CONSOL-011-sse-replay-smoke.json",
+                "bytes": 32,
+                "current_run_allowed": True,
+                "forbidden_audit_scope": False,
+                "oversized": False,
+            },
+            {
+                "path": "release-gate-summary.json",
+                "bytes": 32,
+                "current_run_allowed": True,
+                "forbidden_audit_scope": False,
+                "oversized": False,
+            },
+        ],
+    }
+    _write_live_evidence_verifier(verifier_path, manifest=manifest)
+    secret_set_command = (
+        "gh secret set PANTHEON_BFF_RBAC_TOKENS_JSON --repo ajoe734/pantheon "
+        "--env dev < /secure/path/PANTHEON_BFF_RBAC_TOKENS_JSON.txt"
+    )
+    verifier_path.parent.joinpath("BFF-LIVE-EVIDENCE-PREFLIGHT.json").write_text(
+        json.dumps(
+            {
+                "task_id": "BFF-LIVE-EVIDENCE-PREFLIGHT",
+                "operator_remediation": {
+                    "github_environment": "dev",
+                    "repository": "ajoe734/pantheon",
+                    "required_secret_names": [
+                        "PANTHEON_BFF_SMOKE_BEARER_TOKEN",
+                        "PANTHEON_BFF_RBAC_TOKENS_JSON",
+                    ],
+                    "missing_secret_names": ["PANTHEON_BFF_RBAC_TOKENS_JSON"],
+                    "missing_workflow_inputs": ["APPROVAL_RACE_ID"],
+                    "invalid_inputs": [
+                        {"name": "SOAK_SECONDS", "reason": "must be at least 75"},
+                    ],
+                    "secret_set_commands": [secret_set_command],
+                    "workflow_dispatch": {
+                        "recommended_workflow": "Pantheon Stage 0 CI",
+                        "mode": "live-evidence",
+                        "environment": "dev",
+                        "run_command_template": (
+                            "gh workflow run \"Pantheon Stage 0 CI\" --repo ajoe734/pantheon "
+                            "--ref dev -f mode=live-evidence -f environment=dev"
+                        ),
+                    },
+                    "notes": [
+                        "Set secrets on the selected GitHub environment, not only at repository scope.",
+                    ],
+                },
+                "secret_values_written": False,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    verifier_path.parent.joinpath("release-gate-summary.json").write_text(
+        json.dumps(
+            {
+                "generatedAt": "2026-07-04T13:30:00Z",
+                "overall": "fail",
+                "auditDir": ".lovable/audits/current-run",
+                "runUrl": "https://github.com/ajoe734/pantheon/actions/runs/123456789",
+                "checklistOut": ".lovable/audits/current-run/Release_Gate_Checklist.md",
+                "gates": {
+                    "3": [
+                        {
+                            "label": "Authenticated: strict bearer RBAC matrix evidence passed.",
+                            "status": "fail",
+                            "owner": "Codex",
+                            "evidence": "BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY.json",
+                            "note": "preflight bearer hash inventory mismatch",
+                        },
+                    ],
+                    "7": [
+                        {
+                            "label": "Evidence written to `.lovable/audits/current-run`.",
+                            "status": "pass",
+                            "owner": "",
+                            "evidence": ".lovable/audits/current-run",
+                            "note": "4 audit file(s) found",
+                        },
+                    ],
+                },
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    with _current_run_evidence_client(verifier_path) as client:
+        response = client.get(
+            "/bff/management/evidence?ref_id=BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY",
+            headers=ADMIN_HEADERS,
         )
-        assert item["operation"]["status"] == "none"
-        assert item["operation"]["task_refs"] == []
-        assert item["operation"]["command_refs"] == []
-        assert payload["meta"]["performance"]["timings_ms"]["read_store_load"] >= 0
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["page_info"]["total"] == 1
+    assert payload["data"]["summary"]["by_source_type"] == {"workflow_artifact": 1}
+    assert payload["data"]["facets"]["link_types"] == {"provenance": 1}
+    assert payload["meta"]["surfaces"]["evidence_refs"]["source"] == "bff_current_run_artifact"
+    assert payload["meta"]["surfaces"]["management_evidence"]["source"] == "bff_composed"
+
+    item = payload["data"]["items"][0]
+    assert item["id"] == "BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY"
+    assert item["source_type"] == "workflow_artifact"
+    assert item["link_type"] == "provenance"
+    assert item["credibility"] == {"tier": "primary", "verified": True}
+    assert item["linked_object_summary"]["entity_type"] == "artifact"
+    assert item["overall"] == "pass"
+    assert item["artifact_manifest"] == manifest
+    assert item["criteria"]["rbac_matrix"]["status"] == "fail"
+    assert item["criteria"]["rbac_matrix"]["note"] == "missing bearer token secrets: PANTHEON_BFF_RBAC_TOKENS_JSON"
+    assert item["criteria"]["current_run_only"]["status"] == "pass"
+    release_gate_summary = item["release_gate_summary"]
+    assert release_gate_summary["overall"] == "fail"
+    assert release_gate_summary["generated_at"] == "2026-07-04T13:30:00Z"
+    assert release_gate_summary["audit_dir"] == ".lovable/audits/current-run"
+    assert release_gate_summary["run_url"] == "https://github.com/ajoe734/pantheon/actions/runs/123456789"
+    assert release_gate_summary["open_check_count"] == 1
+    assert release_gate_summary["checks"] == [
+        {
+            "gate": "3",
+            "index": 0,
+            "label": "Authenticated: strict bearer RBAC matrix evidence passed.",
+            "status": "fail",
+            "note": "preflight bearer hash inventory mismatch",
+            "owner": "Codex",
+            "evidence": "BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY.json",
+            "blocking": True,
+        },
+        {
+            "gate": "7",
+            "index": 0,
+            "label": "Evidence written to `.lovable/audits/current-run`.",
+            "status": "pass",
+            "note": "4 audit file(s) found",
+            "owner": None,
+            "evidence": ".lovable/audits/current-run",
+            "blocking": False,
+        },
+    ]
+    assert "runUrl" not in release_gate_summary
+    remediation = item["operator_remediation"]
+    assert remediation["github_environment"] == "dev"
+    assert remediation["repository"] == "ajoe734/pantheon"
+    assert remediation["required_secret_names"] == [
+        "PANTHEON_BFF_SMOKE_BEARER_TOKEN",
+        "PANTHEON_BFF_RBAC_TOKENS_JSON",
+    ]
+    assert remediation["missing_secret_names"] == ["PANTHEON_BFF_RBAC_TOKENS_JSON"]
+    assert remediation["missing_workflow_inputs"] == ["APPROVAL_RACE_ID"]
+    assert remediation["invalid_inputs"] == [
+        {"name": "SOAK_SECONDS", "reason": "must be at least 75"},
+    ]
+    assert remediation["secret_set_commands"] == [secret_set_command]
+    assert remediation["workflow_dispatch"]["recommended_workflow"] == "Pantheon Stage 0 CI"
+    assert remediation["workflow_dispatch"]["mode"] == "live-evidence"
+    assert remediation["workflow_dispatch"]["environment"] == "dev"
+    assert remediation["notes"] == [
+        "Set secrets on the selected GitHub environment, not only at repository scope.",
+    ]
+    assert "token-value" not in json.dumps(remediation)
+    assert "sourceType" not in item
+    assert "linkType" not in item
+    assert "linkedObjectSummary" not in item
+    assert "artifactManifest" not in item
+
+
+def test_management_evidence_ignores_malformed_current_run_verifier(tmp_path: Path) -> None:
+    verifier_path = tmp_path / "BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY.json"
+    verifier_path.write_text("{not-json", encoding="utf-8")
+
+    with _current_run_evidence_client(verifier_path) as client:
+        response = client.get("/bff/management/evidence", headers=ADMIN_HEADERS)
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["data"]["items"] == []
+    assert payload["page_info"]["total"] == 0
+    assert payload["meta"]["surfaces"]["evidence_refs"]["status"] == "unavailable"
 
 
 def test_management_evidence_preserves_capability_redaction() -> None:
@@ -299,14 +564,34 @@ def test_management_evidence_preserves_capability_redaction() -> None:
 
         assert response.status_code == 200, response.text
         payload = response.json()
-        assert payload["summary"]["redactedEvidence"] == 1
+        assert payload["data"]["summary"]["redacted_evidence"] == 1
         assert payload["meta"]["redacted_evidence_count"] == 1
 
-        item = payload["items"][0]
+        item = payload["data"]["items"][0]
         assert item["id"] == "evref-b3-metric-001"
         assert item["redacted"] is True
-        assert item["requiredCapability"] == "metric.read"
+        assert item["required_capability"] == "metric.read"
         assert item["reason"] == "insufficient_capability"
+        assert "requiredCapability" not in item
+
+
+def test_knowledge_evidence_detail_exposes_linked_object_summary() -> None:
+    with _evidence_client() as client:
+        response = client.get(
+            "/api/v1/knowledge/evidence/evref-b3-alert-001",
+            headers=ADMIN_HEADERS,
+        )
+
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["ref_id"] == "evref-b3-alert-001"
+        assert payload["linked_object_summary"] == {
+            "entity_type": "artifact",
+            "entity_ref": "artifact-b3-alpha",
+            "display_label": "Runtime artifact",
+        }
+        assert payload["resolved_link"]["route_href"] == "/alerts/risk-alpha"
+        assert payload["meta"]["surfaces"]["evidence_ref_detail"] in {"ok", "degraded"}
 
 
 def test_management_evidence_detail_composes_operations_relationships_and_chain() -> None:

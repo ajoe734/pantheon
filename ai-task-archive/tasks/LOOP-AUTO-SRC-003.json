@@ -1,0 +1,139 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-SRC-003",
+  "archived_at": "2026-07-01T10:51:59Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-SRC-003",
+    "title": "Harden source scheduler supervision",
+    "summary_zh": "讓 source scheduler 變成 required supervised worker，補 restart、readiness、missed tick metrics 與 DNS/worker 故障恢復。",
+    "phase": "Global Loop Autopilot / Wave 1 Source Persona Search",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "LOOP-AUTO-SRC-002"
+    ],
+    "artifacts": [
+      "docker-compose.yml",
+      "services/source_ingestion/scheduler_worker.py",
+      "docs/deployment/evidence"
+    ],
+    "acceptance": [
+      "Source scheduler is supervised for required dev and staging truth",
+      "Restart recovers missed due schedules",
+      "Worker exposes last success last failure and missed tick metrics"
+    ],
+    "next": "Owner finalized: PR #2445 merged into dev (implementation + review approval record + task brief, commit d63ab6dd0 confirmed on origin/dev). Verified: pytest services/source_ingestion/tests/test_scheduler_worker.py services/source_ingestion/test_compose_activation.py -> 24 passed; docker compose config --quiet -> passed. Closing review_approved -> done.",
+    "last_update": "2026-07-01T10:51:59Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+    "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+    "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+    "proof_required": [
+      "unit tests",
+      "contract tests",
+      "local service smoke",
+      "restart or replay evidence when worker or runtime behavior changes"
+    ],
+    "non_goals": [
+      "No live-capital execution",
+      "No approval gate bypass",
+      "No panel-only closure",
+      "No seed fixture as live proof"
+    ],
+    "dispatch_rules": [
+      "idempotent duplicate ticks and duplicate events",
+      "operator-visible truth projection required",
+      "maturity cannot rise above collected evidence",
+      "repo workflow closure required before done"
+    ],
+    "loop_ids": [
+      "source_ingestion"
+    ],
+    "current_maturity": "scheduled",
+    "target_maturity": "reconciled",
+    "desired_state_sources": [
+      "source-ingest schedule store"
+    ],
+    "actual_state_sources": [
+      "scheduler worker health",
+      "source run records"
+    ],
+    "wave_id": "Wave 1 Source Persona Search",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過：source scheduler supervision hardening meets acceptance; focused scheduler/compose tests pass; PR checks pass; Docker Compose healthcheck is liveness/readiness only and not unhealthy auto-restart, which remains outside this task."
+    ],
+    "review_file": ".orchestrator/reviews/LOOP-AUTO-SRC-003-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-01T10:51:59Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-src-003",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOOP-AUTO-SRC-003",
+      "git_clean_required": false,
+      "commit": "d63ab6dd04f222cacacc03a6a21a69d53f6a556d",
+      "commit_subject": "LOOP-AUTO-SRC-003: record reviewer approval and task brief",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "- 3647e0f9": "harden source scheduler supervision (scheduler_worker.py,",
+        "- bf05210d": "fix compute_startup_missed double-count",
+        "- Source scheduler supervised via restart": "unless-stopped + healthcheck",
+        "Verified": "PR #2445 CI checks (Commit trailers, Runtime mirror guard, Smoke acceptance) → all SUCCESS",
+        "LLM-Agent": "Claude",
+        "Task-ID": "LOOP-AUTO-SRC-003",
+        "Reviewer": "Codex"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LOOP-AUTO-SRC-003",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "c2ebcd5eaa22b42f8810d60e54c77c8fd2457d42",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-SRC-003",
+      "from": "Gemini",
+      "to": "Claude",
+      "message": "Auto-reassigned LOOP-AUTO-SRC-003 away from unavailable lane Gemini (disabled, sidecar-only, or auth-down); owner Gemini -> Claude.",
+      "status": "done",
+      "created_at": "2026-07-01T06:06:23Z",
+      "resolved_at": "2026-07-01T10:35:09Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-SRC-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implementation was already delivered, tested, and merged via PR #2445 (commits 3647e0f9e + bf05210d7); Codex already wrote a full approval in .orchestrator/reviews/LOOP-AUTO-SRC-003-review-codex.md (all 3 acceptance criteria PASS), but the board regressed from review_approved back to in_progress/todo after a supervisor re-dispatch and lost review_notes_zh. Re-verified on current worktree: pytest services/source_ingestion/tests/test_scheduler_worker.py services/source_ingestion/test_compose_activation.py -> 24 passed. Requesting Codex re-run the approve command already drafted at the bottom of that review file (REVIEW_FILE=.orchestrator/reviews/LOOP-AUTO-SRC-003-review-codex.md) so this can be finalized to done without redoing the review.",
+      "status": "done",
+      "created_at": "2026-07-01T10:39:45Z",
+      "resolved_at": "2026-07-01T10:42:39Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-SRC-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: source scheduler supervision hardening meets acceptance; owner should finalize after PR merge.",
+      "status": "done",
+      "created_at": "2026-07-01T10:42:39Z",
+      "resolved_at": "2026-07-01T10:52:00Z"
+    }
+  ],
+  "blockers": []
+}

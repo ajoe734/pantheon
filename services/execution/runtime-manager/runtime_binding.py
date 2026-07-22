@@ -279,14 +279,18 @@ class RuntimeBindingStore:
     -------------------
     When `single_runtime_enforced=True` (passed at create time from the
     backing CapitalPool), `create()` will raise if the pool already has an
-    active binding.  The caller must retire the existing binding first.
+    active binding. Runtime-manager-owned replacements use `cutover()` to
+    persist source retirement and replacement creation in one snapshot.
     """
 
     def __init__(self, path: Optional[Path] = None) -> None:
         self._bindings: Dict[str, RuntimeBinding] = {}
         self._path = path
+        self._backup_path = self._backup_for(path) if path else None
         if path and path.exists():
             self._load(path)
+        elif path:
+            self._restore_from_backup()
 
     # ---- Read helpers ----
 
@@ -354,7 +358,11 @@ class RuntimeBindingStore:
             self._check_single_active_binding(binding.capital_pool_id)
 
         self._bindings[binding.binding_id] = binding
-        self._save()
+        try:
+            self._save()
+        except Exception:
+            self._bindings.pop(binding.binding_id, None)
+            raise
         return binding
 
     def transition_status(
@@ -395,7 +403,11 @@ class RuntimeBindingStore:
             **{**binding.to_dict(), **updates}
         )
         self._bindings[binding_id] = updated
-        self._save()
+        try:
+            self._save()
+        except Exception:
+            self._bindings[binding_id] = binding
+            raise
         return updated
 
     def retire(self, binding_id: str, retired_at: Optional[str] = None) -> RuntimeBinding:
@@ -405,6 +417,80 @@ class RuntimeBindingStore:
             RuntimeBindingStatus.RETIRED.value,
             retired_at=retired_at,
         )
+
+    def cutover(
+        self,
+        source_binding_id: str,
+        replacement: RuntimeBinding,
+        *,
+        retired_at: Optional[str] = None,
+        single_runtime_enforced: bool = True,
+    ) -> tuple[RuntimeBinding, RuntimeBinding]:
+        """Atomically create a replacement and retire its source.
+
+        Both records are persisted in one filesystem snapshot.  A process
+        crash therefore exposes either the complete pre-cutover state or the
+        complete post-cutover state, never a child-active/source-active gap.
+        """
+        source = self.require(source_binding_id)
+        if source.is_terminal():
+            raise RuntimeBindingError(
+                f"Cannot cut over terminal RuntimeBinding {source_binding_id!r}."
+            )
+        if RuntimeBindingStatus.RETIRED.value not in _ALLOWED_STATUS_TRANSITIONS.get(
+            source.status, []
+        ):
+            raise RuntimeBindingError(
+                "Atomic cutover cannot bypass the source status machine: "
+                f"{source.status!r} -> {RuntimeBindingStatus.RETIRED.value!r}."
+            )
+        errors = validate_binding(replacement)
+        if errors:
+            raise RuntimeBindingError(
+                f"Invalid replacement RuntimeBinding: {errors}"
+            )
+        if replacement.binding_id in self._bindings:
+            raise RuntimeBindingError(
+                f"RuntimeBinding already exists: {replacement.binding_id}"
+            )
+        if replacement.capital_pool_id != source.capital_pool_id:
+            raise RuntimeBindingError(
+                "Atomic cutover replacement must remain in the source capital pool."
+            )
+        if single_runtime_enforced and replacement.status == RuntimeBindingStatus.ACTIVE.value:
+            conflicting = [
+                binding
+                for binding in self._bindings.values()
+                if binding.capital_pool_id == source.capital_pool_id
+                and binding.status == RuntimeBindingStatus.ACTIVE.value
+                and binding.binding_id != source_binding_id
+            ]
+            if conflicting:
+                raise RuntimeBindingError(
+                    "Atomic cutover found another active RuntimeBinding for pool "
+                    f"{source.capital_pool_id!r}: "
+                    f"{[binding.binding_id for binding in conflicting]!r}."
+                )
+
+        cutover_at = retired_at or utc_now()
+        retired_source = RuntimeBinding(
+            **{
+                **source.to_dict(),
+                "status": RuntimeBindingStatus.RETIRED.value,
+                "retired_at": cutover_at,
+            }
+        )
+        previous = self._bindings
+        committed = dict(previous)
+        committed[source_binding_id] = retired_source
+        committed[replacement.binding_id] = replacement
+        self._bindings = committed
+        try:
+            self._save()
+        except Exception:
+            self._bindings = previous
+            raise
+        return retired_source, replacement
 
     # ---- Single-runtime guard ----
 
@@ -423,15 +509,50 @@ class RuntimeBindingStore:
         if self._path:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             records = [b.to_dict() for b in self._bindings.values()]
-            self._path.write_text(json.dumps(records, indent=2))
+            # Write the recovery copy first and the canonical snapshot last.
+            # If the final atomic replace fails, callers can safely restore
+            # their in-memory draft; no exception can occur after the canonical
+            # file has committed.
+            if records and self._backup_path:
+                self._write_records(self._backup_path, records)
+            self._write_records(self._path, records)
 
     def _load(self, path: Path) -> None:
-        text = path.read_text()
-        if not text.strip():
+        records = self._read_records(path)
+        if not records and self._restore_from_backup():
             return
+        for b in records:
+            self._bindings[b.binding_id] = b
+        if records and path == self._path and self._backup_path:
+            self._write_records(self._backup_path, [b.to_dict() for b in records])
+
+    @staticmethod
+    def _backup_for(path: Path) -> Path:
+        return path.with_name(f"{path.name}.bak")
+
+    @staticmethod
+    def _read_records(path: Path) -> List[RuntimeBinding]:
+        text = path.read_text(encoding="utf-8")
+        if not text.strip():
+            return []
         data = json.loads(text)
         if not isinstance(data, list):
             raise RuntimeBindingError(f"Expected JSON array in {path}")
-        for record in data:
-            b = RuntimeBinding.from_dict(record)
-            self._bindings[b.binding_id] = b
+        return [RuntimeBinding.from_dict(record) for record in data]
+
+    @staticmethod
+    def _write_records(path: Path, records: List[Dict[str, Any]]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_name(f".{path.name}.tmp")
+        tmp_path.write_text(json.dumps(records, indent=2) + "\n", encoding="utf-8")
+        tmp_path.replace(path)
+
+    def _restore_from_backup(self) -> bool:
+        if not self._path or not self._backup_path or not self._backup_path.exists():
+            return False
+        records = self._read_records(self._backup_path)
+        if not records:
+            return False
+        self._bindings = {b.binding_id: b for b in records}
+        self._write_records(self._path, [b.to_dict() for b in records])
+        return True

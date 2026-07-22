@@ -1,0 +1,111 @@
+{
+  "status": 200,
+  "ok": true,
+  "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/agora/workshops/ce63ec2a-c5f1-4e41-8219-e410d22037c7/readiness",
+  "body": {
+    "data": {
+      "spec_version": "1.0",
+      "assessment_id": "ready_ce63ec2a-c5f1-4e41-8219-e410d22037c7_1",
+      "workshop_id": "ce63ec2a-c5f1-4e41-8219-e410d22037c7",
+      "strategy_id": "unbound-ce63ec2a-c5f1-4e41-8219-e410d22037c7",
+      "workshop_version_id": "unbound-ce63ec2a-c5f1-4e41-8219-e410d22037c7",
+      "strategy_spec_registry_id": "unbound-ce63ec2a-c5f1-4e41-8219-e410d22037c7",
+      "assessment_version": 1,
+      "gates": [
+        {
+          "gate": "preliminary_research",
+          "state": "conditional",
+          "requirements": [
+            {
+              "requirement_id": "state_map_present",
+              "title": "Strategy completeness state map is present",
+              "hardness": "soft",
+              "state": "missing"
+            },
+            {
+              "requirement_id": "workshop_evidence_present",
+              "title": "Workshop event evidence exists in scoped store",
+              "hardness": "hard",
+              "state": "satisfied"
+            },
+            {
+              "requirement_id": "research_blockers_clear",
+              "title": "No research gate hard blockers",
+              "hardness": "hard",
+              "state": "satisfied"
+            }
+          ],
+          "evaluated_at": "2026-07-05T15:26:13Z"
+        },
+        {
+          "gate": "full_validation",
+          "state": "not_assessed",
+          "requirements": [
+            {
+              "requirement_id": "preliminary_research_ready",
+              "title": "Preliminary research gate is ready",
+              "hardness": "hard",
+              "state": "partial"
+            },
+            {
+              "requirement_id": "validation_blockers_clear",
+              "title": "No validation gate hard blockers",
+              "hardness": "hard",
+              "state": "satisfied"
+            }
+          ],
+          "blocking_requirement_ids": [
+            "preliminary_research_ready"
+          ],
+          "evaluated_at": "2026-07-05T15:26:13Z"
+        },
+        {
+          "gate": "trading_room",
+          "state": "not_assessed",
+          "requirements": [
+            {
+              "requirement_id": "strategy_registry_ref_present",
+              "title": "Strategy Registry reference exists in scoped workshop session",
+              "hardness": "hard",
+              "state": "missing"
+            },
+            {
+              "requirement_id": "full_validation_ready",
+              "title": "Full validation gate is ready",
+              "hardness": "hard",
+              "state": "partial"
+            },
+            {
+              "requirement_id": "trading_room_blockers_clear",
+              "title": "No Trading Room hard blockers",
+              "hardness": "hard",
+              "state": "satisfied"
+            }
+          ],
+          "blocking_requirement_ids": [
+            "strategy_registry_ref_present",
+            "full_validation_ready"
+          ],
+          "evaluated_at": "2026-07-05T15:26:13Z"
+        }
+      ],
+      "staleness_reasons": [
+        "strategy_completeness_snapshot_missing"
+      ],
+      "assessed_at": "2026-07-05T15:26:13Z",
+      "evidence_refs": [
+        {
+          "ref_type": "evidence_item",
+          "ref_id": "priv-content-stub://7c868004-e0d7-43a7-8449-35d44bbdc8b8",
+          "summary": "Workshop event 1",
+          "data_cutoff": "2026-07-05 14:43:35+00"
+        }
+      ]
+    },
+    "meta": {
+      "snapshot_at": "2026-07-05T15:26:13Z",
+      "capability": "agora.workshop.v1",
+      "audience": "tenant:pantheon-dev:user:pantheon-dev-browser"
+    }
+  }
+}

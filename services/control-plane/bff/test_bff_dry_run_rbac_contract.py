@@ -284,6 +284,24 @@ def test_dry_run_command_routes_do_not_write_command_store_or_sse() -> None:
         assert runtime["data"]["id"].startswith("runtime-")
         assert client.get(f"/bff/runtimes/{runtime['data']['id']}", headers=OPERATOR_HEADERS).status_code != 200
 
+        for index, path in enumerate(
+            (
+                "/bff/alerts/alert-dry/escalate-incident",
+                "/bff/incidents/incident-dry/append-postmortem",
+                "/bff/incidents/incident-dry/resolve",
+                "/bff/incidents/incident-dry/rollback-deployment",
+                "/bff/incidents/incident-dry/start-mitigation",
+            )
+        ):
+            preview = _assert_dry_run(client.post(
+                path,
+                headers=_dry_headers(f"dry-incident-alias-{index}"),
+                json={"reason": "preview", "note": "no side effects"},
+            ))
+            assert preview["data"]["status"] == "accepted"
+            assert preview["meta"]["idempotency"]["key"] == f"dry-incident-alias-{index}"
+            assert preview["meta"]["evidenceKind"] == "generic_id_command.preview"
+
         assert bff_main.command_store._get_all_commands() == []
         assert all(len(buffer) == 0 for buffer in bff_main._sse_buffers.values())
 

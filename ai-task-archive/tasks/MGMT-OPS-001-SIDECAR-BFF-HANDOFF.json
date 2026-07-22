@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "MGMT-OPS-001-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-07-08T04:19:45Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-OPS-001-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare MGMT-OPS-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-OPS-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Management Console Operations / Wave 0 source truth",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/MGMT-OPS-001/MGMT-OPS-001-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closed sidecar after PR #3061 merged to dev at 0f5274fff5d5065c6f5d562ccdea5ee97adb670c; support-only handoff packet updated with reviewer reassignment, PR #3051 evidence, and parent PR #3050 merge facts; validation: git diff --check, gh PR checks green.",
+    "last_update": "2026-07-08T04:19:45Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-OPS-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Approved: PR #3051 is merged and changed only the support handoff packet; scope remains support-only with parent route claims framed as candidate state. Note: packet metadata still names the old Claude2 reviewer from generation time; current status owner/reviewer is Codex2/Codex due reviewer reassignment."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-08T04:19:45Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-ops-001-sidecar-bff-handoff",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-OPS-001-SIDECAR-BFF-HANDOFF",
+      "git_clean_required": false,
+      "commit": "dd5f8693c2605126bf394e92912d936c9cd98e06",
+      "commit_subject": "MGMT-OPS-001-SIDECAR-BFF-HANDOFF: refresh closeout facts",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support/sidecars/MGMT-OPS-001 closeout facts for the BFF/frontend handoff packet.",
+        "Not changing": "L1 canonical truth, parent BFF implementation, execute-plans frontend code, runtime/registry/governance behavior, or parent task closeout state.",
+        "Composes with": "PR #3051 merged support packet, parent PR #3050 on dev, and closeout PR #3061.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "MGMT-OPS-001-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex",
+        "Verified": "git diff --check -- support/sidecars/MGMT-OPS-001/MGMT-OPS-001-SIDECAR-BFF-HANDOFF.md; gh pr view 3050; gh pr view 3051"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-OPS-001-SIDECAR-BFF-HANDOFF",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "0f5274fff5d5065c6f5d562ccdea5ee97adb670c",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-OPS-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Handoff packet ready for review in PR #3051; commit 7a7f1bc61fd661ab9e46c3ed5c903325cb95a247 adds support/sidecars/MGMT-OPS-001/MGMT-OPS-001-SIDECAR-BFF-HANDOFF.md only. Verified git diff --check on the packet. Parent MGMT-OPS-001 route is treated as parent PR candidate state, not merged dev truth.",
+      "status": "done",
+      "created_at": "2026-07-07T15:53:56Z",
+      "resolved_at": "2026-07-08T04:11:33Z"
+    },
+    {
+      "task_id": "MGMT-OPS-001-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved by Codex: PR #3051 is merged, diff is support-only, and owner Codex2 should run closeout/finalization.",
+      "status": "done",
+      "created_at": "2026-07-08T04:11:33Z",
+      "resolved_at": "2026-07-08T04:19:47Z"
+    }
+  ],
+  "blockers": []
+}

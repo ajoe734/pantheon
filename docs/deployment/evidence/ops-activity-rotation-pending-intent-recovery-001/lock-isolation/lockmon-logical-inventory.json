@@ -1,0 +1,19 @@
+{
+  "command": [
+    "python3",
+    "-m",
+    "unittest",
+    "scripts.test_activity_audit_logical_inventory"
+  ],
+  "exit_code": 0,
+  "candidate_pid_count": 1,
+  "lock_holder_pids_observed": {
+    "/home/lupin/code/pantheon/.orchestrator/activity-audit.lock": [],
+    "/home/lupin/code/pantheon/.orchestrator/task-state.lock": []
+  },
+  "candidate_pids_holding_central_locks": {
+    "/home/lupin/code/pantheon/.orchestrator/activity-audit.lock": [],
+    "/home/lupin/code/pantheon/.orchestrator/task-state.lock": []
+  },
+  "sampling_interval_seconds": 0.2
+}

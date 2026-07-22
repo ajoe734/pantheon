@@ -1,0 +1,109 @@
+{
+  "capturedAt": "2026-07-13T13:02:08.845Z",
+  "deploySha": "1a4265c770825818396badbdf960ec2deaa44763",
+  "results": [
+    {
+      "consoleErrors": [
+        "Access to fetch at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/management/performance-attribution/by-strategy?period=latest&page_size=50' from origin 'https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+        "Failed to load resource: net::ERR_FAILED",
+        "Access to resource at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/events/stream' from origin 'https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+        "Failed to load resource: net::ERR_FAILED",
+        "Access to fetch at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/agora/trading-room' from origin 'https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+        "Failed to load resource: net::ERR_FAILED",
+        "Access to fetch at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/agora/trading-room/decision-events' from origin 'https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+        "Failed to load resource: net::ERR_FAILED",
+        "Access to resource at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/events/stream' from origin 'https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+        "Failed to load resource: net::ERR_FAILED",
+        "Access to resource at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/events/stream' from origin 'https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+        "Failed to load resource: net::ERR_FAILED",
+        "Access to resource at 'https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/events/stream' from origin 'https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+        "Failed to load resource: net::ERR_FAILED"
+      ],
+      "deploySha": "1a4265c770825818396badbdf960ec2deaa44763",
+      "failedRequests": [
+        {
+          "failure": "net::ERR_FAILED",
+          "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/management/performance-attribution/by-strategy?period=latest&page_size=50"
+        },
+        {
+          "failure": "net::ERR_FAILED",
+          "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/events/stream"
+        },
+        {
+          "failure": "net::ERR_FAILED",
+          "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/agora/trading-room"
+        },
+        {
+          "failure": "net::ERR_FAILED",
+          "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/agora/trading-room/decision-events"
+        },
+        {
+          "failure": "net::ERR_FAILED",
+          "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/events/stream"
+        },
+        {
+          "failure": "net::ERR_FAILED",
+          "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/events/stream"
+        },
+        {
+          "failure": "net::ERR_FAILED",
+          "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/events/stream"
+        },
+        {
+          "failure": "net::ERR_ABORTED",
+          "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/events/stream"
+        }
+      ],
+      "fullPagePath": "/tmp/pantheon-worker-worktrees/pantheon/ag-uipol-005/docs/bff/execution-tasks/2026-07-13-agora-ui-polish/ag-uipol-005-hosted-1a4265c/performance-desktop.png",
+      "name": "performance-desktop",
+      "path": "/agora/strategy-performance",
+      "surfaceReady": true,
+      "title": "Pantheon Management Console",
+      "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/agora/strategy-performance?nocache=1a4265c770825818396badbdf960ec2deaa44763",
+      "viewport": {
+        "width": 1440,
+        "height": 960
+      },
+      "viewportPath": "/tmp/pantheon-worker-worktrees/pantheon/ag-uipol-005/docs/bff/execution-tasks/2026-07-13-agora-ui-polish/ag-uipol-005-hosted-1a4265c/performance-desktop-viewport.png",
+      "workshopId": null
+    },
+    {
+      "consoleErrors": [
+        "EventSource's response has a MIME type (\"text/html\") that is not \"text/event-stream\". Aborting the connection."
+      ],
+      "deploySha": "1a4265c770825818396badbdf960ec2deaa44763",
+      "failedRequests": [],
+      "fullPagePath": "/tmp/pantheon-worker-worktrees/pantheon/ag-uipol-005/docs/bff/execution-tasks/2026-07-13-agora-ui-polish/ag-uipol-005-hosted-1a4265c/servant-drawer-placeholder-desktop.png",
+      "name": "servant-drawer-placeholder-desktop",
+      "path": "/agora/strategy-workshop",
+      "surfaceReady": true,
+      "title": "Pantheon Management Console",
+      "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/agora/strategy-workshop?nocache=1a4265c770825818396badbdf960ec2deaa44763",
+      "viewport": {
+        "width": 1440,
+        "height": 960
+      },
+      "viewportPath": "/tmp/pantheon-worker-worktrees/pantheon/ag-uipol-005/docs/bff/execution-tasks/2026-07-13-agora-ui-polish/ag-uipol-005-hosted-1a4265c/servant-drawer-placeholder-desktop-viewport.png",
+      "workshopId": null
+    },
+    {
+      "consoleErrors": [
+        "EventSource's response has a MIME type (\"text/html\") that is not \"text/event-stream\". Aborting the connection."
+      ],
+      "deploySha": "1a4265c770825818396badbdf960ec2deaa44763",
+      "failedRequests": [],
+      "fullPagePath": "/tmp/pantheon-worker-worktrees/pantheon/ag-uipol-005/docs/bff/execution-tasks/2026-07-13-agora-ui-polish/ag-uipol-005-hosted-1a4265c/servant-drawer-placeholder-narrow.png",
+      "name": "servant-drawer-placeholder-narrow",
+      "path": "/agora/strategy-workshop",
+      "surfaceReady": true,
+      "title": "Pantheon Management Console",
+      "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/agora/strategy-workshop?nocache=1a4265c770825818396badbdf960ec2deaa44763",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "viewportPath": "/tmp/pantheon-worker-worktrees/pantheon/ag-uipol-005/docs/bff/execution-tasks/2026-07-13-agora-ui-polish/ag-uipol-005-hosted-1a4265c/servant-drawer-placeholder-narrow-viewport.png",
+      "workshopId": null
+    }
+  ]
+}

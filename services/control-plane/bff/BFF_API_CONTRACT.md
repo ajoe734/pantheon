@@ -608,19 +608,59 @@ when the backing store is unconfigured or unreachable (§7.2).
 
 | Route | Composes | Response Envelope | Degraded Behavior | Min Role |
 |---|---|---|---|---|
-| `GET /bff/management/data-sources` | source-ingest `/api/source-ingest/registry` | `{ data, items, page_info, meta }` canonical list; `meta.status`, `meta.source`, `meta.surfaces.data_sources` | When source-ingest URL is unconfigured (`source:missing`) or unreachable (`source:unavailable`): empty `items`, `meta.status:unavailable`, `data.status:unavailable` — never a bare `[]` | `operator` |
-| `GET /bff/lineage` | lineage-edge store (`lineage_edges`) via `ReadSurfaceStore` | `{ data: { id, nodes, edges, status, source }, items, page_info, meta }` canonical list; `meta.status`, `meta.source`, `meta.surfaces.lineage`; query params: `root_id`, `root_type`, `depth` (default 3, max 20), `artifact_id` | When lineage store is missing (`source:missing`): empty `nodes`/`edges`/`items`, `meta.status:unavailable`, `data.status:unavailable` — never a bare `[]` | `operator` |
+| `GET /bff/management/data-sources` | source-ingest `/api/source-ingest/registry` | `DataSourcesEnvelope`; `data: { id, items, summary, status, source }`; typed `page_info`; typed `meta.surfaces.data_sources`; no top-level `items` | When source-ingest URL is unconfigured (`source:missing`) or unreachable (`source:unavailable`): empty `data.items`, `meta.status:unavailable`, `data.status:unavailable`, and surface `staleness` — never a bare `[]` | `operator` |
+| `GET /bff/management/permissions` | governance permission read surface (`governance_permissions`) | `ManagementRecordsEnvelope`; `data: { id, items, summary }`; typed `page_info`; typed `meta.surfaces.governance_permissions`; no top-level `items` | When the dataset is missing: empty `data.items`, `meta.status:unavailable`, surface `source:missing`, and `meta.degradation.reason` | `operator` |
+| `GET /bff/management/memory-governance` | memory governance read surface (`memory_governance_rules`) | `ManagementRecordsEnvelope`; `data: { id, items, summary }`; typed `page_info`; typed `meta.surfaces.memory_governance_rules`; no top-level `items` | When the dataset is missing: empty `data.items`, `meta.status:unavailable`, surface `source:missing`, and `meta.degradation.reason` | `operator` |
+| `GET /bff/management/consult-rules` | consult rule read surface (`consult_rules`) | `ManagementRecordsEnvelope`; `data: { id, items, summary }`; typed `page_info`; typed `meta.surfaces.consult_rules`; no top-level `items` | When the dataset is missing: empty `data.items`, `meta.status:unavailable`, surface `source:missing`, and `meta.degradation.reason` | `operator` |
+| `GET /bff/lineage` | lineage-edge store (`lineage_edges`) via `ReadSurfaceStore` | `LineageEnvelope`; `data: { id, nodes, edges, status, source }`; typed `page_info`; typed `meta.surfaces.lineage`; query params: `root_id`, `root_type`, `depth` (default 3, max 20), `artifact_id` | When lineage store is missing (`source:missing`): empty `nodes`/`edges`/`items`, `meta.status:unavailable`, `data.status:unavailable` — never a bare `[]` | `operator` |
+| `GET /bff/workflows` | workflow template registry (`workflow_templates`) | `ManagementRecordsEnvelope`; `data/items` list; typed `page_info`; typed `meta.surfaces.workflow_templates` | When the registry is missing: empty `data/items`, `meta.degradation.reason`, surface `status:unavailable` | `operator` |
+| `GET /bff/hooks` | hook registry (`hook_registry`) | `ManagementRecordsEnvelope`; `data/items` list; typed `page_info`; typed `meta.surfaces.hook_registry` | When the registry is missing: empty `data/items`, `meta.degradation.reason`, surface `status:unavailable` | `operator` |
+| `GET /bff/knowledge` | composed knowledge inbox over notes, evidence, insights, strategy specs, and memory | `ManagementRecordsEnvelope`; `data/items` list; typed `page_info`; typed `meta.surfaces.knowledge_inbox` plus source surfaces and `composition_sources` | When all source datasets are missing: empty `data/items`, `knowledge_inbox.status:unavailable`, and per-source surface `source:missing` | `operator` |
 
 **Degraded envelope example** (source-ingest unconfigured in dev):
 
 ```json
 {
-  "data": { "id": "management-data-sources", "items": [], "status": "unavailable", "source": "missing" },
-  "items": [],
-  "page_info": { "next_page_token": null, "total": 0, "page_size": 0 },
-  "meta": { "snapshot_at": "...", "status": "unavailable", "source": "missing", "surfaces": { "data_sources": "unavailable" } }
+  "data": {
+    "id": "management-data-sources",
+    "items": [],
+    "summary": { "total_items": 0, "returned_items": 0, "status": "unavailable", "source": "missing" },
+    "status": "unavailable",
+    "source": "missing"
+  },
+  "page_info": { "next_page_token": null, "total": 0, "page_size": 50, "returned": 0, "has_more": false },
+  "meta": {
+    "snapshot_at": "...",
+    "status": "unavailable",
+    "source": "missing",
+    "surfaces": {
+      "data_sources": {
+        "status": "unavailable",
+        "source": "missing",
+        "message": "Source-ingest registry is unavailable or unconfigured.",
+        "staleness": { "served_from": "unverifiable", "last_known_at": "..." }
+      }
+    },
+    "degradation": { "reason": "management data sources are currently unavailable." }
+  }
 }
 ```
+
+OpenAPI must publish these shared schema components for management console reads:
+`SurfaceState`, `PageInfo`, `ManagementListMeta`, `ManagementRecordsEnvelope`,
+`DataSourcesEnvelope`, and `LineageEnvelope`.
+
+MGMT-OPS-001 adds the shared per-persona operations confidence read model:
+
+```
+GET /bff/management/operations-read-model/{persona_id}?period=latest
+```
+
+The `200` response must publish `OperationsReadModelEnvelope` in OpenAPI. The
+envelope contains `identity`, `data_confidence`, finite-or-null `performance`
+metrics, `sources[]`, and `diagnostics[]` so management console pages share the
+same `formal`/`partial`/`fallback`/`degraded`/`unavailable` source-confidence
+semantics instead of synthesizing local fallback rules.
 
 ### 10.2 Consistency Model
 
@@ -876,8 +916,13 @@ New `list_*` methods were added to `ReadSurfaceStore` in `read_store.py`.
 | Governance sub-rules (GR) | GR-01 to GR-04 | 4 |
 | Composed views | 10 | 10 |
 | SSE streams (runtime, incidents, kill-switch, approvals, ask, generic) | 6 | 6 |
-| BFF Management (BFFGAP-CONSOLE) | DS-01 (`/bff/management/data-sources`), LIN-01 (`/bff/lineage`) | 2 |
+| BFF Management (BFFGAP-CONSOLE additive surfaces) | DS-01 (`/bff/management/data-sources`), LIN-01 (`/bff/lineage`) | 2 |
 | **Total v1 endpoints** | | **58** |
+
+`MGMT-GAP-003` acceptance intentionally spans eight management-console read
+routes: DS-01, GR-01, GR-02, GR-03, LIN-01, AR-01, AR-02, and KW-BFF-01.
+GR/AR/KW routes remain counted in their owning rows above, so they are not
+double-counted in the additive total.
 
 ---
 

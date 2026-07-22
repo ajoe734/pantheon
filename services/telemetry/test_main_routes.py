@@ -20,6 +20,7 @@ import sys
 import threading
 import types
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
@@ -28,6 +29,7 @@ from services.telemetry.ingest_svc import TelemetryIngestService
 from services.telemetry.heartbeat_service import build_telemetry_event_from_runtime_heartbeat
 from services.telemetry.lineage_read import LineageReadService
 from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
+from services.telemetry.trade_episode_projection import TradeEpisodeProjectionStore
 from services.telemetry.dead_letter import TAG_WRITER_ERROR
 
 # ---------------------------------------------------------------------------
@@ -224,7 +226,9 @@ class TestMainRoutes(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls._old_runtime_manager_url = os.environ.get("PANTHEON_RUNTIME_MANAGER_URL")
+        cls._old_telemetry_db_dsn = os.environ.get("TELEMETRY_DB_DSN")
         os.environ["PANTHEON_RUNTIME_MANAGER_URL"] = "http://runtime-manager.test"
+        os.environ.pop("TELEMETRY_DB_DSN", None)
 
         # Start a dedicated asyncio event loop in a daemon thread so the
         # TelemetryIngestService batch writer can run during the test.
@@ -243,6 +247,7 @@ class TestMainRoutes(unittest.TestCase):
             batch_interval=0.05,
             binding_store=_StubBindingStore(),
             runtime_summary_store=RuntimeSummaryProjectionStore(heartbeat_stale_after_seconds=10_000_000_000),
+            trade_episode_projection_store=TradeEpisodeProjectionStore(),
         )
         asyncio.run_coroutine_threadsafe(svc.start(), loop).result(timeout=5)
 
@@ -273,6 +278,10 @@ class TestMainRoutes(unittest.TestCase):
             os.environ.pop("PANTHEON_RUNTIME_MANAGER_URL", None)
         else:
             os.environ["PANTHEON_RUNTIME_MANAGER_URL"] = cls._old_runtime_manager_url
+        if cls._old_telemetry_db_dsn is None:
+            os.environ.pop("TELEMETRY_DB_DSN", None)
+        else:
+            os.environ["TELEMETRY_DB_DSN"] = cls._old_telemetry_db_dsn
 
     # --- health ---
 
@@ -298,12 +307,62 @@ class TestMainRoutes(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         payload = resp.get_json()
         self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["dependencies"]["canonical_telemetry_table"]["status"], "ok")
+        self.assertEqual(payload["dependencies"]["canonical_telemetry_table"]["backend"], "memory")
         self.assertEqual(payload["dependencies"]["telemetry_writer"]["status"], "ok")
         self.assertTrue(payload["dependencies"]["telemetry_writer"]["running"])
+        self.assertIn("last_successful_write_at", payload["dependencies"]["telemetry_writer"])
+        self.assertIn("failure_dlq_entries", payload["dependencies"]["telemetry_writer"])
         self.assertEqual(payload["dependencies"]["dead_letter_queue"]["status"], "ok")
         self.assertIn("writer_total_written", payload["metrics"])
+        self.assertIn("writer_failure_dlq_entries", payload["metrics"])
+        self.assertIn("writer_seconds_since_last_successful_write", payload["metrics"])
         self.assertIn("dlq_memory_entries", payload["metrics"])
         self.assertIn("startup_dlq_loaded", payload["metrics"])
+
+    def test_readyz_fails_when_canonical_table_missing(self):
+        class _MissingTableConnection:
+            async def fetchval(self, _query, table):
+                self.table = table
+                return None
+
+            async def fetch(self, *_args):
+                return []
+
+            async def close(self):
+                self.closed = True
+
+        async def connect(dsn, timeout=None):
+            self.assertEqual(dsn, "postgresql://example/db")
+            self.assertEqual(timeout, 2.0)
+            return _MissingTableConnection()
+
+        fake_asyncpg = types.SimpleNamespace(connect=connect)
+        with patch.dict(os.environ, {"TELEMETRY_DB_DSN": "postgresql://example/db"}):
+            with patch.dict(sys.modules, {"asyncpg": fake_asyncpg}):
+                resp = self.client.get("/readyz")
+
+        self.assertEqual(resp.status_code, 503)
+        payload = resp.get_json()
+        dependency = payload["dependencies"]["canonical_telemetry_table"]
+        self.assertEqual(payload["status"], "degraded")
+        self.assertEqual(dependency["status"], "error")
+        self.assertFalse(dependency["table_exists"])
+        self.assertIn("scripts/db_migrate.sh", dependency["message"])
+
+    def test_startup_timeout_is_env_backed_and_bounded(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("TELEMETRY_STARTUP_TIMEOUT_SECONDS", None)
+            self.assertEqual(_main._startup_timeout_seconds(), 180.0)
+
+        with patch.dict(os.environ, {"TELEMETRY_STARTUP_TIMEOUT_SECONDS": "2.5"}):
+            self.assertEqual(_main._startup_timeout_seconds(), 2.5)
+
+        with patch.dict(os.environ, {"TELEMETRY_STARTUP_TIMEOUT_SECONDS": "0"}):
+            self.assertEqual(_main._startup_timeout_seconds(), 1.0)
+
+        with patch.dict(os.environ, {"TELEMETRY_STARTUP_TIMEOUT_SECONDS": "invalid"}):
+            self.assertEqual(_main._startup_timeout_seconds(), 180.0)
 
     def test_replay_route_replays_write_failure_entry(self):
         _main._svc._dlq.reject(
@@ -512,6 +571,46 @@ class TestMainRoutes(unittest.TestCase):
         self.assertEqual(resp.status_code, 404)
         data = resp.get_json()
         self.assertEqual(data["error"]["code"], "LINEAGE_TARGET_NOT_FOUND")
+
+    def test_trade_episodes_list_and_get(self):
+        opened_event = {
+            "event_id": "00000000-0000-0000-0000-000000000003",
+            "schema_version": "1.0",
+            "event_type": "trade_episode.opened",
+            "occurred_at": "2026-07-11T12:00:00Z",
+            "ingested_at": "2026-07-11T12:00:05Z",
+            "trace_id": "00000000-0000-0000-0000-000000000001",
+            "trade_episode_id": "00000000-0000-0000-0000-000000000002",
+            "persona_id": "persona-macro",
+            "environment": "paper",
+            "producer": "trade-journal-service",
+            "sequence_number": 1,
+            "payload": {
+                "strategy_id": "strategy-quant-01",
+                "instrument_id": "SPY",
+                "side": "long",
+                "thesis": "Fed meeting catalyst",
+                "requested_quantity": 100.0,
+            }
+        }
+
+        # Ingest the event via Flask
+        resp = self.client.post("/api/telemetry/ingest", json=opened_event)
+        self.assertEqual(resp.status_code, 202)
+
+        # Verify it shows up in list
+        resp_list = self.client.get("/api/telemetry/trade-episodes?persona_id=persona-macro")
+        self.assertEqual(resp_list.status_code, 200)
+        data = resp_list.get_json()
+        self.assertEqual(data["count"], 1)
+        self.assertEqual(data["projections"][0]["trade_episode_id"], "00000000-0000-0000-0000-000000000002")
+
+        # Verify it shows up in detail
+        resp_detail = self.client.get("/api/telemetry/trade-episodes/00000000-0000-0000-0000-000000000002")
+        self.assertEqual(resp_detail.status_code, 200)
+        proj = resp_detail.get_json()
+        self.assertEqual(proj["status"], "open")
+        self.assertEqual(proj["instrument_id"], "SPY")
 
 
 if __name__ == "__main__":

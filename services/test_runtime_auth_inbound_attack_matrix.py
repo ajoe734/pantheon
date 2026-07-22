@@ -84,8 +84,27 @@ def test_strict_mode_missing_secret_fails_closed():
     assert e.value.code in ("AUTH_JWT_SECRET_MISSING", "AUTH_JWT_UNVERIFIED")
 
 
+def test_permissive_plain_bearer_fails_closed():
+    env = {"PANTHEON_RUNTIME_AUTH_MODE": "permissive", "PANTHEON_RUNTIME_JWT_SECRET": ""}
+    with pytest.raises(A.AuthError) as e:
+        A.validate_request_auth(authorization="Bearer definitely-invalid-no-role-token", env=env)
+    assert e.value.status_code == 403
+    assert e.value.code == "AUTH_TOKEN_FORMAT"
+
+
 def test_tampered_signature_rejected():
     t = A.encode_jwt_hs256(_claims(), secret=SECRET)
     h, p, s = t.split(".")
     with pytest.raises(A.AuthError):
         _v(f"{h}.{p}.{s[:-2]}AA")
+
+
+@pytest.mark.parametrize("bad_mode", ["strcit", "", "disabled", "strict-ish", "PERMISIVE"])
+def test_malformed_auth_mode_fails_closed_to_strict(bad_mode):
+    # A typo'd/unrecognized PANTHEON_RUNTIME_AUTH_MODE must not silently fall
+    # through to permissive structured-token parsing.
+    env = {"PANTHEON_RUNTIME_AUTH_MODE": bad_mode, "PANTHEON_RUNTIME_JWT_SECRET": ""}
+    with pytest.raises(A.AuthError) as e:
+        A.validate_request_auth(authorization="Bearer plain-actor:operator", env=env)
+    assert e.value.code == "AUTH_TOKEN_FORMAT"
+    assert e.value.status_code == 401

@@ -1,0 +1,100 @@
+{
+  "checked_at": "2026-07-08T01:12:09.875Z",
+  "execute_plans_merge_commit": "91c039d051bf596d42d4468c8c4f5b9b8f82803d",
+  "frontend_base_url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io",
+  "route": "/agora/strategy-performance",
+  "required_bff_paths": [
+    "/bff/agora/trading-room",
+    "/bff/agora/trading-room/decision-events",
+    "/bff/management/performance-attribution/by-strategy"
+  ],
+  "results": [
+    {
+      "viewport": {
+        "name": "desktop",
+        "width": 1440,
+        "height": 1000
+      },
+      "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/agora/strategy-performance?nocache=91c039d051bf596d42d4468c8c4f5b9b8f82803d",
+      "screenshot": "performance-desktop.png",
+      "hasTitle": true,
+      "hasOldPlaceholder": false,
+      "hasUnavailable": false,
+      "requiredOk": true,
+      "failed": [],
+      "consoleErrors": [],
+      "responses": [
+        {
+          "method": "GET",
+          "path": "/bff/events/stream",
+          "status": 200,
+          "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/events/stream"
+        },
+        {
+          "method": "GET",
+          "path": "/bff/management/performance-attribution/by-strategy",
+          "status": 200,
+          "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/management/performance-attribution/by-strategy?period=latest&page_size=50"
+        },
+        {
+          "method": "GET",
+          "path": "/bff/agora/trading-room/decision-events",
+          "status": 200,
+          "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/agora/trading-room/decision-events"
+        },
+        {
+          "method": "GET",
+          "path": "/bff/agora/trading-room",
+          "status": 200,
+          "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/agora/trading-room"
+        }
+      ],
+      "textSample": "A AGORA ⚡ Servant Trading Room Strategy Workshop Performance Strategy Performance Period: latest Policy: read_only_performance_attribution Snapshot: Jul 08, 2026, 01:12 AM UTC Refresh STRATEGIES 2 TOTAL PNL not reported WORST DRAWDOWN not reported TELEMETRY RUNTIME COVERAGE 0/4 DECISION EVENTS 0 BFF Source Health 1 returned rows of 1 total capital_pools ok deployment_plans ok GET /api/v1/deployment-plans declared GET /api/v1/persona-capital-bindings declared GET /api/v1/runtime-bindings declared",
+      "pass": true
+    },
+    {
+      "viewport": {
+        "name": "mobile",
+        "width": 390,
+        "height": 844
+      },
+      "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/agora/strategy-performance?nocache=91c039d051bf596d42d4468c8c4f5b9b8f82803d",
+      "screenshot": "performance-mobile.png",
+      "hasTitle": true,
+      "hasOldPlaceholder": false,
+      "hasUnavailable": false,
+      "requiredOk": true,
+      "failed": [],
+      "consoleErrors": [],
+      "responses": [
+        {
+          "method": "GET",
+          "path": "/bff/events/stream",
+          "status": 200,
+          "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/events/stream"
+        },
+        {
+          "method": "GET",
+          "path": "/bff/management/performance-attribution/by-strategy",
+          "status": 200,
+          "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/management/performance-attribution/by-strategy?period=latest&page_size=50"
+        },
+        {
+          "method": "GET",
+          "path": "/bff/agora/trading-room/decision-events",
+          "status": 200,
+          "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/agora/trading-room/decision-events"
+        },
+        {
+          "method": "GET",
+          "path": "/bff/agora/trading-room",
+          "status": 200,
+          "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/agora/trading-room"
+        }
+      ],
+      "textSample": "A AGORA ⚡ Servant Trading Room Strategy Workshop Performance Strategy Performance Period: latest Policy: read_only_performance_attribution Snapshot: Jul 08, 2026, 01:12 AM UTC Refresh STRATEGIES 2 TOTAL PNL not reported WORST DRAWDOWN not reported TELEMETRY RUNTIME COVERAGE 0/4 DECISION EVENTS 0 BFF Source Health 1 returned rows of 1 total capital_pools ok deployment_plans ok GET /api/v1/deployment-plans declared GET /api/v1/persona-capital-bindings declared GET /api/v1/runtime-bindings declared",
+      "pass": true
+    }
+  ],
+  "pass": true
+}

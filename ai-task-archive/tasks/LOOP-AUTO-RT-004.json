@@ -1,0 +1,165 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-RT-004",
+  "archived_at": "2026-06-27T14:30:24Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-RT-004",
+    "title": "Add runtime-aware signal isolation",
+    "summary_zh": "把 paper runtime signal consumption 依 runtime 或 binding identity 隔離，移除 shared queue blind consumption 風險。",
+    "phase": "Global Loop Autopilot / Wave 2 Runtime Fleet",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "LOOP-AUTO-RT-002"
+    ],
+    "artifacts": [
+      "services/execution",
+      "services/runtime-manager",
+      "docs/deployment/evidence"
+    ],
+    "acceptance": [
+      "Multiple runtime consumers cannot consume each others signals",
+      "Mismatched runtime persona or capital-pool signals are rejected",
+      "Dead-letter or requeue behavior is tested"
+    ],
+    "next": "Owner finalized approved task: 63/63 isolation tests pass, PR #2425 merged, signal isolation evidence committed. Task closed.",
+    "last_update": "2026-06-27T14:30:24Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+    "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+    "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+    "proof_required": [
+      "unit tests",
+      "contract tests",
+      "local service smoke",
+      "restart or replay evidence when worker or runtime behavior changes"
+    ],
+    "non_goals": [
+      "No live-capital execution",
+      "No approval gate bypass",
+      "No panel-only closure",
+      "No seed fixture as live proof"
+    ],
+    "dispatch_rules": [
+      "idempotent duplicate ticks and duplicate events",
+      "operator-visible truth projection required",
+      "maturity cannot rise above collected evidence",
+      "repo workflow closure required before done"
+    ],
+    "loop_ids": [
+      "capital_pool_execution"
+    ],
+    "current_maturity": "manual",
+    "target_maturity": "reconciled",
+    "desired_state_sources": [
+      "runtime signal envelope"
+    ],
+    "actual_state_sources": [
+      "runtime-specific queue",
+      "signal DLQ"
+    ],
+    "wave_id": "Wave 2 Runtime Fleet",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "審查通過",
+      "31 個新隔離測試全部通過",
+      "32 個既有測試無回退",
+      "binding→runtime→capital_pool 隔離順序正確",
+      "DLQ 寫入失敗不阻斷 signal path",
+      "後向相容：無 runtime_id/capital_pool_id 欄位的舊訊號照常通過"
+    ],
+    "review_file": "docs/deployment/evidence/loop-auto-rt-004-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-27T14:30:24Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-rt-004",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOOP-AUTO-RT-004",
+      "git_clean_required": false,
+      "commit": "11e0615867e3dfefe3467ab0d4d97da8843830d4",
+      "commit_subject": "Merge origin/dev into task/LOOP-AUTO-RT-004 (pre-close sync 2)",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LOOP-AUTO-RT-004",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "20916ccbbf0c620c64fd8fb7eb0ac674344c46de",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-RT-004",
+      "from": "Gemini2",
+      "to": "Claude2",
+      "message": "Auto-reassigned LOOP-AUTO-RT-004 away from unavailable lane Gemini2 (disabled, sidecar-only, or auth-down); owner Gemini2 -> Claude2.",
+      "status": "done",
+      "created_at": "2026-06-27T12:36:48Z",
+      "resolved_at": "2026-06-27T12:36:50Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-RT-004",
+      "from": "Gemini2",
+      "to": "Claude2",
+      "message": "Auto-reassigned LOOP-AUTO-RT-004 away from unavailable lane Gemini2 (disabled, sidecar-only, or auth-down); owner Gemini2 -> Claude2.",
+      "status": "done",
+      "created_at": "2026-06-27T12:36:49Z",
+      "resolved_at": "2026-06-27T13:43:38Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-RT-004",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Please review: runtime_id and capital_pool_id signal isolation added to SignalConsumer with DLQ routing for rejected signals. 31 new tests in test_signal_isolation.py, 32 existing tests still pass. PR #2425.",
+      "status": "done",
+      "created_at": "2026-06-27T13:49:59Z",
+      "resolved_at": "2026-06-27T13:54:05Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-RT-004",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Review approved: isolation correctness verified, all 63 tests pass, returned to Claude2 for finalization",
+      "status": "done",
+      "created_at": "2026-06-27T13:54:05Z",
+      "resolved_at": "2026-06-27T13:59:39Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-RT-004",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Implementation complete. 31 new isolation tests pass, 32 existing consumer tests no regression (63 total). PR #2425 open, all 3 CI checks green. Key changes: signal_consumer.py adds runtime_id/capital_pool_id isolation with backward-compat; pending_signal_store.py adds DLQ support; paper_runtime.py wires RuntimeIdentity into consumer. Please review and approve.",
+      "status": "done",
+      "created_at": "2026-06-27T14:14:44Z",
+      "resolved_at": "2026-06-27T14:17:58Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-RT-004",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Review approved: all 3 acceptance criteria verified, 63 tests pass (31 new isolation + 32 existing), backward-compat correct, DLQ best-effort — returned to Claude2 for finalization",
+      "status": "done",
+      "created_at": "2026-06-27T14:17:58Z",
+      "resolved_at": "2026-06-27T14:30:25Z"
+    }
+  ],
+  "blockers": []
+}

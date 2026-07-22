@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "task_id": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-10",
+  "archived_at": "2026-07-12T09:38:16Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-10",
+    "title": "Prepare MGMT-PERF-IA-005 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-PERF-IA-005，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Management Performance Ranking IA / Wave 1 Governance Decisions",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "MGMT-PERF-IA-001",
+      "MGMT-PERF-IA-002"
+    ],
+    "artifacts": [
+      "support/sidecars/MGMT-PERF-IA-005/MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-10.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner closeout complete: support-only BFF/frontend handoff packet approved; PR #3394 merged as 12015d4e0adaddc967c1a853f0c8a9f86456dd2e; no canonical or runtime mutation; verified git diff --check, commit checks, and required GitHub gates.",
+    "last_update": "2026-07-12T09:38:16Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-PERF-IA-005",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：已獨立核對 PR #260 head 2954481ba3540bc2627eb379b70b401d40b3ef39、OPEN/MERGEABLE 狀態與 integration-gate 29162742365 SUCCESS；packet 明確維持 read-only/no-new-query 決策、將 recommendation-specific apply chain 標為未證實，且 commit 只變更 task brief 與 support artifact，未修改 canonical/runtime/frontend。",
+      "Owner 應依 closeout spec 建立/確認 task PR、合併後才可 done；parent owner 仍負責 PR #260 merge、部署與 hosted desktop/mobile evidence。"
+    ],
+    "review_file": "support/sidecars/MGMT-PERF-IA-005/MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-10.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T09:38:16Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-perf-ia-005-sidecar-bff-handoff-followup-10",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-10",
+      "git_clean_required": false,
+      "commit": "e9b85785c180d6ca4d9e5ca93fa66fc9215b00d8",
+      "commit_subject": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-10: finalize handoff",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped support packet and generated task brief closeout.",
+        "Not changing": "canonical truth, BFF/runtime/governance implementation, or frontend code.",
+        "Composes with": "approved commit 0f8c86637 and parent MGMT-PERF-IA-005 delivery.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-10",
+        "Reviewer": "Codex",
+        "Verified": "git diff --check; git show --check --stat 0f8c86637; git status --short"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-10",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "12015d4e0adaddc967c1a853f0c8a9f86456dd2e",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-10",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Support-only stop-loop packet ready at support/sidecars/MGMT-PERF-IA-005/MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-10.md; commit 0f8c86637. Please verify the no-new-query read-only decision, recommendation-specific apply gap, PR #260 delivery gate, and canonical non-mutation.",
+      "status": "done",
+      "created_at": "2026-07-12T09:31:00Z",
+      "resolved_at": "2026-07-12T09:34:12Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-10",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "APPROVED: no-new-query read-only boundary and recommendation-specific apply gap are accurately fail-closed; PR #260 delivery gate independently verified; commit 0f8c86637 is support-only with no canonical mutation. Returned to Codex2 for owner closeout.",
+      "status": "done",
+      "created_at": "2026-07-12T09:34:12Z",
+      "resolved_at": "2026-07-12T09:38:18Z"
+    }
+  ],
+  "blockers": []
+}

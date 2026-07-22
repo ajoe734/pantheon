@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "task_id": "AG-GAP-005",
+  "archived_at": "2026-07-12T14:07:49Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-GAP-005",
+    "title": "Contract honesty: resolve 501 routes + refresh compatibility manifest",
+    "summary_zh": "v1_1 OpenAPI 承諾的 6 條 workshop 501 stub 路由逐條實作或正式標註 deferred；dev-compatibility-manifest 從 2026-06-21 pending 更新到 v1_5 現況。",
+    "phase": "Agora Gap Closure 2026-07-12 / Wave 0",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/04/pantheon_agora_gap_assessment_2026-07-12/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-12-agora-gap-closure/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-12-agora-gap-closure/AG-GAP-005-contract-honesty.md"
+    ],
+    "acceptance": [
+      "all acceptance criteria in docs/bff/execution-tasks/2026-07-12-agora-gap-closure/AG-GAP-005-contract-honesty.md"
+    ],
+    "next": "Owner finalized reviewer-approved contract honesty delivery. PR #3425 merged into dev at 38d9de26f566f431510854791f12fd4297448073. Six workshop routes remain formally deferred and fail-closed with 501; dev compatibility manifest tracks v1.5 as pending. Verification: python3 -m pytest -q scripts/test_agora_compat_manifest.py scripts/test_agora_v1_2_bundle.py scripts/test_agora_v1_5_bundle.py (14 passed); python3 scripts/agora_compat_manifest.py verify --manifest docs/contracts/agora/dev-compatibility-manifest.json --allow-pending (ok); git diff --check.",
+    "last_update": "2026-07-12T14:07:49Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_agora_gap_closure_2026-07-12",
+    "auto_generated": true,
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "source_ref": {
+      "archive": "docs/04/pantheon_agora_gap_assessment_2026-07-12/INDEX.md",
+      "packet": "docs/bff/execution-tasks/2026-07-12-agora-gap-closure/INDEX.md",
+      "prior_packet": "docs/bff/execution-tasks/2026-07-05-agora-dynui-full-production-recovery/INDEX.md",
+      "prior_gate": "docs/bff/execution-tasks/2026-07-08-agora-live-tabs-production/AG-DYNUI-LIVE-TABS-GATE-011.md"
+    },
+    "wave": 0,
+    "fleet_lane": "agora-gap-contract",
+    "review_notes_zh": [
+      "審查通過：六條 workshop 501 operation 已逐條正式標註 deferred 並保留 fail-closed；v1.5 compatibility chain 與 frontend 缺證據時 pending blocker 一致。驗證：pytest -q scripts/test_agora_compat_manifest.py services/control-plane/bff/test_bff_agora_core_contract.py services/control-plane/bff/test_bff_agora_extended_contract.py（17 passed）；python3 scripts/agora_compat_manifest.py verify --allow-pending（ok）。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T14:07:49Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-gap-005",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-GAP-005",
+      "git_clean_required": false,
+      "commit": "255e707a109bdbf91870cec8f866df40a633792d",
+      "commit_subject": "AG-GAP-005: finalize contract honesty records",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "AG-GAP-005",
+        "Reviewer": "Codex",
+        "Verified": "pytest Agora compatibility/v1.2/v1.5 suites (14 passed); manifest verify --allow-pending; git diff --check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-GAP-005",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "38d9de26f566f431510854791f12fd4297448073",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-GAP-005",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-07-12T13:56:56Z",
+      "resolved_at": "2026-07-12T13:57:04Z"
+    },
+    {
+      "task_id": "AG-GAP-005",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Implemented formal deferred disposition for all six workshop 501 operations; refreshed compatibility generator and manifest to v1.5 capability chain. Anchor d7c532ddf. Verified: 14 pytest checks passed and manifest verify --allow-pending passed; deployment remains honestly pending on frontend v1.5 evidence.",
+      "status": "done",
+      "created_at": "2026-07-12T14:00:21Z",
+      "resolved_at": "2026-07-12T14:01:50Z"
+    },
+    {
+      "task_id": "AG-GAP-005",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: formal 501 deferrals and v1.5 compatibility refresh are contract-honest; 17 focused tests passed and manifest verify --allow-pending succeeded. Owner must finalize task commit/PR into dev, then mark done.",
+      "status": "done",
+      "created_at": "2026-07-12T14:01:50Z",
+      "resolved_at": "2026-07-12T14:07:50Z"
+    }
+  ],
+  "blockers": []
+}

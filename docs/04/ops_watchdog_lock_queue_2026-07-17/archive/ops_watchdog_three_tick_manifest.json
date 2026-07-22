@@ -1,0 +1,467 @@
+{
+  "deployed_sha": "c9560db5cba9583bd2dff70894e583cdca5d2a20",
+  "generated_at": "2026-07-18T02:59:37.548197Z",
+  "reflog_proof": [
+    "c9560db5c HEAD@{0}: checkout: moving from c5592c1068a8570c659cb484dbd53466c080769b to origin/dev",
+    "c5592c106 HEAD@{1}: checkout: moving from b43d5a798fc8c05300b8097fae9805bd9fdc77ce to c5592c1068a8570c659cb484dbd53466c080769b",
+    "b43d5a798 HEAD@{2}: reset: moving to origin/dev",
+    "c5592c106 HEAD@{3}: checkout: moving from 332feddda122fef92240c637ff407fe960c2ba3f to c5592c1068a8570c659cb484dbd53466c080769b",
+    "332feddda HEAD@{4}: reset: moving to 332feddda122fef92240c637ff407fe960c2ba3f",
+    "c5592c106 HEAD@{5}: pull origin dev: Fast-forward",
+    "5fdf28f2e HEAD@{6}: reset: moving to origin/dev",
+    "332feddda HEAD@{7}: reset: moving to origin/dev",
+    "d606a77ac HEAD@{8}: reset: moving to origin/dev",
+    "ed98b2803 HEAD@{9}: reset: moving to origin/dev"
+  ],
+  "ticks": [
+    {
+      "file_manifest": {
+        "live-supervisor-mainroot-config.json": {
+          "exists": true,
+          "mtime": "2026-07-18T01:15:21.186649Z",
+          "sha256": "007ed3c9af032463b03d45ee494ee284b5b6a6bf6651eb79d0ac27e6b7df9e6a",
+          "size_bytes": 49496
+        },
+        "state.json": {
+          "exists": true,
+          "mtime": "2026-07-18T02:56:52.360891Z",
+          "sha256": "ecae5ccbedd0e0cd7fbbda1c90f3ec8616ba3a67d648c178ee9464f31637b5f5",
+          "size_bytes": 3146507
+        },
+        "supervisor-watchdog-contention.jsonl": {
+          "exists": true,
+          "mtime": "2026-07-18T02:54:01.780941Z",
+          "sha256": "f3bb7acf41bac2a97aa66a04be8ba3de2ec33c67f0a73bbee6088066bf9c4ccb",
+          "size_bytes": 717317
+        },
+        "supervisor-watchdog.jsonl": {
+          "exists": true,
+          "mtime": "2026-07-18T02:57:02.183291Z",
+          "sha256": "299244e0ef7434f6e3a8f0ac68bb36c3c6a498c2526ff6cc6c5623e35390d0ff",
+          "size_bytes": 23538612
+        },
+        "watchdog-state.json": {
+          "exists": true,
+          "mtime": "2026-07-18T02:57:02.177005Z",
+          "sha256": "f959f97039416dcc6e0a33347bf123ea55c251228d550c025bf68df42f4a91b1",
+          "size_bytes": 6683
+        }
+      },
+      "lock_evidence": {
+        "lsof_output": "COMMAND    PID  USER   FD   TYPE DEVICE SIZE/OFF    NODE NAME\npython3 202546 lupin    3uW  REG    8,1        7 1053645 /home/lupin/code/pantheon/.orchestrator/supervisor.lock\npython3 470341 lupin    3uR  REG    8,1        0 1117775 /home/lupin/code/pantheon/.orchestrator/runtime-admission.lock\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/4a7b579c2d1ce1c165c4a280265b46100a1467b4f2eff92e3e42671748c1b388\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/42e58cfe756f38a8287b673590f65f92f150b7b7dced6a003fad84ce62bbe6c2\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/72c26577bf8e7aafbe7571bc62b1b1cc7a1e0030ea1609d4cfc44a628a564ac5\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/c934d38b9ca6080e8df0c904c55b9ab9378d23fc6939e155db7f5f07b1b906d9\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/1046d63c9381\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/f29a37d923da\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/b724c3c89931\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/edc4722ef9fc\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/f323eb739456f066a23d16f5d5ef2424d179883860f717c22f6e8cc27043f24e\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/7601eb4be1c8\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/f11149ff47cf787198db055f58a4c640407252f53cb52e8d21ade8a3147bbce9\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/59d18ea051b3179d8cc6f7b3492f0fd28384ef5f149399584a59553ce9278844\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/468acb4bd28008d99eceeaa77273682ebbc771015a93be5bddb39e73f15029cb\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/d65039390ed7\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/e4fa7f36151e\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/72cb7c0ab1f3\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/17a7fb7f3a7c8273a043a46946ecfd119db4ad01edba558cf7d072e35ee064ce\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/812ab6c0f2b1ab6f4d4b97ac7098d901091ac1cc16d3eefae3b55edc9df2cdaf\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/078960ff5bd2fe53e41cc2257797780b16d8d812f5bbc519cdee01f2bf0c6d53\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/3b16c887c262c9bff3f4c65e83f96cee9cb42aca417ed3808c0a7d2ffaa65818\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/128a6e514810775e17c43e171e881b13e91130d1821762c44b750663b630e5d7\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/abc1574c192b5b362014202f62f8c603918f63057bf520c53aae5569c78fece6\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/877a1136c27988346db4c661dcede7ea6f09736afcdc15920b0d34f68fcb4d03\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/b0d6c1c4047bd78a94b9ab113b6619a765d98e2a0498688b0684ee6926cb3142\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/0f7e0b9c2dcbd49877322aff9b1b6ab6156e2bcf7a63622934973196957d976a\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/0bd750c0744851705404fb76134b0bdf15f0ccdf2a4cd5a368457feadf0ff023\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/44fd6703ba534be685bf510ddbfdb2da63e0cfa9f75e16c9dece34e60fac3dae\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/ee38e777337d\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/f20b1d6e741e\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/b35d607ffe4a\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/1c804b20f048\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/62a3790247a1\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/0f2192b5c3a5\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/84adbe21a59a\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/634981e2d5be\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/6094c444ffd9\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/fed89ebaf301\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/c5a23a241755\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/d2d98210a608eb31d412a31a55699fc363e74f99bd2a11f77e57327f14de8ef2\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/9cf4d02fcca1\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/139d2c2f676ed94bc23743185cee5be49a06d4fd7d8bf94260ba37ad908e2a7b\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/e8b153fa781b\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/5f51b6453bc9fd57eceaa5cb5e489a7eccca34848b6af9255d78e00f28af7c9c\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/22fad0737942\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/e5a2948871ad8f62973bcea8bc33406ea112b8e6581d07217319e5ef97bc0d5b\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/13cd55ec418d2620bf0d89c122a85fac3cda51d50845365247ebb366b1429234\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/2a88ceb5d593\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/85bc87838b76\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/92448a329045b6ff2a7290ac7cea18edc2ff4fc0c95e5a1236b079e7734414a7\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/d32c167efcf0272cce54e77a5743803bd011d35207df88d53d09271440fb836a\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/49d55a2bd823\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/5620fe7dd130\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/85a11263283c2a0884386853b6362d7139e49060af760c0dfae1d9215bdd048c\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/49644f062eea\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/4349999ef87287ba69b87e861bd5eaaa021afaacd7e3915baa6812d5bd6d542f\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/b21960fca2298441d3a02062cb9c2ffd1853ce94a2d07b34c434765f4377ed8d\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/2f121186e85e17ef1b585d8dc1196aae6b9885f3b1ba5a0ca55da09b1e5371f4\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/0d5aa2bc08a07984fb125be92f46d433e81d32f118b1894085748725dc3a33d1\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/1d25760180e8\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/11d3dc9d34aa\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/8a403edb6123\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/6e93f92c0256\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/a3f4d858b67636d847d02cb6e4ca05743d7ebd1b4b36f504375c99f9b76209e7\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/35668db317be41e00f01c51a6714101ffb07c166d5ea71570990da371496487e\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/8f658968790f\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/3abf6496796f\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/08bac9b47a4660e30d911c13e519a656b5db77e4646930ea58b0a2bafd8c0c1c\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/38f12b359454\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/74442d28d2b49579452ed6fed20bdef37212c6d33372daf6459cab4e659e6c79\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/b4172970c835\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/d818879fcb0d6df64c028b6baecf29f68c55fa909e86869e0bb4508bf1dc0d38\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/fb0c79a14176\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/1ba4d9f07ac907601d3567ac87bba502b32c5e061d6a7d08c75cdd14e968a095\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/ca95096d7fb4\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/5425e3b13a3b73c19dda7926a45726a787176e12983ed308dabcd48ed5879d77\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/fe5c8e4f6311\n      Output information may be incomplete.\n"
+      },
+      "process_evidence": {
+        "supervisor_count": 14,
+        "supervisor_processes": [
+          "202546 python3 .orchestrator/supervisor.py --verbose",
+          "233493 python3 .orchestrator/worker_runner.py --run-id codex-20260718T023336Z-b881b98f",
+          "233610 codex exec",
+          "233634 codex exec",
+          "253856 python3 .orchestrator/worker_runner.py --run-id codex-20260718T023518Z-ec996fdd",
+          "254066 codex exec",
+          "254123 codex exec",
+          "344992 python3 .orchestrator/worker_runner.py --run-id claude-1-20260718T024248Z-cad0f202",
+          "345074 python3 .orchestrator/supervisor.py --verbose",
+          "454206 python3 .orchestrator/worker_runner.py --run-id antigravity-20260718T025522Z-c736e6d3",
+          "454295 agy --prompt",
+          "455360 python3 .orchestrator/worker_runner.py --run-id codex-20260718T025530Z-713a97e9",
+          "455706 codex exec",
+          "455807 codex exec"
+        ],
+        "watchdog_count": 0,
+        "watchdog_processes": []
+      },
+      "require_watchdog_health": {
+        "checks": [
+          {
+            "lock_held": true,
+            "name": "supervisor_process_alive",
+            "ok": true,
+            "pid": 202546,
+            "pid_matches": true
+          },
+          {
+            "last_heartbeat_at": "2026-07-18T02:56:52Z",
+            "name": "supervisor_heartbeat_present",
+            "ok": true
+          },
+          {
+            "age_seconds": 11.093603,
+            "max_age_seconds": 900.0,
+            "name": "supervisor_heartbeat_fresh",
+            "ok": true
+          },
+          {
+            "last_loop_error": null,
+            "lifecycle": "running",
+            "name": "supervisor_not_degraded",
+            "ok": true
+          },
+          {
+            "age_seconds": 1.093603,
+            "max_age_seconds": 180.0,
+            "name": "watchdog_state_present",
+            "ok": true,
+            "state_file": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/watchdog-state.json",
+            "updated_at": "2026-07-18T02:57:02Z"
+          },
+          {
+            "age_seconds": 1.093603,
+            "max_age_seconds": 180.0,
+            "name": "watchdog_probe_fresh",
+            "ok": true,
+            "state_file": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/watchdog-state.json",
+            "updated_at": "2026-07-18T02:57:02Z"
+          }
+        ],
+        "generated_at": "2026-07-18T02:57:03.093603Z",
+        "healthy": true,
+        "repo_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "state_file": "/home/lupin/code/pantheon/.orchestrator/state.json",
+        "supervisor": {
+          "alive": true,
+          "heartbeat_age_seconds": 11.093603,
+          "last_heartbeat_at": "2026-07-18T02:56:52Z",
+          "last_loop_error": null,
+          "lifecycle": "running",
+          "lock_held": true,
+          "max_heartbeat_age_seconds": 900.0,
+          "pid": 202546,
+          "process_alive": true
+        },
+        "watchdog": {
+          "age_seconds": 1.093603,
+          "max_age_seconds": 180.0,
+          "state_file": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/watchdog-state.json",
+          "updated_at": "2026-07-18T02:57:02Z"
+        }
+      },
+      "timestamp": "2026-07-18T02:57:04.105277Z",
+      "watchdog_metric_event": {
+        "at": "2026-07-18T02:57:02Z",
+        "decision": "observe_only",
+        "event_id": "watchdog-1784343422183-470465",
+        "event_type": "watchdog_probe",
+        "heartbeat_age_seconds": 10.0,
+        "lock_held": true,
+        "log_path": null,
+        "new_pid": null,
+        "pid": 202546,
+        "reason": "supervisor_healthy",
+        "resource": {
+          "active_worker_count": 5,
+          "active_worker_count_source": "live_worker_runner_pid_identity",
+          "active_worker_live_count": 5,
+          "active_worker_runtime_state_count": 5,
+          "active_worker_scan_error": null,
+          "disk_free_gb": 310.299,
+          "disk_used_percent": 35.8,
+          "load_1m": 5.19,
+          "memory_available_mb": 29269.3,
+          "state_parent_writable": true
+        },
+        "restart_count_hour": 1,
+        "restart_count_window": 0,
+        "version": 1
+      }
+    },
+    {
+      "file_manifest": {
+        "live-supervisor-mainroot-config.json": {
+          "exists": true,
+          "mtime": "2026-07-18T01:15:21.186649Z",
+          "sha256": "007ed3c9af032463b03d45ee494ee284b5b6a6bf6651eb79d0ac27e6b7df9e6a",
+          "size_bytes": 49496
+        },
+        "state.json": {
+          "exists": true,
+          "mtime": "2026-07-18T02:58:05.902640Z",
+          "sha256": "ab6278ed870da7c4b654d1bc8c997dd6d0261b4df508a713fb2c0d930a759413",
+          "size_bytes": 3131614
+        },
+        "supervisor-watchdog-contention.jsonl": {
+          "exists": true,
+          "mtime": "2026-07-18T02:54:01.780941Z",
+          "sha256": "f3bb7acf41bac2a97aa66a04be8ba3de2ec33c67f0a73bbee6088066bf9c4ccb",
+          "size_bytes": 717317
+        },
+        "supervisor-watchdog.jsonl": {
+          "exists": true,
+          "mtime": "2026-07-18T02:58:02.545424Z",
+          "sha256": "75e42e3c31a57f705eacae6ca09434f21a86f29794eec893600a02c8ed6d1f35",
+          "size_bytes": 23539289
+        },
+        "watchdog-state.json": {
+          "exists": true,
+          "mtime": "2026-07-18T02:58:02.539009Z",
+          "sha256": "f9ee46d15473647df63bd085fa7988f059a38f20e741d2934330acf73ecfbb77",
+          "size_bytes": 6684
+        }
+      },
+      "lock_evidence": {
+        "lsof_output": "COMMAND    PID  USER   FD   TYPE DEVICE SIZE/OFF    NODE NAME\npython3 202546 lupin    3uW  REG    8,1        7 1053645 /home/lupin/code/pantheon/.orchestrator/supervisor.lock\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/4a7b579c2d1ce1c165c4a280265b46100a1467b4f2eff92e3e42671748c1b388\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/42e58cfe756f38a8287b673590f65f92f150b7b7dced6a003fad84ce62bbe6c2\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/72c26577bf8e7aafbe7571bc62b1b1cc7a1e0030ea1609d4cfc44a628a564ac5\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/c934d38b9ca6080e8df0c904c55b9ab9378d23fc6939e155db7f5f07b1b906d9\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/1046d63c9381\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/f29a37d923da\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/b724c3c89931\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/edc4722ef9fc\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/f323eb739456f066a23d16f5d5ef2424d179883860f717c22f6e8cc27043f24e\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/7601eb4be1c8\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/f11149ff47cf787198db055f58a4c640407252f53cb52e8d21ade8a3147bbce9\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/59d18ea051b3179d8cc6f7b3492f0fd28384ef5f149399584a59553ce9278844\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/468acb4bd28008d99eceeaa77273682ebbc771015a93be5bddb39e73f15029cb\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/d65039390ed7\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/e4fa7f36151e\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/72cb7c0ab1f3\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/17a7fb7f3a7c8273a043a46946ecfd119db4ad01edba558cf7d072e35ee064ce\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/812ab6c0f2b1ab6f4d4b97ac7098d901091ac1cc16d3eefae3b55edc9df2cdaf\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/078960ff5bd2fe53e41cc2257797780b16d8d812f5bbc519cdee01f2bf0c6d53\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/3b16c887c262c9bff3f4c65e83f96cee9cb42aca417ed3808c0a7d2ffaa65818\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/128a6e514810775e17c43e171e881b13e91130d1821762c44b750663b630e5d7\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/abc1574c192b5b362014202f62f8c603918f63057bf520c53aae5569c78fece6\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/877a1136c27988346db4c661dcede7ea6f09736afcdc15920b0d34f68fcb4d03\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/b0d6c1c4047bd78a94b9ab113b6619a765d98e2a0498688b0684ee6926cb3142\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/0f7e0b9c2dcbd49877322aff9b1b6ab6156e2bcf7a63622934973196957d976a\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/0bd750c0744851705404fb76134b0bdf15f0ccdf2a4cd5a368457feadf0ff023\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/44fd6703ba534be685bf510ddbfdb2da63e0cfa9f75e16c9dece34e60fac3dae\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/ee38e777337d\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/f20b1d6e741e\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/b35d607ffe4a\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/1c804b20f048\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/62a3790247a1\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/0f2192b5c3a5\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/84adbe21a59a\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/634981e2d5be\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/6094c444ffd9\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/fed89ebaf301\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/c5a23a241755\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/d2d98210a608eb31d412a31a55699fc363e74f99bd2a11f77e57327f14de8ef2\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/9cf4d02fcca1\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/139d2c2f676ed94bc23743185cee5be49a06d4fd7d8bf94260ba37ad908e2a7b\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/e8b153fa781b\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/5f51b6453bc9fd57eceaa5cb5e489a7eccca34848b6af9255d78e00f28af7c9c\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/22fad0737942\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/e5a2948871ad8f62973bcea8bc33406ea112b8e6581d07217319e5ef97bc0d5b\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/13cd55ec418d2620bf0d89c122a85fac3cda51d50845365247ebb366b1429234\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/2a88ceb5d593\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/85bc87838b76\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/92448a329045b6ff2a7290ac7cea18edc2ff4fc0c95e5a1236b079e7734414a7\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/d32c167efcf0272cce54e77a5743803bd011d35207df88d53d09271440fb836a\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/49d55a2bd823\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/5620fe7dd130\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/85a11263283c2a0884386853b6362d7139e49060af760c0dfae1d9215bdd048c\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/49644f062eea\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/4349999ef87287ba69b87e861bd5eaaa021afaacd7e3915baa6812d5bd6d542f\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/b21960fca2298441d3a02062cb9c2ffd1853ce94a2d07b34c434765f4377ed8d\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/2f121186e85e17ef1b585d8dc1196aae6b9885f3b1ba5a0ca55da09b1e5371f4\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/0d5aa2bc08a07984fb125be92f46d433e81d32f118b1894085748725dc3a33d1\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/1d25760180e8\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/11d3dc9d34aa\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/8a403edb6123\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/6e93f92c0256\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/a3f4d858b67636d847d02cb6e4ca05743d7ebd1b4b36f504375c99f9b76209e7\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/35668db317be41e00f01c51a6714101ffb07c166d5ea71570990da371496487e\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/8f658968790f\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/3abf6496796f\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/08bac9b47a4660e30d911c13e519a656b5db77e4646930ea58b0a2bafd8c0c1c\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/38f12b359454\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/74442d28d2b49579452ed6fed20bdef37212c6d33372daf6459cab4e659e6c79\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/b4172970c835\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/d818879fcb0d6df64c028b6baecf29f68c55fa909e86869e0bb4508bf1dc0d38\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/fb0c79a14176\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/1ba4d9f07ac907601d3567ac87bba502b32c5e061d6a7d08c75cdd14e968a095\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/ca95096d7fb4\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/5425e3b13a3b73c19dda7926a45726a787176e12983ed308dabcd48ed5879d77\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/fe5c8e4f6311\n      Output information may be incomplete.\n"
+      },
+      "process_evidence": {
+        "supervisor_count": 12,
+        "supervisor_processes": [
+          "202546 python3 .orchestrator/supervisor.py --verbose",
+          "233493 python3 .orchestrator/worker_runner.py --run-id codex-20260718T023336Z-b881b98f",
+          "233610 codex exec",
+          "233634 codex exec",
+          "253856 python3 .orchestrator/worker_runner.py --run-id codex-20260718T023518Z-ec996fdd",
+          "254066 codex exec",
+          "254123 codex exec",
+          "454206 python3 .orchestrator/worker_runner.py --run-id antigravity-20260718T025522Z-c736e6d3",
+          "454295 agy --prompt",
+          "455360 python3 .orchestrator/worker_runner.py --run-id codex-20260718T025530Z-713a97e9",
+          "455706 codex exec",
+          "455807 codex exec"
+        ],
+        "watchdog_count": 0,
+        "watchdog_processes": []
+      },
+      "require_watchdog_health": {
+        "checks": [
+          {
+            "lock_held": true,
+            "name": "supervisor_process_alive",
+            "ok": true,
+            "pid": 202546,
+            "pid_matches": true
+          },
+          {
+            "last_heartbeat_at": "2026-07-18T02:57:33Z",
+            "name": "supervisor_heartbeat_present",
+            "ok": true
+          },
+          {
+            "age_seconds": 30.891229,
+            "max_age_seconds": 900.0,
+            "name": "supervisor_heartbeat_fresh",
+            "ok": true
+          },
+          {
+            "last_loop_error": null,
+            "lifecycle": "running",
+            "name": "supervisor_not_degraded",
+            "ok": true
+          },
+          {
+            "age_seconds": 1.891229,
+            "max_age_seconds": 180.0,
+            "name": "watchdog_state_present",
+            "ok": true,
+            "state_file": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/watchdog-state.json",
+            "updated_at": "2026-07-18T02:58:02Z"
+          },
+          {
+            "age_seconds": 1.891229,
+            "max_age_seconds": 180.0,
+            "name": "watchdog_probe_fresh",
+            "ok": true,
+            "state_file": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/watchdog-state.json",
+            "updated_at": "2026-07-18T02:58:02Z"
+          }
+        ],
+        "generated_at": "2026-07-18T02:58:03.891229Z",
+        "healthy": true,
+        "repo_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "state_file": "/home/lupin/code/pantheon/.orchestrator/state.json",
+        "supervisor": {
+          "alive": true,
+          "heartbeat_age_seconds": 30.891229,
+          "last_heartbeat_at": "2026-07-18T02:57:33Z",
+          "last_loop_error": null,
+          "lifecycle": "running",
+          "lock_held": true,
+          "max_heartbeat_age_seconds": 900.0,
+          "pid": 202546,
+          "process_alive": true
+        },
+        "watchdog": {
+          "age_seconds": 1.891229,
+          "max_age_seconds": 180.0,
+          "state_file": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/watchdog-state.json",
+          "updated_at": "2026-07-18T02:58:02Z"
+        }
+      },
+      "timestamp": "2026-07-18T02:58:05.987716Z",
+      "watchdog_metric_event": {
+        "at": "2026-07-18T02:58:02Z",
+        "decision": "observe_only",
+        "event_id": "watchdog-1784343482546-478529",
+        "event_type": "watchdog_probe",
+        "heartbeat_age_seconds": 29.0,
+        "lock_held": true,
+        "log_path": null,
+        "new_pid": null,
+        "pid": 202546,
+        "reason": "supervisor_healthy",
+        "resource": {
+          "active_worker_count": 4,
+          "active_worker_count_source": "live_worker_runner_pid_identity",
+          "active_worker_live_count": 4,
+          "active_worker_runtime_state_count": 4,
+          "active_worker_scan_error": null,
+          "disk_free_gb": 310.516,
+          "disk_used_percent": 35.75,
+          "load_1m": 5.08,
+          "memory_available_mb": 27280.5,
+          "state_parent_writable": true
+        },
+        "restart_count_hour": 1,
+        "restart_count_window": 0,
+        "version": 1
+      }
+    },
+    {
+      "file_manifest": {
+        "live-supervisor-mainroot-config.json": {
+          "exists": true,
+          "mtime": "2026-07-18T01:15:21.186649Z",
+          "sha256": "007ed3c9af032463b03d45ee494ee284b5b6a6bf6651eb79d0ac27e6b7df9e6a",
+          "size_bytes": 49496
+        },
+        "state.json": {
+          "exists": true,
+          "mtime": "2026-07-18T02:59:04.035482Z",
+          "sha256": "d8ce881da2f75537dbe4934730546950333d4735571972902f19d1a3954b4e71",
+          "size_bytes": 3131647
+        },
+        "supervisor-watchdog-contention.jsonl": {
+          "exists": true,
+          "mtime": "2026-07-18T02:59:02.011495Z",
+          "sha256": "5439a2206d7139b47a9a1b66b9f070bb68432072d8a8f4495696b1727bba44c4",
+          "size_bytes": 718000
+        },
+        "supervisor-watchdog.jsonl": {
+          "exists": true,
+          "mtime": "2026-07-18T02:59:35.071758Z",
+          "sha256": "c5da355a5a713fa34586739c444031083a08aec6c460712eaa40909c25bdec7a",
+          "size_bytes": 23539966
+        },
+        "watchdog-state.json": {
+          "exists": true,
+          "mtime": "2026-07-18T02:59:35.064922Z",
+          "sha256": "e13d38ae8cfc1cc7adc055a79a542f27c7ab99a231b8cddf24b8e795668316d9",
+          "size_bytes": 6684
+        }
+      },
+      "lock_evidence": {
+        "lsof_output": "COMMAND    PID  USER   FD   TYPE DEVICE SIZE/OFF    NODE NAME\npython3 202546 lupin    3uW  REG    8,1        7 1053645 /home/lupin/code/pantheon/.orchestrator/supervisor.lock\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/4a7b579c2d1ce1c165c4a280265b46100a1467b4f2eff92e3e42671748c1b388\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/42e58cfe756f38a8287b673590f65f92f150b7b7dced6a003fad84ce62bbe6c2\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/72c26577bf8e7aafbe7571bc62b1b1cc7a1e0030ea1609d4cfc44a628a564ac5\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/c934d38b9ca6080e8df0c904c55b9ab9378d23fc6939e155db7f5f07b1b906d9\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/1046d63c9381\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/f29a37d923da\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/b724c3c89931\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/edc4722ef9fc\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/f323eb739456f066a23d16f5d5ef2424d179883860f717c22f6e8cc27043f24e\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/7601eb4be1c8\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/f11149ff47cf787198db055f58a4c640407252f53cb52e8d21ade8a3147bbce9\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/59d18ea051b3179d8cc6f7b3492f0fd28384ef5f149399584a59553ce9278844\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/468acb4bd28008d99eceeaa77273682ebbc771015a93be5bddb39e73f15029cb\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/d65039390ed7\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/e4fa7f36151e\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/72cb7c0ab1f3\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/17a7fb7f3a7c8273a043a46946ecfd119db4ad01edba558cf7d072e35ee064ce\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/812ab6c0f2b1ab6f4d4b97ac7098d901091ac1cc16d3eefae3b55edc9df2cdaf\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/078960ff5bd2fe53e41cc2257797780b16d8d812f5bbc519cdee01f2bf0c6d53\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/3b16c887c262c9bff3f4c65e83f96cee9cb42aca417ed3808c0a7d2ffaa65818\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/128a6e514810775e17c43e171e881b13e91130d1821762c44b750663b630e5d7\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/abc1574c192b5b362014202f62f8c603918f63057bf520c53aae5569c78fece6\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/877a1136c27988346db4c661dcede7ea6f09736afcdc15920b0d34f68fcb4d03\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/b0d6c1c4047bd78a94b9ab113b6619a765d98e2a0498688b0684ee6926cb3142\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/0f7e0b9c2dcbd49877322aff9b1b6ab6156e2bcf7a63622934973196957d976a\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/0bd750c0744851705404fb76134b0bdf15f0ccdf2a4cd5a368457feadf0ff023\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/44fd6703ba534be685bf510ddbfdb2da63e0cfa9f75e16c9dece34e60fac3dae\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/ee38e777337d\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/f20b1d6e741e\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/b35d607ffe4a\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/1c804b20f048\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/62a3790247a1\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/0f2192b5c3a5\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/84adbe21a59a\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/634981e2d5be\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/6094c444ffd9\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/fed89ebaf301\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/c5a23a241755\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/d2d98210a608eb31d412a31a55699fc363e74f99bd2a11f77e57327f14de8ef2\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/9cf4d02fcca1\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/139d2c2f676ed94bc23743185cee5be49a06d4fd7d8bf94260ba37ad908e2a7b\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/e8b153fa781b\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/5f51b6453bc9fd57eceaa5cb5e489a7eccca34848b6af9255d78e00f28af7c9c\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/22fad0737942\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/e5a2948871ad8f62973bcea8bc33406ea112b8e6581d07217319e5ef97bc0d5b\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/13cd55ec418d2620bf0d89c122a85fac3cda51d50845365247ebb366b1429234\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/2a88ceb5d593\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/85bc87838b76\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/92448a329045b6ff2a7290ac7cea18edc2ff4fc0c95e5a1236b079e7734414a7\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/d32c167efcf0272cce54e77a5743803bd011d35207df88d53d09271440fb836a\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/49d55a2bd823\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/5620fe7dd130\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/85a11263283c2a0884386853b6362d7139e49060af760c0dfae1d9215bdd048c\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/49644f062eea\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/4349999ef87287ba69b87e861bd5eaaa021afaacd7e3915baa6812d5bd6d542f\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/b21960fca2298441d3a02062cb9c2ffd1853ce94a2d07b34c434765f4377ed8d\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/2f121186e85e17ef1b585d8dc1196aae6b9885f3b1ba5a0ca55da09b1e5371f4\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/0d5aa2bc08a07984fb125be92f46d433e81d32f118b1894085748725dc3a33d1\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/1d25760180e8\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/11d3dc9d34aa\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/8a403edb6123\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/6e93f92c0256\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/a3f4d858b67636d847d02cb6e4ca05743d7ebd1b4b36f504375c99f9b76209e7\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/35668db317be41e00f01c51a6714101ffb07c166d5ea71570990da371496487e\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/8f658968790f\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/3abf6496796f\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/08bac9b47a4660e30d911c13e519a656b5db77e4646930ea58b0a2bafd8c0c1c\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/38f12b359454\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/74442d28d2b49579452ed6fed20bdef37212c6d33372daf6459cab4e659e6c79\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/b4172970c835\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/d818879fcb0d6df64c028b6baecf29f68c55fa909e86869e0bb4508bf1dc0d38\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/fb0c79a14176\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/1ba4d9f07ac907601d3567ac87bba502b32c5e061d6a7d08c75cdd14e968a095\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/ca95096d7fb4\n      Output information may be incomplete.\nlsof: WARNING: can't stat() overlay file system /var/lib/docker/rootfs/overlayfs/5425e3b13a3b73c19dda7926a45726a787176e12983ed308dabcd48ed5879d77\n      Output information may be incomplete.\nlsof: WARNING: can't stat() nsfs file system /run/docker/netns/fe5c8e4f6311\n      Output information may be incomplete.\n"
+      },
+      "process_evidence": {
+        "supervisor_count": 12,
+        "supervisor_processes": [
+          "202546 python3 .orchestrator/supervisor.py --verbose",
+          "233493 python3 .orchestrator/worker_runner.py --run-id codex-20260718T023336Z-b881b98f",
+          "233610 codex exec",
+          "233634 codex exec",
+          "253856 python3 .orchestrator/worker_runner.py --run-id codex-20260718T023518Z-ec996fdd",
+          "254066 codex exec",
+          "254123 codex exec",
+          "454206 python3 .orchestrator/worker_runner.py --run-id antigravity-20260718T025522Z-c736e6d3",
+          "454295 agy --prompt",
+          "455360 python3 .orchestrator/worker_runner.py --run-id codex-20260718T025530Z-713a97e9",
+          "455706 codex exec",
+          "455807 codex exec"
+        ],
+        "watchdog_count": 0,
+        "watchdog_processes": []
+      },
+      "require_watchdog_health": {
+        "checks": [
+          {
+            "lock_held": true,
+            "name": "supervisor_process_alive",
+            "ok": true,
+            "pid": 202546,
+            "pid_matches": true
+          },
+          {
+            "last_heartbeat_at": "2026-07-18T02:59:03Z",
+            "name": "supervisor_heartbeat_present",
+            "ok": true
+          },
+          {
+            "age_seconds": 33.315504,
+            "max_age_seconds": 900.0,
+            "name": "supervisor_heartbeat_fresh",
+            "ok": true
+          },
+          {
+            "last_loop_error": null,
+            "lifecycle": "running",
+            "name": "supervisor_not_degraded",
+            "ok": true
+          },
+          {
+            "age_seconds": 1.315504,
+            "max_age_seconds": 180.0,
+            "name": "watchdog_state_present",
+            "ok": true,
+            "state_file": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/watchdog-state.json",
+            "updated_at": "2026-07-18T02:59:35Z"
+          },
+          {
+            "age_seconds": 1.315504,
+            "max_age_seconds": 180.0,
+            "name": "watchdog_probe_fresh",
+            "ok": true,
+            "state_file": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/watchdog-state.json",
+            "updated_at": "2026-07-18T02:59:35Z"
+          }
+        ],
+        "generated_at": "2026-07-18T02:59:36.315504Z",
+        "healthy": true,
+        "repo_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "state_file": "/home/lupin/code/pantheon/.orchestrator/state.json",
+        "supervisor": {
+          "alive": true,
+          "heartbeat_age_seconds": 33.315504,
+          "last_heartbeat_at": "2026-07-18T02:59:03Z",
+          "last_loop_error": null,
+          "lifecycle": "running",
+          "lock_held": true,
+          "max_heartbeat_age_seconds": 900.0,
+          "pid": 202546,
+          "process_alive": true
+        },
+        "watchdog": {
+          "age_seconds": 1.315504,
+          "max_age_seconds": 180.0,
+          "state_file": "/home/lupin/pantheon-ci-deploy/dev-root/.orchestrator/watchdog-state.json",
+          "updated_at": "2026-07-18T02:59:35Z"
+        }
+      },
+      "timestamp": "2026-07-18T02:59:37.471898Z",
+      "watchdog_metric_event": {
+        "at": "2026-07-18T02:59:35Z",
+        "decision": "observe_only",
+        "event_id": "watchdog-1784343575072-489896",
+        "event_type": "watchdog_probe",
+        "heartbeat_age_seconds": 31.0,
+        "lock_held": true,
+        "log_path": null,
+        "new_pid": null,
+        "pid": 202546,
+        "reason": "supervisor_healthy",
+        "resource": {
+          "active_worker_count": 4,
+          "active_worker_count_source": "live_worker_runner_pid_identity",
+          "active_worker_live_count": 4,
+          "active_worker_runtime_state_count": 4,
+          "active_worker_scan_error": null,
+          "disk_free_gb": 310.508,
+          "disk_used_percent": 35.75,
+          "load_1m": 7.48,
+          "memory_available_mb": 29542.5,
+          "state_parent_writable": true
+        },
+        "restart_count_hour": 1,
+        "restart_count_window": 0,
+        "version": 1
+      }
+    }
+  ]
+}

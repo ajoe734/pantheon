@@ -17,6 +17,10 @@ POST  /api/postmortems
     Enforces referential integrity: the referenced incident_id must exist.
     Returns 201 on success, 422 on validation failure, 409 if already exists.
 
+POST  /api/postmortems/consume-resolved-incident
+    Consume a resolved IncidentCase event and create or refresh an idempotent
+    Postmortem draft. Returns 201 on first draft, 200 on duplicate/update.
+
 GET   /api/postmortems
     List postmortems.  Optional query params:
       incident_id  — filter by IncidentCase
@@ -61,14 +65,30 @@ from __future__ import annotations
 
 import logging
 import os
+import secrets
 import sys
 import uuid
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, Header, HTTPException, Query, Response
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
+import asyncio
+from services.foundation import (
+    EventEnvelope,
+    OutboxRecord,
+    TraceContext,
+    EnvironmentScope,
+    EnvironmentName,
+)
+from services.foundation.reliable_delivery import (
+    ReliableInboxStore,
+    ReliableOutboxRecord,
+    ReliableOutboxStore,
+    reconcile_prepared,
+)
+from services.foundation.serialization import sha256_checksum
 
 # ---------------------------------------------------------------------------
 # Bootstrap domain layer
@@ -80,6 +100,7 @@ if str(_INC_DIR.parent) not in sys.path:
 try:
     from services.incident.incident import (  # type: ignore
         IncidentCase,
+        IncidentConcurrencyError,
         IncidentError,
         IncidentStore,
         Postmortem,
@@ -90,6 +111,7 @@ try:
 except ImportError:
     from incident.incident import (  # type: ignore
         IncidentCase,
+        IncidentConcurrencyError,
         IncidentError,
         IncidentStore,
         Postmortem,
@@ -106,6 +128,12 @@ try:
         PostmortemResponse,
         UpdatePostmortemStatusRequest,
     )
+    from .consumer import (
+        PostmortemDraftConsumerError,
+        PostmortemDraftConsumerRetryableError,
+        ResolvedIncidentPostmortemDraftConsumer,
+        postmortem_id_for_incident,
+    )
 except ImportError:
     from models import (  # type: ignore
         CreatePostmortemRequest,
@@ -113,6 +141,12 @@ except ImportError:
         OperatorPostmortemPayload,
         PostmortemResponse,
         UpdatePostmortemStatusRequest,
+    )
+    from consumer import (  # type: ignore
+        PostmortemDraftConsumerError,
+        PostmortemDraftConsumerRetryableError,
+        ResolvedIncidentPostmortemDraftConsumer,
+        postmortem_id_for_incident,
     )
 
 try:
@@ -143,6 +177,24 @@ PERSISTENCE_POSTURE = require_persistence_posture("postmortems")
 # referential integrity (postmortem references incident) is enforced in-process.
 # In production, both services connect to the shared Pantheon incidents DB schema.
 store: IncidentStore = build_incident_store(STORE_PATH)
+
+OUTBOX_BACKEND = (os.getenv("POSTMORTEM_STORE_BACKEND") or os.getenv("INCIDENT_STORE_BACKEND", "json")).strip().lower()
+OUTBOX_DSN = os.getenv("POSTMORTEM_STORE_DSN") or os.getenv("INCIDENT_STORE_DSN") or os.getenv("DATABASE_URL")
+outbox_store = ReliableOutboxStore(
+    backend=OUTBOX_BACKEND,
+    dsn=OUTBOX_DSN,
+    table_name="incident.postmortems_outbox",
+    json_path=Path(DATA_DIR) / "postmortems_outbox.json",
+    owner_service="postmortem-svc",
+)
+inbox_store = ReliableInboxStore(
+    backend=OUTBOX_BACKEND,
+    dsn=OUTBOX_DSN,
+    table_name="incident.postmortems_inbox",
+    json_path=Path(DATA_DIR) / "postmortems_inbox.json",
+    owner_service="postmortem-svc",
+    consumer_name="postmortem-resolved-incident-consumer",
+)
 reference_validator = CanonicalReferenceValidator()
 
 # ---------------------------------------------------------------------------
@@ -186,7 +238,14 @@ def _utc_now() -> str:
 
 def _to_response(pm: Postmortem) -> PostmortemResponse:
     d = pm.to_dict()
-    for list_field in ("contributing_factors", "timeline", "action_items", "author_ids"):
+    for list_field in (
+        "contributing_factors",
+        "timeline",
+        "action_items",
+        "author_ids",
+        "telemetry_event_ids",
+        "reconciliation_ids",
+    ):
         d.setdefault(list_field, [])
     return PostmortemResponse(**d)
 
@@ -258,6 +317,11 @@ def create_postmortem(body: CreatePostmortemRequest) -> PostmortemResponse:
             timeline=body.timeline,
             action_items=body.action_items,
             author_ids=body.author_ids,
+            telemetry_event_ids=body.telemetry_event_ids,
+            reconciliation_ids=body.reconciliation_ids,
+            incident_cluster_id=body.incident_cluster_id,
+            incident_evidence_summary=body.incident_evidence_summary,
+            lineage_ref=body.lineage_ref,
         )
     except (IncidentError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc))
@@ -283,6 +347,8 @@ def create_postmortem(body: CreatePostmortemRequest) -> PostmortemResponse:
 
     try:
         store.create_postmortem(pm)
+    except IncidentConcurrencyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except IncidentError as exc:
         # Covers: orphaned incident_id, evidence mismatch, duplicate
         raise HTTPException(status_code=422, detail=str(exc))
@@ -292,6 +358,118 @@ def create_postmortem(body: CreatePostmortemRequest) -> PostmortemResponse:
         postmortem_id, body.incident_id, body.binding_id,
     )
     return _to_response(pm)
+
+
+@app.post(
+    "/api/postmortems/consume-resolved-incident",
+    response_model=PostmortemResponse,
+    status_code=201,
+    summary="Consume a resolved IncidentCase into an idempotent Postmortem draft",
+)
+def consume_resolved_incident(
+    response: Response,
+    body: Dict[str, Any] = Body(...),
+) -> PostmortemResponse:
+    """Create or refresh a draft Postmortem from a resolved IncidentCase."""
+    event: EventEnvelope | None = None
+    reservation: Dict[str, Any] | None = None
+    raw_event = body.get("event")
+    if raw_event is not None:
+        try:
+            event = EventEnvelope.from_dict(raw_event)
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=f"invalid incident delivery event: {exc}") from exc
+        incident_id = str(body.get("incident_id") or "").strip()
+        if (
+            event.event_type != "incident.resolved"
+            or event.aggregate_type != "incident"
+            or event.aggregate_id != incident_id
+            or str(event.payload.get("incident_id") or "") != incident_id
+            or event.producer_service != "incident-svc"
+            or str(event.payload.get("terminal_status") or "")
+            not in {"resolved", "closed"}
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="incident delivery envelope does not match the requested incident_id",
+            )
+        existing_result = store.find_postmortem_for_incident(incident_id)
+        result_ref = (
+            existing_result.postmortem_id
+            if existing_result is not None
+            else postmortem_id_for_incident(incident_id)
+        )
+        inbox_state, reservation = inbox_store.reserve(
+            event,
+            result_ref=result_ref,
+            lease_seconds=_positive_int_env("POSTMORTEMS_INBOX_CLAIM_SECONDS", 30),
+        )
+        if inbox_state == "conflict":
+            raise HTTPException(status_code=409, detail="divergent incident delivery replay")
+        if inbox_state == "in_progress":
+            raise HTTPException(
+                status_code=503,
+                detail="incident delivery is already claimed and awaiting an applied receipt",
+            )
+        if inbox_state == "applied":
+            applied_result_ref = str(reservation.get("result_ref") or "")
+            existing = store.get_postmortem(applied_result_ref)
+            if existing is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail="incident delivery receipt is applied but its postmortem result is not visible",
+                )
+            if existing.incident_id != incident_id:
+                raise HTTPException(
+                    status_code=409,
+                    detail="incident delivery result identity is occupied by another incident",
+                )
+            response.status_code = 200
+            return _to_response(existing)
+
+    consumer = ResolvedIncidentPostmortemDraftConsumer(incident_store=store)
+    try:
+        result = consumer.consume(body)
+    except PostmortemDraftConsumerRetryableError as exc:
+        if event is not None and reservation is not None:
+            inbox_store.release_reservation(event, reservation)
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except PostmortemDraftConsumerError as exc:
+        if event is not None and reservation is not None:
+            inbox_store.release_reservation(event, reservation)
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception:
+        if event is not None and reservation is not None:
+            inbox_store.release_reservation(event, reservation)
+        raise
+
+    if not result.created:
+        response.status_code = 200
+
+    if event is not None:
+        try:
+            inbox_store.record_applied(
+                event,
+                result_ref=result.postmortem.postmortem_id,
+                notes=f"created={result.created}; updated={result.updated}",
+                reservation=reservation,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except Exception as exc:
+            log.exception("AUDIT: Postmortem inbox receipt write failed for %s", event.event_id)
+            raise HTTPException(
+                status_code=503,
+                detail=f"postmortem applied; inbox receipt awaiting retry: {exc}",
+            ) from exc
+
+    log.info(
+        "Consumed resolved incident into Postmortem %s created=%s updated=%s",
+        result.postmortem.postmortem_id,
+        result.created,
+        result.updated,
+    )
+    return _to_response(result.postmortem)
 
 
 # ---------------------------------------------------------------------------
@@ -342,7 +520,14 @@ def get_operator_payload(postmortem_id: str) -> OperatorPostmortemPayload:
     incident = _get_incident_for_postmortem_or_404(postmortem_id)
 
     pm_dict = pm.to_dict()
-    for list_field in ("contributing_factors", "timeline", "action_items", "author_ids"):
+    for list_field in (
+        "contributing_factors",
+        "timeline",
+        "action_items",
+        "author_ids",
+        "telemetry_event_ids",
+        "reconciliation_ids",
+    ):
         pm_dict.setdefault(list_field, [])
 
     return OperatorPostmortemPayload(
@@ -357,6 +542,327 @@ def get_operator_payload(postmortem_id: str) -> OperatorPostmortemPayload:
 # ---------------------------------------------------------------------------
 # Routes — status transitions
 # ---------------------------------------------------------------------------
+
+def _positive_int_env(name: str, default: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+def _nonnegative_float_env(name: str, default: float) -> float:
+    try:
+        value = float(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+    return value if value >= 0 else default
+
+
+def _postmortem_delivery_ids(
+    postmortem_id: str,
+    intent_checksum: str,
+) -> tuple[str, str, str]:
+    digest = sha256_checksum(
+        {
+            "postmortem_id": postmortem_id,
+            "transition": "published",
+            "intent_checksum": intent_checksum,
+        }
+    )[:24]
+    return (
+        f"evt-postmortem-published-{digest}",
+        f"idmp-postmortem-published-{digest}",
+        f"outbox-postmortem-published-{digest}",
+    )
+
+
+def _delivery_environment(deployment_stage: str | None) -> EnvironmentName:
+    normalized = str(deployment_stage or "").strip().lower()
+    if normalized == "frozen":
+        normalized = EnvironmentName.LIVE.value
+    try:
+        return EnvironmentName(normalized)
+    except ValueError:
+        configured = os.getenv("PANTHEON_EVENT_ENVIRONMENT", EnvironmentName.DEV.value)
+        try:
+            return EnvironmentName(configured.strip().lower())
+        except ValueError:
+            return EnvironmentName.DEV
+
+
+def _bridge_proposal(
+    postmortem: Dict[str, Any],
+    incident: Dict[str, Any],
+    *,
+    publish_event_id: str,
+) -> Dict[str, Any] | None:
+    from services.evolution.postmortem_bridge import (
+        build_published_postmortem_proposal_request,
+        on_postmortem_published,
+    )
+
+    bridge_input = {
+        **postmortem,
+        "severity": incident.get("severity"),
+        "corrective_action_required": bool(postmortem.get("action_items")),
+    }
+    bridge_result = on_postmortem_published(bridge_input)
+    if bridge_result is None:
+        return None
+
+    proposal = build_published_postmortem_proposal_request(
+        postmortem,
+        incident,
+        publish_event_id=publish_event_id,
+    )
+    bridge_action = str(bridge_result["proposed_action"])
+    stage = str(postmortem.get("deployment_stage") or incident.get("deployment_stage") or "").strip().lower()
+    if bridge_action == "rollback":
+        proposal["action_type"] = "flag_for_review"
+    elif bridge_action == "freeze" and stage == "frozen":
+        proposal["action_type"] = "flag_for_review"
+    else:
+        proposal["action_type"] = bridge_action
+    proposal["rationale"] = str(bridge_result["rationale"])
+    metadata = dict(proposal.get("metadata") or {})
+    metadata.update(
+        {
+            "bridge_contract": "on_postmortem_published",
+            "bridge_proposed_action": bridge_action,
+            "bridge_cooldown_window_hours": bridge_result["cooldown_window_hours"],
+            "bridge_action_normalized": proposal["action_type"] != bridge_action,
+        }
+    )
+    proposal["metadata"] = metadata
+    return proposal
+
+
+def _prepare_evolution_delivery(
+    postmortem: Dict[str, Any],
+    incident: Dict[str, Any],
+) -> ReliableOutboxRecord:
+    postmortem_id = str(postmortem["postmortem_id"])
+    intent_postmortem = dict(postmortem)
+    intent_postmortem.pop("published_event_id", None)
+    intent_checksum = sha256_checksum(
+        {"postmortem": intent_postmortem, "incident": incident}
+    )
+    event_id, idempotency_key, outbox_id = _postmortem_delivery_ids(
+        postmortem_id,
+        intent_checksum,
+    )
+    published_snapshot = {**intent_postmortem, "published_event_id": event_id}
+    proposal = _bridge_proposal(
+        published_snapshot,
+        incident,
+        publish_event_id=event_id,
+    )
+    trace = TraceContext.new(
+        environment=EnvironmentScope(
+            name=_delivery_environment(str(incident.get("deployment_stage") or ""))
+        ),
+        source_system="postmortem-svc",
+        correlation_id=str(postmortem.get("trace_id") or "") or None,
+        idempotency_key=idempotency_key,
+    )
+    event = EventEnvelope(
+        event_id=event_id,
+        event_type="postmortem.published",
+        aggregate_type="postmortem",
+        aggregate_id=postmortem_id,
+        sequence_no=1,
+        trace=trace,
+        payload={
+            "postmortem_id": postmortem_id,
+            "incident_id": incident["incident_id"],
+            "decision_id": proposal.get("decision_id") if proposal else None,
+            "proposal": proposal,
+            "postmortem": published_snapshot,
+            "incident": incident,
+        },
+        idempotency_key=idempotency_key,
+        producer_service="postmortem-svc",
+    )
+    record = OutboxRecord(
+        outbox_id=outbox_id,
+        owner_service="postmortem-svc",
+        event=event,
+    )
+    prepared = outbox_store.prepare(
+        record=record,
+        transition={
+            "aggregate_type": "postmortem",
+            "aggregate_id": postmortem_id,
+            "expected_statuses": ["published"],
+            "expected_snapshot_checksum": sha256_checksum(published_snapshot),
+            "source_incident_checksum": sha256_checksum(incident),
+            "published_event_id": event_id,
+        },
+    )
+    log.info(
+        "AUDIT: Prepared postmortem %s bridge event in outbox %s proposal=%s",
+        postmortem_id,
+        outbox_id,
+        bool(proposal),
+    )
+    return prepared
+
+
+def _postmortem_transition_applied(transition: Dict[str, Any]) -> bool:
+    if transition.get("aggregate_type") != "postmortem":
+        return False
+    postmortem = store.get_postmortem(str(transition.get("aggregate_id") or ""))
+    expected = set(transition.get("expected_statuses") or [])
+    if postmortem is None or postmortem.status not in expected:
+        return False
+    expected_event_id = str(transition.get("published_event_id") or "")
+    if expected_event_id and postmortem.published_event_id != expected_event_id:
+        return False
+    return True
+
+
+def reconcile_postmortems_outbox() -> int:
+    return reconcile_prepared(outbox_store, transition_applied=_postmortem_transition_applied)
+
+
+def _publish_postmortem_to_evolution_if_needed(postmortem_id: str) -> None:
+    """Compatibility helper for direct callers; status routes use prepare/activate."""
+    postmortem = store.get_postmortem(postmortem_id)
+    if postmortem is None or postmortem.status != "published":
+        raise ValueError(f"published postmortem not found: {postmortem_id}")
+    incident = store.get_incident(postmortem.incident_id)
+    if incident is None:
+        raise ValueError(f"parent incident not found: {postmortem.incident_id}")
+    outbox_store.activate(_prepare_evolution_delivery(postmortem.to_dict(), incident.to_dict()))
+
+
+# background delivery loop for postmortems
+async def process_postmortems_outbox():
+    reconcile_postmortems_outbox()
+    records = outbox_store.claim_due(
+        worker_id="postmortems-outbox-worker",
+        lease_seconds=_positive_int_env("POSTMORTEMS_OUTBOX_CLAIM_SECONDS", 30),
+    )
+    if not records:
+        return
+
+    import httpx
+    evolution_url = os.getenv("EVOLUTION_URL", "http://localhost:8093").strip()
+    url = f"{evolution_url}/api/evolution/proposals"
+    max_attempts = _positive_int_env("POSTMORTEMS_OUTBOX_MAX_ATTEMPTS", 8)
+    base_delay = _nonnegative_float_env("POSTMORTEMS_OUTBOX_BACKOFF_BASE_SECONDS", 1.0)
+
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        for record in records:
+            postmortem_id = record.event.payload.get("postmortem_id")
+            log.info("AUDIT: Outbox worker attempting delivery of postmortem %s proposal to %s", postmortem_id, url)
+
+            proposal_payload = record.event.payload.get("proposal")
+            if proposal_payload is None:
+                log.info("AUDIT: Bridge produced no proposal for postmortem %s", postmortem_id)
+                applied, canonical = outbox_store.complete_published(record)
+                if not applied:
+                    log.warning(
+                        "AUDIT: Ignored stale no-op completion for postmortem outbox %s; canonical status=%s",
+                        record.outbox_id,
+                        canonical.status,
+                    )
+                continue
+            request_payload = {**dict(proposal_payload), "delivery_event": record.event.to_dict()}
+
+            try:
+                resp = await client.post(url, json=request_payload)
+                if resp.status_code in {200, 201}:
+                    log.info("AUDIT: Successfully delivered proposal for postmortem %s to evolution. Status: %d", postmortem_id, resp.status_code)
+                    applied, canonical = outbox_store.complete_published(record)
+                    if not applied:
+                        log.warning(
+                            "AUDIT: Ignored stale success completion for postmortem outbox %s; canonical status=%s",
+                            record.outbox_id,
+                            canonical.status,
+                        )
+                else:
+                    err_msg = f"status_code={resp.status_code} body={resp.text}"
+                    log.warning("AUDIT: Outbox delivery attempt %d for postmortem %s returned error: %s", record.delivery_attempts + 1, postmortem_id, err_msg)
+                    applied, canonical = outbox_store.complete_failed(
+                        record,
+                        err_msg,
+                        max_attempts=max_attempts,
+                        base_delay_seconds=base_delay,
+                        permanent=resp.status_code in {400, 409, 422},
+                    )
+                    if not applied:
+                        log.warning(
+                            "AUDIT: Ignored stale failure completion for postmortem outbox %s; canonical status=%s",
+                            record.outbox_id,
+                            canonical.status,
+                        )
+            except Exception as exc:
+                err_msg = str(exc)
+                log.warning("AUDIT: Outbox delivery attempt %d for postmortem %s failed with exception: %s", record.delivery_attempts + 1, postmortem_id, err_msg)
+                applied, canonical = outbox_store.complete_failed(
+                    record,
+                    err_msg,
+                    max_attempts=max_attempts,
+                    base_delay_seconds=base_delay,
+                )
+                if not applied:
+                    log.warning(
+                        "AUDIT: Ignored stale exception completion for postmortem outbox %s; canonical status=%s",
+                        record.outbox_id,
+                        canonical.status,
+                    )
+
+async def postmortems_outbox_loop():
+    while True:
+        try:
+            await process_postmortems_outbox()
+        except Exception as exc:
+            log.exception("Error in postmortems outbox delivery loop: %s", exc)
+        await asyncio.sleep(_nonnegative_float_env("POSTMORTEMS_OUTBOX_POLL_SECONDS", 2.0))
+
+@app.on_event("startup")
+def start_postmortems_outbox_worker():
+    import sys
+    if "pytest" in sys.modules or os.getenv("PYTEST_CURRENT_TEST"):
+        return
+    asyncio.create_task(postmortems_outbox_loop())
+
+
+@app.post("/api/postmortems/outbox/{outbox_id}/redrive")
+def redrive_postmortem_outbox(
+    outbox_id: str,
+    body: Dict[str, Any] = Body(...),
+    redrive_token: Optional[str] = Header(None, alias="X-Pantheon-Outbox-Redrive-Token"),
+) -> Dict[str, Any]:
+    expected_token = os.getenv("POSTMORTEMS_OUTBOX_REDRIVE_TOKEN", "").strip()
+    if not expected_token:
+        raise HTTPException(status_code=503, detail="postmortem outbox redrive is not configured")
+    if not redrive_token or not secrets.compare_digest(redrive_token, expected_token):
+        raise HTTPException(status_code=403, detail="invalid postmortem outbox redrive token")
+    actor_id = str(body.get("actor_id") or "").strip()
+    actor_role = str(body.get("actor_role") or "").strip()
+    approval_ref = str(body.get("approval_ref") or "").strip()
+    reason = str(body.get("reason") or "").strip()
+    if actor_role not in {"operator", "risk_owner"} or not actor_id or not approval_ref or not reason:
+        raise HTTPException(
+            status_code=422,
+            detail="actor_id, operator/risk_owner actor_role, approval_ref, and reason are required",
+        )
+    try:
+        record = outbox_store.redrive(
+            outbox_id,
+            actor=f"{actor_role}:{actor_id}",
+            note=f"approval_ref={approval_ref}; {reason}",
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"outbox record not found: {outbox_id}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    log.warning("AUDIT: Redrove postmortem outbox %s by %s:%s", outbox_id, actor_role, actor_id)
+    return record.to_dict()
+
 
 @app.post(
     "/api/postmortems/{postmortem_id}/status",
@@ -373,17 +879,72 @@ def update_status(
 
     published_at is auto-set when transitioning to published.
     """
-    _get_or_404(postmortem_id)
+    pm = _get_or_404(postmortem_id)
+    incident = store.get_incident(pm.incident_id)
+    if incident is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Parent IncidentCase '{pm.incident_id}' not found for postmortem '{postmortem_id}'"
+        )
+
+    crosses_published_boundary = pm.status != "published" and body.status == "published"
+    prepared: ReliableOutboxRecord | None = None
+    published_at = body.published_at or pm.published_at
+    source_snapshot = pm.to_dict()
+    if crosses_published_boundary:
+        from services.evolution.postmortem_bridge import PostmortemBridgeError
+
+        published_at = published_at or _utc_now()
+        prospective = pm.to_dict()
+        prospective["status"] = "published"
+        prospective["published_at"] = published_at
+        try:
+            prepared = _prepare_evolution_delivery(prospective, incident.to_dict())
+        except PostmortemBridgeError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Bridge precondition validation failed: {exc}"
+            ) from exc
+        except Exception as exc:
+            log.exception("AUDIT: Could not prepare postmortem outbox for %s", postmortem_id)
+            raise HTTPException(
+                status_code=503,
+                detail=f"postmortem status not changed because delivery intent could not be persisted: {exc}",
+            ) from exc
+
     try:
         updated = store.update_postmortem_status(
             postmortem_id,
             body.status,
-            published_at=body.published_at,
+            published_at=published_at,
+            published_event_id=(prepared.event.event_id if prepared is not None else None),
+            expected_snapshot=source_snapshot if prepared is not None else None,
+            expected_incident_snapshot=(
+                incident.to_dict() if prepared is not None else None
+            ),
         )
     except IncidentError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        status_code = 409 if "changed concurrently" in str(exc) else 400
+        raise HTTPException(status_code=status_code, detail=str(exc))
 
     log.info("Postmortem %s → status=%s", postmortem_id, body.status)
+
+    if prepared is not None:
+        try:
+            outbox_store.activate(prepared)
+        except Exception as exc:
+            log.exception(
+                "AUDIT: Postmortem %s published but its durable prepared outbox could not be activated",
+                postmortem_id,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "postmortem status changed and durable delivery intent is awaiting reconciliation: "
+                    f"{exc}"
+                ),
+            ) from exc
+
     return _to_response(updated)
 
 

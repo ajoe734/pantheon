@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "task_id": "MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-28",
+  "archived_at": "2026-07-12T10:01:32Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-28",
+    "title": "Prepare MGMT-PERF-IA-006 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-PERF-IA-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Management Performance Ranking IA / Wave 2 integration",
+    "owner": "Codex2",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "depends_on": [
+      "MGMT-PERF-IA-004"
+    ],
+    "artifacts": [
+      "support/sidecars/MGMT-PERF-IA-006/MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-28.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Finalized support-only BFF/frontend evidence-reconciliation handoff after Antigravity approval; PR #3399 merged into dev at a364e10d4e2645ccd903a0108032f54c40345988. Verified git diff --check, artifact presence, ancestry, and successful PR checks; canonical truth and runtime remained unchanged.",
+    "last_update": "2026-07-12T10:01:32Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-PERF-IA-006",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：封包結構與 fail-closed 規格正確，屬 support-only 材料，無變更 canonical truth"
+    ],
+    "review_file": "support/sidecars/MGMT-PERF-IA-006/MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-28.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T10:01:32Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-perf-ia-006-sidecar-bff-handoff-followup-28",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-28",
+      "git_clean_required": false,
+      "commit": "a364e10d4e2645ccd903a0108032f54c40345988",
+      "commit_subject": "Merge pull request #3399 from ajoe734/task/MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-28",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "MGMT-PERF-IA-006": "add follow-up 28 evidence handoff"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-28",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "a364e10d4e2645ccd903a0108032f54c40345988",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-28",
+      "from": "Codex2",
+      "to": "Antigravity",
+      "message": "Support-only evidence reconciliation and first-divergence packet ready at commit 16b3caf2b / PR #3399. Please review fail-closed disposition rules, canonical non-mutation, and parent ownership.",
+      "status": "done",
+      "created_at": "2026-07-12T09:59:17Z",
+      "resolved_at": "2026-07-12T10:00:33Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-28",
+      "from": "Antigravity",
+      "to": "Codex2",
+      "message": "Review approved and returned to the owner Codex2 for finalization",
+      "status": "done",
+      "created_at": "2026-07-12T10:00:33Z",
+      "resolved_at": "2026-07-12T10:01:33Z"
+    }
+  ],
+  "blockers": []
+}

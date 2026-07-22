@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import shutil
 import subprocess
@@ -18,6 +19,7 @@ from common import (
     config_path,
     load_config,
     load_json,
+    normalize_agent_id,
     run_command,
     to_bool,
     utc_now,
@@ -546,7 +548,14 @@ def codex_auth_ready(
     return probe.get("ready") is True
 
 
-def _claude_auth_probe(config: dict[str, Any], provider_id: str, binary: str | None, env: dict[str, str]) -> dict[str, Any]:
+def _claude_auth_probe(
+    config: dict[str, Any],
+    provider_id: str,
+    binary: str | None,
+    env: dict[str, str],
+    *,
+    force: bool = False,
+) -> dict[str, Any]:
     metadata = {
         "credentials": str(claude_credentials_path(env)),
         "credentials_exists": claude_credentials_path(env).exists(),
@@ -564,10 +573,17 @@ def _claude_auth_probe(config: dict[str, Any], provider_id: str, binary: str | N
             metadata=metadata,
         )
     previous = _previous_provider_auth_probe(config, provider_id)
-    if previous and not _auth_probe_due(config, provider_id, previous):
+    if previous and not force and not _auth_probe_due(config, provider_id, previous):
         return _reuse_auth_probe(provider_id, "claude", previous, method="claude_auth_status_refresh")
+    status_payload = _claude_auth_status_payload(config, provider_id, binary, env)
+    account_identity = _claude_account_identity(status_payload)
+    account_group = _claude_account_group(account_identity)
+    if account_identity:
+        metadata["account_identity"] = account_identity
+    if account_group:
+        metadata["account_group"] = account_group
     ready = claude_auth_ready(binary, env=env, refresh_if_needed=True)
-    return _auth_probe_record(
+    record = _auth_probe_record(
         provider_id,
         "claude",
         ready=ready,
@@ -576,6 +592,79 @@ def _claude_auth_probe(config: dict[str, Any], provider_id: str, binary: str | N
         status="ready" if ready else "auth_not_ready",
         metadata=metadata,
     )
+    if account_identity:
+        record["account_identity"] = account_identity
+    if account_group:
+        record["account_group"] = account_group
+    return record
+
+
+def _claude_auth_status_payload(
+    config: dict[str, Any],
+    provider_id: str,
+    binary: str,
+    env: dict[str, str],
+) -> dict[str, Any]:
+    settings = _auth_probe_settings(config, provider_id)
+    timeout = float(settings.get("probe_timeout_seconds") or AUTH_PROBE_DEFAULT_TIMEOUT_SECONDS)
+    try:
+        result = run_command([binary, "auth", "status"], timeout=timeout, env=env)
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    if result.returncode != 0 or not result.stdout:
+        return {}
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _first_nested_value(payload: dict[str, Any], *keys: str) -> str | None:
+    queue: list[dict[str, Any]] = [payload]
+    seen: set[int] = set()
+    while queue:
+        current = queue.pop(0)
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        for key in keys:
+            value = current.get(key)
+            if value not in (None, "", [], {}):
+                return str(value).strip()
+        for value in current.values():
+            if isinstance(value, dict):
+                queue.append(value)
+    return None
+
+
+def _claude_account_identity(payload: dict[str, Any]) -> dict[str, Any]:
+    if not payload or payload.get("loggedIn") is False:
+        return {}
+    identity = {
+        "provider": "claude",
+        "email": _first_nested_value(payload, "email", "userEmail", "accountEmail", "username"),
+        "org_id": _first_nested_value(
+            payload,
+            "orgId",
+            "organizationId",
+            "organizationUUID",
+            "organizationUuid",
+            "orgUUID",
+            "orgUuid",
+        ),
+        "org_name": _first_nested_value(payload, "orgName", "organizationName"),
+        "subscription_type": _first_nested_value(payload, "subscriptionType", "subscription", "plan", "tier"),
+    }
+    return {key: value for key, value in identity.items() if value}
+
+
+def _claude_account_group(identity: dict[str, Any]) -> str | None:
+    account_key = str(identity.get("org_id") or identity.get("email") or "").strip().lower()
+    if not account_key:
+        return None
+    digest = hashlib.sha256(f"claude:{account_key}".encode("utf-8")).hexdigest()[:16]
+    return normalize_agent_id(f"claude_account_{digest}")
 
 
 def _antigravity_auth_metadata(config: dict[str, Any], provider_id: str, env: dict[str, str]) -> dict[str, Any]:
@@ -623,7 +712,13 @@ def _antigravity_probe_ready(returncode: int, stdout: str, combined: str) -> tup
     return True, None, "ready"
 
 
-def _antigravity_auth_probe(config: dict[str, Any], provider_id: str, binary: str | None) -> dict[str, Any]:
+def _antigravity_auth_probe(
+    config: dict[str, Any],
+    provider_id: str,
+    binary: str | None,
+    *,
+    force: bool = False,
+) -> dict[str, Any]:
     env = _antigravity_runtime_env(config, provider_id)
     metadata = _antigravity_auth_metadata(config, provider_id, env)
     if not binary:
@@ -649,7 +744,7 @@ def _antigravity_auth_probe(config: dict[str, Any], provider_id: str, binary: st
 
     previous = _previous_provider_auth_probe(config, provider_id)
     method = "agy_prompt_api_key" if metadata.get("gemini_api_key_present") else "agy_prompt_oauth"
-    if previous and not _auth_probe_due(config, provider_id, previous):
+    if previous and not force and not _auth_probe_due(config, provider_id, previous):
         return _reuse_auth_probe(provider_id, "antigravity", previous, method=method)
 
     provider_settings = (config.get("providers", {}).get(provider_id, {}) or {}).get("antigravity", {}) or {}
@@ -800,6 +895,79 @@ def _copilot_auth_ready(gh_binary: str | None) -> bool:
 def _configured_provider_binary(config: dict[str, Any], provider: str, section: str, default: str) -> str | None:
     provider_settings = (config.get("providers", {}).get(provider, {}) or {}).get(section, {})
     return command_exists(provider_settings.get("cli") or default)
+
+
+def probe_provider_auth(
+    config: dict[str, Any],
+    provider_id: str,
+    *,
+    force: bool = True,
+) -> dict[str, Any]:
+    """Probe one concrete provider immediately before dispatch.
+
+    The periodic capability report is useful fleet telemetry, but its cached
+    Claude/Antigravity probes are not an authoritative launch gate.  This
+    targeted entry point probes only the account about to own a worker and can
+    force a fresh check without rebuilding every provider capability.
+
+    Providers without a live CLI challenge still return a normalized material
+    check.  An unknown delivery mode returns ``ready=None`` so new adapters are
+    not accidentally disabled merely because this module does not know them.
+    """
+    provider_key = str(provider_id or "").strip()
+    provider = (config.get("providers", {}).get(provider_key, {}) or {})
+    delivery_mode = str(provider.get("delivery_mode") or provider_key).strip().lower()
+
+    if delivery_mode == "codex":
+        binary = _configured_provider_binary(config, provider_key, "codex", "codex")
+        return _codex_auth_probe(config, provider_key, binary, force=force)
+    if delivery_mode == "claude_cli":
+        binary = _configured_provider_binary(config, provider_key, "runtime", "claude")
+        return _claude_auth_probe(
+            config,
+            provider_key,
+            binary,
+            _provider_runtime_env(config, provider_key),
+            force=force,
+        )
+    if delivery_mode == "antigravity":
+        binary = _configured_provider_binary(config, provider_key, "antigravity", "agy")
+        return _antigravity_auth_probe(config, provider_key, binary, force=force)
+    if delivery_mode == "gemini":
+        settings = _gemini_settings(config, provider_key)
+        oauth_creds_path = _gemini_oauth_creds_path(config, provider_key)
+        env = _gemini_runtime_env(config, provider_key)
+        ready = _gemini_auth_ready(settings, oauth_creds_path=oauth_creds_path, env=env)
+        return _auth_probe_record(
+            provider_key,
+            "gemini",
+            ready=ready,
+            method="gemini_auth_material",
+            error=None if ready else "Gemini CLI authentication material is not ready.",
+            status="ready" if ready else "auth_material_missing",
+        )
+    if delivery_mode in {"copilot", "copilot_local"}:
+        gh_binary = command_exists(provider.get("cloud", {}).get("cli") or "gh")
+        ready = _copilot_auth_ready(gh_binary)
+        return _auth_probe_record(
+            provider_key,
+            "copilot",
+            ready=ready,
+            method="copilot_auth_material",
+            error=None if ready else "Copilot/GitHub authentication material is not ready.",
+            status="ready" if ready else "auth_material_missing",
+        )
+    return {
+        "provider": provider_key,
+        "kind": delivery_mode or "unknown",
+        "ready": None,
+        "status": "unsupported_probe",
+        "method": "unsupported",
+        "error": None,
+        "checked_at": utc_now(),
+        "last_auth_probe_at": utc_now(),
+        "source": "live",
+    }
 
 
 def _custom_agents_info() -> dict[str, Any]:
@@ -1073,7 +1241,7 @@ def _claude_provider_report(
     ]
     if provider_id != "claude":
         notes.append(f"Provider `{provider_id}` uses its own Claude runtime HOME/profile when configured.")
-    return {
+    report = {
         "installed": installed,
         "host_layer": "CLI + VS Code extension" if provider_binary and claude_path else ("CLI" if provider_binary else "VS Code extension"),
         "delivery_mode": provider_settings.get("delivery_mode", "claude_cli"),
@@ -1122,6 +1290,11 @@ def _claude_provider_report(
         },
         "notes": notes,
     }
+    if auth_probe.get("account_group"):
+        report["account_group"] = auth_probe.get("account_group")
+    if auth_probe.get("account_identity"):
+        report["account_identity"] = auth_probe.get("account_identity")
+    return report
 
 
 def _gemini_provider_report(

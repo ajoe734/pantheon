@@ -1,0 +1,1060 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "Persona provisioning through binding and first-evaluation authoritative readback",
+    "note": "Current hosted reprobe at 2026-07-20T02:59:01Z passed all 14 gates against exact public dev BFF SHA 93c50da6d67560f7035025879af08dfc3197fb76: create stayed provisioning, duplicate retry converged, RuntimeBinding/runtime/deployment-plan readbacks passed, reconcile returned authoritative readback meta, and the first-evaluation schedule was registered. Earlier pass and fail epochs remain immutable history.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Raw artifacts under raw/ are immutable. This manifest may append observations or correct legacy claims only by recording the invalidation in record_log.",
+    "recording_mode": "logical_append_only_with_recorded_legacy_correction",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-20T02:59:01Z",
+    "evidence_cut_semantics": "Current exact-SHA hosted pass run 29713573136 against public BFF SHA 93c50da6d67560f7035025879af08dfc3197fb76 supersedes prior hosted epochs for current product admission. Governed status lifecycle mutation remains separately blocked because the canonical status root does not contain LOOP-PROD-PER-001; no status file was hand-edited.",
+    "id": "LOOP-PROD-PER-001",
+    "overall_admission": "ready_for_independent_review_status_task_absent",
+    "owner": "Codex2",
+    "phase": "Loop Product-Level Remediation / Wave 2",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/evidence.json",
+    "reviewer": "Claude",
+    "target_environment": "dev",
+    "target_maturity": "product-level",
+    "task_branch": "task/LOOP-PROD-PER-001",
+    "title": "Persona provisioning through binding and first-evaluation readback"
+  },
+  "authorities": {
+    "actual_state": [
+      "durable Persona provisioning ledger",
+      "canonical Persona lifecycle state",
+      "Deployment plan and saga projection",
+      "Runtime Manager RuntimeBinding",
+      "paper worker session and heartbeat",
+      "OpenClaw first-evaluation schedule"
+    ],
+    "desired_state": [
+      "create-paper Persona specification",
+      "deployment policy",
+      "canonical first-evaluation workflow catalog"
+    ],
+    "task_packet": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-PER-001.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Codex2 for the task implementation and evidence; owner services remain authoritative for their records",
+    "composes_with": [
+      "LOOP-PROD-DEP-001",
+      "LOOP-PROD-CAP-001",
+      "LOOP-PROD-OODA-001",
+      "PPL-ALLOC-010",
+      "PPL-ALLOC-011",
+      "OPS-DEV-ENV-LEASE-001"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/evidence.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/evidence.sha256",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260715T134000Z-local-validation.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260715T134700Z-github-delivery.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260715T134900Z-admission-blockers.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260715T134921Z-hosted-precheck.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260718T155203Z-hosted-probe-pass.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260718T155300Z-dev-deploy-summary.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260718T162257Z-hosted-probe-pass.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260718T162300Z-dev-deploy-summary.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260718T170333Z-hosted-probe-fail.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260718T181109Z-hosted-probe-pass.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260718T180717Z-dev-deploy-summary.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260720T025901Z-hosted-probe-pass-summary.json"
+    ],
+    "implementation_changed_files": [
+      ".env.example",
+      ".github/workflows/loop-prod-per-001-hosted-probe.yml",
+      ".github/workflows/stage-0-ci.yml",
+      "docker-compose.control.yml",
+      "docker-compose.staging-full.yml",
+      "docker-compose.yml",
+      "env/prod-control.env.example",
+      "scripts/deploy_nonprod_vm.sh",
+      "scripts/probe_loop_prod_per_001_hosted.py",
+      "scripts/test_probe_loop_prod_per_001_hosted.py",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/persona_provisioning.py",
+      "services/control-plane/bff/persona_provisioning_coordinator.py",
+      "services/control-plane/bff/read_store.py",
+      "services/control-plane/bff/test_loop_prod_per_001_provisioning.py",
+      "services/control-plane/bff/test_persona_provisioning_coordinator.py",
+      "services/control-plane/bff/test_persona_provisioning_readback.py",
+      "services/control-plane/bff/test_persona_provisioning_route_security.py",
+      "services/control-plane/cron/persona_cron_registrar.py",
+      "services/control-plane/cron/service.py",
+      "services/control-plane/cron/test_persona_cron_registrar.py",
+      "services/control-plane/cron/workflows.py",
+      "services/openclaw-gateway-adapter/assistant_openclaw_provider.py",
+      "services/openclaw-gateway-adapter/main.py",
+      "services/openclaw-gateway-adapter/test_main.py"
+    ],
+    "not_changing": "Secret values, another task's environment-lease PR, live broker/capital activation, frontend code, or Human/Ops final authority",
+    "owned_layer": "Durable Persona create-paper coordination, explicit authoritative lifecycle reconciliation, exact first-evaluation ownership, and fail-closed deployment/adapter configuration"
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "sha": "708ee6f41",
+        "subject": "LOOP-PROD-PER-001: anchor durable provisioning"
+      },
+      {
+        "sha": "18f2b119a",
+        "subject": "LOOP-PROD-PER-001: anchor worker readback"
+      },
+      {
+        "sha": "7117ae028",
+        "subject": "LOOP-PROD-PER-001: anchor canonical convergence"
+      },
+      {
+        "sha": "e9dd98dba",
+        "subject": "LOOP-PROD-PER-001: anchor real PostgreSQL proof"
+      },
+      {
+        "sha": "cbe8796db",
+        "subject": "LOOP-PROD-PER-001: anchor strict deploy readback"
+      },
+      {
+        "sha": "ddbdec9a2e785e389f88bdb266624f2e6d487443",
+        "subject": "LOOP-PROD-PER-001: anchor authoritative provisioning controller"
+      },
+      {
+        "sha": "63c9e2bb9",
+        "subject": "LOOP-PROD-PER-001: anchor terminal readback fencing"
+      },
+      {
+        "sha": "fd829751a",
+        "subject": "LOOP-PROD-PER-001: anchor composed BFF contract"
+      },
+      {
+        "sha": "15a749a6078e0c9fb47106529e5e6450e377f6d1",
+        "subject": "LOOP-PROD-PER-001: register persona deployment artifacts"
+      },
+      {
+        "sha": "900ef22729bd794106a17887cc361a4e6ce2ca09",
+        "subject": "LOOP-PROD-PER-001: add hosted persona probe"
+      },
+      {
+        "sha": "8ed4410552083cb85f93e171d67c9e92ef1d61f0",
+        "subject": "LOOP-PROD-PER-001: route hosted probe through stage0"
+      },
+      {
+        "sha": "8c914a4096215fd31072484d180a05fb737aed25",
+        "subject": "LOOP-PROD-PER-001: wait for schedule readback"
+      },
+      {
+        "sha": "8a17d764d5694c129093ce27a03bf3778c7d66f9",
+        "subject": "LOOP-PROD-PER-001: align cron schedule readback shape"
+      },
+      {
+        "sha": "45e62126bfca92a987273a7b88ee343929ad8533",
+        "subject": "LOOP-PROD-PER-001: accept canonical artifact ids in hosted probe"
+      },
+      {
+        "sha": "8245adc5e8aa8cc0ceb45048542b6d6bc5c3b86a",
+        "subject": "LOOP-PROD-PER-001: harden hosted probe transport retry"
+      },
+      {
+        "sha": "de8a2d47ffc6a7a299d2d97605d2a801fc94a818",
+        "subject": "LOOP-PROD-PER-001: serialize hosted probe retry evidence"
+      },
+      {
+        "sha": "c82d280ea",
+        "subject": "LOOP-PROD-PER-001: anchor current hosted evidence"
+      },
+      {
+        "sha": "5858beee0",
+        "subject": "LOOP-PROD-PER-001: anchor current hosted evidence"
+      },
+      {
+        "sha": "2db7a999ed4b7d89eb57f732acf9739407bb8ff6",
+        "subject": "LOOP-PROD-PER-001: anchor reconcile replay"
+      }
+    ],
+    "pull_request": {
+      "number": 3713,
+      "url": "https://github.com/ajoe734/pantheon/pull/3713",
+      "head_sha": "34a37f514219a4739153faff6b7c185e2e243bb2",
+      "base": "dev",
+      "merged_at": "2026-07-15T13:47:00Z",
+      "merge_sha": "e7a6dfa5cc6bab0fe6a6cf28b0c51ac590dbf8bf"
+    },
+    "required_checks": [
+      {
+        "workflow": "Branch CI Gate",
+        "name": "Commit trailers",
+        "conclusion": "success"
+      },
+      {
+        "workflow": "Branch CI Gate",
+        "name": "Runtime mirror guard",
+        "conclusion": "success"
+      },
+      {
+        "workflow": "Branch CI Gate",
+        "name": "Smoke acceptance",
+        "conclusion": "success"
+      },
+      {
+        "workflow": "Orchestrator Sync",
+        "name": "Forward to orchestrator",
+        "conclusion": "success"
+      }
+    ],
+    "raw_evidence_ref": "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260715T134700Z-github-delivery.json",
+    "followup_pull_requests": [
+      {
+        "number": 3849,
+        "url": "https://github.com/ajoe734/pantheon/pull/3849",
+        "head_sha": "15a749a6078e0c9fb47106529e5e6450e377f6d1",
+        "base": "dev",
+        "merged_at": "2026-07-18T11:56:06Z",
+        "merge_sha": "585a06a3b34a320ac697d75d1a719dc2aabf6b45",
+        "title": "LOOP-PROD-PER-001: register persona deployment artifacts"
+      },
+      {
+        "number": 3850,
+        "url": "https://github.com/ajoe734/pantheon/pull/3850",
+        "head_sha": "900ef22729bd794106a17887cc361a4e6ce2ca09",
+        "base": "dev",
+        "merged_at": "2026-07-18T12:22:35Z",
+        "merge_sha": "93d3dcc5f7c561df77b4dd77ea4438017d25ae80",
+        "title": "LOOP-PROD-PER-001: add hosted persona probe"
+      },
+      {
+        "number": 3851,
+        "url": "https://github.com/ajoe734/pantheon/pull/3851",
+        "head_sha": "8ed4410552083cb85f93e171d67c9e92ef1d61f0",
+        "base": "dev",
+        "merged_at": "2026-07-18T12:27:18Z",
+        "merge_sha": "c11e42ba9f33b8c7149ebd083a4a0213236d954c",
+        "title": "LOOP-PROD-PER-001: route hosted probe through stage0"
+      },
+      {
+        "number": 3853,
+        "url": "https://github.com/ajoe734/pantheon/pull/3853",
+        "head_sha": "8c914a4096215fd31072484d180a05fb737aed25",
+        "base": "dev",
+        "merged_at": "2026-07-18T12:45:33Z",
+        "merge_sha": "e78bfc056544dd629bcb47103eaa9f8dc2139e78",
+        "title": "LOOP-PROD-PER-001: wait for schedule readback"
+      },
+      {
+        "number": 3856,
+        "url": "https://github.com/ajoe734/pantheon/pull/3856",
+        "head_sha": "8a17d764d5694c129093ce27a03bf3778c7d66f9",
+        "base": "dev",
+        "merged_at": "2026-07-18T13:33:52Z",
+        "merge_sha": "4104782461c118aad677bd1975a12d2882aed033",
+        "title": "LOOP-PROD-PER-001: align cron schedule readback shape"
+      },
+      {
+        "number": 3858,
+        "url": "https://github.com/ajoe734/pantheon/pull/3858",
+        "head_sha": "45e62126bfca92a987273a7b88ee343929ad8533",
+        "base": "dev",
+        "merged_at": "2026-07-18T14:28:56Z",
+        "merge_sha": "148335806f14cd4a0bc492c695de5f7d09a657e7",
+        "title": "LOOP-PROD-PER-001: accept canonical artifact ids in hosted probe"
+      },
+      {
+        "number": 3859,
+        "url": "https://github.com/ajoe734/pantheon/pull/3859",
+        "head_sha": "8245adc5e8aa8cc0ceb45048542b6d6bc5c3b86a",
+        "base": "dev",
+        "merged_at": "2026-07-18T14:39:23Z",
+        "merge_sha": "154d0015794c1e726bfb558d54f8ae2bb861c2f7",
+        "title": "LOOP-PROD-PER-001: harden hosted probe transport retry"
+      },
+      {
+        "number": 3860,
+        "url": "https://github.com/ajoe734/pantheon/pull/3860",
+        "head_sha": "de8a2d47ffc6a7a299d2d97605d2a801fc94a818",
+        "base": "dev",
+        "merged_at": "2026-07-18T14:45:56Z",
+        "merge_sha": "60e762ea25729705208ed455cb048bc3dfddc293",
+        "title": "LOOP-PROD-PER-001: serialize hosted probe retry evidence"
+      },
+      {
+        "number": 3865,
+        "url": "https://github.com/ajoe734/pantheon/pull/3865",
+        "head_sha": "7a84d773e9290307afe4bd0c207547cc2a5050a7",
+        "base": "dev",
+        "merged_at": "2026-07-18T16:16:03Z",
+        "merge_sha": "c5c616e3a44cc325a4663cd5f4dfa996a38c9da4",
+        "title": "LOOP-PROD-PER-001: anchor hosted evidence"
+      },
+      {
+        "number": 3867,
+        "url": "https://github.com/ajoe734/pantheon/pull/3867",
+        "head_sha": "489dd4329bde9a909f54481bcec64928354d0736",
+        "base": "dev",
+        "merged_at": "2026-07-18T16:30:18Z",
+        "merge_sha": "784cefcd7b84cb89a01bcf35c2e9e49fcc2a2924",
+        "title": "LOOP-PROD-PER-001: anchor current hosted evidence"
+      },
+      {
+        "number": 3872,
+        "url": "https://github.com/ajoe734/pantheon/pull/3872",
+        "head_sha": "2db7a999ed4b7d89eb57f732acf9739407bb8ff6",
+        "base": "dev",
+        "merged_at": "2026-07-18T17:47:13Z",
+        "merge_sha": "060b2eb999c6ccbb3ce50153c747127c0deafc33",
+        "title": "LOOP-PROD-PER-001: anchor reconcile replay"
+      },
+      {
+        "number": 3900,
+        "url": "https://github.com/ajoe734/pantheon/pull/3900",
+        "head_sha": "2c25ca41e58b48b5db6562df55bf8d63c7d26713",
+        "base": "dev",
+        "merged_at": "2026-07-20T03:12:18Z",
+        "merge_sha": "0d64fc8f3a47e910862f46ddad02d27183ea6199",
+        "title": "LOOP-PROD-PER-001: anchor current hosted proof",
+        "required_checks": "passed"
+      }
+    ],
+    "downstream_deployment_merge": {
+      "number": 3861,
+      "url": "https://github.com/ajoe734/pantheon/pull/3861",
+      "head_sha": "348c328474b049a467c7b9b9198020fa3a16f225",
+      "base": "dev",
+      "merged_at": "2026-07-18T14:59:11Z",
+      "merge_sha": "df60d6be6247dada2fe62d7c75ad56c11459e9a7",
+      "title": "LOOP-PROD-TEL-002: require running paper worker for stimulus",
+      "per_relevance": "superseded as current deployed SHA by PR #3864; retained because it carried the earlier passing PER probe cut"
+    },
+    "github_review_visibility": {
+      "status": "not_visible_in_pr_metadata",
+      "checked_at": "2026-07-20T03:01:00Z",
+      "reviewer": "Claude",
+      "note": "GitHub review records and reviewDecision are empty for implementation PR #3872, prior evidence PR #3876, and current evidence PR #3900. Current product proof is ready, but no independent reviewer verdict is claimed."
+    },
+    "current_deployment_merge": {
+      "pull_request": 3872,
+      "merge_sha": "060b2eb999c6ccbb3ce50153c747127c0deafc33",
+      "merged_at": "2026-07-18T17:47:13Z",
+      "nonprod_deploy_run_id": 29654625707,
+      "nonprod_deploy_conclusion": "success",
+      "public_bff_source_commit_sha": "060b2eb999c6ccbb3ce50153c747127c0deafc33",
+      "raw_evidence_ref": "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260718T180717Z-dev-deploy-summary.json",
+      "number": 3872,
+      "url": "https://github.com/ajoe734/pantheon/pull/3872",
+      "head_sha": "2db7a999ed4b7d89eb57f732acf9739407bb8ff6",
+      "base": "dev",
+      "title": "LOOP-PROD-PER-001: anchor reconcile replay",
+      "per_relevance": "Historical PER delivery identity at 2026-07-18T18:07:17Z; includes terminal reconcile replay and authoritative first-evaluation schedule meta from PR #3872. Current proof is separately bound to run 29713573136 and deployed SHA 93c50da6d67560f7035025879af08dfc3197fb76."
+    },
+    "current_hosted_probe": {
+      "workflow": "Pantheon Stage 0 CI",
+      "run_id": 29713573136,
+      "job_id": 88261837809,
+      "conclusion": "success",
+      "completed_at": "2026-07-20T02:59:01Z",
+      "workflow_head_sha": "600b6e25957d739299d39db3802d9b98f97e0141",
+      "expected_and_observed_bff_sha": "93c50da6d67560f7035025879af08dfc3197fb76",
+      "raw_evidence_ref": "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260720T025901Z-hosted-probe-pass-summary.json",
+      "source_artifact_sha256": "2a0e28b88adfcf9d2f2ec46f9134921e249f3c98b253677d4eec211eb4f9673a"
+    }
+  },
+  "validation": {
+    "conclusion": "local_and_current_hosted_probe_pass_status_task_absent",
+    "validated_at": "2026-07-20T02:59:01Z",
+    "validated_head_sha": "93c50da6d67560f7035025879af08dfc3197fb76",
+    "raw_evidence_refs": [
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260715T134000Z-local-validation.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260718T155203Z-hosted-probe-pass.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260718T162257Z-hosted-probe-pass.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260718T170333Z-hosted-probe-fail.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260718T181109Z-hosted-probe-pass.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260718T180717Z-dev-deploy-summary.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260720T025901Z-hosted-probe-pass-summary.json"
+    ],
+    "coverage_summary": [
+      "focused local PER and adjacent suites passed on the task worktree before PR #3872 merge",
+      "nonprod deploy run 29654625707 completed success and public /bff/version reports exact BFF SHA 060b2eb999c6ccbb3ce50153c747127c0deafc33 with strict/no-stub auth",
+      "historical hosted run 29655287111 observed exact public BFF SHA 060b2eb999c6ccbb3ce50153c747127c0deafc33 and passed all gates for its evidence epoch",
+      "hosted security negative checks passed: unauthenticated create 401, cross-tenant create 403, live-capital create 422",
+      "current hosted run 29713573136 re-proved all 14 gates at BFF SHA 93c50da6d67560f7035025879af08dfc3197fb76 with dynamic persona persona-c4bbeada41a6bdf5e2e3, RuntimeBinding rb-c1646761eeb84ac9915eff3569d239f7, runtime rt-59974662, and registered first-evaluation job 9f9cfa19-803f-4dc2-9f6b-cc09127ac328",
+      "read-only governed status lookup now reaches task resolution but returns Unknown task: LOOP-PROD-PER-001; status lifecycle remains blocked without hand-editing canonical files"
+    ],
+    "local_verification_commands": [
+      "python3 -m py_compile services/control-plane/cron/persona_cron_registrar.py services/control-plane/cron/test_persona_cron_registrar.py services/openclaw-gateway-adapter/main.py services/openclaw-gateway-adapter/test_main.py services/control-plane/bff/test_persona_provisioning_readback.py",
+      "python3 -m pytest -q services/control-plane/cron/test_persona_cron_registrar.py",
+      "python3 -m pytest -q services/openclaw-gateway-adapter/test_main.py -k cron",
+      "python3 -m pytest -q services/control-plane/bff/test_persona_provisioning_readback.py services/control-plane/bff/test_loop_prod_per_001_provisioning.py services/control-plane/bff/test_persona_provisioning_route_security.py services/control-plane/bff/test_persona_provisioning_coordinator.py",
+      "python3 -m pytest -q services/registry/test_strategy_artifact.py services/runtime-manager/test_deploy_authority.py services/deployment/test_runtime_manager_dispatch_adapter.py services/deployment/test_service.py",
+      "python3 -m pytest -q services/openclaw-gateway-adapter/test_main.py",
+      "python3 -m pytest -q services/control-plane/cron/test_cron.py",
+      "python3 -m py_compile scripts/probe_loop_prod_per_001_hosted.py scripts/test_probe_loop_prod_per_001_hosted.py",
+      "python3 -m pytest -q scripts/test_probe_loop_prod_per_001_hosted.py",
+      "git diff --check"
+    ],
+    "hosted_verification": {
+      "workflow": "Pantheon Stage 0 CI",
+      "mode": "loop-prod-per-001-hosted-probe",
+      "run_id": 29713573136,
+      "job_id": 88261837809,
+      "conclusion": "success",
+      "completed_at": "2026-07-20T02:59:01Z",
+      "workflow_head_sha": "600b6e25957d739299d39db3802d9b98f97e0141",
+      "expected_source_sha": "93c50da6d67560f7035025879af08dfc3197fb76",
+      "observed_source_sha": "93c50da6d67560f7035025879af08dfc3197fb76",
+      "raw_evidence_ref": "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260720T025901Z-hosted-probe-pass-summary.json",
+      "failed_checks": [],
+      "passed_checks": 14,
+      "blocker": null
+    }
+  },
+  "deployment": {
+    "applicable": true,
+    "environment": "dev",
+    "public_bff_base_url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
+    "expected_merge_sha": "93c50da6d67560f7035025879af08dfc3197fb76",
+    "environment_lease": {
+      "status": "passed_current_nonprod_deploy_under_shared_lease",
+      "run_id": 29654625707,
+      "job_id": 88107710277,
+      "completed_at": "2026-07-18T18:07:17Z",
+      "reason": "Nonprod deploy run 29654625707 deployed BFF SHA 060b2eb999c6ccbb3ce50153c747127c0deafc33, acquired the shared dev environment lease, passed public exact-version smoke, and released after complete success.",
+      "raw_evidence_ref": "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260718T180717Z-dev-deploy-summary.json"
+    },
+    "strict_auth_credentials": {
+      "status": "passed_for_bff_surface",
+      "reason": "/bff/version reported auth_mode=strict and auth_stub=false; hosted negative probes returned 401 without auth, 403 for cross-tenant, and 422 for live-capital create."
+    },
+    "canonical_root_deploy": {
+      "status": "historical_per_delivery_superseded_by_current_exact_sha_release",
+      "run_id": 29654625707,
+      "head_sha": "060b2eb999c6ccbb3ce50153c747127c0deafc33",
+      "completed_at": "2026-07-18T18:07:17Z",
+      "raw_evidence_ref": "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260718T180717Z-dev-deploy-summary.json",
+      "current_observed_release": "release/v2026.07.19.3",
+      "current_observed_sha": "93c50da6d67560f7035025879af08dfc3197fb76",
+      "current_release_pull_request": 3893
+    },
+    "identity_admission": {
+      "status": "pass_current_hosted_probe_ready_for_review",
+      "authoritative_chain": [
+        "/bff/version source_commit_sha 93c50da6d67560f7035025879af08dfc3197fb76",
+        "/readyz dependencies runtime_manager/governance/deployment ok",
+        "hosted probe run 29713573136 passed 14/14 checks",
+        "RuntimeBinding rb-c1646761eeb84ac9915eff3569d239f7 authoritative readback active",
+        "Deployment plan plan-persona-paper-df5a46d76ff2e59248ef authoritative readback uses artifact-persona-paper-df5a46d76ff2e59248ef",
+        "POST /provisioning/reconcile returned authoritative first-evaluation schedule job 9f9cfa19-803f-4dc2-9f6b-cc09127ac328"
+      ],
+      "reason": "Current exact-SHA hosted reprobe confirms the complete PER chain remains valid after later dev releases."
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "observed_at": "2026-07-15T13:49:21Z",
+      "status": "blocked",
+      "hosted_source_sha": "a10f752b3ea4420f271535e255f2d4e7d3d498b2",
+      "expected_source_sha": "e7a6dfa5cc6bab0fe6a6cf28b0c51ac590dbf8bf",
+      "auth_stub": true,
+      "auth_mode": "permissive",
+      "mfa_required": false,
+      "fixed_bearer_http_status": 200,
+      "image_digest": "unknown",
+      "raw_evidence_ref": "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260715T134921Z-hosted-precheck.json",
+      "superseded_by": "post_deploy hosted probe run 29650745889"
+    },
+    "post_deploy": {
+      "observed_at": "2026-07-18T16:22:57Z",
+      "status": "passed",
+      "raw_evidence_ref": "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260718T162257Z-hosted-probe-pass.json",
+      "github_run_url": "https://github.com/ajoe734/pantheon/actions/runs/29651757459",
+      "workflow_run_id": 29651757459,
+      "job_id": 88099168852,
+      "workflow_head_sha": "c5c616e3a44cc325a4663cd5f4dfa996a38c9da4",
+      "expected_source_sha": "36262a8133770aa49287582c840029cec1b3014e",
+      "observed_source_sha": "36262a8133770aa49287582c840029cec1b3014e",
+      "build_time": "2026-07-18T15:56:05Z",
+      "auth_stub": false,
+      "auth_mode": "strict",
+      "readyz_status": "ok",
+      "persona_id": "persona-947204f51dd8c28e9f2d",
+      "persona_name": "LOOP-PROD-PER-001 hosted proof 20260718T162037Z-e1a5ab16",
+      "idempotency_key": "loop-prod-per-001-hosted-20260718T162037Z-e1a5ab16",
+      "runtime_id": "rt-b84ab9d2",
+      "runtime_binding_id": "rb-5c2213c947114385adbb27ff40fff6ea",
+      "deployment_plan_id": "plan-persona-paper-f1a155d6a3059e767d71",
+      "strategy_artifact_id": "artifact-persona-paper-f1a155d6a3059e767d71",
+      "strategy_spec_registry_id": "reg-strategy-spec-persona-f1a155d6a3059e767d71",
+      "paper_worker_session_id": "prmon-rb-5c2213c947114385adbb27ff40fff6ea-9e94758a",
+      "paper_worker_last_heartbeat_at": "2026-07-18T16:22:38Z",
+      "first_evaluation_workflow_id": "pantheon.persona.first-evaluation",
+      "poll_count": 3,
+      "checks": [
+        "jwt.minted_in_memory",
+        "deployment_identity.exact_sha",
+        "auth_posture.strict_no_stub",
+        "readyz.dependencies_ok",
+        "security.create_requires_auth",
+        "security.create_rejects_cross_tenant",
+        "security.create_rejects_live_capital",
+        "persona.create_initial_state_provisioning",
+        "persona.duplicate_retry_converges",
+        "persona.reconcile_terminal_paper_running",
+        "runtime_binding.authoritative_readback",
+        "runtime_status.authoritative_readback",
+        "deployment_plan.uses_strategy_artifact",
+        "first_evaluation_schedule.readback_gated_final_state"
+      ],
+      "superseded_by": "latest_reprobe run 29655287111 against public BFF SHA 060b2eb999c6ccbb3ce50153c747127c0deafc33 passed with authoritative schedule meta"
+    },
+    "latest_reprobe": {
+      "observed_at": "2026-07-20T02:59:01Z",
+      "status": "passed",
+      "raw_evidence_ref": "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260720T025901Z-hosted-probe-pass-summary.json",
+      "github_run_url": "https://github.com/ajoe734/pantheon/actions/runs/29713573136",
+      "workflow_run_id": 29713573136,
+      "job_id": 88261837809,
+      "workflow_head_sha": "600b6e25957d739299d39db3802d9b98f97e0141",
+      "expected_source_sha": "93c50da6d67560f7035025879af08dfc3197fb76",
+      "observed_source_sha": "93c50da6d67560f7035025879af08dfc3197fb76",
+      "build_time": "2026-07-19T19:32:12Z",
+      "auth_stub": false,
+      "auth_mode": "strict",
+      "readyz_status": "ok",
+      "persona_id": "persona-c4bbeada41a6bdf5e2e3",
+      "persona_name": "LOOP-PROD-PER-001 hosted proof 20260720T025751Z-25ac62b9",
+      "idempotency_key": "loop-prod-per-001-hosted-20260720T025751Z-25ac62b9",
+      "runtime_id": "rt-59974662",
+      "runtime_binding_id": "rb-c1646761eeb84ac9915eff3569d239f7",
+      "deployment_plan_id": "plan-persona-paper-df5a46d76ff2e59248ef",
+      "strategy_artifact_id": "artifact-persona-paper-df5a46d76ff2e59248ef",
+      "paper_worker_session_id": "prmon-rb-c1646761eeb84ac9915eff3569d239f7-d5cdfe2b",
+      "paper_worker_last_heartbeat_at": "2026-07-20T02:58:10Z",
+      "first_evaluation_workflow_id": "pantheon.persona.first-evaluation",
+      "first_evaluation_registered": true,
+      "first_evaluation_job_id": "9f9cfa19-803f-4dc2-9f6b-cc09127ac328",
+      "first_evaluation_request_id": "persona-provisioning:persona-c4bbeada41a6bdf5e2e3:pantheon.persona.first-evaluation",
+      "poll_count": 1,
+      "passed_checks": 14,
+      "failed_checks": [],
+      "supersedes": "prior current-pass run 29655287111 at BFF SHA 060b2eb999c6ccbb3ce50153c747127c0deafc33; all prior raw epochs remain immutable"
+    },
+    "superseded_failed_reprobe": {
+      "observed_at": "2026-07-18T17:03:33Z",
+      "status": "failed",
+      "raw_evidence_ref": "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260718T170333Z-hosted-probe-fail.json",
+      "github_run_url": "https://github.com/ajoe734/pantheon/actions/runs/29653015381",
+      "workflow_run_id": 29653015381,
+      "job_id": 88102458757,
+      "workflow_head_sha": "bf782753dcef2fdc0859de934380037e4eb63807",
+      "expected_source_sha": "8ba246a5633312e352894efbe4f8c92f0351ba85",
+      "observed_source_sha": "8ba246a5633312e352894efbe4f8c92f0351ba85",
+      "build_time": "2026-07-18T16:30:09Z",
+      "auth_stub": false,
+      "auth_mode": "strict",
+      "readyz_status": "ok",
+      "persona_id": "persona-96f7ee586133d92aba0f",
+      "persona_name": "LOOP-PROD-PER-001 hosted proof 20260718T165858Z-d392b835",
+      "idempotency_key": "loop-prod-per-001-hosted-20260718T165858Z-d392b835",
+      "runtime_id": "rt-ad45ab53",
+      "runtime_binding_id": "rb-fc718ed955b64236a0cca32dda5de830",
+      "deployment_plan_id": "plan-persona-paper-f656da03ed6e4f3b1fb7",
+      "strategy_artifact_id": "artifact-persona-paper-f656da03ed6e4f3b1fb7",
+      "first_evaluation_workflow_id": "pantheon.persona.first-evaluation",
+      "poll_count": 3,
+      "passed_checks": 12,
+      "failed_checks": [
+        "persona.reconcile_terminal_paper_running",
+        "first_evaluation_schedule.readback_gated_final_state"
+      ],
+      "failure_summary": "POST /provisioning/reconcile timed out on all three 60-second attempts; final detail reached paper_running, but current probe lacks authoritative reconcile meta for final admission."
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "status": "pass",
+      "local_conclusion": "pass",
+      "hosted_conclusion": "pass_current_reprobe",
+      "proof": [
+        "Deterministic reservation and owner GET-first coordination",
+        "duplicate RuntimeBinding/worker fail-closed behavior",
+        "current hosted duplicate idempotency retry converged to Persona persona-c4bbeada41a6bdf5e2e3 without a second identity"
+      ]
+    },
+    "failure_and_degraded_behavior": {
+      "status": "pass_by_local_terminal_coverage",
+      "local_conclusion": "pass",
+      "hosted_conclusion": "success_path_pass_current_reprobe",
+      "proof": [
+        "Deployment compensating/failed, binding mismatch, worker stale/duplicate, cron outage, timeout, and operator degraded-dependency tests pass locally",
+        "current hosted success path completed with degraded_dependencies=[] and terminal reconcile status ok"
+      ]
+    },
+    "request_receipt_downstream_correlation": {
+      "status": "pass",
+      "local_conclusion": "pass",
+      "hosted_conclusion": "pass_current_reprobe",
+      "proof": [
+        "Durable success stores exact Deployment, RuntimeBinding, paper worker, and first-evaluation schedule proof",
+        "hosted create stayed provisioning until reconcile/readback returned paper_running with Persona persona-c4bbeada41a6bdf5e2e3",
+        "current hosted reprobe 29713573136 passed the authoritative reconcile-meta gate and first-evaluation schedule readback for job 9f9cfa19-803f-4dc2-9f6b-cc09127ac328"
+      ]
+    },
+    "restart_and_recovery": {
+      "status": "pass_by_local_restart_coverage",
+      "local_conclusion": "pass",
+      "hosted_conclusion": "success_path_pass",
+      "proof": [
+        "Terminal ledger replay precedes mutable owner reads and restores durable runtime identities after the ledger/Persona crash window",
+        "real PostgreSQL lease and checkpoint integration passed"
+      ]
+    },
+    "rollback_or_compensation": {
+      "status": "pass_by_local_compensation_coverage",
+      "local_conclusion": "pass",
+      "hosted_conclusion": "success_path_pass",
+      "proof": [
+        "Failure holds the ledger lease, persists terminal truth even when cron cleanup is degraded, and resumes Deployment/Capital compensation",
+        "hosted paper path did not require live-capital rollback and rejected initial live capital"
+      ]
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "status": "passed_current_exact_sha_after_governed_delivery",
+      "reason": "PER implementation SHA 060b2eb999c6ccbb3ce50153c747127c0deafc33 was originally deployed under shared lease; current Stage-0 probe performed no deployment and verified the inherited PER behavior at exact release SHA 93c50da6d67560f7035025879af08dfc3197fb76."
+    },
+    "hosted_frontend": {
+      "status": "not_applicable",
+      "reason": "This task changes backend/control-plane provisioning only"
+    },
+    "mfa": {
+      "status": "not_applicable_for_dev_paper_persona",
+      "reason": "Hosted /bff/version reports mfa_required=false; the accepted operation is low-risk dev paper Persona creation and does not promote live capital."
+    },
+    "no_live_capital": {
+      "status": "pass",
+      "local_conclusion": "pass",
+      "hosted_conclusion": "pass",
+      "proof": [
+        "Create flow is low-risk paper-only and rejects live/prod/canary initial modes",
+        "hosted live-capital create returned 422"
+      ]
+    },
+    "rbac": {
+      "status": "pass",
+      "local_conclusion": "pass",
+      "hosted_conclusion": "pass",
+      "proof": [
+        "hosted create without auth returned 401",
+        "strict/no-stub posture was read back from /bff/version"
+      ]
+    },
+    "tenant_isolation": {
+      "status": "pass",
+      "local_conclusion": "pass",
+      "hosted_conclusion": "pass",
+      "proof": [
+        "hosted cross-tenant create returned 403"
+      ]
+    },
+    "two_person_approval": {
+      "status": "not_applicable",
+      "reason": "Low-risk paper Persona creation does not activate live capital; Human/Ops production sign-off remains a separate program gate"
+    }
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "statement": "create remains provisioning until canonical binding, worker, and first evaluation schedule read back",
+      "status": "pass_current_hosted_reprobe",
+      "local": "pass",
+      "hosted": "pass_current_reprobe",
+      "evidence": "current hosted run 29713573136 created persona-c4bbeada41a6bdf5e2e3 in provisioning, duplicate retry converged, and final reconcile returned paper_running with authoritative RuntimeBinding/paper worker/first-evaluation schedule meta."
+    },
+    {
+      "id": "AC2",
+      "statement": "dynamic identity propagates without seed name, pool, binding, or metric substitution",
+      "status": "pass",
+      "local": "pass",
+      "hosted": "pass_current_reprobe",
+      "evidence": "current hosted run 29713573136 used dynamic persona persona-c4bbeada41a6bdf5e2e3 with plan/binding/runtime ids and artifact-persona-paper-df5a46d76ff2e59248ef; no seed substitution observed."
+    },
+    {
+      "id": "AC3",
+      "statement": "downstream failure is terminal and restart-safe",
+      "status": "pass_by_local_terminal_coverage",
+      "local": "pass",
+      "hosted": "success_path_pass",
+      "evidence": "local BFF/cron/deployment/runtime-manager suites cover terminal failure, restart replay, degraded dependencies, and compensation"
+    },
+    {
+      "id": "AC4",
+      "statement": "duplicate create/retry converges to one Persona, binding, worker, and evaluation schedule",
+      "status": "pass",
+      "local": "pass_by_composed_contracts",
+      "hosted": "pass_current_reprobe",
+      "evidence": "current hosted duplicate idempotency retry returned the same persona id persona-c4bbeada41a6bdf5e2e3; final reconcile and first-evaluation readback passed."
+    },
+    {
+      "id": "AC5",
+      "statement": "archive branch, PR, checks, merge SHA, independent reviewer verdict, and residual risk owner/expiry",
+      "status": "repo_delivery_ready_for_review_status_task_absent",
+      "delivery": "pass_through_current_evidence_pr_3900",
+      "independent_review": "pending_claude_review",
+      "reviewer": "Claude",
+      "evidence": "implementation PR #3872 and current evidence PR #3900 merged with green checks; hosted probe run 29713573136 passed. No independent Claude verdict is recorded. Governed status handoff is separately blocked because the canonical status root reports Unknown task: LOOP-PROD-PER-001 and must not be hand-edited."
+    },
+    {
+      "id": "AC6",
+      "statement": "authoritative pre/post readback; no synthetic receipt is terminal success",
+      "status": "pass_current_hosted_reprobe",
+      "local": "pass",
+      "hosted_pre": "superseded_blocked_precheck",
+      "hosted_post": "pass_current_reprobe",
+      "evidence": "current hosted run 29713573136 has authoritative RuntimeBinding/runtime/deployment-plan readbacks plus terminal POST /provisioning/reconcile meta and first-evaluation schedule proof."
+    },
+    {
+      "id": "AC7",
+      "statement": "duplicate, degraded, restart, rollback, compensation, and admitted-command RPO=0 proof",
+      "status": "pass_current_hosted_reprobe_with_local_failure_coverage",
+      "local": "pass",
+      "hosted": "duplicate_success_authoritative_success_path_pass_current_reprobe",
+      "evidence": "local failure/restart/rollback/compensation/RPO=0 coverage remains green; current hosted success path passed duplicate, terminal reconcile, and first-evaluation schedule gates."
+    },
+    {
+      "id": "AC8",
+      "statement": "exact deployment identity and controller truth when deployed",
+      "status": "pass_current_hosted_reprobe",
+      "evidence": "/bff/version observed exact deployed SHA 93c50da6d67560f7035025879af08dfc3197fb76, and current hosted probe 29713573136 passed all 14 checks against that SHA."
+    },
+    {
+      "id": "AC9",
+      "statement": "RBAC, tenant, MFA, two-person, environment, and no-live-capital boundaries",
+      "status": "pass_with_dev_mfa_not_applicable",
+      "evidence": "strict/no-stub auth, 401 unauthenticated create, 403 cross-tenant create, 422 live-capital create, shared-lease deployment cut, and paper-only two-person N/A were recorded"
+    },
+    {
+      "id": "AC10",
+      "statement": "redacted append-only checksummed evidence; missing or contradicted proof fails closed",
+      "status": "pass_current_manifest_ready_for_review",
+      "manifest": "checksummed_current_hosted_pass_recorded_with_prior_failure_superseded",
+      "independent_review": "pending_claude_review_status_task_absent"
+    }
+  ],
+  "residual_risks": {
+    "RISK-OPENCLAW-OAUTH-001": {
+      "blocking_for_this_task": false,
+      "severity": "medium",
+      "owner": "OpenClaw/Ops auth lane",
+      "expiry": "2026-07-20T23:59:59Z",
+      "description": "Nonprod deploy run 29648721747 failed after stack deploy because the OpenClaw assistant live smoke received expired OAuth credentials.",
+      "containment": "Do not treat OpenClaw assistant live smoke as PER first-evaluation scheduler proof; PER uses the BFF/cron first-evaluation readback and adapter readiness surfaces.",
+      "recheck_trigger": "OpenClaw OAuth re-authentication or next nonprod deploy smoke"
+    },
+    "RISK-DEPLOY-WORKFLOW-POSTSTACK-001": {
+      "blocking_for_this_task": false,
+      "severity": "low",
+      "owner": "Pantheon dev deployment/probe lane",
+      "expiry": "2026-07-20T23:59:59Z",
+      "description": "Historical deploy runs 29649101040 and 29650856548 deployed dev stacks but failed unrelated TEL-002 probes. PER implementation deploy run 29654625707 remains historical delivery evidence; current product admission is bound to hosted probe run 29713573136 at release SHA 93c50da6d67560f7035025879af08dfc3197fb76.",
+      "containment": "Use current exact-SHA hosted probe run 29713573136 for PER acceptance; retain earlier deploy/probe runs only as immutable history.",
+      "recheck_trigger": "next full nonprod deploy workflow if unrelated probes regress again"
+    },
+    "RISK-DEV-MFA-POSTURE-001": {
+      "blocking_for_this_task": false,
+      "severity": "low",
+      "owner": "Human/Ops production admission lane",
+      "expiry": "2026-07-31T23:59:59Z",
+      "description": "Dev /bff/version reports mfa_required=false.",
+      "containment": "Accepted operation is dev paper Persona creation only; live capital and production promotion remain outside this task and require separate Human/Ops gates.",
+      "recheck_trigger": "production/canary promotion or any live-capital Persona workflow"
+    },
+    "RISK-PER-RECONCILE-TIMEOUT-001": {
+      "blocking_for_this_task": false,
+      "severity": "closed",
+      "owner": "Codex2 / BFF persona provisioning lane",
+      "expiry": "2026-07-19T23:59:59Z",
+      "description": "Superseded: hosted PER probe run 29653015381 failed on reconcile timeout, PR #3872 added terminal replay/authoritative meta coverage, and both later runs 29655287111 and 29713573136 passed against their exact deployed BFF SHAs.",
+      "containment": "Keep exact-SHA hosted probe in the evidence gate; any future missing reconcile meta must fail closed again.",
+      "recheck_trigger": "next Stage 0 mode loop-prod-per-001-hosted-probe against the currently deployed BFF SHA"
+    },
+    "RISK-STATUS-COMMAND-LEASE-001": {
+      "blocking_for_this_task": false,
+      "severity": "superseded",
+      "owner": "Supervisor/status command lane",
+      "expiry": "2026-07-19T23:59:59Z",
+      "description": "Historical lease-identity mismatch is no longer the first observed failure. The current read-only governed command reaches task lookup and returns Unknown task: LOOP-PROD-PER-001.",
+      "containment": "Preserve this historical cause and use RISK-STATUS-TASK-ABSENT-001 for the current blocker.",
+      "recheck_trigger": "historical only",
+      "blocking_scope": "superseded by current missing-task observation"
+    },
+    "RISK-STATUS-TASK-ABSENT-001": {
+      "blocking_for_this_task": true,
+      "severity": "high",
+      "owner": "Supervisor/status canonical-task lane",
+      "expiry": "2026-07-27T02:59:01Z",
+      "description": "On 2026-07-20, read-only AI_NAME=Codex2 scripts/ai-status.sh show LOOP-PROD-PER-001 from the canonical Pantheon root returned Unknown task. No governed handoff/review/done mutation can be attempted for an absent task.",
+      "containment": "Do not hand-edit ai-status.json, ai-activity-log.jsonl, current-work.md, dashboard projections, or archive files. Product proof remains ready for Claude review in the repository evidence manifest.",
+      "recheck_trigger": "Supervisor/catalog reconciliation restores or explicitly archives LOOP-PROD-PER-001 through the governed status protocol, after which handoff/review can be retried.",
+      "blocking_scope": "governed status lifecycle mutation only; current product proof and repository evidence are ready for independent review"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/evidence.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260715T134000Z-local-validation.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260715T134700Z-github-delivery.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260715T134900Z-admission-blockers.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260715T134921Z-hosted-precheck.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260718T155203Z-hosted-probe-pass.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260718T155300Z-dev-deploy-summary.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260718T162257Z-hosted-probe-pass.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260718T162300Z-dev-deploy-summary.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260718T170333Z-hosted-probe-fail.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260718T181109Z-hosted-probe-pass.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260718T180717Z-dev-deploy-summary.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/raw/20260720T025901Z-hosted-probe-pass-summary.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/evidence.sha256",
+    "hosted_semantic_sha256": {
+      "raw_hosted_probe": "sha256:cc2cbd0e3fbbf0b68f9fd1e3adf4d7b38f4669ba4141fe2a6618c05687f375c2",
+      "raw_deploy_summary": "sha256:07a147db46e3e2570c867d76278b926a0cbfb25f6c0088082ec8c6be027453a4",
+      "superseded_155203_hosted_probe": "sha256:7a1e1da63e7cd23f103fc6e16cd4e40d8b93cd138ede8023c08fa16d5b6c2d99",
+      "current_failed_reprobe": "sha256:ec2875664ec7da49a20047a8e5c197c7ceac7847e21908c31446419abfc3c129",
+      "current_pass_reprobe": "sha256:cc2cbd0e3fbbf0b68f9fd1e3adf4d7b38f4669ba4141fe2a6618c05687f375c2",
+      "current_pass_deploy_summary": "sha256:07a147db46e3e2570c867d76278b926a0cbfb25f6c0088082ec8c6be027453a4",
+      "latest_pass_summary": "sha256:ebf85760186822ca414cae5621d3a68606af180320bad0b60f6f24b2940e641a",
+      "latest_source_artifact": "sha256:2a0e28b88adfcf9d2f2ec46f9134921e249f3c98b253677d4eec211eb4f9673a"
+    },
+    "manifest_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/evidence.json",
+    "normalized_hosted_readback": {
+      "source_commit_sha": "93c50da6d67560f7035025879af08dfc3197fb76",
+      "build_time": "2026-07-19T19:32:12Z",
+      "auth_stub": false,
+      "auth_mode": "strict",
+      "readyz_status": "ok",
+      "result_status": "passed",
+      "persona_id": "persona-c4bbeada41a6bdf5e2e3",
+      "runtime_id": "rt-59974662",
+      "runtime_binding_id": "rb-c1646761eeb84ac9915eff3569d239f7",
+      "deployment_plan_id": "plan-persona-paper-df5a46d76ff2e59248ef",
+      "strategy_artifact_id": "artifact-persona-paper-df5a46d76ff2e59248ef",
+      "paper_worker_session_id": "prmon-rb-c1646761eeb84ac9915eff3569d239f7-d5cdfe2b",
+      "paper_worker_last_heartbeat_at": "2026-07-20T02:58:10Z",
+      "first_evaluation_workflow_id": "pantheon.persona.first-evaluation",
+      "first_evaluation_registered": true,
+      "first_evaluation_job_id": "9f9cfa19-803f-4dc2-9f6b-cc09127ac328",
+      "first_evaluation_request_id": "persona-provisioning:persona-c4bbeada41a6bdf5e2e3:pantheon.persona.first-evaluation",
+      "failed_checks": []
+    },
+    "self_hash_omitted": true,
+    "self_hash_reason": "Checksums are stored in the companion file to avoid a recursive self-hash.",
+    "source_artifact_sha256_by_epoch": {
+      "20260718T155203Z_hosted_probe": "sha256:7a1e1da63e7cd23f103fc6e16cd4e40d8b93cd138ede8023c08fa16d5b6c2d99",
+      "20260718T155300Z_deploy_summary": "sha256:708305195408200c666eba64af403a45c01097aa6a4a6e21b400ffc271800a10",
+      "20260718T162257Z_hosted_probe": "sha256:e63e02b30bde1f428cec18aa8199cd1c1dc04c9847570d49e70c9fd7e12c9a3f",
+      "20260718T162300Z_deploy_summary": "sha256:906867e213ed2a686febcf37efcc03f32664e73899d59aa7fea018ab55645253",
+      "20260718T170333Z_hosted_probe_fail": "sha256:ec2875664ec7da49a20047a8e5c197c7ceac7847e21908c31446419abfc3c129",
+      "20260718T181109Z_hosted_probe_pass": "sha256:cc2cbd0e3fbbf0b68f9fd1e3adf4d7b38f4669ba4141fe2a6618c05687f375c2",
+      "20260718T180717Z_deploy_summary": "sha256:07a147db46e3e2570c867d76278b926a0cbfb25f6c0088082ec8c6be027453a4",
+      "20260720T025901Z_hosted_probe_pass_summary": "sha256:ebf85760186822ca414cae5621d3a68606af180320bad0b60f6f24b2940e641a"
+    }
+  },
+  "record_log": [
+    {
+      "sequence": 1,
+      "recorded_at": "2026-07-15T04:40:00Z",
+      "kind": "legacy_manifest_claim",
+      "status": "invalidated",
+      "actor": "unknown_legacy_writer",
+      "reason": "The prior pass claim used wrong owner/reviewer, stale PR/head identity, no hosted authority chain, and no raw artifacts. It is superseded by this fail-closed cut."
+    },
+    {
+      "sequence": 2,
+      "recorded_at": "2026-07-15T13:47:18Z",
+      "kind": "implementation_delivery",
+      "status": "pass",
+      "actor": "Codex2",
+      "ref": "raw/20260715T134700Z-github-delivery.json"
+    },
+    {
+      "sequence": 3,
+      "recorded_at": "2026-07-15T13:49:00Z",
+      "kind": "deployment_admission_preflight",
+      "status": "blocked",
+      "actor": "Codex2",
+      "ref": "raw/20260715T134900Z-admission-blockers.json"
+    },
+    {
+      "sequence": 4,
+      "recorded_at": "2026-07-15T13:49:21Z",
+      "kind": "hosted_pre_deploy_readback",
+      "status": "blocked",
+      "actor": "Codex2",
+      "ref": "raw/20260715T134921Z-hosted-precheck.json"
+    },
+    {
+      "sequence": 5,
+      "recorded_at": "2026-07-18T14:45:56Z",
+      "kind": "implementation_followup_delivery",
+      "status": "pass",
+      "actor": "Codex2",
+      "ref": "PRs #3849, #3850, #3851, #3853, #3856, #3858, #3859, #3860"
+    },
+    {
+      "sequence": 6,
+      "recorded_at": "2026-07-18T15:44:43Z",
+      "kind": "dev_deploy_observation",
+      "status": "stack_deployed_workflow_failed_unrelated_probe",
+      "actor": "Codex2",
+      "ref": "raw/20260718T155300Z-dev-deploy-summary.json"
+    },
+    {
+      "sequence": 7,
+      "recorded_at": "2026-07-18T15:52:14Z",
+      "kind": "hosted_product_probe",
+      "status": "pass",
+      "actor": "Codex2",
+      "ref": "raw/20260718T155203Z-hosted-probe-pass.json"
+    },
+    {
+      "sequence": 8,
+      "recorded_at": "2026-07-18T15:53:00Z",
+      "kind": "post_cut_shared_dev_observation",
+      "status": "excluded_from_cut",
+      "actor": "Codex2",
+      "ref": "run 29650856548 started after accepted PER evidence cut"
+    },
+    {
+      "sequence": 9,
+      "recorded_at": "2026-07-18T16:19:25Z",
+      "kind": "dev_deploy_observation",
+      "status": "stack_deployed_workflow_failed_unrelated_probe",
+      "actor": "Codex2",
+      "ref": "raw/20260718T162300Z-dev-deploy-summary.json"
+    },
+    {
+      "sequence": 10,
+      "recorded_at": "2026-07-18T16:22:57Z",
+      "kind": "hosted_product_probe",
+      "status": "pass",
+      "actor": "Codex2",
+      "ref": "raw/20260718T162257Z-hosted-probe-pass.json"
+    },
+    {
+      "sequence": 11,
+      "recorded_at": "2026-07-18T16:23:00Z",
+      "kind": "hosted_evidence_cut_update",
+      "status": "supersedes_prior_cut",
+      "actor": "Codex2",
+      "ref": "36262a8133770aa49287582c840029cec1b3014e supersedes df60d6be6247dada2fe62d7c75ad56c11459e9a7 as current public BFF evidence identity"
+    },
+    {
+      "sequence": 12,
+      "recorded_at": "2026-07-18T17:03:33Z",
+      "kind": "hosted_product_probe",
+      "status": "failed_current_reprobe",
+      "actor": "Codex2",
+      "ref": "raw/20260718T170333Z-hosted-probe-fail.json",
+      "reason": "Current public BFF SHA 8ba246a5633312e352894efbe4f8c92f0351ba85 failed persona.reconcile_terminal_paper_running and first_evaluation_schedule.readback_gated_final_state because reconcile timed out and first-evaluation proof lacked reconcile meta."
+    },
+    {
+      "sequence": 13,
+      "recorded_at": "2026-07-18T17:04:00Z",
+      "kind": "status_lifecycle_update",
+      "status": "blocked",
+      "actor": "Codex2",
+      "ref": "PANTHEON_COMMAND_ROOT/scripts/ai-status.sh",
+      "reason": "AI_NAME=Codex2 status mutations are blocked by lease identity mismatch against ORCH_AGENT_ID=codex2_1, and read-only show is fail-closed due pending status_activity_outbox."
+    },
+    {
+      "sequence": 14,
+      "recorded_at": "2026-07-18T17:47:13Z",
+      "kind": "implementation_followup_delivery",
+      "status": "pass",
+      "actor": "Codex2",
+      "ref": "PR #3872 / merge 060b2eb999c6ccbb3ce50153c747127c0deafc33"
+    },
+    {
+      "sequence": 15,
+      "recorded_at": "2026-07-18T18:07:17Z",
+      "kind": "dev_deploy_observation",
+      "status": "pass",
+      "actor": "Codex2",
+      "ref": "raw/20260718T180717Z-dev-deploy-summary.json"
+    },
+    {
+      "sequence": 16,
+      "recorded_at": "2026-07-18T18:11:09Z",
+      "kind": "hosted_product_probe",
+      "status": "pass_current_reprobe",
+      "actor": "Codex2",
+      "ref": "raw/20260718T181109Z-hosted-probe-pass.json",
+      "reason": "Current public BFF SHA 060b2eb999c6ccbb3ce50153c747127c0deafc33 passed terminal reconcile and first-evaluation schedule readback, superseding run 29653015381."
+    },
+    {
+      "sequence": 17,
+      "recorded_at": "2026-07-18T18:11:09Z",
+      "kind": "status_lifecycle_update",
+      "status": "blocked",
+      "actor": "Codex2",
+      "ref": "PANTHEON_COMMAND_ROOT/scripts/ai-status.sh",
+      "reason": "AI_NAME=Codex2 governed status command blocked by runtime SHA mismatch: command root e99442c5aee4e5b0936787d64fe3af1194ee56e4, expected 1035637a2ab0a7edee3a9229949abbbc75314d4f."
+    },
+    {
+      "sequence": 18,
+      "recorded_at": "2026-07-18T19:09:48Z",
+      "kind": "status_lifecycle_update",
+      "status": "blocked",
+      "actor": "Codex2",
+      "ref": "PANTHEON_COMMAND_ROOT/scripts/ai-status.sh handoff LOOP-PROD-PER-001 Claude",
+      "reason": "AI_NAME=Codex2 governed handoff is blocked by lease identity mismatch: actor Codex2 normalized to codex, active worker lease agent codex2_1 normalized to codex2_. Product proof remains ready for independent Claude review."
+    },
+    {
+      "sequence": 19,
+      "recorded_at": "2026-07-20T02:59:01Z",
+      "kind": "hosted_product_probe",
+      "status": "pass_current_reprobe",
+      "actor": "Codex",
+      "ref": "raw/20260720T025901Z-hosted-probe-pass-summary.json",
+      "reason": "Stage-0 run 29713573136 passed all 14 PER gates against exact deployed BFF SHA 93c50da6d67560f7035025879af08dfc3197fb76, including dynamic provisioning, duplicate convergence, authoritative binding/runtime/plan readback, terminal paper_running, registered first evaluation, and three security negatives."
+    },
+    {
+      "sequence": 20,
+      "recorded_at": "2026-07-20T03:00:00Z",
+      "kind": "status_lifecycle_read_only_recheck",
+      "status": "blocked_task_absent",
+      "actor": "Codex",
+      "ref": "AI_NAME=Codex2 scripts/ai-status.sh show LOOP-PROD-PER-001",
+      "reason": "The canonical Pantheon status root returned Unknown task: LOOP-PROD-PER-001. No mutation was attempted and no canonical status, activity, archive, current-work, or dashboard file was hand-edited."
+    },
+    {
+      "sequence": 21,
+      "recorded_at": "2026-07-20T03:01:00Z",
+      "kind": "evidence_ready_for_independent_review",
+      "status": "pending_independent_review",
+      "actor": "Codex",
+      "reviewer": "Claude",
+      "ref": "docs/deployment/evidence/loop-product-level/LOOP-PROD-PER-001/evidence.json",
+      "reason": "Current product proof is complete and checksummed. Terminal task closure remains fail-closed until an independent verdict is recorded and the Supervisor/status lane resolves the absent canonical task through governed protocol."
+    },
+    {
+      "sequence": 22,
+      "recorded_at": "2026-07-20T03:12:18Z",
+      "kind": "current_evidence_delivery",
+      "status": "pass",
+      "actor": "Codex",
+      "ref": "PR #3900 / merge 0d64fc8f3a47e910862f46ddad02d27183ea6199",
+      "reason": "The current exact-SHA hosted summary and corrected status blocker merged after all visible Commit trailers, Runtime mirror guard, Forward to orchestrator, and Smoke acceptance checks passed. Independent review and governed status-task reconciliation remain pending."
+    }
+  ]
+}

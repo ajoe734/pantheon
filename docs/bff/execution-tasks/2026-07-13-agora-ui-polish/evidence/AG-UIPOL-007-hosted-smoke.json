@@ -1,0 +1,136 @@
+{
+  "taskId": "AG-UIPOL-007",
+  "capturedAt": "2026-07-14T06:18:57.313Z",
+  "passed": true,
+  "manifest": {
+    "app": "execute-plans",
+    "environment": "pantheon-dev-fe",
+    "deployedAt": "20260714T061341Z",
+    "commit": "36a2f9292eadccd32b1fd79db2e7820ce750a984",
+    "sourceRef": "36a2f9292eadccd32b1fd79db2e7820ce750a984",
+    "sourceBranch": "dev",
+    "feHost": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io",
+    "bffHost": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+    "bffCommit": "4a27eb31fcb35c10cfb1519475a596b81e908e20",
+    "buildMode": {
+      "VITE_BFF_MODE": "live",
+      "VITE_BFF_FALLBACK": "strict",
+      "VITE_BFF_REAL_WRITES": "false",
+      "VITE_BFF_ALLOW_DEV_STUB_WRITES": "false",
+      "VITE_BFF_EMBEDDED_BEARER_TOKEN": "false"
+    }
+  },
+  "deployment": {
+    "runId": 29310638792,
+    "conclusion": "success",
+    "url": "https://github.com/ajoe734/execute-plans/actions/runs/29310638792"
+  },
+  "browser": {
+    "engine": "chromium",
+    "args": [
+      "--disable-quic"
+    ],
+    "desktopViewport": {
+      "width": 1600,
+      "height": 1100
+    },
+    "narrowViewport": {
+      "width": 768,
+      "height": 1200
+    }
+  },
+  "proposalRegression": {
+    "rendered": true,
+    "availabilityText": "工作區資料可用性 / 部分可用",
+    "formerUndefinedBgCrashAbsent": true
+  },
+  "lenses": [
+    {
+      "id": "lens-A",
+      "recipeTestId": "dashboard-recipe-a",
+      "uniqueColumn": "Accum. Days",
+      "candidateProvenance": "explicit-sample-fallback",
+      "candidateHttpResponseObserved": false,
+      "screenshot": "AG-UIPOL-007-desktop-lens-a.png",
+      "sha256": "b938e817750d8911be1e3fba37e05cb4760b2ebfea7d5be4d688b29f3ee1222e"
+    },
+    {
+      "id": "lens-B",
+      "recipeTestId": "dashboard-recipe-b",
+      "uniqueColumn": "Peer Group",
+      "candidateProvenance": "explicit-sample-fallback",
+      "candidateHttpResponseObserved": false,
+      "screenshot": "AG-UIPOL-007-desktop-lens-b.png",
+      "sha256": "eac2e751b6c659e1a9b8af0a0d982e7876a0b36d7b792191c388d4aee8f3819c"
+    },
+    {
+      "id": "lens-C",
+      "recipeTestId": "dashboard-recipe-c",
+      "uniqueColumn": "Breakout Level",
+      "candidateProvenance": "explicit-sample-fallback",
+      "candidateHttpResponseObserved": false,
+      "screenshot": "AG-UIPOL-007-desktop-lens-c.png",
+      "sha256": "edb24e6a8c00285ff57825ed1418102fab6868a89987d3bfc0660b6c6e0f4fcc"
+    },
+    {
+      "id": "lens-D",
+      "recipeTestId": "dashboard-recipe-d",
+      "uniqueColumn": "Event Type",
+      "candidateProvenance": "explicit-sample-fallback",
+      "candidateHttpResponseObserved": false,
+      "screenshot": "AG-UIPOL-007-desktop-lens-d.png",
+      "sha256": "c5f942e8aa62b01dd625f3a1e1fa1b08b39ae52de565c63f539fdef6854922c4"
+    },
+    {
+      "id": "lens-E",
+      "recipeTestId": "dashboard-recipe-e",
+      "uniqueColumn": "Target Amount",
+      "candidateProvenance": "explicit-sample-fallback",
+      "candidateHttpResponseObserved": false,
+      "screenshot": "AG-UIPOL-007-desktop-lens-e.png",
+      "sha256": "aba2c43cf073f5e321f8968a6b8c17ed462054d1cdf6ff59503df41252a19339"
+    }
+  ],
+  "narrow": {
+    "candidateSymbol": "AAPL",
+    "keyboard": {
+      "enterOpened": true,
+      "focusWrappedBothDirections": true,
+      "escapeClosed": true,
+      "focusRestored": true
+    },
+    "screenshots": [
+      "AG-UIPOL-007-narrow-switcher.png",
+      "AG-UIPOL-007-narrow-board.png",
+      "AG-UIPOL-007-narrow-drawer.png"
+    ]
+  },
+  "network": {
+    "successfulResponses": [
+      {
+        "method": "GET",
+        "path": "/bff/events/stream",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/bff/agora/trading-room/decision-events",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/bff/agora/trading-room",
+        "status": 200
+      },
+      {
+        "method": "POST",
+        "path": "/bff/agora/strategies/full003-live-1783268175-13279b/trading-room/proposals",
+        "status": 201
+      }
+    ],
+    "failedRequests": [],
+    "forbiddenExecutionRequests": []
+  },
+  "pageErrors": [],
+  "consoleErrors": []
+}
