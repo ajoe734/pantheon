@@ -18,9 +18,13 @@ Each report joins these sources at a named `origin/dev` SHA:
 6. task ownership trailers from branch commits when no canonical task row is
    available.
 
-The tool rejects a snapshot if an open GitHub PR head is absent from the
-refreshed remote refs or the two head SHAs differ. The operator must refresh
-and rerun instead of publishing a mixed-time report.
+When `--refresh` is requested, the fetch must finish before the tool resolves
+the full `base_sha`. Branch collection, PR reachability, trailer lookup, report
+validation, and deletion proof are then bound to that immutable commit rather
+than the movable `origin/dev` ref. The tool rejects a snapshot if an open
+GitHub PR head is absent from the refreshed remote refs or the two head SHAs
+differ. The operator must refresh and rerun instead of publishing a mixed-time
+report.
 
 Archive `ahead`, `push_status`, or branch-name fields are context only. They do
 not prove current GitHub reachability and never authorize branch retirement by
@@ -89,6 +93,10 @@ python3 scripts/git/task_pr_triage.py generate \
   --refresh \
   --status-root "$PANTHEON_STATUS_ROOT" \
   --as-of <UTC-ISO-TIMESTAMP> \
+  --include-pr 3058 \
+  --include-pr 3317 \
+  --include-pr 3334 \
+  --include-pr 3372 \
   --include-pr 3936 \
   --include-pr 3948 \
   --expected-cohort-count 29 \
