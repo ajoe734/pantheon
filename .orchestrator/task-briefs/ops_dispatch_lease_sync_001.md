@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: in_progress
 - Owner: Codex
 - Reviewer: Claude
-- Next: Started convergence and governed lifecycle smoke for dispatch lease sync
+- Next: Recovered authoritative task state from validated event 138 after isolated lock test polluted event 139 with LOCK-ONE/LOCK-TWO; recovery appended as a new journal commit and parity verified. Resume governed lifecycle smoke on merged runtime bbac7fcbee827b916e565e806eacfbec18a1dac6.
 
 ## Summary
 收斂 #3936/#3948，讓 supervisor 把已啟動 worker run id 以 ORCH_RUN_ID 傳給 governed status command，並以完整 lifecycle smoke 證明不再因缺 lease 反覆退出。
