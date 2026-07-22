@@ -1410,13 +1410,6 @@
       },
       {
         "family": "unknown",
-        "key": "GET /bff/management/evidence/{param}",
-        "method": "GET",
-        "path": "/bff/management/evidence/{param}",
-        "status": "implemented"
-      },
-      {
-        "family": "unknown",
         "key": "GET /bff/management/evolution-journal",
         "method": "GET",
         "path": "/bff/management/evolution-journal",
@@ -1595,20 +1588,6 @@
         "key": "GET /bff/management/portfolio-book/positions",
         "method": "GET",
         "path": "/bff/management/portfolio-book/positions",
-        "status": "implemented"
-      },
-      {
-        "family": "management-console",
-        "key": "GET /bff/management/promotion-reviews",
-        "method": "GET",
-        "path": "/bff/management/promotion-reviews",
-        "status": "implemented"
-      },
-      {
-        "family": "management-console",
-        "key": "GET /bff/management/promotion-reviews/{param}",
-        "method": "GET",
-        "path": "/bff/management/promotion-reviews/{param}",
         "status": "implemented"
       },
       {

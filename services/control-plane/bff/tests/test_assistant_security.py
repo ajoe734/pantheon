@@ -926,38 +926,6 @@ def test_provider_list_delegates_to_openclaw_adapter_with_auth_probe(monkeypatch
     assert resp.json()["data"][0]["provider"] == "codex_cli"
 
 
-def test_provider_list_delegates_to_openclaw_adapter_with_auth_probe(monkeypatch) -> None:
-    calls = []
-
-    def provider_list(auth_probe: bool):
-        calls.append(auth_probe)
-        return {
-            "status": "ok",
-            "data": [
-                {"provider": "codex_cli", "ready": True, "auth_status": "ready"},
-                {"provider": "claude", "ready": False, "auth_status": "failed"},
-            ],
-        }
-
-    store = ControlModeStore(storage_path="off", initial_passphrase="control phrase ok")
-    client = _control_mode_client(
-        store,
-        roles=["operator"],
-        capabilities=["assistant.kernel.debug"],
-        mfa_verified=True,
-        provider_list=provider_list,
-    )
-
-    resp = client.get(
-        "/bff/assistant/providers?auth_probe=true",
-        headers=OPERATOR_TOOL_HEADERS,
-    )
-
-    assert resp.status_code == 200
-    assert calls == [True]
-    assert resp.json()["data"][0]["provider"] == "codex_cli"
-
-
 def test_provider_reauth_delegates_to_openclaw_adapter(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_ASSISTANT_KERNEL_ENABLED", "true")
     calls = []

@@ -2399,54 +2399,6 @@
     },
     {
       "method": "GET",
-      "path": "/bff/management/personas/{param}/readiness",
-      "family": "management-console",
-      "status": "implemented"
-    },
-    {
-      "method": "GET",
-      "path": "/bff/management/promotion-reviews",
-      "family": "management-console",
-      "status": "implemented"
-    },
-    {
-      "method": "GET",
-      "path": "/bff/management/promotion-reviews/{param}",
-      "family": "management-console",
-      "status": "implemented"
-    },
-    {
-      "method": "GET",
-      "path": "/bff/management/shell-summary",
-      "family": "management-console",
-      "status": "implemented"
-    },
-    {
-      "method": "POST",
-      "path": "/bff/management/personas/paper-launch",
-      "family": "management-console",
-      "status": "implemented"
-    },
-    {
-      "method": "POST",
-      "path": "/bff/management/personas/{param}/promotion-reviews",
-      "family": "management-console",
-      "status": "implemented"
-    },
-    {
-      "method": "POST",
-      "path": "/bff/management/personas/{param}/setup/retry",
-      "family": "management-console",
-      "status": "implemented"
-    },
-    {
-      "method": "POST",
-      "path": "/bff/management/promotion-reviews/{param}/decisions",
-      "family": "management-console",
-      "status": "implemented"
-    },
-    {
-      "method": "GET",
       "path": "/bff/mcp-servers",
       "family": "mcp-final",
       "status": "alias",
@@ -3345,12 +3297,6 @@
     {
       "method": "GET",
       "path": "/bff/management/evidence",
-      "family": "unknown",
-      "status": "implemented"
-    },
-    {
-      "method": "GET",
-      "path": "/bff/management/evidence/{param}",
       "family": "unknown",
       "status": "implemented"
     },

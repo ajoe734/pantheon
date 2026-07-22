@@ -78,7 +78,6 @@ class CommandType(str, Enum):
     HUMAN_GATE_REQUEST_MORE_EVIDENCE = "HumanGateRequestMoreEvidence"
     HUMAN_GATE_REVOKE = "HumanGateRevoke"
     HUMAN_GATE_EXTEND_TTL = "HumanGateExtendTtl"
-    EVIDENCE_REF_ACTION = "EvidenceRefAction"
     QUARTERLY_RANKING_RECOMMENDATION_SUBMIT = "QuarterlyRankingRecommendationSubmit"
     # BFF-WRITE-P0-LIFECYCLE: P0-1/2/3 lifecycle action types
     ADVANCE_LIFECYCLE = "AdvanceLifecycle"
@@ -138,7 +137,6 @@ class ObjectType(str, Enum):
     SENTINEL_FINDING = "SentinelFinding"
     SENTINEL_REMEDIATION = "SentinelRemediation"
     HUMAN_GATE_ITEM = "HumanGateItem"
-    EVIDENCE_REF = "EvidenceRef"
 
 
 class CommandStatus(str, Enum):

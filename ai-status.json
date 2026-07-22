@@ -588,7 +588,7 @@
   },
   "workload_summary": {
     "Claude": {
-      "total": 2,
+      "total": 1,
       "active": 0,
       "blocked": 0,
       "done": 1,
@@ -623,24 +623,6 @@
       "review_approved": 0,
       "todo": 0
     },
-    "Antigravity": {
-      "total": 0,
-      "active": 0,
-      "blocked": 0,
-      "done": 0,
-      "review": 0,
-      "review_approved": 0,
-      "todo": 0
-    },
-    "Antigravity2": {
-      "total": 0,
-      "active": 0,
-      "blocked": 0,
-      "done": 0,
-      "review": 0,
-      "review_approved": 0,
-      "todo": 0
-    },
     "Gemini": {
       "total": 0,
       "active": 0,
@@ -664,7 +646,7 @@
       "active": 1,
       "blocked": 1,
       "done": 0,
-      "review": 2,
+      "review": 0,
       "review_approved": 0,
       "todo": 0
     },
@@ -673,15 +655,6 @@
       "active": 0,
       "blocked": 0,
       "done": 1,
-      "review": 0,
-      "review_approved": 0,
-      "todo": 0
-    },
-    "Copilot": {
-      "total": 0,
-      "active": 0,
-      "blocked": 0,
-      "done": 0,
       "review": 0,
       "review_approved": 0,
       "todo": 0
