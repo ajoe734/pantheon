@@ -18,6 +18,7 @@ from services.trade_journey.correlation_envelope import (
 from services.trade_journey.lifecycle_projector import (
     AtomicProjectionBundle,
     ConflictingLifecycleEvent,
+    DEFAULT_HEALTH_MAX_AGE_SECONDS,
     LIFECYCLE_EVENT_TYPE_QUERY,
     LifecycleProjector,
     PostgresLifecycleSource,
@@ -420,6 +421,32 @@ def test_generation_retention_is_bounded_and_never_removes_active_generation(tmp
     assert json.loads((tmp_path / "current" / "manifest.json").read_text())["generation"] == 6
 
 
+def test_publish_finishes_retention_cleanup_before_switching_current(tmp_path, monkeypatch):
+    bundle = AtomicProjectionBundle(tmp_path, generation_retention=2)
+    bundle.publish(
+        1,
+        {"schema_version": "journey-test", "events": []},
+        {"schema_version": "loop-test", "records": {}},
+    )
+    previous_active = (tmp_path / "current").resolve().name
+    observed: list[tuple[bool, str]] = []
+    original_maintain = bundle.maintain
+
+    def observe_maintain(*, reserve_for_publish: bool = False):
+        observed.append((reserve_for_publish, (tmp_path / "current").resolve().name))
+        return original_maintain(reserve_for_publish=reserve_for_publish)
+
+    monkeypatch.setattr(bundle, "maintain", observe_maintain)
+    bundle.publish(
+        2,
+        {"schema_version": "journey-test", "events": []},
+        {"schema_version": "loop-test", "records": {}},
+    )
+
+    assert observed == [(True, previous_active)]
+    assert (tmp_path / "current").resolve().name != previous_active
+
+
 def test_retention_preserves_old_active_generation_and_cleans_only_abandoned_staging(tmp_path):
     generations = tmp_path / "generations"
     generations.mkdir()
@@ -616,3 +643,30 @@ def test_projector_readiness_exposes_freshness_generation_watermark_and_disk(tmp
     assert low_disk["ready"] is False
     assert low_disk["disk"]["low"] is True
     assert any(reason.startswith("disk_below_policy:") for reason in low_disk["reasons"])
+
+
+def test_default_freshness_window_covers_observed_large_volume_poll(tmp_path, monkeypatch):
+    monkeypatch.delenv("LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS", raising=False)
+    projector = LifecycleProjector(
+        state_path=tmp_path / "controller_state.json",
+        bundle_root=tmp_path,
+        deployment_sha="deadbeef",
+        clock=lambda: "2026-07-22T12:00:00Z",
+    )
+    projector.project_records(
+        lifecycle_rows()[:1], mode="live", source_high_watermark=1
+    )
+
+    observed = projector_readiness(
+        state_path=tmp_path / "controller_state.json",
+        bundle_root=tmp_path,
+        max_backlog=0,
+        min_free_bytes=0,
+        min_free_percent=0,
+        now=datetime(2026, 7, 22, 12, 1, 1, tzinfo=timezone.utc),
+    )
+
+    assert DEFAULT_HEALTH_MAX_AGE_SECONDS == 120.0
+    assert observed["freshness"]["max_age_seconds"] == 120.0
+    assert observed["freshness"]["age_seconds"] == 61.0
+    assert observed["ready"] is True

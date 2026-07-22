@@ -10,6 +10,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 
 HERE = Path(__file__).resolve().parent
@@ -250,6 +251,62 @@ class BranchClassificationTests(unittest.TestCase):
 
 
 class ValidationTests(unittest.TestCase):
+    def test_refresh_completes_before_base_sha_capture(self):
+        events = []
+
+        def refresh(remote):
+            events.append(("refresh", remote))
+
+        def run(command, **_kwargs):
+            events.append(("run", command))
+            return SimpleNamespace(stdout="b" * 40 + "\n", returncode=0)
+
+        with mock.patch.object(
+            triage, "_refresh_refs", side_effect=refresh
+        ), mock.patch.object(triage, "_run", side_effect=run):
+            base_sha = triage.capture_base_snapshot("origin", "origin/dev", True)
+
+        self.assertEqual(base_sha, "b" * 40)
+        self.assertEqual(events[0], ("refresh", "origin"))
+        self.assertEqual(
+            events[1],
+            ("run", ["git", "rev-parse", "--verify", "origin/dev^{commit}"]),
+        )
+
+    def test_branch_collection_uses_immutable_base_sha(self):
+        commands = []
+
+        def run(command, **_kwargs):
+            commands.append(command)
+            return SimpleNamespace(stdout="", returncode=0)
+
+        base_sha = "b" * 40
+        with mock.patch.object(triage, "_run", side_effect=run):
+            self.assertEqual(triage.collect_branches("origin", base_sha), [])
+
+        self.assertTrue(
+            any(f"--merged={base_sha}" in command for command in commands)
+        )
+
+    def test_rejects_ancestry_mismatch_against_report_base_sha(self):
+        head_sha = "a" * 40
+        report = {
+            "base_sha": "b" * 40,
+            "branches": [
+                {
+                    "branch": "task/TASK-001",
+                    "head_sha": head_sha,
+                    "dev_reachable": False,
+                }
+            ],
+            "cohort_prs": [],
+        }
+        with mock.patch.object(
+            triage, "_snapshot_reachability", return_value={head_sha: True}
+        ):
+            with self.assertRaisesRegex(triage.TriageError, "ancestry decision"):
+                triage.validate_report_ancestry(report)
+
     def test_apply_closure_requires_explicit_allowlist(self):
         with tempfile.TemporaryDirectory() as directory:
             report = Path(directory) / "report.json"

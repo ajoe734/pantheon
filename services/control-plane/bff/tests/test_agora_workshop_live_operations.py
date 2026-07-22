@@ -752,6 +752,186 @@ def test_downstream_rejection_has_durable_failure_receipt_and_safe_compensation(
     assert canonical.forbidden_execution_calls == []
 
 
+def test_conclude_refuses_missing_and_unselected_final_versions() -> None:
+    client, store, canonical = _harness()
+    _created_a, version_a = _create_version(client, store, key="conclude-guard-a")
+    created_b, version_b = _create_version(
+        client,
+        store,
+        key="conclude-guard-b",
+        body=_version_body("Second Candidate"),
+    )
+    selected = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/versions/{version_b}/select",
+        headers=_command_headers("conclude-guard-select", created_b.headers["etag"]),
+    )
+    assert selected.status_code == 200, selected.text
+    canonical.add_approval("approval-guard-conclude", version_id=version_a)
+    baseline_readbacks = canonical.call_count("get_strategy_spec")
+
+    missing = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/conclude",
+        headers=_command_headers("conclude-guard-missing", selected.headers["etag"]),
+        json={
+            "final_version_id": "wsv-does-not-exist",
+            "approval_decision_id": "approval-guard-conclude",
+        },
+    )
+    assert missing.status_code == 409, missing.text
+    assert _reason(missing) == "WORKSHOP_VERSION_REQUIRED"
+
+    unselected = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/conclude",
+        headers=_command_headers("conclude-guard-unselected", selected.headers["etag"]),
+        json={
+            "final_version_id": version_a,
+            "approval_decision_id": "approval-guard-conclude",
+        },
+    )
+    assert unselected.status_code == 409, unselected.text
+    assert _reason(unselected) == "WORKSHOP_FINAL_VERSION_NOT_SELECTED"
+    details = unselected.json()["detail"]["error"]["details"]
+    assert details["selected_version_id"] == version_b
+
+    cross_tenant = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/conclude",
+        headers=_command_headers(
+            "conclude-guard-tenant",
+            selected.headers["etag"],
+            tenant_id="tenant-beta",
+        ),
+        json={
+            "final_version_id": version_b,
+            "approval_decision_id": "approval-guard-conclude",
+        },
+    )
+    assert cross_tenant.status_code == 403, cross_tenant.text
+    assert _reason(cross_tenant) == "CROSS_USER_ACCESS_FORBIDDEN"
+
+    # None of the refused conclusions admitted a command or touched the
+    # Registry; the workshop is still reviewable.
+    session = store.get_session(WORKSHOP_ID)
+    assert session["status"] == "in_review"
+    assert session["selected_version_id"] == version_b
+    assert canonical.call_count("get_strategy_spec") == baseline_readbacks
+    assert canonical.forbidden_execution_calls == []
+
+
+def test_conclude_refuses_mutated_or_incomplete_final_version_with_durable_receipt() -> None:
+    client, store, canonical = _harness()
+    created, version_id = _create_version(client, store, key="conclude-digest-create")
+    registry_id = created.json()["data"]["resource"]["version"][
+        "strategy_spec_registry_id"
+    ]
+    selected = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/versions/{version_id}/select",
+        headers=_command_headers("conclude-digest-select", created.headers["etag"]),
+    )
+    assert selected.status_code == 200, selected.text
+    canonical.add_approval("approval-digest-conclude", version_id=version_id)
+    canonical.registry[registry_id]["entry"]["metadata"]["strategy_spec"][
+        "title"
+    ] = "Mutated behind immutable Registry identity"
+
+    mutated = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/conclude",
+        headers=_command_headers("conclude-digest-key", selected.headers["etag"]),
+        json={
+            "final_version_id": version_id,
+            "approval_decision_id": "approval-digest-conclude",
+        },
+    )
+    assert mutated.status_code == 409, mutated.text
+    assert _reason(mutated) == "WORKSHOP_VERSION_PROJECTION_CONFLICT"
+
+    receipt = store.get_command_receipt(
+        workshop_id=WORKSHOP_ID,
+        tenant_id=TENANT_ID,
+        user_id=USER_ID,
+        operation="conclude",
+        idempotency_key="conclude-digest-key",
+    )
+    assert receipt is not None
+    assert receipt["status"] == "failed"
+    assert receipt["failure"]["reason"] == "WORKSHOP_VERSION_PROJECTION_CONFLICT"
+    session = store.get_session(WORKSHOP_ID)
+    assert session["status"] == "in_review"
+    assert session.get("final_workshop_version_id") is None
+
+    # An incomplete Registry readback (document removed) is also refused with
+    # its own durable failed receipt.
+    canonical.registry[registry_id]["entry"]["metadata"].pop("strategy_spec")
+    incomplete = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/conclude",
+        headers=_command_headers("conclude-incomplete-key", _etag(store)),
+        json={
+            "final_version_id": version_id,
+            "approval_decision_id": "approval-digest-conclude",
+        },
+    )
+    assert incomplete.status_code == 502, incomplete.text
+    assert _reason(incomplete) == "STRATEGY_SPEC_DOCUMENT_REQUIRED"
+    incomplete_receipt = store.get_command_receipt(
+        workshop_id=WORKSHOP_ID,
+        tenant_id=TENANT_ID,
+        user_id=USER_ID,
+        operation="conclude",
+        idempotency_key="conclude-incomplete-key",
+    )
+    assert incomplete_receipt is not None
+    assert incomplete_receipt["status"] == "failed"
+    assert store.get_session(WORKSHOP_ID)["status"] == "in_review"
+    assert canonical.forbidden_execution_calls == []
+
+
+def test_research_timeout_is_durable_and_new_key_retry_succeeds() -> None:
+    client, store, canonical = _harness()
+    created, version_id = _create_version(client, store, key="research-timeout-create")
+    canonical.add_approval("approval-timeout-run", version_id=version_id)
+    canonical.raise_research_error = True
+    body = _research_body(version_id, "approval-timeout-run")
+
+    timed_out = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/research-runs",
+        headers=_command_headers("research-timeout", created.headers["etag"]),
+        json=body,
+    )
+    assert timed_out.status_code == 503, timed_out.text
+    assert _reason(timed_out) == "research service unavailable"
+
+    receipt = store.get_command_receipt(
+        workshop_id=WORKSHOP_ID,
+        tenant_id=TENANT_ID,
+        user_id=USER_ID,
+        operation="dispatch_research",
+        idempotency_key="research-timeout",
+    )
+    assert receipt is not None
+    assert receipt["status"] == "failed"
+    assert receipt["failure"]["retryable"] is True
+
+    same_key = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/research-runs",
+        headers=_command_headers("research-timeout", _etag(store)),
+        json=body,
+    )
+    assert same_key.status_code == 409, same_key.text
+    assert _reason(same_key) == "COMMAND_PREVIOUSLY_FAILED"
+
+    canonical.raise_research_error = False
+    retried = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/research-runs",
+        headers=_command_headers("research-timeout-retry", _etag(store)),
+        json=body,
+    )
+    assert retried.status_code == 202, retried.text
+    retried_resource = retried.json()["data"]["resource"]
+    assert retried_resource["run"]["run_id"] == "research-run-001"
+    assert retried_resource["downstream_terminal"] is False
+    assert canonical.call_count("dispatch_research_run") == 2
+    assert canonical.forbidden_execution_calls == []
+
+
 def test_consultation_projection_failure_cancels_downstream_and_keeps_receipt() -> None:
     client, store, canonical = _harness(store=ConsultationCommitFailingStore())
     created, version_id = _create_version(client, store)
