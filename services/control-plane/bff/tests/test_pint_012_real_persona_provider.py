@@ -10,7 +10,12 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from agora.interaction.runner import run_selected_persona_interaction
-from agora.interaction.provider import build_participant_admission
+from agora.interaction.provider import (
+    RecommendedMeasure,
+    authority_boundary,
+    build_participant_admission,
+    build_provider_prompt,
+)
 from agora.interaction.router import SubmitInteractionRequest
 from openclaw_ops_client import OpenClawOpsClientError
 
@@ -194,6 +199,39 @@ def test_each_frozen_persona_invokes_a_distinct_admitted_agent_with_exact_contex
     offered = [event for event in workshop.events if event["event_type"] == "opinion_offered"]
     assert len(offered) == 2
     assert all("priv-content-stub" not in event["private_content_ref"] for event in offered)
+
+
+def test_provider_prompt_exposes_the_complete_strict_recommended_measure_contract():
+    prompt, _context = build_provider_prompt(
+        topic="Recommend one bounded paper risk limit",
+        mode="challenge",
+        interaction_id="int-contract",
+        participant={
+            "persona_id": "risk",
+            "persona_version": "risk-v3",
+            "display_name": "Risk",
+        },
+        persona_profile={
+            "mandate": "drawdown containment",
+            "archetype": "risk_manager",
+            "strategy_family": "risk_control",
+        },
+        context_refs=[{"type": "strategy", "id": "strategy-1", "version_id": "v9"}],
+        tenant_id="pantheon-dev",
+        submitted_at="2026-07-21T04:00:00Z",
+    )
+
+    encoded_shape = prompt.split("Required output shape: ", 1)[1].splitlines()[0]
+    shape = json.loads(encoded_shape)
+    measure = shape["recommended_measures"][0]
+    assert set(measure) == set(RecommendedMeasure.model_fields)
+    assert set(measure["target"]) == {"kind", "id", "version", "path"}
+    assert set(measure["validation_plan"]) == {"validator", "required_checks"}
+    assert set(measure["evidence_refs"][0]) == {
+        "ref_type", "ref_id", "version", "observed_at", "data_cutoff", "freshness", "summary",
+    }
+    assert measure["authority"] == authority_boundary()
+    assert "Do not return measure_sha256" in prompt
 
 
 def test_exact_admission_rejects_cross_tenant_and_environment_above_ceiling():

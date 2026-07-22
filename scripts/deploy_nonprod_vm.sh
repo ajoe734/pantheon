@@ -1650,6 +1650,9 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_STATUS_ROOT_CONTAINER="${PANTHEON_STATUS_ROOT_CONTAINER}" \
       docker compose -p pantheon -f docker-compose.yml up -d --build \
       || { dump_dev_root_failure_diagnostics; exit 1; }
+    PANTHEON_DEV_REPO="$(pwd)" \
+      bash scripts/openclaw-configure-shared-model-pool.sh \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
     retire_legacy_static_paper_runtime \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     verify_dev_paper_fleet \

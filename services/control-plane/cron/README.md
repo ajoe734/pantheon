@@ -61,9 +61,9 @@ the execution substrate:
 The live transport uses the pinned runtime:
 
 - repository: `https://github.com/openclaw/openclaw`
-- tag: `v2026.6.8`
-- commit: `8c802aa683510c7f7503597b54c3021733245e59`
-- image: `ghcr.io/openclaw/openclaw:2026.6.8`
+- tag: `v2026.7.1`
+- commit: `2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4`
+- image: `ghcr.io/openclaw/openclaw:2026.7.1`
 
 ## Local Commands
 

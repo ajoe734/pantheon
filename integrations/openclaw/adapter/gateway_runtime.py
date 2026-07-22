@@ -18,10 +18,10 @@ def _strip_output(value: str) -> str:
 @dataclass(frozen=True)
 class OpenClawGatewayConfig:
     repository_url: str = "https://github.com/openclaw/openclaw"
-    release_tag: str = "v2026.6.8"
-    commit_sha: str = "8c802aa683510c7f7503597b54c3021733245e59"
-    image_ref: str = "ghcr.io/openclaw/openclaw:2026.6.8"
-    image_digest: str = "sha256:4826ca6157377e93463786d5c16852e34eede9f4bd4be55e3773cdc509762857"
+    release_tag: str = "v2026.7.1"
+    commit_sha: str = "2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4"
+    image_ref: str = "ghcr.io/openclaw/openclaw:2026.7.1"
+    image_digest: str = "sha256:6a31d44b2944e7adcd2b582bf6fb463111264ebca97a0201795b799135bd102c"
     container_name: str = "pantheon-openclaw-gateway"
     host: str = "127.0.0.1"
     host_port: int = 18789

@@ -14,15 +14,19 @@
 # The upstream runtime pin is governed: tag/commit are tracked in
 # OSS_INTEGRATION_CHECKLIST.md and integrations/openclaw/governance.md. When
 # bumping, change the FROM tag here AND the upstream commit pin there together.
-FROM ghcr.io/openclaw/openclaw:2026.6.8
+FROM ghcr.io/openclaw/openclaw:2026.7.1
 
-# Keep the Claude Code CLI version aligned with
-# services/openclaw-gateway-adapter/Dockerfile (ANTHROPIC_CLAUDE_CODE_NPM_VERSION).
-ARG ANTHROPIC_CLAUDE_CODE_NPM_VERSION=2.1.178
+# This gateway runs Node 24 and may use a newer Claude Code CLI than the
+# Python adapter image, whose separate CLI remains constrained by Node 20.
+ARG ANTHROPIC_CLAUDE_CODE_NPM_VERSION=2.1.216
+ARG GOOGLE_GEMINI_CLI_NPM_VERSION=0.51.0
 
 USER root
-RUN npm install -g "@anthropic-ai/claude-code@${ANTHROPIC_CLAUDE_CODE_NPM_VERSION}" \
-    && claude --version
+RUN npm install -g \
+      "@anthropic-ai/claude-code@${ANTHROPIC_CLAUDE_CODE_NPM_VERSION}" \
+      "@google/gemini-cli@${GOOGLE_GEMINI_CLI_NPM_VERSION}" \
+    && claude --version \
+    && gemini --version
 # Point the Claude CLI's default config dir (~/.claude) at the persistent
 # openclaw-data volume location. OpenClaw spawns `claude -p` in a sanitized env
 # WITHOUT CLAUDE_CONFIG_DIR, so it resolves the default ~/.claude — this symlink

@@ -12,7 +12,7 @@ def _decode(segment: str) -> dict[str, object]:
     return json.loads(base64.urlsafe_b64decode(segment))
 
 
-def test_bundle_has_distinct_tenant_scoped_one_hour_hs256_tokens() -> None:
+def test_bundle_has_distinct_mfa_verified_tenant_scoped_one_hour_hs256_tokens() -> None:
     secret = "unit-test-secret"
     tokens, metadata = build_bundle(
         secret=secret,
@@ -34,13 +34,14 @@ def test_bundle_has_distinct_tenant_scoped_one_hour_hs256_tokens() -> None:
         assert claims["roles"] == expected_roles
         assert claims["user_id"] == claims["sub"]
         assert claims["sid"].startswith("pantheon-dev-proof-")
-        assert claims["app_metadata"] == {"tenant_id": "pantheon-dev"}
-        assert claims["tenant_id"] == "pantheon-dev"
-        assert claims["allowed_tenants"] == ["pantheon-dev"]
+        assert claims["app_metadata"] == {"tenant_id": "tenant-dev"}
+        assert claims["tenant_id"] == "tenant-dev"
+        assert claims["allowed_tenants"] == ["tenant-dev"]
         assert claims["exp"] - claims["iat"] == TTL_SECONDS == 3600
         assert claims["nbf"] == claims["iat"] - 30
         assert claims["iss"] == "pantheon-dev"
         assert claims["aud"] == "bff-operators"
+        assert claims["mfa_verified"] is True
         subjects.add(claims["sub"])
         padded_signature = signature_segment + "=" * (-len(signature_segment) % 4)
         actual_signature = base64.urlsafe_b64decode(padded_signature)
@@ -90,3 +91,6 @@ def test_workflow_is_dev_only_and_validates_before_secret_updates() -> None:
         assert workflow.index(f"gh secret set {secret_name}") > validate_at
     assert "--body" not in workflow
     assert "COORDINATION_REPO_TOKEN" in workflow
+    assert "--header 'X-Tenant-Id: tenant-dev'" in workflow
+    assert "--arg tenant 'tenant-dev'" in workflow
+    assert "X-Tenant-Id: pantheon-dev" not in workflow
