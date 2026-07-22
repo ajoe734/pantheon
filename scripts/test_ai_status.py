@@ -331,18 +331,20 @@ class LogicalActorNormalizationTests(unittest.TestCase):
 
 class StatusCommandLeaseValidationTests(unittest.TestCase):
     def setUp(self) -> None:
-        _setup_test_isolation(self)
+        self.temporary = tempfile.TemporaryDirectory(prefix="status-lease-test-")
+        self.root = Path(self.temporary.name)
+        self.status_file = self.root / "ai-status.json"
         self.task_id = "LEASE-SYNC-001"
         self.run_id = "codex-lease-sync-run"
-        self.workspace = self._test_root / "task-worktree"
-        self.command_root = self._test_root / "command-runtime"
+        self.workspace = self.root / "task-worktree"
+        self.command_root = self.root / "command-runtime"
         self.workspace.mkdir()
         self.command_root.mkdir()
         self.issued_runtime = {
             "command_root": str(self.command_root),
             "source_sha": "lease-sync-runtime-sha",
         }
-        self._test_status_file.write_text(
+        self.status_file.write_text(
             json.dumps(
                 {
                     "tasks": [
@@ -360,7 +362,7 @@ class StatusCommandLeaseValidationTests(unittest.TestCase):
         )
 
     def tearDown(self) -> None:
-        _teardown_test_isolation(self)
+        self.temporary.cleanup()
 
     def _runtime_state(
         self,
@@ -371,7 +373,7 @@ class StatusCommandLeaseValidationTests(unittest.TestCase):
         status_root: Path | None = None,
     ) -> dict[str, object]:
         worker_task_id = task_id or self.task_id
-        worker_status_root = status_root or self._test_root
+        worker_status_root = status_root or self.root
         return {
             "workers": {
                 self.run_id: {
@@ -415,6 +417,8 @@ class StatusCommandLeaseValidationTests(unittest.TestCase):
             env["ORCH_TASK_ID"] = env_task_id
         with (
             mock.patch.dict(os.environ, env, clear=True),
+            mock.patch.object(ai_status, "STATUS_ROOT", self.root),
+            mock.patch.object(ai_status, "STATUS_FILE", self.status_file),
             mock.patch.object(ai_status, "load_config", return_value={}),
             mock.patch.object(
                 ai_status,
@@ -445,7 +449,11 @@ class StatusCommandLeaseValidationTests(unittest.TestCase):
         )
 
     def test_rejects_auto_worker_without_run_lease(self) -> None:
-        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=True):
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=True),
+            mock.patch.object(ai_status, "STATUS_ROOT", self.root),
+            mock.patch.object(ai_status, "STATUS_FILE", self.status_file),
+        ):
             with self.assertRaisesRegex(
                 RuntimeError,
                 "status command lease required for auto worker: Codex",
@@ -478,7 +486,7 @@ class StatusCommandLeaseValidationTests(unittest.TestCase):
             )
 
     def test_rejects_cross_root_authority(self) -> None:
-        other_root = self._test_root / "other-status-root"
+        other_root = self.root / "other-status-root"
         other_root.mkdir()
         with self.assertRaisesRegex(RuntimeError, "status command root mismatch"):
             self._validate(
@@ -736,6 +744,11 @@ class StatusRootRoutingTests(unittest.TestCase):
             )
 
             env = os.environ.copy()
+            # The fixture installs a shadow-mode command runtime. Do not let an
+            # auto-worker's live authoritative journal binding replace that isolated
+            # test configuration in the child status commands.
+            env.pop(ai_status.TASK_STATE_STORE_MODE_ENV, None)
+            env.pop(ai_status.TASK_STATE_EVENT_LOG_ENV, None)
             env.update(
                 {
                     "AI_NAME": "Codex2",
