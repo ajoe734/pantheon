@@ -163,3 +163,26 @@ fixtures or an unmerged branch are not hosted acceptance.
   external egress, all source-ingestion tests, research adapter tests, Agora
   projection tests, and the deploy contract. Skips were pre-existing optional
   live/provider paths, and only deprecation warnings were emitted.
+
+## Owner closeout verification
+
+After Codex2 approved the final remediation, the owner merged current
+`origin/dev` commit `9f3e9ac8d5d1ebc114b0f0dcde6c57442836af8f` into the task branch without
+conflicts and repeated the independent review gate. The following checks passed
+on the integrated branch:
+
+- the six-file focused pytest command recorded in the reviewer evidence:
+  `127 passed, 1 warning`;
+- `python -m compileall -q` for the source-ingestion main, scheduler,
+  scheduler-worker, and controller-worker modules;
+- `bash -n scripts/deploy_nonprod_vm.sh`;
+- default and bounded `source-ingest-scheduler` Compose configuration checks,
+  with the exact TWSE/TPEx allowlist, connector selection, one tick,
+  concurrency one, and record cap 100; and
+- `git diff --check`.
+
+This owner closeout validates the merged-code candidate only. It did not make
+an external request, use provider credentials, deploy the branch, or alter
+production/live-capital state. Replacement-VM source/projection readback and
+the accepted hosted manifest remain the explicitly downstream
+`AG-HOSTED-CLOSE-001` evidence gate.
