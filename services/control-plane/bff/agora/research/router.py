@@ -1710,7 +1710,11 @@ def create_research_router(
                 -float(score.get("effective_score") or 0.0),
             )
         )
-        return _candidate_list_envelope(items=scores, utc_now=utc_now, scope=scope)
+        return _candidate_list_envelope(
+            items=[_score_without_private_explanations(score) for score in scores],
+            utc_now=utc_now,
+            scope=scope,
+        )
 
     # -------------------------------------------------------------------
     # POST /bff/agora/candidate-pools/{pool_id}/score

@@ -256,6 +256,7 @@ def test_next_event_requires_a_governed_monitoring_source(
         },
     )
     assert approve.status_code == 200, approve.text
+    member_mutated_at = approve.json()["meta"]["snapshot_at"]
 
     monitor = client.post(
         f"/bff/agora/candidate-pools/{pool_id}/members/{artifact_id}/monitor",
@@ -274,6 +275,12 @@ def test_next_event_requires_a_governed_monitoring_source(
     assert monitor.status_code == 201, monitor.text
 
     member = _get_member(client, pool_id, artifact_id)["data"]
+    assert member["fields"]["details"]["provenance"]["as_of"] == member_mutated_at
+    listed_member = next(
+        item for item in _list_members(client, pool_id)["items"]
+        if item["artifact_id"] == artifact_id
+    )
+    assert listed_member["fields"]["details"]["provenance"]["as_of"] == member_mutated_at
     next_event = member["fields"]["next_event"]
     assert next_event["availability"] == "available"
     assert next_event["value"]["kind"] == "monitoring_schedule"
@@ -325,6 +332,17 @@ def test_evidence_summaries_are_redacted_by_role_and_in_lists(
     created = _create_pool(client, "ag-cand-truth-redact-op-create", operator_id="agora-truth-user")
     pool_id = created["data"]["pool_id"]
     _score_pool(client, pool_id, created["meta"]["etag"], "ag-cand-truth-redact-op-score")
+
+    score_list = client.get(
+        f"/bff/agora/candidate-pools/{pool_id}/score",
+        headers=_headers(),
+    )
+    assert score_list.status_code == 200, score_list.text
+    assert all(
+        "explanation" not in component
+        for score in score_list.json()["items"]
+        for component in score["components"]
+    )
 
     list_item = _list_members(client, pool_id)["items"][0]
     _assert_private_score_explanations_absent(
