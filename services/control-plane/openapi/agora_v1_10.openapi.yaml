@@ -35,7 +35,7 @@ servers:
   - url: "{bff_base}"
     variables:
       bff_base:
-        default: "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io"
+        default: "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io"
 security:
   - BearerAuth: []
 components:

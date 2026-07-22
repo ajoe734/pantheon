@@ -114,6 +114,14 @@ def test_openapi_and_manifest_publish_the_same_route_statuses() -> None:
     assert {item["implementation_status"] for item in manifest["capabilities"]} == {"implemented"}
 
 
+def test_openapi_defaults_to_the_current_replacement_dev_bff() -> None:
+    spec = yaml.safe_load(OPENAPI_PATH.read_text(encoding="utf-8"))
+    bff_default = spec["servers"][0]["variables"]["bff_base"]["default"]
+
+    assert bff_default == "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io"
+    assert "35.201.239.38" not in bff_default
+
+
 def test_field_states_are_available_with_provenance_or_typed_unavailable() -> None:
     _assert_valid("CandidateFieldState", {
         "availability": "available",

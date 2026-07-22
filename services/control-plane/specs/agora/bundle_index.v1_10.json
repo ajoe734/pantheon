@@ -11,7 +11,7 @@
   },
   "openapi": {
     "path": "services/control-plane/openapi/agora_v1_10.openapi.yaml",
-    "sha256": "0a50bf3ddff5a33e29f46c8f6eb18f77d573fdaa523a2d3c967afecf2983f849"
+    "sha256": "b1308a2f766cd0c3e9f4cf78e00be34c4e24c2d804040476f701f7f9c52fce15"
   },
   "required_definition_checksums": {
     "FieldProvenance": "ed99cbd2b7c11da08e1930c2e35bc42863b64ced84adcc949f4fb414aa4814da",
