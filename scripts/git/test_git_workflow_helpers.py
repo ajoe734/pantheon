@@ -362,6 +362,14 @@ class PublishPromoteTests(unittest.TestCase):
                 mode, _detail = publish_promote.assess_promotion_mode(master, release)
             self.assertEqual(mode, "conflicted")
 
+    def test_empty_successful_merge_base_is_portably_unrelated(self) -> None:
+        no_base = subprocess.CompletedProcess(
+            ["git", "merge-base"], returncode=0, stdout="", stderr=""
+        )
+        with mock.patch.object(publish_promote, "_run_git_result", return_value=no_base):
+            mode, detail = publish_promote.assess_promotion_mode("master", "release")
+        self.assertEqual((mode, detail), ("snapshot_bridge", "histories are unrelated"))
+
     def test_open_candidate_uses_normal_push_and_protected_auto_merge(self) -> None:
         candidate = {
             "version": "v2026.20.0",
