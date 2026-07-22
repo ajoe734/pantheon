@@ -1005,6 +1005,14 @@ services:
       # Both lifecycle read models are switched through one projector-owned
       # generation symlink, so the BFF can never observe a mixed generation.
       PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE: ${PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE:-/data/bff/lifecycle-projection/current/trade_journey_events.json}
+      LIFECYCLE_PROJECTION_ROOT: /data/bff/lifecycle-projection
+      LIFECYCLE_PROJECTOR_STATE_PATH: /data/bff/lifecycle-projection/controller_state.json
+      LIFECYCLE_PROJECTOR_GENERATION_RETENTION: ${LIFECYCLE_PROJECTOR_GENERATION_RETENTION:-32}
+      LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS: ${LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS:-3600}
+      LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS: ${LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS:-30}
+      LIFECYCLE_PROJECTOR_HEALTH_MAX_BACKLOG: ${LIFECYCLE_PROJECTOR_HEALTH_MAX_BACKLOG:-5000}
+      LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_BYTES: ${LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_BYTES:-134217728}
+      LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_PERCENT: ${LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_PERCENT:-5}
       PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_BACKEND: ${PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_BACKEND:-postgres}
       PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_DSN: ${PANTHEON_TRADE_JOURNEY_ACTION_LEDGER_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_TRADE_JOURNEY_CLOCK_DRIFT_SECONDS: ${PANTHEON_TRADE_JOURNEY_CLOCK_DRIFT_SECONDS:-5}
@@ -1215,8 +1223,12 @@ services:
       LIFECYCLE_PROJECTOR_POLL_SECONDS: ${LIFECYCLE_PROJECTOR_POLL_SECONDS:-1}
       LIFECYCLE_PROJECTOR_BATCH_SIZE: ${LIFECYCLE_PROJECTOR_BATCH_SIZE:-500}
       LIFECYCLE_PROJECTOR_MAX_TICKS: ${LIFECYCLE_PROJECTOR_MAX_TICKS:-0}
+      LIFECYCLE_PROJECTOR_GENERATION_RETENTION: ${LIFECYCLE_PROJECTOR_GENERATION_RETENTION:-32}
+      LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS: ${LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS:-3600}
       LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS: ${LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS:-30}
       LIFECYCLE_PROJECTOR_HEALTH_MAX_BACKLOG: ${LIFECYCLE_PROJECTOR_HEALTH_MAX_BACKLOG:-5000}
+      LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_BYTES: ${LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_BYTES:-134217728}
+      LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_PERCENT: ${LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_PERCENT:-5}
       PANTHEON_TJ_E2E_FIXTURE_INGEST_ENABLED: ${PANTHEON_TJ_E2E_FIXTURE_INGEST_ENABLED:-false}
       GIT_SHA: ${GIT_SHA:-unknown}
     volumes:
@@ -1227,12 +1239,7 @@ services:
       telemetry:
         condition: service_healthy
     healthcheck:
-      # Deploy-unblock relaxation (OPS-PROJECTOR-HEALTH-RELAX 2026-07-17): strict CLI health
-      # is stronger than container readiness during startup/recovery. The projector now tracks a
-      # lifecycle-filtered source watermark, while hosted proofs remain the canonical acceptance
-      # gate for zero-backlog live truth. Lenient health still fails on crash (no state file), tick
-      # error (last_error set), or a truly-stuck loop (no poll 600s).
-      test: ["CMD-SHELL", "python -c \"import json,sys,datetime as dt; c=json.load(open('/data/bff/lifecycle-projection/controller_state.json'))['controller']; age=(dt.datetime.now(dt.timezone.utc)-dt.datetime.fromisoformat(c['last_poll_at'].replace('Z','+00:00'))).total_seconds(); sys.exit(0 if (c.get('last_error') is None and age < 600) else 1)\""]
+      test: ["CMD", "python", "-m", "services.trade_journey.lifecycle_projector", "healthcheck"]
       interval: 15s
       timeout: 10s
       retries: 20
