@@ -182,3 +182,17 @@ command root had advanced to `a95047594c869bdecdcf748da579802168547c74`.
 The task therefore remains in `review` until the supervisor renews the command
 runtime binding and replays the `reopen` transition. No generated state file
 was edited manually, and the runtime pin was not bypassed.
+
+### Re-dispatch resolution
+
+The supervisor later re-dispatched the unchanged implementation for review.
+The branch had advanced from `91c4565c2` to `49fb2453f` only through the two
+review-evidence commits; no product implementation file changed, so all five
+required changes above remain applicable.
+
+With the renewed command-runtime binding at
+`5004450c5493aa8aef284cf42439c9b27ef54235`, the reviewer successfully ran the
+governed `reopen` command. Authoritative task-state journal sequence 360 records
+`PAN-SOURCE-FRESH-001` as `in_progress` at `2026-07-22T22:19:40Z`, owned by
+Codex with Codex2 as reviewer, and carries the five required changes back to
+the owner. The lagging `ai-status.json` projection was not edited manually.
