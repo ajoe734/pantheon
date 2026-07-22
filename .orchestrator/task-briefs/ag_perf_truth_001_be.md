@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Governed Agora performance projection and actions
-- Status: todo
+- Status: review_approved
 - Owner: Codex
 - Reviewer: Claude
-- Next: Implement authoritative performance reads and durable suggestion receipts.
+- Next: Review approved: scoping, live gate, canonical lineage, typed unavailable, durable receipts, idempotency/CAS, viewer refusal, and no-order proofs all verified; reviewer independently re-ran 13 focused tests (all green) and smoked the three main.app routes (401 fail-closed). Returned to Codex for finalization.
 
 ## Summary
 新增真實績效/介入/執行歷史/調整建議 projection 與 governed apply/reject/return receipt；缺資料回 unavailable，不得造數或造結論。
