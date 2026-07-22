@@ -140,3 +140,24 @@ force pushes. The repository environment did not have the optional `pytest`
 module installed; the same test file ran through the standard-library unittest
 runner, while GitHub smoke acceptance independently passed on the promoted
 release tree.
+
+### Owner finalization
+
+Claude approved the task after independently re-running the focused 34-test
+suite and checking the protected terminal evidence. Codex2 then composed the
+review approval with the latest `origin/dev` and repeated the closeout checks:
+
+- `python3 -m unittest scripts/git/test_git_workflow_helpers.py` — 34 tests,
+  all passed.
+- `python3 -m py_compile scripts/git/publish_promote.py scripts/git/test_git_workflow_helpers.py`
+  — passed.
+- `git diff --check` — clean.
+
+The final readback still resolves protected `master` to
+`ff77abecf2c2c9fe819fd73e0a0be07eb0be3809`, with both the master and release
+trees at `ef2ef8a8108002f048b09650207a3a12d6879a8f`. The immutable release tag
+object remains `0df22a28c723a757aea467c6167fadfaa75e5a2b`, its release commit remains
+an ancestor of `master`, `prod/v2026.07.22.2` remains pinned to the protected
+merge, run 29945824590 remains successful, and all seven reconciled historical
+promote PRs remain closed. This is the owner closeout record for the approved
+delivery; it does not expand the task's implementation or operational scope.
