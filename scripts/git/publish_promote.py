@@ -36,6 +36,8 @@ CONFIG_FILE = ROOT / ".orchestrator" / "config.json"
 # configured by nightly_publish.version_format is eligible for automation.
 RELEASE_TAG_RE = re.compile(r"^refs/tags/release/(v\d{4}\.\d{2}(?:\.\d+){1,2})$")
 DAILY_RELEASE_RE = re.compile(r"^v\d{4}\.\d{2}\.\d{2}\.\d+$")
+UNMERGED_STAGE_RE = re.compile(r"^\d{6} [0-9a-f]+ [123]\t(.+)$")
+RETIRED_EMBEDDED_FRONTEND_PREFIX = "execute-plans/"
 
 
 class PromotionConflict(RuntimeError):
@@ -238,8 +240,43 @@ def assess_promotion_mode(main_ref: str, release_ref: str) -> tuple[str, str]:
     if merge_tree.returncode == 0:
         return "clean_merge", "merge-tree preflight succeeded"
     if merge_tree.returncode == 1:
-        return "conflicted", _result_detail(merge_tree)
+        release_wins = _run_git_result(
+            "merge-tree", "--write-tree", "-Xtheirs", main_ref, release_ref
+        )
+        if release_wins.returncode == 0:
+            return (
+                "release_wins_merge",
+                "standard merge conflicted; release-wins preflight succeeded",
+            )
+        cleanup_paths = safe_release_deleted_mirror_paths(release_wins, release_ref)
+        if release_wins.returncode == 1 and cleanup_paths:
+            return (
+                "release_wins_cleanup",
+                "release-wins preflight leaves only retired embedded-frontend deletions",
+            )
+        return "conflicted", _result_detail(release_wins)
     return "error", _result_detail(merge_tree)
+
+
+def safe_release_deleted_mirror_paths(
+    merge_tree: subprocess.CompletedProcess[str], release_ref: str
+) -> list[str]:
+    """Return conflicts safe to resolve as release-side mirror deletions."""
+    paths = sorted(
+        {
+            match.group(1)
+            for line in merge_tree.stdout.splitlines()
+            if (match := UNMERGED_STAGE_RE.match(line))
+        }
+    )
+    if not paths:
+        return []
+    for path in paths:
+        if not path.startswith(RETIRED_EMBEDDED_FRONTEND_PREFIX):
+            return []
+        if _run_git_result("cat-file", "-e", f"{release_ref}:{path}").returncode == 0:
+            return []
+    return paths
 
 
 def ensure_git_identity() -> None:
@@ -382,7 +419,13 @@ def discover(
         candidate
         for candidate in candidates
         if candidate["disposition"] == "pending"
-        and candidate.get("promotion_mode") in {"clean_merge", "snapshot_bridge"}
+        and candidate.get("promotion_mode")
+        in {
+            "clean_merge",
+            "snapshot_bridge",
+            "release_wins_merge",
+            "release_wins_cleanup",
+        }
     ]
     terminal_snapshots: list[dict] = []
     for candidate in reversed(promotable):
@@ -481,6 +524,38 @@ def create_snapshot_bridge(version: str, main_ref: str, release_ref: str) -> str
     return commit
 
 
+def create_release_wins_cleanup_merge(version: str, release_ref: str) -> None:
+    """Resolve only the known embedded-frontend modify/delete conflict."""
+    proc = _run_git_result(
+        "merge", "--no-ff", "--no-commit", "-X", "theirs", release_ref
+    )
+    if proc.returncode not in {0, 1}:
+        raise RuntimeError(f"release-wins merge failed: {_result_detail(proc)}")
+    unmerged = run_git("diff", "--name-only", "--diff-filter=U").splitlines()
+    if not unmerged or any(
+        not path.startswith(RETIRED_EMBEDDED_FRONTEND_PREFIX) for path in unmerged
+    ):
+        _run_git_result("merge", "--abort")
+        raise PromotionConflict(
+            "release-wins merge left conflicts outside the retired embedded frontend"
+        )
+    if any(
+        _run_git_result("cat-file", "-e", f"{release_ref}:{path}").returncode == 0
+        for path in unmerged
+    ):
+        _run_git_result("merge", "--abort")
+        raise PromotionConflict("release-wins cleanup would delete a path retained by release")
+
+    run_git("rm", "-r", "--", RETIRED_EMBEDDED_FRONTEND_PREFIX.rstrip("/"))
+    if run_git("diff", "--name-only", "--diff-filter=U"):
+        _run_git_result("merge", "--abort")
+        raise PromotionConflict("release-wins cleanup did not resolve every conflict")
+    if run_git("ls-files", RETIRED_EMBEDDED_FRONTEND_PREFIX.rstrip("/")):
+        _run_git_result("merge", "--abort")
+        raise PromotionConflict("retired embedded frontend remains tracked after cleanup")
+    run_git("commit", "-m", f"promote: {version}")
+
+
 def open_candidate(cand: dict, settings: dict) -> dict:
     version = cand["version"]
     publish_branch = cand["publish_branch"]
@@ -507,18 +582,17 @@ def open_candidate(cand: dict, settings: dict) -> dict:
         }
 
     run_git("checkout", "-B", promote_branch, main_ref)
-    if cand.get("promotion_mode") == "snapshot_bridge":
+    promotion_mode = cand.get("promotion_mode")
+    if promotion_mode == "snapshot_bridge":
         create_snapshot_bridge(version, main_ref, release_ref)
+    elif promotion_mode == "release_wins_cleanup":
+        create_release_wins_cleanup_merge(version, release_ref)
     else:
         try:
-            run_git(
-                "merge",
-                "--no-ff",
-                "--no-edit",
-                "-m",
-                f"promote: {version}",
-                release_ref,
-            )
+            merge_args = ["merge", "--no-ff", "--no-edit", "-m", f"promote: {version}"]
+            if promotion_mode == "release_wins_merge":
+                merge_args.extend(["-X", "theirs"])
+            run_git(*merge_args, release_ref)
         except subprocess.CalledProcessError as exc:
             _run_git_result("merge", "--abort")
             detail = (exc.stderr or exc.stdout or str(exc)).strip()

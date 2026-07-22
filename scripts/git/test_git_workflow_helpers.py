@@ -341,7 +341,7 @@ class PublishPromoteTests(unittest.TestCase):
                 self._git(repo, "rev-parse", "HEAD^{tree}").stdout.strip(), master_tree
             )
 
-    def test_common_history_content_conflict_stays_fail_closed(self) -> None:
+    def test_common_history_content_conflict_uses_release_wins_merge(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
             self._git(repo, "init", "-b", "master")
@@ -360,7 +360,64 @@ class PublishPromoteTests(unittest.TestCase):
             master = self._git(repo, "rev-parse", "HEAD").stdout.strip()
             with mock.patch.object(publish_promote, "ROOT", repo):
                 mode, _detail = publish_promote.assess_promotion_mode(master, release)
+            self.assertEqual(mode, "release_wins_merge")
+
+    def test_non_mirror_modify_delete_conflict_stays_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            self._git(repo, "init", "-b", "master")
+            self._git(repo, "config", "user.name", "fixture")
+            self._git(repo, "config", "user.email", "fixture@example.invalid")
+            (repo / "state.txt").write_text("base\n")
+            self._git(repo, "add", "state.txt")
+            self._git(repo, "commit", "-m", "base")
+            self._git(repo, "checkout", "-b", "publish")
+            self._git(repo, "rm", "state.txt")
+            self._git(repo, "commit", "-m", "release deletes state")
+            release = self._git(repo, "rev-parse", "HEAD").stdout.strip()
+            self._git(repo, "checkout", "master")
+            (repo / "state.txt").write_text("master-only change\n")
+            self._git(repo, "commit", "-am", "master modifies state")
+            master = self._git(repo, "rev-parse", "HEAD").stdout.strip()
+            with mock.patch.object(publish_promote, "ROOT", repo):
+                mode, _detail = publish_promote.assess_promotion_mode(master, release)
             self.assertEqual(mode, "conflicted")
+
+    def test_retired_embedded_frontend_conflict_is_deleted_and_rollback_safe(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            self._git(repo, "init", "-b", "master")
+            self._git(repo, "config", "user.name", "fixture")
+            self._git(repo, "config", "user.email", "fixture@example.invalid")
+            mirror = repo / "execute-plans"
+            mirror.mkdir()
+            (mirror / "legacy.ts").write_text("base\n")
+            self._git(repo, "add", "execute-plans/legacy.ts")
+            self._git(repo, "commit", "-m", "base")
+            self._git(repo, "checkout", "-b", "publish")
+            self._git(repo, "rm", "execute-plans/legacy.ts")
+            self._git(repo, "commit", "-m", "release removes embedded frontend")
+            release = self._git(repo, "rev-parse", "HEAD").stdout.strip()
+            self._git(repo, "checkout", "master")
+            mirror.mkdir(exist_ok=True)
+            (mirror / "legacy.ts").write_text("master-only edit\n")
+            self._git(repo, "commit", "-am", "master edits embedded frontend")
+            master = self._git(repo, "rev-parse", "HEAD").stdout.strip()
+            master_tree = self._git(repo, "rev-parse", "HEAD^{tree}").stdout.strip()
+
+            with mock.patch.object(publish_promote, "ROOT", repo):
+                mode, _detail = publish_promote.assess_promotion_mode(master, release)
+                self.assertEqual(mode, "release_wins_cleanup")
+                publish_promote.create_release_wins_cleanup_merge("v2026.07.22.2", release)
+
+            merge_commit = self._git(repo, "rev-parse", "HEAD").stdout.strip()
+            parents = self._git(repo, "show", "-s", "--format=%P", merge_commit).stdout.split()
+            self.assertEqual(parents, [master, release])
+            self.assertFalse((mirror / "legacy.ts").exists())
+            self._git(repo, "revert", "-m", "1", merge_commit, "--no-edit")
+            self.assertEqual(
+                self._git(repo, "rev-parse", "HEAD^{tree}").stdout.strip(), master_tree
+            )
 
     def test_empty_successful_merge_base_is_portably_unrelated(self) -> None:
         no_base = subprocess.CompletedProcess(
