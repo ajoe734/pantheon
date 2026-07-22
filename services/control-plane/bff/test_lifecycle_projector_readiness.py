@@ -25,6 +25,18 @@ def _configure_dependencies(monkeypatch, projection_root: Path) -> None:
         "LIFECYCLE_PROJECTOR_STATE_PATH",
         str(projection_root / "controller_state.json"),
     )
+    monkeypatch.setenv(
+        "LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH",
+        str(projection_root / "health_state.json"),
+    )
+    monkeypatch.setenv(
+        "PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE",
+        str(projection_root / "current" / "trade_journey_events.json"),
+    )
+    monkeypatch.setenv(
+        "PANTHEON_BFF_LOOP_RUN_STORE",
+        str(projection_root / "current" / "loop_runs.json"),
+    )
     monkeypatch.setenv("LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS", "30")
     monkeypatch.setenv("LIFECYCLE_PROJECTOR_HEALTH_MAX_BACKLOG", "0")
     monkeypatch.setenv("LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_BYTES", "0")
@@ -54,7 +66,7 @@ def test_bff_readyz_fails_closed_when_projector_is_stale_and_recovers(
     assert dependency["source_high_watermark"] == 1
     assert dependency["last_successful_publish_at"]
 
-    state_path = tmp_path / "controller_state.json"
+    state_path = tmp_path / "health_state.json"
     state = json.loads(state_path.read_text(encoding="utf-8"))
     state["controller"]["last_poll_at"] = "2020-01-01T00:00:00Z"
     state_path.write_text(json.dumps(state), encoding="utf-8")
@@ -96,3 +108,36 @@ def test_bff_readyz_exposes_projector_error_reason(tmp_path: Path, monkeypatch) 
     assert dependency["worker_status"] == "error"
     assert dependency["error_reason"] == "last_error:postgres unavailable"
     assert dependency["backlog"] == 1
+
+
+def test_bff_readyz_fails_closed_when_read_store_is_not_projector_current(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _configure_dependencies(monkeypatch, tmp_path)
+    projector = LifecycleProjector(
+        state_path=tmp_path / "controller_state.json",
+        bundle_root=tmp_path,
+        deployment_sha="deadbeef",
+    )
+    projector.project_records(
+        lifecycle_rows()[:1], mode="live", source_high_watermark=1
+    )
+    monkeypatch.setenv(
+        "PANTHEON_BFF_LOOP_RUN_STORE",
+        str(tmp_path / "loop_runs.json"),
+    )
+
+    response = TestClient(bff_main.app).get("/readyz")
+
+    assert response.status_code == 503
+    dependency = response.json()["dependencies"]["lifecycle_projector"]
+    assert dependency["worker_status"] == "ready"
+    assert dependency["ready"] is False
+    assert dependency["status"] == "degraded"
+    assert dependency["error_reason"] == "read_surface_store_mismatch:loop_runs"
+    assert dependency["read_surface_stores"]["loop_runs"] == {
+        "configured_path": str(tmp_path / "loop_runs.json"),
+        "expected_path": str(tmp_path / "current" / "loop_runs.json"),
+        "aligned": False,
+    }

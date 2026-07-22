@@ -8,8 +8,9 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import os
+import time
 from pathlib import Path
-from typing import Any, Mapping, Protocol, Sequence
+from typing import Any, Callable, Mapping, Protocol, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
@@ -37,16 +38,31 @@ CONTROLLER_FIELDS = (
 
 
 class ReadbackError(RuntimeError):
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        safe_details: Mapping[str, Any] | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.safe_message = message
+        self.safe_details = dict(safe_details or {})
 
 
 @dataclass(frozen=True)
 class HttpResult:
     status: int
     payload: Any
+
+
+@dataclass(frozen=True)
+class SurfaceRead:
+    result: HttpResult
+    data: Mapping[str, Any]
+    attempts: int
+    transient_http_statuses: tuple[int, ...]
 
 
 class HttpClient(Protocol):
@@ -106,6 +122,63 @@ def _require(condition: bool, code: str, message: str) -> None:
 def _object(value: Any, code: str, message: str) -> Mapping[str, Any]:
     _require(isinstance(value, Mapping), code, message)
     return value
+
+
+def _read_surface_data(
+    *,
+    client: HttpClient,
+    url: str,
+    headers: Mapping[str, str],
+    code: str,
+    label: str,
+    max_attempts: int,
+    poll_seconds: float,
+    sleep: Callable[[float], None],
+) -> SurfaceRead:
+    """Wait for a newly published public read surface without leaking payloads."""
+
+    attempts = max(1, int(max_attempts))
+    delay = max(0.0, float(poll_seconds))
+    transient_http_statuses: list[int] = []
+    last_status: int | None = None
+    last_transport_error = False
+    for attempt in range(1, attempts + 1):
+        try:
+            result = client.request("GET", url, headers=headers)
+        except ReadbackError as exc:
+            if exc.code != "bff_transport_error":
+                raise
+            result = None
+            last_status = None
+            last_transport_error = True
+        else:
+            last_status = result.status
+            last_transport_error = False
+            payload = result.payload
+            data = payload.get("data") if isinstance(payload, Mapping) else None
+            if result.status == 200 and isinstance(data, Mapping):
+                return SurfaceRead(
+                    result=result,
+                    data=data,
+                    attempts=attempt,
+                    transient_http_statuses=tuple(transient_http_statuses),
+                )
+            transient_http_statuses.append(result.status)
+        if attempt < attempts:
+            sleep(delay)
+
+    details: dict[str, Any] = {
+        "surface": label,
+        "attempts": attempts,
+        "transport_error": last_transport_error,
+    }
+    if last_status is not None:
+        details["last_http_status"] = last_status
+    raise ReadbackError(
+        code,
+        f"{label} did not converge after bounded retries",
+        safe_details=details,
+    )
 
 
 def _controller_summary(controller: Mapping[str, Any]) -> dict[str, Any]:
@@ -177,6 +250,9 @@ def verify_readback(
     client_id: str,
     client_secret: str,
     client: HttpClient,
+    surface_read_attempts: int = 4,
+    surface_read_poll_seconds: float = 5.0,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, Any]:
     _require(bool(expected_sha) and expected_sha != "unknown", "expected_sha_invalid", "a concrete expected SHA was required")
     _require(base_url.startswith("https://"), "bff_url_invalid", "public BFF URL must use HTTPS")
@@ -233,12 +309,21 @@ def verify_readback(
     }
     _require(all(status == 401 for status in negative_statuses.values()), "bff_auth_negative_failed", "public BFF protected read accepted an invalid identity")
 
-    loop_result = client.request("GET", loop_url, headers=auth)
+    loop_read = _read_surface_data(
+        client=client,
+        url=loop_url,
+        headers=auth,
+        code="bff_loop_read_invalid",
+        label="loop-run detail",
+        max_attempts=surface_read_attempts,
+        poll_seconds=surface_read_poll_seconds,
+        sleep=sleep,
+    )
+    loop_result = loop_read.result
     loop_payload = _object(loop_result.payload, "bff_loop_read_invalid", "loop-run response was invalid")
-    loop = _object(loop_payload.get("data"), "bff_loop_read_invalid", "loop-run data was missing")
+    loop = loop_read.data
     loop_surface = _object(_object(loop_payload.get("meta"), "bff_loop_read_invalid", "loop-run metadata was missing").get("surfaces"), "bff_loop_read_invalid", "loop-run surfaces were missing")
     loop_surface = _object(loop_surface.get("loop_run_detail"), "bff_loop_read_invalid", "loop-run detail surface was missing")
-    _require(loop_result.status == 200, "bff_loop_read_invalid", "loop-run detail request failed")
     _require(all(str(loop.get(field) or "") == str(identity[field]) for field in STABLE_IDENTITY_FIELDS), "bff_loop_identity_mismatch", "loop-run stable identity mismatched hosted proof")
     _require(loop.get("id") == loop_id and loop.get("loop_run_id") == loop_id and loop.get("journey_id") == journey_id, "bff_loop_identity_mismatch", "loop-run identifiers mismatched hosted proof")
     _require(loop.get("source") == "canonical_telemetry_lifecycle_projector" and loop.get("accepted_live") is True and loop.get("projection_mode") == "live", "bff_loop_truth_invalid", "loop-run record was not canonical live truth")
@@ -260,9 +345,19 @@ def verify_readback(
         checkpoint=checkpoint,
     )
 
-    journey_result = client.request("GET", journey_url, headers=auth)
+    journey_read = _read_surface_data(
+        client=client,
+        url=journey_url,
+        headers=auth,
+        code="bff_journey_read_invalid",
+        label="Trade Journey detail",
+        max_attempts=surface_read_attempts,
+        poll_seconds=surface_read_poll_seconds,
+        sleep=sleep,
+    )
+    journey_result = journey_read.result
     journey_payload = _object(journey_result.payload, "bff_journey_read_invalid", "Trade Journey response was invalid")
-    journey = _object(journey_payload.get("data"), "bff_journey_read_invalid", "Trade Journey data was missing")
+    journey = journey_read.data
     journey_meta = _object(journey_payload.get("meta"), "bff_journey_read_invalid", "Trade Journey metadata was missing")
     freshness = _object(journey_meta.get("freshness"), "bff_journey_read_invalid", "Trade Journey freshness was missing")
     _require(journey_result.status == 200 and journey.get("journey_id") == journey_id, "bff_journey_read_invalid", "Trade Journey detail request failed")
@@ -281,9 +376,19 @@ def verify_readback(
     )
     _require(loop_controller_summary == journey_controller_summary, "bff_cross_surface_mismatch", "BFF surfaces did not serve one atomic controller generation")
 
-    evidence_result = client.request("GET", evidence_url, headers=auth)
+    evidence_read = _read_surface_data(
+        client=client,
+        url=evidence_url,
+        headers=auth,
+        code="bff_evidence_invalid",
+        label="Trade Journey evidence",
+        max_attempts=surface_read_attempts,
+        poll_seconds=surface_read_poll_seconds,
+        sleep=sleep,
+    )
+    evidence_result = evidence_read.result
     evidence_payload = _object(evidence_result.payload, "bff_evidence_invalid", "Trade Journey evidence response was invalid")
-    evidence = _object(evidence_payload.get("data"), "bff_evidence_invalid", "Trade Journey evidence data was missing")
+    evidence = evidence_read.data
     by_stage = _object(evidence.get("by_stage"), "bff_evidence_invalid", "Trade Journey stage evidence was missing")
     correlated = 0
     for event in proof.get("events") or []:
@@ -322,6 +427,8 @@ def verify_readback(
             },
             "loop_run": {
                 "http_status": loop_result.status,
+                "read_attempts": loop_read.attempts,
+                "transient_http_statuses": list(loop_read.transient_http_statuses),
                 "loop_run_id": loop_id,
                 "journey_id": journey_id,
                 "status": loop.get("status"),
@@ -333,6 +440,12 @@ def verify_readback(
             "trade_journey": {
                 "http_status": journey_result.status,
                 "evidence_http_status": evidence_result.status,
+                "read_attempts": journey_read.attempts,
+                "transient_http_statuses": list(journey_read.transient_http_statuses),
+                "evidence_read_attempts": evidence_read.attempts,
+                "evidence_transient_http_statuses": list(
+                    evidence_read.transient_http_statuses
+                ),
                 "journey_id": journey_id,
                 "tenant_id": tenant_id,
                 "environment": "paper",
@@ -382,6 +495,8 @@ def execute_readback(**kwargs: Any) -> tuple[int, dict[str, Any]]:
             "failure": {"code": exc.code, "message": exc.safe_message},
             "redaction": {"access_token_included": False, "credentials_included": False, "response_payloads_included": False},
         }
+        if exc.safe_details:
+            artifact["failure"]["details"] = exc.safe_details
         code = 1
     except Exception:  # noqa: BLE001 - always emit allowlist-only failure evidence
         artifact = {

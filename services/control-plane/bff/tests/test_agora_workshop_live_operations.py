@@ -93,6 +93,8 @@ class FakeCanonicalOperations:
         self.calls: list[tuple[str, Dict[str, Any]]] = []
         self.research_status = "queued"
         self.raise_research_error = False
+        self.research_error: Optional[CanonicalOperationError] = None
+        self.consultation_error: Optional[CanonicalOperationError] = None
         self.forbidden_execution_calls: list[str] = []
 
     def _record(self, name: str, payload: Optional[Dict[str, Any]] = None) -> None:
@@ -168,10 +170,15 @@ class FakeCanonicalOperations:
         *,
         task_payload: Dict[str, Any],
         run_payload: Dict[str, Any],
+        resume: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         self._record(
             "dispatch_research_run",
-            {"task_payload": task_payload, "run_payload": run_payload},
+            {
+                "task_payload": task_payload,
+                "run_payload": run_payload,
+                "resume": copy.deepcopy(resume),
+            },
         )
         if self.raise_research_error:
             raise CanonicalOperationError(
@@ -179,6 +186,9 @@ class FakeCanonicalOperations:
                 "research service unavailable",
                 retryable=True,
             )
+        if self.research_error is not None:
+            error, self.research_error = self.research_error, None
+            raise error
         return {
             "task": {
                 "task_id": "research-task-001",
@@ -198,11 +208,15 @@ class FakeCanonicalOperations:
         *,
         request_id: str,
         payload: Dict[str, Any],
+        resume: bool = False,
     ) -> Dict[str, Any]:
         self._record(
             "open_consultation",
-            {"request_id": request_id, "payload": payload},
+            {"request_id": request_id, "payload": payload, "resume": resume},
         )
+        if self.consultation_error is not None:
+            error, self.consultation_error = self.consultation_error, None
+            raise error
         return {
             "request_id": request_id,
             "status": "submitted",
@@ -288,16 +302,19 @@ def _harness(
     store: Optional[MemoryWorkshopStore] = None,
 ) -> tuple[TestClient, MemoryWorkshopStore, FakeCanonicalOperations]:
     workshop_store = store or MemoryWorkshopStore()
-    workshop_store.create_session(
-        {
-            "workshop_id": WORKSHOP_ID,
-            "tenant_id": TENANT_ID,
-            "user_id": USER_ID,
-            "strategy_id": STRATEGY_ID,
-            "active_strategy_spec_registry_id": BASE_REGISTRY_ID,
-            "status": "open",
-        }
-    )
+    if workshop_store.get_session(WORKSHOP_ID) is None:
+        # Reusing a populated store simulates a BFF restart: receipts,
+        # version links, and the session survive; only process state resets.
+        workshop_store.create_session(
+            {
+                "workshop_id": WORKSHOP_ID,
+                "tenant_id": TENANT_ID,
+                "user_id": USER_ID,
+                "strategy_id": STRATEGY_ID,
+                "active_strategy_spec_registry_id": BASE_REGISTRY_ID,
+                "status": "open",
+            }
+        )
     canonical = FakeCanonicalOperations()
     identity = {
         "operator_id": USER_ID,
@@ -752,6 +769,186 @@ def test_downstream_rejection_has_durable_failure_receipt_and_safe_compensation(
     assert canonical.forbidden_execution_calls == []
 
 
+def test_conclude_refuses_missing_and_unselected_final_versions() -> None:
+    client, store, canonical = _harness()
+    _created_a, version_a = _create_version(client, store, key="conclude-guard-a")
+    created_b, version_b = _create_version(
+        client,
+        store,
+        key="conclude-guard-b",
+        body=_version_body("Second Candidate"),
+    )
+    selected = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/versions/{version_b}/select",
+        headers=_command_headers("conclude-guard-select", created_b.headers["etag"]),
+    )
+    assert selected.status_code == 200, selected.text
+    canonical.add_approval("approval-guard-conclude", version_id=version_a)
+    baseline_readbacks = canonical.call_count("get_strategy_spec")
+
+    missing = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/conclude",
+        headers=_command_headers("conclude-guard-missing", selected.headers["etag"]),
+        json={
+            "final_version_id": "wsv-does-not-exist",
+            "approval_decision_id": "approval-guard-conclude",
+        },
+    )
+    assert missing.status_code == 409, missing.text
+    assert _reason(missing) == "WORKSHOP_VERSION_REQUIRED"
+
+    unselected = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/conclude",
+        headers=_command_headers("conclude-guard-unselected", selected.headers["etag"]),
+        json={
+            "final_version_id": version_a,
+            "approval_decision_id": "approval-guard-conclude",
+        },
+    )
+    assert unselected.status_code == 409, unselected.text
+    assert _reason(unselected) == "WORKSHOP_FINAL_VERSION_NOT_SELECTED"
+    details = unselected.json()["detail"]["error"]["details"]
+    assert details["selected_version_id"] == version_b
+
+    cross_tenant = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/conclude",
+        headers=_command_headers(
+            "conclude-guard-tenant",
+            selected.headers["etag"],
+            tenant_id="tenant-beta",
+        ),
+        json={
+            "final_version_id": version_b,
+            "approval_decision_id": "approval-guard-conclude",
+        },
+    )
+    assert cross_tenant.status_code == 403, cross_tenant.text
+    assert _reason(cross_tenant) == "CROSS_USER_ACCESS_FORBIDDEN"
+
+    # None of the refused conclusions admitted a command or touched the
+    # Registry; the workshop is still reviewable.
+    session = store.get_session(WORKSHOP_ID)
+    assert session["status"] == "in_review"
+    assert session["selected_version_id"] == version_b
+    assert canonical.call_count("get_strategy_spec") == baseline_readbacks
+    assert canonical.forbidden_execution_calls == []
+
+
+def test_conclude_refuses_mutated_or_incomplete_final_version_with_durable_receipt() -> None:
+    client, store, canonical = _harness()
+    created, version_id = _create_version(client, store, key="conclude-digest-create")
+    registry_id = created.json()["data"]["resource"]["version"][
+        "strategy_spec_registry_id"
+    ]
+    selected = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/versions/{version_id}/select",
+        headers=_command_headers("conclude-digest-select", created.headers["etag"]),
+    )
+    assert selected.status_code == 200, selected.text
+    canonical.add_approval("approval-digest-conclude", version_id=version_id)
+    canonical.registry[registry_id]["entry"]["metadata"]["strategy_spec"][
+        "title"
+    ] = "Mutated behind immutable Registry identity"
+
+    mutated = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/conclude",
+        headers=_command_headers("conclude-digest-key", selected.headers["etag"]),
+        json={
+            "final_version_id": version_id,
+            "approval_decision_id": "approval-digest-conclude",
+        },
+    )
+    assert mutated.status_code == 409, mutated.text
+    assert _reason(mutated) == "WORKSHOP_VERSION_PROJECTION_CONFLICT"
+
+    receipt = store.get_command_receipt(
+        workshop_id=WORKSHOP_ID,
+        tenant_id=TENANT_ID,
+        user_id=USER_ID,
+        operation="conclude",
+        idempotency_key="conclude-digest-key",
+    )
+    assert receipt is not None
+    assert receipt["status"] == "failed"
+    assert receipt["failure"]["reason"] == "WORKSHOP_VERSION_PROJECTION_CONFLICT"
+    session = store.get_session(WORKSHOP_ID)
+    assert session["status"] == "in_review"
+    assert session.get("final_workshop_version_id") is None
+
+    # An incomplete Registry readback (document removed) is also refused with
+    # its own durable failed receipt.
+    canonical.registry[registry_id]["entry"]["metadata"].pop("strategy_spec")
+    incomplete = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/conclude",
+        headers=_command_headers("conclude-incomplete-key", _etag(store)),
+        json={
+            "final_version_id": version_id,
+            "approval_decision_id": "approval-digest-conclude",
+        },
+    )
+    assert incomplete.status_code == 502, incomplete.text
+    assert _reason(incomplete) == "STRATEGY_SPEC_DOCUMENT_REQUIRED"
+    incomplete_receipt = store.get_command_receipt(
+        workshop_id=WORKSHOP_ID,
+        tenant_id=TENANT_ID,
+        user_id=USER_ID,
+        operation="conclude",
+        idempotency_key="conclude-incomplete-key",
+    )
+    assert incomplete_receipt is not None
+    assert incomplete_receipt["status"] == "failed"
+    assert store.get_session(WORKSHOP_ID)["status"] == "in_review"
+    assert canonical.forbidden_execution_calls == []
+
+
+def test_research_timeout_is_durable_and_new_key_retry_succeeds() -> None:
+    client, store, canonical = _harness()
+    created, version_id = _create_version(client, store, key="research-timeout-create")
+    canonical.add_approval("approval-timeout-run", version_id=version_id)
+    canonical.raise_research_error = True
+    body = _research_body(version_id, "approval-timeout-run")
+
+    timed_out = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/research-runs",
+        headers=_command_headers("research-timeout", created.headers["etag"]),
+        json=body,
+    )
+    assert timed_out.status_code == 503, timed_out.text
+    assert _reason(timed_out) == "research service unavailable"
+
+    receipt = store.get_command_receipt(
+        workshop_id=WORKSHOP_ID,
+        tenant_id=TENANT_ID,
+        user_id=USER_ID,
+        operation="dispatch_research",
+        idempotency_key="research-timeout",
+    )
+    assert receipt is not None
+    assert receipt["status"] == "failed"
+    assert receipt["failure"]["retryable"] is True
+
+    same_key = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/research-runs",
+        headers=_command_headers("research-timeout", _etag(store)),
+        json=body,
+    )
+    assert same_key.status_code == 409, same_key.text
+    assert _reason(same_key) == "COMMAND_PREVIOUSLY_FAILED"
+
+    canonical.raise_research_error = False
+    retried = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/research-runs",
+        headers=_command_headers("research-timeout-retry", _etag(store)),
+        json=body,
+    )
+    assert retried.status_code == 202, retried.text
+    retried_resource = retried.json()["data"]["resource"]
+    assert retried_resource["run"]["run_id"] == "research-run-001"
+    assert retried_resource["downstream_terminal"] is False
+    assert canonical.call_count("dispatch_research_run") == 2
+    assert canonical.forbidden_execution_calls == []
+
+
 def test_consultation_projection_failure_cancels_downstream_and_keeps_receipt() -> None:
     client, store, canonical = _harness(store=ConsultationCommitFailingStore())
     created, version_id = _create_version(client, store)
@@ -790,6 +987,17 @@ def test_consultation_projection_failure_cancels_downstream_and_keeps_receipt() 
     assert receipt["compensation"]["canonical_refs"][
         "consultation_request_id"
     ].startswith("cr-ws-")
+    # Successful downstream cancellation seals the compensation: the failed
+    # attempt is resolved and is no longer resumable partial-effect lineage.
+    assert receipt["compensation"]["resolution"] == "cancelled"
+    assert receipt["compensation"]["resolved_at"]
+    assert store.find_resumable_command(
+        workshop_id=WORKSHOP_ID,
+        tenant_id=TENANT_ID,
+        user_id=USER_ID,
+        operation="open_consultation",
+        request_hash=receipt["request_hash"],
+    ) is None
 
     replay = client.post(
         f"/bff/agora/workshops/{WORKSHOP_ID}/consultations",
@@ -801,3 +1009,284 @@ def test_consultation_projection_failure_cancels_downstream_and_keeps_receipt() 
     assert canonical.call_count("open_consultation") == 1
     assert canonical.call_count("cancel_consultation") == 1
     assert canonical.forbidden_execution_calls == []
+
+
+def _last_call(canonical: FakeCanonicalOperations, name: str) -> Dict[str, Any]:
+    return next(
+        payload for call_name, payload in reversed(canonical.calls) if call_name == name
+    )
+
+
+def _receipt(
+    store: MemoryWorkshopStore, operation: str, idempotency_key: str
+) -> Dict[str, Any]:
+    receipt = store.get_command_receipt(
+        workshop_id=WORKSHOP_ID,
+        tenant_id=TENANT_ID,
+        user_id=USER_ID,
+        operation=operation,
+        idempotency_key=idempotency_key,
+    )
+    assert receipt is not None
+    return receipt
+
+
+def test_research_partial_failure_records_lineage_and_new_key_retry_resumes() -> None:
+    client, store, canonical = _harness()
+    created, version_id = _create_version(client, store, key="research-partial-create")
+    canonical.add_approval("approval-partial-run", version_id=version_id)
+    body = _research_body(version_id, "approval-partial-run")
+    canonical.research_error = CanonicalOperationError(
+        "research_orchestrator",
+        "canonical research dispatch response is missing run_id",
+        retryable=True,
+        partial_effects={"research_task_id": "research-task-001"},
+    )
+
+    failed = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/research-runs",
+        headers=_command_headers("research-partial", created.headers["etag"]),
+        json=body,
+    )
+    assert failed.status_code == 503, failed.text
+    first_task_key = _last_call(canonical, "dispatch_research_run")[
+        "task_payload"
+    ]["idempotency_key"]
+
+    # The failed receipt carries durable partial-effect lineage: the created
+    # downstream task id and a resumable compensation with the downstream
+    # idempotency digest.
+    receipt = _receipt(store, "dispatch_research", "research-partial")
+    assert receipt["status"] == "failed"
+    assert receipt["canonical_refs"] == {"research_task_id": "research-task-001"}
+    assert receipt["compensation"]["resumable"] is True
+    assert receipt["compensation"]["partial_effects"] == {
+        "research_task_id": "research-task-001"
+    }
+    assert receipt["compensation"]["downstream_idempotency_digest"]
+
+    retried = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/research-runs",
+        headers=_command_headers("research-partial-retry", _etag(store)),
+        json=body,
+    )
+    assert retried.status_code == 202, retried.text
+    retry_call = _last_call(canonical, "dispatch_research_run")
+    # The retry adopts the recorded task instead of creating a duplicate and
+    # reuses the same downstream idempotency key.
+    assert retry_call["resume"] == {
+        "research_task_id": "research-task-001",
+        "research_run_id": None,
+    }
+    assert retry_call["task_payload"]["idempotency_key"] == first_task_key
+
+    retry_receipt = _receipt(store, "dispatch_research", "research-partial-retry")
+    assert retry_receipt["status"] == "completed"
+    assert retry_receipt["canonical_refs"]["research_task_id"] == "research-task-001"
+    assert (
+        retry_receipt["canonical_refs"]["resumed_from_idempotency_key"]
+        == "research-partial"
+    )
+
+    resolved = _receipt(store, "dispatch_research", "research-partial")
+    assert resolved["compensation"]["resolution"] == "resumed"
+    assert (
+        resolved["compensation"]["resolved_by_idempotency_key"]
+        == "research-partial-retry"
+    )
+    assert store.find_resumable_command(
+        workshop_id=WORKSHOP_ID,
+        tenant_id=TENANT_ID,
+        user_id=USER_ID,
+        operation="dispatch_research",
+        request_hash=receipt["request_hash"],
+    ) is None
+    assert canonical.forbidden_execution_calls == []
+
+
+def test_research_partial_failure_after_run_acceptance_resumes_both_ids() -> None:
+    client, store, canonical = _harness()
+    created, version_id = _create_version(client, store, key="research-run-partial-create")
+    canonical.add_approval("approval-run-partial", version_id=version_id)
+    body = _research_body(version_id, "approval-run-partial")
+    canonical.research_error = CanonicalOperationError(
+        "research_orchestrator",
+        "authoritative research run readback id mismatch",
+        retryable=True,
+        partial_effects={
+            "research_task_id": "research-task-001",
+            "research_run_id": "research-run-001",
+        },
+    )
+
+    failed = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/research-runs",
+        headers=_command_headers("research-run-partial", created.headers["etag"]),
+        json=body,
+    )
+    assert failed.status_code == 503, failed.text
+    receipt = _receipt(store, "dispatch_research", "research-run-partial")
+    assert receipt["canonical_refs"] == {
+        "research_task_id": "research-task-001",
+        "research_run_id": "research-run-001",
+    }
+
+    retried = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/research-runs",
+        headers=_command_headers("research-run-partial-retry", _etag(store)),
+        json=body,
+    )
+    assert retried.status_code == 202, retried.text
+    retry_call = _last_call(canonical, "dispatch_research_run")
+    assert retry_call["resume"] == {
+        "research_task_id": "research-task-001",
+        "research_run_id": "research-run-001",
+    }
+    assert canonical.call_count("dispatch_research_run") == 2
+
+
+def test_resume_requires_the_same_request_body() -> None:
+    client, store, canonical = _harness()
+    created, version_id = _create_version(client, store, key="research-hash-create")
+    canonical.add_approval("approval-hash-guard", version_id=version_id)
+    body = _research_body(version_id, "approval-hash-guard")
+    canonical.research_error = CanonicalOperationError(
+        "research_orchestrator",
+        "run dispatch lost",
+        retryable=True,
+        partial_effects={"research_task_id": "research-task-001"},
+    )
+
+    failed = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/research-runs",
+        headers=_command_headers("research-hash-a", created.headers["etag"]),
+        json=body,
+    )
+    assert failed.status_code == 503, failed.text
+
+    different_body = {**body, "research_context": "A different research request."}
+    fresh = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/research-runs",
+        headers=_command_headers("research-hash-b", _etag(store)),
+        json=different_body,
+    )
+    assert fresh.status_code == 202, fresh.text
+    dispatch_calls = [
+        payload
+        for name, payload in canonical.calls
+        if name == "dispatch_research_run"
+    ]
+    assert len(dispatch_calls) == 2
+    # A different logical request never adopts another command's downstream
+    # resources or its downstream idempotency keys.
+    assert dispatch_calls[-1]["resume"] is None
+    assert (
+        dispatch_calls[-1]["task_payload"]["idempotency_key"]
+        != dispatch_calls[0]["task_payload"]["idempotency_key"]
+    )
+
+
+def test_consultation_partial_failure_retry_adopts_recorded_request() -> None:
+    client, store, canonical = _harness()
+    created, version_id = _create_version(client, store, key="consult-partial-create")
+    selected = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/versions/{version_id}/select",
+        headers=_command_headers("consult-partial-select", created.headers["etag"]),
+    )
+    assert selected.status_code == 200, selected.text
+    body = {
+        "consultation_type": "advisory",
+        "subject": "Resume after partial submit failure",
+    }
+    canonical.consultation_error = CanonicalOperationError(
+        "consultation_service",
+        "canonical service is unavailable",
+        retryable=True,
+        partial_effects={"consultation_request_id": "__pending__"},
+    )
+
+    failed = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/consultations",
+        headers=_command_headers("consult-partial", selected.headers["etag"]),
+        json=body,
+    )
+    assert failed.status_code == 503, failed.text
+    first_request_id = _last_call(canonical, "open_consultation")["request_id"]
+    assert first_request_id.startswith("cr-ws-")
+
+    receipt = _receipt(store, "open_consultation", "consult-partial")
+    assert receipt["status"] == "failed"
+    assert receipt["canonical_refs"] == {
+        "consultation_request_id": "__pending__"
+    }
+    assert receipt["compensation"]["resumable"] is True
+
+    retried = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/consultations",
+        headers=_command_headers("consult-partial-retry", _etag(store)),
+        json=body,
+    )
+    assert retried.status_code == 201, retried.text
+    retry_call = _last_call(canonical, "open_consultation")
+    assert retry_call["resume"] is True
+    # The retry re-uses the recorded consultation request id, adopting the
+    # possibly-created downstream request instead of opening a second one.
+    assert retry_call["request_id"] == "__pending__"
+
+    resolved = _receipt(store, "open_consultation", "consult-partial")
+    assert resolved["compensation"]["resolution"] == "resumed"
+    assert canonical.call_count("cancel_consultation") == 0
+    assert canonical.forbidden_execution_calls == []
+
+
+def test_restart_safe_retry_resumes_from_durable_state_without_duplicates() -> None:
+    client, store, canonical = _harness()
+    created, version_id = _create_version(client, store, key="restart-partial-create")
+    canonical.add_approval("approval-restart-run", version_id=version_id)
+    body = _research_body(version_id, "approval-restart-run")
+    canonical.research_error = CanonicalOperationError(
+        "research_orchestrator",
+        "run acceptance lost before readback",
+        retryable=True,
+        partial_effects={"research_task_id": "research-task-001"},
+    )
+
+    failed = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/research-runs",
+        headers=_command_headers("restart-partial", created.headers["etag"]),
+        json=body,
+    )
+    assert failed.status_code == 503, failed.text
+    first_task_key = _last_call(canonical, "dispatch_research_run")[
+        "task_payload"
+    ]["idempotency_key"]
+
+    # Simulate a BFF restart: a brand-new router and canonical adapter over
+    # the same durable store.  Resume state must come from the store alone.
+    restarted_client, _, restarted_canonical = _harness(store=store)
+    restarted_canonical.add_approval("approval-restart-run", version_id=version_id)
+
+    retried = restarted_client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/research-runs",
+        headers=_command_headers("restart-partial-retry", _etag(store)),
+        json=body,
+    )
+    assert retried.status_code == 202, retried.text
+    assert restarted_canonical.call_count("dispatch_research_run") == 1
+    retry_call = _last_call(restarted_canonical, "dispatch_research_run")
+    assert retry_call["resume"] == {
+        "research_task_id": "research-task-001",
+        "research_run_id": None,
+    }
+    assert retry_call["task_payload"]["idempotency_key"] == first_task_key
+    assert retry_call["run_payload"]["idempotency_key"].endswith("-run")
+
+    retry_receipt = _receipt(store, "dispatch_research", "restart-partial-retry")
+    assert retry_receipt["status"] == "completed"
+    assert (
+        retry_receipt["canonical_refs"]["resumed_from_idempotency_key"]
+        == "restart-partial"
+    )
+    resolved = _receipt(store, "dispatch_research", "restart-partial")
+    assert resolved["compensation"]["resolution"] == "resumed"
+    assert restarted_canonical.forbidden_execution_calls == []
