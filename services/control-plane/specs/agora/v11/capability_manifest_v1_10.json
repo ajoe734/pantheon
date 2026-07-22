@@ -1,0 +1,63 @@
+{
+  "manifest_version": "1.10",
+  "extends": "v1.9",
+  "description": "Additive candidate-truth extension over the frozen Agora v1.9 bundle. Candidate pool member reads now carry per-field provenance/as-of, typed unavailable states, role-aware evidence redaction, explicit score semantics, stable pagination, and observable freshness so Trading Room can render honest candidates without static sample fallback.",
+  "schema_bundle_index": "services/control-plane/specs/agora/bundle_index.v1_10.json",
+  "openapi_ref": "services/control-plane/openapi/agora_v1_10.openapi.yaml",
+  "capabilities": [
+    {
+      "id": "candidate_member_truth_projection_contract",
+      "name": "agora.candidate.truth.v1",
+      "version": "1.0",
+      "description": "Every rendered candidate field (rationale, concerns, next event, evidence, details) is either projected verbatim from a durable record of the same candidate with provenance and as-of, or explicitly typed unavailable. No generated narrative, no cross-candidate sample text, no raw private content in list responses, and a Sharpe-derived score is never presented as a generic confidence score.",
+      "schemas": [
+        "FieldProvenance",
+        "AvailableField",
+        "UnavailableField",
+        "CandidateFieldState",
+        "ComponentDigest",
+        "CandidateRationaleValue",
+        "CandidateConcernsValue",
+        "CandidateNextEventValue",
+        "CandidateEvidenceItem",
+        "CandidateEvidenceValue",
+        "CandidateDetailsValue",
+        "CandidateTruthFields",
+        "ScoreSemanticsEntry",
+        "CandidateScoreSemantics",
+        "CandidateMemberTruthProjection",
+        "CandidateMemberPageInfo",
+        "CandidateMemberListFreshness"
+      ],
+      "routes": [
+        "GET /bff/agora/candidate-pools/{pool_id}/members",
+        "GET /bff/agora/candidate-pools/{pool_id}/members/{artifact_id}"
+      ],
+      "implementation_status": "implemented"
+    }
+  ],
+  "required_definition_checksums": [
+    "FieldProvenance",
+    "AvailableField",
+    "UnavailableField",
+    "CandidateFieldState",
+    "ComponentDigest",
+    "CandidateRationaleValue",
+    "CandidateConcernsValue",
+    "CandidateNextEventValue",
+    "CandidateEvidenceItem",
+    "CandidateEvidenceValue",
+    "CandidateDetailsValue",
+    "CandidateTruthFields",
+    "ScoreSemanticsEntry",
+    "CandidateScoreSemantics",
+    "CandidateMemberTruthProjection",
+    "CandidateMemberPageInfo",
+    "CandidateMemberListFreshness"
+  ],
+  "authority_boundary": {
+    "execution_authority": "none",
+    "no_order_route_proof": "candidate_pool_bff_request_only_no_order_route",
+    "notes": "Read-only projection extension. No broker orders, no RuntimeBinding writes, no capital binding, no lifecycle promotion."
+  }
+}
