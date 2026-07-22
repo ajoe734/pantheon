@@ -1,0 +1,54 @@
+{
+  "manifest_version": "1.10",
+  "capabilities": [
+    {
+      "id": "durable_workshop_versions",
+      "name": "agora.workshop.versions.durable.v1",
+      "implementation_status": "implemented",
+      "routes": [
+        "GET /bff/agora/workshops/{workshop_id}/versions",
+        "POST /bff/agora/workshops/{workshop_id}/versions",
+        "POST /bff/agora/workshops/{workshop_id}/versions/{version_id}/select"
+      ],
+      "authoritative_sources": {
+        "strategy_spec_json": "strategy_registry",
+        "version_link_and_selection": "strategy_workshop_postgres"
+      },
+      "durability": {
+        "backend": "postgres",
+        "restart_persistent": true,
+        "legacy_active_pointer_backfill": "deterministic"
+      },
+      "concurrency": {
+        "create_idempotency_key_required": true,
+        "select_idempotency_key_required": true,
+        "select_if_match_required": true,
+        "select_atomic_cas": true
+      },
+      "isolation": {
+        "tenant_scoped": true,
+        "user_scoped": true,
+        "registry_scope_readback_validated_when_present": true
+      },
+      "execution_authority": "none"
+    }
+  ],
+  "required_definition_checksums": {
+    "WorkshopVersionLink": "a2488b6b367bb0b3ea21217f904a3246974a595123d46084d8665dbd907fc8a6",
+    "AuthoritativeStrategySpecReadback": "b0268fb83c46067c6a56c235ab0fd08ba08caf81684b185445ceaaeb567be47a",
+    "WorkshopVersionResource": "772e2e763ea8f0e14417b4a44460accdde542d64f4c990bd2d1accf80e44b716",
+    "WorkshopVersionListEnvelope": "167666ab48c6ca012aec3869c69fb2ce15f9b381c59557feb2be00487a2d2b40",
+    "WorkshopVersionCreateEnvelope": "a6f40d565138cb4cf757967b99e6d728477c56a337215600c020f5ffbf130873",
+    "WorkshopVersionSelectResource": "ec774c2ea5868b67a91f8fa30cc5ed3bd14e540888e8c95b6c4a7b612637e889",
+    "WorkshopVersionSelectEnvelope": "b0a7c22b8010a34758ab898889b1a24437dc3b4ef5899df87783560da906393a",
+    "LegacyVersionBackfillRule": "39a7fb43d285f56c0088015bdee1fb5112c20765673c4f1742b8c4a266dd2f6b"
+  },
+  "migration": {
+    "legacy_rows_preserve_existing_payload_fields": true,
+    "lock_version_unchanged": true,
+    "updated_at_unchanged": true,
+    "selected_aliases_only_populated_when_null": true
+  },
+  "task_id": "AG-WS-OPS-001",
+  "note": "Additive durable version projection over v1.9. Research, consultation, conclusion, order routing, deployment, and live-capital effects are excluded."
+}
