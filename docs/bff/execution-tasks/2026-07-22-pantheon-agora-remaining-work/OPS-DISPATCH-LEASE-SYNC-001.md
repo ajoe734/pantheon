@@ -49,9 +49,9 @@ terminal state without a missing-lease exit loop.
 
 ## Delivery and lifecycle evidence — 2026-07-22
 
-Status: the canonical implementation and live lease propagation are verified;
-the terminal lifecycle smoke remains open on an independent runtime-admission
-lock blocker.
+Status: the canonical implementation, live lease propagation, and lease-backed
+owner progress transaction are verified. The task is ready for the real Claude
+reviewer transition and owner closeout.
 
 ### Canonical repair
 
@@ -61,8 +61,9 @@ lock blocker.
   to both dispatch-status call sites and clears an inherited `ORCH_RUN_ID` when
   no run ID was issued.
 - Duplicate PR #3936 was closed with an explicit #3948 supersession comment.
-- The installed command runtime is
-  `6506ccfc6a4710956dd31bc78a5e854f309d1728`, which contains merge #3948.
+- The current installed command runtime is
+  `bbac7fcbee827b916e565e806eacfbec18a1dac6`, which contains merge #3948 and
+  the independent lock-order repair from PR #3955.
 - Follow-up test commit `45bcc56545dea80c23a9b4629fd73917c226c6dd`
   adds direct owner/reviewer, missing/expired lease, cross-task, and cross-root
   authority regressions. It changes tests only and does not introduce another
@@ -71,7 +72,7 @@ lock blocker.
 ### Verification
 
 - `python3 -m unittest discover -s .orchestrator -p 'test_supervisor.py'`
-  — 319 passed.
+  — 320 passed on the branch after merging current `origin/dev`.
 - `env -u PANTHEON_TASK_STATE_STORE_MODE -u
   PANTHEON_TASK_STATE_EVENT_LOG python3 -m unittest scripts.test_ai_status`
   — 103 passed. The explicit unsets keep the repository fixtures isolated from
@@ -95,9 +96,17 @@ lock blocker.
 - At 16:45 UTC the subprocess was still waiting for a shared lock on
   `/home/lupin/pantheon/.orchestrator/runtime-admission.lock`, while the live
   supervisor held the same inode exclusively. The owner progress transaction
-  therefore had not committed, and the task had not reached
-  `review -> review_approved -> done`.
+  therefore had not committed at that time.
+- PR #3955 subsequently moved dispatch status synchronization outside the
+  supervisor's exclusive runtime lock. On command runtime `bbac7fcbee`, the
+  supervisor issued fresh run `codex-20260722T165521Z-a31dd02a` with task,
+  worktree, status-root, and command-runtime bindings.
+- At 16:57 UTC that run invoked the installed governed wrapper with
+  `AI_NAME=Codex` and its issued `ORCH_RUN_ID`; owner `progress` committed as
+  authoritative journal event 145, with parity follow-up event 146. There was
+  no missing-lease, expired-lease, cross-root, or lock-wait exit.
 
-The task must remain nonterminal until the separate runtime-admission lock
-holder is resolved, a fresh unexpired worker lease commits owner progress, and
-the real reviewer and owner complete the remaining governed transitions.
+The remaining lifecycle actions are intentionally performed by their real
+actors: Codex hands the task to Claude for `review`, Claude records
+`review_approved`, and Codex finalizes `done` only after this task branch's
+evidence/tests PR merges to `dev`.
