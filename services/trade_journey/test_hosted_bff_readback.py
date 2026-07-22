@@ -191,6 +191,32 @@ class MismatchedControllerClient(FakeClient):
         return result
 
 
+class EventuallyVisibleLoopClient(FakeClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.authenticated_loop_reads = 0
+
+    def request(self, method, url, *, headers=None, payload=None):
+        if (
+            "/bff/v5/loop-runs/" in url
+            and (headers or {}).get("Authorization") == "Bearer token-value"
+        ):
+            self.authenticated_loop_reads += 1
+            if self.authenticated_loop_reads == 1:
+                return readback.HttpResult(504, {"error": {"code": "UPSTREAM_TIMEOUT"}})
+        return super().request(method, url, headers=headers, payload=payload)
+
+
+class MissingLoopClient(FakeClient):
+    def request(self, method, url, *, headers=None, payload=None):
+        if (
+            "/bff/v5/loop-runs/" in url
+            and (headers or {}).get("Authorization") == "Bearer token-value"
+        ):
+            return readback.HttpResult(404, {"error": {"code": "RESOURCE_NOT_FOUND"}})
+        return super().request(method, url, headers=headers, payload=payload)
+
+
 def test_authenticated_public_bff_readback_correlates_both_surfaces(tmp_path):
     source = tmp_path / "source.json"
     output = tmp_path / "readback.json"
@@ -288,3 +314,61 @@ def test_readback_rejects_surface_controller_generation_mismatch(tmp_path):
     assert code == 1
     assert artifact["failure"]["code"] == "bff_generation_mismatch"
     assert "token-value" not in output.read_text(encoding="utf-8")
+
+
+def test_readback_retries_bounded_public_surface_warmup(tmp_path):
+    source = tmp_path / "source.json"
+    output = tmp_path / "readback.json"
+    source.write_text(json.dumps(_source_artifact()), encoding="utf-8")
+
+    code, artifact = readback.execute_readback(
+        source_path=source,
+        output=output,
+        expected_sha=SHA,
+        base_url=BASE_URL,
+        client_id="client-id",
+        client_secret="client-secret",
+        client=EventuallyVisibleLoopClient(),
+        surface_read_poll_seconds=0,
+        sleep=lambda _seconds: None,
+    )
+
+    assert code == 0
+    assert artifact["public_bff"]["loop_run"]["read_attempts"] == 2
+    assert artifact["public_bff"]["loop_run"]["transient_http_statuses"] == [504]
+    assert artifact["public_bff"]["trade_journey"]["read_attempts"] == 1
+    assert "token-value" not in output.read_text(encoding="utf-8")
+
+
+def test_readback_reports_redacted_bounded_retry_failure(tmp_path):
+    source = tmp_path / "source.json"
+    output = tmp_path / "readback.json"
+    source.write_text(json.dumps(_source_artifact()), encoding="utf-8")
+
+    code, artifact = readback.execute_readback(
+        source_path=source,
+        output=output,
+        expected_sha=SHA,
+        base_url=BASE_URL,
+        client_id="client-id",
+        client_secret="client-secret",
+        client=MissingLoopClient(),
+        surface_read_attempts=2,
+        surface_read_poll_seconds=0,
+        sleep=lambda _seconds: None,
+    )
+
+    assert code == 1
+    assert artifact["failure"] == {
+        "code": "bff_loop_read_invalid",
+        "message": "loop-run detail did not converge after bounded retries",
+        "details": {
+            "surface": "loop-run detail",
+            "attempts": 2,
+            "transport_error": False,
+            "last_http_status": 404,
+        },
+    }
+    raw = output.read_text(encoding="utf-8")
+    assert "token-value" not in raw
+    assert "client-secret" not in raw
