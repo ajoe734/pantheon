@@ -141,6 +141,7 @@ def test_complete_atomically_records_version_session_event_and_readback() -> Non
             "strategy_id": "strategy-a",
             "strategy_spec_registry_id": "registry-2",
             "parent_workshop_version_id": "wv-1",
+            "document_sha256": "a" * 64,
             "created_by": "operator-a",
         },
         session_updates={
@@ -163,6 +164,7 @@ def test_complete_atomically_records_version_session_event_and_readback() -> Non
         "strategy_spec_registry_id": "registry-2"
     }
     assert completed["version_link"]["sequence_no"] == 1
+    assert completed["version_link"]["document_sha256"] == "a" * 64
     assert store.get_version_link("ws-command-1", "wv-2") == completed["version_link"]
     assert store.list_version_links("ws-command-1") == [completed["version_link"]]
     session = store.get_session("ws-command-1")
@@ -296,6 +298,8 @@ def test_runtime_postgres_bootstrap_contains_additive_operation_tables() -> None
     assert "request_payload_json JSONB NOT NULL" in ddl
     assert "UNIQUE (tenant_id, user_id, workshop_id, operation, idempotency_key)" in ddl
     assert "ADD COLUMN IF NOT EXISTS active_workshop_version_id" in ddl
+    assert "ADD COLUMN IF NOT EXISTS document_sha256 CHAR(64)" in ddl
+    assert "ck_ws_version_document_sha256" in ddl
     assert "CHECK (status IN ('open','in_review','concluded','archived'))" in ddl
 
 
