@@ -671,6 +671,7 @@ jobs:
             --source "${local_evidence}" \
             --output "${readback_evidence}" \
             --expected-sha "${DEPLOY_SHA}" \
+            --expected-login-identity operator_a \
             --base-url "${DEV_BFF_PUBLIC_URL}" || readback_status=$?
           echo "Canonical lifecycle hosted evidence: ${evidence_name}" >> "$GITHUB_STEP_SUMMARY"
           echo "Authenticated public BFF readback evidence: ${readback_name}" >> "$GITHUB_STEP_SUMMARY"
