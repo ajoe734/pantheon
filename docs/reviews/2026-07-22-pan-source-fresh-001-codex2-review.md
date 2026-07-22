@@ -164,3 +164,21 @@ The first attempt with the system Python could not start because that
 interpreter has no `pytest`; the repository's existing virtual environment was
 then used. No external request, deployment, provider credential, production
 state, or live-capital surface was touched during review.
+
+## Governed lifecycle transition
+
+After pushing this changes-required review, the reviewer attempted the required
+governed transition with:
+
+```text
+AI_NAME=Codex2 $PANTHEON_COMMAND_ROOT/scripts/ai-status.sh reopen \
+  PAN-SOURCE-FRESH-001 "Changes required; review commit 4f8fd7769 ..."
+```
+
+The wrapper rejected the command before any canonical state mutation because
+the supervisor-provided `PANTHEON_COMMAND_RUNTIME_SHA` was
+`bb482ac3905ef860febd1f8fb48176406389c5e6`, while the same supervisor-provided
+command root had advanced to `a95047594c869bdecdcf748da579802168547c74`.
+The task therefore remains in `review` until the supervisor renews the command
+runtime binding and replays the `reopen` transition. No generated state file
+was edited manually, and the runtime pin was not bypassed.
