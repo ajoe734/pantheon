@@ -1,0 +1,14 @@
+{
+  "as_of": "2026-07-22T17:43:50Z",
+  "base_ref": "origin/dev",
+  "base_sha": "beef87e0a96c7ecf770edf312eb05cb896b7cebd",
+  "candidate_count": 0,
+  "candidates": [],
+  "guard": "No branch deletion is implemented or authorized by this tool.",
+  "mode": "dry-run-only",
+  "remote": "origin",
+  "repository": "ajoe734/pantheon",
+  "retention_days": 30,
+  "schema_version": 1,
+  "task_id": "OPS-TASK-PR-TRIAGE-001"
+}
