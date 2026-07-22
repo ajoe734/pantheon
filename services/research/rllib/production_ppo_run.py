@@ -20,10 +20,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
+try:
+    from .security import secure_local_ray_init_kwargs
+except ImportError:
+    from security import secure_local_ray_init_kwargs  # type: ignore
+
 TASK_ID = "OSS-RLLIB-V2-001"
 FRAMEWORK = "ray.rllib"
-FRAMEWORK_VERSION_PIN = "2.9.3"
-GYMNASIUM_VERSION_PIN = "0.28.1"
+FRAMEWORK_VERSION_PIN = "2.54.0"
+GYMNASIUM_VERSION_PIN = "1.2.2"
 PRODUCTION_NUM_ITERS = 100        # minimum for production runs
 DEFAULT_EVAL_EPISODES = 10
 DEFAULT_SEED = 42
@@ -178,11 +183,12 @@ def _train_with_rllib(
     ppo_config_cls = getattr(ppo_mod, "PPOConfig")
 
     ray.init(
-        include_dashboard=False,
+        **secure_local_ray_init_kwargs(
         ignore_reinit_error=True,
         local_mode=True,
         logging_level="ERROR",
         num_cpus=1,
+        ),
     )
     algo = None
     checkpoint_ref: Optional[str] = None

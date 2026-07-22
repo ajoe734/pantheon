@@ -5,8 +5,8 @@
 # See: services/learning/rl/PATH_DEFINITION.md §1
 # See: services/learning/DEFERRED_OSS_ACTIVATION_MAP.md §4
 
-ray[rllib]==2.9.3
-ray[tune]==2.9.3
-gymnasium==0.28.1
+ray[rllib]==2.54.0
+ray[tune]==2.54.0
+gymnasium==1.2.2
 pydantic>=2.6.3
 redis>=5.0.0
