@@ -94,6 +94,7 @@ def fetch_promote_refs(main_branch: str) -> None:
         main_branch,
         "+refs/heads/publish/*:refs/remotes/origin/publish/*",
         "--tags",
+        "--prune",
         "--quiet",
     )
     if proc.returncode != 0:
@@ -276,52 +277,6 @@ def list_release_tags() -> list[tuple[str, datetime]]:
         when = datetime.fromisoformat(ts.replace("Z", "+00:00"))
         items.append((m.group(1), when))
     return items
-
-
-def fetch_blocking_labels(version: str, prefix: str, block_labels: list[str]) -> list[str]:
-    """Use gh CLI to find any open issues with regression labels for this version."""
-    if not os.environ.get("GH_TOKEN"):
-        return []
-    labels_query = f"{prefix}{version}"
-    cmd = [
-        "gh",
-        "issue",
-        "list",
-        "--state",
-        "open",
-        "--label",
-        labels_query,
-        "--json",
-        "number,title,labels",
-    ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT)
-    blockers: list[str] = []
-    if proc.returncode == 0:
-        try:
-            data = json.loads(proc.stdout)
-            blockers.extend(f"#{i['number']} {i['title']}" for i in data)
-        except json.JSONDecodeError:
-            pass
-    for label in block_labels:
-        cmd_extra = [
-            "gh",
-            "issue",
-            "list",
-            "--state",
-            "open",
-            "--label",
-            label,
-            "--json",
-            "number,title",
-        ]
-        proc = subprocess.run(cmd_extra, capture_output=True, text=True, cwd=ROOT)
-        if proc.returncode == 0:
-            try:
-                for i in json.loads(proc.stdout):
-                    blockers.append(f"#{i['number']} {i['title']} (label: {label})")
-            except json.JSONDecodeError:
-                pass
-    return blockers
 
 
 def discover(

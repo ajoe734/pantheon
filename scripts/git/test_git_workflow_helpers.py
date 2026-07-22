@@ -305,6 +305,7 @@ class PublishPromoteTests(unittest.TestCase):
             self._git(repo, "add", "state.txt")
             self._git(repo, "commit", "-m", "re-rooted master")
             master = self._git(repo, "rev-parse", "HEAD").stdout.strip()
+            master_tree = self._git(repo, "rev-parse", "HEAD^{tree}").stdout.strip()
 
             self._git(repo, "checkout", "--orphan", "publish/v2026.07.15.0")
             self._git(repo, "rm", "-rf", ".")
@@ -335,6 +336,10 @@ class PublishPromoteTests(unittest.TestCase):
             self.assertEqual(parents[0], master)
             self.assertEqual(len(parents), 2)
             self.assertEqual(self._git(repo, "rev-parse", f"{commit}^{{tree}}").stdout.strip(), release_tree)
+            self._git(repo, "revert", "-m", "1", commit, "--no-edit")
+            self.assertEqual(
+                self._git(repo, "rev-parse", "HEAD^{tree}").stdout.strip(), master_tree
+            )
 
     def test_common_history_content_conflict_stays_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
