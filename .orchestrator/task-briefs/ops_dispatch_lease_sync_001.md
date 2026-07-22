@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Restore governed dispatch status sync
-- Status: in_progress
+- Status: review
 - Owner: Codex
 - Reviewer: Claude
-- Next: Runtime bbac7fcbee827b916e565e806eacfbec18a1dac6 accepted the fresh supervisor-issued lease and committed owner progress at authoritative event 145 with parity event 146. Focused suites pass; hand the task to Claude for the real reviewer transition.
+- Next: Review pushed branch HEAD 3fc25c62496cde6ad1711bc83d2fed4c48f674b0. Canonical repair #3948 merged; duplicate #3936 closed; runtime bbac7fcbee contains repair plus #3955 lock-order fix; supervisor 320/320 and status 103/103 pass; lease-backed owner progress committed at events 145-146. Please approve or reopen with concrete findings.
 
 ## Summary
 收斂 #3936/#3948，讓 supervisor 把已啟動 worker run id 以 ORCH_RUN_ID 傳給 governed status command，並以完整 lifecycle smoke 證明不再因缺 lease 反覆退出。

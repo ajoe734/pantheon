@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-18T10:56:43Z",
+  "generated_at": "2026-07-22T17:04:39Z",
   "focus_mode": "execution",
   "focus_mode_source": "planning_state_fallback",
   "runtime_summary": {
@@ -211,18 +211,25 @@
     "max_dispatches_per_tick": 10,
     "max_tasks_per_agent": null,
     "max_tasks_per_agent_by_agent": {
-      "Claude": 0,
+      "Claude": 1,
       "Claude2": 0,
-      "Antigravity": 0,
+      "Antigravity": 1,
       "Antigravity2": 0,
       "Codex": 4,
       "Codex2": 4,
       "Copilot": 0
     },
+    "max_concurrent_per_account": {
+      "claude_account_shared_max_1": 1,
+      "antigravity": 1,
+      "antigravity2": 0,
+      "codex1": 4,
+      "codex2": 4,
+      "copilot": 0
+    },
     "max_concurrent_per_quota_group": {
-      "claude": 0,
-      "claude2": 0,
-      "antigravity": 0,
+      "claude_account_shared_max_1": 1,
+      "antigravity": 1,
       "antigravity2": 0,
       "codex1": 4,
       "codex2": 4,
@@ -230,9 +237,7 @@
     },
     "sidecar_only_agents": [],
     "disabled_agents": [
-      "Claude",
       "Claude2",
-      "Antigravity",
       "Antigravity2",
       "Copilot"
     ]
