@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import uuid
+from pathlib import Path
 
 import pytest
+import yaml
+from jsonschema import Draft7Validator, FormatChecker
 
 from .store import (
     MemoryWorkshopStore,
@@ -17,6 +22,20 @@ STRATEGY_ID = "strategy-legacy-version-projection"
 REGISTRY_ID = "registry-legacy-version-projection"
 DIGEST = "a" * 64
 CREATED_AT = "2026-07-22T12:00:00Z"
+ROOT = Path(__file__).resolve().parents[5]
+AGORA_SPECS = ROOT / "services/control-plane/specs/agora"
+VERSION_SCHEMA = AGORA_SPECS / "v11/workshop_version_operations.schema.json"
+VERSION_MANIFEST = AGORA_SPECS / "v11/capability_manifest_v1_10.json"
+VERSION_BUNDLE = AGORA_SPECS / "bundle_index.v1_10.json"
+VERSION_OPENAPI = ROOT / "services/control-plane/openapi/agora_v1_10.openapi.yaml"
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _stable_json(value: object) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
 
 def _legacy_session() -> dict[str, str]:
@@ -98,11 +117,100 @@ def test_memory_version_digest_is_write_once() -> None:
         )
 
 
-def test_postgres_versions_and_selection_survive_store_restart() -> None:
+def test_v1_10_contract_bundle_is_additive_typed_and_hash_locked() -> None:
+    schema = json.loads(VERSION_SCHEMA.read_text(encoding="utf-8"))
+    manifest = json.loads(VERSION_MANIFEST.read_text(encoding="utf-8"))
+    bundle = json.loads(VERSION_BUNDLE.read_text(encoding="utf-8"))
+    openapi = yaml.safe_load(VERSION_OPENAPI.read_text(encoding="utf-8"))
+    Draft7Validator.check_schema(schema)
+
+    assert bundle["extends"] == {
+        "bundle_path": "services/control-plane/specs/agora/bundle_index.v1_9.json",
+        "bundle_version": "1.9",
+        "bundle_index_sha256": _sha256(AGORA_SPECS / "bundle_index.v1_9.json"),
+    }
+    for relative_path, expected_hash in bundle["files"].items():
+        assert _sha256(ROOT / "services/control-plane" / relative_path) == expected_hash
+    assert bundle["openapi"] == {
+        "path": "services/control-plane/openapi/agora_v1_10.openapi.yaml",
+        "sha256": _sha256(VERSION_OPENAPI),
+    }
+    assert bundle["required_definition_checksums"] == manifest[
+        "required_definition_checksums"
+    ]
+    assert set(bundle["required_definition_checksums"]) == set(schema["definitions"])
+    for name, expected_hash in bundle["required_definition_checksums"].items():
+        actual_hash = hashlib.sha256(
+            _stable_json(schema["definitions"][name]).encode("utf-8")
+        ).hexdigest()
+        assert actual_hash == expected_hash, name
+
+    expected_routes = {
+        "GET /bff/agora/workshops/{workshop_id}/versions",
+        "POST /bff/agora/workshops/{workshop_id}/versions",
+        "POST /bff/agora/workshops/{workshop_id}/versions/{version_id}/select",
+    }
+    openapi_routes = {
+        f"{method.upper()} {path}"
+        for path, path_item in openapi["paths"].items()
+        for method in path_item
+        if method.lower() in {"get", "post", "put", "patch", "delete"}
+    }
+    manifest_routes = {
+        route
+        for capability in manifest["capabilities"]
+        for route in capability["routes"]
+    }
+    assert openapi_routes == manifest_routes == expected_routes
+    assert openapi["info"]["x-extends-contract"].endswith("bundle_index.v1_9.json")
+    assert openapi["info"]["x-implementation-status"] == "implemented"
+    create_parameters = openapi["paths"][
+        "/bff/agora/workshops/{workshop_id}/versions"
+    ]["post"]["parameters"]
+    select_parameters = openapi["paths"][
+        "/bff/agora/workshops/{workshop_id}/versions/{version_id}/select"
+    ]["post"]["parameters"]
+    for parameters in (create_parameters, select_parameters):
+        refs = {parameter["$ref"] for parameter in parameters}
+        assert "#/components/parameters/IfMatch" in refs
+        assert "#/components/parameters/IdempotencyKey" in refs
+
+    link_validator = Draft7Validator(
+        schema["definitions"]["WorkshopVersionLink"],
+        format_checker=FormatChecker(),
+    )
+    valid_link = {
+        "workshop_version_id": "wsv-contract",
+        "workshop_id": "ws-contract",
+        "strategy_id": "strategy-contract",
+        "strategy_spec_registry_id": "registry-contract",
+        "parent_workshop_version_id": None,
+        "source_event_id": None,
+        "sequence_no": 1,
+        "document_sha256": "f" * 64,
+        "created_by": "operator-contract",
+        "created_at": CREATED_AT,
+    }
+    assert list(link_validator.iter_errors(valid_link)) == []
+    assert list(
+        link_validator.iter_errors({**valid_link, "document_sha256": "mutable"})
+    )
+
+
+def test_postgres_versions_and_selection_survive_store_restart(
+    request: pytest.FixtureRequest,
+) -> None:
     dsn = os.getenv("TEST_DATABASE_URL")
     if not dsn:
         pytest.skip("TEST_DATABASE_URL is not set")
     schema = f"agora_ws_ops_{uuid.uuid4().hex[:12]}"
+    import psycopg
+
+    def cleanup_schema() -> None:
+        with psycopg.connect(dsn) as conn:
+            conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+
+    request.addfinalizer(cleanup_schema)
     workshop_id = f"ws-{uuid.uuid4().hex}"
     base_registry_id = f"registry-{uuid.uuid4().hex}"
     next_registry_id = f"registry-{uuid.uuid4().hex}"
