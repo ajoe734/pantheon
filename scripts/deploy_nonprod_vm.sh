@@ -97,6 +97,12 @@ DEV_MANAGEMENT_AI_ATTACH_BUCKET="${DEV_MANAGEMENT_AI_ATTACH_BUCKET:-}"
 DEV_MANAGEMENT_AI_ATTACH_LOCATION="${DEV_MANAGEMENT_AI_ATTACH_LOCATION:-asia-east1}"
 PANTHEON_DEV_DOCKER_PRUNE="${PANTHEON_DEV_DOCKER_PRUNE:-true}"
 PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE="${PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE:-true}"
+DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-}"
+SOURCE_REFRESH_EGRESS_MODE="${PANTHEON_EXTERNAL_EGRESS:-deny}"
+SOURCE_REFRESH_ALLOWED_HOSTS="${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}"
+SOURCE_REFRESH_MAX_TICKS="${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-1}"
+SOURCE_REFRESH_MAX_CONCURRENCY="${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-1}"
+SOURCE_REFRESH_MAX_RECORDS="${SOURCE_INGEST_MAX_RECORDS:-100}"
 DEV_APP_DB_USER="${DEV_APP_DB_USER:-${PANTHEON_APP_DB_USER:-pantheon_app}}"
 
 STAGING_CONTROL_VM="${STAGING_CONTROL_VM:-pantheon-lupin-staging-control}"
@@ -427,6 +433,12 @@ if [[ "$DRY_RUN" == "true" ]]; then
   info "dev_status_root_host=${PANTHEON_STATUS_ROOT_HOST:-}"
   info "dev_status_root_container=${PANTHEON_STATUS_ROOT_CONTAINER:-}"
   info "dev_docker_prune=${PANTHEON_DEV_DOCKER_PRUNE}"
+  info "dev_compose_profiles=${DEV_COMPOSE_PROFILES:-<default-safe>}"
+  info "source_refresh_egress_mode=${SOURCE_REFRESH_EGRESS_MODE}"
+  info "source_refresh_allowed_hosts_configured=$([[ -n "${SOURCE_REFRESH_ALLOWED_HOSTS}" ]] && echo true || echo false)"
+  info "source_refresh_max_ticks=${SOURCE_REFRESH_MAX_TICKS}"
+  info "source_refresh_max_concurrency=${SOURCE_REFRESH_MAX_CONCURRENCY}"
+  info "source_refresh_max_records=${SOURCE_REFRESH_MAX_RECORDS}"
   info "management_ai_store_backend=${MANAGEMENT_AI_STORE_BACKEND:-}"
   info "management_ai_store_schema=${MANAGEMENT_AI_STORE_SCHEMA:-}"
   info "management_ai_database_user=${DEV_MANAGEMENT_AI_DB_USER}"
@@ -565,6 +577,12 @@ ssh_bash() {
   command_prefix+=" PANTHEON_STATUS_ROOT_CONTAINER=$(shell_quote "${PANTHEON_STATUS_ROOT_CONTAINER:-}")"
   command_prefix+=" PANTHEON_DEV_DOCKER_PRUNE=$(shell_quote "${PANTHEON_DEV_DOCKER_PRUNE:-true}")"
   command_prefix+=" PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE=$(shell_quote "${PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE:-true}")"
+  command_prefix+=" PANTHEON_DEV_COMPOSE_PROFILES=$(shell_quote "${DEV_COMPOSE_PROFILES}")"
+  command_prefix+=" PANTHEON_EXTERNAL_EGRESS=$(shell_quote "${SOURCE_REFRESH_EGRESS_MODE}")"
+  command_prefix+=" PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=$(shell_quote "${SOURCE_REFRESH_ALLOWED_HOSTS}")"
+  command_prefix+=" SOURCE_INGEST_CONTROLLER_MAX_TICKS=$(shell_quote "${SOURCE_REFRESH_MAX_TICKS}")"
+  command_prefix+=" SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY=$(shell_quote "${SOURCE_REFRESH_MAX_CONCURRENCY}")"
+  command_prefix+=" SOURCE_INGEST_MAX_RECORDS=$(shell_quote "${SOURCE_REFRESH_MAX_RECORDS}")"
   command_prefix+=" MANAGEMENT_AI_STORE_BACKEND=$(shell_quote "${MANAGEMENT_AI_STORE_BACKEND:-}")"
   command_prefix+=" MANAGEMENT_AI_STORE_SCHEMA=$(shell_quote "${MANAGEMENT_AI_STORE_SCHEMA:-}")"
   command_prefix+=" MANAGEMENT_AI_STORE_DSN=$(shell_quote "${MANAGEMENT_AI_STORE_DSN:-}")"
@@ -594,6 +612,51 @@ info() {
 error() {
   echo "[remote-deploy] ERROR: $*" >&2
   exit 1
+}
+
+validate_source_refresh_profile() {
+  local selected="false"
+  case ",${PANTHEON_DEV_COMPOSE_PROFILES:-}," in
+    *,source-ingest-scheduler,*) selected="true" ;;
+  esac
+
+  if [[ "$selected" != "true" ]]; then
+    [[ "${PANTHEON_EXTERNAL_EGRESS:-deny}" == "deny" ]] \
+      || error "external egress must remain deny when source-ingest-scheduler is not selected"
+    [[ -z "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}" ]] \
+      || error "external host allowlist requires the bounded source-ingest-scheduler profile"
+    return 0
+  fi
+
+  [[ "${PANTHEON_EXTERNAL_EGRESS:-deny}" == "allowlist" ]] \
+    || error "source-ingest-scheduler requires PANTHEON_EXTERNAL_EGRESS=allowlist"
+  [[ -n "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}" ]] \
+    || error "source-ingest-scheduler requires a reviewed exact host allowlist"
+  [[ "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-}" =~ ^[0-9]+$ ]] \
+    && (( SOURCE_INGEST_CONTROLLER_MAX_TICKS >= 1 && SOURCE_INGEST_CONTROLLER_MAX_TICKS <= 24 )) \
+    || error "SOURCE_INGEST_CONTROLLER_MAX_TICKS must be between 1 and 24"
+  [[ "${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-}" =~ ^[0-9]+$ ]] \
+    && (( SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY >= 1 && SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY <= 4 )) \
+    || error "SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY must be between 1 and 4"
+  [[ "${SOURCE_INGEST_MAX_RECORDS:-}" =~ ^[0-9]+$ ]] \
+    && (( SOURCE_INGEST_MAX_RECORDS >= 1 && SOURCE_INGEST_MAX_RECORDS <= 500 )) \
+    || error "SOURCE_INGEST_MAX_RECORDS must be between 1 and 500"
+
+  python3 - "${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS}" <<'PY'
+import sys
+
+from services.external_egress import allowed_hosts
+
+hosts = allowed_hosts(
+    {
+        "PANTHEON_EXTERNAL_EGRESS": "allowlist",
+        "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS": sys.argv[1],
+    }
+)
+if not hosts:
+    raise SystemExit("source refresh exact host allowlist is empty")
+print(f"validated {len(hosts)} exact source refresh hosts")
+PY
 }
 
 curl_with_retry() {
@@ -1573,6 +1636,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     # MOPS, FinMind, SEC/FRED/FINRA, stooq); left always-on it is continuous
     # crawling from one cloud egress IP. Add it explicitly for a bounded run.
     PANTHEON_DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-activation-ready-smoke,dormant-smoke,openclaw,openclaw-activation-ready-e2e,search-index-scheduler,smoke,source-search-bounded}"
+    validate_source_refresh_profile
     ensure_dev_management_ai_bucket
     ensure_dev_management_ai_postgres_role
     prune_dev_management_ai_telemetry_for_disk
@@ -1584,6 +1648,11 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     GIT_SHA="${PANTHEON_DEPLOY_SHA}" \
     BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     PANTHEON_ENV=dev \
+    PANTHEON_EXTERNAL_EGRESS="${PANTHEON_EXTERNAL_EGRESS:-deny}" \
+    PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}" \
+    SOURCE_INGEST_CONTROLLER_MAX_TICKS="${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-1}" \
+    SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY="${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-1}" \
+    SOURCE_INGEST_MAX_RECORDS="${SOURCE_INGEST_MAX_RECORDS:-100}" \
     PANTHEON_CANARY_EXECUTION_ENABLED=false \
     PANTHEON_LIVE_BROKER_ENABLED=false \
     BROKER_PAPER_ENABLED=true \

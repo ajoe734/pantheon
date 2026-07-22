@@ -91,7 +91,7 @@ from .controller_state import ControllerStateError, read_controller_state
 from .controller_auth import load_controller_token
 from .persona_source_reconciler import RECONCILIATION_METADATA_KEY, SourceProvisioningReconciler
 from .requirement_state import RequirementSnapshotStore, RequirementStateError
-from .scheduler import IngestBatch, IngestionScheduler, JsonlIngestScheduleStore
+from .scheduler import IngestBatch, IngestReceipt, IngestionScheduler, JsonlIngestScheduleStore
 from .source_health import (
     SourceHealth,
     SourceHealthError,
@@ -140,6 +140,10 @@ FRONTIER_RUNNING_TIMEOUT_SECONDS = max(
     1,
     int(os.getenv("SOURCE_INGEST_FRONTIER_RUNNING_TIMEOUT_SECONDS", "300")),
 )
+DEFAULT_STALE_THRESHOLD_SECONDS = max(
+    1,
+    int(os.getenv("SOURCE_INGEST_DEFAULT_STALE_THRESHOLD_SECONDS", "86400")),
+)
 # Optional: when set, notify search service after successful ingest runs (fire-and-forget).
 SEARCH_INGEST_NOTIFY_URL = os.getenv("SEARCH_INGEST_NOTIFY_URL", "").rstrip("/")
 PRODUCTION_POSTURE = require_source_search_posture("source-ingest")
@@ -171,6 +175,7 @@ register_fastapi_health_routes(
     "pantheon-source-ingest",
     dependencies=lambda: {
         "source_search_posture": PRODUCTION_POSTURE.to_dict(),
+        "source_freshness": _source_freshness_readiness(),
     },
     metrics=lambda: {
         "run_count": len(store.list_runs()),
@@ -311,6 +316,7 @@ class ConfiguredFetchBody(StrictBaseModel):
     max_records: int = 100
     default_access_scope: list[str] = Field(default_factory=lambda: ["public"])
     respect_robots_txt: bool = True
+    network_scope: Literal["external", "internal_service"] = "external"
     adapter: str | None = None
     adapter_config: dict[str, Any] = Field(default_factory=dict)
     request: dict[str, Any] = Field(default_factory=dict)
@@ -340,6 +346,7 @@ class ConfiguredFetchBody(StrictBaseModel):
                     "max_records": self.max_records,
                     "default_access_scope": self.default_access_scope,
                     "respect_robots_txt": self.respect_robots_txt,
+                    "network_scope": self.network_scope,
                 }
             )
         if self.mode == "provider_owned_adapter":
@@ -645,20 +652,61 @@ def _latest_run_for_connector(connector_id: str) -> Any | None:
     return max(runs, key=_run_effective_at)
 
 
+def _latest_receipt_for_connector(connector_id: str, *, status: str | None = None) -> IngestReceipt | None:
+    receipts = store.list_receipts(connector_id=connector_id)
+    if status is not None:
+        receipts = [receipt for receipt in receipts if receipt.status == status]
+    return receipts[-1] if receipts else None
+
+
+def _last_failed_receipt_for_connector(connector_id: str) -> IngestReceipt | None:
+    receipts = [
+        receipt
+        for receipt in store.list_receipts(connector_id=connector_id)
+        if receipt.typed_failure is not None
+    ]
+    return receipts[-1] if receipts else None
+
+
+def _connector_stale_threshold_seconds(connector_id: str, schedule: Any | None) -> int:
+    config = connector_store.get_config(connector_id)
+    metadata = dict(config.connector.metadata) if config is not None else {}
+    configured = metadata.get("stale_threshold_seconds") or metadata.get("freshness_sla_seconds")
+    if configured not in (None, ""):
+        try:
+            return max(1, int(configured))
+        except (TypeError, ValueError):
+            pass
+    cadence = int(schedule.interval_seconds) if schedule is not None else 0
+    return max(DEFAULT_STALE_THRESHOLD_SECONDS, cadence * 2)
+
+
 def _connector_freshness_summary(connector_id: str) -> dict[str, Any]:
     schedule = schedule_config_store.get_schedule(connector_id)
     watermark = store.get_watermark(connector_id)
     latest_run = _latest_run_for_connector(connector_id)
+    latest_receipt = _latest_receipt_for_connector(connector_id)
+    latest_success_receipt = _latest_receipt_for_connector(connector_id, status="completed")
+    last_failed_receipt = _last_failed_receipt_for_connector(connector_id)
     now = datetime.now(timezone.utc)
 
     schedule_enabled = bool(schedule and schedule.enabled and schedule.interval_seconds > 0)
-    last_success_at = watermark.updated_at if watermark else None
+    last_success_at = (
+        latest_success_receipt.finished_at
+        if latest_success_receipt is not None
+        else (watermark.updated_at if watermark else None)
+    )
     last_success_dt = _parse_utc_datetime(last_success_at)
+    source_timestamp = latest_success_receipt.source_timestamp if latest_success_receipt is not None else None
+    source_timestamp_dt = _parse_utc_datetime(source_timestamp)
     latest_run_at = _run_effective_at(latest_run) if latest_run else None
     latest_run_status = _run_status_value(latest_run) if latest_run else None
     next_due_at: str | None = None
     seconds_until_due: int | None = None
     staleness_seconds: int | None = None
+    age_seconds = max(0, int((now - source_timestamp_dt).total_seconds())) if source_timestamp_dt else None
+    stale_threshold_seconds = _connector_stale_threshold_seconds(connector_id, schedule)
+    stale = age_seconds is not None and age_seconds > stale_threshold_seconds
     is_due = False
 
     if schedule is None:
@@ -674,7 +722,7 @@ def _connector_freshness_summary(connector_id: str) -> dict[str, Any]:
         staleness_seconds = max(0, int((now - last_success_dt).total_seconds()))
         seconds_until_due = int((due_at - now).total_seconds())
         is_due = seconds_until_due <= 0
-        status = "due" if is_due else "fresh"
+        status = "stale" if stale else ("due" if is_due else "fresh")
         seconds_until_due = max(0, seconds_until_due)
 
     if (
@@ -682,7 +730,7 @@ def _connector_freshness_summary(connector_id: str) -> dict[str, Any]:
         and latest_run_status in {"failed", "rejected"}
         and (last_success_dt is None or latest_run_at >= last_success_dt)
     ):
-        status = "degraded"
+        status = "stale" if stale else "degraded"
 
     latest_run_payload = None
     if latest_run is not None:
@@ -697,17 +745,48 @@ def _connector_freshness_summary(connector_id: str) -> dict[str, Any]:
         }
 
     return {
-        "schema_version": "source_connector_freshness.v1",
+        "schema_version": "source_connector_freshness.v2",
         "status": status,
+        "stale": stale,
         "is_due": is_due,
         "schedule_enabled": schedule_enabled,
         "last_success_at": last_success_at,
+        "source_timestamp": source_timestamp,
+        "age_seconds": age_seconds,
+        "stale_threshold_seconds": stale_threshold_seconds,
+        "last_failure_at": last_failed_receipt.finished_at if last_failed_receipt is not None else None,
+        "last_typed_failure": (
+            dict(last_failed_receipt.typed_failure)
+            if last_failed_receipt is not None and last_failed_receipt.typed_failure is not None
+            else None
+        ),
         "last_watermark": watermark.value if watermark else None,
         "last_ingest_run_id": watermark.last_ingest_run_id if watermark else None,
         "latest_run": latest_run_payload,
+        "latest_receipt": latest_receipt.to_dict() if latest_receipt is not None else None,
         "staleness_seconds": staleness_seconds,
         "next_due_at": next_due_at,
+        "next_run_at": next_due_at,
         "seconds_until_due": seconds_until_due,
+    }
+
+
+def _source_freshness_readiness() -> dict[str, Any]:
+    summaries = [
+        _connector_freshness_summary(config.connector.connector_id)
+        for config in connector_store.list_configs()
+    ]
+    scheduled = [summary for summary in summaries if summary["schedule_enabled"]]
+    stale = [summary for summary in scheduled if summary["status"] == "stale"]
+    degraded = [summary for summary in scheduled if summary["status"] in {"degraded", "never_ingested"}]
+    return {
+        # Data staleness is visible but does not make the API process unready;
+        # the scheduler depends on API readiness and must be able to repair it.
+        "status": "stale" if stale else ("degraded_data" if degraded else "ok"),
+        "data_ready": not stale and not degraded,
+        "scheduled_connector_count": len(scheduled),
+        "stale_connector_count": len(stale),
+        "degraded_connector_count": len(degraded),
     }
 
 
@@ -1526,6 +1605,55 @@ def _provider_metadata_from_records(result: Any) -> dict[str, Any]:
     return metadata
 
 
+def _source_timestamp_for_result(result: Any) -> str | None:
+    timestamps: list[datetime] = []
+    for record in result.records:
+        metadata = dict(record.metadata)
+        normalized_row = metadata.get("normalized_row")
+        candidates: list[Any] = []
+        if isinstance(normalized_row, Mapping):
+            candidates.extend(
+                normalized_row.get(key)
+                for key in ("available_time", "as_of_time", "event_time", "timestamp", "date")
+            )
+        candidates.extend(
+            metadata.get(key)
+            for key in ("available_time", "as_of_time", "event_time", "source_timestamp", "date")
+        )
+        candidates.append(record.to_dict().get("created_at"))
+        for candidate in candidates:
+            parsed = _parse_utc_datetime(candidate)
+            if parsed is not None:
+                timestamps.append(parsed)
+                break
+    if not timestamps:
+        return None
+    return max(timestamps).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _persist_ingest_receipt(result: Any, evidence_refs: Mapping[str, Any]) -> IngestReceipt:
+    run = result.run.to_dict()
+    storage_refs = evidence_refs.get("storage_refs")
+    receipt = IngestReceipt(
+        ingest_run_id=result.run.ingest_run_id,
+        connector_id=result.run.connector_id,
+        status=result.run.status.value,
+        trigger_type=result.run.trigger_type,
+        trace_id=result.run.trace_id,
+        started_at=str(run["started_at"]),
+        finished_at=run.get("finished_at"),
+        raw_count=int(result.run.raw_count or 0),
+        normalized_count=int(result.run.normalized_count or 0),
+        rejected_count=int(result.run.rejected_count or 0),
+        watermark=result.watermark.value if result.watermark else None,
+        source_timestamp=_source_timestamp_for_result(result),
+        evidence_refs={key: value for key, value in evidence_refs.items() if key != "storage_refs"},
+        storage_refs=dict(storage_refs) if isinstance(storage_refs, Mapping) else {},
+        typed_failure=dict(result.typed_failure) if result.typed_failure is not None else None,
+    )
+    return store.upsert_receipt(receipt)
+
+
 def _update_source_health_and_usage(
     *,
     connector: SourceConnector,
@@ -1575,6 +1703,7 @@ def _result_payload(
     evidence_refs: dict[str, Any] | None = None,
     source_search_refresh: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    receipt = store.get_receipt(result.run.ingest_run_id)
     return {
         "run": result.run.to_dict(),
         "watermark": result.watermark.to_dict() if result.watermark else None,
@@ -1591,6 +1720,7 @@ def _result_payload(
         "dlq_entries": [entry.to_dict() for entry in result.dlq_entries],
         "audit_actions": [action.to_dict() for action in result.audit_actions],
         "frontier_id": getattr(result, "frontier_id", None),
+        "receipt": receipt.to_dict() if receipt is not None else None,
     }
 
 
@@ -1615,6 +1745,7 @@ def _run_job(
     evidence_refs = _persist_source_evidence_refs(result, storage_refs=storage_refs)
     evidence_refs["storage_refs"] = storage_refs
     _update_source_health_and_usage(connector=connector, result=result, storage_refs=storage_refs)
+    _persist_ingest_receipt(result, evidence_refs)
     source_search_refresh: dict[str, Any] | None = None
     if result.run.status.value == "completed":
         source_search_refresh = _notify_search_index_refresh(
@@ -2357,7 +2488,10 @@ def ingest_source_records(
 
 @app.get("/api/source-ingest/jobs")
 def list_jobs() -> dict[str, Any]:
-    return {"runs": [run.to_dict() for run in store.list_runs()]}
+    return {
+        "runs": [run.to_dict() for run in store.list_runs()],
+        "receipts": [receipt.to_dict() for receipt in store.list_receipts()],
+    }
 
 
 @app.get("/api/source-ingest/jobs/{ingest_run_id}")
@@ -2365,7 +2499,24 @@ def get_job(ingest_run_id: str) -> dict[str, Any]:
     run = store.get_run(ingest_run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="ingest run not found")
-    return {"run": run.to_dict()}
+    receipt = store.get_receipt(ingest_run_id)
+    return {
+        "run": run.to_dict(),
+        "receipt": receipt.to_dict() if receipt is not None else None,
+    }
+
+
+@app.get("/api/source-ingest/receipts")
+def list_ingest_receipts(connector_id: str | None = None) -> dict[str, Any]:
+    return {"receipts": [receipt.to_dict() for receipt in store.list_receipts(connector_id=connector_id)]}
+
+
+@app.get("/api/source-ingest/receipts/{ingest_run_id}")
+def get_ingest_receipt(ingest_run_id: str) -> dict[str, Any]:
+    receipt = store.get_receipt(ingest_run_id)
+    if receipt is None:
+        raise HTTPException(status_code=404, detail="ingest receipt not found")
+    return {"receipt": receipt.to_dict()}
 
 
 @app.get("/api/source-ingest/watermarks/{connector_id}")
@@ -2662,6 +2813,11 @@ def _run_scheduled_connectors(request: RunScheduledRequest | None = None) -> dic
                 "run": result.run.to_dict(),
                 "evidence_refs": evidence_refs,
                 "source_search_refresh": source_search_refresh,
+                "receipt": (
+                    store.get_receipt(result.run.ingest_run_id).to_dict()
+                    if store.get_receipt(result.run.ingest_run_id) is not None
+                    else None
+                ),
             }
             if result.run.status.value != "completed":
                 failed.append({**payload, "error": _result_error(result)})

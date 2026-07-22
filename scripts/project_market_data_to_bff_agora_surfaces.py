@@ -10,12 +10,14 @@ from __future__ import annotations
 import json
 import os
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 
 CONNECTOR_ID = "tw-twse-tpex-official-market"
 PROJECTOR = "source-ingest-market-data"
+DEFAULT_STALE_THRESHOLD_SECONDS = 86_400
 
 
 def _get_source_records(base_url: str) -> list[dict[str, Any]]:
@@ -28,7 +30,82 @@ def _get_source_records(base_url: str) -> list[dict[str, Any]]:
     return [record for record in records if isinstance(record, dict)]
 
 
-def project(records: list[dict[str, Any]]) -> dict[str, dict[str, dict[str, Any]]]:
+def _get_connector_freshness(base_url: str) -> dict[str, Any]:
+    url = f"{base_url.rstrip('/')}/api/source-ingest/controller/readback"
+    with urllib.request.urlopen(url, timeout=30) as response:
+        payload = json.loads(response.read())
+    connectors = payload.get("connectors") if isinstance(payload, dict) else None
+    if not isinstance(connectors, list):
+        raise ValueError("source-ingest readback has no connectors list")
+    for connector in connectors:
+        if isinstance(connector, dict) and connector.get("connector_id") == CONNECTOR_ID:
+            freshness = connector.get("freshness")
+            if not isinstance(freshness, dict):
+                raise ValueError(f"source-ingest readback for {CONNECTOR_ID} has no freshness object")
+            return freshness
+    raise ValueError(f"source-ingest readback has no connector {CONNECTOR_ID}")
+
+
+def _parse_timestamp(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _freshness_metadata(
+    *,
+    source_timestamp: str,
+    connector_freshness: dict[str, Any],
+    now: datetime,
+    default_stale_threshold_seconds: int,
+) -> dict[str, Any]:
+    parsed_source_timestamp = _parse_timestamp(source_timestamp)
+    age_seconds = (
+        max(0, int((now - parsed_source_timestamp).total_seconds()))
+        if parsed_source_timestamp is not None
+        else None
+    )
+    threshold = max(
+        1,
+        int(connector_freshness.get("stale_threshold_seconds") or default_stale_threshold_seconds),
+    )
+    stale = (
+        connector_freshness.get("status") == "stale"
+        or age_seconds is None
+        or age_seconds > threshold
+    )
+    return {
+        "schemaVersion": "agora_source_freshness.v1",
+        "status": "stale" if stale else "fresh",
+        "stale": stale,
+        "lastSuccessAt": connector_freshness.get("last_success_at"),
+        "sourceTimestamp": source_timestamp or None,
+        "ageSeconds": age_seconds,
+        "staleThresholdSeconds": threshold,
+        "nextRunAt": connector_freshness.get("next_run_at") or connector_freshness.get("next_due_at"),
+        "lastTypedFailure": connector_freshness.get("last_typed_failure"),
+    }
+
+
+def project(
+    records: list[dict[str, Any]],
+    *,
+    connector_freshness: dict[str, Any] | None = None,
+    now: datetime | None = None,
+    stale_threshold_seconds: int = DEFAULT_STALE_THRESHOLD_SECONDS,
+) -> dict[str, dict[str, dict[str, Any]]]:
+    freshness_readback = dict(connector_freshness or {})
+    captured_at = now or datetime.now(timezone.utc)
+    if captured_at.tzinfo is None:
+        captured_at = captured_at.replace(tzinfo=timezone.utc)
+    captured_at = captured_at.astimezone(timezone.utc)
     latest: dict[str, tuple[str, dict[str, Any], dict[str, Any]]] = {}
     for record in records:
         if str(record.get("connector_id") or "") != CONNECTOR_ID:
@@ -48,6 +125,12 @@ def project(records: list[dict[str, Any]]) -> dict[str, dict[str, dict[str, Any]
         source_id = str(record.get("source_id") or "")
         metadata = record.get("metadata") or {}
         source_ref = f"source_ingest:{source_id}"
+        freshness = _freshness_metadata(
+            source_timestamp=observed_at,
+            connector_freshness=freshness_readback,
+            now=captured_at,
+            default_stale_threshold_seconds=stale_threshold_seconds,
+        )
         common = {
             "symbol": symbol,
             "market": row.get("market"),
@@ -58,6 +141,9 @@ def project(records: list[dict[str, Any]]) -> dict[str, dict[str, dict[str, Any]
             "ingestRunId": metadata.get("source_ingest_run_id") or metadata.get("ingest_run_id"),
             "connectorId": CONNECTOR_ID,
             "projectionOwner": PROJECTOR,
+            "freshness": freshness,
+            "freshnessStatus": freshness["status"],
+            "stale": freshness["stale"],
         }
         watchlist_id = f"market-{symbol}"
         watchlist[watchlist_id] = {
@@ -107,7 +193,14 @@ def write_projection(stores: dict[str, dict[str, dict[str, Any]]], out_dir: str 
 def main() -> int:
     base_url = os.environ.get("SOURCE_INGEST_URL", "http://source-ingest:8097")
     out_dir = os.environ.get("OUT_DIR", "/data/bff")
-    stores = project(_get_source_records(base_url))
+    stores = project(
+        _get_source_records(base_url),
+        connector_freshness=_get_connector_freshness(base_url),
+        stale_threshold_seconds=max(
+            1,
+            int(os.environ.get("AGORA_MARKET_STALE_THRESHOLD_SECONDS", str(DEFAULT_STALE_THRESHOLD_SECONDS))),
+        ),
+    )
     write_projection(stores, out_dir)
     print(f"projected {len(stores['agora_watchlist'])} markets and {len(stores['agora_signals'])} signals -> {out_dir}")
     return 0

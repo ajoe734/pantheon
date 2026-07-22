@@ -142,6 +142,17 @@ def test_run_scheduled_runs_due_connector_and_persists_evidence(client) -> None:
     assert body["ran"][0]["connector_id"] == "conn-sched-notes"
     assert body["ran"][0]["run"]["status"] == "completed"
     assert body["ran"][0]["evidence_refs"]["knowledge_object_ids"]
+    receipt = body["ran"][0]["receipt"]
+    assert receipt["schema_version"] == "source_ingest_receipt.v1"
+    assert receipt["status"] == "completed"
+    assert receipt["connector_id"] == "conn-sched-notes"
+    assert receipt["normalized_count"] == 1
+    assert receipt["source_timestamp"]
+    assert receipt["typed_failure"] is None
+
+    receipt_readback = test_client.get(f"/api/source-ingest/receipts/{receipt['ingest_run_id']}")
+    assert receipt_readback.status_code == 200
+    assert receipt_readback.json()["receipt"] == receipt
 
     source = test_client.get("/api/source-ingest/source-records/src-conn-sched-notes-note-1")
     assert source.status_code == 200
@@ -227,6 +238,46 @@ def test_run_scheduled_honors_bounded_concurrency(client) -> None:
     done_frontier = test_client.get("/api/source-ingest/frontier?status=done")
     assert done_frontier.status_code == 200
     assert len(done_frontier.json()["frontier"]) == 2
+
+
+def test_blocked_host_records_typed_denial_without_outbound_request(client, monkeypatch) -> None:
+    test_client, _, _ = client
+    outbound_called = False
+
+    def forbidden_transport(*args, **kwargs):
+        nonlocal outbound_called
+        outbound_called = True
+        raise AssertionError("outbound transport must not be built for a denied host")
+
+    monkeypatch.setattr("urllib.request.build_opener", forbidden_transport)
+    configured = test_client.post(
+        "/api/source-ingest/connectors",
+        json={
+            "connector": _connector(connector_id="conn-blocked-host"),
+            "fetch": {
+                "mode": "external_feed",
+                "url": "https://blocked.example/source.json",
+                "allowed_url_prefixes": ["https://blocked.example/"],
+                "respect_robots_txt": False,
+                "max_records": 1,
+            },
+        },
+    )
+    assert configured.status_code == 201, configured.text
+    test_client.put(
+        "/api/source-ingest/connectors/conn-blocked-host/schedule",
+        json={"interval_seconds": 60, "enabled": True},
+    )
+
+    response = test_client.post("/api/source-ingest/run-scheduled", json={"max_concurrency": 1})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["summary"]["total_failed"] == 1
+    receipt = response.json()["failed"][0]["receipt"]
+    assert receipt["typed_failure"]["category"] == "external_egress"
+    assert receipt["typed_failure"]["code"] == "host_not_allowlisted"
+    assert receipt["typed_failure"]["retryable"] is False
+    assert outbound_called is False
 
 
 def test_run_scheduled_skips_disabled_connector(client) -> None:
@@ -607,10 +658,17 @@ def test_registry_reports_connector_freshness_after_scheduled_run(client) -> Non
         if connector["connector_id"] == "conn-sched-notes"
     )
     freshness = entry["freshness"]
-    assert freshness["schema_version"] == "source_connector_freshness.v1"
+    assert freshness["schema_version"] == "source_connector_freshness.v2"
     assert freshness["status"] == "fresh"
+    assert freshness["stale"] is False
     assert freshness["is_due"] is False
     assert freshness["last_ingest_run_id"]
+    assert freshness["source_timestamp"]
+    assert freshness["age_seconds"] >= 0
+    assert freshness["stale_threshold_seconds"] >= 86400
+    assert freshness["next_run_at"] == freshness["next_due_at"]
+    assert freshness["last_typed_failure"] is None
+    assert freshness["latest_receipt"]["status"] == "completed"
     assert freshness["latest_run"]["status"] == "completed"
     assert freshness["seconds_until_due"] > 0
     health = entry["health_metrics"]
@@ -620,6 +678,50 @@ def test_registry_reports_connector_freshness_after_scheduled_run(client) -> Non
     assert health["expected_rows"] == 1
     assert health["schema_hash"]
     assert health["source_error"] is None
+
+
+def test_stale_source_remains_readable_with_explicit_readiness_truth(client) -> None:
+    test_client, _, _ = client
+    configured = test_client.post(
+        "/api/source-ingest/connectors",
+        json={
+            "connector": _connector(
+                connector_id="conn-stale-readable",
+                metadata={"stale_threshold_seconds": 60},
+            ),
+            "fetch": {
+                "mode": "static_records",
+                "records": [
+                    {
+                        "source_id": "src-stale-readable-1",
+                        "title": "Persisted stale source",
+                        "content_ref": "memory://scheduled/stale/source-1",
+                        "created_at": "2020-01-01T00:00:00Z",
+                    }
+                ],
+            },
+        },
+    )
+    assert configured.status_code == 201, configured.text
+    test_client.put(
+        "/api/source-ingest/connectors/conn-stale-readable/schedule",
+        json={"interval_seconds": 60, "enabled": True},
+    )
+    run = test_client.post("/api/source-ingest/run-scheduled", json={"max_concurrency": 1})
+    assert run.status_code == 200, run.text
+
+    registry = test_client.get("/api/source-ingest/registry").json()
+    entry = next(item for item in registry["connectors"] if item["connector_id"] == "conn-stale-readable")
+    assert entry["freshness"]["status"] == "stale"
+    assert entry["freshness"]["stale"] is True
+    assert entry["freshness"]["age_seconds"] > entry["freshness"]["stale_threshold_seconds"]
+
+    persisted = test_client.get("/api/source-ingest/source-records/src-stale-readable-1")
+    assert persisted.status_code == 200
+    ready = test_client.get("/readyz")
+    assert ready.status_code == 200
+    assert ready.json()["dependencies"]["source_freshness"]["status"] == "stale"
+    assert ready.json()["dependencies"]["source_freshness"]["data_ready"] is False
 
 
 def test_active_universe_plan_endpoint_uses_default_low_cost_rules(client) -> None:

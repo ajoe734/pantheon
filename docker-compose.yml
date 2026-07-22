@@ -147,9 +147,10 @@ services:
       SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS: ${SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS:-2}
       SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS: ${SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS:-60}
       SOURCE_INGEST_FRONTIER_RUNNING_TIMEOUT_SECONDS: ${SOURCE_INGEST_FRONTIER_RUNNING_TIMEOUT_SECONDS:-300}
+      SOURCE_INGEST_DEFAULT_STALE_THRESHOLD_SECONDS: ${SOURCE_INGEST_DEFAULT_STALE_THRESHOLD_SECONDS:-86400}
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
-      # Third-party fetches are denied outside production. Set to `allowlist`
-      # with PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS for a scoped live pull.
+      # Third-party fetches are denied in every environment unless an operator
+      # starts the bounded refresh profile with an exact reviewed host list.
       PANTHEON_EXTERNAL_EGRESS: ${PANTHEON_EXTERNAL_EGRESS:-deny}
       PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS: ${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}
       PANTHEON_SOURCE_SEARCH_POSTURE: ${PANTHEON_SOURCE_SEARCH_POSTURE:-dev}
@@ -199,22 +200,21 @@ services:
       context: .
       dockerfile: services/source_ingestion/Dockerfile
     command: ["python", "-m", "services.source_ingestion.controller_worker"]
-    restart: unless-stopped
-    # Opt-in only. An always-on 60s tick drives every connector against its
-    # third-party provider, which reads as continuous crawling from one cloud
-    # egress IP. Enable the profile deliberately for a bounded ingest run.
+    restart: "no"
+    # Opt-in, bounded, and non-restarting. The deploy gate requires a finite
+    # tick count and an exact HTTPS host allowlist before enabling this profile.
     profiles: ["source-ingest-scheduler"]
     environment:
       SOURCE_INGEST_API_URL: http://source-ingest:8097
       SOURCE_INGEST_DESIRED_STATE_PATH: /workspace/services/source_ingestion/default_desired_state.json
       SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS: ${SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS:-60}
       SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS: ${SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS:-30}
-      SOURCE_INGEST_CONTROLLER_MAX_TICKS: ${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-0}
+      SOURCE_INGEST_CONTROLLER_MAX_TICKS: ${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-1}
       SOURCE_INGEST_CONTROLLER_STATE_PATH: /data/source-ingest/controller_state.json
       SOURCE_INGEST_CONTROLLER_ALIVE_PATH: /data/source-ingest/controller_alive
       SOURCE_INGEST_CONTROLLER_TOKEN_FILE: /data/source-ingest/controller_token
       SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL: reconciled_live_proof
-      SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY: ${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-2}
+      SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY: ${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-1}
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       PANTHEON_LOOP_ID: source-ingestion
       PANTHEON_CONTROLLER_NAME: source-ingestion-controller
@@ -240,6 +240,25 @@ services:
       timeout: 5s
       retries: 3
       start_period: 90s
+
+  source-ingest-agora-projector:
+    build:
+      context: .
+      dockerfile: services/source_ingestion/Dockerfile
+    command: ["python", "scripts/project_market_data_to_bff_agora_surfaces.py"]
+    restart: "no"
+    profiles: ["source-ingest-scheduler"]
+    environment:
+      SOURCE_INGEST_URL: http://source-ingest:8097
+      OUT_DIR: /data/bff
+      AGORA_MARKET_STALE_THRESHOLD_SECONDS: ${AGORA_MARKET_STALE_THRESHOLD_SECONDS:-86400}
+    volumes:
+      - bff-data:/data/bff
+    depends_on:
+      source-ingest:
+        condition: service_healthy
+      source-ingest-scheduler:
+        condition: service_completed_successfully
 
   strategy-distillation-worker:
     build:

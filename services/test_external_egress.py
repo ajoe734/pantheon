@@ -212,7 +212,6 @@ def test_every_production_connector_uses_guarded_transport() -> None:
     root = Path(__file__).resolve().parents[1]
     paths = [
         *sorted((root / "services/source_ingestion/connectors").glob("*.py")),
-        root / "services/source_ingestion/configured.py",
         *sorted((root / "services/research/adapters").glob("*_client.py")),
     ]
     offenders: list[str] = []
@@ -221,6 +220,10 @@ def test_every_production_connector_uses_guarded_transport() -> None:
         if "urlopen(" in source:
             offenders.append(str(path.relative_to(root)))
     assert offenders == []
+    configured = (root / "services/source_ingestion/configured.py").read_text(encoding="utf-8")
+    assert "return open_external_url(request, caller=caller, timeout=timeout)" in configured
+    assert 'network_scope == "internal_service"' in configured
+    assert "_InternalServiceRedirectHandler" in configured
 
 
 def test_connector_fetch_helpers_are_denied_before_outbound_transport(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -33,6 +33,7 @@ ALLOWED_HOSTS_ENV_VAR = "PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS"
 MODE_ALLOWLIST = "allowlist"
 MODE_DENY = "deny"
 VALID_MODES = (MODE_ALLOWLIST, MODE_DENY)
+_INTERNAL_HOST_SUFFIXES = (".internal", ".local", ".localdomain", ".svc", ".cluster.local")
 
 DNSResolver = Callable[..., Sequence[tuple[Any, ...]]]
 
@@ -136,6 +137,8 @@ def is_internal_host(host: str) -> bool:
     if not candidate:
         return True
     if candidate == "localhost" or candidate.endswith(".localhost") or "." not in candidate:
+        return True
+    if candidate.endswith(_INTERNAL_HOST_SUFFIXES):
         return True
     try:
         address = ipaddress.ip_address(candidate)
