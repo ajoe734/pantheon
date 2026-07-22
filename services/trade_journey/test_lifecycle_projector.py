@@ -424,15 +424,20 @@ def test_retention_preserves_old_active_generation_and_cleans_only_abandoned_sta
     generations = tmp_path / "generations"
     generations.mkdir()
     for generation in range(1, 5):
-        (generations / f"g{generation:012d}-fixture").mkdir()
-    os.symlink("generations/g000000000001-fixture", tmp_path / "current")
+        (generations / f"g{generation:012d}-{generation:012x}").mkdir()
+    os.symlink("generations/g000000000001-000000000001", tmp_path / "current")
 
-    abandoned = generations / ".g000000000005-abandoned.tmp"
-    recent = generations / ".g000000000006-recent.tmp"
+    abandoned = generations / ".g000000000005-000000000005.tmp"
+    recent = generations / ".g000000000006-000000000006.tmp"
+    unowned_generation = generations / "g000000000007-operator-note"
+    unowned_staging = generations / ".g000000000008-operator-note.tmp"
     abandoned.mkdir()
     recent.mkdir()
+    unowned_generation.mkdir()
+    unowned_staging.mkdir()
     os.utime(abandoned, (1, 1))
     os.utime(recent, (95, 95))
+    os.utime(unowned_staging, (1, 1))
 
     bundle = AtomicProjectionBundle(
         tmp_path,
@@ -448,13 +453,15 @@ def test_retention_preserves_old_active_generation_and_cleans_only_abandoned_sta
         if path.is_dir() and not path.name.startswith(".")
     }
     assert generation_names == {
-        "g000000000001-fixture",
-        "g000000000004-fixture",
+        "g000000000001-000000000001",
+        "g000000000004-000000000004",
+        "g000000000007-operator-note",
     }
-    assert (tmp_path / "current").resolve().name == "g000000000001-fixture"
+    assert (tmp_path / "current").resolve().name == "g000000000001-000000000001"
     assert not abandoned.exists()
     assert recent.exists()
-    assert report["active_generation"] == "g000000000001-fixture"
+    assert unowned_staging.exists()
+    assert report["active_generation"] == "g000000000001-000000000001"
     assert report["abandoned_staging"] == [abandoned.name]
 
 
@@ -489,6 +496,46 @@ def test_enospc_during_projection_and_error_publication_does_not_escape_worker_l
             if path.is_dir() and not path.name.startswith(".")
         ]
     ) <= 2
+
+
+def test_transient_enospc_converges_without_losing_checkpoint_or_active_generation(
+    tmp_path,
+):
+    attempts = 0
+
+    def fail_twice(_path: Path) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts <= 2:
+            raise OSError(28, "No space left on device")
+
+    projector = _projector(
+        tmp_path,
+        publisher=AtomicProjectionBundle(
+            tmp_path,
+            before_switch=fail_twice,
+            generation_retention=2,
+            staging_max_age_seconds=0,
+        ),
+    )
+    with pytest.raises(OSError) as failure:
+        projector.project_records(
+            lifecycle_rows()[:1], mode="live", source_high_watermark=1
+        )
+    assert _record_worker_failure(projector, failure.value) is False
+
+    recovered = projector.project_records(
+        lifecycle_rows()[:1], mode="live", source_high_watermark=1
+    )
+
+    assert recovered.checkpoint == 1
+    assert projector.checkpoint == 1
+    assert projector.controller["status"] == "ready"
+    assert projector.controller["last_error"] is None
+    assert (tmp_path / "current" / "manifest.json").is_file()
+    assert json.loads((tmp_path / "current" / "manifest.json").read_text())[
+        "generation"
+    ] == recovered.generation
 
 
 def test_repeated_identical_source_failure_does_not_publish_unbounded_generations(tmp_path):

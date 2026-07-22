@@ -314,7 +314,15 @@ class AtomicProjectionBundle:
         if not name.startswith("g") or "-" not in name:
             return None
         raw_generation, suffix = name[1:].split("-", 1)
-        if not raw_generation.isdigit() or not suffix:
+        if (
+            len(raw_generation) != 12
+            or not raw_generation.isdigit()
+            or len(suffix) != 12
+            or any(
+                character not in "0123456789abcdef"
+                for character in suffix.lower()
+            )
+        ):
             return None
         return int(raw_generation)
 
@@ -350,6 +358,8 @@ class AtomicProjectionBundle:
         for path in self.generations.iterdir():
             if not path.name.startswith(".g") or not path.name.endswith(".tmp"):
                 continue
+            if self._generation_number(Path(path.name[1:-4])) is None:
+                continue
             try:
                 age = now - path.lstat().st_mtime
             except OSError:
@@ -365,6 +375,11 @@ class AtomicProjectionBundle:
         candidates: list[Path] = []
         for path in self.root.iterdir():
             if not path.name.startswith(".current.") or not path.name.endswith(".tmp"):
+                continue
+            suffix = path.name[len(".current.") : -len(".tmp")]
+            if len(suffix) != 32 or any(
+                character not in "0123456789abcdef" for character in suffix.lower()
+            ):
                 continue
             try:
                 age = now - path.lstat().st_mtime
