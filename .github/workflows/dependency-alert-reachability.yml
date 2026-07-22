@@ -1,0 +1,72 @@
+name: Dependency Alert Reachability
+
+on:
+  pull_request:
+    paths:
+      - "services/research/**/requirements.txt"
+      - "services/research/**/Dockerfile"
+      - "services/research/mlflow/entrypoint.py"
+      - "services/research/rllib/security.py"
+      - "docker-compose.yml"
+      - "scripts/security/dependabot_reachability.py"
+      - ".github/workflows/dependency-alert-reachability.yml"
+  push:
+    branches: [dev]
+    paths:
+      - "services/research/**/requirements.txt"
+      - "services/research/**/Dockerfile"
+      - "services/research/mlflow/entrypoint.py"
+      - "services/research/rllib/security.py"
+      - "docker-compose.yml"
+      - "scripts/security/dependabot_reachability.py"
+      - ".github/workflows/dependency-alert-reachability.yml"
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  vulnerability-alerts: read
+
+jobs:
+  inventory:
+    name: Reachable critical/high inventory
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout candidate graph
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install policy parser
+        run: python -m pip install packaging==25.0
+
+      - name: Query current open Dependabot alerts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -H "Accept: application/vnd.github+json" \
+            "/repos/${{ github.repository }}/dependabot/alerts?state=open&per_page=100" \
+            > "$RUNNER_TEMP/dependabot-alerts.json"
+
+      - name: Reconcile alerts to candidate manifests
+        run: |
+          python scripts/security/dependabot_reachability.py \
+            --alerts-json "$RUNNER_TEMP/dependabot-alerts.json" \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --fail-on critical \
+            --fail-on high \
+            --json-output "$RUNNER_TEMP/dependabot-reachability.json" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload reconciliation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependabot-reachability-${{ github.run_id }}
+          path: ${{ runner.temp }}/dependabot-reachability.json
+          if-no-files-found: error
+          retention-days: 30

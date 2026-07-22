@@ -2130,6 +2130,7 @@ services:
   # Dormant OSS deferred-prep smoke profiles — activation-gated; not started by default
   #
   # Run a single service:
+  #   docker compose --profile dormant-smoke up --wait mlflow-dormant-smoke
   #   docker compose --profile dormant-smoke run --rm finrl-dormant-smoke
   #   docker compose --profile dormant-smoke run --rm rllib-dormant-smoke
   #   docker compose --profile dormant-smoke run --rm ray-tune-dormant-smoke
@@ -2141,16 +2142,54 @@ services:
   # Each service exits after the smoke run completes.
   # ===========================================================================
 
+  mlflow-dormant-smoke:
+    profiles: ["dormant-smoke"]
+    build:
+      context: services/research/mlflow
+      dockerfile: Dockerfile
+    environment:
+      MLFLOW_HOST: 127.0.0.1
+      MLFLOW_PORT: "5000"
+      MLFLOW_SERVER_ALLOWED_HOSTS: localhost:*,127.0.0.1:*
+      MLFLOW_SERVER_CORS_ALLOWED_ORIGINS: http://localhost:*,http://127.0.0.1:*
+      MLFLOW_SERVER_DISABLE_SECURITY_MIDDLEWARE: "false"
+      MLFLOW_SERVER_ENABLE_JOB_EXECUTION: "false"
+    network_mode: none
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:5000/health', headers={'Host':'localhost'}), timeout=5).read()",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    restart: "no"
+
   finrl-dormant-smoke:
     profiles: ["dormant-smoke"]
     build:
-      context: .
-      dockerfile: services/research/finrl/Dockerfile
+      context: services/research/finrl
+      dockerfile: Dockerfile
       args:
         PANTHEON_INSTALL_UPSTREAM_DEPS: "false"
     environment:
       PANTHEON_DEFERRED_PREP_GATE: "1"
       FINRL_BACKEND: "stub"
+    network_mode: none
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m
     command: ["python", "smoke_test.py", "--enable-deferred-prep", "--backend", "stub"]
     restart: "no"
 
@@ -2163,7 +2202,15 @@ services:
         PANTHEON_INSTALL_UPSTREAM_DEPS: "false"
     environment:
       PANTHEON_DEFERRED_PREP_GATE: "1"
+      PANTHEON_RLLIB_PREP_ENABLED: "1"
+      PANTHEON_RLLIB_BACKEND: "stub"
       RLLIB_BACKEND: "stub"
+    network_mode: none
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m
     command: ["python", "smoke_test.py", "--enable-deferred-prep", "--deferred-backend", "stub"]
     restart: "no"
 
@@ -2176,7 +2223,15 @@ services:
         PANTHEON_INSTALL_UPSTREAM_DEPS: "false"
     environment:
       PANTHEON_DEFERRED_PREP_GATE: "1"
+      PANTHEON_RAYTUNE_PREP_ENABLED: "1"
+      PANTHEON_RAYTUNE_BACKEND: "stub"
       RAY_TUNE_BACKEND: "stub"
+    network_mode: none
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m
     command: ["python", "ray_tune_smoke_test.py", "--enable-deferred-prep", "--backend", "stub"]
     restart: "no"
 
