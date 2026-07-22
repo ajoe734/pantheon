@@ -227,7 +227,10 @@ def assess_promotion_mode(main_ref: str, release_ref: str) -> tuple[str, str]:
     real merge base remain fail-closed for manual reconciliation.
     """
     base = _run_git_result("merge-base", main_ref, release_ref)
-    if base.returncode == 1:
+    # Git versions differ in whether a no-base result exits 0 or 1. The
+    # presence of a base SHA is the portable signal; an empty successful
+    # result must not be misclassified as a content merge.
+    if base.returncode in {0, 1} and not base.stdout.strip():
         return "snapshot_bridge", "histories are unrelated"
     if base.returncode != 0:
         return "error", _result_detail(base)
