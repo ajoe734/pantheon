@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import time
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -121,6 +122,11 @@ STICKY_AUTH_FAILURE_MARKERS = (
     "invalid_grant",
 )
 STICKY_AUTH_BLOCKED_UNTIL = "9999-12-31T23:59:59Z"
+
+
+_DEFERRED_DISPATCH_STATUS_SYNCS: ContextVar[
+    list[tuple[dict[str, Any], str | None]] | None
+] = ContextVar("deferred_dispatch_status_syncs", default=None)
 
 
 SESSION_ID_PATTERNS = [
@@ -6561,6 +6567,11 @@ def sync_dispatched_task_status(
     if not config.get("paths", {}).get("status_file"):
         return False
 
+    deferred = _DEFERRED_DISPATCH_STATUS_SYNCS.get()
+    if deferred is not None:
+        deferred.append((dict(event), run_id))
+        return False
+
     script, env = status_command_subprocess_context(config)
     if not script.exists():
         write_activity_log(
@@ -6633,6 +6644,37 @@ def sync_dispatched_task_status(
         },
     )
     return False
+
+
+def _run_with_deferred_dispatch_status_syncs(
+    config: dict[str, Any],
+    operation: Any,
+) -> bool:
+    """Run one supervisor mutation, then sync task status after its lock is free.
+
+    The status command validates the worker lease under a shared runtime lock. Running
+    it synchronously from ``process_queue`` while the supervisor owns the exclusive
+    runtime lock deadlocks the parent and child. Queueing only for the duration of the
+    locked operation preserves that validation while keeping subprocess work outside
+    the critical section.
+    """
+
+    deferred: list[tuple[dict[str, Any], str | None]] = []
+    token = _DEFERRED_DISPATCH_STATUS_SYNCS.set(deferred)
+    try:
+        with runtime_state_lock(config, shared=False, nonblocking=False):
+            changed = bool(operation())
+    finally:
+        _DEFERRED_DISPATCH_STATUS_SYNCS.reset(token)
+
+    sync_changed = False
+    for event, run_id in deferred:
+        sync_changed = sync_dispatched_task_status(
+            config,
+            event,
+            run_id=run_id,
+        ) or sync_changed
+    return changed or sync_changed
 
 
 def _prepare_preempted_task_status_locked(
@@ -11008,8 +11050,9 @@ def run_once(
     verbose: bool = False,
     once: bool = False,
 ) -> bool:
-    with runtime_state_lock(config, shared=False, nonblocking=False):
-        return _run_once_locked(
+    return _run_with_deferred_dispatch_status_syncs(
+        config,
+        lambda: _run_once_locked(
             config,
             watch=watch,
             replay=replay,
@@ -11017,6 +11060,7 @@ def run_once(
             verbose=verbose,
             once=once,
         )
+    )
 
 
 def sync_task_state_shadow(config: dict[str, Any], state: dict[str, Any]) -> bool:
@@ -11295,13 +11339,15 @@ def claim_next_task_for_agent(
     release_task_id: str | None = None,
     quiet: bool = False,
 ) -> bool:
-    with runtime_state_lock(config, shared=False, nonblocking=False):
-        return _claim_next_task_for_agent_locked(
+    return _run_with_deferred_dispatch_status_syncs(
+        config,
+        lambda: _claim_next_task_for_agent_locked(
             config,
             agent_name=agent_name,
             release_task_id=release_task_id,
             quiet=quiet,
         )
+    )
 
 
 def _claim_next_task_for_agent_locked(

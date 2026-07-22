@@ -4390,6 +4390,56 @@ class DispatchStatusSyncTests(unittest.TestCase):
         self.assertTrue(changed)
         self.assertNotIn("ORCH_RUN_ID", run_mock.call_args.kwargs["env"])
 
+    def test_run_once_syncs_dispatch_after_releasing_runtime_lock(self) -> None:
+        event = {
+            "task_id": "APP-002-W1-FRONT-HANDOFF",
+            "target_agent": "copilot",
+            "target_display_name": "Copilot",
+            "reason": "owned_ready_dispatch",
+        }
+        command_env = {
+            "PANTHEON_COMMAND_ROOT": str(self.root),
+            "PANTHEON_COMMAND_RUNTIME_SHA": "installed-sha",
+        }
+        call_order: list[str] = []
+
+        @contextlib.contextmanager
+        def runtime_lock(*_args: object, **_kwargs: object):
+            call_order.append("lock_enter")
+            try:
+                yield
+            finally:
+                call_order.append("lock_exit")
+
+        def locked_cycle(*_args: object, **_kwargs: object) -> bool:
+            call_order.append("locked_cycle")
+            changed = supervisor.sync_dispatched_task_status(
+                self.config,
+                event,
+                run_id="copilot-run-7",
+            )
+            self.assertFalse(changed)
+            return False
+
+        def status_command(*_args: object, **_kwargs: object) -> mock.Mock:
+            call_order.append("status_command")
+            return mock.Mock(returncode=0, stderr="", stdout="")
+
+        with (
+            mock.patch.object(supervisor, "runtime_state_lock", side_effect=runtime_lock),
+            mock.patch.object(supervisor, "_run_once_locked", side_effect=locked_cycle),
+            mock.patch.object(supervisor, "status_command_runtime_env", return_value=command_env),
+            mock.patch.object(supervisor.subprocess, "run", side_effect=status_command) as run_mock,
+        ):
+            changed = supervisor.run_once(self.config, watch=False)
+
+        self.assertTrue(changed)
+        self.assertEqual(
+            call_order,
+            ["lock_enter", "locked_cycle", "lock_exit", "status_command"],
+        )
+        self.assertEqual(run_mock.call_args.kwargs["env"]["ORCH_RUN_ID"], "copilot-run-7")
+
     def test_sync_status_pipeline_uses_installed_command_runtime(self) -> None:
         command_env = {
             "PANTHEON_COMMAND_ROOT": str(self.root),
@@ -5248,10 +5298,17 @@ class SupervisorRuntimeAdmissionLockTests(unittest.TestCase):
 
     def test_supervisor_runtime_writer_surface_uses_canonical_helpers(self) -> None:
         run_once_source = inspect.getsource(supervisor.run_once)
+        locked_operation_source = inspect.getsource(
+            supervisor._run_with_deferred_dispatch_status_syncs
+        )
         queue_writer_source = inspect.getsource(supervisor.save_event_queue)
 
-        self.assertIn("with runtime_state_lock(config, shared=False", run_once_source)
-        self.assertIn("return _run_once_locked(", run_once_source)
+        self.assertIn("_run_with_deferred_dispatch_status_syncs(", run_once_source)
+        self.assertIn("lambda: _run_once_locked(", run_once_source)
+        self.assertIn(
+            "with runtime_state_lock(config, shared=False",
+            locked_operation_source,
+        )
         self.assertEqual(
             queue_writer_source.count("replace_event_queue(config, events)"),
             1,
