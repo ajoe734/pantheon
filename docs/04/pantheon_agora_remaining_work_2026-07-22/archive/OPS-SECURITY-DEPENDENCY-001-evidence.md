@@ -1,8 +1,8 @@
 # OPS-SECURITY-DEPENDENCY-001 evidence
 
-Date: 2026-07-22  
-Repository: `ajoe734/pantheon`  
-Merge target: `dev`  
+Date: 2026-07-22
+Repository: `ajoe734/pantheon`
+Merge target: `dev`
 Audited baseline: `52d9ed234af280fc239459bfeddf76886ae35f08`
 
 ## Result
