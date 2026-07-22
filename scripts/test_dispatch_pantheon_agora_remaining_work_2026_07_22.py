@@ -36,7 +36,7 @@ class PacketTests(unittest.TestCase):
                 )
 
     def test_bootstrap_then_frontier_fits_enabled_owner_capacity(self) -> None:
-        counts = {"Codex": 0, "Codex2": 0}
+        counts = {"Codex": 0, "Codex2": 0, "Claude": 0, "Antigravity": 0}
         initial = []
         for task in MODULE.TASKS:
             if task.get("existing"):
@@ -47,7 +47,10 @@ class PacketTests(unittest.TestCase):
             if deps == ["OPS-DISPATCH-LEASE-SYNC-001"]:
                 counts[task["owner"]] += 1
         self.assertEqual(initial, ["OPS-DISPATCH-LEASE-SYNC-001"])
-        self.assertEqual(counts, {"Codex": 4, "Codex2": 4})
+        self.assertEqual(
+            counts,
+            {"Codex": 2, "Codex2": 2, "Claude": 2, "Antigravity": 2},
+        )
 
     def test_ep5_live_work_is_not_dispatched(self) -> None:
         self.assertFalse(any("EP5" in task["id"] for task in MODULE.TASKS))

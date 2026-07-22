@@ -4,7 +4,7 @@ Priority: P1
 Repository: `ajoe734/pantheon`
 Merge target: `dev`
 Owner: Codex
-Reviewer: Codex2
+Reviewer: Claude
 Depends on: `AG-PERF-TRUTH-001-BE`, `AG-CAND-TRUTH-001-BE`, `AG-WS-OPS-002`
 
 ## Objective

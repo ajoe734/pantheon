@@ -3,8 +3,8 @@
 Priority: P2
 Repository: `ajoe734/pantheon`
 Merge target: `dev`
-Owner: Codex
-Reviewer: Codex2
+Owner: Antigravity
+Reviewer: Codex
 Depends on: `OPS-DISPATCH-LEASE-SYNC-001`
 
 ## Objective

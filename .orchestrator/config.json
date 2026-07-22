@@ -893,9 +893,7 @@
     ],
     "sidecar_only_agents": [],
     "disabled_agents": [
-      "Claude",
       "Claude2",
-      "Antigravity",
       "Antigravity2",
       "Copilot"
     ],
@@ -935,18 +933,18 @@
       ]
     },
     "target_workload": {
-      "Claude": 0,
+      "Claude": 5,
       "Claude2": 0,
-      "Antigravity": 0,
+      "Antigravity": 5,
       "Antigravity2": 0,
       "Codex": 30,
       "Codex2": 30,
       "Copilot": 0
     },
     "max_tasks_per_agent_by_agent": {
-      "Claude": 0,
+      "Claude": 1,
       "Claude2": 0,
-      "Antigravity": 0,
+      "Antigravity": 1,
       "Antigravity2": 0,
       "Codex": 4,
       "Codex2": 4,
@@ -957,8 +955,8 @@
     "require_explicit_provider_accounts": true,
     "allow_legacy_provider_account_aliases": false,
     "max_concurrent_per_account": {
-      "claude_account_shared_max_1": 0,
-      "antigravity": 0,
+      "claude_account_shared_max_1": 1,
+      "antigravity": 1,
       "antigravity2": 0,
       "codex1": 4,
       "codex2": 4,

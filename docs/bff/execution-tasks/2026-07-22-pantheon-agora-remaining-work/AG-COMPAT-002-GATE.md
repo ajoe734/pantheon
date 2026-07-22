@@ -3,8 +3,8 @@
 Priority: P1
 Repository: `ajoe734/pantheon`
 Merge target: `dev`
-Owner: Codex
-Reviewer: Codex2
+Owner: Claude
+Reviewer: Codex
 Depends on: `AG-COMPAT-001-FE`
 
 ## Objective

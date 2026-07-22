@@ -3,7 +3,7 @@
 Priority: P0
 Repository: `ajoe734/execute-plans`
 Merge target: `dev`
-Owner: Codex2
+Owner: Antigravity
 Reviewer: Codex
 Depends on: `AG-PERF-TRUTH-001-BE`
 

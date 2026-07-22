@@ -4,7 +4,7 @@ Priority: P0
 Repository: `ajoe734/execute-plans`
 Merge target: `dev`
 Owner: Codex
-Reviewer: Codex2
+Reviewer: Claude
 Depends on: `AG-CAND-TRUTH-001-BE`
 
 ## Objective
