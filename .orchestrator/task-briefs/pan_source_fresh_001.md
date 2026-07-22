@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review
 - Owner: Codex
 - Reviewer: Codex2
-- Next: Codex2 independently re-reviewed 7e159061f and found both findings from d2633fae0 resolved. Reviewer evidence is ready for the governed approve transition back to Codex for finalization, latest-dev integration, PR, checks, merge, and hosted-proof handoff.
+- Next: Codex2 independently approved both findings and pushed reviewer evidence at a743a69a4. The governed approve transition was rejected before mutation because PANTHEON_COMMAND_ROOT is cbbc0a02e while this dispatch is pinned to 35d7e5724; supervisor must renew the command-runtime binding and redispatch/replay approve back to Codex.
 
 ## Summary
 把 deny-all egress 緊急修補正式交付，建立 HTTPS allowlist/SSRF guard、bounded scheduler、ingest receipt 與 Agora freshness/stale truth。

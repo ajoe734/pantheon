@@ -368,3 +368,19 @@ created the reviewed tip, so owner finalization must integrate the then-current
 closeout work; this approval does not claim a deployment. No external request,
 provider credential, deployment, production state, or live-capital surface was
 touched during final re-review.
+
+### Governed approval transition blocker
+
+The final approval evidence was committed and pushed at
+`a743a69a49f7c25d34bb3e86e4f87a4893dad09b`. The reviewer then invoked the
+governed `approve` command with `AI_NAME=Codex2`, this review file, and the
+three final review notes. The wrapper rejected the command before canonical
+state mutation because the supervisor-provided command root was
+`cbbc0a02e415f4aae2e0fbf12c22b0646af0c884`, while this dispatch remained
+pinned to `PANTHEON_COMMAND_RUNTIME_SHA=35d7e572445dab5f4702670771e50560955de49e`.
+
+The authoritative task row therefore remains in `review` despite the durable
+approved verdict. The command checkout and runtime SHA were not altered, no
+generated state file was edited manually, and `done` was not attempted. The
+supervisor must renew the command-runtime binding and replay the reviewer
+`approve` transition before owner finalization can begin.
