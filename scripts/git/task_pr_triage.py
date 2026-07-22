@@ -23,6 +23,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -46,9 +47,10 @@ FULL_PR_URL_RE = re.compile(
     r"https://github\.com/(?P<repository>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/pull/(?P<number>\d+)"
 )
 NAMED_PR_RE = re.compile(
-    r"(?:(?P<repository>execute-plans|Pantheon)\s+)?PR\s+#(?P<number>\d+)",
+    r"(?:(?P<repository>execute-plans|Pantheon)\s+)?PRs?\s+#(?P<number>\d+)",
     re.IGNORECASE,
 )
+SUPERSEDED_BY_RE = re.compile(r"superseded\s+by\s+#(?P<number>\d+)", re.IGNORECASE)
 
 
 class TriageError(RuntimeError):
@@ -254,6 +256,17 @@ def extract_pr_references(text: str, default_repository: str) -> list[dict[str, 
             }
         )
 
+    for match in SUPERSEDED_BY_RE.finditer(text):
+        if any(start <= match.start() < end for start, end in occupied):
+            continue
+        references.append(
+            {
+                "repository": default_repository,
+                "number": int(match.group("number")),
+                "source": match.group(0),
+            }
+        )
+
     unique: dict[tuple[str, int], dict[str, Any]] = {}
     for reference in references:
         unique[(reference["repository"], reference["number"])] = reference
@@ -318,44 +331,58 @@ def collect_open_prs(repository: str) -> list[dict[str, Any]]:
         "number,title,url,headRefName,headRefOid,baseRefName,isDraft,"
         "mergeStateStatus,createdAt,updatedAt,author"
     )
-    proc = _run(
-        [
-            "gh",
-            "pr",
-            "list",
-            "--repo",
-            repository,
-            "--state",
-            "open",
-            "--base",
-            "dev",
-            "--limit",
-            "500",
-            "--json",
-            fields,
-        ]
-    )
-    records = json.loads(proc.stdout)
-    return [
-        {
-            "number": int(item["number"]),
-            "state": "OPEN",
-            "title": item.get("title"),
-            "url": item.get("url"),
-            "created_at": item.get("createdAt"),
-            "updated_at": item.get("updatedAt"),
-            "closed_at": None,
-            "merged_at": None,
-            "draft": bool(item.get("isDraft")),
-            "merge_state": item.get("mergeStateStatus") or "UNKNOWN",
-            "head_ref": item.get("headRefName"),
-            "head_sha": item.get("headRefOid"),
-            "base_ref": item.get("baseRefName"),
-            "author": (item.get("author") or {}).get("login"),
-            "comments": [],
-        }
-        for item in records
+    command = [
+        "gh",
+        "pr",
+        "list",
+        "--repo",
+        repository,
+        "--state",
+        "open",
+        "--base",
+        "dev",
+        "--limit",
+        "500",
+        "--json",
+        fields,
     ]
+    result: list[dict[str, Any]] = []
+    for attempt in range(4):
+        records = json.loads(_run(command).stdout)
+        result = [
+            {
+                "number": int(item["number"]),
+                "state": "OPEN",
+                "title": item.get("title"),
+                "url": item.get("url"),
+                "created_at": item.get("createdAt"),
+                "updated_at": item.get("updatedAt"),
+                "closed_at": None,
+                "merged_at": None,
+                "draft": bool(item.get("isDraft")),
+                "merge_state": item.get("mergeStateStatus") or "UNKNOWN",
+                "head_ref": item.get("headRefName"),
+                "head_sha": item.get("headRefOid"),
+                "base_ref": item.get("baseRefName"),
+                "author": (item.get("author") or {}).get("login"),
+                "comments": [],
+            }
+            for item in records
+        ]
+        unresolved = [
+            item
+            for item in result
+            if str(item.get("head_ref") or "").startswith("task/")
+            and item.get("merge_state") == "UNKNOWN"
+        ]
+        if not unresolved:
+            return result
+        if attempt < 3:
+            time.sleep(1)
+    raise TriageError(
+        "GitHub did not resolve mergeStateStatus for open task PR(s): "
+        + ", ".join(f"#{item['number']}" for item in unresolved)
+    )
 
 
 def collect_pr_detail(repository: str, number: int) -> dict[str, Any]:
@@ -450,11 +477,36 @@ def _history_index(history: Iterable[dict[str, Any]]) -> tuple[dict[int, dict[st
     return by_number, by_branch
 
 
+def validate_open_ref_consistency(
+    open_by_branch: dict[str, dict[str, Any]],
+    branch_by_name: dict[str, dict[str, Any]],
+) -> None:
+    """Reject a GitHub/ref snapshot assembled across a concurrent update."""
+
+    problems: list[str] = []
+    for branch_name, pull in sorted(open_by_branch.items()):
+        branch = branch_by_name.get(branch_name)
+        if not branch:
+            problems.append(f"PR #{pull['number']} branch {branch_name} is absent")
+            continue
+        if branch.get("head_sha") != pull.get("head_sha"):
+            problems.append(
+                f"PR #{pull['number']} head {pull.get('head_sha')} != "
+                f"remote ref {branch.get('head_sha')}"
+            )
+    if problems:
+        raise TriageError(
+            "GitHub open-PR and remote-ref snapshots raced; refresh and rerun: "
+            + "; ".join(problems)
+        )
+
+
 def _resolved_replacements(
     text: str,
     repository: str,
     history_by_number: dict[int, dict[str, Any]],
     current_pr: int,
+    allowed_task_ids: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     replacements: list[dict[str, Any]] = []
     for reference in extract_pr_references(text, repository):
@@ -462,6 +514,17 @@ def _resolved_replacements(
             continue
         evidence = history_by_number.get(reference["number"])
         if evidence and evidence.get("state") == "MERGED":
+            if allowed_task_ids:
+                evidence_ids = set(_task_candidates(evidence, {}))
+                related = any(
+                    evidence_id == allowed_id
+                    or evidence_id.startswith(f"{allowed_id}-")
+                    or allowed_id.startswith(f"{evidence_id}-")
+                    for evidence_id in evidence_ids
+                    for allowed_id in allowed_task_ids
+                )
+                if not related:
+                    continue
             replacements.append(
                 {
                     "repository": repository,
@@ -491,16 +554,46 @@ def classify_pr(
     archive_summary = _archive_summary(archive)
     archive_text = _archive_evidence_text(archive, archives)
     comment_text = "\n".join(pr.get("comments") or [])
+    related_task_ids = set(candidates if archive else [])
+    archive_task = (archive or {}).get("task") or {}
+    for field in ("helper_parent", "superseded_by"):
+        normalized = _normalize_task_id(archive_task.get(field))
+        if normalized:
+            related_task_ids.add(normalized)
     replacements = _resolved_replacements(
-        archive_text + "\n" + comment_text,
+        archive_text,
+        repository,
+        history_by_number,
+        int(pr["number"]),
+        related_task_ids,
+    )
+    comment_replacements = _resolved_replacements(
+        comment_text,
         repository,
         history_by_number,
         int(pr["number"]),
     )
+    replacements_by_number = {
+        item["number"]: item for item in replacements + comment_replacements
+    }
+    replacements = [replacements_by_number[key] for key in sorted(replacements_by_number)]
+
+    replacement_archive: dict[str, Any] | None = None
+    if not archive:
+        for replacement in replacements:
+            replacement_pr = history_by_number.get(replacement["number"])
+            if not replacement_pr:
+                continue
+            _, replacement_archive = _find_task_record(
+                _task_candidates(replacement_pr, {}), archives
+            )
+            if replacement_archive:
+                break
 
     owner = (
         (active or {}).get("owner")
         or ((archive or {}).get("task") or {}).get("owner")
+        or ((replacement_archive or {}).get("task") or {}).get("owner")
         or trailers.get("LLM-Agent")
         or "Human/Ops"
     )
@@ -509,6 +602,8 @@ def classify_pr(
         if (active or {}).get("owner")
         else "task-archive"
         if ((archive or {}).get("task") or {}).get("owner")
+        else "replacement-task-archive"
+        if ((replacement_archive or {}).get("task") or {}).get("owner")
         else "commit-trailer"
         if trailers.get("LLM-Agent")
         else "triage-fallback"
@@ -731,6 +826,7 @@ def build_report(
         if str(pr.get("head_ref") or "").startswith("task/")
     }
     branch_by_name = {str(branch["branch"]): branch for branch in branches}
+    validate_open_ref_consistency(open_by_branch, branch_by_name)
 
     cutoff = as_of - timedelta(hours=overdue_hours)
     cohort_numbers = {
@@ -1029,16 +1125,16 @@ def cmd_generate(args: argparse.Namespace) -> int:
     as_of = _parse_datetime(args.as_of) if args.as_of else datetime.now(timezone.utc)
     assert as_of is not None
     status_root = Path(args.status_root).resolve()
-    if args.refresh:
-        _refresh_refs(args.remote)
     base_sha = _run(["git", "rev-parse", args.base_ref]).stdout.strip()
     active, archives = load_task_state(status_root)
     history = collect_pr_history(args.repository)
+    if args.refresh:
+        _refresh_refs(args.remote)
+    branches = collect_branches(args.remote, args.base_ref)
     open_prs = collect_open_prs(args.repository)
     included = {
         number: collect_pr_detail(args.repository, number) for number in args.include_pr
     }
-    branches = collect_branches(args.remote, args.base_ref)
     report, manifest = build_report(
         repository=args.repository,
         remote=args.remote,

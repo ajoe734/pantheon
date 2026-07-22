@@ -4,9 +4,12 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 
 HERE = Path(__file__).resolve().parent
@@ -96,6 +99,8 @@ class PullRequestClassificationTests(unittest.TestCase):
             "number": 9,
             "state": "MERGED",
             "url": "https://github.com/ajoe734/pantheon/pull/9",
+            "title": "TASK-001-REPLACEMENT: deliver task",
+            "head_ref": "task/TASK-001-REPLACEMENT",
             "merged_at": "2026-07-01T00:00:00Z",
             "merge_commit_sha": "b" * 40,
         }
@@ -111,6 +116,26 @@ class PullRequestClassificationTests(unittest.TestCase):
             outcome="completed", next_message="Claims PR #9 but no live merge record."
         )
         result = self.classify(archives={"task-001": completed})
+        self.assertEqual(result["disposition"], "active-repair")
+        self.assertFalse(result["close_authorized"])
+
+    def test_unrelated_merged_pr_number_in_archive_is_not_replacement(self):
+        completed = archive(
+            outcome="completed",
+            next_message="Related frontend notes mention PR #9.",
+        )
+        unrelated = {
+            "number": 9,
+            "state": "MERGED",
+            "url": "https://github.com/ajoe734/pantheon/pull/9",
+            "title": "OTHER-001: unrelated task",
+            "head_ref": "task/OTHER-001",
+            "merged_at": "2026-07-01T00:00:00Z",
+            "merge_commit_sha": "b" * 40,
+        }
+        result = self.classify(
+            archives={"task-001": completed}, history=[unrelated]
+        )
         self.assertEqual(result["disposition"], "active-repair")
         self.assertFalse(result["close_authorized"])
 
@@ -225,6 +250,36 @@ class BranchClassificationTests(unittest.TestCase):
 
 
 class ValidationTests(unittest.TestCase):
+    def test_apply_closure_requires_explicit_allowlist(self):
+        with tempfile.TemporaryDirectory() as directory:
+            report = Path(directory) / "report.json"
+            report.write_text(json.dumps({"closure_candidates": []}))
+            args = SimpleNamespace(
+                report=str(report),
+                apply=True,
+                only=[],
+                repository="ajoe734/pantheon",
+            )
+            with self.assertRaisesRegex(triage.TriageError, "explicit --only"):
+                triage.cmd_close_superseded(args)
+
+    def test_rejects_open_pr_remote_ref_snapshot_race(self):
+        with self.assertRaisesRegex(triage.TriageError, "snapshots raced"):
+            triage.validate_open_ref_consistency(
+                {
+                    "task/TASK-001": {
+                        "number": 10,
+                        "head_sha": "a" * 40,
+                    }
+                },
+                {
+                    "task/TASK-001": {
+                        "branch": "task/TASK-001",
+                        "head_sha": "b" * 40,
+                    }
+                },
+            )
+
     def test_rejects_non_dry_run_manifest(self):
         report = {
             "cohort_prs": [],
@@ -256,7 +311,7 @@ class ValidationTests(unittest.TestCase):
 
     def test_pr_reference_parser_keeps_external_repository(self):
         refs = triage.extract_pr_references(
-            "execute-plans PR #218 and Pantheon PR #3057 merged; see "
+            "execute-plans PR #218, execute-plans PRs #265/#267, and Pantheon PR #3057 merged; see "
             "https://github.com/ajoe734/pantheon/pull/3058",
             "ajoe734/pantheon",
         )
@@ -267,6 +322,17 @@ class ValidationTests(unittest.TestCase):
         self.assertTrue(
             any(ref["repository"] == "ajoe734/pantheon" and ref["number"] == 3057 for ref in refs)
         )
+        self.assertFalse(
+            any(ref["repository"] == "ajoe734/pantheon" and ref["number"] == 265 for ref in refs)
+        )
+
+    def test_pr_reference_parser_recognizes_superseded_by_number(self):
+        refs = triage.extract_pr_references(
+            "Superseded by #3948, which merged the canonical repair.",
+            "ajoe734/pantheon",
+        )
+        self.assertEqual(refs[0]["number"], 3948)
+        self.assertEqual(refs[0]["repository"], "ajoe734/pantheon")
 
 
 if __name__ == "__main__":
