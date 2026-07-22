@@ -62,6 +62,7 @@ def _run(
     *,
     cwd: Path = ROOT,
     check: bool = True,
+    input_text: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     proc = subprocess.run(
         command,
@@ -69,6 +70,7 @@ def _run(
         check=False,
         capture_output=True,
         text=True,
+        input=input_text,
     )
     if check and proc.returncode != 0:
         detail = proc.stderr.strip() or proc.stdout.strip() or "no command output"
@@ -140,9 +142,9 @@ def parse_commit_trailers(messages: Iterable[str]) -> dict[str, str]:
     return trailers
 
 
-def git_commit_trailers(commit: str, base_ref: str) -> dict[str, str]:
+def git_commit_trailers(commit: str, base_sha: str) -> dict[str, str]:
     proc = _run(
-        ["git", "log", "-20", "--format=%B%x00", commit, "--not", base_ref],
+        ["git", "log", "-20", "--format=%B%x00", commit, "--not", base_sha],
         check=False,
     )
     messages = [part for part in proc.stdout.split("\0") if part.strip()]
@@ -423,7 +425,7 @@ def collect_pr_detail(repository: str, number: int) -> dict[str, Any]:
     }
 
 
-def collect_branches(remote: str, base_ref: str) -> list[dict[str, Any]]:
+def collect_branches(remote: str, base_sha: str) -> list[dict[str, Any]]:
     pattern = f"refs/remotes/{remote}/task/*"
     fmt = "%00".join(
         [
@@ -440,7 +442,7 @@ def collect_branches(remote: str, base_ref: str) -> list[dict[str, Any]]:
             [
                 "git",
                 "for-each-ref",
-                f"--merged={base_ref}",
+                f"--merged={base_sha}",
                 "--format=%(refname:short)",
                 pattern,
             ]
@@ -498,6 +500,83 @@ def validate_open_ref_consistency(
         raise TriageError(
             "GitHub open-PR and remote-ref snapshots raced; refresh and rerun: "
             + "; ".join(problems)
+        )
+
+
+def capture_base_snapshot(remote: str, base_ref: str, refresh: bool) -> str:
+    """Refresh requested refs first, then resolve the immutable ancestry base."""
+
+    if refresh:
+        _refresh_refs(remote)
+    base_sha = _run(
+        ["git", "rev-parse", "--verify", f"{base_ref}^{{commit}}"]
+    ).stdout.strip()
+    if not re.fullmatch(r"[0-9a-f]{40}", base_sha):
+        raise TriageError(f"{base_ref} did not resolve to a full commit SHA")
+    return base_sha
+
+
+def _snapshot_reachability(base_sha: str, head_shas: Iterable[str]) -> dict[str, bool]:
+    """Compute reachability for many heads against one immutable commit snapshot."""
+
+    if not re.fullmatch(r"[0-9a-f]{40}", base_sha):
+        raise TriageError("report base_sha must be a full lowercase commit SHA")
+    resolved = _run(
+        ["git", "rev-parse", "--verify", f"{base_sha}^{{commit}}"]
+    ).stdout.strip()
+    if resolved != base_sha:
+        raise TriageError(f"report base_sha did not resolve exactly: {base_sha} -> {resolved}")
+
+    heads = sorted(set(head_shas))
+    invalid = [head for head in heads if not re.fullmatch(r"[0-9a-f]{40}", head)]
+    if invalid:
+        raise TriageError(f"report contains invalid head SHA: {invalid[0]}")
+    if heads:
+        objects = _run(
+            ["git", "cat-file", "--batch-check=%(objectname) %(objecttype)"],
+            input_text="\n".join(heads) + "\n",
+        ).stdout.splitlines()
+        unavailable = [
+            line
+            for line in objects
+            if line.endswith(" missing") or not line.endswith(" commit")
+        ]
+        if unavailable:
+            raise TriageError(
+                "cannot reconcile ancestry because report head object is unavailable: "
+                + unavailable[0]
+            )
+
+    ancestors = set(_run(["git", "rev-list", base_sha]).stdout.splitlines())
+    return {head: head in ancestors for head in heads}
+
+
+def validate_report_ancestry(report: dict[str, Any]) -> None:
+    """Reconcile every recorded ancestry decision against report.base_sha."""
+
+    base_sha = str(report.get("base_sha") or "")
+    branches = report.get("branches") or []
+    cohort = report.get("cohort_prs") or []
+    rows = [(f"branch {item.get('branch')}", item) for item in branches]
+    rows.extend((f"PR #{item.get('number')}", item) for item in cohort)
+    head_shas = [str(item.get("head_sha") or "") for _, item in rows]
+    reachability = _snapshot_reachability(base_sha, head_shas)
+
+    mismatches: list[str] = []
+    for label, item in rows:
+        head_sha = str(item.get("head_sha") or "")
+        recorded = item.get("dev_reachable")
+        actual = reachability[head_sha]
+        if not isinstance(recorded, bool) or recorded != actual:
+            mismatches.append(
+                f"{label} head {head_sha}: recorded={recorded!r}, actual={actual}"
+            )
+    if mismatches:
+        sample = "; ".join(mismatches[:20])
+        suffix = f"; ... {len(mismatches) - 20} more" if len(mismatches) > 20 else ""
+        raise TriageError(
+            f"{len(mismatches)} ancestry decision(s) disagree with immutable base "
+            f"{base_sha}: {sample}{suffix}"
         )
 
 
@@ -845,15 +924,11 @@ def build_report(
         branch = branch_by_name.get(str(pr.get("head_ref")))
         dev_reachable = bool(branch and branch.get("dev_reachable"))
         if not branch and pr.get("head_sha"):
-            dev_reachable = (
-                _run(
-                    ["git", "merge-base", "--is-ancestor", str(pr["head_sha"]), base_ref],
-                    check=False,
-                ).returncode
-                == 0
-            )
+            dev_reachable = _snapshot_reachability(
+                base_sha, [str(pr["head_sha"])]
+            )[str(pr["head_sha"])]
         trailers = (
-            git_commit_trailers(str(pr["head_sha"]), base_ref)
+            git_commit_trailers(str(pr["head_sha"]), base_sha)
             if pr.get("head_sha")
             else {}
         )
@@ -905,7 +980,7 @@ def build_report(
                 "open_pr": None,
                 "dev_reachable": True,
                 "retention_satisfied": True,
-                "recoverability": f"head is an ancestor of {base_ref}",
+                "recoverability": f"head is an ancestor of {base_sha}",
             },
             "remote_ref": f"refs/heads/{item['branch']}",
         }
@@ -1006,6 +1081,9 @@ def validate_report(
             )
 
     branch_by_name = {item["branch"]: item for item in report.get("branches") or []}
+    for field in ("repository", "remote", "base_ref", "base_sha", "as_of"):
+        if deletion_manifest.get(field) != report.get(field):
+            raise TriageError(f"branch manifest {field} does not match report")
     if deletion_manifest.get("mode") != "dry-run-only":
         raise TriageError("branch manifest must remain dry-run-only")
     candidates = deletion_manifest.get("candidates") or []
@@ -1025,7 +1103,11 @@ def validate_report(
             )
 
 
-def render_markdown(report: dict[str, Any], deletion_manifest: dict[str, Any]) -> str:
+def render_markdown(
+    report: dict[str, Any],
+    deletion_manifest: dict[str, Any],
+    closure_results: dict[str, Any] | None = None,
+) -> str:
     summary = report["summary"]
     lines = [
         "# OPS-TASK-PR-TRIAGE-001 evidence report",
@@ -1037,7 +1119,7 @@ def render_markdown(report: dict[str, Any], deletion_manifest: dict[str, Any]) -
         "",
         f"The fixed audit cohort contains **{summary['cohort_pr_count']}** task PRs: "
         f"{summary['open_task_pr_count']} remain open and "
-        f"{len(summary['resolved_baseline_prs'])} were resolved by the lease-repair task.",
+        f"{len(summary['resolved_baseline_prs'])} are now closed or merged.",
         "",
         "| PR | State | Merge | Draft | Disposition | Owner | Evidence |",
         "|---:|---|---|:---:|---|---|---|",
@@ -1078,6 +1160,23 @@ def render_markdown(report: dict[str, Any], deletion_manifest: dict[str, Any]) -
         )
     if not report["closure_candidates"]:
         lines.append("| - | - | - | No closure candidates |")
+    applied = (closure_results or {}).get("results") or []
+    if applied:
+        applied_numbers = ", ".join(f"#{item['number']}" for item in applied)
+        lines.extend(
+            [
+                "",
+                "### Applied closure record",
+                "",
+                f"The explicit allowlist was applied at `{closure_results['applied_at']}` "
+                f"to {applied_numbers}. Each PR was revalidated at its recorded head, "
+                "received an evidence comment, and is now closed. Exact comment URLs, "
+                "replacement evidence, and head SHAs remain recorded in "
+                "`closure-results.json`.",
+                "",
+                f"Recorded branch deletions: {closure_results.get('branch_deletions', 0)}.",
+            ]
+        )
 
     lines.extend(
         [
@@ -1125,12 +1224,10 @@ def cmd_generate(args: argparse.Namespace) -> int:
     as_of = _parse_datetime(args.as_of) if args.as_of else datetime.now(timezone.utc)
     assert as_of is not None
     status_root = Path(args.status_root).resolve()
-    base_sha = _run(["git", "rev-parse", args.base_ref]).stdout.strip()
+    base_sha = capture_base_snapshot(args.remote, args.base_ref, args.refresh)
     active, archives = load_task_state(status_root)
     history = collect_pr_history(args.repository)
-    if args.refresh:
-        _refresh_refs(args.remote)
-    branches = collect_branches(args.remote, args.base_ref)
+    branches = collect_branches(args.remote, base_sha)
     open_prs = collect_open_prs(args.repository)
     included = {
         number: collect_pr_detail(args.repository, number) for number in args.include_pr
@@ -1155,10 +1252,12 @@ def cmd_generate(args: argparse.Namespace) -> int:
     output = Path(args.output)
     manifest_path = Path(args.deletion_manifest)
     markdown_path = Path(args.markdown)
+    closure_path = output.parent / "closure-results.json"
+    closure_results = _load_json(closure_path) if closure_path.exists() else None
     _write_json(output, report)
     _write_json(manifest_path, manifest)
     markdown_path.parent.mkdir(parents=True, exist_ok=True)
-    markdown_path.write_text(render_markdown(report, manifest))
+    markdown_path.write_text(render_markdown(report, manifest, closure_results))
     print(
         json.dumps(
             {
@@ -1178,6 +1277,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
     report = _load_json(Path(args.report))
     manifest = _load_json(Path(args.deletion_manifest))
     validate_report(report, manifest, args.expected_cohort_count)
+    validate_report_ancestry(report)
     print(
         f"valid: {len(report['cohort_prs'])} PRs, "
         f"{len(report['branches'])} branches, "

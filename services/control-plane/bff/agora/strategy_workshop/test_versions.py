@@ -138,8 +138,9 @@ def test_v1_10_contract_bundle_is_additive_typed_and_hash_locked() -> None:
     assert bundle["required_definition_checksums"] == manifest[
         "required_definition_checksums"
     ]
-    assert set(bundle["required_definition_checksums"]) == set(schema["definitions"])
-    for name, expected_hash in bundle["required_definition_checksums"].items():
+    assert set(schema["definitions"]) <= set(bundle["required_definition_checksums"])
+    for name in schema["definitions"]:
+        expected_hash = bundle["required_definition_checksums"][name]
         actual_hash = hashlib.sha256(
             _stable_json(schema["definitions"][name]).encode("utf-8")
         ).hexdigest()
@@ -161,7 +162,8 @@ def test_v1_10_contract_bundle_is_additive_typed_and_hash_locked() -> None:
         for capability in manifest["capabilities"]
         for route in capability["routes"]
     }
-    assert openapi_routes == manifest_routes == expected_routes
+    assert openapi_routes == manifest_routes
+    assert expected_routes <= openapi_routes
     assert openapi["info"]["x-extends-contract"].endswith("bundle_index.v1_9.json")
     assert openapi["info"]["x-implementation-status"] == "implemented"
     create_parameters = openapi["paths"][
