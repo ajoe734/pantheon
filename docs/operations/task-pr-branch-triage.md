@@ -30,6 +30,15 @@ Archive `ahead`, `push_status`, or branch-name fields are context only. They do
 not prove current GitHub reachability and never authorize branch retirement by
 themselves.
 
+The report summary keeps the fixed overdue cohort separate from the live
+repository-wide open-PR inventory: `cohort_open_pr_count` and
+`cohort_resolved_pr_count` always partition `cohort_pr_count`, while
+`global_open_task_pr_count` may also include recent task PRs outside the
+cohort. The captured `as_of` time is normalized to the published second before
+age and retention calculations, so rerunning against the same `base_sha`,
+`as_of`, GitHub state, and task state reproduces identical report and dry-run
+JSON.
+
 ## Dispositions
 
 | Disposition | Meaning | Automatic mutation |
