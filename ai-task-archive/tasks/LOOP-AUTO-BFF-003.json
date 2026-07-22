@@ -1,0 +1,154 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-BFF-003",
+  "archived_at": "2026-06-27T14:27:56Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-BFF-003",
+    "title": "Label seed snapshot registry scheduled and live truth",
+    "summary_zh": "在 operator panels 明確標示 seed、fixture、snapshot、registry、scheduled、live truth，避免 demo fixture 被看成真實 loop。",
+    "phase": "Global Loop Autopilot / Wave 7 BFF Operator Truth",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "LOOP-AUTO-BFF-001"
+    ],
+    "artifacts": [
+      "services/control-plane/bff",
+      "execute-plans",
+      "docs/deployment/evidence"
+    ],
+    "acceptance": [
+      "No panel displays seed or fixture as live proof",
+      "Registry metadata and live truth are labeled separately",
+      "Degraded truth source is visible in operator payload"
+    ],
+    "next": "Done: implementation PR #2433 merged, review closeout PR #2436 merged, evidence recorded in docs/deployment/evidence/loop-auto-bff-003/claude-review.md; focused BFF/frontend validation passed.",
+    "last_update": "2026-06-27T14:27:56Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+    "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+    "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+    "proof_required": [
+      "unit tests",
+      "contract tests",
+      "local service smoke",
+      "restart or replay evidence when worker or runtime behavior changes"
+    ],
+    "non_goals": [
+      "No live-capital execution",
+      "No approval gate bypass",
+      "No panel-only closure",
+      "No seed fixture as live proof"
+    ],
+    "dispatch_rules": [
+      "idempotent duplicate ticks and duplicate events",
+      "operator-visible truth projection required",
+      "maturity cannot rise above collected evidence",
+      "repo workflow closure required before done"
+    ],
+    "loop_ids": [
+      "bff_health_monitoring",
+      "all"
+    ],
+    "current_maturity": "api-only",
+    "target_maturity": "reconciled",
+    "desired_state_sources": [
+      "BFF truth contract"
+    ],
+    "actual_state_sources": [
+      "operator panels",
+      "BFF read models"
+    ],
+    "wave_id": "Wave 7 BFF Operator Truth",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Claude review approved PR #2433; all acceptance criteria met with BFF contract tests, LoopTruthPanel test, loopHealth client test, and management build."
+    ],
+    "review_file": "docs/deployment/evidence/loop-auto-bff-003/claude-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-27T14:27:56Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-bff-003",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOOP-AUTO-BFF-003",
+      "git_clean_required": false,
+      "repository_fallback": {
+        "from_repository_id": "execute_plans",
+        "missing_repository_path": "/tmp/pantheon-worker-worktrees/pantheon/execute-plans",
+        "reason": "non-Pantheon artifact repository local_path is unavailable; using Pantheon because the task also has Pantheon artifacts"
+      },
+      "commit": "ac1576d50c37b10f85fb7577f26ded1678fc712d",
+      "commit_subject": "LOOP-AUTO-BFF-003: refresh review closeout branch",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped closeout brief metadata after merging current dev.",
+        "Not changing": "BFF/frontend implementation and reviewer evidence content.",
+        "Composes with": "PR #2436 review-evidence closeout and final ai-status done archive.",
+        "Verified": "not run; branch refresh metadata only. Previous focused validation in this closeout: BFF contract/read-model tests 9 passed, LoopTruthPanel test 1 passed, loopHealth client test 1 passed with 28 skipped, management build passed.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "LOOP-AUTO-BFF-003",
+        "Reviewer": "Claude"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LOOP-AUTO-BFF-003",
+      "ahead": 0,
+      "behind": 4,
+      "push_status": "behind",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "5fc713915fcd32a423faa6b1dd4aa57834f0feab",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-BFF-003",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Auto-reassigned LOOP-AUTO-BFF-003 away from unavailable lane Codex2 (disabled, sidecar-only, or auth-down); owner Codex2 -> Codex.",
+      "status": "done",
+      "created_at": "2026-06-27T12:37:30Z",
+      "resolved_at": "2026-06-27T12:37:37Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-BFF-003",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Auto-reassigned LOOP-AUTO-BFF-003 away from unavailable lane Codex2 (disabled, sidecar-only, or auth-down); owner Codex2 -> Codex.",
+      "status": "done",
+      "created_at": "2026-06-27T12:37:36Z",
+      "resolved_at": "2026-06-27T13:59:06Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-BFF-003",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implemented and merged in PR #2433 (merge 9203f87efd9330c4b14c5931b8c0a58841a07a78); awaiting Claude review approval before owner done closeout.",
+      "status": "done",
+      "created_at": "2026-06-27T14:15:54Z",
+      "resolved_at": "2026-06-27T14:18:29Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-BFF-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved — all three acceptance criteria met with contract tests and frontend panel. Returning to Codex for done closeout.",
+      "status": "done",
+      "created_at": "2026-06-27T14:18:29Z",
+      "resolved_at": "2026-06-27T14:27:57Z"
+    }
+  ],
+  "blockers": []
+}

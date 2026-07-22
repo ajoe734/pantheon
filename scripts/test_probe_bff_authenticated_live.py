@@ -38,6 +38,17 @@ class _FakeResponse:
         return self._body
 
 
+def canonical_error_shape() -> dict[str, object]:
+    return {
+        "ok": True,
+        "location": "error",
+        "code_present": True,
+        "message_present": True,
+        "meta_correlation_id_present": True,
+        "outer_detail_wrapper": False,
+    }
+
+
 def test_request_json_validates_required_values_and_extracts_body_paths(monkeypatch) -> None:
     probe = _load_probe_module()
 
@@ -75,6 +86,11 @@ def test_request_json_validates_required_values_and_extracts_body_paths(monkeypa
 
     assert result["ok"] is True
     assert result["extracted"] == {"data.id": "strategy-dry-run-001"}
+    assert result["request_headers"]["Authorization"] == "present"
+    assert result["request_headers"]["X-Dry-Run"] == "1"
+    assert result["request_headers"]["Idempotency-Key"] == "present"
+    assert result["request_headers"]["Idempotency-Key-Sha256-12"] == probe.sha256_12("idem-test-dry-run-strategy")
+    assert "token-123" not in json.dumps(result["request_headers"])
     assert result["response_headers"] == {"X-Correlation-Id": "cid-test"}
 
 
@@ -93,8 +109,10 @@ def test_request_json_accepts_expected_bff_error_envelope(monkeypatch) -> None:
                     {
                         "error": {
                             "code": "FORBIDDEN",
+                            "message": "Forbidden",
                             "details": {"precondition_failed": "role_check"},
-                        }
+                        },
+                        "meta": {"correlationId": "cid-error"},
                     }
                 ).encode("utf-8")
             ),
@@ -121,6 +139,29 @@ def test_request_json_accepts_expected_bff_error_envelope(monkeypatch) -> None:
     assert result["ok"] is True
     assert result["error_envelope"] is True
     assert result["error_code"] == "FORBIDDEN"
+    assert result["error_envelope_shape"] == {
+        "ok": True,
+        "location": "error",
+        "code_present": True,
+        "message_present": True,
+        "meta_correlation_id_present": True,
+        "outer_detail_wrapper": False,
+    }
+
+
+def test_error_envelope_shape_rejects_outer_detail_wrapper() -> None:
+    probe = _load_probe_module()
+
+    shape = probe.error_envelope_shape(
+        {
+            "detail": {"error": {"code": "FORBIDDEN", "message": "Forbidden"}},
+            "meta": {"correlationId": "cid-error"},
+        }
+    )
+
+    assert shape["ok"] is False
+    assert shape["location"] == "detail.error"
+    assert shape["outer_detail_wrapper"] is True
 
 
 def test_main_follows_management_ai_conversation_href_for_readback(tmp_path, monkeypatch) -> None:
@@ -215,9 +256,19 @@ def test_build_dry_run_results_attaches_per_probe_side_effect_proofs(monkeypatch
                 "meta.liveCapitalSideEffects": False,
             }
         elif probe.family.endswith("-readback-not-persisted"):
-            result.update({"status": 404, "error_envelope": True, "error_code": "RESOURCE_NOT_FOUND"})
+            result.update({
+                "status": 404,
+                "error_envelope": True,
+                "error_envelope_shape": canonical_error_shape(),
+                "error_code": "RESOURCE_NOT_FOUND",
+            })
         elif probe.family.startswith("dry-run-invalid-"):
-            result.update({"status": 422, "error_envelope": True, "error_code": "VALIDATION_FAILED"})
+            result.update({
+                "status": 422,
+                "error_envelope": True,
+                "error_envelope_shape": canonical_error_shape(),
+                "error_code": "VALIDATION_FAILED",
+            })
         return result
 
     monkeypatch.setattr(probe, "request_json", fake_request_json)
@@ -269,14 +320,50 @@ def test_build_rbac_matrix_results_attaches_write_side_effect_proofs(monkeypatch
             "ok": True,
             "error_envelope": probe.expect_error_envelope,
         }
-        if probe.method == "POST" and probe.expect_error_envelope:
+        if probe.expect_error_envelope:
+            result["error_envelope_shape"] = canonical_error_shape()
+        if probe.family.endswith("readback-not-persisted") and probe.path == "/bff/agora/notes":
+            result.update(
+                {
+                    "status": 200,
+                    "error_envelope": False,
+                    "absent_item_checks": [
+                        {"ok": True, "items_checked": 2},
+                        {"ok": True, "items_checked": 2},
+                    ],
+                }
+            )
+        elif probe.family.endswith("readback-not-persisted"):
+            result.update({
+                "status": 404,
+                "error_envelope": True,
+                "error_envelope_shape": canonical_error_shape(),
+                "error_code": "RESOURCE_NOT_FOUND",
+            })
+        elif probe.method == "POST" and probe.expect_error_envelope:
             result["error_code"] = "FORBIDDEN"
         elif probe.method == "POST":
-            result["extracted"] = {
+            extracted = {
                 "meta.dryRun": True,
                 "meta.durable": False,
                 "meta.liveCapitalSideEffects": False,
             }
+            if probe.family in {
+                "rbac-write-operator-strategy",
+                "rbac-write-reviewer-strategy",
+                "rbac-write-approver-strategy",
+                "rbac-write-admin-strategy",
+                "rbac-write-operator-ranking-formula",
+                "rbac-write-reviewer-ranking-formula",
+                "rbac-write-approver-ranking-formula",
+                "rbac-write-admin-ranking-formula",
+                "rbac-write-operator-agora-note",
+                "rbac-write-reviewer-agora-note",
+                "rbac-write-approver-agora-note",
+                "rbac-write-admin-agora-note",
+            }:
+                extracted["data.id"] = f"{probe.family}-id"
+            result["extracted"] = extracted
         return result
 
     monkeypatch.setattr(probe, "request_json", fake_request_json)
@@ -303,6 +390,16 @@ def test_build_rbac_matrix_results_attaches_write_side_effect_proofs(monkeypatch
     assert [result["side_effect_check"]["kind"] for result in write_results].count(
         "authorization_rejected_before_persistence"
     ) == 16
+    readback_checks = [
+        result["side_effect_check"].get("readback_not_persisted")
+        for result in write_results
+        if result["rbac_label"] in {"operator", "reviewer", "approver", "admin"}
+        and result["rbac_resource"] in {"strategy", "ranking-formula", "agora-note"}
+    ]
+    assert len(readback_checks) == 12
+    assert all(isinstance(check, dict) and check["ok"] is True for check in readback_checks)
+    assert [check["kind"] for check in readback_checks].count("readback_not_persisted") == 8
+    assert [check["kind"] for check in readback_checks].count("list_readback_not_persisted") == 4
     assert all("target_marker_sha256_12" in result["side_effect_check"] for result in write_results)
     assert "live-rbac-" not in json.dumps([result["side_effect_check"] for result in write_results])
 
@@ -471,6 +568,7 @@ def test_build_approval_race_accepts_single_winner_plus_conflict(monkeypatch) ->
         with lock:
             calls.append(request.headers["Authorization"])
             call_number = len(calls)
+        probe.time.sleep(0.02)
         if call_number == 1:
             return _FakeResponse(
                 status=202,
@@ -521,6 +619,8 @@ def test_build_approval_race_accepts_single_winner_plus_conflict(monkeypatch) ->
     assert result["accepted_count"] == 1
     assert result["safe_error_count"] == 1
     assert result["duplicate_winners"] is False
+    assert result["concurrency"]["concurrent"] is True
+    assert result["concurrency"]["overlap_ms"] >= 0
     assert sorted(calls) == ["Bearer token-a", "Bearer token-b"]
 
 
@@ -540,6 +640,7 @@ def test_build_two_man_race_accepts_two_operator_scoped_signatures(monkeypatch) 
         with lock:
             calls.append(request.headers["Authorization"])
             call_number = len(calls)
+        probe.time.sleep(0.02)
         return _FakeResponse(
             status=202,
             body={
@@ -575,6 +676,8 @@ def test_build_two_man_race_accepts_two_operator_scoped_signatures(monkeypatch) 
     assert result["replayed_count"] == 0
     assert result["distinct_command_ids"] is True
     assert result["command_id_count"] == 2
+    assert result["concurrency"]["concurrent"] is True
+    assert result["concurrency"]["overlap_ms"] >= 0
     assert sorted(calls) == ["Bearer token-a", "Bearer token-b"]
 
 

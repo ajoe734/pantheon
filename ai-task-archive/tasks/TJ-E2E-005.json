@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "task_id": "TJ-E2E-005",
+  "archived_at": "2026-07-12T12:28:16Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "title": "Canonical BFF read API",
+    "summary_zh": "依 Trade Journey E2E gap 規格執行：Canonical BFF read API。",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "phase": "Trade Journey E2E / Wave 2",
+    "next": "Closeout finalized: PR #3411 merged into dev at 83f2c6709abcaf245755e9ee0edbaac010f23d72 (verified ancestor of origin/dev). Re-ran pytest services/control-plane/bff/test_tj_e2e_005_trade_journeys_read_api.py: 27 passed. No task-owned worktree changes; commit 17692abe1 already carries required trailers.",
+    "source_ref": {
+      "doc": "docs/04/pantheon_trade_journey_e2e_observability_gap_2026-07-11/TRADE_JOURNEY_E2E_OBSERVABILITY_GAP.md",
+      "packet": "docs/bff/execution-tasks/2026-07-11-trade-journey-e2e/TJ-E2E-005-canonical-bff-read-api.md",
+      "target_repo": "pantheon",
+      "merge_target": "dev"
+    },
+    "metadata": {
+      "wave": 2,
+      "fleet_lane": "canonical-bff-read-api",
+      "target_repo": "pantheon"
+    },
+    "created_at": "2026-07-11T22:58:28.902157+00:00",
+    "id": "TJ-E2E-005",
+    "depends_on": [
+      "TJ-E2E-004"
+    ],
+    "last_update": "2026-07-12T12:28:16Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_trade_journey_e2e_2026-07-11",
+    "review_notes_zh": [
+      "審查通過：canonical list/detail/timeline/graph/resolve/evidence/replay/metrics routes 已接至 TJ-E2E-004 materializer；tenant scope、identifier existence protection、route shadowing、cursor pagination、read_state/freshness、live-capital masking 與 replay timestamp 邊界均有測試。Reviewer rerun：65 passed；py_compile 與 git diff --check clean。PR #3411 已合併至 dev，merge commit 83f2c6709abcaf245755e9ee0edbaac010f23d72。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T12:28:16Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/tj-e2e-005",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/TJ-E2E-005",
+      "git_clean_required": false,
+      "commit": "83f2c6709abcaf245755e9ee0edbaac010f23d72",
+      "commit_subject": "Merge pull request #3411 from ajoe734/task/TJ-E2E-005",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "TJ-E2E-005": "add canonical Trade Journey BFF read API"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/TJ-E2E-005",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "83f2c6709abcaf245755e9ee0edbaac010f23d72",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "TJ-E2E-005",
+      "from": "Claude",
+      "to": "Antigravity",
+      "message": "PR #3411 open (auto-merge) on task/TJ-E2E-005: implemented list/detail/timeline/graph/resolve/evidence/replay/metrics under /bff/management/trade-journeys on top of the TJ-E2E-004 materializer, with cursor pagination, ambiguity-aware resolve, formal/partial/degraded/unavailable read_state + source freshness, tenant row-level scope with identifier-existence protection (uniform 404), live-capital masking, and OpenAPI/DTO/auth/route-shadowing/degraded/performance tests (27 new + 38 adjacent-regression tests passing). Ready for review.",
+      "status": "done",
+      "created_at": "2026-07-12T12:16:12Z",
+      "resolved_at": "2026-07-12T12:25:51Z"
+    },
+    {
+      "task_id": "TJ-E2E-005",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved. PR #3411 merged at 83f2c6709abcaf245755e9ee0edbaac010f23d72; owner Claude must perform task-closeout finalization and mark done.",
+      "status": "done",
+      "created_at": "2026-07-12T12:25:51Z",
+      "resolved_at": "2026-07-12T12:28:17Z"
+    }
+  ],
+  "blockers": []
+}

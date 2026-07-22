@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "task_id": "AG-E2E-SW-001",
+  "archived_at": "2026-06-22T12:03:55Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-E2E-SW-001",
+    "title": "Winner-branch workshop E2E acceptance",
+    "summary_zh": "Winner-branch 賣家節點複雜描述到可驗證 StrategySpec Draft 的 v1.3 E2E 驗收。",
+    "phase": "EPIC AGORA-SW / Phase 2",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-SW-003",
+      "AG-FE-SW-002",
+      "AG-XR-OPENAPI-004"
+    ],
+    "artifacts": [
+      "services/control-plane/tests/agora/test_winner_branch_workshop_e2e.py"
+    ],
+    "acceptance": [
+      "賣家節點描述產生 schema-valid draft 與正確 completeness map;E2E 綠燈收錄 CI;【驗收】實作與引用 spec/schema 逐欄位一致,無自創欄位/route/enum;遇疑問須先開 blocker 澄清而非自行實作;自行臆測或偏離設計稿一律不通過"
+    ],
+    "next": "Merged PR #2263 into dev (d233d4faf7aaa09c2c9ade14afe771b5990b8415); closeout evidence committed in 6102d8dc; focused pytest 149 passed and GitHub required checks passed.",
+    "last_update": "2026-06-22T12:03:55Z",
+    "auto_created_by": "agora-closure-followup-2026-06-20",
+    "review_notes_zh": [
+      "全部三個接受測試綠燈通過，152 passed, 3 warnings (pre-existing)",
+      "schema-backed 驗證取代虛假 self-equality 斷言",
+      "FORBIDDEN_EXECUTION_KEYS 在三個測試檔遞迴執行",
+      "scope 邊界明確：無新 route/BFF/OpenAPI/frontend 改動",
+      "commit trailers 完整，owned layer/not-changing 聲明清晰"
+    ],
+    "review_file": ".orchestrator/task-briefs/ag_e2e_sw_001.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-22T12:03:55Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-e2e-sw-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-E2E-SW-001",
+      "git_clean_required": false,
+      "commit": "7e6616012fb7e19ab6a558640babb886fce8ffd6",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-E2E-SW-001",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-E2E-SW-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "d233d4faf7aaa09c2c9ade14afe771b5990b8415",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-E2E-SW-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implementation ready for review in PR #2261 (commit 7021b4ab5f087a1be3083e0f6feb36ec2d7974ff). Added task-scoped winner-branch workshop E2E artifact for governed evidence -> StrategySpec draft -> StrategyCompleteness map, and replaced vacuous no-order assertions with schema-backed fixtures. Verified: Agora acceptance 149 passed; strategy_spec/source seed 95 passed; full services/control-plane/tests/agora 152 passed with 3 existing datetime.utcnow warnings; git diff --check clean.",
+      "status": "done",
+      "created_at": "2026-06-22T11:53:15Z",
+      "resolved_at": "2026-06-22T11:56:21Z"
+    },
+    {
+      "task_id": "AG-E2E-SW-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all 3 acceptance tests pass (152 passed); schema validation is real (Draft7Validator against schema files); no-order stubs replaced with schema-backed payloads; forbidden execution keys recursively enforced; scope boundary fully respected — no new routes/BFF/OpenAPI/frontend changes. Returned to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-06-22T11:56:21Z",
+      "resolved_at": "2026-06-22T12:03:56Z"
+    }
+  ],
+  "blockers": []
+}

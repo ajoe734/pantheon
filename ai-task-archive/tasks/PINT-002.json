@@ -1,0 +1,128 @@
+{
+  "version": 1,
+  "task_id": "PINT-002",
+  "archived_at": "2026-07-12T15:10:48Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PINT-002",
+    "title": "BFF context eligibility and interaction commands",
+    "summary_zh": "Implement BFF context resolution participant eligibility and typed interaction submission.",
+    "phase": "Persona Interaction / Wave 1 BFF",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "PINT-001"
+    ],
+    "artifacts": [
+      "services/control-plane/bff/agora/",
+      "services/control-plane/bff/tests/"
+    ],
+    "acceptance": [
+      "Idempotent contextual workshop;Eligibility reasons;Fail-closed permissions;Merge Pantheon PR"
+    ],
+    "next": "PR #3447 merged into dev at b3768a218658379b2283aee986c89557f0b6c674; context eligibility and typed interaction commands accepted; focused pytest passed 22 tests.",
+    "last_update": "2026-07-12T15:10:48Z",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T15:10:48Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/pint-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/PINT-002",
+      "git_clean_required": false,
+      "commit": "10451a0efbb5a6d27f0c5d0fb6469ed52295eb23",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/PINT-002",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/PINT-002",
+      "ahead": 0,
+      "behind": 8,
+      "push_status": "behind",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "b3768a218658379b2283aee986c89557f0b6c674",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PINT-002",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Chair reassigned owner from Codex2 to Codex: PINT-002 is a non-human blocked task with Codex supplied as a healthy rescue target; redispatch must still wait for the missing PINT-001 additive contract freeze. Task returned to todo for a blocked-owner rescue dispatch.",
+      "status": "done",
+      "created_at": "2026-07-12T13:22:24Z",
+      "resolved_at": "2026-07-12T13:22:28Z"
+    },
+    {
+      "task_id": "PINT-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Implemented idempotent contextual workshop resolution, fail-closed included/excluded Persona eligibility, and typed analysis-only interaction submission. Anchor d20a38f72. Verified: 207 Agora tests passed.",
+      "status": "done",
+      "created_at": "2026-07-12T14:13:54Z",
+      "resolved_at": "2026-07-12T14:37:59Z"
+    },
+    {
+      "task_id": "PINT-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Reopened: tenant isolation fail-open in participant eligibility. In services/control-plane/bff/agora/interaction/router.py eligibility(), the tenant check at line ~113 is 'str(persona.get(\"tenant_id\") or resolved.tenant_id) != resolved.tenant_id', which always evaluates false when persona.tenant_id is missing/None -- so any persona lacking an explicit tenant_id is silently treated as belonging to every tenant and included with zero reasons. Verified with a live repro: a persona record with tenant_id=None from another tenant context is returned in 'included' with no tenant_mismatch reason, while a persona with an explicit different tenant_id is correctly excluded. This contradicts the task's 'fail-closed' acceptance criterion and is inconsistent with session_for()'s correct fail-closed pattern (session.get('tenant_id') != resolved.tenant_id, no fallback) in the same file. Required fix: drop the 'or resolved.tenant_id' fallback so a missing/None tenant_id fails closed (adds tenant_mismatch), matching session_for's pattern. Also worth a look: context:resolve's Idempotency-Key replay does not fingerprint the request body, so a reused key with a different payload silently returns the first cached response -- confirm this is intentional before closing. Tests still pass (22 passed) because the existing suite never exercises a persona record with a missing/None tenant_id.",
+      "status": "done",
+      "created_at": "2026-07-12T14:37:59Z",
+      "resolved_at": "2026-07-12T14:37:59Z"
+    },
+    {
+      "task_id": "PINT-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Tenant isolation now fails closed for personas with missing/None tenant_id; regression coverage added. Context replay remains the original same-key replay contract (no payload-conflict expansion). Verified: 22 focused tests passed. Commits: d20a38f72, 0481cf650.",
+      "status": "done",
+      "created_at": "2026-07-12T14:40:59Z",
+      "resolved_at": "2026-07-12T15:03:55Z"
+    },
+    {
+      "task_id": "PINT-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Independently re-verified: router wiring into create_agora_router matches sibling routers, workshop_store field usage matches strategy_workshop/store.py, fail-closed tenant_mismatch fix in 0481cf650 is correct (removed the resolved.tenant_id fallback that let unscoped personas pass). Ran pytest services/control-plane/bff/tests/test_agora_persona_interactions.py services/control-plane/bff/tests/test_agora_router.py -q: 22 passed. Acceptance criteria met (idempotent context resolution, eligibility reasons, fail-closed permissions).",
+      "status": "done",
+      "created_at": "2026-07-12T15:03:55Z",
+      "resolved_at": "2026-07-12T15:10:49Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "PINT-002",
+      "owner": "Codex2",
+      "waiting_for": "Claude",
+      "message": "Blocked by incomplete PINT-001 contract freeze: merged Agora v1.6 bundle defines only persona opinion consultation and governed action authority events with implementation_status=contract_frozen_no_backend_routes. It does not define contextual workshop resolution, participant eligibility/recommendation, or typed interaction submission schemas/routes/capabilities/ETag/idempotency rules. docs/product/persona-interaction-and-governed-action-plan.md section 10 explicitly says implementation tasks must not guess these decisions. PINT-001 owner must add and merge the missing additive contracts/examples before PINT-002 can implement safely.",
+      "status": "resolved",
+      "created_at": "2026-07-12T12:53:06Z",
+      "resolved_at": "2026-07-12T13:22:24Z",
+      "resolution_ref": "chair_reassignment:PINT-002"
+    },
+    {
+      "task_id": "PINT-002",
+      "owner": "Codex",
+      "waiting_for": "Claude",
+      "message": "PINT-001 merged event-only schemas but did not freeze the exact BFF routes, request/response schemas, contextual reference verification contract, eligibility reason model, environment/capability gates, or idempotency semantics required by PINT-002. capability_manifest_v1_6.json explicitly says no backend routes, while the accepted product plan forbids implementation tasks from guessing them. Waiting for PINT-001 contract owner to publish an additive BFF/OpenAPI freeze before implementation.",
+      "status": "resolved",
+      "created_at": "2026-07-12T13:23:50Z",
+      "resolved_at": "2026-07-12T14:00:25Z"
+    }
+  ]
+}

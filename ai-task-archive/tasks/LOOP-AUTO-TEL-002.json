@@ -1,0 +1,138 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-TEL-002",
+  "archived_at": "2026-07-01T10:48:06Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-TEL-002",
+    "title": "Add scheduled reconciliation worker",
+    "summary_zh": "新增 scheduled reconciliation worker，從 telemetry truth 定期對 binding/run 狀態做 reconciliation。",
+    "phase": "Global Loop Autopilot / Wave 4 Telemetry Reconciliation Incident",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "LOOP-AUTO-TEL-001",
+      "LOOP-AUTO-RT-002"
+    ],
+    "artifacts": [
+      "services/reconciliation-drift",
+      "services/telemetry",
+      "docker-compose.yml",
+      "docs/deployment/evidence"
+    ],
+    "acceptance": [
+      "Reconciliation runs from schedule without manual POST",
+      "Duplicate ticks do not duplicate reconciliation records",
+      "Worker links telemetry binding and runtime identifiers"
+    ],
+    "next": "PR #2679 merged; scheduled reconciliation worker closeout evidence finalized and verified with services/reconciliation-drift tests.",
+    "last_update": "2026-07-01T10:48:06Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+    "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+    "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+    "proof_required": [
+      "unit tests",
+      "contract tests",
+      "local service smoke",
+      "restart or replay evidence when worker or runtime behavior changes"
+    ],
+    "non_goals": [
+      "No live-capital execution",
+      "No approval gate bypass",
+      "No panel-only closure",
+      "No seed fixture as live proof"
+    ],
+    "dispatch_rules": [
+      "idempotent duplicate ticks and duplicate events",
+      "operator-visible truth projection required",
+      "maturity cannot rise above collected evidence",
+      "repo workflow closure required before done"
+    ],
+    "loop_ids": [
+      "telemetry_reconciliation"
+    ],
+    "current_maturity": "api-only",
+    "target_maturity": "scheduled",
+    "desired_state_sources": [
+      "runtime telemetry projection"
+    ],
+    "actual_state_sources": [
+      "ReconciliationRecord",
+      "DriftReport"
+    ],
+    "wave_id": "Wave 4 Telemetry Reconciliation Incident",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Scheduler+endpoint+compose 已核實：排程 tick 觸發、tick_id+binding_id 保證 idempotent、evaluation 記錄 binding_id/runtime_id/telemetry_event_ids。33 tests passed。PR #2676 evidence refresh 因 push-event commit-trailers 假陽性卡住，已重新 merge dev 並推送解除，已 merge 進 dev。",
+      "後續交還 owner Codex 完成 closeout。"
+    ],
+    "review_file": ".orchestrator/reviews/loop-auto-tel-002-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-01T10:48:06Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-tel-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOOP-AUTO-TEL-002",
+      "git_clean_required": false,
+      "commit": "269d0a317a8e97352f6310cfebd0cb034ac3e72c",
+      "commit_subject": "Merge pull request #2679 from ajoe734/task/LOOP-AUTO-TEL-002",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "LOOP-AUTO-TEL-002": "finalize closeout evidence"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LOOP-AUTO-TEL-002",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "269d0a317a8e97352f6310cfebd0cb034ac3e72c",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-TEL-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-07-01T10:23:41Z",
+      "resolved_at": "2026-07-01T10:23:53Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-TEL-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Codex helper verification ready for review. Implementation PR #2426 is already merged; evidence refresh PR #2676 is open with auto-merge enabled. Verification: scheduler+compose subset 8 passed; full services/reconciliation-drift/tests 21 passed.",
+      "status": "done",
+      "created_at": "2026-07-01T10:28:34Z",
+      "resolved_at": "2026-07-01T10:36:15Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-TEL-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: scheduled reconciliation worker verified against acceptance criteria in code and tests; returned to Codex for finalization",
+      "status": "done",
+      "created_at": "2026-07-01T10:36:15Z",
+      "resolved_at": "2026-07-01T10:48:07Z"
+    }
+  ],
+  "blockers": []
+}

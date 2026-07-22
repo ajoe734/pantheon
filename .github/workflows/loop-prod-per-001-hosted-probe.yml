@@ -1,0 +1,61 @@
+name: LOOP-PROD-PER-001 Hosted Probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      bff_base_url:
+        description: "Target dev BFF base URL"
+        required: true
+        default: "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io"
+        type: string
+      expected_sha:
+        description: "Expected deployed BFF source commit SHA. Leave blank for workflow ref SHA."
+        required: false
+        default: ""
+        type: string
+      tenant_id:
+        description: "Tenant carried by the hosted proof JWT"
+        required: true
+        default: "pantheon-dev"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: loop-prod-per-001-hosted-probe-dev
+  cancel-in-progress: false
+
+jobs:
+  hosted-probe:
+    name: Persona provisioning hosted readback
+    runs-on: ubuntu-latest
+    environment: dev
+    timeout-minutes: 15
+    env:
+      BFF_BASE_URL: ${{ inputs.bff_base_url }}
+      EXPECTED_SHA: ${{ inputs.expected_sha || github.sha }}
+      TENANT_ID: ${{ inputs.tenant_id }}
+      DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
+      DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
+      DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Run hosted persona provisioning probe
+        run: |
+          python3 scripts/probe_loop_prod_per_001_hosted.py \
+            --base-url "${BFF_BASE_URL}" \
+            --expected-sha "${EXPECTED_SHA}" \
+            --tenant-id "${TENANT_ID}" \
+            --run-id "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --output ".artifacts/LOOP-PROD-PER-001/hosted-probe.json"
+
+      - name: Upload hosted probe evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: loop-prod-per-001-hosted-probe
+          path: .artifacts/LOOP-PROD-PER-001/hosted-probe.json
+          if-no-files-found: error

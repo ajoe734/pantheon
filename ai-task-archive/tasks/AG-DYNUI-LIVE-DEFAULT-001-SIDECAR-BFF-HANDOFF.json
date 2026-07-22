@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "task_id": "AG-DYNUI-LIVE-DEFAULT-001-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-07-02T04:59:42Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DYNUI-LIVE-DEFAULT-001-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare AG-DYNUI-LIVE-DEFAULT-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-DYNUI-LIVE-DEFAULT-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Agora Dynamic UI Live Route Parity",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/AG-DYNUI-LIVE-DEFAULT-001/AG-DYNUI-LIVE-DEFAULT-001-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout: verified PR #2746 merged into dev (HEAD ancestor of origin/dev); handoff packet content re-confirmed accurate (live dev FE still on execute-plans dev commit 4b0b30c0, TradingDeskLayout.tsx still light-themed). No further sidecar changes needed; parent AG-DYNUI-LIVE-DEFAULT-001 owner (Claude) has the packet for implementation in the real ajoe734/execute-plans repo.",
+    "last_update": "2026-07-02T04:59:42Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-DYNUI-LIVE-DEFAULT-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：sidecar packet 正確定位 live dev FE 實際部署自 ajoe734/execute-plans dev（非 Pantheon-tracked mirror），並提供 BFF query surface 與 operator journey。已獨立驗證：git clone ajoe734/execute-plans dev HEAD=4b0b30c0 與 deployment.json 一致，TradingDeskLayout.tsx 確為 bg-white/border-slate-200 淺色版本；tradingRoom.ts 路由清單與封包 §4 相符",
+      "後續：parent owner 需在真實 execute-plans repo 落地修正並記錄新 deployment.json"
+    ],
+    "review_file": "support/sidecars/AG-DYNUI-LIVE-DEFAULT-001/AG-DYNUI-LIVE-DEFAULT-001-SIDECAR-BFF-HANDOFF-REVIEW.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-02T04:59:42Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-dynui-live-default-001-sidecar-bff-handoff",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-DYNUI-LIVE-DEFAULT-001-SIDECAR-BFF-HANDOFF",
+      "git_clean_required": false,
+      "commit": "b0a911c8c45d18c7109175fd2bff3b869633c2e0",
+      "commit_subject": "Merge pull request #2746 from ajoe734/task/AG-DYNUI-LIVE-DEFAULT-001-SIDECAR-BFF-HANDOFF",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "AG-DYNUI-LIVE-DEFAULT-001-SIDECAR-BFF-HANDOFF": "add handoff packet"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/dev",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "b0a911c8c45d18c7109175fd2bff3b869633c2e0",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-DYNUI-LIVE-DEFAULT-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Handoff packet ready in PR #2746 (task/AG-DYNUI-LIVE-DEFAULT-001-SIDECAR-BFF-HANDOFF -> dev, auto-merge enabled). Key finding: live dev FE white Trading Desk skeleton is a delivery/composition gap, not a component bug -- AG-FE-DYNUI-005's dark theme only landed in the Pantheon-tracked execute-plans/ mirror, never in the real ajoe734/execute-plans repo the live dev FE builds from (verified via deployment.json commit 4b0b30c0 and its still-white TradingDeskLayout.tsx). Fix should target ajoe734/execute-plans, not pantheon/execute-plans/. See support/sidecars/AG-DYNUI-LIVE-DEFAULT-001/AG-DYNUI-LIVE-DEFAULT-001-SIDECAR-BFF-HANDOFF.md for BFF query surface, operator journey, and frontend handoff rules.",
+      "status": "done",
+      "created_at": "2026-07-02T04:51:06Z",
+      "resolved_at": "2026-07-02T04:57:22Z"
+    },
+    {
+      "task_id": "AG-DYNUI-LIVE-DEFAULT-001-SIDECAR-BFF-HANDOFF",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Sidecar packet approved; independently reverified repo-divergence, live deployment, and BFF route claims. Support-only BFF/frontend handoff returned to owner for closeout.",
+      "status": "done",
+      "created_at": "2026-07-02T04:57:22Z",
+      "resolved_at": "2026-07-02T04:59:43Z"
+    }
+  ],
+  "blockers": []
+}

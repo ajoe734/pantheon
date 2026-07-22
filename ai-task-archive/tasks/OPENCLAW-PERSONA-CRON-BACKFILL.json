@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "task_id": "OPENCLAW-PERSONA-CRON-BACKFILL",
+  "archived_at": "2026-07-04T16:55:43Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OPENCLAW-PERSONA-CRON-BACKFILL",
+    "title": "Backfill all persona OODA cron jobs + resolve sessionTarget",
+    "summary_zh": "補完既有 17 persona × 4 = 68 個 OODA cron job(現只 5/68 因灌到一半被 dev redeploy 的 compose up 打斷),並釐清 live job 的 sessionTarget=main 為何對不上 code 設定的 persona-own agent。先定義正確 sessionTarget 語意再補灌;跑在穩定環境。reconcile 工具已存在 scripts/reconcile_persona_ooda_cron.py(idempotent)。",
+    "phase": "OpenClaw live wiring / persona cron backfill",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "OPENCLAW-CRON-WRITE-SCOPE"
+    ],
+    "artifacts": [
+      ".orchestrator/task-briefs/openclaw_persona_cron_backfill.md",
+      "scripts/reconcile_persona_ooda_cron.py",
+      "services/control-plane/cron/persona_cron_registrar.py"
+    ],
+    "acceptance": [
+      "cron.list total == existing_personas * 4 (minus legit skips), with before/after counts",
+      "each job's sessionTarget == the defined-correct value (sampled)",
+      "force-run one job for >=2 distinct personas -> cron.runs status ok",
+      "re-running reconcile is a no-op (idempotent, all skipped)"
+    ],
+    "next": "Closeout finalized: reviewer independently re-verified reconcile idempotency (17 personas x 4 = registered=0 skipped=68 failed=0), cron.list totals 72 (68 owned by current 17 personas + 4 orphaned diagnostic-persona jobs out of scope), sessionTarget=main confirmed as gateway-side normalization (payload.text carries correct persona_id, force-run status ok across >=2 distinct personas), and pytest services/control-plane/cron/ -q 39 passed. Refreshed BEHIND PR #2985 twice via merge-from-dev and it merged into dev at ffa2c8b4c.",
+    "last_update": "2026-07-04T16:55:43Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_openclaw_live_wiring_followups_2026-07-03",
+    "auto_generated": true,
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "fleet_lane": "openclaw-live-wiring-followups",
+    "source_ref": {
+      "predecessor_prs": [
+        "https://github.com/ajoe734/pantheon/pull/2812",
+        "https://github.com/ajoe734/pantheon/pull/2818"
+      ],
+      "briefs_dir": ".orchestrator/task-briefs"
+    },
+    "review_notes_zh": [
+      "審查通過(獨立驗證,非僅信任 commit message)",
+      "獨立重跑 scripts/reconcile_persona_ooda_cron.py 對 live gateway(adapter-proxy 路徑):17 personas x 4 = registered=0 skipped=68 failed=0,確認 idempotent no-op。",
+      "直接查 cron.list(分頁)算出 72 筆 job = 68 筆屬於現存 17 個 persona(每人 4 個 workflow,pairs 皆不重複)+ 4 筆屬於已不存在的 diagnostic persona persona-diag-local-4(commit 已揭露、非本 task 的 17 個 persona 範圍,清理留給 human/ops,不擋本 task)。",
+      "抽樣 cron.list 與 cron.runs:sessionTarget 持久化皆為 'main'(gateway 端強制正規化,非 code 可控),但 payload.text 內的 persona_id 正確對應各自 persona,符合 commit 對『正確語意』的認定;cron.runs 顯示多個不同 persona(至少 persona-20260620-5b8e9913、persona-20260620-69d3ac96、persona-20260613-95eb3e7d 等)status=ok,滿足 force-run/live-run 證據要求。",
+      "python3 -m pytest services/control-plane/cron/ -q 本地重跑 39 passed,含 5 個新回歸測試(job-name collision、pagination、fail-closed on cron.list error、payload-identity matching)。",
+      "PR #2985 綠燈可合併(MERGEABLE, 6 checks 全綠)。",
+      "OPENCLAW-OODA-PACKET-CLOSURE 的下游設計範圍未被本 task 越權宣稱,正確地把 sessionTarget=main 的根因留給該任務處理,不是本 task 的驗收項。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-04T16:55:43Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/openclaw-persona-cron-backfill",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPENCLAW-PERSONA-CRON-BACKFILL",
+      "git_clean_required": false,
+      "commit": "ffa2c8b4cc8dd792777412ee19ba31aac10f4a64",
+      "commit_subject": "Merge origin/dev into task/OPENCLAW-PERSONA-CRON-BACKFILL to refresh PR #2985 (BEHIND)",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OPENCLAW-PERSONA-CRON-BACKFILL",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "1dc6b51321b5e2b332e636f96ea2ca997376293e",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OPENCLAW-PERSONA-CRON-BACKFILL",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Ready for review. Evidence: cron.list total=72 (68 real jobs for the 17 existing personas, all present, 0 missing; +4 pre-existing orphan jobs for a non-existent test persona 'persona-diag-local-4' not in the current agent list -- likely residue from OPENCLAW-CRON-WRITE-SCOPE's live full-BFF-path verification. Their removal was blocked by the harness permission classifier as pre-existing jobs I did not create this session; recommend a human/ops-authorized cron.remove for those 4 ids, or a tiny follow-up task -- they are NOT part of this task's 17-persona acceptance and do not indicate any backfill gap). sessionTarget: gateway persists 'main' regardless of submitted value (confirmed via cron.list samples + force-run sessionKey agent:main:cron:...); this is the same gateway-normalization finding already folded into OPENCLAW-OODA-PACKET-CLOSURE, not a new open question. Force-run: persona-tw-equity and persona-crypto ingest jobs both -> cron.runs status ok. Idempotency: reran reconcile_persona_ooda_cron.py twice after fixing 2 registrar bugs (job_name truncation collision + cron.list limit=500/silent-swallow) -> registered=0 skipped=68 failed=0 both times. Also note: while diagnosing the limit=500 bug I twice accidentally created real duplicate jobs (46 then 36) before catching it -- both times identified via job-id-set diffing against a pre-change snapshot and removed; final gateway state verified to match the original 72-job snapshot exactly (same ids) before the idempotent reruns. Commit 05f51918e, PR https://github.com/ajoe734/pantheon/pull/2985 (auto-merge enabled against dev). Tests: python3 -m pytest services/control-plane/cron/ -q -> 39 passed.",
+      "status": "done",
+      "created_at": "2026-07-04T16:05:17Z",
+      "resolved_at": "2026-07-04T16:41:27Z"
+    },
+    {
+      "task_id": "OPENCLAW-PERSONA-CRON-BACKFILL",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Chair reassigned review from Codex to Claude2: codex1 (agent Codex) has been quota_terminal dispatch-paused since 2026-07-04T15:49:09Z ('Codex usage limit reached'), ~49 minutes elapsed as of this review (16:38Z), past the 30-minute reviewer-reassignment threshold and still active (blocked_until ~16:49Z). This is blocking sign-off on a task whose PR #2985 is green and mergeable. Claude2 shares Claude's governance-review/control-plane capability lane, is idle (0 active tasks), auth_ready=true, and is not itself dispatch-paused or the task owner.",
+      "status": "done",
+      "created_at": "2026-07-04T16:41:27Z",
+      "resolved_at": "2026-07-04T16:49:32Z"
+    },
+    {
+      "task_id": "OPENCLAW-PERSONA-CRON-BACKFILL",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Independently re-verified all 4 acceptance criteria live against the running gateway (adapter-proxy path): 68/68 real jobs for 17 personas confirmed via paginated cron.list, idempotent rerun (registered=0 skipped=68 failed=0), sessionTarget=main gateway normalization confirmed with persona_id correctly carried in payload, and cron.runs shows status=ok across >=2 distinct personas. Tests green (39 passed, 5 new regressions). PR #2985 is green/mergeable. Approved and returned to owner Claude for finalization.",
+      "status": "done",
+      "created_at": "2026-07-04T16:49:32Z",
+      "resolved_at": "2026-07-04T16:55:44Z"
+    }
+  ],
+  "blockers": []
+}

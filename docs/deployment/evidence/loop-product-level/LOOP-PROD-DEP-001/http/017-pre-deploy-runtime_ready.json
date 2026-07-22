@@ -1,0 +1,52 @@
+{
+  "captured_at": "2026-07-15T00:06:39Z",
+  "duration_ms": 2.34,
+  "label": "pre-deploy-runtime_ready",
+  "request": {
+    "body": null,
+    "headers": {
+      "Authorization": "Bearer <redacted>"
+    },
+    "method": "GET",
+    "started_at": "2026-07-15T00:06:39Z",
+    "url": "http://127.0.0.1:18081/readyz"
+  },
+  "response": {
+    "payload": {
+      "dependencies": {
+        "consultation": {
+          "configured": true,
+          "optional": true,
+          "status": "ok",
+          "url": "http://consultation-svc:8096"
+        },
+        "deployment": {
+          "configured": true,
+          "optional": true,
+          "status": "ok",
+          "url": "http://deployment:8095"
+        },
+        "governance_approval": {
+          "configured": true,
+          "optional": true,
+          "status": "ok",
+          "url": "http://governance:8082"
+        }
+      },
+      "details": {
+        "single_runtime_enforced": true,
+        "store_path": "/data/runtime/runtime_bindings.json"
+      },
+      "live": true,
+      "metrics": {
+        "binding_count": 18,
+        "service_up": 1
+      },
+      "ready": true,
+      "service": "runtime-manager",
+      "status": "ok",
+      "timestamp": "2026-07-15T00:06:39Z"
+    },
+    "status": 200
+  }
+}

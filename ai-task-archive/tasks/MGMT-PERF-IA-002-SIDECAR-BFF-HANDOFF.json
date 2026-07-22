@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-07-11T06:34:20Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare MGMT-PERF-IA-002 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-PERF-IA-002，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Management Performance Ranking IA / Wave 0 BFF contract",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/MGMT-PERF-IA-002/MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: support-only BFF/frontend handoff packet merged via PR #3126 at merge commit 9d08d37938bcf80439d5256730539660a3df3413; task commit 30f11e192905c1d6b34aab51908fd3dbc4f261e8 is on origin/dev. Verified git diff-tree --check 30f11e192^ 30f11e192; reviewer approval recorded 7 parent-contract tests passed. Parent owner Antigravity retains selective absorption authority.",
+    "last_update": "2026-07-11T06:34:20Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-PERF-IA-002",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "支援 packet 僅修改指定 sidecar artifact，清楚標示 branch-only candidate evidence；BFF query gap、operator journey 與 execute-plans handoff 可供 parent owner 選擇性吸收。未重定義 ranking formula、confidence、governance 或 runtime truth，並明確禁止 frontend 自算官方排名、跨 snapshot join 與直接 apply。驗證：git diff --check 16a0b8cb1..30f11e192；pytest -q services/control-plane/bff/test_bff_performance_ranking_read_model_contract.py（7 passed）。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T06:34:20Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-perf-ia-002-sidecar-bff-handoff",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF",
+      "git_clean_required": false,
+      "commit": "30f11e192905c1d6b34aab51908fd3dbc4f261e8",
+      "commit_subject": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF: add BFF handoff packet",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support-only BFF query-gap, operator journey, and frontend handoff packet.",
+        "Not changing": "canonical truth, BFF runtime, ranking formulas, governance, or frontend code.",
+        "Composes with": "MGMT-PERF-IA-002 parent implementation owned by Antigravity.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF",
+        "Reviewer": "Codex",
+        "Verified": "git diff --check -- support/sidecars/MGMT-PERF-IA-002/MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF.md"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "9d08d37938bcf80439d5256730539660a3df3413",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Support packet committed at 30f11e192; review BFF query gaps, operator journey, and frontend handoff for parent-owner absorption.",
+      "status": "done",
+      "created_at": "2026-07-11T06:30:41Z",
+      "resolved_at": "2026-07-11T06:32:52Z"
+    },
+    {
+      "task_id": "MGMT-PERF-IA-002-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: support-only BFF/frontend handoff packet is coherent and ready for Codex2 closeout, PR merge, and parent-owner Antigravity selective absorption.",
+      "status": "done",
+      "created_at": "2026-07-11T06:32:52Z",
+      "resolved_at": "2026-07-11T06:34:21Z"
+    }
+  ],
+  "blockers": []
+}

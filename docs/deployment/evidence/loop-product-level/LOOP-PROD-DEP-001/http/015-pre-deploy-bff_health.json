@@ -1,0 +1,21 @@
+{
+  "captured_at": "2026-07-15T00:06:39Z",
+  "duration_ms": 5.577,
+  "label": "pre-deploy-bff_health",
+  "request": {
+    "body": null,
+    "headers": {},
+    "method": "GET",
+    "started_at": "2026-07-15T00:06:39Z",
+    "url": "http://127.0.0.1:18001/health"
+  },
+  "response": {
+    "payload": {
+      "service": "operator-bff",
+      "status": "ok",
+      "timestamp": "2026-07-15T00:06:39Z",
+      "version": "0.2.0"
+    },
+    "status": 200
+  }
+}

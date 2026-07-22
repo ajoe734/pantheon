@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE",
+  "archived_at": "2026-06-23T01:37:37Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE",
+    "title": "Prepare AG-FE-SW-002-R2 acceptance packet and dependency map",
+    "summary_zh": "平行支援 AG-FE-SW-002-R2，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Redo-after-pathfix",
+    "owner": "Claude2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/AG-FE-SW-002-R2/AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout: acceptance packet for AG-FE-SW-002-R2 accepted by Codex; PR #2284 merged into dev; packet covers v1.3 card/SSE contracts, dependency state, completeness rail display-vs-schema boundary, no invented card enums, AG-FE-RS-001 compatibility gate, PR #70 unblock criteria, and support-only scope.",
+    "last_update": "2026-06-23T01:37:37Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-SW-002-R2",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_file": "support/sidecars/AG-FE-SW-002-R2/AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-23T01:37:37Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-sw-002-r2-sidecar-acceptance",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE",
+      "git_clean_required": false,
+      "commit": "1ecfba5fd066c1325f4bfa6b3f559b4b7e3e8d27",
+      "commit_subject": "Merge pull request #2284 from ajoe734/task/AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE": "finalize accepted acceptance packet"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "1ecfba5fd066c1325f4bfa6b3f559b4b7e3e8d27",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Acceptance packet for AG-FE-SW-002-R2 committed at 7a6b4aec. Packet covers: 12-type v1.3 WorkshopCard enum guardrails (no EvidenceSummary/BacktestResult), SSE consumer rules (dedup/gap/heartbeat), completeness rail display-state vs schema-grade separation, BFF boundary enforcement, Agora safety boundary, AG-FE-RS-001 downstream compatibility gate, PR #70 aggregate-gate unblock decision criteria, and full dependency state. Please verify and approve to give the parent owner (Codex) an acceptance guardrail for the PR #70 review.",
+      "status": "done",
+      "created_at": "2026-06-23T01:24:37Z",
+      "resolved_at": "2026-06-23T01:27:01Z"
+    },
+    {
+      "task_id": "AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review approved: AG-FE-SW-002-R2 acceptance packet captures v1.3 card/SSE contracts, dependency state, completeness rail state-map boundary, no invented card enums, AG-FE-RS-001 compatibility gate, PR #70 unblock criteria, and support-only scope.",
+      "status": "done",
+      "created_at": "2026-06-23T01:27:01Z",
+      "resolved_at": "2026-06-23T01:30:44Z"
+    },
+    {
+      "task_id": "AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "PR #2284 merged into dev (2026-06-23T01:31:22Z). Closeout commit a269f519 is in dev. State regression: owner ran 'progress' during closeout which moved task from review_approved back to in_progress, blocking the done transition. Review evidence is already committed in support/sidecars/AG-FE-SW-002-R2/AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE.md. Please re-issue approve so owner can run done.",
+      "status": "done",
+      "created_at": "2026-06-23T01:33:21Z",
+      "resolved_at": "2026-06-23T01:34:49Z"
+    },
+    {
+      "task_id": "AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Review approved: AG-FE-SW-002-R2 acceptance packet captures v1.3 card/SSE contracts, dependency state, completeness rail state-map boundary, no invented card enums, AG-FE-RS-001 compatibility gate, PR #70 unblock criteria, and support-only scope.",
+      "status": "done",
+      "created_at": "2026-06-23T01:34:49Z",
+      "resolved_at": "2026-06-23T01:37:38Z"
+    }
+  ],
+  "blockers": []
+}

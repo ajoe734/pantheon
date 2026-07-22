@@ -978,18 +978,19 @@ def test_get_persona_management_health_parity_with_fleet() -> None:
     mgmt_health = mgmt_response.json().get("data", {}).get("health") or {}
 
     assert fleet_response.status_code == 200, fleet_response.text
-    fleet_data = fleet_response.json().get("data") or []
-    fleet_items = fleet_data if isinstance(fleet_data, list) else []
+    fleet_data = fleet_response.json().get("data") or {}
+    fleet_items = fleet_data.get("items") if isinstance(fleet_data, dict) else []
+    fleet_items = fleet_items if isinstance(fleet_items, list) else []
     fleet_persona = next(
         (p for p in fleet_items if p.get("persona_id") == "persona-alpha" or p.get("id") == "persona-alpha"),
         None,
     )
     if fleet_persona is None:
         return  # persona not in fleet view — skip parity check
-    fleet_health = fleet_persona.get("health") or {}
+    fleet_health = fleet_persona.get("health")
 
-    assert mgmt_health.get("status") == fleet_health.get("status"), (
-        f"Health status mismatch: mgmt={mgmt_health.get('status')!r} vs fleet={fleet_health.get('status')!r}"
+    assert mgmt_health.get("status") == fleet_health, (
+        f"Health status mismatch: mgmt={mgmt_health.get('status')!r} vs fleet={fleet_health!r}"
     )
 
 

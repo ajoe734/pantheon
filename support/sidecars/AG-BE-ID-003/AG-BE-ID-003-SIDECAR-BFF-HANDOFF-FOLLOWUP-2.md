@@ -115,7 +115,7 @@ sessions where `mode` is anything else. It is a separate lane from the main
     `interactive`, `trainer`, `research_task`) with its own terminate endpoint; or
   - the `ask/sessions/` surface is the intended single-type fast path and
     `/bff/agora/sessions/` is retained only for legacy compatibility.
-  
+
   This decision gates G1 and G2 resolution.
 
 ### F2 — Default mode `"quick_ask"` is not a valid SD §5.3 session type

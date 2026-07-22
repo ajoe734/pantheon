@@ -1,0 +1,86 @@
+{
+  "manifest_version": "1.5",
+  "extends": "v1.4",
+  "description": "Agora BFF capability manifest v1.5 - dynamic Trading Room workspace proposal, widget revision proposal, and workspace version routes.",
+  "schema_bundle_index": "services/control-plane/specs/agora/bundle_index.v1_5.json",
+  "openapi_ref": "services/control-plane/openapi/agora_v1_5.openapi.yaml",
+  "capabilities": [
+    {
+      "id": "dynamic_workspace_proposals",
+      "name": "agora.trading_room.workspace_proposal.v1",
+      "version": "1.0",
+      "description": "Create, retrieve, and accept complete TradingRoomWorkspaceProposal previews before a trader enters an active workspace.",
+      "schemas": [
+        "TradingRoomWorkspaceProposal",
+        "TradingRoomWorkspace",
+        "TradingRoomViewSpec",
+        "TradingRoomWidgetSpec"
+      ],
+      "routes": [
+        "POST /bff/agora/strategies/{strategy_id}/trading-room/proposals",
+        "GET /bff/agora/strategies/{strategy_id}/trading-room/proposals/{proposal_id}",
+        "POST /bff/agora/strategies/{strategy_id}/trading-room/proposals/{proposal_id}/accept",
+        "GET /bff/agora/trading-room/workspaces/{workspace_id}"
+      ]
+    },
+    {
+      "id": "dynamic_workspace_editing",
+      "name": "agora.trading_room.workspace_editing.v1",
+      "version": "1.0",
+      "description": "Persist controlled trader edits to views, widgets, and layout through schema-validated TradingRoomWidgetSpec payloads.",
+      "schemas": [
+        "TradingRoomViewSpec",
+        "TradingRoomWidgetSpec",
+        "WorkspaceLayoutOperation"
+      ],
+      "routes": [
+        "PATCH /bff/agora/trading-room/workspaces/{workspace_id}/layout",
+        "POST /bff/agora/trading-room/workspaces/{workspace_id}/views",
+        "PATCH /bff/agora/trading-room/workspaces/{workspace_id}/views/{view_id}",
+        "POST /bff/agora/trading-room/workspaces/{workspace_id}/widgets",
+        "PATCH /bff/agora/trading-room/workspaces/{workspace_id}/widgets/{widget_id}"
+      ]
+    },
+    {
+      "id": "dynamic_widget_revision_proposals",
+      "name": "agora.trading_room.widget_revision.v1",
+      "version": "1.0",
+      "description": "Require servant-originated widget changes to pass through WidgetRevisionProposal before/after preview and trader acceptance.",
+      "schemas": [
+        "TradingRoomWidgetSpec",
+        "WidgetRevisionProposal"
+      ],
+      "routes": [
+        "POST /bff/agora/trading-room/workspaces/{workspace_id}/widgets/{widget_id}/revision-proposals",
+        "POST /bff/agora/trading-room/widget-revision-proposals/{proposal_id}/accept"
+      ]
+    },
+    {
+      "id": "dynamic_workspace_versions",
+      "name": "agora.trading_room.workspace_versions.v1",
+      "version": "1.0",
+      "description": "Expose append-only TradingRoomDashboardVersion change log and rollback for per-trader, per-strategy-version workspaces.",
+      "schemas": [
+        "TradingRoomDashboardVersion"
+      ],
+      "routes": [
+        "GET /bff/agora/trading-room/workspaces/{workspace_id}/versions",
+        "POST /bff/agora/trading-room/workspaces/{workspace_id}/versions/{version_id}/rollback"
+      ]
+    }
+  ],
+  "required_definition_checksums": [
+    "TradingRoomWorkspaceProposal",
+    "TradingRoomWidgetSpec",
+    "WidgetRevisionProposal"
+  ],
+  "no_order_route_proof": "dynamic_trading_room_request_only_no_order_route",
+  "safety_boundary": {
+    "direct_order_route": false,
+    "capital_binding": false,
+    "arbitrary_frontend_code": false,
+    "schema_validator_required": true,
+    "widget_chart_allowlist_required": true
+  },
+  "note": "The v1.5 surface is additive over v1.4 and mirrors the already landed Trading Room BFF dynamic workspace routes. It does not authorize direct trading actions or arbitrary frontend code generation."
+}

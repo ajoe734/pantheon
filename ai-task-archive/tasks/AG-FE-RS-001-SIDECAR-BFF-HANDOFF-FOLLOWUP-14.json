@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-14",
+  "archived_at": "2026-06-22T10:18:36Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-14",
+    "title": "Prepare AG-FE-RS-001 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-FE-RS-001，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Phase 3",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-BE-RS-002",
+      "AG-XR-OPENAPI-004"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-FE-RS-001/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-14.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "PR #2249 merged into dev at bb9f3b4eeab550cfe55fa88b43efe5f1e5e27084; support-only packet approved by Claude and ready for parent AG-FE-RS-001 intake.",
+    "last_update": "2026-06-22T10:18:36Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-RS-001",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Support-only follow-up packet approved: AG-FE-RS-001 follow-up 14 records the current-dev delta after follow-up 13, confirms only adjacent AG-FE-SW mirror/support changes landed, preserves no-new-AG-FE-RS-route-facts disposition and no-order/live-strict stop lines, and does not change canonical truth, runtime, schema, OpenAPI, frontend source, governance, broker/order, RuntimeBinding, or canary/live-promotion files."
+    ],
+    "review_file": "support/sidecars/AG-FE-RS-001/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-14.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-22T10:18:36Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-rs-001-sidecar-bff-handoff-followup-14",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-14",
+      "git_clean_required": false,
+      "commit": "93d8aa33abaa6f89ce9d1bd3338997fb8201ca75",
+      "commit_subject": "AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-14: add packet",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "generated task brief plus support-only current-dev delta BFF/frontend handoff packet for AG-FE-RS-001.",
+        "Not changing": "canonical truth, BFF runtime, schemas, OpenAPI, execute-plans frontend source, governance, broker/order, RuntimeBinding, canary/live-promotion.",
+        "Composes with": "Follow-up 13 done disposition, adjacent AG-FE-SW-001 PR #2245/#2247 dev delta, and parent AG-FE-RS-001 owner intake.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-14",
+        "Reviewer": "Claude",
+        "Verified": "ASCII scan, trailing-whitespace scan, private-index git diff --cached --check, ai-status show commands, gh PR status checks, and AG-FE-RS pathset diff."
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-14",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "bb9f3b4eeab550cfe55fa88b43efe5f1e5e27084",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-14",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only AG-FE-RS-001 follow-up 14 packet is committed at 93d8aa33 and merged via PR #2249 at bb9f3b4e. Review scope: generated task brief plus support/sidecars/AG-FE-RS-001/AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-14.md. It records current-dev delta after follow-up 13: adjacent AG-FE-SW mirror/support changes merged, no AG-FE-RS research route/card/schema/source delta, and parent AG-FE-RS-001 should start or raise a concrete blocker under existing stop lines. Validation: ASCII/trailing-whitespace/private-index diff checks, ai-status show commands, gh PR status checks, and AG-FE-RS pathset diff passed.",
+      "status": "done",
+      "created_at": "2026-06-22T10:14:52Z",
+      "resolved_at": "2026-06-22T10:16:49Z"
+    },
+    {
+      "task_id": "AG-FE-RS-001-SIDECAR-BFF-HANDOFF-FOLLOWUP-14",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Support-only AG-FE-RS-001 current-dev delta handoff approved for parent owner intake.",
+      "status": "done",
+      "created_at": "2026-06-22T10:16:49Z",
+      "resolved_at": "2026-06-22T10:18:37Z"
+    }
+  ],
+  "blockers": []
+}

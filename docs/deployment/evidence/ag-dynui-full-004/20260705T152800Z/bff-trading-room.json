@@ -1,0 +1,25 @@
+{
+  "status": 200,
+  "ok": true,
+  "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/agora/trading-room",
+  "body": {
+    "spec_version": "1.0",
+    "user_scope_ref": "operator:pantheon-dev-browser",
+    "strategies": [],
+    "queue_summary": {
+      "entry": 0,
+      "add": 0,
+      "reduce": 0,
+      "exit": 0,
+      "review": 0
+    },
+    "top_decision_events": [],
+    "position_summaries": [],
+    "risk_summary": {
+      "state": "normal",
+      "alerts": []
+    },
+    "snapshot_at": "2026-07-05T15:26:13Z",
+    "data_cutoff": "2026-07-05T15:26:13Z"
+  }
+}

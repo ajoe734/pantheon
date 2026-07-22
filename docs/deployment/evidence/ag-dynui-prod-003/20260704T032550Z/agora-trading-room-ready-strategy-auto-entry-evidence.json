@@ -1,0 +1,7 @@
+{
+  "url": "http://localhost:8082/agora/trading-room",
+  "capturedAt": "2026-07-04T03:27:28.988Z",
+  "note": "NOT live tenant data. Live dev BFF scope (operator:pantheon-dev-browser) genuinely has zero strategies right now (confirmed via direct curl) and dev writes are disabled (VITE_BFF_REAL_WRITES=false), so no ready strategy exists to demonstrate auto-entry against live data. This capture runs the real built app (same code, same build, same route/proxy path) against a network-level Playwright route mock of GET /bff/agora/trading-room shaped exactly like the BFF contract (TradingRoomAggregate) and the reviewed unit-test fixtures. It demonstrates selectDefaultReadyStrategy()/effectiveStrategyId auto-entry, not fabricated product behavior.",
+  "hasWorkspaceView": false,
+  "activeLensSelected": "true"
+}

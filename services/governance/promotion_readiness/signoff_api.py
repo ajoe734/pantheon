@@ -161,6 +161,32 @@ class SignoffAPI:
         payload.setdefault("meaning", "approved")
         signature = HumanGateSignature.from_dict(payload)
         updated = decision.with_signature(signature)
+        conditional_put = getattr(self.store, "put_if_matches", None)
+        if callable(conditional_put):
+            return conditional_put(decision, updated)
+        return self.store.put(updated)
+
+    def revoke_decision(
+        self,
+        decision_id: str,
+        *,
+        reason: str,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> HumanGateDecision:
+        decision = self.store.require(decision_id)
+        updated = validate_decision(
+            replace(
+                decision,
+                status="revoked",
+                can_proceed=False,
+                reason=str(reason or "").strip() or "Human gate revoked.",
+                updated_at=utc_now(),
+                metadata={**decision.metadata, **dict(metadata or {})},
+            )
+        )
+        conditional_put = getattr(self.store, "put_if_matches", None)
+        if callable(conditional_put):
+            return conditional_put(decision, updated)
         return self.store.put(updated)
 
 

@@ -1,9 +1,9 @@
 {
   "metadata": {
-    "snapshot_date": "2026-07-05",
+    "snapshot_date": "2026-07-13",
     "source": "services/control-plane/bff/main.py",
     "generator": "scripts/bff_route_manifest_backend.py",
-    "total_routes": 585,
+    "total_routes": 644,
     "status_values": [
       "implemented",
       "alias",
@@ -122,6 +122,12 @@
     },
     {
       "method": "GET",
+      "path": "/bff/agora/datasets/{param}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/agora/decision-journal",
       "family": "agora-core",
       "status": "implemented"
@@ -153,6 +159,12 @@
     {
       "method": "GET",
       "path": "/bff/agora/insights",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/interaction-evidence/{param}",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -195,6 +207,18 @@
     {
       "method": "GET",
       "path": "/bff/agora/postmortems",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/proposals/{param}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/proposals/{param}/revisions",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -284,6 +308,12 @@
     },
     {
       "method": "GET",
+      "path": "/bff/agora/strategies/{param}/trading-room/proposals/{param}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/agora/trading-intents/{param}",
       "family": "agora-core",
       "status": "implemented"
@@ -320,6 +350,18 @@
     },
     {
       "method": "GET",
+      "path": "/bff/agora/trading-room/workspaces/{param}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/trading-room/workspaces/{param}/versions",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/agora/training-examples",
       "family": "agora-core",
       "status": "implemented"
@@ -344,6 +386,12 @@
     },
     {
       "method": "GET",
+      "path": "/bff/agora/workshops/{param}/cards",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/agora/workshops/{param}/completeness",
       "family": "agora-core",
       "status": "implemented"
@@ -351,6 +399,12 @@
     {
       "method": "GET",
       "path": "/bff/agora/workshops/{param}/events",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/agora/workshops/{param}/readiness",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -387,6 +441,24 @@
     {
       "method": "PATCH",
       "path": "/bff/agora/journal/{param}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "PATCH",
+      "path": "/bff/agora/trading-room/workspaces/{param}/layout",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "PATCH",
+      "path": "/bff/agora/trading-room/workspaces/{param}/views/{param}",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "PATCH",
+      "path": "/bff/agora/trading-room/workspaces/{param}/widgets/{param}",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -482,6 +554,30 @@
     },
     {
       "method": "POST",
+      "path": "/bff/agora/interaction-evidence",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/interactions",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/interactions/context:resolve",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/interactions/participants:eligible",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
       "path": "/bff/agora/journal",
       "family": "agora-core",
       "status": "implemented"
@@ -507,6 +603,18 @@
     {
       "method": "POST",
       "path": "/bff/agora/notes",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/proposals",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/proposals/{param}/actions",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -590,6 +698,18 @@
     },
     {
       "method": "POST",
+      "path": "/bff/agora/strategies/{param}/trading-room/proposals",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/strategies/{param}/trading-room/proposals/{param}/accept",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
       "path": "/bff/agora/trading-intents/{param}/handoffs",
       "family": "agora-core",
       "status": "implemented"
@@ -603,6 +723,36 @@
     {
       "method": "POST",
       "path": "/bff/agora/trading-room/decision-events/{param}/decisions",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/trading-room/widget-revision-proposals/{param}/accept",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/trading-room/workspaces/{param}/versions/{param}/rollback",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/trading-room/workspaces/{param}/views",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/trading-room/workspaces/{param}/widgets",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/trading-room/workspaces/{param}/widgets/{param}/revision-proposals",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -638,6 +788,12 @@
     },
     {
       "method": "POST",
+      "path": "/bff/agora/workshops/{param}/completeness",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
       "path": "/bff/agora/workshops/{param}/conclude",
       "family": "agora-core",
       "status": "implemented"
@@ -651,6 +807,12 @@
     {
       "method": "POST",
       "path": "/bff/agora/workshops/{param}/messages",
+      "family": "agora-core",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/agora/workshops/{param}/readiness/reassess",
       "family": "agora-core",
       "status": "implemented"
     },
@@ -1298,6 +1460,12 @@
     },
     {
       "method": "POST",
+      "path": "/api/v1/bindings",
+      "family": "api-v1",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
       "path": "/api/v1/consult/requests",
       "family": "api-v1",
       "status": "implemented"
@@ -1552,6 +1720,24 @@
       "status": "implemented"
     },
     {
+      "method": "POST",
+      "path": "/bff/rebalances/{param}/apply",
+      "family": "capital-ranking-rebalance",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/rebalances/{param}/approve",
+      "family": "capital-ranking-rebalance",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/rebalances/{param}/two-man-sign",
+      "family": "capital-ranking-rebalance",
+      "status": "implemented"
+    },
+    {
       "method": "GET",
       "path": "/bff/artifacts",
       "family": "evolution-experiment-jobs-events",
@@ -1721,6 +1907,12 @@
     },
     {
       "method": "GET",
+      "path": "/bff/v5/downstream-health",
+      "family": "execute-plans-cutover-smoke",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/v5/execution/persona-health",
       "family": "execute-plans-cutover-smoke",
       "status": "implemented"
@@ -1728,6 +1920,30 @@
     {
       "method": "GET",
       "path": "/bff/v5/execution/strategy-health",
+      "family": "execute-plans-cutover-smoke",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/v5/loop-health",
+      "family": "execute-plans-cutover-smoke",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/v5/loop-health/{param}",
+      "family": "execute-plans-cutover-smoke",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/v5/loop-inventory",
+      "family": "execute-plans-cutover-smoke",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/v5/loop-inventory/{param}",
       "family": "execute-plans-cutover-smoke",
       "status": "implemented"
     },
@@ -2178,54 +2394,6 @@
     {
       "method": "GET",
       "path": "/bff/management/data-sources",
-      "family": "management-console",
-      "status": "implemented"
-    },
-    {
-      "method": "GET",
-      "path": "/bff/management/personas/{param}/readiness",
-      "family": "management-console",
-      "status": "implemented"
-    },
-    {
-      "method": "GET",
-      "path": "/bff/management/promotion-reviews",
-      "family": "management-console",
-      "status": "implemented"
-    },
-    {
-      "method": "GET",
-      "path": "/bff/management/promotion-reviews/{param}",
-      "family": "management-console",
-      "status": "implemented"
-    },
-    {
-      "method": "GET",
-      "path": "/bff/management/shell-summary",
-      "family": "management-console",
-      "status": "implemented"
-    },
-    {
-      "method": "POST",
-      "path": "/bff/management/personas/paper-launch",
-      "family": "management-console",
-      "status": "implemented"
-    },
-    {
-      "method": "POST",
-      "path": "/bff/management/personas/{param}/promotion-reviews",
-      "family": "management-console",
-      "status": "implemented"
-    },
-    {
-      "method": "POST",
-      "path": "/bff/management/personas/{param}/setup/retry",
-      "family": "management-console",
-      "status": "implemented"
-    },
-    {
-      "method": "POST",
-      "path": "/bff/management/promotion-reviews/{param}/decisions",
       "family": "management-console",
       "status": "implemented"
     },
@@ -2714,6 +2882,12 @@
     },
     {
       "method": "GET",
+      "path": "/bff/personas/{param}/runtime-profile",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/personas/{param}/skills",
       "family": "strategy-persona",
       "status": "implemented"
@@ -2727,6 +2901,30 @@
     {
       "method": "GET",
       "path": "/bff/personas/{param}/tools",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/personas/{param}/trade-journal",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/personas/{param}/trade-journal/{param}",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/personas/{param}/trade-patterns",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/personas/{param}/trade-reflections",
       "family": "strategy-persona",
       "status": "implemented"
     },
@@ -2823,6 +3021,24 @@
     {
       "method": "POST",
       "path": "/bff/personas/{param}/test-prompt",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/personas/{param}/trade-journal/{param}/reflection:retry",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/personas/{param}/trade-lessons/{param}:decide",
+      "family": "strategy-persona",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/personas/{param}/trade-lessons/{param}:submit-review",
       "family": "strategy-persona",
       "status": "implemented"
     },
@@ -2996,6 +3212,12 @@
     },
     {
       "method": "GET",
+      "path": "/bff/assistant/providers/usage-summary",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/assistant/sessions/{param}",
       "family": "unknown",
       "status": "implemented"
@@ -3080,19 +3302,7 @@
     },
     {
       "method": "GET",
-      "path": "/bff/management/evidence/{param}",
-      "family": "unknown",
-      "status": "implemented"
-    },
-    {
-      "method": "GET",
       "path": "/bff/management/evolution-journal",
-      "family": "unknown",
-      "status": "implemented"
-    },
-    {
-      "method": "GET",
-      "path": "/bff/management/fleet",
       "family": "unknown",
       "status": "implemented"
     },
@@ -3135,6 +3345,12 @@
     {
       "method": "GET",
       "path": "/bff/management/loop-throughput",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/management/operations-read-model/{param}",
       "family": "unknown",
       "status": "implemented"
     },
@@ -3243,6 +3459,18 @@
     },
     {
       "method": "GET",
+      "path": "/bff/management/promotion-reviews",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/management/promotion-reviews/{param}",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/management/quarterly-ranking",
       "family": "unknown",
       "status": "implemented"
@@ -3309,6 +3537,12 @@
     },
     {
       "method": "GET",
+      "path": "/bff/management/shell-summary",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
       "path": "/bff/management/strategy-allocation",
       "family": "unknown",
       "status": "implemented"
@@ -3322,6 +3556,72 @@
     {
       "method": "GET",
       "path": "/bff/management/strategy-seeds/{param}",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/management/trade-journeys",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/management/trade-journeys/attention",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/management/trade-journeys/events",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/management/trade-journeys/metrics",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/management/trade-journeys/resolve",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/management/trade-journeys/slo",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/management/trade-journeys/{param}",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/management/trade-journeys/{param}/evidence",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/management/trade-journeys/{param}/graph",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/management/trade-journeys/{param}/replay",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "GET",
+      "path": "/bff/management/trade-journeys/{param}/timeline",
       "family": "unknown",
       "status": "implemented"
     },
@@ -3374,6 +3674,12 @@
       "status": "implemented"
     },
     {
+      "method": "GET",
+      "path": "/bff/version",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
       "method": "POST",
       "path": "/bff/assistant/control-mode/activate",
       "family": "unknown",
@@ -3406,6 +3712,18 @@
     {
       "method": "POST",
       "path": "/bff/assistant/provider/reauth",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/assistant/provider/reauth/{param}/code",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/assistant/providers",
       "family": "unknown",
       "status": "implemented"
     },
@@ -3459,6 +3777,12 @@
     },
     {
       "method": "POST",
+      "path": "/bff/management/allocation-policy/evaluate",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
       "path": "/bff/management/nl/ask",
       "family": "unknown",
       "status": "implemented"
@@ -3466,6 +3790,24 @@
     {
       "method": "POST",
       "path": "/bff/management/nl/ask/stream",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/management/personas/create-paper-bundle",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/management/promotion-reviews/{param}/decisions",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/management/quarterly-ranking/recommendations/{param}/submit",
       "family": "unknown",
       "status": "implemented"
     },
@@ -3484,6 +3826,18 @@
     {
       "method": "POST",
       "path": "/bff/management/strategy-seeds/{param}/submit-replication",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/management/trade-journeys/events",
+      "family": "unknown",
+      "status": "implemented"
+    },
+    {
+      "method": "POST",
+      "path": "/bff/management/trade-journeys/{param}/actions",
       "family": "unknown",
       "status": "implemented"
     },

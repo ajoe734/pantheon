@@ -496,77 +496,6 @@ return a bare `[]`. The unavailable condition is explicit in
   "source": "missing"
 }
 ```
-
-### 9.11 Persona Paper-First Promotion Surfaces (PPLG-001)
-
-**Canonical sources**: `services/control-plane/specs/persona_paper_live.schema.json`, `services/control-plane/persona/persona_registry.schema.json`, `services/control-plane/governance/persona_capital_binding.schema.json`, `services/control-plane/governance/approval_decision.schema.json`, `services/control-plane/governance/deployment_plan.schema.json`, RuntimeBinding contract, telemetry, incidents.
-
-The primary user-facing create flow is **Create Paper Persona**. It must not
-leave a normal completed persona as identity-only. A create request completes as
-`paper_running` or `paper_warming_up`, remains visibly `paper_provisioning`, or
-returns `setup_failed` / `repair_required` with retry/repair metadata.
-
-The workflow may orchestrate multiple writes, but it does not create a parallel
-truth source. The atomic records remain auditable and separately owned:
-Persona, PersonaCapitalBinding, paper CapitalPool, ApprovalDecision,
-DeploymentPlan, RuntimeBinding, telemetry heartbeat, and incident/review records.
-
-| Route | Method | Surface | Request / Response Contract | Notes |
-|---|---|---|---|---|
-| `/bff/management/personas/paper-launch` | POST | PPLG-LAUNCH | `PaperPersonaLaunch` | Requires `Idempotency-Key`; binds paper capital only; response must include step state and repair metadata. |
-| `/bff/management/personas/{persona_id}/readiness` | GET | PPLG-READY | `PersonaReadinessProjection` | Shows paper runtime, setup failure, repair, competition track, and pending human review state. |
-| `/bff/management/personas/{persona_id}/setup/retry` | POST | PPLG-RETRY | `PaperPersonaLaunch` | Idempotent retry from the failed or repairable step; same payload/key replays the current launch state. |
-| `/bff/management/personas/evaluations` | GET | PPLG-EVAL-LIST | `[PaperEvaluationSnapshot]` | Filter by cohort, evaluation status, market scope, strategy family, and product lifecycle. |
-| `/bff/management/personas/{persona_id}/evaluation` | GET | PPLG-EVAL-DETAIL | `PaperEvaluationSnapshot + PromotionScoreSnapshot` | Shows gates, after-cost score, evidence, and recommendation. |
-| `/bff/management/personas/competition-standings` | GET | PPLG-COMPETITION | `CohortRankingSnapshot` | Unified cohort leaderboard for paper, canary, and live personas. |
-| `/bff/management/personas/{persona_id}/promotion-reviews` | POST | PPLG-PROMOTION-REQUEST | `HumanReviewRequest` | Submits an advisory recommendation; does not approve canary/live. |
-| `/bff/management/promotion-reviews` | GET | PPLG-PROMOTION-QUEUE | `[HumanReviewRequest]` | Human review queue for promotion, live allocation, resume, and retire decisions. |
-| `/bff/management/promotion-reviews/{review_id}/decisions` | POST | PPLG-PROMOTION-DECISION | ApprovalDecision-backed decision envelope | Human approval/rejection; required before canary/live state or allocation changes. |
-| `/bff/management/quarterly-rankings` | GET | PPLG-QUARTERLY | `CohortRankingSnapshot + QuarterlyRebalanceProposal` | Advisory quarterly ranking and proposed actions only. |
-| `/bff/management/quarterly-rankings/{proposal_id}/decisions` | POST | PPLG-QUARTERLY-DECISION | ApprovalDecision-backed decision envelope | Human approval/rejection required before replacement or allocation changes. |
-| `/bff/management/risk-guardrail-events` | GET | PPLG-RISK-GUARDRAILS | `[RiskGuardrailEvent]` | Read-only queue of automatic protection actions and review evidence. |
-
-**Unified competition invariant**:
-
-- Paper challengers, canary challengers, live incumbents, watchlisted incumbents,
-  and risk-off excluded personas share one cohort competition model.
-- `competition_track` is the required discriminator:
-  `paper_challenger`, `canary_challenger`, `live_incumbent`,
-  `watchlist_incumbent`, or `risk_off_excluded`.
-- The global `研究 / 模擬 / 正式` selector is a command-safety context. It may
-  change command affordances and explicit filters, but it must not hide paper
-  challengers from live incumbent comparison by switching to a separate persona
-  dataset.
-
-**Human gate invariant**:
-
-- Paper-to-canary, canary allocation increase, canary-to-live, live allocation
-  increase, quarterly rebalance/replacement, resume from incident, and retire
-  decisions require `HumanReviewRequest` plus an ApprovalDecision-backed human
-  decision record.
-- System scoring and ranking are advisory. They can recommend review, but cannot
-  approve canary/live, increase allocation, replace an incumbent, or execute a
-  quarterly rebalance.
-
-**Automatic guardrail invariant**:
-
-- Automatic guardrails cannot promote or increase allocation.
-- The only automatic actions are `pause_new_orders`, `reduce_exposure`,
-  `risk_off`, and `frozen`.
-- Each automatic action must emit `RiskGuardrailEvent` with
-  `review_required=true`, `may_promote=false`, `may_increase_allocation=false`,
-  `incident_id`, and `trace_id`.
-
-**Fleet and League UX contract**:
-
-- Persona Fleet / League default views show paper challengers, canary
-  challengers, and live incumbents together.
-- Rows expose `competition_track`, `cohort_id`, `cohort_rank`,
-  `incumbent_persona_id` when applicable, `challenger_delta_score`, paper
-  runtime state, evaluation state, review state, capital scope, and live status.
-- Do not show `啟動精靈` for an already runnable persona. Use concrete actions:
-  repair paper setup, view paper evaluation, submit live review, view review,
-  view canary/live runtime, view quarterly rebalance, or view incident review.
 ---
 
 ## 10. Composed Views
@@ -608,19 +537,59 @@ when the backing store is unconfigured or unreachable (§7.2).
 
 | Route | Composes | Response Envelope | Degraded Behavior | Min Role |
 |---|---|---|---|---|
-| `GET /bff/management/data-sources` | source-ingest `/api/source-ingest/registry` | `{ data, items, page_info, meta }` canonical list; `meta.status`, `meta.source`, `meta.surfaces.data_sources` | When source-ingest URL is unconfigured (`source:missing`) or unreachable (`source:unavailable`): empty `items`, `meta.status:unavailable`, `data.status:unavailable` — never a bare `[]` | `operator` |
-| `GET /bff/lineage` | lineage-edge store (`lineage_edges`) via `ReadSurfaceStore` | `{ data: { id, nodes, edges, status, source }, items, page_info, meta }` canonical list; `meta.status`, `meta.source`, `meta.surfaces.lineage`; query params: `root_id`, `root_type`, `depth` (default 3, max 20), `artifact_id` | When lineage store is missing (`source:missing`): empty `nodes`/`edges`/`items`, `meta.status:unavailable`, `data.status:unavailable` — never a bare `[]` | `operator` |
+| `GET /bff/management/data-sources` | source-ingest `/api/source-ingest/registry` | `DataSourcesEnvelope`; `data: { id, items, summary, status, source }`; typed `page_info`; typed `meta.surfaces.data_sources`; no top-level `items` | When source-ingest URL is unconfigured (`source:missing`) or unreachable (`source:unavailable`): empty `data.items`, `meta.status:unavailable`, `data.status:unavailable`, and surface `staleness` — never a bare `[]` | `operator` |
+| `GET /bff/management/permissions` | governance permission read surface (`governance_permissions`) | `ManagementRecordsEnvelope`; `data: { id, items, summary }`; typed `page_info`; typed `meta.surfaces.governance_permissions`; no top-level `items` | When the dataset is missing: empty `data.items`, `meta.status:unavailable`, surface `source:missing`, and `meta.degradation.reason` | `operator` |
+| `GET /bff/management/memory-governance` | memory governance read surface (`memory_governance_rules`) | `ManagementRecordsEnvelope`; `data: { id, items, summary }`; typed `page_info`; typed `meta.surfaces.memory_governance_rules`; no top-level `items` | When the dataset is missing: empty `data.items`, `meta.status:unavailable`, surface `source:missing`, and `meta.degradation.reason` | `operator` |
+| `GET /bff/management/consult-rules` | consult rule read surface (`consult_rules`) | `ManagementRecordsEnvelope`; `data: { id, items, summary }`; typed `page_info`; typed `meta.surfaces.consult_rules`; no top-level `items` | When the dataset is missing: empty `data.items`, `meta.status:unavailable`, surface `source:missing`, and `meta.degradation.reason` | `operator` |
+| `GET /bff/lineage` | lineage-edge store (`lineage_edges`) via `ReadSurfaceStore` | `LineageEnvelope`; `data: { id, nodes, edges, status, source }`; typed `page_info`; typed `meta.surfaces.lineage`; query params: `root_id`, `root_type`, `depth` (default 3, max 20), `artifact_id` | When lineage store is missing (`source:missing`): empty `nodes`/`edges`/`items`, `meta.status:unavailable`, `data.status:unavailable` — never a bare `[]` | `operator` |
+| `GET /bff/workflows` | workflow template registry (`workflow_templates`) | `ManagementRecordsEnvelope`; `data/items` list; typed `page_info`; typed `meta.surfaces.workflow_templates` | When the registry is missing: empty `data/items`, `meta.degradation.reason`, surface `status:unavailable` | `operator` |
+| `GET /bff/hooks` | hook registry (`hook_registry`) | `ManagementRecordsEnvelope`; `data/items` list; typed `page_info`; typed `meta.surfaces.hook_registry` | When the registry is missing: empty `data/items`, `meta.degradation.reason`, surface `status:unavailable` | `operator` |
+| `GET /bff/knowledge` | composed knowledge inbox over notes, evidence, insights, strategy specs, and memory | `ManagementRecordsEnvelope`; `data/items` list; typed `page_info`; typed `meta.surfaces.knowledge_inbox` plus source surfaces and `composition_sources` | When all source datasets are missing: empty `data/items`, `knowledge_inbox.status:unavailable`, and per-source surface `source:missing` | `operator` |
 
 **Degraded envelope example** (source-ingest unconfigured in dev):
 
 ```json
 {
-  "data": { "id": "management-data-sources", "items": [], "status": "unavailable", "source": "missing" },
-  "items": [],
-  "page_info": { "next_page_token": null, "total": 0, "page_size": 0 },
-  "meta": { "snapshot_at": "...", "status": "unavailable", "source": "missing", "surfaces": { "data_sources": "unavailable" } }
+  "data": {
+    "id": "management-data-sources",
+    "items": [],
+    "summary": { "total_items": 0, "returned_items": 0, "status": "unavailable", "source": "missing" },
+    "status": "unavailable",
+    "source": "missing"
+  },
+  "page_info": { "next_page_token": null, "total": 0, "page_size": 50, "returned": 0, "has_more": false },
+  "meta": {
+    "snapshot_at": "...",
+    "status": "unavailable",
+    "source": "missing",
+    "surfaces": {
+      "data_sources": {
+        "status": "unavailable",
+        "source": "missing",
+        "message": "Source-ingest registry is unavailable or unconfigured.",
+        "staleness": { "served_from": "unverifiable", "last_known_at": "..." }
+      }
+    },
+    "degradation": { "reason": "management data sources are currently unavailable." }
+  }
 }
 ```
+
+OpenAPI must publish these shared schema components for management console reads:
+`SurfaceState`, `PageInfo`, `ManagementListMeta`, `ManagementRecordsEnvelope`,
+`DataSourcesEnvelope`, and `LineageEnvelope`.
+
+MGMT-OPS-001 adds the shared per-persona operations confidence read model:
+
+```
+GET /bff/management/operations-read-model/{persona_id}?period=latest
+```
+
+The `200` response must publish `OperationsReadModelEnvelope` in OpenAPI. The
+envelope contains `identity`, `data_confidence`, finite-or-null `performance`
+metrics, `sources[]`, and `diagnostics[]` so management console pages share the
+same `formal`/`partial`/`fallback`/`degraded`/`unavailable` source-confidence
+semantics instead of synthesizing local fallback rules.
 
 ### 10.2 Consistency Model
 
@@ -876,8 +845,13 @@ New `list_*` methods were added to `ReadSurfaceStore` in `read_store.py`.
 | Governance sub-rules (GR) | GR-01 to GR-04 | 4 |
 | Composed views | 10 | 10 |
 | SSE streams (runtime, incidents, kill-switch, approvals, ask, generic) | 6 | 6 |
-| BFF Management (BFFGAP-CONSOLE) | DS-01 (`/bff/management/data-sources`), LIN-01 (`/bff/lineage`) | 2 |
+| BFF Management (BFFGAP-CONSOLE additive surfaces) | DS-01 (`/bff/management/data-sources`), LIN-01 (`/bff/lineage`) | 2 |
 | **Total v1 endpoints** | | **58** |
+
+`MGMT-GAP-003` acceptance intentionally spans eight management-console read
+routes: DS-01, GR-01, GR-02, GR-03, LIN-01, AR-01, AR-02, and KW-BFF-01.
+GR/AR/KW routes remain counted in their owning rows above, so they are not
+double-counted in the additive total.
 
 ---
 

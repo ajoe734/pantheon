@@ -48,6 +48,8 @@ class CreateIncidentRequest(BaseModel):
     runtime_id: str
     trace_id: str
     telemetry_event_ids: List[str] = Field(default_factory=list)
+    reconciliation_ids: List[str] = Field(default_factory=list)
+    incident_cluster_id: Optional[str] = None
     evidence_summary: Optional[str] = None
     lineage_ref: Optional[str] = None
 
@@ -78,6 +80,8 @@ class IncidentResponse(BaseModel):
     trace_id: str
     resolved_at: Optional[str] = None
     telemetry_event_ids: List[str] = Field(default_factory=list)
+    reconciliation_ids: List[str] = Field(default_factory=list)
+    incident_cluster_id: Optional[str] = None
     evidence_summary: Optional[str] = None
     lineage_ref: Optional[str] = None
 
@@ -108,6 +112,8 @@ class OperatorIncidentPayload(BaseModel):
     evidence_summary: Optional[str] = None
     lineage_ref: Optional[str] = None
     telemetry_event_ids: List[str] = Field(default_factory=list)
+    reconciliation_ids: List[str] = Field(default_factory=list)
+    incident_cluster_id: Optional[str] = None
 
     # Computed convenience fields (assembled by the service layer)
     is_open: bool = False

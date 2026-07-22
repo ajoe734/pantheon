@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/trade_journey/strategy_lifecycle/v1",
+  "title": "StrategyLifecycle",
+  "type": "object",
+  "required": [
+    "strategy_lifecycle_id",
+    "strategy_id",
+    "strategy_version",
+    "status",
+    "research_journey_id",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "strategy_lifecycle_id": {
+      "type": "string",
+      "pattern": "^sl_[a-zA-Z0-9_-]+$"
+    },
+    "strategy_id": {
+      "type": "string"
+    },
+    "strategy_version": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["evaluating", "promoted", "deployed", "retired", "superseded"]
+    },
+    "research_journey_id": {
+      "type": "string",
+      "pattern": "^rj_[a-zA-Z0-9_-]+$"
+    },
+    "promotion_decision_id": {
+      "type": "string"
+    },
+    "capital_pool_id": {
+      "type": "string"
+    },
+    "runtime_id": {
+      "type": "string"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

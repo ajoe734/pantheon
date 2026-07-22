@@ -329,6 +329,34 @@ Working tree durability:
 - if `dev` advances, rebase or merge the task branch as committed work;
   do not make `git stash pop` the normal preservation path
 
+Cross-repo FE task PRs (`ajoe734/execute-plans`):
+
+- `execute-plans` mirrors the same `task/<TASK-ID>` → `dev` model as
+  this repo. Its GitHub-configured default branch is `dev`, not `main`;
+  `.orchestrator/multi_repo_registry.py` records this as
+  `default_branch` for the `execute_plans` repo id, which is what
+  `scripts/ai_status.py`'s `done`-finalize gate uses to verify a task
+  branch's HEAD merged into the correct target before allowing closeout.
+- open FE task PRs with `--base dev`, the same as a pantheon task PR.
+  Do not PR a `task/<TASK-ID>` branch straight into `execute-plans`
+  `main` — that bypasses the integration line and is the dev/main drift
+  root cause fixed by `OPS-EP-BRANCH-TARGETING-001` (a stale `main`
+  value in the registry previously made the `done` gate check ancestry
+  against the wrong branch).
+- `execute-plans` `main` is promoted separately and is not a valid
+  direct target for a task PR.
+
+### Shared Deploy Workflow Ownership
+
+Shared CI/CD workflows (`nonprod-deploy.yml` and its execute-plans
+counterpart) are fleet infrastructure, not something a task owns. No task
+may run `gh workflow disable` against one or `gh run cancel` against a run
+it did not dispatch, even to protect its own proof run. Use the workflow's
+`concurrency:` group or the dev environment lease
+(`scripts/dev_environment_lease.py`) instead. Full rule, rationale, and the
+`scripts/check_shared_deploy_workflow_disabled.py` detection guard:
+`docs/conventions/GIT_WORKFLOW.md` § 9.1.
+
 ### Discussion Planning Mode
 
 `discussion_planning` is additive. It does not replace the current execution lifecycle.

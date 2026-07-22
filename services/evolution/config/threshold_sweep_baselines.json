@@ -1,0 +1,15 @@
+{
+  "_schema_note": "Live config, operator/research-populated. Maps artifact_id -> named research-expected baseline values used by threshold_sweep_worker to turn a raw runtime-summary metric into a unit-consistent multiple (see threshold_sweep_thresholds.json 'ratio_baseline_key'). Each approved entry carries its policy_source evidence. An artifact without an approved positive baseline still fails closed (diagnostic only, no fabricated breach).",
+  "_example": {
+    "artifact-example-001": {
+      "expected_drawdown": 0.12,
+      "policy_source": "docs/example-governed-baseline.md#decision"
+    }
+  },
+  "baselines": {
+    "artifact-tw-session-momentum-v1": {
+      "expected_drawdown": 0.0303,
+      "policy_source": "docs/bff/execution-tasks/2026-07-14-evolution-generative-loop-gap/EVOLOOP-005-governed-baselines.md#governance-decision"
+    }
+  }
+}

@@ -126,13 +126,33 @@ def test_fred_adapter_supports_public_csv_fallback_and_per_series_watermark() ->
     records = adapter.records_from_csv("GDP", FRED_CSV, trace_id="trace-fred")
 
     assert connector.connector_id == FRED_CONNECTOR_ID
-    assert connector.metadata["optional_secret_ref_id"] == "env://FRED_API_KEY"
+    assert connector.auth_policy.secret_ref.secret_ref_id == "env://FRED_API_KEY"
+    assert connector.metadata["required_secret_ref_id"] == "env://FRED_API_KEY"
     assert connector.metadata["symbol_scope"] == "global_no_symbol_filter"
     assert len(records) == 2
     assert records[0].metadata["dataset"] == "macro_fred_observation"
     assert records[0].metadata["fetch_mode"] == "public_csv_fallback"
     assert records[0].metadata["latest_watermark_key"] == "fred:GDP"
     assert records[0].metadata["staleness_seconds"] == 15552000
+
+
+def test_fred_live_fetch_requires_keyed_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    adapter = FredMacroSeriesAdapter(max_records=5)
+    monkeypatch.delenv("FRED_API_KEY", raising=False)
+    with pytest.raises(SourceEvidenceError, match="FRED_API_KEY"):
+        adapter.fetch_api_observations("GDP")
+    monkeypatch.setenv("FRED_API_KEY", "test-fred-key")
+    captured = {}
+
+    def fake_request(url: str, *, user_agent: str, timeout_seconds: float = 20.0):
+        captured["url"] = url
+        return {"observations": [{"date": "2026-01-01", "value": "1.2"}]}
+
+    monkeypatch.setattr("services.source_ingestion.connectors.us_public._request_json", fake_request)
+    payload = adapter.fetch_api_observations("GDP")
+
+    assert payload["observations"][0]["value"] == "1.2"
+    assert "api_key=test-fred-key" in captured["url"]
 
 
 def test_finra_short_sale_adapter_normalizes_daily_file_and_publication_window() -> None:
@@ -174,6 +194,14 @@ def test_stooq_daily_ohlcv_adapter_is_disabled_until_runtime_endpoint_verified()
     assert health.metadata["disabled_reason"] == "stooq_endpoint_unverified_2026-06-11"
 
 
+def test_yahoo_us_daily_ohlcv_connector_is_removed() -> None:
+    """Yahoo Finance forbids programmatic access; no adapter may reintroduce it."""
+    from services.source_ingestion import connectors, provider_adapters
+
+    assert not hasattr(connectors, "YahooUsEquityDailyAdapter")
+    assert "YahooUsEquityDailyAdapter.records_from_chart_payload" not in provider_adapters.ALLOWED_PROVIDER_ADAPTERS
+
+
 def test_provider_owned_dispatch_allowlists_us_public_adapters(tmp_path) -> None:
     store = JsonlConfiguredConnectorStore(tmp_path / "connectors.jsonl")
     fred = FredMacroSeriesAdapter(max_records=5)
@@ -198,6 +226,85 @@ def test_provider_owned_dispatch_allowlists_us_public_adapters(tmp_path) -> None
 
     assert len(batch.records) == 2
     assert batch.next_watermark == "fred:GDP:2025-10-01"
+    assert batch.records[0].metadata["provider_owned_adapter"] == (
+        "FredMacroSeriesAdapter.records_from_observations_payload"
+    )
+
+
+def test_provider_owned_dispatch_fetches_sec_when_payload_absent(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SEC_EDGAR_USER_AGENT", "Pantheon source-ingest ops@example.com")
+    store = JsonlConfiguredConnectorStore(tmp_path / "connectors.jsonl")
+    adapter = SecEdgarFilingAdapter(max_records=5)
+    fetch = dict(adapter.fetch_config())
+    fetch["request"] = {"dataset": "sec_filing_event", "symbols": ["AAPL"]}
+    store.upsert_config(adapter.connector(), fetch)
+    monkeypatch.setattr(SecEdgarFilingAdapter, "fetch_company_tickers", lambda self: SEC_TICKERS)
+    monkeypatch.setattr(SecEdgarFilingAdapter, "fetch_submissions", lambda self, cik: SEC_SUBMISSIONS)
+
+    batch = ConfiguredConnectorFetcher(store).fetch_batch(
+        SEC_EDGAR_CONNECTOR_ID,
+        None,
+        trace_id="trace-sec-live-driver",
+    )
+
+    assert len(batch.records) == 1
+    assert batch.records[0].metadata["dataset"] == "sec_filing_event"
+    assert batch.records[0].metadata["provider_owned_adapter"] == "SecEdgarFilingAdapter.records_from_payload"
+
+
+def test_provider_owned_dispatch_fetches_finra_when_payload_absent(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = JsonlConfiguredConnectorStore(tmp_path / "connectors.jsonl")
+    adapter = FinraShortSaleAdapter(max_records=5)
+    store.upsert_config(adapter.connector(), adapter.fetch_config())
+    monkeypatch.setattr(
+        FinraShortSaleAdapter,
+        "fetch_short_volume_text",
+        lambda self, trade_date: FINRA_SHORT_VOLUME,
+    )
+
+    batch = ConfiguredConnectorFetcher(store).fetch_batch(
+        FINRA_SHORT_SALE_CONNECTOR_ID,
+        None,
+        trace_id="trace-finra-live-driver",
+    )
+
+    assert len(batch.records) == 2
+    assert batch.records[0].metadata["dataset"] == "us_short_volume_daily"
+    assert batch.records[0].metadata["provider_owned_adapter"] == (
+        "FinraShortSaleAdapter.records_from_short_volume_text"
+    )
+
+
+def test_provider_owned_dispatch_fetches_fred_keyed_api_when_payload_absent(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FRED_API_KEY", "test-fred-key")
+    store = JsonlConfiguredConnectorStore(tmp_path / "connectors.jsonl")
+    adapter = FredMacroSeriesAdapter(max_records=5)
+    fetch = dict(adapter.fetch_config())
+    fetch["request"] = {"series_ids": ["GDP"], "fetch_mode": "keyed_api"}
+    store.upsert_config(adapter.connector(), fetch)
+    monkeypatch.setattr(
+        FredMacroSeriesAdapter,
+        "fetch_api_observations",
+        lambda self, series_id: {"observations": [{"date": "2026-01-01", "value": "1.2"}]},
+    )
+
+    batch = ConfiguredConnectorFetcher(store).fetch_batch(
+        FRED_CONNECTOR_ID,
+        None,
+        trace_id="trace-fred-live-driver",
+    )
+
+    assert len(batch.records) == 1
+    assert batch.records[0].metadata["fetch_mode"] == "keyed_api"
     assert batch.records[0].metadata["provider_owned_adapter"] == (
         "FredMacroSeriesAdapter.records_from_observations_payload"
     )

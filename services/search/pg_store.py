@@ -34,6 +34,18 @@ _EVIDENCE_LOADERS: Dict[str, Any] = {
     "knowledge_object": KnowledgeObject.from_dict,
 }
 
+# Source-ingest upserts preserve each row's original append_id. A stable
+# knowledge object can therefore be updated to reference a bundle appended
+# later. Preserve append order within a record type, but replay dependency
+# types before their consumers so the read-only search view can restart from
+# the same valid dataset as the source-ingest owner.
+_EVIDENCE_REPLAY_ORDER = (
+    "source_record",
+    "evidence_item",
+    "evidence_bundle",
+    "knowledge_object",
+)
+
 
 def _quote_pg(identifier: str) -> str:
     parts = identifier.split(".")
@@ -73,7 +85,9 @@ class PostgresReadOnlyEvidenceRepository(InMemoryEvidenceRepository):
 
     def reload(self) -> None:
         self._source_records.clear()
+        self._source_dedupe_index.clear()
         self._evidence_items.clear()
+        self._evidence_dedupe_index.clear()
         self._bundles.clear()
         self._knowledge_objects.clear()
         with self._connect() as conn:
@@ -81,25 +95,31 @@ class PostgresReadOnlyEvidenceRepository(InMemoryEvidenceRepository):
                 f"SELECT record_type, payload FROM {self.table} ORDER BY append_id ASC"
             )
             rows = cursor.fetchall()
+        records_by_type: Dict[str, list[Any]] = {
+            record_type: [] for record_type in _EVIDENCE_REPLAY_ORDER
+        }
         for row in rows:
             record_type = row[0] if isinstance(row, tuple) else row.get("record_type")
             payload = row[1] if isinstance(row, tuple) else row.get("payload")
             if isinstance(payload, str):
                 payload = json.loads(payload)
-            loader = _EVIDENCE_LOADERS.get(str(record_type or ""))
+            normalized_type = str(record_type or "")
+            loader = _EVIDENCE_LOADERS.get(normalized_type)
             if loader is None or not isinstance(payload, dict):
                 raise EvidenceValidationError(
                     f"Unsupported source evidence record type from Postgres: {record_type!r}"
                 )
-            obj = loader(payload)
-            if isinstance(obj, SourceRecord):
-                InMemoryEvidenceRepository.add_source_record(self, obj)
-            elif isinstance(obj, EvidenceItem):
-                InMemoryEvidenceRepository.add_evidence_item(self, obj)
-            elif isinstance(obj, EvidenceBundle):
-                InMemoryEvidenceRepository.add_bundle(self, obj)
-            elif isinstance(obj, KnowledgeObject):
-                InMemoryEvidenceRepository.add_knowledge_object(self, obj)
+            records_by_type[normalized_type].append(loader(payload))
+        for record_type in _EVIDENCE_REPLAY_ORDER:
+            for obj in records_by_type[record_type]:
+                if isinstance(obj, SourceRecord):
+                    InMemoryEvidenceRepository.add_source_record(self, obj)
+                elif isinstance(obj, EvidenceItem):
+                    InMemoryEvidenceRepository.add_evidence_item(self, obj)
+                elif isinstance(obj, EvidenceBundle):
+                    InMemoryEvidenceRepository.add_bundle(self, obj)
+                elif isinstance(obj, KnowledgeObject):
+                    InMemoryEvidenceRepository.add_knowledge_object(self, obj)
 
     def add_source_record(self, source: SourceRecord) -> SourceRecord:
         raise EvidenceValidationError(

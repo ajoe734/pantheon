@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "task_id": "MGMT-LOAD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+  "archived_at": "2026-07-01T12:16:44Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-LOAD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+    "title": "Prepare MGMT-LOAD-003 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-LOAD-003，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "MGMT Console Load Gap / Wave 2 FE shell fanout",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "MGMT-LOAD-001",
+      "MGMT-LOAD-002"
+    ],
+    "artifacts": [
+      "support/sidecars/MGMT-LOAD-003/MGMT-LOAD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Support-only BFF/frontend handoff packet merged in PR #2689; closeout task brief merged in PR #2691 (46642a5e). No canonical, runtime, frontend, registry, or governance implementation changed; checks passed.",
+    "last_update": "2026-07-01T12:16:44Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-LOAD-003",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：packet 僅新增 support artifact，未觸及 canonical/runtime/frontend；BFF /bff/management/shell-summary 端點與描述相符；TopBar/JobProgressDrawer mount-time fanout 與 paths.ts 缺 shell-summary builder 皆與 execute-plans checkout 現況一致；e2e fanout 目前確為 soft-fail annotation 非 hard gate",
+      "交還 owner Codex 供 MGMT-LOAD-003 parent 吸收判斷"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-01T12:16:44Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-load-003-sidecar-bff-handoff-followup-2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-LOAD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "git_clean_required": false,
+      "commit": "27583dc1d3d9f2eedd4e093948ca307b1db83cba",
+      "commit_subject": "MGMT-LOAD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2: record closeout",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task brief review approval and owner closeout record for the support-only BFF/frontend handoff packet.",
+        "Not changing": "canonical architecture, BFF runtime code, frontend runtime code, route registry behavior, governance policy, or MGMT-LOAD-003 parent implementation.",
+        "Composes with": "merged PR #2689 and the MGMT-LOAD-003 parent frontend shell fanout reduction task.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "MGMT-LOAD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+        "Reviewer": "Claude",
+        "Verified": "git diff --check -- support/sidecars/MGMT-LOAD-003/MGMT-LOAD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md; AI_NAME=Codex ./scripts/ai-status.sh show MGMT-LOAD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2; worker_commit.py --dry-run + git diff --cached --check for task brief"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-LOAD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "46642a5ec94ada81b80edbf9f1294a271c9fffed",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-LOAD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Support-only followup packet merged in Pantheon PR #2689 (merge f49b8496d4fd46cdadca3a7fe74c34fa2cd9b8ea). Please review support/sidecars/MGMT-LOAD-003/MGMT-LOAD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md for parent-owner absorption; no canonical truth or runtime/frontend implementation changed.",
+      "status": "done",
+      "created_at": "2026-07-01T12:09:57Z",
+      "resolved_at": "2026-07-01T12:12:10Z"
+    },
+    {
+      "task_id": "MGMT-LOAD-003-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Sidecar packet verified against execute-plans checkout, BFF main.py, and MGMT-LOAD-002/003 status; support-only scope confirmed, approved for owner absorption decision",
+      "status": "done",
+      "created_at": "2026-07-01T12:12:10Z",
+      "resolved_at": "2026-07-01T12:16:45Z"
+    }
+  ],
+  "blockers": []
+}

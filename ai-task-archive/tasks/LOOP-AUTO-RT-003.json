@@ -1,0 +1,141 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-RT-003",
+  "archived_at": "2026-07-01T10:17:44Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-RT-003",
+    "title": "Add runtime session reaper and restart alignment",
+    "summary_zh": "清理 stale paper monitoring sessions，讓 worker restart 建立 fresh session，不再用 ended_at=null 當 liveness proof。",
+    "phase": "Global Loop Autopilot / Wave 2 Runtime Fleet",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "LOOP-AUTO-RT-002"
+    ],
+    "artifacts": [
+      "services/runtime-manager",
+      "services/control-plane/bff",
+      "docs/deployment/evidence"
+    ],
+    "acceptance": [
+      "Stale monitoring sessions are automatically ended",
+      "Restarted workers create fresh sessions",
+      "BFF surfaces session staleness and terminal reason"
+    ],
+    "next": "Owner closeout complete: PR #2668 merged into dev at 427262fdcfba8fc61cd0e3b1b851eb684cd2af24; implementation was already merged in PR #2427, Claude review approved, and post-merge pytest passed (51 passed, 8 warnings).",
+    "last_update": "2026-07-01T10:17:44Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+    "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+    "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+    "proof_required": [
+      "unit tests",
+      "contract tests",
+      "local service smoke",
+      "restart or replay evidence when worker or runtime behavior changes"
+    ],
+    "non_goals": [
+      "No live-capital execution",
+      "No approval gate bypass",
+      "No panel-only closure",
+      "No seed fixture as live proof"
+    ],
+    "dispatch_rules": [
+      "idempotent duplicate ticks and duplicate events",
+      "operator-visible truth projection required",
+      "maturity cannot rise above collected evidence",
+      "repo workflow closure required before done"
+    ],
+    "loop_ids": [
+      "capital_pool_execution",
+      "bff_health_monitoring"
+    ],
+    "current_maturity": "manual",
+    "target_maturity": "reconciled",
+    "desired_state_sources": [
+      "runtime heartbeat freshness"
+    ],
+    "actual_state_sources": [
+      "monitoring session store",
+      "BFF runtime board"
+    ],
+    "wave_id": "Wave 2 Runtime Fleet",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "reconciler 與 BFF 的 staleness 判斷邏輯一致，force-close 後才開新 session_id，符合三項 acceptance",
+      "focused suite 50 passed, full runtime-manager suite 92 passed，未發現需修正問題"
+    ],
+    "review_file": ".orchestrator/reviews/LOOP-AUTO-RT-003-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-01T10:17:44Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-rt-003",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOOP-AUTO-RT-003",
+      "git_clean_required": false,
+      "commit": "dae279388791ccbf7579a9df7b5d09574588ef0e",
+      "commit_subject": "LOOP-AUTO-RT-003: record post-merge closeout evidence",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "LOOP-AUTO-RT-003 evidence artifact.",
+        "Not changing": "runtime-manager/BFF implementation or reviewer decision.",
+        "Composes with": "PR #2427 implementation merge and PR #2668 closeout metadata.",
+        "Verified": "python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler.py services/control-plane/bff/test_pkt010_runtime_state_board_contract.py services/control-plane/bff/test_read_store_service_clients.py services/control-plane/bff/test_loop_health_read_model_contract.py -q (51 passed, 8 warnings in 15.12s)",
+        "LLM-Agent": "Codex",
+        "Task-ID": "LOOP-AUTO-RT-003",
+        "Reviewer": "Claude"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LOOP-AUTO-RT-003",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "427262fdcfba8fc61cd0e3b1b851eb684cd2af24",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-RT-003",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Runtime session reaper and restart alignment are already merged to dev; owner re-verified focused suite: python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler.py services/control-plane/bff/test_pkt010_runtime_state_board_contract.py services/control-plane/bff/test_read_store_service_clients.py services/control-plane/bff/test_loop_health_read_model_contract.py -q => 50 passed. Please review/approve central status so owner can finalize done.",
+      "status": "done",
+      "created_at": "2026-07-01T07:00:13Z",
+      "resolved_at": "2026-07-01T07:48:54Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-RT-003",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Auto-reassigned review from Claude2 to Claude after repeated Claude2 terminal: {\"type\":\"assistant\",\"message\":{\"id\":\"fd6ca914-a67a-4e2c-ac81-5f723e3b0544\",\"container\":null,\"model\":\"<synthetic>\",\"role\":\"assistant\",\"stop_details\":null,\"stop_reason\":\"stop_sequenc",
+      "status": "done",
+      "created_at": "2026-07-01T07:48:54Z",
+      "resolved_at": "2026-07-01T07:59:19Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-RT-003",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Approved: session reaper and restart alignment verified against controller liveness evidence (PR #2668 adds reviewer evidence artifact, implementation already merged via PR #2427). Owner may finalize once PR #2668 merges.",
+      "status": "done",
+      "created_at": "2026-07-01T07:59:19Z",
+      "resolved_at": "2026-07-01T10:17:45Z"
+    }
+  ],
+  "blockers": []
+}

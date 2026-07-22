@@ -1,0 +1,157 @@
+name: TJ-E2E-012 Hosted Acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      bff_base_url:
+        description: "Pantheon dev BFF base URL"
+        required: true
+        default: "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io"
+        type: string
+      fe_deployment_url:
+        description: "Pantheon dev frontend deployment manifest URL"
+        required: true
+        default: "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io/deployment.json"
+        type: string
+      expected_bff_sha:
+        description: "Exact deployed Pantheon BFF commit SHA"
+        required: true
+        type: string
+      expected_fe_sha:
+        description: "Exact deployed execute-plans commit SHA"
+        required: true
+        type: string
+      tenant_id:
+        description: "Acceptance tenant"
+        required: true
+        default: "tenant-dev"
+        type: string
+      forbidden_tenant_id:
+        description: "Different tenant used only for negative RBAC probes"
+        required: true
+        default: "tenant-forbidden-proof"
+        type: string
+      replay_as_of:
+        description: "Scenario 12 timezone-aware replay timestamp"
+        required: true
+        default: "2026-07-12T12:01:30Z"
+        type: string
+      ambiguity_identifier:
+        description: "Scenario 9 identifier intentionally shared by two journeys"
+        required: true
+        default: "ambiguous-scenario-9"
+        type: string
+      seed_scenarios:
+        description: "Dev only: materialize the deterministic source scenarios before acceptance"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tj-e2e-012-hosted-acceptance-dev
+  cancel-in-progress: false
+
+jobs:
+  hosted-acceptance:
+    name: Twelve-scenario hosted evidence
+    runs-on: ubuntu-latest
+    environment: dev
+    timeout-minutes: 20
+    env:
+      BFF_BASE: ${{ inputs.bff_base_url }}
+      TJ_E2E_FE_DEPLOYMENT_URL: ${{ inputs.fe_deployment_url }}
+      TJ_E2E_ALLOWED_BFF_ORIGIN: ${{ vars.DEV_BFF_URL || 'https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io' }}
+      TJ_E2E_ALLOWED_FE_ORIGIN: ${{ vars.DEV_FE_URL || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
+      TJ_E2E_EXPECTED_BFF_SHA: ${{ inputs.expected_bff_sha }}
+      TJ_E2E_EXPECTED_FE_SHA: ${{ inputs.expected_fe_sha }}
+      TJ_E2E_TENANT_ID: ${{ inputs.tenant_id }}
+      TJ_E2E_FORBIDDEN_TENANT_ID: ${{ inputs.forbidden_tenant_id }}
+      TJ_E2E_REPLAY_AS_OF: ${{ inputs.replay_as_of }}
+      TJ_E2E_AMBIGUITY_IDENTIFIER: ${{ inputs.ambiguity_identifier }}
+      TJ_E2E_OPERATOR_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID || 'pantheon-dev-operator-a-v1' }}
+      TJ_E2E_OPERATOR_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET }}
+      TJ_E2E_VIEWER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1' }}
+      TJ_E2E_VIEWER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET }}
+      TJ_E2E_EVIDENCE_DIR: .artifacts/TJ-E2E-012/${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Checkout dispatched revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Authenticate to Google Cloud for dev VM loopback seed
+        if: ${{ inputs.seed_scenarios }}
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed
+        with:
+          workload_identity_provider: ${{ vars.DEV_GCP_WIF_PROVIDER || 'projects/317269804408/locations/global/workloadIdentityPools/pantheon-github-pool/providers/pantheon-github-provider' }}
+          service_account: ${{ vars.DEV_GCP_DEPLOY_SERVICE_ACCOUNT || 'pantheon-cloud-build@pantheon-lupin-dev-20260719.iam.gserviceaccount.com' }}
+
+      - name: Set up Cloud SDK for dev VM loopback seed
+        if: ${{ inputs.seed_scenarios }}
+        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f
+
+      - name: Materialize explicitly authorized dev-only source scenarios
+        if: ${{ inputs.seed_scenarios }}
+        env:
+          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
+          DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
+          DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
+          DEV_DEPLOY_WORKTREE: ${{ vars.DEV_DEPLOY_WORKTREE || '/home/lupin/pantheon-ci-deploy/dev-root' }}
+          GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-lupin-dev-20260719' }}
+        run: |
+          set -euo pipefail
+          [[ "${TJ_E2E_EXPECTED_BFF_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          mkdir -p "${TJ_E2E_EVIDENCE_DIR}"
+          seed_evidence="${TJ_E2E_EVIDENCE_DIR}/canonical-seed.json"
+          printf -v worktree_q '%q' "${DEV_DEPLOY_WORKTREE}"
+          printf -v expected_sha_q '%q' "${TJ_E2E_EXPECTED_BFF_SHA}"
+          set +e
+          seed_output="$(gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" \
+            --zone "${DEV_ZONE}" \
+            --project "${GCP_DEPLOY_PROJECT_ID}" \
+            --ssh-flag=-T \
+            --command "set -euo pipefail; cd ${worktree_q}; test \"\$(git rev-parse HEAD)\" = ${expected_sha_q}; GITHUB_REPOSITORY=ajoe734/pantheon TJ_E2E_TENANT_ID=tenant-dev TJ_E2E_EXPECTED_BFF_SHA=${expected_sha_q} TJ_E2E_TELEMETRY_BASE=http://127.0.0.1:18083 TJ_E2E_RUNTIME_MANAGER_BASE=http://127.0.0.1:18081 TJ_E2E_SEED_BFF_BASE=http://127.0.0.1:18001 python3 scripts/seed_tj_e2e_012_hosted_scenarios.py")"
+          seed_status=$?
+          set -e
+          python3 - "${seed_evidence}" "${seed_status}" "${seed_output}" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          path = Path(sys.argv[1])
+          status = int(sys.argv[2])
+          lines = [line for line in sys.argv[3].splitlines() if line.strip()]
+          parsed = None
+          if lines:
+              try:
+                  parsed = json.loads(lines[-1])
+              except json.JSONDecodeError:
+                  parsed = None
+          payload = {
+              "schema_version": "pantheon.tj-e2e-012.canonical-seed-evidence.v1",
+              "result": "passed" if status == 0 and isinstance(parsed, dict) else "failed",
+              "transport": "gcp-wif-ssh-dev-vm-loopback",
+              "expected_bff_sha": os.environ["TJ_E2E_EXPECTED_BFF_SHA"],
+              "seed": parsed if isinstance(parsed, dict) else None,
+          }
+          path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+          if [[ "${seed_status}" -ne 0 ]]; then
+            echo "Canonical dev telemetry seed failed; redacted evidence was recorded." >&2
+            exit "${seed_status}"
+          fi
+
+      - name: Verify exact hosted pair and all twelve source scenarios
+        run: python3 scripts/verify_hosted_scenarios.py
+
+      - name: Upload immutable redacted acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tj-e2e-012-hosted-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .artifacts/TJ-E2E-012/${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 30

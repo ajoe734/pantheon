@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "task_id": "MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX-V2",
+  "archived_at": "2026-07-11T15:22:24Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX-V2",
+    "title": "Fix Persona Fleet focused pagination contract from dev",
+    "summary_zh": "從最新 execute-plans/dev 修正 Persona Fleet focused query 與分頁一致性，禁止 main 舊架構與 seed fallback 回流。",
+    "phase": "MGMT-OPS-003 Hosted Gap / Wave 0 linked-page repair V2",
+    "owner": "Codex",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "execute-plans:src/lib/bff-v1/management.ts",
+      "execute-plans:src/lib/bff-v1/paths.ts",
+      "execute-plans:src/management/pages/oversight/_core.tsx",
+      "execute-plans:src/management/pages/oversight/PersonaFleetPage.test.tsx",
+      "execute-plans:e2e/25-persona-fleet-live-linked-pages.spec.ts",
+      "execute-plans:hosted-dev-evidence"
+    ],
+    "acceptance": [
+      "branch merge-base is execute-plans origin/dev at or after e23aba15 and reviewer records ancestry",
+      "persona URL focus is sent to BFF q with explicit page_size and never falls outside loaded UI rows",
+      "unfocused Fleet preserves production-only default and no seed fallback",
+      "unit tests verify query propagation and focus reloads",
+      "hosted browser BFF probe passes with rows valid true",
+      "e2e/25 live linked-page contract passes",
+      "PR merges to execute-plans dev and Dev FE Deploy succeeds",
+      "deployment.json reports repaired merge SHA"
+    ],
+    "next": "Closed after execute-plans PR #256 merged as 30bc432f8a4e095e9947da4f076886828a2bcd58 and Pantheon closeout PR #3235 merged; focused q + page_size=100 pagination and persona reload verified, live-only/no-seed fallback preserved.",
+    "last_update": "2026-07-11T15:22:24Z",
+    "review_notes_zh": [
+      "審查通過，驗證了 BFF query 參數傳遞與 100 筆分頁 reload 邏輯，且 E2E 及瀏覽器 probe 測試均通過"
+    ],
+    "review_file": "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX-V2-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T15:22:24Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-ops-003-gap-001-focus-pagination-fix-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX-V2",
+      "git_clean_required": false,
+      "commit": "aede2f0ceed6f7a31f038c620b3b45994c64a387",
+      "commit_subject": "MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX-V2: finalize record",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "Pantheon task-scoped closeout record",
+        "Not changing": "execute-plans frontend, BFF, fallback behavior, or architecture",
+        "Composes with": "execute-plans PR #256 and Pantheon approval evidence",
+        "LLM-Agent": "Codex",
+        "Task-ID": "MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX-V2",
+        "Reviewer": "Antigravity",
+        "Verified": "gh PR merge/check query, commit ancestry query, git diff --check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX-V2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "42401e0100ee317c83b7eda53fd35fa8493a05a5",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX-V2",
+      "from": "Codex",
+      "to": "Antigravity",
+      "message": "Ready for review: execute-plans PR #256 merged to dev as 30bc432f8a4e095e9947da4f076886828a2bcd58; fix commit 2a565262f4b8bc1c440c079d47483e7a28d3c414 is an ancestor. Focused query now sends q plus page_size=100 and reloads on persona changes; live-only/no-seed fallback remains unchanged. Verified npm test -- --run src/management/pages/oversight/PersonaFleetPage.test.tsx src/lib/bff-v1/__tests__/management.test.ts (49 passed); Dev FE Deploy and integration gate succeeded.",
+      "status": "done",
+      "created_at": "2026-07-11T15:15:05Z",
+      "resolved_at": "2026-07-11T15:18:39Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-001-FOCUS-PAGINATION-FIX-V2",
+      "from": "Antigravity",
+      "to": "Codex",
+      "message": "Review approved; returning to the owner for finalization",
+      "status": "done",
+      "created_at": "2026-07-11T15:18:39Z",
+      "resolved_at": "2026-07-11T15:22:26Z"
+    }
+  ],
+  "blockers": []
+}

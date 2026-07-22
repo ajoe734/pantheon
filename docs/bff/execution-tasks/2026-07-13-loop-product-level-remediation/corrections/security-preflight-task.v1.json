@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "packet_type": "fleet_security_preflight",
+  "task_id": "LOOP-PROD-SECURITY-PREFLIGHT-001",
+  "title": "Inventory security scope and freeze shared-control-plane work",
+  "status": "deferred_security_backlog",
+  "program_id": "loop-product-level-remediation-2026-07-13",
+  "plan": "docs/04/pantheon_loop_product_level_remediation_2026-07-13/archive/SECURITY_PREFLIGHT_AND_HOLD_MATRIX_2026-07-18.md",
+  "task_doc": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-SECURITY-PREFLIGHT-001.md",
+  "target_repo": "pantheon",
+  "merge_target": "dev",
+  "fleet_lane": "security-preflight-and-hold",
+  "owner": "Codex",
+  "reviewer": "Codex2",
+  "depends_on": [],
+  "artifacts": [
+    "scripts/dispatch_loop_product_level_remediation_2026-07-13.py",
+    "scripts/test_dispatch_loop_product_level_remediation_2026_07_13.py",
+    "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/tasks.json",
+    "docs/deployment/evidence/loop-product-level/LOOP-PROD-SECURITY-PREFLIGHT-001"
+  ],
+  "security_hold": "default_deny_until_preflight_and_human_ops_release",
+  "acceptance": [
+    "Every primary and corrective task has a content-addressed security/shared-state classification and explicit block reason.",
+    "Unclassified tasks and shared-control-plane artifacts fail closed before merge, deploy, credential access, live worker admission, or canonical status mutation.",
+    "Security-sensitive tasks are represented as security_blocked until an exact-catalog Human/Ops release decision is accepted.",
+    "Read-only audit and isolated fixture tests remain possible without touching shared state.",
+    "The runtime gate separation remains intact: runtime lock safety is pre-dispatch; protected verifier and Ed25519 completion remain final closeout only.",
+    "Two distinct fleet reviews, checks, exact source identity, rollback matrix, and redacted release decision are archived."
+  ],
+  "non_goals": [
+    "No product feature implementation",
+    "No live status or activity-log mutation",
+    "No credentials, secrets, deploy, restart, broker, or capital side effect",
+    "No final program completion verdict"
+  ],
+  "product_level_required": true,
+  "requires_human_ops_signoff": true,
+  "dispatch_rules": [
+    "Do not dispatch while security work is paused; only a clean fleet task worktree may implement the future gate.",
+    "Owner and reviewer must be distinct admitted fleet identities.",
+    "The planner may author the matrix and inspect evidence but may not implement product artifacts.",
+    "No held task is released by a task-local flag or by a fleet worker's self-approval."
+  ]
+}

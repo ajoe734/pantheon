@@ -1,0 +1,147 @@
+{
+  "version": 1,
+  "task_id": "AG-DYNUI-PROD-005",
+  "archived_at": "2026-07-04T16:52:59Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DYNUI-PROD-005",
+    "title": "Close Agora dynamic workflow wiring",
+    "summary_zh": "補齊 V11 dynamic workflow：proposal generation/accept、workspace load、layout patch、widget revision proposal、apply/keep-copy、version history、rollback 都必須走 strict BFF 和 allowlisted WidgetSpec/ChartSpec。",
+    "phase": "Agora DYNUI Production Gap / Dynamic Workflow",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "AG-DYNUI-PROD-002",
+      "AG-DYNUI-PROD-003",
+      "AG-DYNUI-PROD-004"
+    ],
+    "artifacts": [
+      "execute-plans/src/agora/trading-room/WorkspaceProposalPreview.tsx",
+      "execute-plans/src/agora/trading-room/WorkspaceGridEditor.tsx",
+      "execute-plans/src/agora/trading-room/WorkspaceWidgetRevisionDrawer.tsx",
+      "execute-plans/src/lib/bff-v1/agora/tradingRoom.ts",
+      "services/control-plane/bff/agora/trading_room.py",
+      "services/control-plane/specs/agora/",
+      "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/AG-DYNUI-PROD-005-dynamic-workflow-closeout.md"
+    ],
+    "acceptance": [
+      "full V11 workflow succeeds through strict BFF calls",
+      "idempotency optimistic concurrency scope isolation and widget allowlists are tested",
+      "no arbitrary frontend code or fake success fallback is accepted",
+      "Do not rebuild from imagination or static screenshots.",
+      "Keep V10/V11 dynamic UI behavior: proposal, grid edit, widget revision, version history, rollback.",
+      "Use strict BFF contracts, auth, scope isolation, validators, and widget allowlists.",
+      "If the design source is missing or conflicts with code, raise a blocker with the exact file/contract.",
+      "Close only after branch, PR, checks, merge, deploy when needed, and hosted proof."
+    ],
+    "next": "Closeout finalized: reviewer (Claude2) independently re-verified backend tests (45 passed), execute-plans dev-branch frontend wiring via gh api, and hosted BFF-wiring probe with no blocking findings; re-ran python3 -m pytest bff/agora/trading_room/test_trading_room.py -q at finalization (45 passed, unchanged); task commit f2c9b1820 already merged to dev via PR #2989.",
+    "last_update": "2026-07-04T16:52:59Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_agora_dynui_production_gap_2026-07-03",
+    "source_ref": {
+      "archive": "docs/04/pantheon_agora_dynui_production_gap_2026-07-03/INDEX.md",
+      "packet": "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/INDEX.md",
+      "task_brief": "docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/AG-DYNUI-PROD-005-dynamic-workflow-closeout.md"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "fleet_lane": "agora-dynui-production-gap",
+    "review_notes_zh": [
+      "審查通過：45 個 backend tests 全過（親自重跑確認），frontend 56 個 test cases 與 execute-plans dev branch 實際內容一致（透過 gh api 直接查驗，非依賴本地過時的 execute-plans 副本)。",
+      "Workspace* 元件確認已掛載：TradingRoomPage.tsx 掛 WorkspaceProposalPreview/WorkspaceGridEditor，WorkspaceGridEditor.tsx 內部掛 WorkspaceWidgetRevisionDrawer 與 version history/rollback。onAddToTradingRoom route wiring 與 PR #176 diff 一致。",
+      "Hosted probe evidence 一致：pass=true，zero old-BFF hits，符合 closeout 文件記錄。無 blocking finding。"
+    ],
+    "review_file": "support/reviews/AG-DYNUI-PROD-005-review-claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-04T16:52:59Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-dynui-prod-005",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-DYNUI-PROD-005",
+      "git_clean_required": false,
+      "repository_fallback": {
+        "from_repository_id": "execute_plans",
+        "missing_repository_path": "/tmp/pantheon-worker-worktrees/pantheon/execute-plans",
+        "reason": "non-Pantheon artifact repository local_path is unavailable; using Pantheon because the task also has Pantheon artifacts"
+      },
+      "commit": "f2c9b18207e459232c6718913b12430ef75e016c",
+      "commit_subject": "AG-DYNUI-PROD-005: record reviewer closeout evidence",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "dynamic workflow wiring task": "backend pytest rerun (45 passed),",
+        "LLM-Agent": "Claude",
+        "Task-ID": "AG-DYNUI-PROD-005",
+        "Reviewer": "Claude2",
+        "Verified": "python3 -m pytest bff/agora/trading_room/test_trading_room.py -q (services/control-plane) -> 45 passed; dependency gate re-checked via python3 scripts/ai_status.py show for AG-DYNUI-PROD-002/003/004 (all terminal_status done)"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-DYNUI-PROD-005",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "00312bf8cdd1e9037184b18189fdef25efd50add",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-DYNUI-PROD-005",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by Codex2 while Codex is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-07-04T14:48:11Z",
+      "resolved_at": "2026-07-04T14:48:11Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-005",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by Codex while Codex2 is dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-07-04T15:48:28Z",
+      "resolved_at": "2026-07-04T15:48:28Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-005",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Implementation merged: PR #2983 (task/AG-DYNUI-PROD-005 -> dev) merged 2026-07-04T16:02:43Z (merge commit 8556643b8). V11 dynamic workflow (proposal/accept, workspace load, layout patch, widget-revision proposal, apply/keep-copy, version history, rollback) verified wired through strict BFF via execute-plans PR #176 (merge eaad3fa9); no pantheon-side backend change was needed. Closeout evidence: docs/bff/execution-tasks/2026-07-03-agora-dynui-production-gap/AG-DYNUI-PROD-005-dynamic-workflow-closeout.md. Verified: python3 -m pytest bff/agora/trading_room/test_trading_room.py -q (45 passed); npx vitest run src/agora/pages/trading-room/TradingRoomPage.test.tsx (56 passed); scripts/probe-hosted-browser-bff.mjs against /agora/trading-room (pass=true, zero old-BFF hits). Please review and approve.",
+      "status": "done",
+      "created_at": "2026-07-04T16:03:50Z",
+      "resolved_at": "2026-07-04T16:41:30Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-005",
+      "from": "Codex2",
+      "to": "Claude2",
+      "message": "Chair reassigned review from Codex2 to Claude2: codex2 (agent Codex2) has been quota_terminal dispatch-paused since 2026-07-04T15:50:01Z, ~48 minutes elapsed as of this review (16:38Z), past the 30-minute reviewer-reassignment threshold and still active (blocked_until ~16:50Z). This is blocking sign-off on a task whose implementation PR #2983 already merged to dev at 16:02:43Z. Claude2 shares Claude's governance-review/control-plane capability lane, is idle, auth_ready=true, and is not the task owner (Claude) or dispatch-paused.",
+      "status": "done",
+      "created_at": "2026-07-04T16:41:30Z",
+      "resolved_at": "2026-07-04T16:48:15Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-005",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Review approved and returned to owner Claude for finalization. Independently reran backend pytest (45 passed) and verified frontend wiring directly against ajoe734/execute-plans dev branch via gh api. Workspace* components, onAddToTradingRoom handoff, and hosted BFF-wiring probe all confirmed consistent with closeout doc claims. No blocking findings.",
+      "status": "done",
+      "created_at": "2026-07-04T16:48:15Z",
+      "resolved_at": "2026-07-04T16:53:00Z"
+    }
+  ],
+  "blockers": []
+}

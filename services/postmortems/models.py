@@ -38,6 +38,11 @@ class CreatePostmortemRequest(BaseModel):
     timeline: List[Dict[str, Any]] = Field(default_factory=list)
     action_items: List[str] = Field(default_factory=list)
     author_ids: List[str] = Field(default_factory=list)
+    telemetry_event_ids: List[str] = Field(default_factory=list)
+    reconciliation_ids: List[str] = Field(default_factory=list)
+    incident_cluster_id: Optional[str] = None
+    incident_evidence_summary: Optional[str] = None
+    lineage_ref: Optional[str] = None
 
 
 class UpdatePostmortemStatusRequest(BaseModel):
@@ -77,9 +82,15 @@ class PostmortemResponse(BaseModel):
     timeline: List[Dict[str, Any]] = Field(default_factory=list)
     action_items: List[str] = Field(default_factory=list)
     author_ids: List[str] = Field(default_factory=list)
+    telemetry_event_ids: List[str] = Field(default_factory=list)
+    reconciliation_ids: List[str] = Field(default_factory=list)
+    incident_cluster_id: Optional[str] = None
+    incident_evidence_summary: Optional[str] = None
+    lineage_ref: Optional[str] = None
 
     # Optional
     published_at: Optional[str] = None
+    published_event_id: Optional[str] = None
     linked_evolution_decision_id: Optional[str] = None
 
     model_config = {"from_attributes": True}
@@ -93,6 +104,7 @@ class OperatorPostmortemPayload(BaseModel):
     status: str
     created_at: str
     published_at: Optional[str] = None
+    published_event_id: Optional[str] = None
     incident_id: str
     incident_status: str
     incident_severity: str
@@ -112,6 +124,11 @@ class OperatorPostmortemPayload(BaseModel):
     timeline: List[Dict[str, Any]] = Field(default_factory=list)
     action_items: List[str] = Field(default_factory=list)
     author_ids: List[str] = Field(default_factory=list)
+    telemetry_event_ids: List[str] = Field(default_factory=list)
+    reconciliation_ids: List[str] = Field(default_factory=list)
+    incident_cluster_id: Optional[str] = None
+    incident_evidence_summary: Optional[str] = None
+    lineage_ref: Optional[str] = None
     linked_evolution_decision_id: Optional[str] = None
 
     model_config = {"from_attributes": True}

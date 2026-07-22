@@ -213,6 +213,16 @@ class TestExtractIdentityJwt:
         assert identity.operator_id == "op-internal"
         assert "operator" in identity.roles
 
+    def test_permissive_mode_rejects_plain_bearer_token(self):
+        """permissive mode must not silently grant operator to arbitrary bearer strings."""
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as exc_info:
+            self._call(
+                "Bearer definitely-invalid-no-role-token",
+                env_overrides={"PANTHEON_BFF_AUTH_MODE": "permissive", "PANTHEON_BFF_JWT_SECRET": ""},
+            )
+        assert exc_info.value.status_code == 403
+
     def test_permissive_structured_token_preserves_capability_suffix(self):
         identity = self._call(
             "Bearer op-admin:admin,operator:mfa:assistant.kernel.debug,audit.read",
@@ -237,6 +247,19 @@ class TestExtractIdentityJwt:
             "assistant.kernel.debug",
             "assistant.kernel.repair",
         ]
+
+    def test_permissive_viewer_does_not_inherit_or_assert_stub_capabilities(self):
+        identity = self._call(
+            "Bearer pantheon-dev-browser:viewer:mfa:assistant.kernel.debug",
+            env_overrides={
+                "PANTHEON_BFF_AUTH_MODE": "permissive",
+                "PANTHEON_BFF_JWT_SECRET": "",
+                "PANTHEON_BFF_STUB_CAPABILITIES": "assistant.kernel.repair",
+            },
+        )
+
+        assert identity.roles == ["viewer"]
+        assert identity.claims.get("capabilities") in (None, [])
 
 
 # ---------------------------------------------------------------------------
@@ -278,6 +301,19 @@ class TestExtractIdentityStub:
             "assistant.kernel.repair",
         ]
 
+    def test_viewer_stub_does_not_inherit_or_assert_capabilities(self):
+        with patch.dict(
+            os.environ,
+            {"PANTHEON_BFF_STUB_CAPABILITIES": "assistant.kernel.repair"},
+            clear=False,
+        ):
+            identity = self._call(
+                "Bearer pantheon-dev-browser:viewer:mfa:assistant.kernel.debug"
+            )
+
+        assert identity.roles == ["viewer"]
+        assert identity.claims["capabilities"] == []
+
     def test_colon_format_multiple_roles(self):
         identity = self._call("Bearer op-multi:operator,reviewer")
         assert "operator" in identity.roles
@@ -289,8 +325,17 @@ class TestExtractIdentityStub:
             self._call("op-bare-token")
         assert exc_info.value.status_code == 401
 
-    def test_no_colon_infers_operator_role(self):
-        identity = self._call("Bearer sometoken")
+    def test_no_colon_requires_explicit_legacy_allowlist(self):
+        from fastapi import HTTPException
+
+        with patch.dict(os.environ, {"PANTHEON_BFF_STUB_LEGACY_BARE_TOKENS": ""}, clear=False):
+            with pytest.raises(HTTPException) as exc_info:
+                self._call("Bearer sometoken")
+        assert exc_info.value.status_code == 403
+
+    def test_allowlisted_no_colon_infers_operator_role(self):
+        with patch.dict(os.environ, {"PANTHEON_BFF_STUB_LEGACY_BARE_TOKENS": "sometoken"}, clear=False):
+            identity = self._call("Bearer sometoken")
         assert "operator" in identity.roles
 
 
@@ -312,6 +357,23 @@ class TestExtractIdentityDispatch:
             {"PANTHEON_BFF_AUTH_STUB": "", "PANTHEON_BFF_AUTH_MODE": "strict"},
             clear=False,
         ):
+            with pytest.raises(HTTPException) as exc_info:
+                _extract_identity("Bearer op-admin:admin:mfa")
+        assert exc_info.value.status_code == 401
+
+    @pytest.mark.parametrize("bad_mode", ["strcit", "", "disabled", "strict-ish", "PERMISIVE"])
+    def test_malformed_auth_mode_with_stub_true_still_routes_to_jwt(self, bad_mode):
+        # A typo'd/unrecognized PANTHEON_BFF_AUTH_MODE combined with
+        # PANTHEON_BFF_AUTH_STUB=true must not silently enable the dev stub —
+        # unrecognized modes fail closed to strict.
+        from fastapi import HTTPException
+        with patch.dict(
+            os.environ,
+            {"PANTHEON_BFF_AUTH_STUB": "true", "PANTHEON_BFF_AUTH_MODE": bad_mode},
+            clear=False,
+        ):
+            assert bff_main._bff_auth_mode() == "strict"
+            assert bff_main._bff_auth_stub_enabled() is False
             with pytest.raises(HTTPException) as exc_info:
                 _extract_identity("Bearer op-admin:admin:mfa")
         assert exc_info.value.status_code == 401
@@ -698,6 +760,53 @@ class TestExtractIdentityJwks:
         assert identity.operator_id == "op-idp-admin"
         assert identity.roles == ["admin"]
         assert identity.mfa_verified is True
+
+    def test_supabase_app_metadata_role_maps_to_operator(self):
+        """Only the admin-owned nested role claim grants operator authority."""
+        token = _make_rs256_jwt(
+            sub="supabase-operator",
+            roles=None,
+            audience="authenticated",
+            issuer="https://supabase.example/auth/v1",
+            extra={
+                "role": "authenticated",
+                "app_metadata": {"roles": ["pantheon-operator"]},
+            },
+        )
+        identity = self._call(
+            f"Bearer {token}",
+            env_overrides={
+                "PANTHEON_BFF_OIDC_ISSUER": "https://supabase.example/auth/v1",
+                "PANTHEON_BFF_OIDC_AUDIENCE": "authenticated",
+                "PANTHEON_BFF_ROLE_CLAIMS": "app_metadata.roles,roles",
+                "PANTHEON_BFF_ROLE_MAP": "pantheon-operator=operator;pantheon-viewer=viewer",
+                "PANTHEON_BFF_ROLE_MAP_MODE": "strict",
+                "PANTHEON_BFF_DEFAULT_ROLE": "viewer",
+            },
+        )
+        assert identity.roles == ["operator"]
+
+    def test_supabase_authenticated_role_does_not_become_operator(self):
+        """A normal Supabase login without admin metadata fails closed to viewer."""
+        token = _make_rs256_jwt(
+            sub="supabase-unassigned",
+            roles=None,
+            audience="authenticated",
+            issuer="https://supabase.example/auth/v1",
+            extra={"role": "authenticated"},
+        )
+        identity = self._call(
+            f"Bearer {token}",
+            env_overrides={
+                "PANTHEON_BFF_OIDC_ISSUER": "https://supabase.example/auth/v1",
+                "PANTHEON_BFF_OIDC_AUDIENCE": "authenticated",
+                "PANTHEON_BFF_ROLE_CLAIMS": "app_metadata.roles,roles",
+                "PANTHEON_BFF_ROLE_MAP": "pantheon-operator=operator;pantheon-viewer=viewer",
+                "PANTHEON_BFF_ROLE_MAP_MODE": "strict",
+                "PANTHEON_BFF_DEFAULT_ROLE": "viewer",
+            },
+        )
+        assert identity.roles == ["viewer"]
 
     def test_mfa_required_rejects_unaccepted_idp_mfa_claim(self):
         """MFA_REQUIRED=true must not accept an IdP claim outside the configured values."""

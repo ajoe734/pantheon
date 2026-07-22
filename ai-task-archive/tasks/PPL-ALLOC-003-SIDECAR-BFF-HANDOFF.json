@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "task_id": "PPL-ALLOC-003-SIDECAR-BFF-HANDOFF",
+  "archived_at": "2026-07-11T04:25:34Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PPL-ALLOC-003-SIDECAR-BFF-HANDOFF",
+    "title": "Prepare PPL-ALLOC-003 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 PPL-ALLOC-003，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Persona Promotion Allocation / Wave 1 binding read models",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "PPL-ALLOC-001"
+    ],
+    "artifacts": [
+      "support/sidecars/PPL-ALLOC-003/PPL-ALLOC-003-SIDECAR-BFF-HANDOFF.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout complete: support-only BFF/frontend handoff packet merged via PR #3106 at af11c922e4663c9dbb7312b025aa8b579fc6d5ff; verified git diff --check and required GitHub checks (Commit trailers, Runtime mirror guard, Smoke acceptance). Parent owner Gemini2 decides composition into PPL-ALLOC-003.",
+    "last_update": "2026-07-11T04:25:34Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "PPL-ALLOC-003",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "審查通過：sidecar packet 清楚界定 paper ledger、canary/live sleeve/pool、current/target weight 與 missing/degraded read-model handoff；保持 support-only，未修改 canonical/runtime。驗證：git diff --check origin/dev...HEAD；PR #3106 CI 全綠。",
+      "Parent owner Gemini2 決定吸收範圍；Codex2 依 closeout spec 等 PR merge 後正式 done。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T04:25:34Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ppl-alloc-003-sidecar-bff-handoff",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/PPL-ALLOC-003-SIDECAR-BFF-HANDOFF",
+      "git_clean_required": false,
+      "commit": "201e91dcb81551e345a6012778af041f0b55c7e7",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/PPL-ALLOC-003-SIDECAR-BFF-HANDOFF",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/PPL-ALLOC-003-SIDECAR-BFF-HANDOFF",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "af11c922e4663c9dbb7312b025aa8b579fc6d5ff",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PPL-ALLOC-003-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Sidecar packet committed at dece92bc8; please review BFF query gaps, normalized binding DTO, operator journey, composition boundaries, and parent test matrix. Support-only; no canonical/runtime changes.",
+      "status": "done",
+      "created_at": "2026-07-11T04:09:58Z",
+      "resolved_at": "2026-07-11T04:12:50Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-003-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review changes requested: remove trailing whitespace on lines 3-9 of the handoff packet, rerun git diff --check against the task commit, and ensure the final commit's Verified trailer matches the actual result. Content scope and composition boundaries are otherwise acceptable.",
+      "status": "done",
+      "created_at": "2026-07-11T04:12:50Z",
+      "resolved_at": "2026-07-11T04:12:50Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-003-SIDECAR-BFF-HANDOFF",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "BFF/frontend handoff packet ready in support/sidecars/PPL-ALLOC-003/PPL-ALLOC-003-SIDECAR-BFF-HANDOFF.md; support-only scope, commits dece92bc8 and 69ea1a89c, PR #3106. Verified: git diff --check; parent target test file not yet present and remains parent-owned.",
+      "status": "done",
+      "created_at": "2026-07-11T04:15:52Z",
+      "resolved_at": "2026-07-11T04:22:50Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-003-SIDECAR-BFF-HANDOFF",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Review approved: support-only BFF/frontend handoff packet is scoped, internally consistent, and ready for parent-owner composition; PR #3106 checks pass. Return to Codex2 for merge-aware closeout.",
+      "status": "done",
+      "created_at": "2026-07-11T04:22:50Z",
+      "resolved_at": "2026-07-11T04:25:35Z"
+    }
+  ],
+  "blockers": []
+}

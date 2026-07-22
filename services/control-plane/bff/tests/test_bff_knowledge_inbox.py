@@ -101,6 +101,7 @@ def test_bff_knowledge_inbox_returns_canonical_list_envelope() -> None:
             assert body["data"] == body["items"]
             assert body["page_info"]["total"] == 5
             assert body["page_info"]["page_size"] == 20
+            assert body["page_info"]["returned"] == 5
             assert body["page_info"]["next_page_token"] is None
             assert {item["inboxType"] for item in body["items"]} == {
                 "research_note",
@@ -134,6 +135,7 @@ def test_bff_knowledge_inbox_empty_store_returns_degraded_envelope() -> None:
             assert body["data"] == []
             assert body["items"] == []
             assert body["page_info"]["total"] == 0
+            assert body["page_info"]["returned"] == 0
             assert body["meta"]["surfaces"]["knowledge_inbox"]["status"] == "unavailable"
             assert body["meta"]["surfaces"]["knowledge_inbox"]["source"] == "missing"
             assert body["meta"]["surfaces"]["knowledge_inbox_notes"]["status"] == "unavailable"
@@ -152,4 +154,3 @@ def test_bff_knowledge_inbox_auth_and_openapi_contract() -> None:
     schema = bff_main.app.openapi()
     assert "/bff/knowledge" in schema["paths"]
     assert "get" in schema["paths"]["/bff/knowledge"]
-

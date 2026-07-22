@@ -4,6 +4,8 @@ from typing import Any, Callable, Dict, List, Optional
 
 from fastapi import APIRouter, Header, Query
 
+from .contracts import LineageEnvelope
+
 
 def create_lineage_router(
     *,
@@ -20,7 +22,10 @@ def create_lineage_router(
     """
     router = APIRouter()
 
-    @router.get("/bff/lineage")
+    @router.get(
+        "/bff/lineage",
+        response_model=LineageEnvelope,
+    )
     async def bff_lineage(
         root_id: Optional[str] = Query(default=None),
         root_type: Optional[str] = Query(default=None),
@@ -81,6 +86,8 @@ def create_lineage_router(
                     "next_page_token": None,
                     "total": 0,
                     "page_size": 0,
+                    "returned": 0,
+                    "has_more": False,
                 },
                 "meta": meta,
             }
@@ -98,6 +105,8 @@ def create_lineage_router(
                 "next_page_token": None,
                 "total": len(edges),
                 "page_size": len(edges),
+                "returned": len(edges),
+                "has_more": False,
             },
             "meta": meta,
         }

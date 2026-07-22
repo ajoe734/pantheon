@@ -1,0 +1,145 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-BFF-002",
+  "archived_at": "2026-06-27T14:54:14Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-BFF-002",
+    "title": "Add BFF downstream health monitor",
+    "summary_zh": "新增 continuous BFF/downstream health monitor，把 probe 結果寫進 telemetry/incident pipeline。",
+    "phase": "Global Loop Autopilot / Wave 7 BFF Operator Truth",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "LOOP-AUTO-BFF-001",
+      "LOOP-AUTO-TEL-001"
+    ],
+    "artifacts": [
+      "services/control-plane/bff",
+      "services/telemetry",
+      "services/incidents",
+      "docs/deployment/evidence"
+    ],
+    "acceptance": [
+      "BFF downstream degradation emits telemetry",
+      "Health monitor can open or update incident for sustained failure",
+      "BFF degraded mode does not affect active runtimes"
+    ],
+    "next": "Owner finalization complete. All tests pass (26 + 33). Evidence note updated. PR #2440 merged into dev at 2026-06-27T14:53:57Z. Acceptance: telemetry emission, idempotent incident creation, background task isolation all verified.",
+    "last_update": "2026-06-27T14:54:14Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+    "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+    "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+    "proof_required": [
+      "unit tests",
+      "contract tests",
+      "local service smoke",
+      "restart or replay evidence when worker or runtime behavior changes"
+    ],
+    "non_goals": [
+      "No live-capital execution",
+      "No approval gate bypass",
+      "No panel-only closure",
+      "No seed fixture as live proof"
+    ],
+    "dispatch_rules": [
+      "idempotent duplicate ticks and duplicate events",
+      "operator-visible truth projection required",
+      "maturity cannot rise above collected evidence",
+      "repo workflow closure required before done"
+    ],
+    "loop_ids": [
+      "bff_health_monitoring"
+    ],
+    "current_maturity": "api-only",
+    "target_maturity": "reconciled",
+    "desired_state_sources": [
+      "downstream health policy"
+    ],
+    "actual_state_sources": [
+      "BFF health metrics",
+      "TelemetryEvent",
+      "IncidentCase"
+    ],
+    "wave_id": "Wave 7 BFF Operator Truth",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "Codex review approved after merging current origin/dev and applying narrow reviewer fixes. Verified git diff --check, commit trailers, downstream health suite 26 passed, focused health/loop/operator suite 33 passed. Acceptance covered: runtime_health telemetry emission, threshold-gated idempotent incident creation, and BFF degraded-mode isolation."
+    ],
+    "review_file": ".orchestrator/reviews/LOOP-AUTO-BFF-002-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-27T14:54:14Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-bff-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOOP-AUTO-BFF-002",
+      "git_clean_required": false,
+      "commit": "bc1ad950a722f69317db055c27e9a62e260b4432",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/LOOP-AUTO-BFF-002",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LOOP-AUTO-BFF-002",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "e4ac1551f3bcd4df72300306ad827bc89978e568",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-BFF-002",
+      "from": "Gemini2",
+      "to": "Claude",
+      "message": "Auto-reassigned LOOP-AUTO-BFF-002 away from unavailable lane Gemini2 (disabled, sidecar-only, or auth-down); owner Gemini2 -> Claude.",
+      "status": "done",
+      "created_at": "2026-06-27T12:37:26Z",
+      "resolved_at": "2026-06-27T12:37:31Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-BFF-002",
+      "from": "Gemini2",
+      "to": "Claude",
+      "message": "Auto-reassigned LOOP-AUTO-BFF-002 away from unavailable lane Gemini2 (disabled, sidecar-only, or auth-down); owner Gemini2 -> Claude.",
+      "status": "done",
+      "created_at": "2026-06-27T12:37:31Z",
+      "resolved_at": "2026-06-27T13:58:50Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-BFF-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implementation complete: DownstreamHealthMonitor module added. 26 tests pass (0 regressions). Three acceptance criteria covered: telemetry emit via runtime_health events, incident creation for sustained failures (idempotent, threshold-gated), background task isolation ensuring BFF degraded mode never affects active runtimes. New route GET /bff/v5/downstream-health exposes probe state. Evidence note at docs/deployment/evidence/loop-auto-bff-002/evidence-note.md.",
+      "status": "done",
+      "created_at": "2026-06-27T14:13:24Z",
+      "resolved_at": "2026-06-27T14:25:48Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-BFF-002",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved after reviewer fixes and focused validation; owner should finalize after PR merges.",
+      "status": "done",
+      "created_at": "2026-06-27T14:25:48Z",
+      "resolved_at": "2026-06-27T14:54:15Z"
+    }
+  ],
+  "blockers": []
+}

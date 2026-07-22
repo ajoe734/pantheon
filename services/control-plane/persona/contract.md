@@ -258,6 +258,10 @@ MUST NOT introduce a fourth name for this edge.
 - `RuntimeBinding` — owned by Execution Plane / Runtime Manager (RUN-001)
 - OpenClaw session execution — delegated to `openclaw-gateway-adapter`
 - Tool / skill resolution beyond the snapshot reference — OpenClaw runtime
+- Trainer teaching commit evaluation — owned by `training-session-svc`; persona
+  policy-affecting commits must present a completed evaluation proof and passed
+  governance gate state before Persona Plane or routing policy surfaces treat the
+  candidate as committed
 
 ### 6.3 Resolution order (session creation)
 

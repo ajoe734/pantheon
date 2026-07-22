@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-28",
+  "archived_at": "2026-06-24T13:39:54Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-28",
+    "title": "Prepare AG-FE-SW-002-R2 acceptance packet and dependency map",
+    "summary_zh": "平行支援 AG-FE-SW-002-R2，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
+    "phase": "EPIC AGORA-FE / Redo-after-pathfix",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "support/sidecars/AG-FE-SW-002-R2/AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-28.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout: FU-28 sidecar acceptance packet finalized. PR #2341 merged. Sidecar file committed in prior PRs (#2337/#2339/#2340), task brief updated to review_approved. Eighth consecutive >24h-band packet; Human/Ops escalation and loop halt recommendation reiterated; single-action brief unchanged from FU7-FU27. Support-only scope; no canonical truth changes.",
+    "last_update": "2026-06-24T13:39:54Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-FE-SW-002-R2",
+    "helper_kind": "acceptance_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_file": "support/sidecars/AG-FE-SW-002-R2/AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-28.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-24T13:39:54Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-sw-002-r2-sidecar-acceptance-followup-28",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-28",
+      "git_clean_required": false,
+      "commit": "237abcb6f3594b844552d7d6ab97750e3894ee84",
+      "commit_subject": "AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-28: finalize packet",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task brief status update and reviewer approval annotation",
+        "Not changing": "L1 canonical truth, sidecar file (already committed), any",
+        "Composes with": "AG-FE-SW-002-R2 parent task (blocked, awaiting Claude gate",
+        "LLM-Agent": "Claude",
+        "Task-ID": "AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-28",
+        "Reviewer": "Codex",
+        "Verified": "support-only artifact; no runtime changes; sidecar file previously committed and reviewed"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-28",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "138b46b666887a9a1f578f8da1057babd2130702",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-28",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "FU-28 packet authored and anchor PR #2337 merged (2026-06-24T13:15:49Z). Eighth consecutive >24h-band cadence packet. Ready for Codex review: verify fast-dispatch annotation (~1m from FU-27 archive to FU-28 dispatch; no intervening tasks), escalation window (~35h43m elapsed, 24h threshold ~11h43m past), eighth consecutive notice, and chain state table update. Loop halt recommendation and single-action brief unchanged from FU7-FU27.",
+      "status": "done",
+      "created_at": "2026-06-24T13:21:22Z",
+      "resolved_at": "2026-06-24T13:24:13Z"
+    },
+    {
+      "task_id": "AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-28",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review changes requested: FU-28 packet evidence mismatch. PR #2334 merged at 2026-06-24T12:57:15Z, but central activity log shows FU-28 assigned at 13:00:12Z, sidecar_task_created/wake_queued at 13:00:14Z, worker_started at 13:00:17Z, and task_dispatch_synced at 13:00:20Z. Update all '~12:58Z' / '~1 minute from FU-27 archive to FU-28 dispatch' claims to the observed dispatch timestamps and recompute the elapsed/escalation deltas if needed. Also qualify or remove 'no intervening tasks' because origin/dev has intervening commits between PR #2334 merge and FU-28 creation: 0e2f7405 at 12:59:02Z (BFF-LIVE-EVIDENCE: verify SSE detail evidence) and aeb6137b at 12:59:47Z (reconcile merge). Eighth consecutive >24h-band notice, loop halt recommendation, and single-action brief otherwise look structurally consistent.",
+      "status": "done",
+      "created_at": "2026-06-24T13:24:13Z",
+      "resolved_at": "2026-06-24T13:24:13Z"
+    },
+    {
+      "task_id": "AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-28",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "FU-28 sidecar packet is complete. Fix commit (a5b61e9a) addresses review change request: corrected dispatch timestamp to 13:00:12Z, dispatch gap to ~3 minutes, added two intervening commits (0e2f7405 at 12:59:02Z and aeb6137b at 12:59:47Z), recomputed deltas (35h46m / 11h46m / 31h46m), updated annotation to near-immediate-dispatch. PR #2340 is open with auto-merge. Eighth consecutive >24h-band packet. Single-action brief and loop halt recommendation unchanged from FU7-FU27. Please review support/sidecars/AG-FE-SW-002-R2/AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-28.md.",
+      "status": "done",
+      "created_at": "2026-06-24T13:34:39Z",
+      "resolved_at": "2026-06-24T13:36:47Z"
+    },
+    {
+      "task_id": "AG-FE-SW-002-R2-SIDECAR-ACCEPTANCE-FOLLOWUP-28",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved: FU-28 packet correctly records near-immediate dispatch at 2026-06-24T13:00:12Z, ~3m after FU-27 archive at ~12:57:15Z, with intervening origin/dev commits 0e2f7405 at 12:59:02Z and aeb6137b at 12:59:47Z; deltas are updated to ~35h46m elapsed, ~11h46m past 24h threshold, and ~31h46m past 4h threshold. Support-only scope preserved, Human/Ops escalation remains warranted, loop halt recommendation and single-action brief remain unchanged from FU7-FU27.",
+      "status": "done",
+      "created_at": "2026-06-24T13:36:47Z",
+      "resolved_at": "2026-06-24T13:39:56Z"
+    }
+  ],
+  "blockers": []
+}

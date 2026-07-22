@@ -1,0 +1,122 @@
+{
+  "version": 1,
+  "task_id": "MGMT-GAP-004",
+  "archived_at": "2026-07-01T11:02:41Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-GAP-004",
+    "title": "Management command receipts and write truth",
+    "summary_zh": "盤點 ranking/governance/workflows/hooks/settings/detail panels 的 write-like CTA；全部改為 governed command receipt/audit flow，或明確 disabled non-production。",
+    "phase": "MGMT Console Production Gap / Batch 3 command truth",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "MGMT-GAP-002",
+      "MGMT-GAP-003"
+    ],
+    "artifacts": [
+      "frontend-checkout:src/management",
+      "frontend-checkout:src/lib/bff",
+      "services/control-plane/bff",
+      "docs/04/pantheon_management_console_gap_2026-06-30"
+    ],
+    "acceptance": [
+      "無 in-scope CTA 只靠 toast/local state 成功; dry-run/real-writes-off probe 證明無隱性 side effect; high-risk action 有 confirm + command/audit evidence"
+    ],
+    "next": "Closed after PR #2666 merged into dev at e61c3e995086f0fa0d87ed8478e0e1f9fd22d8a5; execute-plans PR #132 merged at 8ad6e034e9f831a11f143496b0320beba7a41dc2; focused Pantheon BFF validation passed (17 tests).",
+    "last_update": "2026-07-01T11:02:41Z",
+    "source_ref": {
+      "doc": "docs/04/pantheon_management_console_gap_2026-06-30/README.md",
+      "archive": "docs/04/pantheon_management_console_gap_2026-06-30/archive/live-audit-2026-06-30.md",
+      "reaudit": "docs/04/pantheon_management_console_gap_2026-06-30/archive/full-reaudit-addendum-2026-07-01.md",
+      "packet": "docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "batch": 3,
+    "fleet_lane": "command-governance",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_management_console_gap_2026-06-30",
+    "auto_generated": true,
+    "review_notes_zh": [
+      "Frontend command receipt/disabled-CTA 轉換與 BFF audit route/target_type 對齊皆已核實正確",
+      "PR #132(execute-plans)與 PR #2666(pantheon)皆已 merge，测试全綠"
+    ],
+    "review_file": "support/reviews/MGMT-GAP-004-review-claude.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-01T11:02:41Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-gap-004",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-GAP-004",
+      "git_clean_required": false,
+      "commit": "e61c3e995086f0fa0d87ed8478e0e1f9fd22d8a5",
+      "commit_subject": "Merge pull request #2666 from ajoe734/task/MGMT-GAP-004",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "MGMT-GAP-004": "align command audit evidence"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-GAP-004",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "c2ebcd5eaa22b42f8810d60e54c77c8fd2457d42",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-GAP-004",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Ready for review. execute-plans PR #132 merged at 8ad6e034e9f831a11f143496b0320beba7a41dc2 with integration-gate success; pantheon PR #2666 merged at e61c3e995086f0fa0d87ed8478e0e1f9fd22d8a5 with Branch CI and Smoke acceptance success. Done transition is waiting for reviewer approval.",
+      "status": "done",
+      "created_at": "2026-07-01T07:23:21Z",
+      "resolved_at": "2026-07-01T07:28:30Z"
+    },
+    {
+      "task_id": "MGMT-GAP-004",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Reviewed command receipt + disabled-CTA conversions against actual BFF route/mutation surface; verified BFF audit test realignment tracks a real route/target-type migration, not a weakened contract; all named test suites pass. Approved and returned to Codex2 for finalization.",
+      "status": "done",
+      "created_at": "2026-07-01T07:28:30Z",
+      "resolved_at": "2026-07-01T09:58:09Z"
+    },
+    {
+      "task_id": "MGMT-GAP-004",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Auto-reassigned ownership from Codex2 to Claude2 after repeated Codex2 quota terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-07-01T09:58:09Z",
+      "resolved_at": "2026-07-01T10:59:31Z"
+    },
+    {
+      "task_id": "MGMT-GAP-004",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Auto-reassigned ownership from Claude2 to Codex after repeated Claude2 terminal: {\"type\":\"assistant\",\"message\":{\"id\":\"06088880-100f-4d74-a88c-0c6436de68ac\",\"container\":null,\"model\":\"<synthetic>\",\"role\":\"assistant\",\"stop_details\":null,\"stop_reason\":\"stop_sequenc",
+      "status": "done",
+      "created_at": "2026-07-01T10:59:31Z",
+      "resolved_at": "2026-07-01T11:02:42Z"
+    }
+  ],
+  "blockers": []
+}

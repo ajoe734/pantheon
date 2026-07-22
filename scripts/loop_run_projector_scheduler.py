@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""Scheduler wrapper for paper_loop_run_projector — runs on a fixed interval.
+"""Legacy scheduler for explicit runtime-snapshot backfill only.
+
+The default Compose service no longer invokes this module. Canonical live
+projection is owned by ``services.trade_journey.lifecycle_projector``; this
+wrapper is retained only for bounded repair comparison.
 
 Environment variables
 ---------------------
 BFF_BASE                           Required.  BFF service base URL.
 BFF_TOKEN                          Optional.  Auth bearer token (default: op-dev:admin:mfa).
-PANTHEON_BFF_LOOP_RUN_STORE        Optional.  Output path (default: /data/bff/loop_runs.json).
+PANTHEON_BFF_LOOP_RUN_BACKFILL_STORE Optional. Backfill output path.
 LOOP_RUN_PROJECTOR_INTERVAL_SECONDS  Optional.  Projection interval (default: 300).
 LOOP_RUN_PROJECTOR_MAX_TICKS       Optional.  Stop after N ticks; 0 = run forever (default: 0).
 """

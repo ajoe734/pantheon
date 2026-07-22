@@ -1,0 +1,192 @@
+{
+  "version": 1,
+  "task_id": "MGMT-OPS-003-GAP-001",
+  "archived_at": "2026-07-11T15:36:34Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-OPS-003-GAP-001",
+    "title": "Frontend Portfolio monitor closure",
+    "summary_zh": "在 execute-plans 補齊 Portfolio Book incidents、六類 filters、資金 stage 與 source-confidence 顯示。",
+    "phase": "MGMT-OPS-003 Hosted Gap / Wave 0 frontend",
+    "owner": "Claude",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "execute-plans:src/management/pages/oversight/PortfolioBook.tsx",
+      "execute-plans:src/lib/v5/management/portfolio.ts",
+      "execute-plans:e2e",
+      "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/MGMT-OPS-003-GAP-001-frontend-monitor.md"
+    ],
+    "acceptance": [
+      "all BFF incidents and source issues are operator visible",
+      "stage broker runtime source-status stale-telemetry and risk-state filters round trip through the URL",
+      "paper canary live and unknown scopes are explicit and accessible",
+      "degraded or missing data never renders as formal attribution or fully covered",
+      "execute-plans PR is merged to main deployed to dev and reviewed with current hosted evidence"
+    ],
+    "next": "Closeout resolved: PR #253 (execute-plans) delivered the Portfolio Book incidents/filters/stage/confidence UI and is merged+deployed. Post-approval regression (persona-fleet default-tab fallback broke the dev deploy probe) was fixed by Codex's #254 and #256, confirmed clean on dev tip 30bc432f (run 29156996097: rows valid=true, live banner valid=true). My own interim fix PR #255 was superseded and closed unmerged. Recorded the evidence trail as an addendum to the review file (pantheon PR #3237, merged 8f3d731b to dev).",
+    "last_update": "2026-07-11T15:36:34Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_mgmt_ops_003_hosted_gap_2026-07-11",
+    "auto_generated": true,
+    "source_ref": {
+      "doc": "docs/04/pantheon_mgmt_ops_003_hosted_gap_2026-07-11/MGMT_OPS_003_HOSTED_GAP.md",
+      "packet": "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/INDEX.md",
+      "review_checklist": "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/REVIEWER_CHECKLIST.md",
+      "trigger": "2026-07-11 hosted plan-to-live verification",
+      "frontend_repo": "ajoe734/execute-plans",
+      "backend_repo": "ajoe734/pantheon",
+      "dev_frontend": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io",
+      "dev_bff": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "helper_kind": "mgmt_ops_003_hosted_gap_closure",
+    "review_contract": {
+      "mode": "fail_closed_hosted_delta",
+      "checklist": "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/REVIEWER_CHECKLIST.md",
+      "approval_forbidden_without": [
+        "merged_pr_and_merge_sha",
+        "deployed_sha_ancestry",
+        "authenticated_api_capture",
+        "desktop_and_mobile_hosted_evidence",
+        "ui_to_api_count_and_label_comparison",
+        "console_and_network_failure_counts"
+      ],
+      "request_changes_when": [
+        "any_gap_matrix_row_is_not_pass",
+        "ui_confidence_exceeds_source_truth",
+        "incident_or_filter_is_hidden",
+        "evidence_is_mock_only_or_stale",
+        "tested_sha_differs_from_deployed_sha"
+      ]
+    },
+    "wave": 0,
+    "target_repo": "execute-plans",
+    "merge_target": "main",
+    "review_notes_zh": [
+      "審查通過，修復並驗證了 E2E Runtimes 測試中的 Legacy Mismatch 邏輯與 data_sources 容錯機制"
+    ],
+    "review_file": "docs/bff/execution-tasks/2026-07-11-mgmt-ops-003-hosted-gap/MGMT-OPS-003-GAP-001-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T15:36:34Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-ops-003-gap-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-OPS-003-GAP-001",
+      "git_clean_required": false,
+      "commit": "7c45ce7c73bac84311050418216cdf2460c855dd",
+      "commit_subject": "Merge dev into task/MGMT-OPS-003-GAP-001 to satisfy strict status checks",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-OPS-003-GAP-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "8f3d731bdde7092e4271bb365c2638bee554f476",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-OPS-003-GAP-001",
+      "from": "Copilot",
+      "to": "Antigravity",
+      "message": "Auto-reassigned MGMT-OPS-003-GAP-001 away from unavailable lane Copilot (disabled, paused, sidecar-only, or auth-down); reviewer Copilot -> Antigravity.",
+      "status": "done",
+      "created_at": "2026-07-11T10:55:11Z",
+      "resolved_at": "2026-07-11T10:55:19Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-07-11T10:55:19Z",
+      "resolved_at": "2026-07-11T10:55:29Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Please review execute-plans PR #252 (head 516baab). Local validation: build passed, Vitest 13 passed, focused eslint passed, Playwright monitor 1 passed. Verify hosted deploy evidence after merge before approval.",
+      "status": "done",
+      "created_at": "2026-07-11T11:03:19Z",
+      "resolved_at": "2026-07-11T11:05:47Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "REQUEST_CHANGES on execute-plans PR #252 head 516baab: assert request propagation and reload/control behavior for all six filters; add independent component coverage for empty/partial/stale/unavailable; then merge/deploy and attach fail-closed hosted evidence (merge/deployed SHA ancestry, authenticated API/raw runtime captures, desktop+mobile screenshots, UI/API comparisons, context links, cold reload, console and failed-network counts).",
+      "status": "done",
+      "created_at": "2026-07-11T11:05:47Z",
+      "resolved_at": "2026-07-11T11:05:47Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-001",
+      "from": "Copilot",
+      "to": "Antigravity",
+      "message": "Auto-reassigned MGMT-OPS-003-GAP-001 away from unavailable lane Copilot (disabled, paused, sidecar-only, or auth-down); reviewer Copilot -> Antigravity.",
+      "status": "done",
+      "created_at": "2026-07-11T11:20:43Z",
+      "resolved_at": "2026-07-11T11:20:43Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-001",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Chair reassigned owner from Codex2 to Claude: The blocked execution task records only an unavailable prior Copilot lane rather than a human-gate requirement; Claude is a listed healthy fallback, is distinct from reviewer Antigravity, and can rerun from task artifacts. Task returned to todo for a blocked-owner rescue dispatch.",
+      "status": "done",
+      "created_at": "2026-07-11T12:16:51Z",
+      "resolved_at": "2026-07-11T12:17:00Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-001",
+      "from": "Claude",
+      "to": "Antigravity",
+      "message": "PR https://github.com/ajoe734/execute-plans/pull/253 (task/MGMT-OPS-003-GAP-001-v2 -> dev) open; commit e5a8e1b renders BFF incidents/six filters/capital-scope/source-confidence per REVIEWER_CHECKLIST.md. Prior attempt PR #252 merged to main is superseded (execute-plans routine FE work merges to dev per AGENTS.md, not main as INDEX.md states); needs human merge (AI cannot self-merge execute-plans PRs). Integration-gate CI running at handoff time.",
+      "status": "done",
+      "created_at": "2026-07-11T12:55:11Z",
+      "resolved_at": "2026-07-11T13:42:34Z"
+    },
+    {
+      "task_id": "MGMT-OPS-003-GAP-001",
+      "from": "Antigravity",
+      "to": "Claude",
+      "message": "Review approved; returning to owner for final merge and closeout",
+      "status": "done",
+      "created_at": "2026-07-11T13:42:34Z",
+      "resolved_at": "2026-07-11T15:36:35Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "MGMT-OPS-003-GAP-001",
+      "owner": "Codex",
+      "waiting_for": "Human/Ops",
+      "message": "execute-plans shared checkout is on task/MGMT-OPS-011 with uncommitted files (.lovable/audits/hosted-browser-bff-probe-2026-07-08.md, docs/04/, playwright-report/, test-results/); per task isolation rules cannot stash, switch branch, or modify until that lane is clean/finalized or a clean task worktree is provided.",
+      "status": "resolved",
+      "created_at": "2026-07-11T11:14:30Z",
+      "resolved_at": "2026-07-11T12:16:51Z",
+      "resolution_ref": "chair_reassignment:MGMT-OPS-003-GAP-001"
+    }
+  ]
+}

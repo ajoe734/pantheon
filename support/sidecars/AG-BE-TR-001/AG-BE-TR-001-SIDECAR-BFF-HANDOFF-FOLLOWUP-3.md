@@ -115,7 +115,7 @@ spec_version: "1.0";
 
 **2. `suggested_size` shape is different**
 
-Packet 2 used `{ value: number; unit: string; non_binding: true }`.  
+Packet 2 used `{ value: number; unit: string; non_binding: true }`.
 The schema (`"additionalProperties": false`) defines:
 
 ```ts
@@ -136,7 +136,7 @@ order-size inputs.
 
 **3. `confidence.calibration_state` enum is different**
 
-Packet 2 used `"calibrated" | "uncalibrated" | "degraded"`.  
+Packet 2 used `"calibrated" | "uncalibrated" | "degraded"`.
 The schema enum is:
 ```ts
 calibration_state: "calibrated" | "partially_calibrated" | "uncalibrated";
@@ -146,7 +146,7 @@ means the model has some calibration evidence but not a full calibration set.
 
 **4. `invalidation.current_state` enum is different**
 
-Packet 2 used `"none" | "watch" | "invalidated"`.  
+Packet 2 used `"none" | "watch" | "invalidated"`.
 The schema enum is:
 ```ts
 current_state: "valid" | "watch" | "invalidated";

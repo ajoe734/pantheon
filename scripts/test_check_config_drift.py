@@ -5,6 +5,7 @@ import types
 from pathlib import Path
 
 from check_config_drift import (
+    DEFAULT_INTENTIONAL_OVERRIDES,
     find_drift,
     get_dotted,
     set_dotted,
@@ -32,10 +33,90 @@ def test_find_drift_allowlisted_override_is_not_drift() -> None:
     assert report["intentional"][0]["path"] == "coordination.enabled"
 
 
+def test_coordination_disable_is_actionable_with_default_overrides() -> None:
+    repo = {"coordination": {"enabled": True}}
+    live = {"coordination": {"enabled": False}}
+
+    report = find_drift(
+        repo,
+        live,
+        critical_flags=("coordination.enabled",),
+        overrides=DEFAULT_INTENTIONAL_OVERRIDES,
+    )
+
+    assert report["intentional"] == []
+    assert report["drift"] == [
+        {"path": "coordination.enabled", "repo": True, "live": False}
+    ]
+
+
+def test_progress_lease_policy_drift_is_actionable_by_default() -> None:
+    repo = {
+        "supervisor": {
+            "observe_worker_commit_progress": True,
+            "lease_requires_work_progress": True,
+        },
+        "worker_runtime": {
+            "worker_lease_seconds": 600,
+            "work_progress_stale_seconds": 360,
+        },
+    }
+    live = {
+        "supervisor": {
+            "observe_worker_commit_progress": False,
+            "lease_requires_work_progress": False,
+        },
+        "worker_runtime": {
+            "worker_lease_seconds": 1800,
+            "work_progress_stale_seconds": 900,
+        },
+    }
+
+    report = find_drift(repo, live)
+
+    assert report["intentional"] == []
+    assert {item["path"] for item in report["drift"]} == {
+        "supervisor.observe_worker_commit_progress",
+        "supervisor.lease_requires_work_progress",
+        "worker_runtime.worker_lease_seconds",
+        "worker_runtime.work_progress_stale_seconds",
+    }
+
+
+def test_task_state_shadow_mode_drift_is_actionable_by_default() -> None:
+    report = find_drift(
+        {"task_state_store": {"mode": "shadow"}},
+        {"task_state_store": {"mode": "off"}},
+    )
+
+    assert report["intentional"] == []
+    assert report["drift"] == [
+        {"path": "task_state_store.mode", "repo": "shadow", "live": "off"}
+    ]
+
+
 def test_find_drift_missing_flag_is_reported_not_drift() -> None:
     report = find_drift({}, {}, critical_flags=("ready_dispatcher.enabled",), overrides=frozenset())
     assert report["drift"] == []
     assert report["missing"][0]["path"] == "ready_dispatcher.enabled"
+
+
+def test_find_drift_repo_owned_flag_missing_from_live_is_actionable() -> None:
+    report = find_drift(
+        {"ready_dispatcher": {"max_concurrent_per_account": {"codex1": 4}}},
+        {"ready_dispatcher": {}},
+        critical_flags=("ready_dispatcher.max_concurrent_per_account",),
+        overrides=frozenset(),
+    )
+
+    assert report["missing"] == []
+    assert report["drift"] == [
+        {
+            "path": "ready_dispatcher.max_concurrent_per_account",
+            "repo": {"codex1": 4},
+            "live": None,
+        }
+    ]
 
 
 def test_find_drift_equal_values_are_clean() -> None:
@@ -78,6 +159,30 @@ def test_main_fix_aligns_drift(tmp_path: Path) -> None:
     rc = main(["--repo-config", str(repo), "--live-config", str(live), "--fix"])
     assert rc == 0
     assert json.loads(live.read_text())["chair_review"]["enabled"] is True
+
+
+def test_main_fix_adds_repo_owned_flag_missing_from_live(tmp_path: Path) -> None:
+    repo = tmp_path / "repo.json"
+    live = tmp_path / "live.json"
+    repo.write_text(
+        json.dumps({"ready_dispatcher": {"max_concurrent_per_account": {"codex1": 4}}})
+    )
+    live.write_text(json.dumps({"ready_dispatcher": {}}))
+
+    rc = main(
+        [
+            "--repo-config",
+            str(repo),
+            "--live-config",
+            str(live),
+            "--fix",
+        ]
+    )
+
+    assert rc == 0
+    assert json.loads(live.read_text())["ready_dispatcher"][
+        "max_concurrent_per_account"
+    ] == {"codex1": 4}
 
 
 def test_main_behind_fails_only_when_threshold_exceeded(tmp_path: Path, monkeypatch) -> None:

@@ -10,6 +10,8 @@ from typing import Any, Optional
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from services.external_egress import guard_external_url
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -78,7 +80,7 @@ class CoinGeckoClient:
         if elapsed < self.rate_limit_delay:
             time.sleep(self.rate_limit_delay - elapsed)
 
-        request = Request(url, headers=headers or {})
+        request = Request(guard_external_url(url, caller="research.coingecko_client"), headers=headers or {})
         self._last_request_time = time.time()
         with urlopen(request, timeout=15) as response:
             return json.loads(response.read().decode("utf-8"))

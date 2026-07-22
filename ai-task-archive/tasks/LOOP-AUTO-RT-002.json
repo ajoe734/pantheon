@@ -1,0 +1,135 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-RT-002",
+  "archived_at": "2026-07-01T06:54:06Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-RT-002",
+    "title": "Implement managed paper runtime fleet reconciler",
+    "summary_zh": "實作 active paper RuntimeBinding 到 exactly-one supervised worker 的 fleet reconciler。",
+    "phase": "Global Loop Autopilot / Wave 2 Runtime Fleet",
+    "owner": "Codex",
+    "reviewer": "Claude2",
+    "status": "done",
+    "depends_on": [
+      "LOOP-AUTO-RT-001"
+    ],
+    "artifacts": [
+      "services/execution",
+      "services/runtime-manager",
+      "docker-compose.yml",
+      "docs/deployment/evidence"
+    ],
+    "acceptance": [
+      "Stack restart recreates workers for all active paper bindings",
+      "Killing one worker restarts only that worker",
+      "Paused or retired binding stops its worker"
+    ],
+    "next": "Owner finalized merged PR #2418 for managed paper runtime fleet reconciler; focused pytest re-run passed 34/34 and task state repaired from stale dispatch.",
+    "last_update": "2026-07-01T06:54:06Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+    "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+    "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+    "proof_required": [
+      "unit tests",
+      "contract tests",
+      "local service smoke",
+      "restart or replay evidence when worker or runtime behavior changes"
+    ],
+    "non_goals": [
+      "No live-capital execution",
+      "No approval gate bypass",
+      "No panel-only closure",
+      "No seed fixture as live proof"
+    ],
+    "dispatch_rules": [
+      "idempotent duplicate ticks and duplicate events",
+      "operator-visible truth projection required",
+      "maturity cannot rise above collected evidence",
+      "repo workflow closure required before done"
+    ],
+    "loop_ids": [
+      "capital_pool_execution"
+    ],
+    "current_maturity": "manual",
+    "target_maturity": "reconciled",
+    "desired_state_sources": [
+      "active RuntimeBinding"
+    ],
+    "actual_state_sources": [
+      "managed worker processes",
+      "runtime heartbeat"
+    ],
+    "wave_id": "Wave 2 Runtime Fleet",
+    "mutates_canonical": true,
+    "review_file": "docs/deployment/evidence/loop-auto-rt-002-review.md",
+    "review_notes_zh": [
+      "PR #2418 merged existing LOOP-AUTO-RT-002 implementation into dev; reviewer artifact docs/deployment/evidence/loop-auto-rt-002-review.md records Approved with 34/34 focused tests passing.",
+      "2026-07-01 owner-side recovery re-ran python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler.py -v: 34 passed in 24.09s."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-01T06:54:06Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-rt-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOOP-AUTO-RT-002",
+      "git_clean_required": false,
+      "commit": "6cec7612ff444f0e40e724e55b77731f223c109e",
+      "commit_subject": "Merge dev into task/LOOP-AUTO-RT-002 to update for PR",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LOOP-AUTO-RT-002",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "4ba705985b89beb803205799cff433c575b8aa9d",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-RT-002",
+      "from": "Gemini",
+      "to": "Claude2",
+      "message": "Auto-reassigned LOOP-AUTO-RT-002 away from unavailable lane Gemini (disabled, sidecar-only, or auth-down); owner Gemini -> Claude2.",
+      "status": "done",
+      "created_at": "2026-07-01T06:06:26Z",
+      "resolved_at": "2026-07-01T06:45:42Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-RT-002",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Claude2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-07-01T06:45:40Z",
+      "resolved_at": "2026-07-01T06:47:43Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-RT-002",
+      "from": "Claude2",
+      "to": "Codex",
+      "message": "Recovered review_approved state from merged PR #2418 and approved review artifact after supervisor dispatch downgraded the task.",
+      "status": "done",
+      "created_at": "2026-07-01T06:53:43Z",
+      "resolved_at": "2026-07-01T06:54:09Z"
+    }
+  ],
+  "blockers": []
+}

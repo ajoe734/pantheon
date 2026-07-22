@@ -25,6 +25,7 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 _ADAPTER_DIR = str(Path(__file__).resolve().parent)
 if _ADAPTER_DIR not in sys.path:
@@ -111,6 +112,175 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
             _run_func=run_func,
         )
 
+    def test_gateway_cron_call_shells_out_and_parses(self) -> None:
+        captured: list[list[str]] = []
+
+        def fake_run(cmd, **_kw):
+            captured.append(list(cmd))
+            class R:
+                returncode = 0
+                stdout = 'banner line\n{"id": "job-1", "name": "n"}'
+                stderr = ""
+            return R()
+
+        provider = self._make_provider(run_func=fake_run)
+        out = provider.gateway_cron_call("cron.add", {"name": "n"})
+        self.assertEqual(out, {"id": "job-1", "name": "n"})
+        cmd = captured[0]
+        self.assertEqual(cmd[1:4], ["gateway", "call", "cron.add"])
+        self.assertIn("--url", cmd)
+        self.assertIn("--token", cmd)
+        self.assertIn("--params", cmd)
+
+    def test_gateway_agents_list_reads_only_the_live_registry(self) -> None:
+        captured: list[list[str]] = []
+
+        def fake_run(cmd, **_kw):
+            captured.append(list(cmd))
+
+            class R:
+                returncode = 0
+                stdout = '{"agents":[{"id":"main"},{"id":"persona-opinion-a"}]}'
+                stderr = ""
+
+            return R()
+
+        provider = self._make_provider(run_func=fake_run)
+
+        self.assertEqual(
+            provider.gateway_agents_list(),
+            [{"id": "main"}, {"id": "persona-opinion-a"}],
+        )
+        self.assertEqual(captured[0][1:4], ["gateway", "call", "agents.list"])
+        self.assertNotIn("--params", captured[0])
+
+    def test_gateway_agents_list_rejects_invalid_live_payload(self) -> None:
+        def fake_run(_cmd, **_kw):
+            class R:
+                returncode = 0
+                stdout = '{"agents":"not-a-list"}'
+                stderr = ""
+
+            return R()
+
+        provider = self._make_provider(run_func=fake_run)
+        with self.assertRaises(OpenClawProviderError) as ctx:
+            provider.gateway_agents_list()
+        self.assertEqual(ctx.exception.error_code, "OPENCLAW_GATEWAY_SERIALIZATION_FAILURE")
+
+    def test_gateway_agents_list_caps_subprocess_to_remaining_budget(self) -> None:
+        captured = {}
+
+        def fake_run(cmd, **kwargs):
+            captured["cmd"] = list(cmd)
+            captured["timeout"] = kwargs["timeout"]
+
+            class R:
+                returncode = 0
+                stdout = '{"agents":[]}'
+                stderr = ""
+
+            return R()
+
+        provider = self._make_provider(run_func=fake_run)
+        provider.gateway_agents_list(timeout_seconds=0.75)
+
+        self.assertEqual(captured["timeout"], 0.75)
+        timeout_index = captured["cmd"].index("--timeout") + 1
+        self.assertGreater(int(captured["cmd"][timeout_index]), 750)
+
+    def test_gateway_agents_list_maps_blocked_probe_timeout(self) -> None:
+        def blocked(_cmd, **kwargs):
+            raise subprocess.TimeoutExpired(cmd="openclaw gateway call agents.list", timeout=kwargs["timeout"])
+
+        provider = self._make_provider(run_func=blocked)
+        with self.assertRaises(OpenClawProviderError) as ctx:
+            provider.gateway_agents_list(timeout_seconds=0.25)
+
+        self.assertEqual(ctx.exception.status_code, 504)
+        self.assertEqual(ctx.exception.error_code, "OPENCLAW_GATEWAY_TIMEOUT")
+
+    def test_gateway_cron_update_forwards_command_and_params_unchanged(self) -> None:
+        captured: list[list[str]] = []
+
+        def fake_run(cmd, **_kw):
+            captured.append(list(cmd))
+
+            class R:
+                returncode = 0
+                stdout = '{"id":"job-1","updated":true}'
+                stderr = ""
+
+            return R()
+
+        params = {
+            "id": "job-1",
+            "patch": {
+                "enabled": False,
+                "payload": {
+                    "kind": "systemEvent",
+                    "text": '{"persona_id":"persona-1","workflow_id":"pantheon.review"}',
+                },
+                "schedule": {"kind": "cron", "expr": "*/30 * * * *"},
+            },
+        }
+        original_params = json.loads(json.dumps(params))
+        provider = self._make_provider(run_func=fake_run)
+
+        out = provider.gateway_cron_call("cron.update", params)
+
+        self.assertEqual(out, {"id": "job-1", "updated": True})
+        self.assertEqual(params, original_params, "provider must not mutate caller params")
+        cmd = captured[0]
+        self.assertEqual(cmd[1:4], ["gateway", "call", "cron.update"])
+        params_index = cmd.index("--params") + 1
+        self.assertEqual(json.loads(cmd[params_index]), original_params)
+
+    def test_gateway_cron_call_parses_banner_prefixed_pretty_json(self) -> None:
+        """Banner/doctor noise + pretty-printed multi-line JSON must still parse."""
+        noisy = (
+            "[state-migrations] Legacy state migration warnings:\n"
+            "- Left migrated task registry sidecar in place\n"
+            "│  Doctor warnings box  │\n"
+            '{\n  "jobs": [],\n  "total": 0,\n  "hasMore": false\n}\n'
+        )
+
+        def fake_run(cmd, **_kw):
+            class R:
+                returncode = 0
+                stdout = noisy
+                stderr = ""
+            return R()
+
+        provider = self._make_provider(run_func=fake_run)
+        out = provider.gateway_cron_call("cron.list", {"limit": 5})
+        self.assertEqual(out.get("total"), 0)
+        self.assertEqual(out.get("jobs"), [])
+
+    def test_extract_gateway_json_wraps_top_level_array(self) -> None:
+        out = AssistantOpenClawProvider._extract_gateway_json('noise\n[{"id": "main"}]')
+        self.assertEqual(out, {"result": [{"id": "main"}]})
+
+    def test_gateway_cron_call_rejects_non_cron_method(self) -> None:
+        provider = self._make_provider(run_func=lambda *a, **k: None)
+        with self.assertRaises(OpenClawProviderError) as ctx:
+            provider.gateway_cron_call("agent.invoke", {})
+        self.assertEqual(ctx.exception.error_code, "OPENCLAW_GATEWAY_METHOD_FORBIDDEN")
+
+    def test_gateway_cron_call_rejects_unknown_cron_method(self) -> None:
+        calls: list[list[str]] = []
+
+        def fake_run(cmd, **_kw):
+            calls.append(list(cmd))
+            raise AssertionError("forbidden methods must not reach the subprocess")
+
+        provider = self._make_provider(run_func=fake_run)
+        with self.assertRaises(OpenClawProviderError) as ctx:
+            provider.gateway_cron_call("cron.unknown", {"id": "job-1"})
+        self.assertEqual(ctx.exception.error_code, "OPENCLAW_GATEWAY_METHOD_FORBIDDEN")
+        self.assertEqual(ctx.exception.status_code, 403)
+        self.assertEqual(calls, [])
+
     def test_readiness_no_binary_auth_probe(self) -> None:
         """auth_probe=True checks binary existence and returns degraded if missing."""
         provider = AssistantOpenClawProvider(
@@ -171,9 +341,41 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertEqual(events[0]["item"]["text"], reply)
         self.assertEqual(result.output["transport"], "cli")
 
+    def test_invoke_selects_validated_per_request_agent_and_reports_it(self) -> None:
+        captured: list[list[str]] = []
+
+        def fake_run(cmd, **_kw):
+            captured.append(list(cmd))
+            class R:
+                returncode = 0
+                stdout = TestAssistantOpenClawProviderUnit._agent_json("persona result")
+                stderr = ""
+            return R()
+
+        provider = self._make_provider(run_func=fake_run)
+        result = provider.invoke(
+            "Return opinion JSON",
+            agent_id="persona-opinion-0123456789abcdef01234567",
+            session_id="fresh-persona-session-1",
+            operator_id="op-1",
+        )
+
+        cmd = captured[0]
+        self.assertEqual(
+            cmd[cmd.index("--agent") + 1],
+            "persona-opinion-0123456789abcdef01234567",
+        )
+        self.assertEqual(cmd[cmd.index("--session-id") + 1], "fresh-persona-session-1")
+        self.assertEqual(
+            result.output["agent_id"],
+            "persona-opinion-0123456789abcdef01234567",
+        )
+
     def test_invoke_cli_args_and_env(self) -> None:
-        """CLI gets `agent --agent --message --json` (no --url/--token); the ws
-        URL + token are supplied via the subprocess env the CLI reads."""
+        """CLI gets `agent --agent --message <prompt> --json` (no --url/--token);
+        the prompt travels as the argv `--message` VALUE (the CLI has no stdin
+        mode — `--message -` is taken literally and yields HEARTBEAT_OK), and the
+        ws URL + token are supplied via the subprocess env the CLI reads."""
         captured: list[list[str]] = []
         captured_env: list[dict] = []
         captured_input: list = []
@@ -188,21 +390,27 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
                 stderr = ""
             return R()
 
-        big_prompt = "test " + ("x" * 200_000)  # would overflow a single argv
+        prompt = "Reply with exactly: OPENCLAW_LIVE"
         provider = self._make_provider(run_func=fake_run)
-        provider.invoke(big_prompt, operator_id="op-1")
+        with patch.dict(
+            os.environ,
+            {"PANTHEON_OPENCLAW_GATEWAY_STATE_DIR": "/home/node/.openclaw"},
+            clear=False,
+        ):
+            provider.invoke(prompt, operator_id="op-1")
         self.assertTrue(captured, "subprocess.run was never called")
         cmd = captured[0]
         self.assertIn("agent", cmd)
         self.assertIn("--agent", cmd)
         self.assertIn("main", cmd)
-        self.assertIn("--message", cmd)
         self.assertIn("--json", cmd)
-        # The prompt is fed via stdin (`--message -`), never as an argv string
-        # (a large prompt as argv overflows MAX_ARG_STRLEN -> "Argument list too long").
-        self.assertIn("-", cmd)
-        self.assertNotIn(big_prompt, cmd)
-        self.assertEqual(captured_input[0], big_prompt)
+        # The prompt is the argv value immediately after --message, NOT stdin
+        # and NOT a literal "-".
+        self.assertIn("--message", cmd)
+        self.assertEqual(cmd[cmd.index("--message") + 1], prompt)
+        self.assertNotEqual(cmd[cmd.index("--message") + 1], "-")
+        # No stdin is fed (the CLI does not read it).
+        self.assertIsNone(captured_input[0])
         # The agent subcommand does NOT accept --url/--token.
         self.assertNotIn("--url", cmd)
         self.assertNotIn("--token", cmd)
@@ -210,6 +418,28 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         env = captured_env[0]
         self.assertEqual(env.get("OPENCLAW_GATEWAY_URL"), "ws://openclaw-gateway:18789")
         self.assertEqual(env.get("OPENCLAW_GATEWAY_TOKEN"), "test-token")
+        self.assertEqual(env.get("OPENCLAW_STATE_DIR"), "/home/node/.openclaw")
+        self.assertEqual(env.get("HOME"), "/home/node")
+
+    def test_invoke_oversized_prompt_fails_loudly(self) -> None:
+        """A prompt beyond the argv byte budget raises OPENCLAW_PROMPT_TOO_LARGE
+        instead of silently overflowing MAX_ARG_STRLEN or dropping the prompt."""
+        calls: list = []
+
+        def fake_run(cmd, **kw):
+            calls.append(cmd)
+            class R:
+                returncode = 0
+                stdout = TestAssistantOpenClawProviderUnit._agent_json("response")
+                stderr = ""
+            return R()
+
+        big_prompt = "x" * (96 * 1024 + 1)
+        provider = self._make_provider(run_func=fake_run)
+        with self.assertRaises(OpenClawProviderError) as ctx:
+            provider.invoke(big_prompt, operator_id="op-1")
+        self.assertEqual(ctx.exception.error_code, "OPENCLAW_PROMPT_TOO_LARGE")
+        self.assertFalse(calls, "subprocess must not run for an oversized prompt")
 
     def test_invoke_non_zero_exit_raises(self) -> None:
         def fake_run(cmd, **_kw):

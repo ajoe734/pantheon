@@ -1978,7 +1978,7 @@ def upsert_materialized_task(
     return "updated"
 
 
-def command_materialize(session: dict[str, Any], _args: list[str]) -> None:
+def _command_materialize_locked(session: dict[str, Any], _args: list[str]) -> None:
     derived = build_derived_state(session)
     if not document_reconciliation_complete(derived):
         raise SystemExit("Document reconciliation must be completed or marked not_needed before materializing tasks.")
@@ -2031,6 +2031,13 @@ def command_materialize(session: dict[str, Any], _args: list[str]) -> None:
     save_session(session)
     save_derived_state(derived)
     ai_status.sync_all(state)
+
+
+def command_materialize(session: dict[str, Any], args: list[str]) -> None:
+    # Planning state has its own lock, but canonical task RMW must additionally
+    # share the never-replaced task-state sidecar with workers and dispatchers.
+    with ai_status.canonical_task_state_lock(shared=False, nonblocking=False):
+        _command_materialize_locked(session, args)
 
 
 def main(argv: list[str]) -> int:

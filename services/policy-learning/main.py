@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json as _json
 import os
 import urllib.request
@@ -12,6 +13,8 @@ from pydantic import BaseModel, Field
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
 from store import PolicyLearningStore, build_policy_learning_store
+from services.research.imitation.bc_trainer import train as train_bc
+from services.research.imitation.eval_metrics import evaluate as evaluate_policy
 
 
 PRODUCTION_ADAPTERS = {"openclaw", "qlib", "trl", "finrl", "rllib", "ray_tune", "wandb"}
@@ -165,6 +168,15 @@ class RejectBody(BaseModel):
     rejected_at: Optional[str] = None
 
 
+class ShadowEvalTickBody(BaseModel):
+    tick_id: Optional[str] = None
+    eval_type: str = "shadow"
+    dataset_refs: List[Dict[str, Any]] = Field(default_factory=list)
+    max_datasets: Optional[int] = None
+    actor_id: str = "scheduler"
+    ticked_at: Optional[str] = None
+
+
 def _proposal_text(body: ProposalBody) -> str:
     parts = [body.adapter, body.requested_mode, body.objective]
     parts.extend(str(ref.get("type") or "") for ref in body.source_refs)
@@ -238,7 +250,7 @@ def capabilities() -> Dict[str, Any]:
 
 
 @app.get("/api/policy-learning/jobs")
-def list_jobs(status: Optional[str] = Query(default=None), policy_id: Optional[str] = Query(default=None)) -> List[Dict[str, Any]]:
+def list_jobs(status: Optional[str] = None, policy_id: Optional[str] = None) -> List[Dict[str, Any]]:
     jobs = store.list_jobs()
     if status:
         jobs = [job for job in jobs if str(job.get("status") or "").lower() == status.lower()]
@@ -396,3 +408,443 @@ def reject_job(job_id: str, body: RejectBody) -> Dict[str, Any]:
     job["rejection"] = {"reason": body.reason, "rejected_at": timestamp, "rejected_by": body.actor_id}
     job["events"] = events
     return store.put_job(job)
+
+
+def discover_eligible_datasets() -> List[Dict[str, Any]]:
+    backend = os.getenv("POLICY_LEARNING_STORE_BACKEND", "json").strip().lower()
+    if backend == "postgres":
+        dsn = os.getenv("POLICY_LEARNING_STORE_DSN") or os.getenv("DATABASE_URL")
+        if dsn:
+            try:
+                import psycopg  # type: ignore[import]
+                with psycopg.connect(dsn) as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "SELECT DISTINCT persona_id, COALESCE(session_id, 'default') "
+                            "FROM agora.agora_dataset_records "
+                            "WHERE learning_eligible = true"
+                        )
+                        rows = cur.fetchall()
+                        if rows:
+                            return [
+                                {
+                                    "id": f"ds-trace-{row[0]}-{row[1]}",
+                                    "type": "trace_dataset",
+                                    "source": "agora_interaction",
+                                    "persona_id": row[0],
+                                    "session_id": None if row[1] == "default" else row[1]
+                                }
+                                for row in rows
+                            ]
+            except Exception:
+                pass
+    return []
+
+
+SEED_DATASET = {
+    "dataset_id": "traj-smoke-2026-05-16",
+    "strategy_id": "alpha-mean-reversion",
+    "source_dataset_refs": ["dataset://feedback/approved/2026-05-16"],
+    "source_strategy_spec_id": "strat-alpha-mean-reversion-v2",
+    "sessions": [
+        {
+            "trajectory_id": "traj-001",
+            "actor_id": "trader-01",
+            "actor_role": "operator",
+            "decision": "approve",
+            "target": {
+                "registry_id": "reg-alpha-1",
+                "strategy_id": "alpha-mean-reversion",
+                "artifact_version": "1.2.0",
+                "artifact_type": "strategy_spec",
+                "promotion_state": "candidate",
+            },
+            "steps": [
+                {"observation": [0.9, 0.1, -0.2], "action": "buy_small", "reward": 0.3, "feedback_event_id": "evt-001"},
+                {"observation": [0.8, 0.2, -0.1], "action": "buy_small", "reward": 0.2, "feedback_event_id": "evt-002"},
+            ],
+        },
+        {
+            "trajectory_id": "traj-002",
+            "actor_id": "trader-02",
+            "actor_role": "approver",
+            "decision": "edit",
+            "target": {
+                "registry_id": "reg-alpha-1",
+                "strategy_id": "alpha-mean-reversion",
+                "artifact_version": "1.2.0",
+                "artifact_type": "strategy_spec",
+                "promotion_state": "paper",
+            },
+            "steps": [
+                {"observation": [-0.85, -0.2, 0.55], "action": "reduce_risk", "reward": 0.15, "feedback_event_id": "evt-003"},
+            ],
+        },
+    ],
+}
+
+
+def _get_dataset_payload(dataset_id: str) -> Dict[str, Any]:
+    backend = os.getenv("POLICY_LEARNING_STORE_BACKEND", "json").strip().lower()
+    if backend == "postgres" and dataset_id.startswith("ds-trace-"):
+        dsn = os.getenv("POLICY_LEARNING_STORE_DSN") or os.getenv("DATABASE_URL")
+        if dsn:
+            try:
+                import psycopg
+                with psycopg.connect(dsn) as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "SELECT persona_id, COALESCE(session_id, 'default'), content, source_refs, evidence_id "
+                            "FROM agora.agora_dataset_records "
+                            "WHERE learning_eligible = true"
+                        )
+                        rows = cur.fetchall()
+                        
+                        sessions = []
+                        source_dataset_refs = []
+                        strategy_id = None
+                        source_strategy_spec_id = None
+                        
+                        for row in rows:
+                            row_persona_id, row_session_id, content, source_refs, evidence_id = row
+                            expected_id = f"ds-trace-{row_persona_id}-{row_session_id}"
+                            if expected_id == dataset_id:
+                                source_dataset_refs.append(f"evidence://{evidence_id}")
+                                if source_refs:
+                                    if isinstance(source_refs, list):
+                                        source_dataset_refs.extend(source_refs)
+                                    elif isinstance(source_refs, str):
+                                        try:
+                                            parsed_refs = _json.loads(source_refs)
+                                            if isinstance(parsed_refs, list):
+                                                source_dataset_refs.extend(parsed_refs)
+                                        except Exception:
+                                            source_dataset_refs.append(source_refs)
+                                
+                                if isinstance(content, str):
+                                    try:
+                                        content = _json.loads(content)
+                                    except Exception:
+                                        continue
+                                
+                                if not isinstance(content, dict):
+                                    continue
+                                
+                                if "sessions" in content and isinstance(content["sessions"], list):
+                                    for s in content["sessions"]:
+                                        if isinstance(s, dict) and "steps" in s:
+                                            sessions.append(s)
+                                    if "strategy_id" in content:
+                                        strategy_id = content["strategy_id"]
+                                    if "source_strategy_spec_id" in content:
+                                        source_strategy_spec_id = content["source_strategy_spec_id"]
+                                else:
+                                    steps = content.get("steps")
+                                    if steps and isinstance(steps, list):
+                                        session_data = {
+                                            "trajectory_id": content.get("trajectory_id") or f"traj-{evidence_id}",
+                                            "actor_id": content.get("actor_id") or "default-actor",
+                                            "actor_role": content.get("actor_role") or "operator",
+                                            "decision": content.get("decision") or "approve",
+                                            "target": content.get("target") or {
+                                                "registry_id": "default",
+                                                "strategy_id": "default",
+                                                "artifact_version": "1.0.0",
+                                                "artifact_type": "strategy_spec",
+                                                "promotion_state": "candidate"
+                                            },
+                                            "steps": steps
+                                        }
+                                        sessions.append(session_data)
+                                        if "strategy_id" in content:
+                                            strategy_id = content["strategy_id"]
+                                        if "source_strategy_spec_id" in content:
+                                            source_strategy_spec_id = content["source_strategy_spec_id"]
+                                    elif "observation" in content and "action" in content:
+                                        session_data = {
+                                            "trajectory_id": f"traj-{evidence_id}",
+                                            "actor_id": content.get("actor_id") or "default-actor",
+                                            "actor_role": content.get("actor_role") or "operator",
+                                            "decision": content.get("decision") or "approve",
+                                            "target": content.get("target") or {
+                                                "registry_id": "default",
+                                                "strategy_id": "default",
+                                                "artifact_version": "1.0.0",
+                                                "artifact_type": "strategy_spec",
+                                                "promotion_state": "candidate"
+                                            },
+                                            "steps": [{
+                                                "observation": content["observation"],
+                                                "action": content["action"],
+                                                "reward": content.get("reward") or 0.0,
+                                                "feedback_event_id": evidence_id
+                                            }]
+                                        }
+                                        sessions.append(session_data)
+                                        if "strategy_id" in content:
+                                            strategy_id = content["strategy_id"]
+                                        if "source_strategy_spec_id" in content:
+                                            source_strategy_spec_id = content["source_strategy_spec_id"]
+                        
+                        if sessions:
+                            return {
+                                "dataset_id": dataset_id,
+                                "strategy_id": strategy_id or "alpha-mean-reversion",
+                                "source_dataset_refs": sorted(list(set(source_dataset_refs))),
+                                "source_strategy_spec_id": source_strategy_spec_id or "strat-alpha-mean-reversion-v2",
+                                "sessions": sessions
+                            }
+            except Exception as exc:
+                import logging
+                logging.getLogger("policy-learning").warning("Failed to load dataset content from postgres: %s", exc)
+
+    payload = copy.deepcopy(SEED_DATASET)
+    payload["dataset_id"] = dataset_id
+    return payload
+
+
+def _process_backlog() -> int:
+    import math
+    processed_count = 0
+    candidates = store.list_candidates()
+    for candidate in candidates:
+        if candidate.get("status") != "proposed":
+            continue
+        candidate_id = candidate["candidate_id"]
+        dataset_ref = candidate.get("dataset_ref") or {}
+        dataset_id = str(dataset_ref.get("id") or dataset_ref.get("dataset_id") or "ds-default")
+        
+        try:
+            # 1. Fetch or generate the dataset payload in IMT-003 format.
+            dataset_payload = _get_dataset_payload(dataset_id)
+            
+            # 2. Run bc_trainer.train(dataset_payload) to get behavior_policy_artifact.
+            bp_artifact = train_bc(dataset_payload)
+            
+            # 3. Pre-compute linear softmax probabilities for each step in dataset_payload and add to bp_artifact
+            policy_data = bp_artifact.get("policy", {})
+            weights = policy_data.get("weights", [])
+            bias = policy_data.get("bias", [])
+            action_labels = policy_data.get("action_labels", [])
+            
+            probs_by_step = {}
+            for session in dataset_payload.get("sessions", []):
+                traj_id = session.get("trajectory_id", "default")
+                for step_idx, step in enumerate(session.get("steps", [])):
+                    obs = step.get("observation", [])
+                    step_id = step.get("step_id")
+                    feedback_id = step.get("feedback_event_id")
+                    
+                    # Compute softmax probabilities
+                    logits = []
+                    for w, b in zip(weights, bias):
+                        logit = sum(wi * xi for wi, xi in zip(w, obs)) + b
+                        logits.append(logit)
+                    max_logit = max(logits)
+                    exp_logits = [math.exp(l - max_logit) for l in logits]
+                    sum_exp = sum(exp_logits)
+                    probs = [e / sum_exp for e in exp_logits]
+                    
+                    probs_map = {label: prob for label, prob in zip(action_labels, probs)}
+                    if step_id:
+                        probs_by_step[step_id] = probs_map
+                    if feedback_id:
+                        probs_by_step[feedback_id] = probs_map
+                    probs_by_step[f"{traj_id}:{step_idx}"] = probs_map
+                    probs_by_step[f"{traj_id}:step{step_idx}"] = probs_map
+
+            policy_data["probabilities_by_step"] = probs_by_step
+            
+            # 4. Run eval_metrics.evaluate(behavior_policy_artifact, dataset_payload) to get eval_result.
+            eval_result = evaluate_policy(bp_artifact, dataset_payload)
+            
+            # 5. Update candidate with metrics, lineage, policy weights details
+            candidate["status"] = "processed"
+            candidate["metrics"] = eval_result.get("metrics", {})
+            candidate["evaluation_summary"] = {
+                "action_match_rate": eval_result.get("action_match_rate"),
+                "return_gap": eval_result.get("return_gap"),
+                "kl_divergence": eval_result.get("kl_divergence"),
+                "evaluator_id": eval_result.get("evaluator_id"),
+                "evaluation_timestamp": eval_result.get("evaluation_timestamp"),
+            }
+            candidate["policy_weights"] = bp_artifact.get("policy", {})
+            candidate["lineage"] = bp_artifact.get("lineage", {})
+            candidate["updated_at"] = utc_now()
+            
+        except Exception as exc:
+            candidate["status"] = "failed"
+            candidate["error_message"] = str(exc)
+            candidate["updated_at"] = utc_now()
+            
+        store.put_candidate(candidate)
+        processed_count += 1
+        
+    return processed_count
+
+
+def _next_candidate_id(timestamp: str, existing: set) -> str:
+    prefix = timestamp[:10].replace("-", "")
+    index = len(existing) + 1
+    candidate = f"sic-{prefix}-{index:03d}"
+    while candidate in existing:
+        index += 1
+        candidate = f"sic-{prefix}-{index:03d}"
+    return candidate
+
+
+@app.post("/api/policy-learning/shadow-eval-tick", status_code=201)
+def shadow_eval_tick(body: ShadowEvalTickBody) -> Dict[str, Any]:
+    """Schedule a shadow / imitation evaluation tick over trace datasets.
+
+    Produces gated ShadowImitationCandidate records in proposed state.
+    Production training and artifact mutation remain fail-closed until a
+    separate experiment approval gate is explicitly activated.
+    """
+    timestamp = body.ticked_at or utc_now()
+    tick_id = body.tick_id or f"shadow-tick-{timestamp[:10].replace('-', '')}"
+    eval_type = body.eval_type.strip().lower() if body.eval_type else "shadow"
+
+    existing_candidates = store.list_candidates()
+    already_seen = {
+        str((c.get("dataset_ref") or {}).get("id") or (c.get("dataset_ref") or {}).get("dataset_id") or "")
+        for c in existing_candidates
+        if c.get("tick_id") == tick_id
+    }
+
+    dataset_refs = body.dataset_refs
+    if not dataset_refs:
+        dataset_refs = discover_eligible_datasets()
+
+    if body.max_datasets is not None and len(dataset_refs) > body.max_datasets:
+        dataset_refs = dataset_refs[: body.max_datasets]
+
+    existing_ids = {str(c.get("candidate_id") or "") for c in existing_candidates}
+    created_ids: List[str] = []
+    skipped_ids: List[str] = []
+
+    for ref in dataset_refs:
+        ref_id = str(ref.get("id") or ref.get("dataset_id") or "")
+        if ref_id and ref_id in already_seen:
+            skipped_ids.append(ref_id)
+            continue
+        candidate_id = _next_candidate_id(timestamp, existing_ids | set(created_ids))
+        candidate = {
+            "id": candidate_id,
+            "candidate_id": candidate_id,
+            "tick_id": tick_id,
+            "eval_type": eval_type,
+            "dataset_ref": ref,
+            "status": "proposed",
+            "production_training": "fail_closed",
+            "experiment_approval_gate": "required",
+            "gate_note": "Candidate requires experiment approval and deployment gate before any production training.",
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "created_by": body.actor_id,
+        }
+        store.put_candidate(candidate)
+        created_ids.append(candidate_id)
+
+    return {
+        "status": "ok",
+        "tick_id": tick_id,
+        "eval_type": eval_type,
+        "candidate_count": len(created_ids),
+        "skipped_count": len(skipped_ids),
+        "skipped_ids": skipped_ids,
+        "candidate_ids": created_ids,
+        "production_training": "fail_closed",
+        "ticked_at": timestamp,
+    }
+
+
+@app.get("/api/policy-learning/candidates")
+def list_candidates(
+    tick_id: Optional[str] = None,
+    eval_type: Optional[str] = None,
+    status: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    candidates = store.list_candidates()
+    if tick_id:
+        candidates = [c for c in candidates if c.get("tick_id") == tick_id]
+    if eval_type:
+        candidates = [c for c in candidates if str(c.get("eval_type") or "").lower() == eval_type.lower()]
+    if status:
+        candidates = [c for c in candidates if str(c.get("status") or "").lower() == status.lower()]
+    return candidates
+
+
+@app.get("/api/policy-learning/candidates/{candidate_id}")
+def get_candidate(candidate_id: str) -> Dict[str, Any]:
+    candidate = store.get_candidate(candidate_id)
+    if not candidate:
+        raise HTTPException(status_code=404, detail="shadow imitation candidate not found")
+    return candidate
+
+
+@app.get("/api/policy-learning/worker/backlog")
+def get_worker_backlog() -> List[Dict[str, Any]]:
+    """Return the list of pending items in the backlog."""
+    return list_candidates(status="proposed")
+
+
+@app.get("/api/policy-learning/worker/dlq")
+def get_worker_dlq() -> List[Dict[str, Any]]:
+    """Return the list of failed items in the DLQ."""
+    return list_candidates(status="failed")
+
+
+@app.post("/api/policy-learning/worker/dlq/{candidate_id}/replay")
+def replay_dlq_item(candidate_id: str) -> Dict[str, Any]:
+    """Reset a failed candidate back to proposed."""
+    candidate = get_candidate(candidate_id)
+    if candidate.get("status") != "failed":
+        raise HTTPException(status_code=400, detail="candidate is not in DLQ")
+    candidate["status"] = "proposed"
+    candidate["updated_at"] = utc_now()
+    candidate.pop("error_message", None)
+    store.put_candidate(candidate)
+    _process_backlog()
+    return store.get_candidate(candidate_id)
+
+
+@app.post("/api/policy-learning/worker/retry/{candidate_id}")
+def retry_candidate(candidate_id: str) -> Dict[str, Any]:
+    """Retry processing a candidate."""
+    candidate = get_candidate(candidate_id)
+    candidate["status"] = "proposed"
+    candidate["updated_at"] = utc_now()
+    candidate.pop("error_message", None)
+    store.put_candidate(candidate)
+    _process_backlog()
+    return store.get_candidate(candidate_id)
+
+
+@app.post("/api/policy-learning/worker/process")
+def trigger_backlog_processing() -> Dict[str, Any]:
+    """Manually trigger backlog processing."""
+    count = _process_backlog()
+    return {"status": "ok", "processed_count": count}
+
+
+@app.post("/api/policy-learning/worker/restart")
+def restart_worker() -> Dict[str, Any]:
+    """Reset all failed and proposed candidates to proposed status."""
+    candidates = store.list_candidates()
+    count = 0
+    for c in candidates:
+        if c.get("status") in ("failed", "proposed"):
+            c["status"] = "proposed"
+            c.pop("error_message", None)
+            c["updated_at"] = utc_now()
+            store.put_candidate(c)
+            count += 1
+    _process_backlog()
+    return {"status": "ok", "reset_count": count}
+
+
+@app.get("/api/policy-learning/worker/readback/{candidate_id}")
+def readback_candidate_target(candidate_id: str) -> Dict[str, Any]:
+    """Target readback for a candidate."""
+    return get_candidate(candidate_id)

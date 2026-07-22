@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import urllib.parse
 import urllib.request
 import urllib.error
@@ -10,6 +11,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
+
+from services.external_egress import guard_external_url
 
 from .connectors import SourceConnector, SourceEvidenceError, SourceRecord
 from .external_sources import validate_external_source_connector, validate_external_source_record
@@ -112,8 +115,8 @@ class JsonlConnectorScheduleStore:
             enabled=enabled,
             updated_at=_utc_now(),
         )
-        self._schedules[connector_id] = config
         self._append("connector_schedule", connector_id, config.to_dict())
+        self._schedules[connector_id] = config
         return config
 
     def get_schedule(self, connector_id: str) -> ConnectorScheduleConfig | None:
@@ -124,6 +127,7 @@ class JsonlConnectorScheduleStore:
 
     def _append(self, record_type: str, record_id: str, payload: Mapping[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        file_preexisted = self.path.exists()
         entry = {
             "schema_version": "connector_schedule_store.v1",
             "record_type": record_type,
@@ -132,6 +136,14 @@ class JsonlConnectorScheduleStore:
         }
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(entry, sort_keys=True, separators=(",", ":")) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        if not file_preexisted:
+            directory_fd = os.open(self.path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
 
 
 def _utc_now() -> str:
@@ -198,11 +210,15 @@ class JsonlConfiguredConnectorStore:
 
     def upsert_config(self, connector: SourceConnector, fetch: Mapping[str, Any]) -> ConfiguredConnector:
         connector = validate_external_source_connector(connector)
-        normalized_fetch = self._validate_fetch_config(fetch)
+        normalized_fetch = self.normalize_fetch_config(fetch)
         config = ConfiguredConnector(connector=connector, fetch=normalized_fetch, updated_at=_utc_now())
-        self._configs[connector.connector_id] = config
         self._append("connector_config", connector.connector_id, config.to_dict())
+        self._configs[connector.connector_id] = config
         return config
+
+    def normalize_fetch_config(self, fetch: Mapping[str, Any]) -> dict[str, Any]:
+        """Return the persisted fetch contract without mutating the store."""
+        return self._validate_fetch_config(fetch)
 
     def get_config(self, connector_id: str) -> ConfiguredConnector | None:
         return self._configs.get(connector_id)
@@ -236,8 +252,8 @@ class JsonlConfiguredConnectorStore:
             state["failed_attempts"] = int(state.get("failed_attempts") or 0) + 1
             state["last_error"] = str(error or "configured connector fetch failed")
         state["updated_at"] = _utc_now()
-        self._states[connector_id] = state
         self._append("connector_fetch_state", connector_id, state)
+        self._states[connector_id] = state
         return dict(state)
 
     def _validate_fetch_config(self, fetch: Mapping[str, Any]) -> dict[str, Any]:
@@ -333,6 +349,7 @@ class JsonlConfiguredConnectorStore:
 
     def _append(self, record_type: str, record_id: str, payload: Mapping[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        file_preexisted = self.path.exists()
         entry = {
             "schema_version": "source_connector_config_store.v1",
             "record_type": record_type,
@@ -341,6 +358,14 @@ class JsonlConfiguredConnectorStore:
         }
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(entry, sort_keys=True, separators=(",", ":")) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        if not file_preexisted:
+            directory_fd = os.open(self.path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
 
 
 class ConfiguredConnectorFetcher:
@@ -441,7 +466,7 @@ class ConfiguredConnectorFetcher:
                 raw = handle.read(max_bytes + 1)
         else:
             request = urllib.request.Request(
-                url,
+                guard_external_url(url, caller="source_ingest.configured_feed"),
                 headers={"Accept": "application/json", "User-Agent": "pantheon-source-ingest/0.1"},
             )
             with urllib.request.urlopen(request, timeout=float(fetch["timeout_seconds"])) as response:
@@ -528,7 +553,7 @@ def _assert_robots_allowed(url: str, allowed_prefixes: list[str], timeout_second
         raise SourceEvidenceError("robots.txt URL is outside allowed_url_prefixes")
     try:
         request = urllib.request.Request(
-            robots_url,
+            guard_external_url(robots_url, caller="source_ingest.configured_robots"),
             headers={"Accept": "text/plain", "User-Agent": "pantheon-source-ingest/0.1"},
         )
         with urllib.request.urlopen(request, timeout=timeout_seconds) as response:

@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
 from urllib.parse import urlencode
 
+from services.external_egress import guard_external_url
+
 from .base import (
     AuthPolicy,
     AuthType,
@@ -131,6 +133,15 @@ def _int(value: Any) -> int:
     if value in (None, "", "-", "--"):
         return 0
     return int(float(str(value).replace(",", "").strip()))
+
+
+def _number(value: Any) -> float | None:
+    if value in (None, "", "-", "--"):
+        return None
+    try:
+        return float(str(value).replace(",", "").strip())
+    except ValueError:
+        return None
 
 
 def _rows_from_payload(payload: Mapping[str, Any] | Sequence[Mapping[str, Any]]) -> tuple[dict[str, Any], ...]:
@@ -270,6 +281,22 @@ class FinMindTaiwanDatasetAdapter(SourceConnectorProvider):
         for row in _rows_from_payload(payload)[: self.max_records]:
             symbol = _text(_first(row, "stock_id", "data_id", "coid", "symbol", "stock_code"))
             as_of_date = _text(_first(row, "date", "mdate", "資料日", "published_at"))
+            normalized_price_row: dict[str, Any] | None = None
+            if dataset == "TaiwanStockPrice":
+                close = _number(_first(row, "close", "Close", "收盤價"))
+                if symbol and as_of_date and close is not None and close > 0:
+                    normalized_price_row = {
+                        "schema_version": "tw_price_daily.v1",
+                        "target_table": "tw_price_daily",
+                        "provider": "FinMind",
+                        "market": "TW",
+                        "symbol": symbol,
+                        "symbol_canonical": f"{symbol}.TW",
+                        "dataset": "tw_price_daily",
+                        "source_dataset": dataset,
+                        "trade_date": as_of_date,
+                        "close": close,
+                    }
             row_hash = _stable_hash({"dataset": dataset, "row": row})
             content_ref = f"finmind://data/{dataset}/{symbol or 'market'}/{as_of_date or row_hash}/{row_hash}"
             records.append(
@@ -291,6 +318,11 @@ class FinMindTaiwanDatasetAdapter(SourceConnectorProvider):
                         "available_time": as_of_date or _utc_now(),
                         "api_endpoint": endpoint,
                         "raw_row": dict(row),
+                        **(
+                            {"normalized_row": normalized_price_row}
+                            if normalized_price_row is not None
+                            else {}
+                        ),
                         "body": json.dumps(dict(row), ensure_ascii=False, sort_keys=True),
                         "access_scope": ["research"],
                         "license_scope": "vendor_research",
@@ -862,7 +894,7 @@ class FinMindLiveFetcher:
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         """HTTP GET against FinMind API. Token is sent only as Authorization header."""
         request = urllib.request.Request(
-            url,
+            guard_external_url(url, caller="source_ingest.finmind_taiwan"),
             headers={
                 "Accept": "application/json",
                 "Authorization": f"Bearer {token}",

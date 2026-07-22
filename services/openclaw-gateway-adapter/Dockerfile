@@ -7,13 +7,15 @@
 # The upstream runtime pin is GOVERNED: this tag MUST stay in lockstep with
 # integrations/openclaw/gateway/Dockerfile (FROM) and the pin tracked in
 # OSS_INTEGRATION_CHECKLIST.md / integrations/openclaw/governance.md. Bump all together.
-FROM ghcr.io/openclaw/openclaw:2026.6.8 AS openclaw_cli
+FROM ghcr.io/openclaw/openclaw:2026.7.1 AS openclaw_cli
 
 FROM python:3.11-slim
 
 WORKDIR /workspace
 
 ARG OPENAI_CODEX_NPM_VERSION=0.136.0
+# The adapter remains on the last Node-20-compatible Claude CLI. OpenClaw's
+# gateway image uses Node 24 and carries the newer CLI used for model routing.
 ARG ANTHROPIC_CLAUDE_CODE_NPM_VERSION=2.1.161
 ARG PANTHEON_ASSISTANT_UID=10001
 

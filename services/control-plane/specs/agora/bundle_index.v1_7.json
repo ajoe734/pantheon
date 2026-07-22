@@ -1,0 +1,53 @@
+{
+  "bundle_version": "1.7",
+  "extends": {
+    "bundle_path": "services/control-plane/specs/agora/bundle_index.v1_6.json",
+    "bundle_version": "1.6",
+    "bundle_index_sha256": "13f1297b75477e691d47229cb35d77c031a9104c63a087298356a861ed2e2ee0"
+  },
+  "files": {
+    "specs/agora/v8/pint_ooda_live_routes.schema.json": "45d9e6e07ba6a2fb1980027d8b0bc0dbae0810ea5181e52ede7c24a9b09ae750",
+    "specs/agora/v8/trading_room_workspace_v1_7.schema.json": "74bef9743d0b77f90aacba8164ff2b9daeb9b4609c21e5bc15ac86ba7dc4d10f",
+    "specs/agora/v8/capability_manifest_v1_7.json": "3ce6b5a2203b2c8b65c0262ed29642ff017f2d7748fa59306a256f474ac8139d"
+  },
+  "openapi": {
+    "path": "services/control-plane/openapi/agora_v1_7.openapi.yaml",
+    "sha256": "4f5a1254d035891859436c62bf7edaf84797e5e4d0ff1076c539f08963a5b86e"
+  },
+  "required_definition_checksums": {
+    "ContextRef": "dc9002a99a616b1df108d3d1f4f7e521e0fa5e86c403b60beb20ebf635feffe3",
+    "ResolveContextRequest": "c9308cead58d2735b7a05c26653140eb04b6d5b5b223a086d1726635e8324c77",
+    "EligibilityRequest": "1381216256d955a680631a97bcbff86ee4f2059b0a23b3d44f27acd19a1d9ac5",
+    "SubmitInteractionRequest": "b69844fce70e54f3ed3c3bc36f91d95a4713e16150e8afb58a35f29fb78e6ae0",
+    "ProposalCreateRequest": "ea8124b881626f8509687af1b8df18418e92a68e1d90a14393da0d5d1af048b7",
+    "ProposalActionRequest": "4d411628f6ae01d75ef955b1c80d9db5f69fedc8b4fc6b05113346dae2b0476c",
+    "OodaPacket": "8d534d653848073016c988f9b6a61676ab9b50751343acc5274872c260ab4b22"
+  },
+  "route_families": {
+    "pint_interaction": [
+      "POST /bff/agora/interactions/context:resolve",
+      "POST /bff/agora/interactions/participants:eligible",
+      "POST /bff/agora/interactions"
+    ],
+    "pint_governed_proposals": [
+      "POST /bff/agora/proposals",
+      "GET /bff/agora/proposals/{proposal_id}",
+      "GET /bff/agora/proposals/{proposal_id}/revisions",
+      "POST /bff/agora/proposals/{proposal_id}/actions"
+    ],
+    "ooda_readback": [
+      "GET /bff/ooda/packets",
+      "GET /bff/ooda/packets/{packet_id}",
+      "GET /bff/strategies/{strategy_id}/ooda",
+      "GET /bff/runtimes/{runtime_id}/ooda",
+      "GET /bff/evolution-programs/{program_id}/ooda"
+    ]
+  },
+  "contract_refs": {
+    "pint_plan": "docs/bff/execution-tasks/2026-07-12-persona-interaction/INDEX.md",
+    "interaction_router": "services/control-plane/bff/agora/interaction/router.py",
+    "proposal_router": "services/control-plane/bff/agora/governance/router.py",
+    "ooda_router": "services/control-plane/bff/main.py"
+  },
+  "note": "Additive route reconciliation over frozen v1.6. It records already-live PINT and read-only OODA endpoints and introduces no execution authority."
+}

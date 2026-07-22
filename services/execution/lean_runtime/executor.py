@@ -27,6 +27,7 @@ HOLD     *          *                  paper_order_simulated no-op telemetry
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any
 
 from .symbol_parser import ParsedSymbol, SymbolParseError, parse as parse_symbol
@@ -38,7 +39,21 @@ _CONFIDENCE_FLOOR = 0.5
 BRACKET_ORDER_STATUS_LOGGED_ONLY = "logged_only"
 BRACKET_ORDER_STATUS_SUBMITTED_TO_BROKER = "submitted_to_broker"
 _BRACKET_EXECUTION_STAGES = {"paper", "sim", "simulation"}
+
+# Taiwan venue suffixes execute through the Shioaji broker boundary, not LEAN
+# Symbol.Create(). execute() routes these to algo.SubmitTaiwanBrokerOrder before
+# the LEAN symbol parser (which deliberately rejects TW market codes) is reached.
+_TAIWAN_VENUE_SUFFIXES = {"TW", "TWSE", "TWO", "TPEX", "TAIFEX"}
+
+
+def _is_taiwan_venue_symbol(symbol_str: str) -> bool:
+    s = str(symbol_str or "").strip().upper()
+    if "." not in s:
+        return False
+    return s.rsplit(".", 1)[1] in _TAIWAN_VENUE_SUFFIXES
+
 _ORDER_ADAPTER_CONTEXT_KEYS = (
+    "correlation_envelope",
     "adapter",
     "broker",
     "provider",
@@ -100,16 +115,52 @@ def execute(signal: dict[str, Any], algo: Any) -> None:
         For unrecoverable signal errors that should be logged and skipped.
     """
     signal_id = signal.get("signal_id", "<unknown>")
-    signal_context = _signal_context_metadata(signal)
     action = signal["action"]           # BUY | SELL | HOLD | EXIT
     direction = signal["direction"]     # LONG | SHORT
-    quantity = float(signal["quantity"])
+    try:
+        quantity = float(signal["quantity"])
+    except (TypeError, ValueError) as exc:
+        raise ExecutionError(f"[{signal_id}] quantity must be numeric") from exc
+    if not math.isfinite(quantity) or quantity < 0:
+        raise ExecutionError(f"[{signal_id}] quantity must be finite and non-negative")
     quantity_type = signal["quantity_type"]  # SHARES | PERCENT_PORTFOLIO | CASH_VALUE
     order_type = signal.get("order_type", "MARKET")
     limit_price = signal.get("limit_price")
-    confidence = float(
-        (signal.get("metadata") or {}).get("confidence_score", 1.0)
-    )
+    try:
+        confidence = float(
+            (signal.get("metadata") or {}).get("confidence_score", 1.0)
+        )
+    except (TypeError, ValueError) as exc:
+        raise ExecutionError(f"[{signal_id}] confidence_score must be numeric") from exc
+    if not math.isfinite(confidence) or confidence < 0:
+        raise ExecutionError(
+            f"[{signal_id}] confidence_score must be finite and non-negative"
+        )
+    if limit_price is not None:
+        try:
+            parsed_limit_price = float(limit_price)
+        except (TypeError, ValueError) as exc:
+            raise ExecutionError(f"[{signal_id}] limit_price must be numeric") from exc
+        if not math.isfinite(parsed_limit_price) or parsed_limit_price <= 0:
+            raise ExecutionError(f"[{signal_id}] limit_price must be finite and positive")
+        limit_price = parsed_limit_price
+    signal_context = _signal_context_metadata(signal)
+
+    # --- Taiwan venues: route to the Shioaji broker boundary, not LEAN ---
+    if _is_taiwan_venue_symbol(signal["symbol"]):
+        _execute_taiwan(
+            signal,
+            algo,
+            signal_id=signal_id,
+            action=action,
+            direction=direction,
+            quantity=quantity,
+            quantity_type=quantity_type,
+            order_type=order_type,
+            limit_price=limit_price,
+            signal_context=signal_context,
+        )
+        return
 
     # --- Parse symbol ---
     try:
@@ -266,6 +317,9 @@ def _signal_context_metadata(signal: dict[str, Any]) -> dict[str, Any]:
         if value not in (None, ""):
             context[key] = value
     context["order_type"] = signal.get("order_type") or "MARKET"
+    envelope = signal.get("correlation_envelope") or metadata.get("correlation_envelope")
+    if isinstance(envelope, dict):
+        context["correlation_envelope"] = dict(envelope)
     for key in (
         "alpha_source",
         "confidence_score",
@@ -290,15 +344,32 @@ def _signal_context_metadata(signal: dict[str, Any]) -> dict[str, Any]:
     for key in _ORDER_ADAPTER_CONTEXT_KEYS:
         value = metadata.get(key)
         if value not in (None, "", [], {}):
+            if key == "price":
+                try:
+                    value = float(value)
+                except (TypeError, ValueError):
+                    continue
+                if not math.isfinite(value) or value <= 0:
+                    continue
             context[key] = value
-    market_price = _signal_market_price(signal)
-    if market_price is not None:
-        context["market_price"] = market_price
+    execution_price = _signal_market_price(signal)
+    evidence_price = _signal_market_evidence_price(signal)
+    market_as_of = _signal_market_as_of(signal)
+    market_source = _signal_market_source(signal)
+    if evidence_price is not None and market_as_of and market_source:
+        context["market_price"] = evidence_price
+        context["market_price_as_of"] = market_as_of
+        context["market_price_source"] = market_source
+    elif execution_price is not None:
+        context["market_price"] = execution_price
     if "quantity" in signal:
         try:
-            context["requested_quantity"] = float(signal["quantity"])
+            requested_quantity = float(signal["quantity"])
         except (TypeError, ValueError):
             pass
+        else:
+            if math.isfinite(requested_quantity):
+                context["requested_quantity"] = requested_quantity
     return context
 
 
@@ -318,6 +389,18 @@ def _seed_signal_market_price(algo: Any, lean_symbol: Any, signal: dict[str, Any
     price = _signal_market_price(signal)
     if price is None:
         return
+    market_as_of = _signal_market_as_of(signal)
+    market_source = _signal_market_source(signal)
+    evidence_price = _signal_market_evidence_price(signal)
+    mark_setter = getattr(algo, "SetSecurityMark", None)
+    if callable(mark_setter) and evidence_price is not None and market_as_of and market_source:
+        mark_setter(
+            lean_symbol,
+            evidence_price,
+            as_of=market_as_of,
+            source=market_source,
+        )
+        return
     setter = getattr(algo, "SetSecurityPrice", None)
     if callable(setter):
         setter(lean_symbol, price)
@@ -335,9 +418,45 @@ def _signal_market_price(signal: dict[str, Any]) -> float | None:
                 price = float(value)
             except (TypeError, ValueError):
                 continue
-            if price > 0:
+            if math.isfinite(price) and price > 0:
                 return price
     return None
+
+
+def _signal_market_evidence_price(signal: dict[str, Any]) -> float | None:
+    metadata = signal.get("metadata") if isinstance(signal.get("metadata"), dict) else {}
+    market_data = metadata.get("market_data") if isinstance(metadata.get("market_data"), dict) else {}
+    for key in ("last_price", "market_price", "close", "price"):
+        value = market_data.get(key)
+        if value in (None, ""):
+            continue
+        try:
+            price = float(value)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(price) and price > 0:
+            return price
+    return None
+
+
+def _signal_market_as_of(signal: dict[str, Any]) -> str:
+    metadata = signal.get("metadata") if isinstance(signal.get("metadata"), dict) else {}
+    market_data = metadata.get("market_data") if isinstance(metadata.get("market_data"), dict) else {}
+    for key in ("as_of", "as_of_time", "event_time", "trade_date", "timestamp"):
+        value = market_data.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return ""
+
+
+def _signal_market_source(signal: dict[str, Any]) -> str:
+    metadata = signal.get("metadata") if isinstance(signal.get("metadata"), dict) else {}
+    market_data = metadata.get("market_data") if isinstance(metadata.get("market_data"), dict) else {}
+    for key in ("source_ref", "market_data_ref", "content_ref"):
+        value = market_data.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return ""
 
 
 def _handle_bracket_order(
@@ -558,6 +677,14 @@ def _build_bracket_legs(
     stop_loss_pct: float,
     take_profit_pct: float,
 ) -> list[dict[str, Any]]:
+    numeric_inputs = (
+        entry_quantity,
+        entry_price,
+        stop_loss_pct,
+        take_profit_pct,
+    )
+    if not all(math.isfinite(value) for value in numeric_inputs):
+        return []
     if entry_quantity <= 0 or entry_price <= 0:
         return []
     if action == "BUY" and direction == "LONG":
@@ -749,6 +876,21 @@ def _place_limit_close_long(
             f"[{signal_id}] LIMIT close failed: PERCENT_PORTFOLIO quantity_type "
             "is not supported for limit orders"
         )
+    if not math.isfinite(quantity) or quantity < 0:
+        raise ExecutionError(
+            f"[{signal_id}] LIMIT close failed: quantity must be finite and non-negative"
+        )
+    try:
+        validated_limit_price = float(limit_price)
+    except (TypeError, ValueError) as exc:
+        raise ExecutionError(
+            f"[{signal_id}] LIMIT close failed: limit_price must be numeric"
+        ) from exc
+    if not math.isfinite(validated_limit_price) or validated_limit_price <= 0:
+        raise ExecutionError(
+            f"[{signal_id}] LIMIT close failed: limit_price must be finite and positive"
+        )
+    limit_price = validated_limit_price
 
     holdings = _get_holdings_quantity(algo, lean_symbol)
     if holdings <= 0:
@@ -809,6 +951,10 @@ def _place_order(
     Place a directional order.  sign=+1 for long, -1 for short.
     Logs lossy float→int conversion for SHARES and CASH_VALUE.
     """
+    if not math.isfinite(quantity) or quantity < 0:
+        raise ExecutionError(
+            f"[{signal_id}] order quantity must be finite and non-negative"
+        )
     if order_type == "LIMIT" and limit_price is None:
         raise ExecutionError(f"[{signal_id}] LIMIT order failed: limit_price is required")
     if order_type == "LIMIT" and quantity_type == "PERCENT_PORTFOLIO":
@@ -816,6 +962,14 @@ def _place_order(
             f"[{signal_id}] LIMIT order failed: PERCENT_PORTFOLIO quantity_type "
             "is not supported for limit orders"
         )
+    if limit_price is not None:
+        try:
+            validated_limit_price = float(limit_price)
+        except (TypeError, ValueError) as exc:
+            raise ExecutionError(f"[{signal_id}] limit_price must be numeric") from exc
+        if not math.isfinite(validated_limit_price) or validated_limit_price <= 0:
+            raise ExecutionError(f"[{signal_id}] limit_price must be finite and positive")
+        limit_price = validated_limit_price
 
     if quantity_type == "PERCENT_PORTFOLIO":
         pct = sign * quantity
@@ -854,12 +1008,12 @@ def _place_order(
 
     elif quantity_type == "CASH_VALUE":
         price = _get_price(algo, lean_symbol)
-        if price <= 0:
+        if not math.isfinite(price) or price <= 0:
             raise ExecutionError(
                 f"[{signal_id}] CASH_VALUE order failed: cannot get price for {lean_symbol}"
             )
         execution_price = float(limit_price) if order_type == "LIMIT" and limit_price is not None else price
-        if execution_price <= 0:
+        if not math.isfinite(execution_price) or execution_price <= 0:
             raise ExecutionError(
                 f"[{signal_id}] CASH_VALUE order failed: cannot get execution price for {lean_symbol}"
             )
@@ -945,21 +1099,100 @@ def _resolve_lean_enum(enum_class: Any, dotted_name: str, prefix: str) -> Any:
 
 def _get_holdings_quantity(algo: Any, lean_symbol: Any) -> float:
     try:
-        return algo.Portfolio[lean_symbol].Quantity
+        quantity = float(algo.Portfolio[lean_symbol].Quantity)
     except Exception:
         return 0.0
+    if not math.isfinite(quantity):
+        raise ExecutionError(f"invalid non-finite holdings quantity for {lean_symbol}")
+    return quantity
 
 
 def _get_price(algo: Any, lean_symbol: Any) -> float:
     try:
-        return float(algo.Securities[lean_symbol].Price)
+        price = float(algo.Securities[lean_symbol].Price)
     except Exception:
         pass
+    else:
+        if math.isfinite(price) and price > 0:
+            return price
 
     ensure_security = getattr(algo, "EnsureSecurity", None)
     if callable(ensure_security):
         try:
-            return float(ensure_security(lean_symbol).Price)
+            price = float(ensure_security(lean_symbol).Price)
         except Exception:
             return 0.0
+        return price if math.isfinite(price) and price > 0 else 0.0
     return 0.0
+
+
+def _execute_taiwan(
+    signal: dict[str, Any],
+    algo: Any,
+    *,
+    signal_id: str,
+    action: str,
+    direction: str,
+    quantity: float,
+    quantity_type: str,
+    order_type: str,
+    limit_price: float | None,
+    signal_context: dict[str, Any],
+) -> None:
+    """Route a Taiwan-venue signal to the Shioaji paper broker boundary.
+
+    LEAN Symbol.Create() has no TW market; Taiwan execution is delegated to the
+    runtime's SubmitTaiwanBrokerOrder, which posts to the paper broker sidecar
+    and records the fill on the same telemetry path as LEAN fills.
+    """
+    submit = getattr(algo, "SubmitTaiwanBrokerOrder", None)
+    if not callable(submit):
+        raise ExecutionError(
+            f"[{signal_id}] Taiwan venue '{signal['symbol']}' requires a Shioaji "
+            "broker boundary; runtime exposes no SubmitTaiwanBrokerOrder"
+        )
+
+    if action == "HOLD":
+        _set_signal_context(algo, signal_context)
+        try:
+            _record_signal_noop(
+                algo,
+                signal["symbol"],
+                signal_id,
+                noop_reason="hold_signal",
+                requested_quantity=quantity,
+                quantity_type=quantity_type,
+                order_type=order_type,
+            )
+        finally:
+            _clear_signal_context(algo)
+        log.info("[%s] HOLD signal — no TW order placed (symbol=%s)", signal_id, signal["symbol"])
+        return
+
+    if action == "BUY" and direction == "LONG":
+        side = "buy"
+    elif action == "SELL" and direction == "SHORT":
+        side = "sell"
+    elif action == "SELL" and direction == "LONG":
+        side = "sell"
+    elif action == "BUY" and direction == "SHORT":
+        side = "buy"
+    else:
+        raise ExecutionError(
+            f"[{signal_id}] Unsupported TW action/direction: {action}/{direction}"
+        )
+
+    _set_signal_context(algo, signal_context)
+    try:
+        submit(
+            signal["symbol"],
+            signal_id=signal_id,
+            side=side,
+            quantity=quantity,
+            quantity_type=quantity_type,
+            action=action,
+            order_type=order_type,
+            limit_price=limit_price,
+        )
+    finally:
+        _clear_signal_context(algo)

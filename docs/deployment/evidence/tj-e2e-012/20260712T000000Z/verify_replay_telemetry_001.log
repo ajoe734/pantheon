@@ -1,0 +1,11 @@
+[PASS] scenario=replay-golden-001  output_dir=/tmp/replay-golden-001
+  ✓ telemetry_file_readable: loaded /tmp/replay-golden-001/telemetry_events.json
+  ✓ lineage_file_readable: loaded /tmp/replay-golden-001/lineage_trace.json
+  ✓ telemetry_emitted: 1 strategy_cycle_completed event(s) found
+  ✓ telemetry_fields_complete: all required telemetry fields present
+  ✓ verdict_matches: verdict = 'approved'
+  ✓ deployment_mode_paper: deployment_mode = 'paper'
+  ✓ ex001_mock_recorded: execution_feedback = 'MOCKED_EX001_DEFERRED'
+  ✓ lineage_trace_complete: all required lineage keys present
+
+verdict written to /tmp/replay-golden-001/verdict.json

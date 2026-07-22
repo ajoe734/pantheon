@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 import main as bff_main
 from command_queue import CommandStore
 from models import (
+    CommandType,
     InterventionKind,
     InterventionRecord,
     InterventionStatus,
@@ -44,7 +45,13 @@ def _isolated_client() -> Iterator[TestClient]:
         original_store = bff_main.command_store
         original_worker = bff_main._process_command_stub
         original_interventions = list(bff_main._V5_INTERVENTIONS_STORE)
+        original_read_store = bff_main.read_store
         bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        bff_main.read_store = ReadSurfaceStore(
+            os.path.join(td, "read_surfaces.json"),
+            allow_local_snapshot_fallback=False,
+        )
+        bff_main.read_store._allow_local_snapshot_fallback = True
         bff_main._process_command_stub = _noop_process_command
         bff_main._V5_INTERVENTIONS_STORE.clear()
         try:
@@ -52,8 +59,87 @@ def _isolated_client() -> Iterator[TestClient]:
         finally:
             bff_main.command_store = original_store
             bff_main._process_command_stub = original_worker
+            bff_main.read_store = original_read_store
             bff_main._V5_INTERVENTIONS_STORE.clear()
             bff_main._V5_INTERVENTIONS_STORE.extend(original_interventions)
+
+
+def _seed_approval_decision(approval_id: str, target_id: str) -> None:
+    approvals = bff_main.read_store._ensure_local_overlay_records("approval_decisions")
+    approvals[approval_id] = {
+        "id": approval_id,
+        "decision_id": approval_id,
+        "state": "approved",
+        "decision_state": "approved",
+        "outcome": "approved",
+        "command": CommandType.REMEDIATE_SENTINEL_INTERVENTION.value,
+        "target": {"type": ObjectType.SENTINEL_INTERVENTION.value, "id": target_id},
+        "target_type": ObjectType.SENTINEL_INTERVENTION.value,
+        "target_id": target_id,
+        "submitted_at": "2026-06-01T00:00:00Z",
+        "decided_at": "2026-06-01T00:01:00Z",
+    }
+    bff_main.read_store._save()
+
+
+def _seed_two_man_signature(
+    client: TestClient,
+    signature_id: str,
+    target_id: str,
+) -> None:
+    for operator_id, authorization in (
+        ("op-v5-admin", ADMIN_MFA_TOKEN),
+        ("op-v5-second", "Bearer op-v5-second:operator"),
+    ):
+        response = client.post(
+            f"/bff/v5/interventions/{target_id}/two-man-sign",
+            headers={
+                "Authorization": authorization,
+                "Idempotency-Key": f"sign-{signature_id}-{operator_id}",
+            },
+            json={
+                "twoManSignatureId": signature_id,
+                "command": CommandType.REMEDIATE_SENTINEL_INTERVENTION.value,
+                "target": {
+                    "type": ObjectType.SENTINEL_INTERVENTION.value,
+                    "id": target_id,
+                },
+                "reason": "authenticated test operator signed remediation",
+            },
+        )
+        assert response.status_code == 202, response.text
+
+
+def _create_confirm_token(client: TestClient, token_id: str, target_id: str) -> None:
+    response = client.post(
+        "/bff/confirm-tokens",
+        headers={
+            "Authorization": ADMIN_MFA_TOKEN,
+            "Idempotency-Key": f"create-{token_id}",
+        },
+        json={
+            "tokenId": token_id,
+            "command": CommandType.REMEDIATE_SENTINEL_INTERVENTION.value,
+            "target": {"type": ObjectType.SENTINEL_INTERVENTION.value, "id": target_id},
+            "issuedForOperatorId": "op-v5-admin",
+        },
+    )
+    assert response.status_code == 201, response.text
+
+
+def _authorize_remediation(
+    client: TestClient,
+    *,
+    target_id: str,
+    confirm_token: str,
+    approval_id: str | None = None,
+    two_man_signature_id: str | None = None,
+) -> None:
+    _create_confirm_token(client, confirm_token, target_id)
+    if approval_id:
+        _seed_approval_decision(approval_id, target_id)
+    if two_man_signature_id:
+        _seed_two_man_signature(client, two_man_signature_id, target_id)
 
 
 # --------------------------------------------------------------------------- #
@@ -187,6 +273,12 @@ def test_get_v5_interventions_requires_auth() -> None:
 def test_remediate_v5_intervention_missing_two_man_returns_409() -> None:
     """Remediation without two-man signature must return 409 TWO_MAN_REQUIRED."""
     with _isolated_client() as client:
+        _authorize_remediation(
+            client,
+            target_id="intv-v5-guard-001",
+            confirm_token="confirm-guard-001",
+            approval_id="approval-guard-001",
+        )
         response = client.post(
             "/bff/v5/interventions/intv-v5-guard-001/remediate",
             headers={
@@ -204,7 +296,7 @@ def test_remediate_v5_intervention_missing_two_man_returns_409() -> None:
         assert response.status_code == 409, response.text
         detail = response.json()
         error = detail["error"]
-        assert error["code"] == "TWO_MAN_REQUIRED"
+        assert error["code"] == "TWO_MAN_SIGNATURE_REQUIRED"
         assert error["details"]["kind"] == "two_man"
         assert "corr-guard-no-two-man-001" in str(detail)
 
@@ -212,6 +304,12 @@ def test_remediate_v5_intervention_missing_two_man_returns_409() -> None:
 def test_remediate_v5_intervention_missing_approval_returns_409() -> None:
     """Remediation without approval evidence must return 409 APPROVAL_REQUIRED."""
     with _isolated_client() as client:
+        _authorize_remediation(
+            client,
+            target_id="intv-v5-guard-002",
+            confirm_token="confirm-guard-002",
+            two_man_signature_id="tms-guard-002",
+        )
         response = client.post(
             "/bff/v5/interventions/intv-v5-guard-002/remediate",
             headers={
@@ -229,7 +327,7 @@ def test_remediate_v5_intervention_missing_approval_returns_409() -> None:
         assert response.status_code == 409, response.text
         detail = response.json()
         error = detail["error"]
-        assert error["code"] == "APPROVAL_REQUIRED"
+        assert error["code"] == "HUMAN_GATE_PENDING"
         assert error["details"]["kind"] == "approval"
 
 
@@ -260,6 +358,13 @@ def test_remediate_v5_intervention_missing_confirm_token_returns_428() -> None:
 def test_remediate_v5_intervention_all_preconditions_returns_202() -> None:
     """Remediation with all required preconditions must be accepted (202)."""
     with _isolated_client() as client:
+        _authorize_remediation(
+            client,
+            target_id="intv-v5-accept-001",
+            confirm_token="confirm-accept-001",
+            approval_id="approval-accept-001",
+            two_man_signature_id="tms-accept-001",
+        )
         response = client.post(
             "/bff/v5/interventions/intv-v5-accept-001/remediate",
             headers={
@@ -290,6 +395,12 @@ def test_remediate_v5_intervention_all_preconditions_returns_202() -> None:
 def test_bff_v1_commands_remediate_sentinel_missing_two_man_returns_409() -> None:
     """RemediateSentinelIntervention via /bff/v1/commands enforces two-man gate."""
     with _isolated_client() as client:
+        _authorize_remediation(
+            client,
+            target_id="intv-v1-001",
+            confirm_token="confirm-v1-001",
+            approval_id="approval-v1-001",
+        )
         response = client.post(
             "/bff/v1/commands",
             headers={
@@ -312,7 +423,7 @@ def test_bff_v1_commands_remediate_sentinel_missing_two_man_returns_409() -> Non
         assert response.status_code == 409, response.text
         detail = response.json()
         error = detail["error"]
-        assert error["code"] == "TWO_MAN_REQUIRED"
+        assert error["code"] == "TWO_MAN_SIGNATURE_REQUIRED"
         assert "TWO_MAN_SIGNATURE_MISSING" in str(detail)
 
 
@@ -639,6 +750,13 @@ def test_bff_v1_commands_remediate_sentinel_top_level_two_man_propagates_to_stor
     """
     idem_key = "remediate-v1-two-man-propagation-001"
     with _isolated_client() as client:
+        _authorize_remediation(
+            client,
+            target_id="intv-v1-propagation-001",
+            confirm_token="confirm-propagation-001",
+            approval_id="approval-propagation-001",
+            two_man_signature_id="tms-propagation-sig-001",
+        )
         response = client.post(
             "/bff/v1/commands",
             headers={
@@ -676,6 +794,13 @@ def test_bff_v1_commands_remediate_sentinel_second_operator_alias_propagates() -
     """Regression: secondOperatorId alias at the top level also propagates to stored params."""
     idem_key = "remediate-v1-second-operator-propagation-001"
     with _isolated_client() as client:
+        _authorize_remediation(
+            client,
+            target_id="intv-v1-second-op-001",
+            confirm_token="confirm-second-op-001",
+            approval_id="approval-second-op-001",
+            two_man_signature_id="op-second-sig-001",
+        )
         response = client.post(
             "/bff/v1/commands",
             headers={

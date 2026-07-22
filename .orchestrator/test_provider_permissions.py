@@ -27,6 +27,42 @@ class ProviderPermissionsTest(unittest.TestCase):
         self.assertEqual(evaluation["decision"], "allow")
         self.assertEqual(evaluation["risk_class"], "safe_read")
 
+    def test_task_output_is_auto_allowed(self) -> None:
+        # Regression for OPS-APPROVAL-BROKER-RISK-CLASS-001: TaskOutput
+        # (polling a background sub-task's output) previously fell through
+        # to risk_class=unknown and sat pending indefinitely, suspending
+        # claude worker slots for hours.
+        evaluation = permission_broker.evaluate_tool_request(
+            "TaskOutput", {"task_id": "bg-1", "block": True, "timeout": 30000}, {}
+        )
+
+        self.assertEqual(evaluation["decision"], "allow")
+        self.assertEqual(evaluation["risk_class"], "harness_orchestration_read")
+
+    def test_harness_orchestration_read_tools_are_auto_allowed(self) -> None:
+        for tool_name, tool_input in (
+            ("TaskGet", {"taskId": "1"}),
+            ("TaskList", {}),
+            ("Monitor", {"description": "watch", "timeout_ms": 1000, "persistent": False}),
+            ("CronList", {}),
+        ):
+            with self.subTest(tool_name=tool_name):
+                evaluation = permission_broker.evaluate_tool_request(tool_name, tool_input, {})
+
+                self.assertEqual(evaluation["decision"], "allow")
+                self.assertEqual(evaluation["risk_class"], "harness_orchestration_read")
+
+    def test_mutating_orchestration_tools_still_require_review(self) -> None:
+        # Harness orchestration tools with real side effects (creating,
+        # updating, or stopping a task) are intentionally NOT auto-allowed;
+        # only read-only polling tools are.
+        for tool_name in ("TaskCreate", "TaskUpdate", "TaskStop"):
+            with self.subTest(tool_name=tool_name):
+                evaluation = permission_broker.evaluate_tool_request(tool_name, {}, {})
+
+                self.assertEqual(evaluation["decision"], "defer")
+                self.assertEqual(evaluation["risk_class"], "unknown")
+
     def test_read_only_agent_explore_request_is_auto_allowed(self) -> None:
         evaluation = permission_broker.evaluate_tool_request(
             "Agent",
@@ -76,6 +112,55 @@ class ProviderPermissionsTest(unittest.TestCase):
         self.assertEqual(evaluation["decision"], "allow")
         self.assertEqual(evaluation["risk_class"], "safe_read")
 
+    def test_read_only_agent_code_review_subagent_type_is_auto_allowed(self) -> None:
+        # Regression for OPS-APPROVAL-BROKER-RISK-CLASS-001: a spawned
+        # code-review subagent request (subagent_type="code-review") was
+        # denied/deferred as risk_class=unknown because the exact-match
+        # SAFE_AGENT_SUBAGENT_TYPES set only contained "review", not the
+        # hyphenated "code-review" variant actually used to spawn review
+        # subagents.
+        evaluation = permission_broker.evaluate_tool_request(
+            "Agent",
+            {
+                "description": "Independent code review of the current diff",
+                "prompt": "Review the pending diff for correctness bugs and report findings.",
+                "subagent_type": "code-review",
+            },
+            {},
+        )
+
+        self.assertEqual(evaluation["decision"], "allow")
+        self.assertEqual(evaluation["risk_class"], "safe_read")
+
+    def test_incident_general_purpose_read_only_agent_request_is_auto_allowed(self) -> None:
+        # Direct shape of apr-20260717T190756Z-4b4e5586: the actual
+        # incident used subagent_type="general-purpose" and read-only review
+        # wording with negated unsafe phrases ("Do not fix", "do not edit").
+        # Those negations must not make the request look mutating.
+        evaluation = permission_broker.evaluate_tool_request(
+            "Agent",
+            {
+                "description": "Review activity reader hardening code",
+                "prompt": (
+                    "You are doing an independent correctness/security review of a merged "
+                    "change in the pantheon repo, already checked out at the relevant "
+                    "commit on top of a merge of origin/dev. Files to actually read in "
+                    "full and reason about: .orchestrator/common.py, .orchestrator/test_common.py, "
+                    "and scripts/activity_audit_logical_inventory.py. Your job: find REAL "
+                    "correctness/security bugs or gaps between what's claimed and what's "
+                    "actually implemented - not style nits. Report back with confirmed "
+                    "findings and things you checked. Do not fix anything - this is "
+                    "read-only review, do not edit files."
+                ),
+                "subagent_type": "general-purpose",
+                "run_in_background": False,
+            },
+            {},
+        )
+
+        self.assertEqual(evaluation["decision"], "allow")
+        self.assertEqual(evaluation["risk_class"], "safe_read")
+
     def test_mutating_agent_request_still_requires_review(self) -> None:
         evaluation = permission_broker.evaluate_tool_request(
             "Agent",
@@ -90,30 +175,49 @@ class ProviderPermissionsTest(unittest.TestCase):
         self.assertEqual(evaluation["decision"], "defer")
         self.assertEqual(evaluation["risk_class"], "unknown")
 
-    def test_edit_allows_configured_execute_plans_workspace_root(self) -> None:
+    def test_mutating_agent_request_with_negated_edit_still_requires_review(self) -> None:
         evaluation = permission_broker.evaluate_tool_request(
-            "Edit",
-            {"file_path": "/home/lupin/code/execute-plans/src/lib/bff/client.ts"},
+            "Agent",
             {
-                "permission_broker": {
-                    "allowed_workspace_roots": ["../execute-plans"],
-                }
+                "description": "Review and repair tests",
+                "prompt": (
+                    "Do not edit files during the first pass. Then update the regression "
+                    "tests, commit the fix, and report the result."
+                ),
+                "subagent_type": "general-purpose",
             },
+            {},
         )
+
+        self.assertEqual(evaluation["decision"], "defer")
+        self.assertEqual(evaluation["risk_class"], "unknown")
+
+    def test_edit_allows_configured_execute_plans_workspace_root(self) -> None:
+        with mock.patch("permission_broker.ROOT", Path("/home/lupin/code/pantheon")):
+            evaluation = permission_broker.evaluate_tool_request(
+                "Edit",
+                {"file_path": "/home/lupin/code/execute-plans/src/lib/bff/client.ts"},
+                {
+                    "permission_broker": {
+                        "allowed_workspace_roots": ["../execute-plans"],
+                    }
+                },
+            )
 
         self.assertEqual(evaluation["decision"], "allow")
         self.assertEqual(evaluation["risk_class"], "repo_write")
 
     def test_edit_outside_configured_workspace_roots_is_denied(self) -> None:
-        evaluation = permission_broker.evaluate_tool_request(
-            "Edit",
-            {"file_path": "/tmp/outside.ts"},
-            {
-                "permission_broker": {
-                    "allowed_workspace_roots": ["../execute-plans"],
-                }
-            },
-        )
+        with mock.patch("permission_broker.ROOT", Path("/home/lupin/code/pantheon")):
+            evaluation = permission_broker.evaluate_tool_request(
+                "Edit",
+                {"file_path": "/tmp/outside.ts"},
+                {
+                    "permission_broker": {
+                        "allowed_workspace_roots": ["../execute-plans"],
+                    }
+                },
+            )
 
         self.assertEqual(evaluation["decision"], "deny")
         self.assertEqual(evaluation["risk_class"], "out_of_workspace")
@@ -369,6 +473,55 @@ EOF
 
         self.assertEqual(permission_broker.classify_command(command), "allow")
 
+    def test_auto_worker_stale_status_runtime_is_denied(self) -> None:
+        command = (
+            "cd /home/lupin/code/pantheon && AI_NAME=Claude timeout 30 "
+            "python3 scripts/ai_status.py note OPS-1 'review result' 2>&1"
+        )
+        env = {
+            "ORCH_RUN_ID": "claude-2-run",
+            "ORCH_TASK_ID": "OPS-1",
+            "PANTHEON_COMMAND_ROOT": "/home/lupin/pantheon-ci-deploy/dev-root",
+        }
+        with mock.patch.dict(os.environ, env, clear=True):
+            evaluation = permission_broker.evaluate_tool_request(
+                "Bash", {"command": command}, {}
+            )
+
+        self.assertEqual(evaluation["decision"], "deny")
+        self.assertEqual(
+            evaluation["risk_class"], "stale_status_command_runtime"
+        )
+        self.assertIn("PANTHEON_COMMAND_ROOT", evaluation["reason"])
+
+    def test_auto_worker_pinned_status_runtime_is_allowed(self) -> None:
+        command = (
+            "AI_NAME=Claude timeout 30 python3 "
+            "$PANTHEON_COMMAND_ROOT/scripts/ai_status.py note OPS-1 "
+            "'review result' 2>&1"
+        )
+        env = {
+            "ORCH_RUN_ID": "claude-2-run",
+            "ORCH_TASK_ID": "OPS-1",
+            "PANTHEON_COMMAND_ROOT": "/home/lupin/pantheon-ci-deploy/dev-root",
+        }
+        with mock.patch.dict(os.environ, env, clear=True):
+            evaluation = permission_broker.evaluate_tool_request(
+                "Bash", {"command": command}, {}
+            )
+
+        self.assertEqual(evaluation["decision"], "allow")
+        self.assertEqual(evaluation["risk_class"], "safe_bash")
+
+    def test_non_worker_status_command_remains_allowed(self) -> None:
+        command = "python3 scripts/ai_status.py note OPS-1 'local operator note'"
+        with mock.patch.dict(os.environ, {}, clear=True):
+            evaluation = permission_broker.evaluate_tool_request(
+                "Bash", {"command": command}, {}
+            )
+
+        self.assertEqual(evaluation["decision"], "allow")
+
     def test_permission_broker_uses_provider_specific_rule_default_mode(self) -> None:
         config = {
             "providers": {
@@ -576,6 +729,26 @@ EOF
         self.assertEqual(probe["method"], "claude_auth_status_refresh")
         claude_auth_ready.assert_called_once()
         self.assertTrue(claude_auth_ready.call_args.kwargs["refresh_if_needed"])
+
+    def test_targeted_pre_dispatch_probe_forces_selected_provider(self) -> None:
+        config = {
+            "providers": {
+                "claude2": {
+                    "delivery_mode": "claude_cli",
+                    "runtime": {"cli": "claude"},
+                }
+            }
+        }
+        expected = {"provider": "claude2", "ready": False, "status": "auth_not_ready"}
+        with (
+            mock.patch.object(provider_permissions, "command_exists", return_value="/usr/bin/claude"),
+            mock.patch.object(provider_permissions, "_claude_auth_probe", return_value=expected) as probe,
+        ):
+            result = provider_permissions.probe_provider_auth(config, "claude2", force=True)
+
+        self.assertEqual(result, expected)
+        probe.assert_called_once()
+        self.assertTrue(probe.call_args.kwargs["force"])
 
     def test_codex_auth_probe_runs_exec_with_provider_home(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

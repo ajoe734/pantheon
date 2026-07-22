@@ -1,0 +1,615 @@
+[
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/management/evidence",
+    "path": "/management/evidence",
+    "status": 200,
+    "startMs": 7,
+    "endMs": 39,
+    "durationMs": 32
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-D_vlMmWJ.css",
+    "path": "/assets/index-D_vlMmWJ.css",
+    "status": 200,
+    "startMs": 61,
+    "endMs": 69,
+    "durationMs": 8
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-Diifq-h-.js",
+    "path": "/assets/index-Diifq-h-.js",
+    "status": 200,
+    "startMs": 57,
+    "endMs": 117,
+    "durationMs": 60
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/chevron-right-B9YeLyb_.js",
+    "path": "/assets/chevron-right-B9YeLyb_.js",
+    "status": 200,
+    "startMs": 187,
+    "endMs": 223,
+    "durationMs": 36
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/Combination-BVJAWctm.js",
+    "path": "/assets/Combination-BVJAWctm.js",
+    "status": 200,
+    "startMs": 187,
+    "endMs": 224,
+    "durationMs": 37
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/dropdown-menu-BQ4YvE9I.js",
+    "path": "/assets/dropdown-menu-BQ4YvE9I.js",
+    "status": 200,
+    "startMs": 187,
+    "endMs": 224,
+    "durationMs": 37
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/check-C7WdCi_Y.js",
+    "path": "/assets/check-C7WdCi_Y.js",
+    "status": 200,
+    "startMs": 187,
+    "endMs": 224,
+    "durationMs": 37
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/PlatformShell-CzW2QV-F.js",
+    "path": "/assets/PlatformShell-CzW2QV-F.js",
+    "status": 200,
+    "startMs": 186,
+    "endMs": 230,
+    "durationMs": 44
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/circle-BtTJrFWO.js",
+    "path": "/assets/circle-BtTJrFWO.js",
+    "status": 200,
+    "startMs": 188,
+    "endMs": 230,
+    "durationMs": 42
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/hooks-DdZgRRjC.js",
+    "path": "/assets/hooks-DdZgRRjC.js",
+    "status": 200,
+    "startMs": 188,
+    "endMs": 231,
+    "durationMs": 43
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/flask-conical-cNlrHAXH.js",
+    "path": "/assets/flask-conical-cNlrHAXH.js",
+    "status": 200,
+    "startMs": 188,
+    "endMs": 231,
+    "durationMs": 43
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/activity-CBd2yWHf.js",
+    "path": "/assets/activity-CBd2yWHf.js",
+    "status": 200,
+    "startMs": 198,
+    "endMs": 231,
+    "durationMs": 33
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/progress-PVg0HGZN.js",
+    "path": "/assets/progress-PVg0HGZN.js",
+    "status": 200,
+    "startMs": 198,
+    "endMs": 231,
+    "durationMs": 33
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/button-KYrhvRwT.js",
+    "path": "/assets/button-KYrhvRwT.js",
+    "status": 200,
+    "startMs": 188,
+    "endMs": 231,
+    "durationMs": 43
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/useTranslation-DBbUQY1j.js",
+    "path": "/assets/useTranslation-DBbUQY1j.js",
+    "status": 200,
+    "startMs": 188,
+    "endMs": 231,
+    "durationMs": 43
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/runtimeEnv-BGL7V4V0.js",
+    "path": "/assets/runtimeEnv-BGL7V4V0.js",
+    "status": 200,
+    "startMs": 188,
+    "endMs": 232,
+    "durationMs": 44
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/lists-DuhmXkHV.js",
+    "path": "/assets/lists-DuhmXkHV.js",
+    "status": 200,
+    "startMs": 198,
+    "endMs": 236,
+    "durationMs": 38
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/client-CC4pvLHp.js",
+    "path": "/assets/client-CC4pvLHp.js",
+    "status": 200,
+    "startMs": 199,
+    "endMs": 236,
+    "durationMs": 37
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/shield-alert-DZ0T29po.js",
+    "path": "/assets/shield-alert-DZ0T29po.js",
+    "status": 200,
+    "startMs": 199,
+    "endMs": 236,
+    "durationMs": 37
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/paths-KG4AE-Mq.js",
+    "path": "/assets/paths-KG4AE-Mq.js",
+    "status": 200,
+    "startMs": 199,
+    "endMs": 236,
+    "durationMs": 37
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-COJ0bSjv.js",
+    "path": "/assets/index-COJ0bSjv.js",
+    "status": 200,
+    "startMs": 199,
+    "endMs": 238,
+    "durationMs": 39
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/tabs-BYYSXmqT.js",
+    "path": "/assets/tabs-BYYSXmqT.js",
+    "status": 200,
+    "startMs": 199,
+    "endMs": 238,
+    "durationMs": 39
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/triangle-alert-BelmTNPN.js",
+    "path": "/assets/triangle-alert-BelmTNPN.js",
+    "status": 200,
+    "startMs": 199,
+    "endMs": 238,
+    "durationMs": 39
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/dialog-BDHWxKxK.js",
+    "path": "/assets/dialog-BDHWxKxK.js",
+    "status": 200,
+    "startMs": 199,
+    "endMs": 238,
+    "durationMs": 39
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-PfZ7SJkh.js",
+    "path": "/assets/index-PfZ7SJkh.js",
+    "status": 200,
+    "startMs": 199,
+    "endMs": 238,
+    "durationMs": 39
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/clipboard-check-BdLkygoI.js",
+    "path": "/assets/clipboard-check-BdLkygoI.js",
+    "status": 200,
+    "startMs": 199,
+    "endMs": 239,
+    "durationMs": 40
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/usePermissions-Dafl1bvF.js",
+    "path": "/assets/usePermissions-Dafl1bvF.js",
+    "status": 200,
+    "startMs": 199,
+    "endMs": 239,
+    "durationMs": 40
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/useLiveList-DyQhbbXT.js",
+    "path": "/assets/useLiveList-DyQhbbXT.js",
+    "status": 200,
+    "startMs": 199,
+    "endMs": 239,
+    "durationMs": 40
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-7iblkpY5.js",
+    "path": "/assets/index-7iblkpY5.js",
+    "status": 200,
+    "startMs": 199,
+    "endMs": 245,
+    "durationMs": 46
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/channels-B1NVCEr3.js",
+    "path": "/assets/channels-B1NVCEr3.js",
+    "status": 200,
+    "startMs": 200,
+    "endMs": 245,
+    "durationMs": 45
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/refresh-ccw-D_0hpHqV.js",
+    "path": "/assets/refresh-ccw-D_0hpHqV.js",
+    "status": 200,
+    "startMs": 200,
+    "endMs": 245,
+    "durationMs": 45
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/database-CSvDg1Nw.js",
+    "path": "/assets/database-CSvDg1Nw.js",
+    "status": 200,
+    "startMs": 200,
+    "endMs": 245,
+    "durationMs": 45
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/liveTransport-DVjTJLVw.js",
+    "path": "/assets/liveTransport-DVjTJLVw.js",
+    "status": 200,
+    "startMs": 200,
+    "endMs": 245,
+    "durationMs": 45
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/search-zIe5ce8u.js",
+    "path": "/assets/search-zIe5ce8u.js",
+    "status": 200,
+    "startMs": 200,
+    "endMs": 245,
+    "durationMs": 45
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/routePrimaryReady-D7hLp1Lv.js",
+    "path": "/assets/routePrimaryReady-D7hLp1Lv.js",
+    "status": 200,
+    "startMs": 200,
+    "endMs": 245,
+    "durationMs": 45
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/input-BcJAcsym.js",
+    "path": "/assets/input-BcJAcsym.js",
+    "status": 200,
+    "startMs": 200,
+    "endMs": 246,
+    "durationMs": 46
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/textarea-C9TUNfz4.js",
+    "path": "/assets/textarea-C9TUNfz4.js",
+    "status": 200,
+    "startMs": 200,
+    "endMs": 246,
+    "durationMs": 46
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/overlayStore-CCkUsldv.js",
+    "path": "/assets/overlayStore-CCkUsldv.js",
+    "status": 200,
+    "startMs": 200,
+    "endMs": 246,
+    "durationMs": 46
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/index-D5U1VxeI.js",
+    "path": "/assets/index-D5U1VxeI.js",
+    "status": 200,
+    "startMs": 199,
+    "endMs": 246,
+    "durationMs": 47
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/separator-D-dWTexh.js",
+    "path": "/assets/separator-D-dWTexh.js",
+    "status": 200,
+    "startMs": 200,
+    "endMs": 246,
+    "durationMs": 46
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/seed-C6lLSeUd.js",
+    "path": "/assets/seed-C6lLSeUd.js",
+    "status": 200,
+    "startMs": 198,
+    "endMs": 248,
+    "durationMs": 50
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/select-CxlzVGu8.js",
+    "path": "/assets/select-CxlzVGu8.js",
+    "status": 200,
+    "startMs": 200,
+    "endMs": 249,
+    "durationMs": 49
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/minus-BSbfz9XY.js",
+    "path": "/assets/minus-BSbfz9XY.js",
+    "status": 200,
+    "startMs": 300,
+    "endMs": 308,
+    "durationMs": 8
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/git-branch-DF2mTavz.js",
+    "path": "/assets/git-branch-DF2mTavz.js",
+    "status": 200,
+    "startMs": 300,
+    "endMs": 311,
+    "durationMs": 11
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/shield-check-0VfK7ipJ.js",
+    "path": "/assets/shield-check-0VfK7ipJ.js",
+    "status": 200,
+    "startMs": 301,
+    "endMs": 312,
+    "durationMs": 11
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/clock-oDUu17zq.js",
+    "path": "/assets/clock-oDUu17zq.js",
+    "status": 200,
+    "startMs": 301,
+    "endMs": 314,
+    "durationMs": 13
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/useAgentPanel-DW2C4GHQ.js",
+    "path": "/assets/useAgentPanel-DW2C4GHQ.js",
+    "status": 200,
+    "startMs": 300,
+    "endMs": 314,
+    "durationMs": 14
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/key-round-DBxwL7Fn.js",
+    "path": "/assets/key-round-DBxwL7Fn.js",
+    "status": 200,
+    "startMs": 301,
+    "endMs": 314,
+    "durationMs": 13
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/ManagementLayout-C6fKmyxr.js",
+    "path": "/assets/ManagementLayout-C6fKmyxr.js",
+    "status": 200,
+    "startMs": 300,
+    "endMs": 314,
+    "durationMs": 14
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/file-text-D3s-lPGR.js",
+    "path": "/assets/file-text-D3s-lPGR.js",
+    "status": 200,
+    "startMs": 301,
+    "endMs": 314,
+    "durationMs": 13
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/scroll-text-VgFKa-jI.js",
+    "path": "/assets/scroll-text-VgFKa-jI.js",
+    "status": 200,
+    "startMs": 300,
+    "endMs": 314,
+    "durationMs": 14
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/card-CbvCn9HK.js",
+    "path": "/assets/card-CbvCn9HK.js",
+    "status": 200,
+    "startMs": 345,
+    "endMs": 362,
+    "durationMs": 17
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/links-DbT5T0iV.js",
+    "path": "/assets/links-DbT5T0iV.js",
+    "status": 200,
+    "startMs": 345,
+    "endMs": 368,
+    "durationMs": 23
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/evidence-BayAZ5Nb.js",
+    "path": "/assets/evidence-BayAZ5Nb.js",
+    "status": 200,
+    "startMs": 344,
+    "endMs": 369,
+    "durationMs": 25
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/circle-check--P7q5yHy.js",
+    "path": "/assets/circle-check--P7q5yHy.js",
+    "status": 200,
+    "startMs": 346,
+    "endMs": 369,
+    "durationMs": 23
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/quarterlyRanking-DM0_QwlP.js",
+    "path": "/assets/quarterlyRanking-DM0_QwlP.js",
+    "status": 200,
+    "startMs": 345,
+    "endMs": 369,
+    "durationMs": 24
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/management-DguVokGq.js",
+    "path": "/assets/management-DguVokGq.js",
+    "status": 200,
+    "startMs": 345,
+    "endMs": 369,
+    "durationMs": 24
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/external-link-BDKNTOUh.js",
+    "path": "/assets/external-link-BDKNTOUh.js",
+    "status": 200,
+    "startMs": 346,
+    "endMs": 369,
+    "durationMs": 23
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/useV5Live-BjGJ6eUh.js",
+    "path": "/assets/useV5Live-BjGJ6eUh.js",
+    "status": 200,
+    "startMs": 346,
+    "endMs": 369,
+    "durationMs": 23
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/arrow-up-right-cRgLY0A3.js",
+    "path": "/assets/arrow-up-right-cRgLY0A3.js",
+    "status": 200,
+    "startMs": 346,
+    "endMs": 369,
+    "durationMs": 23
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/OpenClawLlmAuthPanel-BSZp9r5Q.js",
+    "path": "/assets/OpenClawLlmAuthPanel-BSZp9r5Q.js",
+    "status": 200,
+    "startMs": 345,
+    "endMs": 369,
+    "durationMs": 24
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/plus-DqHpcIxy.js",
+    "path": "/assets/plus-DqHpcIxy.js",
+    "status": 200,
+    "startMs": 346,
+    "endMs": 371,
+    "durationMs": 25
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/assets/managementAi-C_QzPWXn.js",
+    "path": "/assets/managementAi-C_QzPWXn.js",
+    "status": 200,
+    "startMs": 345,
+    "endMs": 371,
+    "durationMs": 26
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/events/stream?lastEventId=MR2DUTO4-3",
+    "path": "/bff/events/stream",
+    "status": null,
+    "startMs": 535,
+    "endMs": null,
+    "durationMs": null,
+    "note": "realtime SSE stream; excluded from readiness milestones"
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/me",
+    "path": "/bff/me",
+    "status": 200,
+    "startMs": 404,
+    "endMs": 537,
+    "durationMs": 133
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/health",
+    "path": "/health",
+    "status": 200,
+    "startMs": 404,
+    "endMs": 538,
+    "durationMs": 134
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/management/evidence",
+    "path": "/bff/management/evidence",
+    "status": 200,
+    "startMs": 406,
+    "endMs": 538,
+    "durationMs": 132
+  },
+  {
+    "method": "GET",
+    "url": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/management/shell-summary",
+    "path": "/bff/management/shell-summary",
+    "status": 200,
+    "startMs": 404,
+    "endMs": 545,
+    "durationMs": 141
+  }
+]

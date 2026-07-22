@@ -37,7 +37,7 @@ DEFAULT_OUTPUT = "support/evidence/BFF-CONSOL-011-sse-replay-smoke.json"
 DEFAULT_CHANNEL = "approval"
 DEFAULT_COOKIE_NAME = "pantheon_session"
 STRICT_LIVE_SOAK_MIN_SECONDS = 75.0
-STRICT_LIVE_SOAK_MIN_HEARTBEATS = 1
+STRICT_LIVE_SOAK_MIN_HEARTBEATS = 2
 STRICT_LIVE_MIN_RECONNECT_ATTEMPTS = 5
 SSE_HEADER_KEYS = (
     "Content-Type",
@@ -50,6 +50,19 @@ SSE_HEADER_KEYS = (
     "X-SSE-Resync-Routes",
     "X-BFF-Session-Kind",
 )
+
+
+def strict_live_evidence_run() -> dict[str, str]:
+    return {
+        "github_environment": os.environ.get("PANTHEON_LIVE_EVIDENCE_ENVIRONMENT", "").strip(),
+        "github_run_id": os.environ.get("GITHUB_RUN_ID", "").strip(),
+        "github_run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT", "").strip(),
+        "github_workflow": os.environ.get("GITHUB_WORKFLOW", "").strip(),
+        "github_job": os.environ.get("GITHUB_JOB", "").strip(),
+        "repository": os.environ.get("GITHUB_REPOSITORY", "").strip(),
+        "ref": (os.environ.get("GITHUB_REF") or os.environ.get("GITHUB_REF_NAME", "")).strip(),
+        "sha": os.environ.get("GITHUB_SHA", "").strip(),
+    }
 
 
 @dataclass(frozen=True)
@@ -82,6 +95,10 @@ BEARER_MODE = AuthMode(
 
 def utc_now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def utc_from_epoch(epoch_seconds: float) -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch_seconds))
 
 
 def sha256_12(value: str) -> str:
@@ -532,7 +549,8 @@ def stream_soak(
         last_event_id=last_event_id,
     )
     req = urllib.request.Request(url, headers=headers, method="GET")
-    started = time.time()
+    started_wall = time.time()
+    started_monotonic = time.monotonic()
     try:
         with urllib.request.urlopen(req, timeout=max(timeout, seconds + 5.0)) as response:
             response_headers = dict(response.headers.items())
@@ -552,6 +570,8 @@ def stream_soak(
                 and not block_summary["duplicate_event_ids"]
                 and expected_ids.issubset(observed_ids)
             )
+            finished_wall = time.time()
+            duration_ms = round((time.monotonic() - started_monotonic) * 1000)
             return {
                 "mode": mode.name,
                 "browser_client": mode.browser_client,
@@ -559,7 +579,14 @@ def stream_soak(
                 "with_credentials": mode.with_credentials,
                 "status": int(response.status),
                 "ok": ok,
-                "duration_ms": round((time.time() - started) * 1000),
+                "duration_ms": duration_ms,
+                "timeline": {
+                    "started_at": utc_from_epoch(started_wall),
+                    "finished_at": utc_from_epoch(finished_wall),
+                    "requested_seconds": seconds,
+                    "observed_duration_ms": duration_ms,
+                    "observed_duration_seconds": round(duration_ms / 1000, 3),
+                },
                 "soak_seconds": seconds,
                 "min_heartbeats": min_heartbeats,
                 "expected_event_ids": sorted(expected_ids),
@@ -575,7 +602,7 @@ def stream_soak(
             "mode": mode.name,
             "status": int(exc.code),
             "ok": False,
-            "duration_ms": round((time.time() - started) * 1000),
+            "duration_ms": round((time.monotonic() - started_monotonic) * 1000),
             "request_headers": redacted_request_headers(headers),
             "response_headers": selected_headers(dict(exc.headers.items())),
             "error_body_prefix": raw[:500],
@@ -585,7 +612,7 @@ def stream_soak(
             "mode": mode.name,
             "status": 0,
             "ok": False,
-            "duration_ms": round((time.time() - started) * 1000),
+            "duration_ms": round((time.monotonic() - started_monotonic) * 1000),
             "request_headers": redacted_request_headers(headers),
             "error": f"{type(exc).__name__}: {exc}",
         }
@@ -807,7 +834,7 @@ def parse_args() -> argparse.Namespace:
         default=0.0,
         help="Optional long-running SSE soak duration. Use >=35s to observe server heartbeat.",
     )
-    parser.add_argument("--soak-min-heartbeats", type=int, default=1)
+    parser.add_argument("--soak-min-heartbeats", type=int, default=2)
     parser.add_argument(
         "--reconnect-attempts",
         type=int,
@@ -942,6 +969,18 @@ def main() -> int:
             "enabled": True,
             "seconds": args.soak_seconds,
             "min_heartbeats": args.soak_min_heartbeats,
+            COOKIE_MODE.name: stream_soak(
+                base_url=base_url,
+                mode=COOKIE_MODE,
+                token=token,
+                timeout=args.timeout,
+                channel=args.channel,
+                cookie_name=args.cookie_name,
+                seconds=args.soak_seconds,
+                min_heartbeats=args.soak_min_heartbeats,
+                last_event_id=replay_last_event_id or None,
+                expected_event_ids=expected_replay_ids,
+            ),
             BEARER_MODE.name: stream_soak(
                 base_url=base_url,
                 mode=BEARER_MODE,
@@ -994,6 +1033,9 @@ def main() -> int:
         "mock_generator_closed_in_live_mode": bool(mock_generator_check.get("passed")),
     }
     if args.soak_seconds > 0:
+        assertions["cookie_soak_observed_heartbeat_without_duplicate_replay"] = bool(
+            soak_results.get(COOKIE_MODE.name, {}).get("ok")
+        )
         assertions["bearer_soak_observed_heartbeat_without_duplicate_replay"] = bool(
             soak_results.get(BEARER_MODE.name, {}).get("ok")
         )
@@ -1002,7 +1044,11 @@ def main() -> int:
             auth_source.get("kind") == "provided_bearer"
             and args.soak_seconds >= STRICT_LIVE_SOAK_MIN_SECONDS
             and args.soak_min_heartbeats >= STRICT_LIVE_SOAK_MIN_HEARTBEATS
+            and soak_results.get(COOKIE_MODE.name, {}).get("ok")
             and soak_results.get(BEARER_MODE.name, {}).get("ok")
+            and reconnect_sequence.get(COOKIE_MODE.name, {}).get("ok")
+            and reconnect_sequence.get(COOKIE_MODE.name, {}).get("attempt_count", 0)
+            >= args.reconnect_attempts
             and reconnect_sequence.get(BEARER_MODE.name, {}).get("ok")
             and reconnect_sequence.get(BEARER_MODE.name, {}).get("attempt_count", 0)
             >= args.reconnect_attempts
@@ -1013,6 +1059,7 @@ def main() -> int:
         "task_id": TASK_ID,
         "generated_at": generated_at,
         "target_url": base_url,
+        "strict_live_evidence_run": strict_live_evidence_run(),
         "channel": args.channel,
         "auth_source": auth_source,
         "strict_live_evidence": args.strict_live_evidence,
@@ -1039,8 +1086,8 @@ def main() -> int:
         "commands": [
             "PANTHEON_BFF_SMOKE_BEARER_TOKEN=<redacted> "
             "scripts/probe_bff_sse_stream.py --base-url <bff-url> "
-            "--strict-live-evidence --soak-seconds 75 --soak-min-heartbeats 1 "
-            "--reconnect-attempts 5"
+            "--strict-live-evidence --soak-seconds 75 --soak-min-heartbeats 2 "
+            "--reconnect-attempts 7"
         ],
         "publish": published_events,
         "open_transcripts": {
@@ -1070,6 +1117,9 @@ def main() -> int:
                     and reconnect_sequence.get(BEARER_MODE.name, {}).get("ok")
                 ),
                 "replay_unavailable_409_with_resync_routes": bool(unavailable.get("ok")),
+                "cookie_soak_heartbeat_duplicate_replay": bool(
+                    not args.soak_seconds or soak_results.get(COOKIE_MODE.name, {}).get("ok")
+                ),
                 "bearer_soak_heartbeat_duplicate_replay": bool(
                     not args.soak_seconds or soak_results.get(BEARER_MODE.name, {}).get("ok")
                 ),

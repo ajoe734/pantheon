@@ -318,6 +318,7 @@ class ConsultEvidenceAttachment(BaseModel):
 # --- API Request/Response Models ---
 
 class CreateConsultRequest(BaseModel):
+    request_id: Optional[str] = Field(default=None, min_length=1)
     request_type: ConsultRequestType
     requested_by: ActorRef
     from_persona_id: Optional[str] = None

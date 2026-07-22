@@ -13,6 +13,7 @@ from services.source_ingestion.connectors import (
     TW_OFFICIAL_CONNECTOR_ID,
     TaiwanOfficialMarketDatasetAdapter,
 )
+from services.source_ingestion.provider_adapters import execute_provider_owned_adapter, provider_adapter_tokens
 from services.source_ingestion.scheduler import IngestBatch, IngestionScheduler, JsonlIngestScheduleStore
 
 
@@ -143,10 +144,14 @@ TWSE_DAY_TRADING_PAYLOAD = [
 def test_taiwan_official_connector_catalog_tier_policy_and_auth() -> None:
     adapter = TaiwanOfficialMarketDatasetAdapter()
     connector = adapter.connector()
+    fetch = adapter.fetch_config()
 
     assert connector.connector_id == TW_OFFICIAL_CONNECTOR_ID
     assert connector.provider == "TWSE/TPEx"
     assert connector.auth_policy.auth_type.value == "none"
+    assert fetch["mode"] == "provider_owned_adapter"
+    assert fetch["adapter"] == "TaiwanOfficialMarketDatasetAdapter.records_from_payload"
+    assert fetch["request"]["venues"] == ["TWSE", "TPEx"]
     assert connector.metadata["official_reference_truth"] is True
     assert {"tw_price_daily", "tw_institutional_flow", "tw_margin_short_balance"} <= set(
         connector.metadata["normalized_datasets"]
@@ -169,6 +174,38 @@ def test_taiwan_official_adapter_emits_twse_and_tpex_daily_price_records() -> No
     assert twse[0].metadata["normalized_row"]["volume"] == 30000000
     assert tpex[0].metadata["normalized_row"]["symbol_canonical"] == "3105.TPEX"
     assert tpex[0].metadata["normalized_row"]["close"] == 118.5
+
+
+def test_taiwan_official_provider_owned_adapter_is_allowlisted_and_emits_both_venues() -> None:
+    adapter = TaiwanOfficialMarketDatasetAdapter(max_records=10)
+    connector = adapter.connector()
+    tokens = set(provider_adapter_tokens())
+
+    records = execute_provider_owned_adapter(
+        connector=connector,
+        fetch={
+            "mode": "provider_owned_adapter",
+            "adapter": "TaiwanOfficialMarketDatasetAdapter",
+            "adapter_config": {"max_records": 10},
+            "request": {
+                "dataset": "tw_price_daily",
+                "venues": ["TWSE", "TPEx"],
+                "payloads": {
+                    "TWSE": TWSE_PRICE_PAYLOAD,
+                    "TPEx": TPEX_PRICE_PAYLOAD,
+                },
+            },
+            "max_records": 10,
+        },
+        trace_id="trace-tw-official-provider-owned",
+    )
+
+    assert "TaiwanOfficialMarketDatasetAdapter" in tokens
+    assert "TaiwanOfficialMarketDatasetAdapter.records_from_payload" in tokens
+    assert [record.metadata["venue"] for record in records] == ["TWSE", "TPEx"]
+    assert records[0].metadata["provider_owned_adapter"] == "TaiwanOfficialMarketDatasetAdapter.records_from_payload"
+    assert records[0].metadata["normalized_row"]["symbol_canonical"] == "2330.TWSE"
+    assert records[1].metadata["normalized_row"]["symbol_canonical"] == "3105.TPEX"
 
 
 def test_taiwan_official_adapter_emits_chip_records_and_skips_archive_detail() -> None:

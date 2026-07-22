@@ -146,9 +146,9 @@ class SourceHealthStore:
                 pass
 
     def upsert(self, health: SourceHealth) -> SourceHealth:
-        self._index[health.source_id] = health
         if self._store is not None:
             self._store.upsert(health.to_dict())
+        self._index[health.source_id] = health
         return health
 
     def get(self, source_id: str) -> SourceHealth | None:
@@ -265,9 +265,9 @@ class SourceUsageDailyStore:
                 pass
 
     def upsert(self, record: SourceUsageDaily) -> SourceUsageDaily:
-        self._index[record.record_id] = record
         if self._store is not None:
             self._store.upsert(record.to_dict())
+        self._index[record.record_id] = record
         return record
 
     def get(self, date: str, source_id: str) -> SourceUsageDaily | None:

@@ -1456,6 +1456,8 @@ def create_research_router(
         now = utc_now()
         next_lifecycle = _REVIEW_DECISION_TO_LIFECYCLE[body.decision]
         review = {
+            "review_id": str(uuid.uuid4()),
+            "artifact_id": artifact_id,
             "decision": body.decision,
             "rationale": body.rationale,
             "score_override": body.score_override,

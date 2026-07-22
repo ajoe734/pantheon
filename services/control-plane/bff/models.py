@@ -35,6 +35,8 @@ class CommandType(str, Enum):
     EXECUTE_EVOLUTION_ACTION = "ExecuteEvolutionAction"
     APPROVE_MUTATION = "ApproveMutation"
     REJECT_MUTATION = "RejectMutation"
+    REVIEW_MUTATION = "ReviewMutation"
+    EXECUTE_MUTATION = "ExecuteMutation"
     RECORD_SPONSOR_DECISION = "RecordSponsorDecision"
     REMEDIATE_SENTINEL_INTERVENTION = "RemediateSentinelIntervention"
     CAPITAL_POOL_ACTION = "CapitalPoolAction"
@@ -76,7 +78,6 @@ class CommandType(str, Enum):
     HUMAN_GATE_REQUEST_MORE_EVIDENCE = "HumanGateRequestMoreEvidence"
     HUMAN_GATE_REVOKE = "HumanGateRevoke"
     HUMAN_GATE_EXTEND_TTL = "HumanGateExtendTtl"
-    EVIDENCE_REF_ACTION = "EvidenceRefAction"
     QUARTERLY_RANKING_RECOMMENDATION_SUBMIT = "QuarterlyRankingRecommendationSubmit"
     # BFF-WRITE-P0-LIFECYCLE: P0-1/2/3 lifecycle action types
     ADVANCE_LIFECYCLE = "AdvanceLifecycle"
@@ -87,6 +88,17 @@ class CommandType(str, Enum):
     TERMINATE_STALE_PAPER_MONITORING_SESSION = "TerminateStalePaperMonitoringSession"
     START_PAPER_MONITORING_SESSION = "StartPaperMonitoringSession"
     PROBE_TELEMETRY_INGEST = "ProbeTelemetryIngest"
+    OBSERVE = "Observe"
+    REQUEST_REVIEW = "RequestReview"
+    PAUSE_PAPER_RUNTIME = "PausePaperRuntime"
+    RESUME_PAPER_RUNTIME = "ResumePaperRuntime"
+    DEMOTE = "Demote"
+    PROMOTE_CANDIDATE = "PromoteCandidate"
+    REBALANCE_PROPOSAL = "RebalanceProposal"
+    REBALANCE_APPROVAL = "RebalanceApproval"
+    REBALANCE_TWO_MAN_SIGN = "RebalanceTwoManSign"
+    APPROVED_APPLY = "ApprovedApply"
+    EMERGENCY_CONTAINMENT = "EmergencyContainment"
 
 
 class ObjectType(str, Enum):
@@ -125,7 +137,6 @@ class ObjectType(str, Enum):
     SENTINEL_FINDING = "SentinelFinding"
     SENTINEL_REMEDIATION = "SentinelRemediation"
     HUMAN_GATE_ITEM = "HumanGateItem"
-    EVIDENCE_REF = "EvidenceRef"
 
 
 class CommandStatus(str, Enum):
@@ -245,6 +256,26 @@ class ApproveMutationCommandPayload(BaseModel):
 class RejectMutationCommandPayload(BaseModel):
     command_type: Literal["RejectMutation"]
     decision_id: str
+    note: Optional[str] = None
+
+
+class ReviewMutationCommandPayload(BaseModel):
+    command_type: Literal["ReviewMutation"]
+    decision_id: str
+    approval_decision_id: str
+    note: Optional[str] = None
+
+
+class ExecuteMutationCommandPayload(BaseModel):
+    command_type: Literal["ExecuteMutation"]
+    decision_id: str
+    has_active_runtime: bool = False
+    active_binding_id: Optional[str] = None
+    freeze_mode: str = "governance_only"
+    rollback_action_type: Optional[str] = None
+    fallback_artifact_id: Optional[str] = None
+    fallback_artifact_version: Optional[str] = None
+    force_stage_freeze: bool = False
     note: Optional[str] = None
 
 

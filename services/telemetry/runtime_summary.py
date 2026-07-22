@@ -11,6 +11,32 @@ from pathlib import Path
 from typing import Any, Optional
 
 
+_LIFECYCLE_IDENTITY_EVENT_TYPES = frozenset(
+    {
+        "signal_generation",
+        "trade_decision",
+        "risk_evaluation",
+        "paper_order_simulated",
+        "order_submitted",
+        "order_accepted",
+        "order_partially_filled",
+        "paper_fill_simulated",
+        "fill_received",
+        "order_filled",
+        "order_rejection",
+        "order_rejection_simulated",
+        "order_canceled",
+        "order_cancelled",
+        "position_snapshot",
+        "position_snapshot_received",
+        "broker_position_snapshot",
+        "reconciliation_completed",
+        "reconciliation_failed",
+    }
+)
+_DEFAULT_RECENT_LIFECYCLE_EVENT_LIMIT = 512
+
+
 def utc_now_rfc3339() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -27,9 +53,123 @@ def _parse_rfc3339(value: Any) -> Optional[datetime]:
     return parsed.astimezone(timezone.utc)
 
 
+def _explicit_metric_as_of(value: Any) -> Optional[str]:
+    """Return a timezone-aware RFC3339 timestamp, or None when unusable.
+
+    ``created_at`` remains the backward-compatible metric timestamp fallback.
+    Explicit per-metric timestamps are only trusted when they are strings and
+    carry timezone information; accepting a naive value would make freshness
+    depend on the telemetry host's local timezone.
+    """
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    try:
+        normalized = f"{text[:-1]}+00:00" if text.endswith("Z") else text
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return text
+
+
+def _strict_rfc3339(value: Any) -> tuple[Optional[str], Optional[datetime]]:
+    """Return an explicitly timezone-aware timestamp and its UTC value.
+
+    Binding rollover is an ownership decision, so unlike the display-oriented
+    parser above it must not silently interpret a naive timestamp in the
+    telemetry host's timezone.
+    """
+    if not isinstance(value, str):
+        return None, None
+    text = value.strip()
+    if not text:
+        return None, None
+    try:
+        normalized = f"{text[:-1]}+00:00" if text.endswith("Z") else text
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None, None
+    if parsed.tzinfo is None:
+        return None, None
+    return text, parsed.astimezone(timezone.utc)
+
+
+def _binding_effective_boundary(
+    metadata: dict[str, Any],
+    *,
+    event_at: Optional[datetime],
+) -> tuple[Optional[str], Optional[datetime], Optional[str]]:
+    """Read an optional RuntimeBinding effective boundary from event metadata.
+
+    Producers have historically emitted only ``created_at``.  Newer adapters
+    may attach binding authority metadata without changing the telemetry
+    envelope schema, so accept the common flat and nested representations.  A
+    boundary after the event that cites it is contradictory and is not used.
+    """
+    candidates: list[tuple[str, Any]] = [
+        ("metadata.runtime_binding_effective_at", metadata.get("runtime_binding_effective_at")),
+        ("metadata.binding_effective_at", metadata.get("binding_effective_at")),
+    ]
+    for container_key in ("runtime_binding", "binding"):
+        container = metadata.get(container_key)
+        if isinstance(container, dict):
+            candidates.append(
+                (f"metadata.{container_key}.effective_at", container.get("effective_at"))
+            )
+
+    for source, value in candidates:
+        text, parsed = _strict_rfc3339(value)
+        if parsed is None:
+            continue
+        if event_at is not None and parsed > event_at:
+            continue
+        return text, parsed, source
+    return None, None, None
+
+
 def _summary_key(payload: dict[str, Any]) -> Optional[str]:
     runtime_id = str(payload.get("runtime_id") or "").strip()
     return runtime_id or None
+
+
+def _json_safe_object(value: Any) -> Optional[dict[str, Any]]:
+    """Return a detached JSON object, or None for unsafe/non-object input."""
+    if not isinstance(value, dict):
+        return None
+    try:
+        cloned = json.loads(json.dumps(value))
+    except (TypeError, ValueError):
+        return None
+    return cloned if isinstance(cloned, dict) else None
+
+
+def _append_recent_lifecycle_event_id(
+    values: Any,
+    event_id: Any,
+    *,
+    limit: int,
+) -> list[str]:
+    """Return an ordered, deduplicated, bounded lifecycle receipt list."""
+    recent: list[str] = []
+    seen: set[str] = set()
+    if isinstance(values, list):
+        for value in values:
+            normalized = str(value or "").strip()
+            if normalized and normalized not in seen:
+                recent.append(normalized)
+                seen.add(normalized)
+    normalized_event_id = str(event_id or "").strip()
+    if normalized_event_id:
+        # A replay through this projection becomes the most recent observation
+        # without creating a second receipt, keeping the history tail aligned
+        # with last_lifecycle_identity.
+        recent = [value for value in recent if value != normalized_event_id]
+        recent.append(normalized_event_id)
+    return recent[-limit:]
 
 
 class RuntimeSummaryProjectionStore:
@@ -40,9 +180,11 @@ class RuntimeSummaryProjectionStore:
         path: Optional[str | Path] = None,
         *,
         heartbeat_stale_after_seconds: int = 90,
+        recent_lifecycle_event_limit: int = _DEFAULT_RECENT_LIFECYCLE_EVENT_LIMIT,
     ) -> None:
         self._path = Path(path) if path else None
         self._heartbeat_stale_after_seconds = max(int(heartbeat_stale_after_seconds), 1)
+        self._recent_lifecycle_event_limit = max(int(recent_lifecycle_event_limit), 1)
         self._lock = threading.RLock()
         self._summaries: dict[str, dict[str, Any]] = {}
         self._load()
@@ -57,6 +199,7 @@ class RuntimeSummaryProjectionStore:
                 "summary_count": len(self._summaries),
                 "path": self.path,
                 "heartbeat_stale_after_seconds": self._heartbeat_stale_after_seconds,
+                "recent_lifecycle_event_limit": self._recent_lifecycle_event_limit,
             }
 
     _VALID_STAGES = frozenset({"paper", "canary", "live", "frozen"})
@@ -73,16 +216,132 @@ class RuntimeSummaryProjectionStore:
 
         event_type = str(event.get("event_type") or "").strip()
         event_time = str(event.get("created_at") or utc_now_rfc3339())
+        event_boundary_text, event_boundary_at = _strict_rfc3339(event.get("created_at"))
         metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
         metrics = event.get("metrics") if isinstance(event.get("metrics"), dict) else {}
         binding_id = str(event.get("binding_id") or event.get("runtime_binding_id") or "").strip()
+        raw_trace_id = event.get("trace_id")
+        trace_id = raw_trace_id.strip() if isinstance(raw_trace_id, str) else ""
+        correlation_envelope = _json_safe_object(event.get("correlation_envelope"))
+        if correlation_envelope is not None:
+            raw_envelope_trace_id = correlation_envelope.get("trace_id")
+            envelope_trace_id = (
+                raw_envelope_trace_id.strip()
+                if isinstance(raw_envelope_trace_id, str)
+                else ""
+            )
+            if trace_id and envelope_trace_id and envelope_trace_id != trace_id:
+                correlation_envelope = None
+            elif not trace_id:
+                trace_id = envelope_trace_id
+        (
+            binding_effective_text,
+            binding_effective_at,
+            binding_effective_source,
+        ) = _binding_effective_boundary(metadata, event_at=event_boundary_at)
         bridge_repo = metadata.get("engine_bridge_repo")
         bridge_commit = metadata.get("engine_bridge_commit")
         bridge_path = metadata.get("engine_bridge_path")
         runtime_adapter_version = metadata.get("runtime_adapter_version")
+        # A threshold-breach producer admits a derived event that just echoes
+        # an existing metric value/back through ingest to prove it is
+        # schema/evidence-valid before citing it as incident evidence. That
+        # echo must not refresh the metric's own as-of time: doing so would
+        # let a stale metric value keep looking fresh forever, because the
+        # very breach it produced would re-stamp the freshness check that
+        # flagged it as stale in the first place.
+        is_derived_metric_echo = metadata.get("derived_from_threshold_evaluation") is True
 
         with self._lock:
             current = dict(self._summaries.get(runtime_id, {}))
+            existing_binding = str(
+                current.get("binding_id") or current.get("runtime_binding_id") or ""
+            ).strip()
+            if existing_binding and not binding_id:
+                return self._reject_binding_reclaim(
+                    runtime_id,
+                    current,
+                    event,
+                    candidate_binding_id=binding_id,
+                    reason="missing_binding_id",
+                    candidate_boundary_at=binding_effective_text or event_boundary_text,
+                )
+
+            if existing_binding and binding_id and existing_binding != binding_id:
+                accepted, reason = self._binding_rollover_is_newer(
+                    current,
+                    event,
+                    candidate_binding_id=binding_id,
+                    candidate_event_at=event_boundary_at,
+                    candidate_effective_at=binding_effective_at,
+                )
+                if not accepted:
+                    return self._reject_binding_reclaim(
+                        runtime_id,
+                        current,
+                        event,
+                        candidate_binding_id=binding_id,
+                        reason=reason,
+                        candidate_boundary_at=binding_effective_text or event_boundary_text,
+                    )
+
+                retired_binding_ids = {
+                    str(value)
+                    for value in current.get("_retired_binding_ids", [])
+                    if str(value).strip()
+                }
+                retired_binding_ids.add(existing_binding)
+                current["_retired_binding_ids"] = sorted(retired_binding_ids)
+                # Reset old metrics, positions, and history to prevent carrying them across rollover
+                keys_to_clear = [
+                    "pnl", "pnl_at", "pnl_binding_id",
+                    "drawdown", "drawdown_at", "drawdown_binding_id",
+                    "sharpe_ratio", "sharpe_ratio_at", "sharpe_ratio_binding_id",
+                    "fill_rate", "fill_rate_at", "fill_rate_binding_id",
+                    "avg_slippage_bps", "avg_slippage_bps_at", "avg_slippage_bps_binding_id",
+                    "total_trades", "total_trades_at", "total_trades_binding_id",
+                    "executed_trade_count",
+                    "last_fill",
+                    "_positions_by_symbol", "positions", "position_count",
+                    "last_heartbeat_at", "last_heartbeat_event_id",
+                    "state", "connectivity_status", "broker_status",
+                    "queue_lag_ms", "event_delivery_lag_ms", "reported_health_summary",
+                    "trace_id", "correlation_envelope", "last_lifecycle_identity",
+                    "recent_lifecycle_event_ids",
+                ]
+                for key in keys_to_clear:
+                    current.pop(key, None)
+
+                self._set_binding_boundary(
+                    current,
+                    event_at_text=event_boundary_text,
+                    event_at=event_boundary_at,
+                    effective_at_text=binding_effective_text,
+                    effective_at=binding_effective_at,
+                    effective_source=binding_effective_source,
+                    reset=True,
+                )
+            elif not existing_binding:
+                self._set_binding_boundary(
+                    current,
+                    event_at_text=event_boundary_text,
+                    event_at=event_boundary_at,
+                    effective_at_text=binding_effective_text,
+                    effective_at=binding_effective_at,
+                    effective_source=binding_effective_source,
+                    reset=True,
+                )
+            else:
+                self._set_binding_boundary(
+                    current,
+                    event_at_text=event_boundary_text,
+                    event_at=event_boundary_at,
+                    effective_at_text=binding_effective_text,
+                    effective_at=binding_effective_at,
+                    effective_source=binding_effective_source,
+                    reset=False,
+                )
+
             current.update(
                 {
                     "id": runtime_id,
@@ -105,6 +364,59 @@ class RuntimeSummaryProjectionStore:
                     "projection_updated_at": utc_now_rfc3339(),
                 }
             )
+            if trace_id:
+                current["trace_id"] = trace_id
+            else:
+                current.pop("trace_id", None)
+            if correlation_envelope is not None:
+                current["correlation_envelope"] = correlation_envelope
+                if event_type in _LIFECYCLE_IDENTITY_EVENT_TYPES:
+                    # Preserve the last complete lifecycle chain separately
+                    # from general runtime freshness. A later heartbeat may
+                    # update the summary without erasing the identity needed
+                    # by the real reconciliation producer.
+                    current["last_lifecycle_identity"] = {
+                        field: json.loads(json.dumps(event[field]))
+                        for field in (
+                            "event_id",
+                            "event_type",
+                            "created_at",
+                            "tenant_id",
+                            "environment",
+                            "execution_mode",
+                            "deployment_stage",
+                            "binding_id",
+                            "runtime_id",
+                            "capital_pool_id",
+                            "artifact_id",
+                            "artifact_version",
+                            "plan_id",
+                            "persona_capital_binding_id",
+                            "trace_id",
+                            "signal_id",
+                            "run_id",
+                            "loop_run_id",
+                            "aggregate_type",
+                            "aggregate_id",
+                            "sequence_no",
+                            "causal_parent_id",
+                            "source_mode",
+                            "target",
+                            "authority_refs",
+                            "metadata",
+                            "correlation_envelope",
+                        )
+                        if event.get(field) not in (None, "", [], {})
+                    }
+                    current["recent_lifecycle_event_ids"] = (
+                        _append_recent_lifecycle_event_id(
+                            current.get("recent_lifecycle_event_ids"),
+                            event.get("event_id"),
+                            limit=self._recent_lifecycle_event_limit,
+                        )
+                    )
+            else:
+                current.pop("correlation_envelope", None)
 
             if event_type == "heartbeat":
                 current["last_heartbeat_at"] = event_time
@@ -156,17 +468,41 @@ class RuntimeSummaryProjectionStore:
                 "total_trades": ("total_trades",),
             }
             for target_key, source_keys in metric_map.items():
+                if is_derived_metric_echo:
+                    break
                 for source_key in source_keys:
                     if source_key in metrics:
+                        # Per-metric as-of timestamp: a metric only carried
+                        # forward by `dict.update` above (e.g. an old drawdown
+                        # value untouched by a newer heartbeat-only event)
+                        # must not read as fresh just because the summary's
+                        # overall `last_event_at` advanced.
+                        explicit_as_of = _explicit_metric_as_of(
+                            event.get(f"{target_key}_as_of")
+                        )
+                        metric_as_of = explicit_as_of or event_time
+                        previous_as_of = _parse_rfc3339(
+                            current.get(f"{target_key}_at")
+                        )
+                        candidate_as_of = _parse_rfc3339(metric_as_of)
+                        if previous_as_of is not None and (
+                            candidate_as_of is None or candidate_as_of < previous_as_of
+                        ):
+                            # Events can arrive out of order. Compare each
+                            # metric against its own as-of field so a stale
+                            # pnl observation cannot overwrite pnl while an
+                            # independently newer drawdown still advances.
+                            break
                         current[target_key] = metrics[source_key]
+                        current[f"{target_key}_at"] = metric_as_of
+                        current[f"{target_key}_binding_id"] = binding_id
                         break
 
             # Surface executed paper fills so trade activity is visible end-to-end.
-            # The runtime emits paper_fill_simulated / bracket_order_logged events that
-            # were ingested but previously not reflected in the runtime summary the BFF
-            # reads (only health + pnl were projected). Project a trade counter, the
-            # last fill, and net positions so executed trades light up downstream.
-            if event_type in ("paper_fill_simulated", "bracket_order_logged"):
+            # ``bracket_order_logged`` only records order intent and must never
+            # inflate fill counts or positions.  Only the simulated-fill event
+            # proves that the paper ledger actually changed.
+            if event_type == "paper_fill_simulated":
                 symbol = metadata.get("symbol") or metrics.get("symbol")
                 fill_qty = metrics.get("fill_quantity")
                 fill_price = metrics.get("fill_price")
@@ -216,6 +552,153 @@ class RuntimeSummaryProjectionStore:
             self._summaries[runtime_id] = current
             self._persist()
             return json.loads(json.dumps(current))
+
+    def _binding_rollover_is_newer(
+        self,
+        current: dict[str, Any],
+        event: dict[str, Any],
+        *,
+        candidate_binding_id: str,
+        candidate_event_at: Optional[datetime],
+        candidate_effective_at: Optional[datetime],
+    ) -> tuple[bool, str]:
+        """Decide whether a different binding may take ownership of a runtime.
+
+        Binding IDs are immutable generations.  Once one has been replaced it
+        is a tombstone for this runtime and can never reclaim the projection.
+        For a previously unseen binding, require binding-generation evidence:
+        comparable effective times, an effective time beyond a legacy
+        projection's first-event boundary, or explicit replacement lineage.
+        Event time alone proves when an event was created, not whether its
+        binding generation is newer.
+        """
+        retired_binding_ids = {
+            str(value)
+            for value in current.get("_retired_binding_ids", [])
+            if str(value).strip()
+        }
+        if candidate_binding_id in retired_binding_ids:
+            return False, "retired_binding_reclaim"
+
+        existing_binding = str(
+            current.get("binding_id") or current.get("runtime_binding_id") or ""
+        ).strip()
+        rollback_parent = str(event.get("rollback_parent") or "").strip()
+        if rollback_parent and rollback_parent == existing_binding and (
+            candidate_event_at is not None or candidate_effective_at is not None
+        ):
+            return True, "explicit_replacement_lineage"
+
+        _, current_effective_at = _strict_rfc3339(current.get("_binding_effective_at"))
+        if current_effective_at is not None and candidate_effective_at is not None:
+            if candidate_effective_at > current_effective_at:
+                return True, "newer_binding_effective_at"
+            return False, "binding_effective_at_not_newer"
+
+        _, current_first_event_at = _strict_rfc3339(
+            current.get("_binding_first_event_at")
+            or current.get("last_event_at")
+            or current.get("collected_at")
+        )
+        if candidate_effective_at is not None and current_effective_at is None:
+            if current_first_event_at is None:
+                return False, "binding_boundary_unavailable"
+            if candidate_effective_at > current_first_event_at:
+                return True, "binding_effective_at_after_legacy_boundary"
+            return False, "binding_effective_at_not_after_legacy_boundary"
+
+        if current_effective_at is not None:
+            return False, "candidate_binding_effective_at_missing"
+        if current_first_event_at is None or candidate_event_at is None:
+            return False, "binding_boundary_unavailable"
+        return False, "binding_effective_boundary_unavailable"
+
+    @staticmethod
+    def _set_binding_boundary(
+        current: dict[str, Any],
+        *,
+        event_at_text: Optional[str],
+        event_at: Optional[datetime],
+        effective_at_text: Optional[str],
+        effective_at: Optional[datetime],
+        effective_source: Optional[str],
+        reset: bool,
+    ) -> None:
+        if reset:
+            current.pop("_binding_effective_at", None)
+            current.pop("_binding_effective_source", None)
+            current.pop("_binding_first_event_at", None)
+            current.pop("_binding_latest_event_at", None)
+            current.pop("_binding_boundary_at", None)
+            current.pop("_binding_boundary_source", None)
+
+        first_text, first_at = _strict_rfc3339(current.get("_binding_first_event_at"))
+        latest_text, latest_at = _strict_rfc3339(current.get("_binding_latest_event_at"))
+        if event_at is not None:
+            if first_at is None or event_at < first_at:
+                first_text, first_at = event_at_text, event_at
+            if latest_at is None or event_at > latest_at:
+                latest_text, latest_at = event_at_text, event_at
+        if first_text is not None:
+            current["_binding_first_event_at"] = first_text
+        if latest_text is not None:
+            current["_binding_latest_event_at"] = latest_text
+
+        _, stored_effective_at = _strict_rfc3339(current.get("_binding_effective_at"))
+        # A late same-binding event may upgrade a created_at-only legacy
+        # projection with an effective boundary, but only if that boundary is
+        # no later than the first event already attributed to the binding.
+        if (
+            stored_effective_at is None
+            and effective_at is not None
+            and (first_at is None or effective_at <= first_at)
+        ):
+            current["_binding_effective_at"] = effective_at_text
+            current["_binding_effective_source"] = effective_source
+
+        boundary_at = current.get("_binding_effective_at") or current.get(
+            "_binding_first_event_at"
+        )
+        if boundary_at is not None:
+            current["_binding_boundary_at"] = boundary_at
+            current["_binding_boundary_source"] = (
+                current.get("_binding_effective_source") or "event.created_at"
+            )
+
+    def _reject_binding_reclaim(
+        self,
+        runtime_id: str,
+        current: dict[str, Any],
+        event: dict[str, Any],
+        *,
+        candidate_binding_id: str,
+        reason: str,
+        candidate_boundary_at: Optional[str],
+    ) -> dict[str, Any]:
+        diagnostics = (
+            dict(current.get("projection_diagnostics"))
+            if isinstance(current.get("projection_diagnostics"), dict)
+            else {}
+        )
+        diagnostics["binding_rollover_rejection_count"] = int(
+            diagnostics.get("binding_rollover_rejection_count") or 0
+        ) + 1
+        diagnostics["last_binding_rollover_rejection"] = {
+            "reason": reason,
+            "event_id": event.get("event_id"),
+            "candidate_binding_id": candidate_binding_id or None,
+            "current_binding_id": current.get("binding_id")
+            or current.get("runtime_binding_id"),
+            "candidate_boundary_at": candidate_boundary_at,
+            "current_boundary_at": current.get("_binding_boundary_at")
+            or current.get("_binding_latest_event_at")
+            or current.get("last_event_at"),
+            "recorded_at": utc_now_rfc3339(),
+        }
+        current["projection_diagnostics"] = diagnostics
+        self._summaries[runtime_id] = current
+        self._persist()
+        return json.loads(json.dumps(current))
 
     def get(self, runtime_id: str, *, now: Optional[datetime] = None) -> Optional[dict[str, Any]]:
         with self._lock:
@@ -302,6 +785,15 @@ class RuntimeSummaryProjectionStore:
                 continue
             key = _summary_key(item)
             if key:
+                recent_lifecycle_event_ids = _append_recent_lifecycle_event_id(
+                    item.get("recent_lifecycle_event_ids"),
+                    None,
+                    limit=self._recent_lifecycle_event_limit,
+                )
+                if recent_lifecycle_event_ids:
+                    item["recent_lifecycle_event_ids"] = recent_lifecycle_event_ids
+                else:
+                    item.pop("recent_lifecycle_event_ids", None)
                 normalized[key] = item
         self._summaries = normalized
 

@@ -8,18 +8,77 @@
 
 set -euo pipefail
 
-PROJECT_ID="${PROJECT_ID:-pantheon-benjamin-20260528}"
+PROJECT_ID="${PROJECT_ID:-pantheon-lupin-dev-20260719}"
 REMOTE_USER="${REMOTE_USER:-lupin}"
 
 DEV_VM="${DEV_VM:-pantheon-lupin-dev}"
 DEV_ZONE="${DEV_ZONE:-asia-east1-b}"
-DEV_REMOTE_DIR="${DEV_REMOTE_DIR:-/home/lupin/code/pantheon}"
-DEV_BFF_CANONICAL_CORS_ORIGIN="${DEV_BFF_CANONICAL_CORS_ORIGIN:-https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io}"
+DEV_REMOTE_DIR="${DEV_REMOTE_DIR:-/home/lupin/pantheon}"
+DEV_BFF_CANONICAL_CORS_ORIGIN="${DEV_BFF_CANONICAL_CORS_ORIGIN:-https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io}"
 DEV_BFF_CORS_ORIGINS="${DEV_BFF_CORS_ORIGINS:-${DEV_BFF_CANONICAL_CORS_ORIGIN},https://pantheon-ai-system-front-dev.lovable.app,https://pantheon-dev.lovable.app}"
 DEV_BFF_REQUIRED_CORS_ORIGINS="${DEV_BFF_REQUIRED_CORS_ORIGINS:-https://preview--pantheon-dev.lovable.app,https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com,https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app,https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com}"
-DEV_BFF_AUTH_STUB="${DEV_BFF_AUTH_STUB:-true}"
+DEV_BFF_PUBLIC_HOST="${DEV_BFF_PUBLIC_HOST:-pantheon-lupin-dev-bff.35.201.204.12.sslip.io}"
+DEV_FE_PUBLIC_HOST="${DEV_FE_PUBLIC_HOST:-pantheon-lupin-dev-fe.35.201.204.12.sslip.io}"
+DEV_FE_STATIC_ROOT="${DEV_FE_STATIC_ROOT:-/var/www/pantheon-dev-fe}"
+# Strict by default: the dev deploy must not silently re-force stub/permissive
+# auth on every run. docker-compose.yml's own PANTHEON_BFF_AUTH_STUB/MODE
+# defaults are strict/false, but this script always passes an explicit value
+# into the compose environment (see PANTHEON_BFF_AUTH_STUB= below), which
+# overrides the compose file default regardless of what it says. Operators who
+# need a permissive dev session must opt in explicitly via
+# DEV_BFF_AUTH_STUB=true DEV_BFF_AUTH_MODE=permissive.
+DEV_BFF_AUTH_STUB="${DEV_BFF_AUTH_STUB:-false}"
+DEV_BFF_AUTH_MODE="${DEV_BFF_AUTH_MODE:-strict}"
+# Governed verifier/dev-login credentials for the strict auth cutover. These
+# must come from a secret source (GitHub Actions secrets in CI), never from
+# compose file defaults. When strict mode is requested without them, the
+# preflight gate below refuses to deploy rather than shipping a strict-looking
+# BFF where every protected route is actually unusable.
+DEV_BFF_JWT_SECRET="${DEV_BFF_JWT_SECRET:-}"
+DEV_BFF_JWT_ISSUER="${DEV_BFF_JWT_ISSUER:-pantheon-dev}"
+DEV_BFF_JWT_AUDIENCE="${DEV_BFF_JWT_AUDIENCE:-bff-operators}"
+DEV_BFF_JWKS_URI="${DEV_BFF_JWKS_URI:-}"
+DEV_BFF_OIDC_DISCOVERY_URL="${DEV_BFF_OIDC_DISCOVERY_URL:-}"
+DEV_BFF_OIDC_ISSUER="${DEV_BFF_OIDC_ISSUER:-}"
+DEV_BFF_OIDC_AUDIENCE="${DEV_BFF_OIDC_AUDIENCE:-}"
+DEV_BFF_OIDC_CLIENT_ID="${DEV_BFF_OIDC_CLIENT_ID:-}"
+DEV_BFF_OIDC_CLIENT_SECRET="${DEV_BFF_OIDC_CLIENT_SECRET:-}"
+# Dedicated server-bound identities used by governed dev proofs. Client IDs
+# are public identifiers with stable dev defaults; every secret must be
+# supplied independently by the deploy environment. Keeping these pairs
+# separate is what gives approval/apply evidence distinct immutable subjects.
+DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID="${DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID:-pantheon-dev-viewer-v1}"
+DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET="${DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET:-}"
+DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID="${DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID:-pantheon-dev-approver-v1}"
+DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET="${DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET:-}"
+DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID="${DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID:-pantheon-dev-risk-owner-v1}"
+DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET="${DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET:-}"
+DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID="${DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID:-pantheon-dev-operator-a-v1}"
+DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET="${DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET:-}"
+DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID="${DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID:-pantheon-dev-operator-b-v1}"
+DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET="${DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET:-}"
+DEV_BFF_MFA_REQUIRED="${DEV_BFF_MFA_REQUIRED:-true}"
+# Keep the legacy/generic operator credential as the explicit no-MFA negative
+# fixture. Governed actors use dedicated credentials and MFA-positive tokens.
+DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED="${DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED:-false}"
+DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED="${DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED:-true}"
+DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED="${DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED:-true}"
+DEV_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED="${DEV_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED:-true}"
+DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED="${DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED:-true}"
+DEV_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED="${DEV_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED:-true}"
+DEV_BFF_ROLE_CLAIMS="${DEV_BFF_ROLE_CLAIMS:-roles,role}"
+DEV_BFF_ROLE_MAP="${DEV_BFF_ROLE_MAP:-}"
+DEV_BFF_ROLE_MAP_MODE="${DEV_BFF_ROLE_MAP_MODE:-passthrough}"
+DEV_BFF_DEFAULT_ROLE="${DEV_BFF_DEFAULT_ROLE:-viewer}"
+# Human-provisioned service credential shared only by operator-bff and the
+# OpenClaw adapter. There is intentionally no generated/local fallback.
+DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN="${DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}"
+DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="${DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-true}"
+DEV_BFF_TENANT_ID="${DEV_BFF_TENANT_ID:-tenant-dev}"
+DEV_BFF_ALLOWED_TENANTS="${DEV_BFF_ALLOWED_TENANTS:-${DEV_BFF_TENANT_ID},pantheon-dev}"
 DEV_ASSISTANT_KERNEL_ENABLED="${DEV_ASSISTANT_KERNEL_ENABLED:-true}"
 DEV_ASSISTANT_CONTROL_MODE_STORE_PATH="${DEV_ASSISTANT_CONTROL_MODE_STORE_PATH:-/data/bff/assistant-control-mode.json}"
+DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH="${DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH:-}"
 DEV_ASSISTANT_CONTROL_IDLE_TTL_SECONDS="${DEV_ASSISTANT_CONTROL_IDLE_TTL_SECONDS:-300}"
 DEV_ASSISTANT_REPAIR_REPO_URL="${DEV_ASSISTANT_REPAIR_REPO_URL:-/workspace/status-root}"
 DEV_ASSISTANT_REPAIR_REMOTE_URL="${DEV_ASSISTANT_REPAIR_REMOTE_URL:-https://github.com/ajoe734/pantheon.git}"
@@ -37,6 +96,7 @@ DEV_MANAGEMENT_AI_DATABASE_URL="${DEV_MANAGEMENT_AI_DATABASE_URL:-}"
 DEV_MANAGEMENT_AI_ATTACH_BUCKET="${DEV_MANAGEMENT_AI_ATTACH_BUCKET:-}"
 DEV_MANAGEMENT_AI_ATTACH_LOCATION="${DEV_MANAGEMENT_AI_ATTACH_LOCATION:-asia-east1}"
 PANTHEON_DEV_DOCKER_PRUNE="${PANTHEON_DEV_DOCKER_PRUNE:-true}"
+PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE="${PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE:-true}"
 DEV_APP_DB_USER="${DEV_APP_DB_USER:-${PANTHEON_APP_DB_USER:-pantheon_app}}"
 
 STAGING_CONTROL_VM="${STAGING_CONTROL_VM:-pantheon-lupin-staging-control}"
@@ -57,6 +117,52 @@ ALLOW_DIRTY="${PANTHEON_ALLOW_DIRTY_DEPLOY:-false}"
 ALLOW_EXAMPLE_ENV="${PANTHEON_ALLOW_EXAMPLE_ENV:-false}"
 DRY_RUN=false
 
+verify_dev_environment_lease_contract() {
+  if [[ "${DEPLOY_ENV}" != "dev" ]]; then
+    return
+  fi
+
+  local lease_state_file="${PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE:-}"
+  local guarded_lease_id="${PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID:-}"
+
+  [[ -n "${guarded_lease_id}" ]] \
+    || error "dev deployment requires the pinned lease guard lease ID"
+  [[ -f "${lease_state_file}" && ! -L "${lease_state_file}" ]] \
+    || error "dev deployment requires a regular lease state file"
+
+  python3 - "${lease_state_file}" "${guarded_lease_id}" "${DEPLOY_SHA}" <<'PY'
+import json
+import re
+import sys
+
+state_path, guarded_lease_id, deploy_sha = sys.argv[1:]
+with open(state_path, encoding="utf-8") as handle:
+    state = json.load(handle)
+
+expected = {
+    "schemaVersion": 1,
+    "repository": "ajoe734/execute-plans",
+    "branch": "environment-coordination",
+    "path": ".pantheon/environment-leases/pantheon-dev-environment.json",
+    "resource": "pantheon-dev-environment",
+    "mode": "deployment",
+    "leaseId": guarded_lease_id,
+    "expectedBackendSha": deploy_sha,
+}
+for key, expected_value in expected.items():
+    if state.get(key) != expected_value:
+        actual = state.get(key)
+        raise SystemExit(
+            f"dev environment lease {key} mismatch: "
+            f"expected {expected_value!r}, got {actual!r}"
+        )
+if not re.fullmatch(r"[0-9a-f]{40}", deploy_sha):
+    raise SystemExit("dev deployment SHA must be a full lowercase commit SHA")
+PY
+
+  info "dev environment lease contract verified: ${guarded_lease_id} -> ${DEPLOY_SHA}"
+}
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -69,7 +175,7 @@ Options:
                          bff (dev only): rebuild only operator-bff; paper fleet
                          and all other services are left running untouched.
   --sha <commit>         Required unless GITHUB_SHA is set. Commit to deploy.
-  --project-id <id>      GCP project. Default: pantheon-benjamin-20260528.
+  --project-id <id>      GCP project. Default: pantheon-lupin-dev-20260719.
   --allow-dirty          Emergency only: stash dirty managed deploy worktree
                          changes before checkout.
   --allow-example-env    Allow staging to use env/*.env.example if real env files
@@ -82,9 +188,27 @@ Environment overrides:
   PANTHEON_DEPLOY_WORKTREE_ROOT
   GITHUB_TOKEN
   DEV_VM DEV_ZONE DEV_REMOTE_DIR
+  DEV_BFF_PUBLIC_HOST DEV_FE_PUBLIC_HOST DEV_FE_STATIC_ROOT
   DEV_BFF_CANONICAL_CORS_ORIGIN DEV_BFF_CORS_ORIGINS
-  DEV_BFF_REQUIRED_CORS_ORIGINS DEV_BFF_AUTH_STUB
+  DEV_BFF_REQUIRED_CORS_ORIGINS DEV_BFF_AUTH_STUB DEV_BFF_AUTH_MODE
+  DEV_BFF_JWT_SECRET DEV_BFF_JWT_ISSUER DEV_BFF_JWT_AUDIENCE
+  DEV_BFF_JWKS_URI DEV_BFF_OIDC_DISCOVERY_URL
+  DEV_BFF_OIDC_ISSUER DEV_BFF_OIDC_AUDIENCE
+  DEV_BFF_OIDC_CLIENT_ID DEV_BFF_OIDC_CLIENT_SECRET
+  DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET
+  DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET
+  DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET
+  DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET
+  DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET
+  DEV_BFF_MFA_REQUIRED DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED
+  DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED
+  DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED DEV_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED
+  DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED DEV_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED
+  DEV_BFF_ROLE_CLAIMS DEV_BFF_ROLE_MAP DEV_BFF_ROLE_MAP_MODE DEV_BFF_DEFAULT_ROLE
+  DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED
+  DEV_BFF_TENANT_ID DEV_BFF_ALLOWED_TENANTS
   DEV_ASSISTANT_KERNEL_ENABLED DEV_ASSISTANT_CONTROL_MODE_STORE_PATH
+  DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH
   DEV_ASSISTANT_CONTROL_IDLE_TTL_SECONDS
   DEV_ASSISTANT_REPAIR_REPO_URL DEV_ASSISTANT_REPAIR_REMOTE_URL
   DEV_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS DEV_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS
@@ -113,6 +237,18 @@ error() {
 
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || error "$1 is required"
+}
+
+is_placeholder_credential() {
+  local normalized="${1,,}"
+  case "$normalized" in
+    replace-me*|changeme*|change-me*|example*|dummy*|placeholder*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }
 
 shell_quote() {
@@ -163,12 +299,15 @@ configure_management_ai_dev_kernel_env() {
 
   PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED:-$DEV_ASSISTANT_KERNEL_ENABLED}"
   PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH="${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH:-$DEV_ASSISTANT_CONTROL_MODE_STORE_PATH}"
+  PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH="${PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH:-$DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH}"
   PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS="${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS:-$DEV_ASSISTANT_CONTROL_IDLE_TTL_SECONDS}"
   PANTHEON_ASSISTANT_REPAIR_REPO_URL="${PANTHEON_ASSISTANT_REPAIR_REPO_URL:-$DEV_ASSISTANT_REPAIR_REPO_URL}"
   PANTHEON_ASSISTANT_REPAIR_REMOTE_URL="${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL:-$DEV_ASSISTANT_REPAIR_REMOTE_URL}"
   PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS="${PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS:-$DEV_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS}"
   PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS="${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS:-$DEV_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS}"
   PANTHEON_BFF_STUB_CAPABILITIES="${PANTHEON_BFF_STUB_CAPABILITIES:-$DEV_BFF_STUB_CAPABILITIES}"
+  PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-$DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN}"
+  PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-$DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED}"
   PANTHEON_STATUS_ROOT_CONTAINER="${PANTHEON_STATUS_ROOT_CONTAINER:-$DEV_STATUS_ROOT_CONTAINER}"
   PANTHEON_STATUS_ROOT_HOST="${PANTHEON_STATUS_ROOT_HOST:-${DEV_STATUS_ROOT_HOST:-$DEV_REMOTE_DIR}}"
 }
@@ -253,9 +392,32 @@ if [[ "$DRY_RUN" == "true" ]]; then
   info "allow_dirty=${ALLOW_DIRTY}"
   info "allow_example_env=${ALLOW_EXAMPLE_ENV}"
   info "dev_bff_cors_origins=${DEV_BFF_CORS_ORIGINS}"
+  info "dev_bff_public_host=${DEV_BFF_PUBLIC_HOST}"
+  info "dev_fe_public_host=${DEV_FE_PUBLIC_HOST}"
+  info "dev_fe_static_root=${DEV_FE_STATIC_ROOT}"
   info "dev_bff_auth_stub=${DEV_BFF_AUTH_STUB}"
+  info "dev_bff_auth_mode=${DEV_BFF_AUTH_MODE}"
+  info "dev_bff_mfa_required=${DEV_BFF_MFA_REQUIRED}"
+  info "dev_bff_jwt_secret_configured=$([[ -n "$DEV_BFF_JWT_SECRET" ]] && echo true || echo false)"
+  info "dev_bff_jwt_issuer_configured=$([[ -n "$DEV_BFF_JWT_ISSUER" ]] && echo true || echo false)"
+  info "dev_bff_jwt_audience_configured=$([[ -n "$DEV_BFF_JWT_AUDIENCE" ]] && echo true || echo false)"
+  info "dev_bff_jwks_configured=$([[ -n "$DEV_BFF_JWKS_URI" || -n "$DEV_BFF_OIDC_DISCOVERY_URL" ]] && echo true || echo false)"
+  info "dev_bff_external_oidc_contract_configured=$([[ -n "$DEV_BFF_OIDC_ISSUER" && -n "$DEV_BFF_OIDC_AUDIENCE" ]] && echo true || echo false)"
+  info "dev_bff_oidc_client_configured=$([[ -n "$DEV_BFF_OIDC_CLIENT_ID" && -n "$DEV_BFF_OIDC_CLIENT_SECRET" ]] && echo true || echo false)"
+  for identity in VIEWER APPROVER RISK_OWNER OPERATOR_A OPERATOR_B; do
+    id_var="DEV_BFF_DEV_LOGIN_${identity}_CLIENT_ID"
+    secret_var="DEV_BFF_DEV_LOGIN_${identity}_CLIENT_SECRET"
+    info "dev_bff_dev_login_${identity,,}_configured=$([[ -n "${!id_var}" && -n "${!secret_var}" ]] && echo true || echo false)"
+  done
+  info "dev_bff_role_claims_configured=$([[ -n "$DEV_BFF_ROLE_CLAIMS" ]] && echo true || echo false)"
+  info "dev_bff_role_map_configured=$([[ -n "$DEV_BFF_ROLE_MAP" ]] && echo true || echo false)"
+  info "dev_bff_role_map_mode=${DEV_BFF_ROLE_MAP_MODE}"
+  info "dev_bff_default_role=${DEV_BFF_DEFAULT_ROLE}"
+  info "dev_openclaw_adapter_service_auth_required=${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-}"
+  info "dev_openclaw_adapter_service_token_configured=$([[ -n "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}" ]] && echo true || echo false)"
   info "dev_assistant_kernel_enabled=${PANTHEON_ASSISTANT_KERNEL_ENABLED:-}"
   info "dev_assistant_control_mode_store_path=${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH:-}"
+  info "dev_assistant_control_passphrase_hash_configured=$([[ -n "${PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH:-}" ]] && echo true || echo false)"
   info "dev_assistant_control_idle_ttl_seconds=${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS:-}"
   info "dev_assistant_repair_repo_url=${PANTHEON_ASSISTANT_REPAIR_REPO_URL:-}"
   info "dev_assistant_repair_remote_url=${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL:-}"
@@ -274,6 +436,41 @@ if [[ "$DRY_RUN" == "true" ]]; then
   info "staging_exec_health_url=${STAGING_EXEC_HEALTH_URL}"
   info "staging_bff_cors_origins=${STAGING_BFF_CORS_ORIGINS}"
   exit 0
+fi
+
+# The shared dev lease is verified before any other dev gate so a stale or
+# mismatched lease is rejected first, before any dev bucket, SSH, checkout,
+# compose, or smoke mutation.  Staging-live is an independent environment and must not
+# depend on the shared dev lease.
+verify_dev_environment_lease_contract
+
+if [[ "$DEPLOY_ENV" == "dev" && "$DEV_BFF_AUTH_MODE" == "strict" && "$DEV_BFF_AUTH_STUB" != "true" ]]; then
+  if [[ -z "$DEV_BFF_JWT_SECRET" || -z "$DEV_BFF_OIDC_CLIENT_ID" || -z "$DEV_BFF_OIDC_CLIENT_SECRET" ]]; then
+    error "strict auth cutover requested (DEV_BFF_AUTH_MODE=strict, DEV_BFF_AUTH_STUB=${DEV_BFF_AUTH_STUB}) but no governed verifier/dev-login credentials are configured (DEV_BFF_JWT_SECRET, DEV_BFF_OIDC_CLIENT_ID, DEV_BFF_OIDC_CLIENT_SECRET); refusing to deploy a BFF where every protected route would be unusable"
+  fi
+  for identity in VIEWER APPROVER RISK_OWNER OPERATOR_A OPERATOR_B; do
+    id_var="DEV_BFF_DEV_LOGIN_${identity}_CLIENT_ID"
+    secret_var="DEV_BFF_DEV_LOGIN_${identity}_CLIENT_SECRET"
+    if [[ -z "${!id_var}" || -z "${!secret_var}" ]]; then
+      error "strict auth cutover requires dedicated ${identity,,} dev-login credentials (${id_var}, ${secret_var}); refusing to deploy without distinct governed proof actors"
+    fi
+  done
+fi
+
+if [[ "$DEPLOY_ENV" == "dev" ]]; then
+  case "${DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED,,}" in
+    1|true|yes|on)
+      if [[ -z "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}" ]] \
+        || is_placeholder_credential "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}"; then
+        error "strict OpenClaw adapter service auth requires a human-provisioned DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN; refusing to deploy with an empty or fabricated service credential"
+      fi
+      ;;
+    0|false|no|off)
+      ;;
+    *)
+      error "DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED must be true or false"
+      ;;
+  esac
 fi
 
 require_cmd gcloud
@@ -316,18 +513,58 @@ ssh_bash() {
   command_prefix+=" PANTHEON_ALLOW_DIRTY_DEPLOY=$(shell_quote "$ALLOW_DIRTY")"
   command_prefix+=" PANTHEON_ALLOW_EXAMPLE_ENV=$(shell_quote "$ALLOW_EXAMPLE_ENV")"
   command_prefix+=" PANTHEON_DEV_BFF_CORS_ORIGINS=$(shell_quote "$DEV_BFF_CORS_ORIGINS")"
+  command_prefix+=" PANTHEON_DEV_BFF_PUBLIC_HOST=$(shell_quote "$DEV_BFF_PUBLIC_HOST")"
+  command_prefix+=" PANTHEON_DEV_FE_PUBLIC_HOST=$(shell_quote "$DEV_FE_PUBLIC_HOST")"
+  command_prefix+=" PANTHEON_DEV_FE_STATIC_ROOT=$(shell_quote "$DEV_FE_STATIC_ROOT")"
   command_prefix+=" PANTHEON_DEV_BFF_AUTH_STUB=$(shell_quote "$DEV_BFF_AUTH_STUB")"
+  command_prefix+=" PANTHEON_DEV_BFF_AUTH_MODE=$(shell_quote "$DEV_BFF_AUTH_MODE")"
+  command_prefix+=" PANTHEON_DEV_BFF_JWT_SECRET=$(shell_quote "$DEV_BFF_JWT_SECRET")"
+  command_prefix+=" PANTHEON_DEV_BFF_JWT_ISSUER=$(shell_quote "$DEV_BFF_JWT_ISSUER")"
+  command_prefix+=" PANTHEON_DEV_BFF_JWT_AUDIENCE=$(shell_quote "$DEV_BFF_JWT_AUDIENCE")"
+  command_prefix+=" PANTHEON_DEV_BFF_JWKS_URI=$(shell_quote "$DEV_BFF_JWKS_URI")"
+  command_prefix+=" PANTHEON_DEV_BFF_OIDC_DISCOVERY_URL=$(shell_quote "$DEV_BFF_OIDC_DISCOVERY_URL")"
+  command_prefix+=" PANTHEON_DEV_BFF_OIDC_ISSUER=$(shell_quote "$DEV_BFF_OIDC_ISSUER")"
+  command_prefix+=" PANTHEON_DEV_BFF_OIDC_AUDIENCE=$(shell_quote "$DEV_BFF_OIDC_AUDIENCE")"
+  command_prefix+=" PANTHEON_DEV_BFF_OIDC_CLIENT_ID=$(shell_quote "$DEV_BFF_OIDC_CLIENT_ID")"
+  command_prefix+=" PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET=$(shell_quote "$DEV_BFF_OIDC_CLIENT_SECRET")"
+  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID=$(shell_quote "$DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID")"
+  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET=$(shell_quote "$DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET")"
+  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID=$(shell_quote "$DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID")"
+  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET=$(shell_quote "$DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET")"
+  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID=$(shell_quote "$DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID")"
+  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET=$(shell_quote "$DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET")"
+  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID=$(shell_quote "$DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID")"
+  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET=$(shell_quote "$DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET")"
+  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID=$(shell_quote "$DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID")"
+  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET=$(shell_quote "$DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET")"
+  command_prefix+=" PANTHEON_DEV_BFF_MFA_REQUIRED=$(shell_quote "$DEV_BFF_MFA_REQUIRED")"
+  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED=$(shell_quote "$DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED")"
+  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED=$(shell_quote "$DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED")"
+  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED=$(shell_quote "$DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED")"
+  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED=$(shell_quote "$DEV_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED")"
+  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED=$(shell_quote "$DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED")"
+  command_prefix+=" PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED=$(shell_quote "$DEV_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED")"
+  command_prefix+=" PANTHEON_DEV_BFF_ROLE_CLAIMS=$(shell_quote "$DEV_BFF_ROLE_CLAIMS")"
+  command_prefix+=" PANTHEON_DEV_BFF_ROLE_MAP=$(shell_quote "$DEV_BFF_ROLE_MAP")"
+  command_prefix+=" PANTHEON_DEV_BFF_ROLE_MAP_MODE=$(shell_quote "$DEV_BFF_ROLE_MAP_MODE")"
+  command_prefix+=" PANTHEON_DEV_BFF_DEFAULT_ROLE=$(shell_quote "$DEV_BFF_DEFAULT_ROLE")"
+  command_prefix+=" PANTHEON_DEV_BFF_TENANT_ID=$(shell_quote "$DEV_BFF_TENANT_ID")"
+  command_prefix+=" PANTHEON_DEV_BFF_ALLOWED_TENANTS=$(shell_quote "$DEV_BFF_ALLOWED_TENANTS")"
   command_prefix+=" PANTHEON_ASSISTANT_KERNEL_ENABLED=$(shell_quote "${PANTHEON_ASSISTANT_KERNEL_ENABLED:-}")"
   command_prefix+=" PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH=$(shell_quote "${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH:-}")"
+  command_prefix+=" PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH=$(shell_quote "${PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH:-}")"
   command_prefix+=" PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS=$(shell_quote "${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS:-}")"
   command_prefix+=" PANTHEON_ASSISTANT_REPAIR_REPO_URL=$(shell_quote "${PANTHEON_ASSISTANT_REPAIR_REPO_URL:-}")"
   command_prefix+=" PANTHEON_ASSISTANT_REPAIR_REMOTE_URL=$(shell_quote "${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL:-}")"
   command_prefix+=" PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS=$(shell_quote "${PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS:-}")"
   command_prefix+=" PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS=$(shell_quote "${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS:-}")"
   command_prefix+=" PANTHEON_BFF_STUB_CAPABILITIES=$(shell_quote "${PANTHEON_BFF_STUB_CAPABILITIES:-}")"
+  command_prefix+=" PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN=$(shell_quote "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN:-}")"
+  command_prefix+=" PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED=$(shell_quote "${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED:-}")"
   command_prefix+=" PANTHEON_STATUS_ROOT_HOST=$(shell_quote "${PANTHEON_STATUS_ROOT_HOST:-}")"
   command_prefix+=" PANTHEON_STATUS_ROOT_CONTAINER=$(shell_quote "${PANTHEON_STATUS_ROOT_CONTAINER:-}")"
   command_prefix+=" PANTHEON_DEV_DOCKER_PRUNE=$(shell_quote "${PANTHEON_DEV_DOCKER_PRUNE:-true}")"
+  command_prefix+=" PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE=$(shell_quote "${PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE:-true}")"
   command_prefix+=" MANAGEMENT_AI_STORE_BACKEND=$(shell_quote "${MANAGEMENT_AI_STORE_BACKEND:-}")"
   command_prefix+=" MANAGEMENT_AI_STORE_SCHEMA=$(shell_quote "${MANAGEMENT_AI_STORE_SCHEMA:-}")"
   command_prefix+=" MANAGEMENT_AI_STORE_DSN=$(shell_quote "${MANAGEMENT_AI_STORE_DSN:-}")"
@@ -375,6 +612,200 @@ curl_with_retry() {
   curl -fsS "$url" >/dev/null
 }
 
+ensure_dev_caddy_ingress() (
+  if [[ "${PANTHEON_DEPLOY_ENV}" != "dev" ]]; then
+    return
+  fi
+
+  local bff_host="${PANTHEON_DEV_BFF_PUBLIC_HOST}"
+  local fe_host="${PANTHEON_DEV_FE_PUBLIC_HOST}"
+  local fe_root="${PANTHEON_DEV_FE_STATIC_ROOT}"
+  local template="deploy/caddy/dev.Caddyfile.tmpl"
+  local rendered
+
+  [[ "$bff_host" =~ ^[A-Za-z0-9.-]+$ ]] \
+    || error "invalid dev BFF public host: ${bff_host}"
+  [[ "$fe_host" =~ ^[A-Za-z0-9.-]+$ ]] \
+    || error "invalid dev FE public host: ${fe_host}"
+  [[ "$fe_root" =~ ^/[A-Za-z0-9._/-]+$ ]] \
+    || error "invalid dev FE static root: ${fe_root}"
+  [[ -f "$template" && ! -L "$template" ]] \
+    || error "versioned dev Caddy template is missing or unsafe: ${template}"
+
+  if ! command -v caddy >/dev/null 2>&1; then
+    info "installing Caddy for dev HTTPS ingress"
+    sudo -n apt-get update
+    sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y caddy
+  fi
+
+  rendered="$(mktemp)"
+  trap 'rm -f "$rendered"' EXIT
+  sed \
+    -e "s|__BFF_HOST__|${bff_host}|g" \
+    -e "s|__FE_HOST__|${fe_host}|g" \
+    -e "s|__FE_ROOT__|${fe_root}|g" \
+    "$template" >"$rendered"
+  sudo -n install -o root -g root -m 0644 "$rendered" /etc/caddy/Caddyfile
+  sudo -n caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null
+  sudo -n systemctl enable --now caddy
+  sudo -n systemctl reload caddy
+  curl_with_retry "https://${bff_host}/health" 12 5 \
+    || error "dev BFF HTTPS ingress did not become healthy: ${bff_host}"
+  info "dev Caddy HTTPS ingress verified: ${bff_host}"
+)
+
+assert_bff_source_sha() {
+  local url="$1"
+  local payload
+  local actual
+
+  payload="$(curl -fsS "$url")"
+  actual="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit_sha") or "")' <<<"$payload")"
+  if [[ "$actual" != "${PANTHEON_DEPLOY_SHA}" ]]; then
+    error "BFF source SHA mismatch: expected ${PANTHEON_DEPLOY_SHA}, got ${actual:-missing}"
+  fi
+  info "BFF source SHA verified: ${actual}"
+}
+
+assert_dedicated_dev_login_identity() {
+  local base_url="$1"
+  local expected_identity="$2"
+  local expected_role="$3"
+  local client_id="$4"
+  local client_secret="$5"
+  local login_body
+  local login_payload
+
+  login_body="$(python3 -c 'import json,sys; print(json.dumps({"grant_type":"client_credentials","client_id":sys.argv[1],"client_secret":sys.argv[2]}))' \
+    "$client_id" "$client_secret")"
+  login_payload="$(curl -fsS -X POST "${base_url}/bff/auth/dev-login" \
+    -H 'Content-Type: application/json' -d "$login_body")" \
+    || return 1
+  python3 -c '
+import base64
+import json
+import sys
+
+expected_identity, expected_role, raw = sys.argv[1:]
+payload = json.loads(raw)
+assert (payload.get("meta") or {}).get("identity") == expected_identity, payload.get("meta")
+token = payload["access_token"]
+encoded = token.split(".")[1]
+claims = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
+assert set(claims.get("roles") or []) == {expected_role}, claims.get("roles")
+assert claims.get("mfa_verified") is True, "issued token is missing MFA verification"
+subject = str(claims.get("sub") or "")
+assert subject, "issued token is missing sub"
+print(subject)
+' "$expected_identity" "$expected_role" "$login_payload"
+}
+
+assert_bff_auth_gate() {
+  local base_url="$1"
+
+  if [[ "${PANTHEON_DEV_BFF_AUTH_MODE}" != "strict" || "${PANTHEON_DEV_BFF_AUTH_STUB}" == "true" ]]; then
+    info "strict auth gate skipped (auth_mode=${PANTHEON_DEV_BFF_AUTH_MODE}, auth_stub=${PANTHEON_DEV_BFF_AUTH_STUB})"
+    return 0
+  fi
+
+  info "asserting hosted BFF auth posture is strict (auth_stub=false, auth_mode=strict)"
+  local version_payload
+  version_payload="$(curl -fsS "${base_url}/bff/version")"
+  python3 -c '
+import json, sys
+
+payload = json.loads(sys.argv[1])
+posture = payload.get("config_posture")
+if not isinstance(posture, dict):
+    # Compatibility with deployment targets that predate the canonical
+    # config_posture envelope. New BFF versions publish posture only there.
+    posture = payload
+auth_stub = posture.get("auth_stub")
+auth_mode = posture.get("auth_mode")
+assert auth_stub is False, f"auth_stub={auth_stub!r}, expected False"
+assert auth_mode == "strict", f"auth_mode={auth_mode!r}, expected strict"
+' "$version_payload" || error "hosted BFF auth posture is not strict: ${version_payload}"
+
+  if [[ -z "${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID}" || -z "${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET}" ]]; then
+    error "strict auth cutover requires dedicated operator A dev-login credentials on the deploy runner; none were provided"
+  fi
+
+  info "asserting authenticated dev-login round trip succeeds"
+  local login_payload
+  local login_body
+  login_body="$(python3 -c 'import json,sys; print(json.dumps({"grant_type":"client_credentials","client_id":sys.argv[1],"client_secret":sys.argv[2]}))' \
+    "${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID}" "${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET}")"
+  login_payload="$(curl -fsS -X POST "${base_url}/bff/auth/dev-login" \
+    -H 'Content-Type: application/json' \
+    -d "${login_body}")" \
+    || error "authenticated dev-login round trip failed against ${base_url}/bff/auth/dev-login"
+  local access_token
+  access_token="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])' <<<"$login_payload")"
+  curl -fsS "${base_url}/bff/me" -H "Authorization: Bearer ${access_token}" >/dev/null \
+    || error "authenticated /bff/me check failed with a freshly issued dev-login token"
+  local readiness_payload
+  readiness_payload="$(curl -fsS "${base_url}/bff/auth/readiness" \
+    -H "Authorization: Bearer ${access_token}")" \
+    || error "strict browser readiness probe failed against ${base_url}/bff/auth/readiness"
+  python3 -c '
+import json
+import sys
+
+expected_sha = sys.argv[1]
+payload = json.loads(sys.argv[2])
+data = payload.get("data") or {}
+auth = data.get("auth") or {}
+assert data.get("sourceCommitSha") == expected_sha, data.get("sourceCommitSha")
+assert data.get("authReady") is True, data
+assert data.get("providerReady") is True, data
+assert data.get("ready") is True, data
+assert auth.get("mode") == "strict", auth
+assert auth.get("stub") is False, auth
+assert auth.get("sessionKind") in {"bearer", "cookie"}, auth
+assert auth.get("operatorRoleReady") is True, auth
+assert auth.get("interactionCapabilityReady") is True, auth
+assert auth.get("verifierReady") is True, auth
+' "${PANTHEON_DEPLOY_SHA}" "${readiness_payload}" \
+    || error "strict browser readiness contract is not satisfied"
+  info "authenticated dev-login and strict browser readiness round trip succeeded"
+
+  info "asserting five dedicated dev-login identities and distinct subjects"
+  local identity
+  local identity_upper
+  local id_var
+  local secret_var
+  local expected_role
+  local subject
+  local dedicated_subjects=()
+  for identity in viewer approver risk_owner operator_a operator_b; do
+    identity_upper="${identity^^}"
+    id_var="PANTHEON_DEV_BFF_DEV_LOGIN_${identity_upper}_CLIENT_ID"
+    secret_var="PANTHEON_DEV_BFF_DEV_LOGIN_${identity_upper}_CLIENT_SECRET"
+    expected_role="$identity"
+    [[ "$identity" == operator_a || "$identity" == operator_b ]] && expected_role="operator"
+    subject="$(assert_dedicated_dev_login_identity \
+      "$base_url" "$identity" "$expected_role" "${!id_var}" "${!secret_var}")" \
+      || error "dedicated ${identity} dev-login round trip or server-bound claims check failed"
+    dedicated_subjects+=("$subject")
+  done
+  python3 -c '
+import sys
+subjects = sys.argv[1:]
+assert len(subjects) == 5, subjects
+assert len(set(subjects)) == len(subjects), subjects
+' "${dedicated_subjects[@]}" \
+    || error "dedicated dev-login identities did not issue five distinct subjects"
+  info "dedicated dev-login identities issued five valid distinct subjects"
+
+  info "asserting a fixed/arbitrary bearer is rejected (fail-closed negative gate)"
+  local fixed_bearer_status
+  fixed_bearer_status="$(curl -s -o /dev/null -w '%{http_code}' "${base_url}/bff/me" -H 'Authorization: Bearer op-fixed:operator:mfa')"
+  if [[ "$fixed_bearer_status" == "200" ]]; then
+    error "hosted BFF accepted a fixed/arbitrary bearer token at ${base_url}/bff/me (strict auth cutover is not effective)"
+  fi
+  info "fixed bearer correctly rejected with HTTP ${fixed_bearer_status}"
+}
+
 snapshot_remote_state() {
   local project="$1"
   local compose_file="$2"
@@ -395,14 +826,46 @@ preserve_known_deploy_runtime_state() {
     ".orchestrator/metrics"
     ".orchestrator/task-briefs"
     ".orchestrator/watchdog-state.json"
+    "trade_journey_events.json"
   )
+  local planning_pointer_path=".orchestrator/planning-session-pointer.json"
+  local planning_session_path=""
   local present_paths=()
   local path
   local runtime_status
   local stash_label
+  local exclude_file
+
+  if [[ -e "$planning_pointer_path" || -L "$planning_pointer_path" ]]; then
+    # Resolve the session from the current runtime pointer before stashing or
+    # detaching. The validator is loaded from the exact target commit so this
+    # first deployment of a validator change does not depend on the old
+    # checkout containing the helper. It accepts only canonical repo-relative
+    # planning session paths and rejects traversal and symlink escapes.
+    planning_session_path="$({
+      git show "${PANTHEON_DEPLOY_SHA}:scripts/deploy_planning_runtime_paths.py" \
+        || error "target commit is missing the planning runtime path validator"
+    } | python3 - "$PWD" "$planning_pointer_path")" \
+      || error "canonical planning runtime pointer failed path validation"
+    known_paths+=("$planning_pointer_path" "$planning_session_path")
+  fi
 
   for path in "${known_paths[@]}"; do
     if [[ ! -e "$path" ]]; then
+      continue
+    fi
+    # Runtime-owned untracked files may not be readable by the deploy user.
+    # Register them in this checkout's private exclude file before asking git
+    # for worktree status; otherwise `git stash --include-untracked` attempts
+    # to open the file and aborts the deployment with EACCES. The file remains
+    # in place across the detached checkout and the repository-level ignore in
+    # the target commit makes this local exclusion unnecessary thereafter.
+    if ! git ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
+      exclude_file="$(git rev-parse --git-path info/exclude)"
+      mkdir -p "$(dirname "$exclude_file")"
+      if ! grep -Fqx "/${path}" "$exclude_file" 2>/dev/null; then
+        printf '/%s\n' "$path" >>"$exclude_file"
+      fi
       continue
     fi
     # Skip gitignored runtime paths (e.g. .orchestrator/metrics,
@@ -431,11 +894,39 @@ preserve_known_deploy_runtime_state() {
   git stash push --include-untracked -m "$stash_label" -- "${present_paths[@]}" >/dev/null
 }
 
+preserve_target_tracked_untracked_paths() {
+  local target_tracked_paths=()
+  local entry
+  local status
+  local path
+  local stash_label
+
+  while IFS= read -r -d '' entry; do
+    status="${entry:0:2}"
+    path="${entry:3}"
+    if [[ "$status" != "??" || -z "$path" ]]; then
+      continue
+    fi
+    if git cat-file -e "${PANTHEON_DEPLOY_SHA}:${path}" 2>/dev/null; then
+      target_tracked_paths+=("$path")
+    fi
+  done < <(git status --porcelain -z)
+
+  if [[ "${#target_tracked_paths[@]}" -eq 0 ]]; then
+    return
+  fi
+
+  stash_label="deploy-target-tracked-untracked-${PANTHEON_DEPLOY_ENV}-${PANTHEON_DEPLOY_COMPONENT}-${PANTHEON_DEPLOY_SHA:0:12}-$(date -u +%Y%m%dT%H%M%SZ)"
+  info "preserving untracked paths that target commit tracks before checkout (${stash_label})"
+  git stash push --include-untracked -m "$stash_label" -- "${target_tracked_paths[@]}" >/dev/null
+}
+
 require_clean_checkout() {
   local status
   local stash_label
 
   preserve_known_deploy_runtime_state
+  preserve_target_tracked_untracked_paths
 
   status="$(git status --porcelain)"
   if [[ -n "$status" && "${PANTHEON_ALLOW_DIRTY_DEPLOY}" != "true" ]]; then
@@ -762,13 +1253,264 @@ SQL
 REMOTE_DB
 }
 
+prune_dev_management_ai_telemetry_for_disk() {
+  if [[ "${PANTHEON_DEPLOY_ENV}" != "dev" || "${PANTHEON_DEPLOY_COMPONENT}" != "root" ]]; then
+    return
+  fi
+  if [[ "${MANAGEMENT_AI_STORE_BACKEND:-}" != "postgres" ]]; then
+    info "Management AI telemetry prune skipped: backend=${MANAGEMENT_AI_STORE_BACKEND:-}"
+    return
+  fi
+  if [[ "${PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE:-true}" != "true" ]]; then
+    info "dev Postgres telemetry prune disabled before root deploy"
+    return
+  fi
+
+  local mgmt_db="${PANTHEON_MANAGEMENT_AI_DB_NAME:-pantheon}"
+  local mgmt_schema="${MANAGEMENT_AI_STORE_SCHEMA:-management_ai}"
+
+  info "pruning dev Postgres telemetry_events before root deploy: db=${mgmt_db} schema=${mgmt_schema}"
+  COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-}" \
+    docker compose -p pantheon -f docker-compose.yml up -d postgres
+
+  local i
+  for ((i = 1; i <= 30; i++)); do
+    if docker compose -p pantheon -f docker-compose.yml exec -T postgres \
+      pg_isready -U "${POSTGRES_USER:-postgres}" -d "${mgmt_db}" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 2
+  done
+
+  docker compose -p pantheon -f docker-compose.yml exec -T \
+    -e MGMT_AI_DB_NAME="${mgmt_db}" \
+    -e MGMT_AI_SCHEMA="${mgmt_schema}" \
+    postgres sh -s <<'REMOTE_DB'
+set -euo pipefail
+
+psql -v ON_ERROR_STOP=1 \
+  --username "${POSTGRES_USER:-postgres}" \
+  --dbname "${MGMT_AI_DB_NAME}" \
+  -v mgmt_schema="${MGMT_AI_SCHEMA}" <<'SQL'
+SELECT n.nspname AS schema,
+       c.relname AS table,
+       pg_size_pretty(pg_total_relation_size(c.oid)) AS total_size
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relname = 'telemetry_events'
+  AND c.relkind IN ('r', 'p')
+ORDER BY pg_total_relation_size(c.oid) DESC;
+
+SELECT set_config('pantheon.mgmt_ai_schema', :'mgmt_schema', false);
+
+DO $prune$
+DECLARE
+  item record;
+  target_schema text := current_setting('pantheon.mgmt_ai_schema');
+BEGIN
+  FOR item IN
+    SELECT n.nspname AS schema_name, c.relname AS table_name
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.relname = 'telemetry_events'
+      AND c.relkind IN ('r', 'p')
+      AND n.nspname IN (target_schema, 'public')
+  LOOP
+    RAISE NOTICE 'truncating %.%', item.schema_name, item.table_name;
+    EXECUTE format('TRUNCATE TABLE %I.%I', item.schema_name, item.table_name);
+  END LOOP;
+END
+$prune$;
+
+VACUUM;
+
+SELECT n.nspname AS schema,
+       c.relname AS table,
+       pg_size_pretty(pg_total_relation_size(c.oid)) AS total_size
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relname = 'telemetry_events'
+  AND c.relkind IN ('r', 'p')
+ORDER BY pg_total_relation_size(c.oid) DESC;
+SQL
+REMOTE_DB
+  docker_storage_diagnostics "after dev Postgres telemetry prune"
+}
+
 dump_dev_root_failure_diagnostics() {
+  local source_ingest_container_id=""
+  local search_container_id=""
+
   info "dev root compose ps after failure"
   docker compose -p pantheon -f docker-compose.yml ps || true
+  info "source-ingest service logs after failure"
+  docker compose -p pantheon -f docker-compose.yml logs --no-color --tail=240 source-ingest || true
+  source_ingest_container_id="$(
+    docker compose -p pantheon -f docker-compose.yml ps -a -q source-ingest 2>/dev/null || true
+  )"
+  if [[ -n "$source_ingest_container_id" ]]; then
+    info "source-ingest container restart and health state after failure"
+    docker inspect --format \
+      'status={{.State.Status}} restart_count={{.RestartCount}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}not_configured{{end}} exit_code={{.State.ExitCode}} oom_killed={{.State.OOMKilled}} error={{json .State.Error}}' \
+      "$source_ingest_container_id" || true
+  fi
+  info "search-svc service logs after failure"
+  docker compose -p pantheon -f docker-compose.yml logs --no-color --tail=240 search-svc || true
+  search_container_id="$(
+    docker compose -p pantheon -f docker-compose.yml ps -a -q search-svc 2>/dev/null || true
+  )"
+  if [[ -n "$search_container_id" ]]; then
+    info "search-svc container restart and health state after failure"
+    docker inspect --format \
+      'status={{.State.Status}} restart_count={{.RestartCount}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}not_configured{{end}} exit_code={{.State.ExitCode}} oom_killed={{.State.OOMKilled}} error={{json .State.Error}}' \
+      "$search_container_id" || true
+  fi
+  info "evolution daily sweep scheduler logs after failure"
+  docker compose -p pantheon -f docker-compose.yml logs --no-color --tail=120 evolution-daily-sweep-scheduler || true
   info "operator-bff logs after failure"
   docker compose -p pantheon -f docker-compose.yml logs --no-color --tail=240 operator-bff || true
   info "postgres logs after failure"
   docker compose -p pantheon -f docker-compose.yml logs --no-color --tail=120 postgres || true
+  info "loop-run-projector-scheduler logs after failure"
+  docker compose -p pantheon -f docker-compose.yml logs --no-color --tail=120 loop-run-projector-scheduler || true
+  info "source-ingest-scheduler logs after failure"
+  docker compose -p pantheon -f docker-compose.yml logs --no-color --tail=120 source-ingest-scheduler || true
+}
+
+retire_legacy_static_paper_runtime() {
+  case ",${PANTHEON_DEV_COMPOSE_PROFILES:-}," in
+    *,static-paper-runtime,*)
+      info "static paper runtime profile explicitly enabled; leaving compatibility worker active"
+      return 0
+      ;;
+  esac
+
+  info "retiring legacy unbound static paper runtime; fleet reconciler is authoritative"
+  COMPOSE_PROFILES=static-paper-runtime \
+    docker compose -p pantheon -f docker-compose.yml rm -f -s pantheon-paper-runtime
+}
+
+verify_dev_paper_fleet() {
+  local attempt
+  local status=""
+
+  for attempt in $(seq 1 30); do
+    status="$(curl -fsS http://127.0.0.1:18011/readyz 2>/dev/null || true)"
+    if python3 -c '
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+workers = list(payload.get("workers") or [])
+assert payload.get("ready") is True
+assert payload.get("live") is True
+assert payload.get("last_error") in (None, "")
+assert payload.get("monitoring_last_error") in (None, "")
+assert int(payload.get("cycle_count") or 0) >= 1
+assert int(payload.get("worker_count") or 0) == int(payload.get("running_count") or 0)
+assert all(worker.get("status") == "running" for worker in workers)
+assert all(worker.get("heartbeat_status") == "active" for worker in workers)
+' "$status" 2>/dev/null; then
+      info "paper fleet reconciler is ready and all desired workers are active"
+      printf '%s\n' "$status"
+      return 0
+    fi
+    sleep 2
+  done
+
+  info "paper fleet reconciler did not converge"
+  docker compose -p pantheon -f docker-compose.yml ps -a paper-fleet-reconciler || true
+  docker compose -p pantheon -f docker-compose.yml logs --no-color --tail=240 paper-fleet-reconciler || true
+  printf '%s\n' "$status"
+  return 1
+}
+
+verify_dev_evolution_daily_sweep() {
+  local compose=(docker compose -p pantheon -f docker-compose.yml)
+  local attempt
+  local logs=""
+  local status=""
+
+  for attempt in $(seq 1 30); do
+    logs="$("${compose[@]}" logs --no-color --since=10m evolution-daily-sweep-scheduler 2>&1 || true)"
+    if printf '%s\n' "$logs" | grep -Fq '"tick":'; then
+      status="$(curl -fsS http://127.0.0.1:18093/api/evolution/sweep-status 2>/dev/null || true)"
+      if python3 -c '
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+assert payload.get("last_success_at")
+assert int(payload.get("total_sweeps_run") or 0) >= 1
+' "$status" 2>/dev/null; then
+        info "evolution daily sweep scheduler emitted a successful tick"
+        printf '%s\n' "$logs"
+        info "evolution daily sweep status"
+        printf '%s\n' "$status"
+        return 0
+      fi
+    fi
+    sleep 2
+  done
+
+  info "evolution daily sweep scheduler did not emit a successful tick"
+  "${compose[@]}" ps -a evolution evolution-daily-sweep-scheduler || true
+  printf '%s\n' "$logs"
+  printf '%s\n' "$status"
+  return 1
+}
+
+provision_dev_supervisor_watchdog() {
+  local live_config="${PANTHEON_DEV_SUPERVISOR_CONFIG:-${HOME}/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json}"
+  local attempt
+  local linger_state=""
+
+  [[ "${PANTHEON_DEPLOY_ENV}" == "dev" ]] \
+    || error "supervisor watchdog provisioning is dev-only"
+  [[ -n "${PANTHEON_STATUS_ROOT_HOST:-}" ]] \
+    || error "supervisor watchdog provisioning requires PANTHEON_STATUS_ROOT_HOST"
+
+  info "provisioning split-root dev supervisor config and persistent watchdog"
+  python3 scripts/provision_live_supervisor_config.py \
+    --repo-config "$(pwd)/.orchestrator/config.json" \
+    --live-config "$live_config" \
+    --command-root "$(pwd)" \
+    --status-root "${PANTHEON_STATUS_ROOT_HOST}"
+  python3 scripts/check_config_drift.py \
+    --repo-config "$(pwd)/.orchestrator/config.json" \
+    --live-config "$live_config" \
+    --fix
+
+  if systemctl --user show-environment >/dev/null 2>&1; then
+    linger_state="$(loginctl show-user "${USER}" -p Linger --value)"
+    if [[ "$linger_state" != "yes" ]]; then
+      info "enabling systemd user linger for reboot-persistent watchdog"
+      sudo -n loginctl enable-linger "${USER}"
+      linger_state="$(loginctl show-user "${USER}" -p Linger --value)"
+    fi
+    [[ "$linger_state" == "yes" ]] \
+      || error "systemd user linger is not enabled for ${USER}"
+  fi
+  python3 scripts/supervisor_watchdog_install.py \
+    --repo "$(pwd)" \
+    --config "$live_config" \
+    --method auto \
+    --start-now
+
+  for attempt in $(seq 1 12); do
+    if python3 scripts/supervisor_runtime_health.py \
+      --repo "$(pwd)" \
+      --config-path "$live_config" \
+      --require-watchdog; then
+      info "persistent dev supervisor watchdog is healthy"
+      return 0
+    fi
+    sleep 5
+  done
+
+  systemctl --user status pantheon-supervisor-watchdog.timer --no-pager || true
+  systemctl --user status pantheon-supervisor-watchdog.service --no-pager || true
+  error "persistent dev supervisor watchdog did not become healthy"
 }
 
 docker_storage_diagnostics() {
@@ -800,34 +1542,6 @@ prune_dev_docker_storage_for_build() {
   docker_storage_diagnostics "after prune"
 }
 
-remove_dev_paper_runtime_name_conflict() {
-  if [[ "${PANTHEON_DEPLOY_ENV}" != "dev" || "${PANTHEON_DEPLOY_COMPONENT}" != "root" ]]; then
-    return
-  fi
-
-  local container="pantheon-pantheon-paper-runtime-1"
-  local container_id
-  local project
-  local service
-
-  container_id="$(docker ps -a --filter "name=^/${container}$" --format '{{.ID}}' | head -n 1)"
-  if [[ -z "$container_id" ]]; then
-    return
-  fi
-
-  project="$(docker inspect "$container_id" --format '{{ index .Config.Labels "com.docker.compose.project" }}' 2>/dev/null || true)"
-  service="$(docker inspect "$container_id" --format '{{ index .Config.Labels "com.docker.compose.service" }}' 2>/dev/null || true)"
-  if [[ -n "$project" && "$project" != "pantheon" ]]; then
-    error "refusing to remove ${container}; labels project=${project} service=${service:-<missing>}"
-  fi
-  if [[ -n "$service" && "$service" != "pantheon-paper-runtime" ]]; then
-    error "refusing to remove ${container}; labels project=${project:-<missing>} service=${service:-<missing>}"
-  fi
-
-  info "removing stale ${container} before dev root compose up"
-  docker rm -f "$container_id" >/dev/null
-}
-
 cd "${PANTHEON_REMOTE_DIR}"
 git rev-parse --is-inside-work-tree >/dev/null
 
@@ -835,10 +1549,12 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
   root)
     snapshot_remote_state pantheon docker-compose.yml
     prepare_deploy_worktree
-    # Dev deploys activate every documented compose profile. Each profile is
-    # either a long-running daemon, an init container, or a one-shot smoke
-    # whose Dockerfile + smoke script have been verified to build and pass
+    # Dev deploys activate every default-safe compose profile. Each selected
+    # profile is either a long-running daemon, an init container, or a one-shot
+    # smoke whose Dockerfile + smoke script have been verified to build and pass
     # locally with stub backends (no real-money / no real-broker side effects).
+    # The legacy static-paper-runtime profile is intentionally excluded because
+    # paper-fleet-reconciler owns binding-scoped workers in the root stack.
     #
     # Profile inventory (alphabetical):
     #   activation-ready-smoke       oss-activation-ready-smoke-matrix
@@ -851,35 +1567,115 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     #   source-search-bounded        source-search-bounded-smoke
     #
     # Operators can narrow scope via PANTHEON_DEV_COMPOSE_PROFILES.
-    PANTHEON_DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-activation-ready-smoke,dormant-smoke,openclaw,openclaw-activation-ready-e2e,search-index-scheduler,smoke,source-ingest-scheduler,source-search-bounded}"
+    #
+    # source-ingest-scheduler is deliberately NOT in the default set. It ticks
+    # every 60s against third-party providers (Yahoo, CoinGecko, TWSE/TPEx,
+    # MOPS, FinMind, SEC/FRED/FINRA, stooq); left always-on it is continuous
+    # crawling from one cloud egress IP. Add it explicitly for a bounded run.
+    PANTHEON_DEV_COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES:-activation-ready-smoke,dormant-smoke,openclaw,openclaw-activation-ready-e2e,search-index-scheduler,smoke,source-search-bounded}"
     ensure_dev_management_ai_bucket
     ensure_dev_management_ai_postgres_role
+    prune_dev_management_ai_telemetry_for_disk
     COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES}" \
       docker compose -p pantheon -f docker-compose.yml config --quiet
     prune_dev_docker_storage_for_build
-    remove_dev_paper_runtime_name_conflict
     COMPOSE_BAKE=false \
     COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES}" \
+    GIT_SHA="${PANTHEON_DEPLOY_SHA}" \
+    BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     PANTHEON_ENV=dev \
+    PANTHEON_CANARY_EXECUTION_ENABLED=false \
     PANTHEON_LIVE_BROKER_ENABLED=false \
+    BROKER_PAPER_ENABLED=true \
+    PANTHEON_TJ_E2E_FIXTURE_INGEST_ENABLED=true \
+    AGORA_WORKSHOP_STORE_BACKEND=postgres \
+    AGORA_WORKSHOP_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
+    AGORA_WORKSHOP_STORE_SCHEMA=agora \
+    AGORA_GOVERNANCE_STORE_BACKEND=postgres \
+    AGORA_GOVERNANCE_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
+    AGORA_GOVERNANCE_STORE_SCHEMA=agora \
+    AGORA_RESEARCH_STORE_BACKEND=postgres \
+    AGORA_RESEARCH_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
+    AGORA_RESEARCH_STORE_SCHEMA=agora_research \
+    AGORA_TRADING_ROOM_STORE_BACKEND=postgres \
+    AGORA_TRADING_ROOM_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
+    AGORA_TRADING_ROOM_STORE_SCHEMA=agora \
     PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_DEV_BFF_CORS_ORIGINS}" \
     PANTHEON_BFF_AUTH_STUB="${PANTHEON_DEV_BFF_AUTH_STUB}" \
+    PANTHEON_BFF_AUTH_MODE="${PANTHEON_DEV_BFF_AUTH_MODE}" \
+    PANTHEON_BFF_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
+    PANTHEON_BFF_JWT_ISSUER="${PANTHEON_DEV_BFF_JWT_ISSUER}" \
+    PANTHEON_BFF_JWT_AUDIENCE="${PANTHEON_DEV_BFF_JWT_AUDIENCE}" \
+    PANTHEON_BFF_JWKS_URI="${PANTHEON_DEV_BFF_JWKS_URI}" \
+    PANTHEON_BFF_OIDC_DISCOVERY_URL="${PANTHEON_DEV_BFF_OIDC_DISCOVERY_URL}" \
+    PANTHEON_BFF_OIDC_ISSUER="${PANTHEON_DEV_BFF_OIDC_ISSUER}" \
+    PANTHEON_BFF_OIDC_AUDIENCE="${PANTHEON_DEV_BFF_OIDC_AUDIENCE}" \
+    PANTHEON_BFF_OIDC_CLIENT_ID="${PANTHEON_DEV_BFF_OIDC_CLIENT_ID}" \
+    PANTHEON_BFF_OIDC_CLIENT_SECRET="${PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET}" \
+    PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID}" \
+    PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET}" \
+    PANTHEON_BFF_DEV_LOGIN_APPROVER_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID}" \
+    PANTHEON_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET}" \
+    PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID}" \
+    PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET}" \
+    PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID}" \
+    PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET}" \
+    PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID}" \
+    PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET}" \
+    PANTHEON_BFF_MFA_REQUIRED="${PANTHEON_DEV_BFF_MFA_REQUIRED}" \
+    PANTHEON_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED}" \
+    PANTHEON_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED}" \
+    PANTHEON_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED}" \
+    PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED}" \
+    PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED}" \
+    PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED}" \
+    PANTHEON_BFF_ROLE_CLAIMS="${PANTHEON_DEV_BFF_ROLE_CLAIMS}" \
+    PANTHEON_BFF_ROLE_MAP="${PANTHEON_DEV_BFF_ROLE_MAP}" \
+    PANTHEON_BFF_ROLE_MAP_MODE="${PANTHEON_DEV_BFF_ROLE_MAP_MODE}" \
+    PANTHEON_BFF_DEFAULT_ROLE="${PANTHEON_DEV_BFF_DEFAULT_ROLE}" \
+    PANTHEON_BFF_TENANT_ID="${PANTHEON_DEV_BFF_TENANT_ID}" \
+    PANTHEON_BFF_ALLOWED_TENANTS="${PANTHEON_DEV_BFF_ALLOWED_TENANTS}" \
     PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED}" \
     PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH="${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH}" \
+    PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH="${PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH}" \
     PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS="${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS}" \
     PANTHEON_ASSISTANT_REPAIR_REPO_URL="${PANTHEON_ASSISTANT_REPAIR_REPO_URL}" \
     PANTHEON_ASSISTANT_REPAIR_REMOTE_URL="${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL}" \
     PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS="${PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS}" \
     PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS="${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS}" \
     PANTHEON_BFF_STUB_CAPABILITIES="${PANTHEON_BFF_STUB_CAPABILITIES}" \
+    PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN}" \
+    PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED}" \
     PANTHEON_STATUS_ROOT_HOST="${PANTHEON_STATUS_ROOT_HOST}" \
     PANTHEON_STATUS_ROOT_CONTAINER="${PANTHEON_STATUS_ROOT_CONTAINER}" \
       docker compose -p pantheon -f docker-compose.yml up -d --build \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
+    PANTHEON_DEV_REPO="$(pwd)" \
+      bash scripts/openclaw-configure-shared-model-pool.sh \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
+    retire_legacy_static_paper_runtime \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
+    verify_dev_paper_fleet \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     curl_with_retry http://127.0.0.1:18001/health \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     curl_with_retry http://127.0.0.1:18001/readyz \
       || { dump_dev_root_failure_diagnostics; exit 1; }
+    assert_bff_source_sha http://127.0.0.1:18001/bff/version \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
+    assert_bff_auth_gate http://127.0.0.1:18001 \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
+    ensure_dev_caddy_ingress \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
+    verify_dev_evolution_daily_sweep \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
+    # Prove the Trade Journey action ledger is genuinely durable on the dev
+    # PostgreSQL instance and that clock-drift diagnostics survive the built
+    # runtime image. This intentionally restarts operator-bff and verifies
+    # receipt replay before the workflow's public smokes run.
+    PANTHEON_DEV_REPO="$(pwd)" bash scripts/verify_trade_journey_residual_dev.sh \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
+    provision_dev_supervisor_watchdog
     ;;
 
   bff)
@@ -891,18 +1687,70 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     prepare_deploy_worktree
     COMPOSE_BAKE=false \
     COMPOSE_PROFILES="" \
+    GIT_SHA="${PANTHEON_DEPLOY_SHA}" \
+    BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     PANTHEON_ENV=dev \
+    PANTHEON_CANARY_EXECUTION_ENABLED=false \
     PANTHEON_LIVE_BROKER_ENABLED=false \
+    BROKER_PAPER_ENABLED=true \
+    AGORA_WORKSHOP_STORE_BACKEND=postgres \
+    AGORA_WORKSHOP_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
+    AGORA_WORKSHOP_STORE_SCHEMA=agora \
+    AGORA_GOVERNANCE_STORE_BACKEND=postgres \
+    AGORA_GOVERNANCE_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
+    AGORA_GOVERNANCE_STORE_SCHEMA=agora \
+    AGORA_RESEARCH_STORE_BACKEND=postgres \
+    AGORA_RESEARCH_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
+    AGORA_RESEARCH_STORE_SCHEMA=agora_research \
+    AGORA_TRADING_ROOM_STORE_BACKEND=postgres \
+    AGORA_TRADING_ROOM_STORE_DSN=postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon \
+    AGORA_TRADING_ROOM_STORE_SCHEMA=agora \
     PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_DEV_BFF_CORS_ORIGINS}" \
     PANTHEON_BFF_AUTH_STUB="${PANTHEON_DEV_BFF_AUTH_STUB}" \
+    PANTHEON_BFF_AUTH_MODE="${PANTHEON_DEV_BFF_AUTH_MODE}" \
+    PANTHEON_BFF_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
+    PANTHEON_BFF_JWT_ISSUER="${PANTHEON_DEV_BFF_JWT_ISSUER}" \
+    PANTHEON_BFF_JWT_AUDIENCE="${PANTHEON_DEV_BFF_JWT_AUDIENCE}" \
+    PANTHEON_BFF_JWKS_URI="${PANTHEON_DEV_BFF_JWKS_URI}" \
+    PANTHEON_BFF_OIDC_DISCOVERY_URL="${PANTHEON_DEV_BFF_OIDC_DISCOVERY_URL}" \
+    PANTHEON_BFF_OIDC_ISSUER="${PANTHEON_DEV_BFF_OIDC_ISSUER}" \
+    PANTHEON_BFF_OIDC_AUDIENCE="${PANTHEON_DEV_BFF_OIDC_AUDIENCE}" \
+    PANTHEON_BFF_OIDC_CLIENT_ID="${PANTHEON_DEV_BFF_OIDC_CLIENT_ID}" \
+    PANTHEON_BFF_OIDC_CLIENT_SECRET="${PANTHEON_DEV_BFF_OIDC_CLIENT_SECRET}" \
+    PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID}" \
+    PANTHEON_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET}" \
+    PANTHEON_BFF_DEV_LOGIN_APPROVER_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID}" \
+    PANTHEON_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET}" \
+    PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID}" \
+    PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET}" \
+    PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID}" \
+    PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET}" \
+    PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID}" \
+    PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET}" \
+    PANTHEON_BFF_MFA_REQUIRED="${PANTHEON_DEV_BFF_MFA_REQUIRED}" \
+    PANTHEON_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED}" \
+    PANTHEON_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED}" \
+    PANTHEON_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED}" \
+    PANTHEON_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED}" \
+    PANTHEON_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED}" \
+    PANTHEON_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED="${PANTHEON_DEV_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED}" \
+    PANTHEON_BFF_ROLE_CLAIMS="${PANTHEON_DEV_BFF_ROLE_CLAIMS}" \
+    PANTHEON_BFF_ROLE_MAP="${PANTHEON_DEV_BFF_ROLE_MAP}" \
+    PANTHEON_BFF_ROLE_MAP_MODE="${PANTHEON_DEV_BFF_ROLE_MAP_MODE}" \
+    PANTHEON_BFF_DEFAULT_ROLE="${PANTHEON_DEV_BFF_DEFAULT_ROLE}" \
+    PANTHEON_BFF_TENANT_ID="${PANTHEON_DEV_BFF_TENANT_ID}" \
+    PANTHEON_BFF_ALLOWED_TENANTS="${PANTHEON_DEV_BFF_ALLOWED_TENANTS}" \
     PANTHEON_ASSISTANT_KERNEL_ENABLED="${PANTHEON_ASSISTANT_KERNEL_ENABLED}" \
     PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH="${PANTHEON_ASSISTANT_CONTROL_MODE_STORE_PATH}" \
+    PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH="${PANTHEON_ASSISTANT_CONTROL_PASSPHRASE_HASH}" \
     PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS="${PANTHEON_ASSISTANT_CONTROL_IDLE_TTL_SECONDS}" \
     PANTHEON_ASSISTANT_REPAIR_REPO_URL="${PANTHEON_ASSISTANT_REPAIR_REPO_URL}" \
     PANTHEON_ASSISTANT_REPAIR_REMOTE_URL="${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL}" \
     PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS="${PANTHEON_ASSISTANT_REPAIR_REPO_URL_EXECUTE_PLANS}" \
     PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS="${PANTHEON_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS}" \
     PANTHEON_BFF_STUB_CAPABILITIES="${PANTHEON_BFF_STUB_CAPABILITIES}" \
+    PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_TOKEN}" \
+    PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED="${PANTHEON_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED}" \
     PANTHEON_STATUS_ROOT_HOST="${PANTHEON_STATUS_ROOT_HOST}" \
     PANTHEON_STATUS_ROOT_CONTAINER="${PANTHEON_STATUS_ROOT_CONTAINER}" \
     MANAGEMENT_AI_STORE_BACKEND="${MANAGEMENT_AI_STORE_BACKEND}" \
@@ -916,6 +1764,12 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
       || { dump_dev_root_failure_diagnostics; exit 1; }
     curl_with_retry http://127.0.0.1:18001/readyz \
       || { dump_dev_root_failure_diagnostics; exit 1; }
+    assert_bff_source_sha http://127.0.0.1:18001/bff/version \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
+    assert_bff_auth_gate http://127.0.0.1:18001 \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
+    ensure_dev_caddy_ingress \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
     ;;
 
   exec)
@@ -923,7 +1777,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     prepare_deploy_worktree
     env_file="$(real_env_or_example env/prod-exec.env env/prod-exec.env.example)"
     docker compose --env-file "$env_file" -p pantheon-exec -f docker-compose.exec.yml config --quiet
-    COMPOSE_BAKE=false docker compose --env-file "$env_file" -p pantheon-exec -f docker-compose.exec.yml up -d --build
+    COMPOSE_BAKE=false GIT_SHA="${PANTHEON_DEPLOY_SHA}" \
+      docker compose --env-file "$env_file" -p pantheon-exec -f docker-compose.exec.yml up -d --build
     curl_with_retry http://127.0.0.1:28081/__health__
     curl_with_retry http://127.0.0.1:28097/__health__
     curl_with_retry http://127.0.0.1:28098/__health__
@@ -938,11 +1793,13 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     env_file="$(real_env_or_example env/prod-control.env env/prod-control.env.example)"
     docker compose --env-file "$env_file" -p pantheon-control -f docker-compose.control.yml config --quiet
     COMPOSE_BAKE=false \
+    GIT_SHA="${PANTHEON_DEPLOY_SHA}" \
     PANTHEON_ENV=staging-live \
     PANTHEON_LIVE_BROKER_ENABLED=true \
     PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_STAGING_BFF_CORS_ORIGINS}" \
       docker compose --env-file "$env_file" -p pantheon-control -f docker-compose.control.yml up -d --build
     curl_with_retry http://127.0.0.1:38001/health
+    assert_bff_source_sha http://127.0.0.1:38001/bff/version
     curl_with_retry "${PANTHEON_STAGING_EXEC_HEALTH_URL%/}/__health__"
     ;;
 

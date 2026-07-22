@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import json
+import gzip
 import io
+import json
+import multiprocessing
 import os
+import shutil
+import stat
+import subprocess
 import tempfile
+import time
 import unittest
+from copy import deepcopy
 from pathlib import Path
 from unittest import mock
 import sys
@@ -13,9 +20,547 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import ai_status
+import task_archive
+from canonical_writer_guard import assert_isolated_legacy_write_target
+from rewrite.task_state_store import load_events, verify_projection
+
+
+def _setup_test_isolation(test_case):
+    test_case._test_temp_dir = tempfile.TemporaryDirectory(prefix="ai-status-test-")
+    test_case._test_root = Path(test_case._test_temp_dir.name)
+    test_case._test_status_file = test_case._test_root / "ai-status.json"
+    test_case._test_log_file = test_case._test_root / "ai-activity-log.jsonl"
+
+    test_case._test_status_file.write_text("{}\n", encoding="utf-8")
+    test_case._test_log_file.write_text("", encoding="utf-8")
+
+    test_case._orig_paths = {
+        "STATUS_ROOT": ai_status.STATUS_ROOT,
+        "STATUS_FILE": ai_status.STATUS_FILE,
+        "LOG_FILE": ai_status.LOG_FILE,
+        "CURRENT_WORK_FILE": ai_status.CURRENT_WORK_FILE,
+        "DOCS_SITE_DIR": ai_status.DOCS_SITE_DIR,
+        "PLANNING_STATE_FILE": ai_status.PLANNING_STATE_FILE,
+        "ORCHESTRATOR_STATE_FILE": ai_status.ORCHESTRATOR_STATE_FILE,
+        "APPROVAL_QUEUE_FILE": ai_status.APPROVAL_QUEUE_FILE,
+        "DASHBOARD_BUNDLE_FILE": ai_status.DASHBOARD_BUNDLE_FILE,
+        "TA_STATUS_ROOT": task_archive.STATUS_ROOT,
+        "TA_STATUS_FILE": task_archive.STATUS_FILE,
+        "TA_ARCHIVE_DIR": task_archive.ARCHIVE_DIR,
+        "TA_ARCHIVE_TASKS_DIR": task_archive.ARCHIVE_TASKS_DIR,
+        "TA_ARCHIVE_INDEX_FILE": task_archive.ARCHIVE_INDEX_FILE,
+    }
+
+    ai_status.configure_status_root_paths(test_case._test_root)
+    task_archive.ARCHIVE_TASKS_DIR.mkdir(parents=True, exist_ok=True)
+    task_archive.ARCHIVE_INDEX_FILE.write_text("{}\n", encoding="utf-8")
+
+
+def _teardown_test_isolation(test_case):
+    paths = test_case._orig_paths
+    ai_status.STATUS_ROOT = paths["STATUS_ROOT"]
+    ai_status.STATUS_FILE = paths["STATUS_FILE"]
+    ai_status.LOG_FILE = paths["LOG_FILE"]
+    ai_status.CURRENT_WORK_FILE = paths["CURRENT_WORK_FILE"]
+    ai_status.DOCS_SITE_DIR = paths["DOCS_SITE_DIR"]
+    ai_status.PLANNING_STATE_FILE = paths["PLANNING_STATE_FILE"]
+    ai_status.ORCHESTRATOR_STATE_FILE = paths["ORCHESTRATOR_STATE_FILE"]
+    ai_status.APPROVAL_QUEUE_FILE = paths["APPROVAL_QUEUE_FILE"]
+    ai_status.DASHBOARD_BUNDLE_FILE = paths["DASHBOARD_BUNDLE_FILE"]
+
+    task_archive.STATUS_ROOT = paths["TA_STATUS_ROOT"]
+    task_archive.STATUS_FILE = paths["TA_STATUS_FILE"]
+    task_archive.ARCHIVE_DIR = paths["TA_ARCHIVE_DIR"]
+    task_archive.ARCHIVE_TASKS_DIR = paths["TA_ARCHIVE_TASKS_DIR"]
+    task_archive.ARCHIVE_INDEX_FILE = paths["TA_ARCHIVE_INDEX_FILE"]
+
+    try:
+        test_case._test_temp_dir.cleanup()
+    except Exception:
+        pass
+
+
+def _locked_status_update(
+    status_file: str,
+    task_id: str,
+    message: str,
+    entered: multiprocessing.synchronize.Event,
+    release: multiprocessing.synchronize.Event | None,
+) -> None:
+    """Process helper that exercises the production stable task-state lock."""
+
+    ai_status.STATUS_FILE = Path(status_file)
+    with ai_status.canonical_task_state_lock(shared=False):
+        state = ai_status.load_state()
+        entered.set()
+        if release is not None and not release.wait(timeout=10):
+            raise RuntimeError("timed out waiting to release task-state transaction")
+        task = ai_status.get_task(state, task_id)
+        if task is None:
+            raise RuntimeError(f"missing fixture task: {task_id}")
+        task["next"] = message
+        ai_status.save_state(state)
+
+
+def _hold_task_state_lock(
+    status_file: str,
+    entered: multiprocessing.synchronize.Event,
+    release: multiprocessing.synchronize.Event,
+) -> None:
+    ai_status.STATUS_FILE = Path(status_file)
+    with ai_status.canonical_task_state_lock(shared=False):
+        entered.set()
+        if not release.wait(timeout=10):
+            raise RuntimeError("timed out waiting to release task-state lock")
+
+
+def _recover_pending_status_outbox(
+    status_file: str,
+    log_file: str,
+    rotate_max_bytes: int,
+    rotate_keep_lines: int,
+) -> None:
+    """Process helper that represents restart recovery after an abrupt exit."""
+
+    ai_status.STATUS_FILE = Path(status_file)
+    ai_status.LOG_FILE = Path(log_file)
+    ai_status.LOG_ROTATE_MAX_BYTES = rotate_max_bytes
+    ai_status.LOG_ROTATE_KEEP_LINES = rotate_keep_lines
+    with ai_status.canonical_task_state_lock(shared=False):
+        state = ai_status.load_state()
+        if not ai_status.recover_status_activity_outbox(state):
+            raise RuntimeError("fixture did not contain a pending status activity outbox")
+
+
+def _recover_pending_archive_outbox(status_file: str, status_root: str) -> None:
+    root = Path(status_root)
+    ai_status.STATUS_FILE = Path(status_file)
+    task_archive.STATUS_ROOT = root
+    task_archive.STATUS_FILE = Path(status_file)
+    task_archive.ARCHIVE_DIR = root / "ai-task-archive"
+    task_archive.ARCHIVE_TASKS_DIR = task_archive.ARCHIVE_DIR / "tasks"
+    task_archive.ARCHIVE_INDEX_FILE = task_archive.ARCHIVE_DIR / "index.json"
+    with ai_status.canonical_task_state_lock(shared=False):
+        state = ai_status.load_state()
+        if not ai_status.recover_status_archive_outbox(state):
+            raise RuntimeError("fixture did not contain a pending status archive outbox")
+
+
+def _commit_terminal_archive_with_sigkill(
+    status_file: str,
+    status_root: str,
+    point: str,
+) -> None:
+    root = Path(status_root)
+    ai_status.STATUS_FILE = Path(status_file)
+    task_archive.STATUS_ROOT = root
+    task_archive.STATUS_FILE = Path(status_file)
+    task_archive.ARCHIVE_DIR = root / "ai-task-archive"
+    task_archive.ARCHIVE_TASKS_DIR = task_archive.ARCHIVE_DIR / "tasks"
+    task_archive.ARCHIVE_INDEX_FILE = task_archive.ARCHIVE_DIR / "index.json"
+    os.environ["LOOP_TEST_ARCHIVE_SIGKILL_AFTER"] = point
+    with ai_status.canonical_task_state_lock(shared=False):
+        state = ai_status.load_state()
+        terminal = ai_status.get_task(state, "LOCK-ONE")
+        if terminal is None:
+            raise RuntimeError("missing terminal fixture task")
+        ai_status.archive_terminal_task_from_state(
+            state,
+            terminal,
+            archived_at="2026-07-14T00:03:00Z",
+        )
+        ai_status.commit_state_with_activity_outbox(state, [])
+
+
+class StrictActivityTailParsingTests(unittest.TestCase):
+    def test_derived_activity_tail_readers_reject_duplicate_keys(self) -> None:
+        ambiguous_rows = (
+            '{"event_id":"first","event_id":"second",'
+            '"type":"task_helper_claimed"}\n',
+            '{"event_id":"nested","type":"task_helper_claimed",'
+            '"metadata":{"role":"a","role":"b"}}\n',
+        )
+        readers = (
+            ("load_logs", ai_status.load_logs),
+            ("recent_helper_claims", ai_status.recent_helper_claims),
+        )
+        original_log_file = ai_status.LOG_FILE
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                ai_status.LOG_FILE = Path(tmpdir) / "ai-activity-log.jsonl"
+                for shape, ambiguous in enumerate(ambiguous_rows):
+                    for reader_name, reader in readers:
+                        with self.subTest(shape=shape, reader=reader_name):
+                            ai_status.LOG_FILE.write_text(
+                                ambiguous,
+                                encoding="utf-8",
+                            )
+                            with self.assertRaisesRegex(
+                                RuntimeError,
+                                "duplicate JSON key",
+                            ):
+                                reader()
+        finally:
+            ai_status.LOG_FILE = original_log_file
+
+
+class TaskStateShadowTests(unittest.TestCase):
+    def setUp(self) -> None:
+        _setup_test_isolation(self)
+
+    def tearDown(self) -> None:
+        _teardown_test_isolation(self)
+
+    def test_save_state_appends_owner_only_shadow_commit(self) -> None:
+        journal = self._test_root / "runtime" / "task-state-events.jsonl"
+        state = {"sprint": "shadow", "tasks": [{"id": "STATE-001", "status": "todo"}]}
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                ai_status.TASK_STATE_STORE_MODE_ENV: "shadow",
+                ai_status.TASK_STATE_EVENT_LOG_ENV: str(journal),
+                "ORCH_RUN_ID": "run-shadow-001",
+            },
+            clear=False,
+        ):
+            ai_status.save_state(state)
+
+        events = load_events(journal)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["source"], "run-shadow-001")
+        self.assertEqual(events[0]["state"], state)
+        self.assertTrue(verify_projection(journal, state)["ok"])
+        self.assertEqual(stat.S_IMODE(journal.stat().st_mode), 0o600)
+
+    def test_shadow_failure_warns_after_incumbent_write_succeeds(self) -> None:
+        real_parent = self._test_root / "real-runtime"
+        real_parent.mkdir()
+        linked_parent = self._test_root / "linked-runtime"
+        linked_parent.symlink_to(real_parent, target_is_directory=True)
+        state = {"sprint": "shadow", "tasks": [{"id": "STATE-002", "status": "todo"}]}
+        stderr = io.StringIO()
+
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    ai_status.TASK_STATE_STORE_MODE_ENV: "shadow",
+                    ai_status.TASK_STATE_EVENT_LOG_ENV: str(linked_parent / "events.jsonl"),
+                },
+                clear=False,
+            ),
+            mock.patch.object(ai_status.sys, "stderr", stderr),
+        ):
+            ai_status.save_state(state)
+
+        self.assertEqual(json.loads(self._test_status_file.read_text(encoding="utf-8")), state)
+        self.assertIn("task-state shadow append failed", stderr.getvalue())
+        self.assertFalse((real_parent / "events.jsonl").exists())
+
+    def test_authoritative_load_ignores_divergent_file_and_save_advances_journal(self) -> None:
+        journal = self._test_root / "runtime" / "task-state-events.jsonl"
+        first = {"sprint": "authoritative", "tasks": [{"id": "STATE-003", "status": "todo"}]}
+        second = {
+            "sprint": "authoritative",
+            "tasks": [{"id": "STATE-003", "status": "in_progress"}],
+        }
+        ai_status.append_state_commit(journal, first, source="migration")
+        self._test_status_file.write_text(
+            json.dumps({"tasks": [{"id": "ROGUE", "status": "done"}]}) + "\n",
+            encoding="utf-8",
+        )
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                ai_status.TASK_STATE_STORE_MODE_ENV: "authoritative",
+                ai_status.TASK_STATE_EVENT_LOG_ENV: str(journal),
+                "AI_NAME": "Human/Ops",
+            },
+            clear=False,
+        ):
+            loaded_task = ai_status.load_state()["tasks"][0]
+            self.assertEqual(
+                {"id": loaded_task["id"], "status": loaded_task["status"]},
+                first["tasks"][0],
+            )
+            ai_status.save_state(second)
+
+        self.assertEqual(load_events(journal)[-1]["state"], second)
+        self.assertEqual(json.loads(self._test_status_file.read_text(encoding="utf-8")), second)
+
+    def test_authoritative_append_failure_preserves_existing_projection(self) -> None:
+        real_parent = self._test_root / "real-authoritative-runtime"
+        real_parent.mkdir()
+        linked_parent = self._test_root / "linked-authoritative-runtime"
+        linked_parent.symlink_to(real_parent, target_is_directory=True)
+        original = {"tasks": [{"id": "STATE-004", "status": "todo"}]}
+        self._test_status_file.write_text(json.dumps(original) + "\n", encoding="utf-8")
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                ai_status.TASK_STATE_STORE_MODE_ENV: "authoritative",
+                ai_status.TASK_STATE_EVENT_LOG_ENV: str(linked_parent / "events.jsonl"),
+            },
+            clear=False,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "symlink"):
+                ai_status.save_state({"tasks": [{"id": "STATE-004", "status": "done"}]})
+
+        self.assertEqual(json.loads(self._test_status_file.read_text(encoding="utf-8")), original)
+
+
+class LogicalActorNormalizationTests(unittest.TestCase):
+    def test_distinct_logical_lanes_do_not_collapse_numeric_suffixes(self) -> None:
+        self.assertEqual(ai_status.normalize_logical_actor("Codex"), "codex")
+        self.assertEqual(ai_status.normalize_logical_actor("Codex2"), "codex2")
+        self.assertEqual(ai_status.normalize_logical_actor("Claude"), "claude")
+        self.assertEqual(ai_status.normalize_logical_actor("Claude2"), "claude2")
+        self.assertNotEqual(
+            ai_status.normalize_logical_actor("Codex"),
+            ai_status.normalize_logical_actor("Codex2"),
+        )
+
+    def test_codex_dispatch_slots_map_to_their_logical_actor(self) -> None:
+        self.assertEqual(ai_status.normalize_logical_actor("codex1_4"), "codex")
+        self.assertEqual(ai_status.normalize_logical_actor("codex2_1"), "codex2")
+        self.assertEqual(ai_status.normalize_logical_actor("codex2-3"), "codex2")
+
+
+class StatusCommandLeaseValidationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory(prefix="status-lease-test-")
+        self.root = Path(self.temporary.name)
+        self.status_file = self.root / "ai-status.json"
+        self.task_id = "LEASE-SYNC-001"
+        self.run_id = "codex-lease-sync-run"
+        self.workspace = self.root / "task-worktree"
+        self.command_root = self.root / "command-runtime"
+        self.workspace.mkdir()
+        self.command_root.mkdir()
+        self.issued_runtime = {
+            "command_root": str(self.command_root),
+            "source_sha": "lease-sync-runtime-sha",
+        }
+        self.status_file.write_text(
+            json.dumps(
+                {
+                    "tasks": [
+                        {
+                            "id": self.task_id,
+                            "owner": "Codex",
+                            "reviewer": "Claude",
+                            "status": "in_progress",
+                        }
+                    ]
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def _runtime_state(
+        self,
+        *,
+        logical_agent_id: str = "codex",
+        lease_expires_at: str = "2999-01-01T00:00:00Z",
+        task_id: str | None = None,
+        status_root: Path | None = None,
+    ) -> dict[str, object]:
+        worker_task_id = task_id or self.task_id
+        worker_status_root = status_root or self.root
+        return {
+            "workers": {
+                self.run_id: {
+                    "run_id": self.run_id,
+                    "logical_agent_id": logical_agent_id,
+                    "task_id": worker_task_id,
+                    "status": "running",
+                    "lease_expires_at": lease_expires_at,
+                    "workspace_path": str(self.workspace),
+                    "status_root": str(worker_status_root),
+                    "status_command_runtime": self.issued_runtime,
+                }
+            },
+            "worker_worktrees": {
+                "leases": {
+                    worker_task_id: {
+                        "task_id": worker_task_id,
+                        "path": str(self.workspace),
+                        "status_root": str(worker_status_root),
+                    }
+                }
+            },
+        }
+
+    def _validate(
+        self,
+        command: str,
+        args: list[str],
+        *,
+        actor: str,
+        runtime_state: dict[str, object] | None = None,
+        env_task_id: str | None = None,
+    ) -> None:
+        env = {
+            "AI_NAME": actor,
+            "ORCH_RUN_ID": self.run_id,
+            "PANTHEON_WORKTREE_ROOT": str(self.workspace),
+            "ORCH_WORKSPACE_PATH": str(self.workspace),
+        }
+        if env_task_id is not None:
+            env["ORCH_TASK_ID"] = env_task_id
+        with (
+            mock.patch.dict(os.environ, env, clear=True),
+            mock.patch.object(ai_status, "STATUS_ROOT", self.root),
+            mock.patch.object(ai_status, "STATUS_FILE", self.status_file),
+            mock.patch.object(ai_status, "load_config", return_value={}),
+            mock.patch.object(
+                ai_status,
+                "load_runtime_state_snapshot",
+                return_value=runtime_state or self._runtime_state(),
+            ),
+            mock.patch.object(
+                ai_status,
+                "status_command_metadata",
+                return_value=self.issued_runtime,
+            ),
+        ):
+            ai_status.validate_active_status_command_lease(command, args)
+
+    def test_accepts_valid_owner_and_reviewer_dispatch_leases(self) -> None:
+        self._validate(
+            "progress",
+            [self.task_id, "owner progress"],
+            actor="Codex",
+            env_task_id=self.task_id,
+        )
+        self._validate(
+            "approve",
+            [self.task_id, "review approved"],
+            actor="Claude",
+            env_task_id=self.task_id,
+            runtime_state=self._runtime_state(logical_agent_id="claude"),
+        )
+
+    def test_rejects_auto_worker_without_run_lease(self) -> None:
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=True),
+            mock.patch.object(ai_status, "STATUS_ROOT", self.root),
+            mock.patch.object(ai_status, "STATUS_FILE", self.status_file),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "status command lease required for auto worker: Codex",
+            ):
+                ai_status.validate_active_status_command_lease(
+                    "progress", [self.task_id, "missing lease"]
+                )
+
+    def test_rejects_expired_run_lease(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "status command lease .* is expired"):
+            self._validate(
+                "progress",
+                [self.task_id, "expired lease"],
+                actor="Codex",
+                env_task_id=self.task_id,
+                runtime_state=self._runtime_state(
+                    lease_expires_at="2000-01-01T00:00:00Z"
+                ),
+            )
+
+    def test_rejects_cross_task_authority(self) -> None:
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "worker task LEASE-SYNC-001 != command task OTHER-TASK-001",
+        ):
+            self._validate(
+                "progress",
+                ["OTHER-TASK-001", "cross-task attempt"],
+                actor="Codex",
+            )
+
+    def test_rejects_cross_root_authority(self) -> None:
+        other_root = self.root / "other-status-root"
+        other_root.mkdir()
+        with self.assertRaisesRegex(RuntimeError, "status command root mismatch"):
+            self._validate(
+                "progress",
+                [self.task_id, "cross-root attempt"],
+                actor="Codex",
+                env_task_id=self.task_id,
+                runtime_state=self._runtime_state(status_root=other_root),
+            )
 
 
 class StatusRootRoutingTests(unittest.TestCase):
+    def _init_repo(self, path: Path) -> None:
+        path.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "init", "-q"], cwd=path, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=path, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=path, check=True)
+        (path / ".gitkeep").write_text("fixture\n", encoding="utf-8")
+        subprocess.run(["git", "add", ".gitkeep"], cwd=path, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "fixture"], cwd=path, check=True)
+        subprocess.run(["git", "remote", "add", "origin", "https://github.com/ajoe734/pantheon.git"], cwd=path, check=True)
+        subprocess.run(["git", "update-ref", "refs/remotes/origin/dev", "HEAD"], cwd=path, check=True)
+
+    def _write_status_state(self, root: Path, *, owner: str, next_value: str) -> None:
+        state = ai_status.default_state()
+        state["tasks"] = [
+            {
+                "id": "CENTRAL-ROOT-001",
+                "title": "Central root routing",
+                "phase": "test",
+                "owner": owner,
+                "reviewer": "Antigravity",
+                "status": "in_progress",
+                "depends_on": [],
+                "artifacts": [],
+                "acceptance": [],
+                "next": next_value,
+                "last_update": "2026-07-16T00:00:00Z",
+            }
+        ]
+        (root / "ai-status.json").write_text(
+            json.dumps(state, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+
+    def _copy_status_tooling(self, destination: Path) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        for rel in (
+            "scripts/ai_status.py",
+            "scripts/ai-status.sh",
+            "scripts/loop_done_guardrail.py",
+            ".orchestrator/common.py",
+            ".orchestrator/runtime_state.py",
+            ".orchestrator/task_archive.py",
+            ".orchestrator/multi_repo_registry.py",
+            ".orchestrator/rewrite/__init__.py",
+            ".orchestrator/rewrite/task_state_store.py",
+            ".orchestrator/config.json",
+        ):
+            source = repo_root / rel
+            target = destination / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+        config_path = destination / ".orchestrator" / "config.json"
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        config["task_state_store"]["mode"] = "shadow"
+        config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+
+    def _commit_all(self, repo: Path, message: str = "install status tooling") -> str:
+        subprocess.run(["git", "add", "."], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", message], cwd=repo, check=True)
+        subprocess.run(["git", "update-ref", "refs/remotes/origin/dev", "HEAD"], cwd=repo, check=True)
+        return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+
     def test_load_local_coordination_payload_tolerates_missing_yaml(self) -> None:
         with tempfile.TemporaryDirectory(prefix="ai-status-no-yaml-") as temp_dir:
             root = Path(temp_dir)
@@ -69,9 +614,608 @@ class StatusRootRoutingTests(unittest.TestCase):
         self.assertEqual(config["paths"]["state_file"], str(status_root / ".orchestrator" / "state.json"))
         self.assertEqual(config["paths"]["event_queue"], str(status_root / ".orchestrator" / "event-queue.jsonl"))
 
+    def test_worktree_status_wrapper_reads_and_writes_only_central_root(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-central-routing-") as temp_dir:
+            root = Path(temp_dir)
+            central = root / "central"
+            worktree = root / "task-worktree"
+            self._init_repo(central)
+            self._copy_status_tooling(central)
+            self._init_repo(worktree)
+            self._copy_status_tooling(worktree)
+            stale_local_ai_status = worktree / "scripts" / "ai_status.py"
+            stale_local_ai_status.write_text(
+                "raise SystemExit('stale worktree-local ai_status.py executed')\n",
+                encoding="utf-8",
+            )
+            self._write_status_state(
+                central,
+                owner="Codex2",
+                next_value="central task is current",
+            )
+            self._write_status_state(
+                worktree,
+                owner="Gemini",
+                next_value="stale worktree task must not be read",
+            )
+            central_log = central / "ai-activity-log.jsonl"
+            worktree_log = worktree / "ai-activity-log.jsonl"
+            central_log.write_text(
+                json.dumps({"event_id": "central-seed", "type": "seed"}) + "\n",
+                encoding="utf-8",
+            )
+            command_sha = self._commit_all(central)
+            worktree_log.write_text(
+                json.dumps({"event_id": "stale-seed", "type": "stale"}) + "\n",
+                encoding="utf-8",
+            )
+            worktree_archive = worktree / "ai-task-archive" / "tasks" / "STALE.json"
+            worktree_archive.parent.mkdir(parents=True)
+            worktree_archive.write_text('{"task_id": "STALE"}\n', encoding="utf-8")
+            worktree_current = worktree / "current-work.md"
+            worktree_dashboard = worktree / "dashboard-bundle.json"
+            worktree_docs_site = worktree / "docs-site"
+            worktree_docs_status = worktree_docs_site / "ai-status.json"
+            worktree_docs_current = worktree_docs_site / "current-work.md"
+            worktree_docs_dashboard = worktree_docs_site / "dashboard-bundle.json"
+            worktree_docs_site.mkdir(parents=True)
+            worktree_current.write_text("stale current work\n", encoding="utf-8")
+            worktree_dashboard.write_text('{"stale": true}\n', encoding="utf-8")
+            worktree_docs_status.write_text('{"stale": "status"}\n', encoding="utf-8")
+            worktree_docs_current.write_text("stale docs current\n", encoding="utf-8")
+            worktree_docs_dashboard.write_text('{"stale": "dashboard"}\n', encoding="utf-8")
+            worktree_task_lock = worktree / ".orchestrator" / "task-state.lock"
+            worktree_activity_lock = worktree / ".orchestrator" / "activity-audit.lock"
+            worktree_task_lock.write_text("stale-task-lock\n", encoding="utf-8")
+            worktree_activity_lock.write_text("stale-activity-lock\n", encoding="utf-8")
+            stale_before = {
+                path: path.read_bytes()
+                for path in (
+                    worktree / "ai-status.json",
+                    worktree_log,
+                    worktree_archive,
+                    worktree_current,
+                    worktree_dashboard,
+                    worktree_docs_status,
+                    worktree_docs_current,
+                    worktree_docs_dashboard,
+                    worktree_task_lock,
+                    worktree_activity_lock,
+                )
+            }
+            central_runner_status = central / ".orchestrator" / "worker-runtime" / "status" / "run.json"
+            central_heartbeat = central / ".orchestrator" / "worker-runtime" / "heartbeats" / "run.json"
+            issued_runtime = {
+                "command_root": str(central),
+                "source_sha": command_sha,
+                "remote": "ajoe734/pantheon",
+                "base_ref": "origin/dev",
+            }
+            central_state_path = central / ".orchestrator" / "state.json"
+            central_state_path.parent.mkdir(parents=True, exist_ok=True)
+            central_state_path.write_text(
+                json.dumps(
+                    {
+                        "version": 2,
+                        "workers": {
+                            "codex-test-run": {
+                                "run_id": "codex-test-run",
+                                "provider": "codex",
+                                "logical_agent_id": "codex2",
+                                "agent_id": "codex2_1",
+                                "task_id": "CENTRAL-ROOT-001",
+                                "status": "running",
+                                "lease_acquired_at": "2026-07-17T00:00:00Z",
+                                "lease_expires_at": "2999-01-01T00:00:00Z",
+                                "queue_event_id": "evt-codex-test-run",
+                                "workspace_path": str(worktree),
+                                "status_root": str(central),
+                                "status_command_runtime": issued_runtime,
+                                "request_snapshot": {
+                                    "metadata": {
+                                        "workspace_task_id": "CENTRAL-ROOT-001",
+                                        "workspace_path": str(worktree),
+                                        "status_root": str(central),
+                                        "status_command_runtime": issued_runtime,
+                                    }
+                                },
+                            }
+                        },
+                        "worker_worktrees": {
+                            "leases": {
+                                "CENTRAL-ROOT-001": {
+                                    "task_id": "CENTRAL-ROOT-001",
+                                    "workspace_task_id": "CENTRAL-ROOT-001",
+                                    "branch": "task/CENTRAL-ROOT-001",
+                                    "path": str(worktree),
+                                    "status_root": str(central),
+                                    "last_queue_event_id": "evt-codex-test-run",
+                                    "last_target_agent": "Codex2",
+                                    "last_used_at": "2026-07-17T00:00:00Z",
+                                }
+                            }
+                        },
+                        "queue": {"events": {}},
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            env = os.environ.copy()
+            # The fixture installs a shadow-mode command runtime. Do not let an
+            # auto-worker's live authoritative journal binding replace that isolated
+            # test configuration in the child status commands.
+            env.pop(ai_status.TASK_STATE_STORE_MODE_ENV, None)
+            env.pop(ai_status.TASK_STATE_EVENT_LOG_ENV, None)
+            env.update(
+                {
+                    "AI_NAME": "Codex2",
+                    "PANTHEON_STATUS_ROOT": str(central),
+                    "PANTHEON_WORKTREE_ROOT": str(worktree),
+                    "ORCH_WORKSPACE_PATH": str(worktree),
+                    "ORCH_RUN_ID": "codex-test-run",
+                    "ORCH_TASK_ID": "CENTRAL-ROOT-001",
+                    "ORCH_RUNNER_STATUS_PATH": str(central_runner_status),
+                    "ORCH_HEARTBEAT_PATH": str(central_heartbeat),
+                    "PANTHEON_COMMAND_ROOT": str(central),
+                    "PANTHEON_COMMAND_RUNTIME_SHA": command_sha,
+                    "PANTHEON_COMMAND_REMOTE": "ajoe734/pantheon",
+                    "PANTHEON_COMMAND_BASE_REF": "origin/dev",
+                }
+            )
+
+            def run_status(args: list[str], *, actor: str, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+                command_env = dict(env)
+                command_env["AI_NAME"] = actor
+                if actor.lower() != "codex2":
+                    command_env.pop("ORCH_RUN_ID", None)
+                if extra_env:
+                    command_env.update(extra_env)
+                return subprocess.run(
+                    ["bash", str(worktree / "scripts" / "ai-status.sh"), *args],
+                    cwd=worktree,
+                    env=command_env,
+                    capture_output=True,
+                    text=True,
+                    timeout=20,
+                    check=False,
+                )
+
+            # Verify lease validation fails when AI_NAME is mismatched
+            mismatched_result = run_status(
+                ["progress", "CENTRAL-ROOT-001", "mismatched progress"],
+                actor="Antigravity",
+                extra_env={"ORCH_RUN_ID": "codex-test-run"}
+            )
+            self.assertNotEqual(mismatched_result.returncode, 0)
+            self.assertIn("status command lease AI identity mismatch", mismatched_result.stderr)
+
+            wrong_lane_result = run_status(
+                ["progress", "CENTRAL-ROOT-001", "wrong logical lane"],
+                actor="Codex",
+                extra_env={"ORCH_RUN_ID": "codex-test-run"},
+            )
+            self.assertNotEqual(wrong_lane_result.returncode, 0)
+            self.assertIn("status command lease AI identity mismatch", wrong_lane_result.stderr)
+
+            show = subprocess.run(
+                ["bash", str(worktree / "scripts" / "ai-status.sh"), "show", "CENTRAL-ROOT-001"],
+                cwd=worktree,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+            self.assertEqual(show.returncode, 0, show.stderr + show.stdout)
+            self.assertIn("central task is current", show.stdout)
+            self.assertNotIn("stale worktree task must not be read", show.stdout)
+
+            for args in (
+                ["progress", "CENTRAL-ROOT-001", "central progress only"],
+                ["handoff", "CENTRAL-ROOT-001", "Antigravity", "central handoff only"],
+            ):
+                result = run_status(args, actor="Codex2")
+                self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+
+            reopen = run_status(
+                ["reopen", "CENTRAL-ROOT-001", "review requested central changes only"],
+                actor="Antigravity",
+            )
+            self.assertEqual(reopen.returncode, 0, reopen.stderr + reopen.stdout)
+            second_handoff = run_status(
+                ["handoff", "CENTRAL-ROOT-001", "Antigravity", "central second review only"],
+                actor="Codex2",
+            )
+            self.assertEqual(second_handoff.returncode, 0, second_handoff.stderr + second_handoff.stdout)
+            approve = run_status(
+                ["approve", "CENTRAL-ROOT-001", "central approval only"],
+                actor="Antigravity",
+                extra_env={"REVIEW_NOTES_ZH": "central approve"},
+            )
+            self.assertEqual(approve.returncode, 0, approve.stderr + approve.stdout)
+            done = run_status(
+                ["done", "CENTRAL-ROOT-001", "central done and archive only"],
+                actor="Codex2",
+                extra_env={
+                    "TASK_REQUIRE_COMMIT_HASH": "0",
+                    "TASK_REQUIRE_GIT_CLEAN": "0",
+                    "TASK_RECORD_REMOTE_STATUS": "0",
+                    "TASK_REQUIRE_MERGED_PR": "0",
+                },
+            )
+            self.assertEqual(done.returncode, 0, done.stderr + done.stdout)
+
+            subprocess.run(["git", "add", "ai-task-archive/tasks/CENTRAL-ROOT-001.json"], cwd=central, check=True)
+            subprocess.run(["git", "commit", "-q", "-m", "commit archived task"], cwd=central, check=True)
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "import sys, pathlib; sys.path.append('.orchestrator'); import task_archive; task_archive.STATUS_ROOT=pathlib.Path(sys.argv[1]); task_archive.STATUS_FILE=task_archive.STATUS_ROOT/'ai-status.json'; task_archive.ARCHIVE_DIR=task_archive.STATUS_ROOT/'ai-task-archive'; task_archive.ARCHIVE_TASKS_DIR=task_archive.ARCHIVE_DIR/'tasks'; task_archive.ARCHIVE_INDEX_FILE=task_archive.ARCHIVE_DIR/'index.json'; task_archive.rebuild_archive_index()",
+                    str(central),
+                ],
+                cwd=worktree,
+                check=True,
+            )
+
+            central_state = json.loads((central / "ai-status.json").read_text(encoding="utf-8"))
+            self.assertIsNone(ai_status.get_task(central_state, "CENTRAL-ROOT-001"))
+            archived = json.loads(
+                (central / "ai-task-archive" / "tasks" / "CENTRAL-ROOT-001.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(archived["task"]["status"], "done")
+            archive_index = json.loads((central / "ai-task-archive" / "index.json").read_text(encoding="utf-8"))
+            self.assertIn("CENTRAL-ROOT-001", archive_index["recent_terminal_ids"])
+            central_events = [
+                json.loads(line)
+                for line in central_log.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertTrue(
+                {"progress", "handoff", "reopen", "review_approved", "done"}.issubset(
+                    {event.get("type") for event in central_events}
+                )
+            )
+            mutating_events = [
+                event
+                for event in central_events
+                if event.get("type") in {"progress", "done"}
+            ]
+            self.assertTrue(mutating_events)
+            for event in mutating_events:
+                self.assertEqual(event["status_command"]["command_root"], str(central.resolve()))
+                self.assertEqual(event["status_command"]["source_sha"], command_sha)
+                self.assertEqual(event["status_command"]["status_root"], str(central.resolve()))
+                self.assertEqual(event["status_command"]["delivery_root"], str(worktree.resolve()))
+            self.assertEqual(
+                archived["task"]["delivery"]["repository_path"],
+                str(worktree.resolve()),
+            )
+            self.assertEqual(
+                archived["task"]["delivery"]["status_command_runtime"]["command_root"],
+                str(central.resolve()),
+            )
+            self.assertTrue((central / ".orchestrator" / "task-state.lock").exists())
+            self.assertTrue((central / ".orchestrator" / "activity-audit.lock").exists())
+            self.assertTrue((central / "current-work.md").exists())
+            self.assertTrue((central / "dashboard-bundle.json").exists())
+            self.assertTrue((central / "docs-site" / "ai-status.json").exists())
+            self.assertTrue((central / "docs-site" / "current-work.md").exists())
+            self.assertTrue((central / "docs-site" / "dashboard-bundle.json").exists())
+            for path, before in stale_before.items():
+                self.assertEqual(
+                    path.read_bytes(),
+                    before,
+                    f"stale worktree coordination file changed: {path}",
+                )
+
+    def test_status_root_validation_rejects_invalid_supervisor_bindings(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-root-invalid-") as temp_dir:
+            root = Path(temp_dir)
+            code_root = root / "code"
+            self._init_repo(code_root)
+            self._copy_status_tooling(code_root)
+            self._write_status_state(
+                code_root,
+                owner="Gemini",
+                next_value="stale task worktree root",
+            )
+            command_sha = self._commit_all(code_root)
+            valid = root / "central"
+            self._init_repo(valid)
+            self._write_status_state(valid, owner="Codex2", next_value="valid")
+            other_valid = root / "other-central"
+            self._init_repo(other_valid)
+            self._write_status_state(other_valid, owner="Codex2", next_value="other valid")
+            symlink = root / "central-link"
+            symlink.symlink_to(valid, target_is_directory=True)
+            real_parent = root / "real-parent"
+            real_parent.mkdir()
+            component_target = real_parent / "component-central"
+            self._init_repo(component_target)
+            self._write_status_state(component_target, owner="Codex2", next_value="component")
+            link_parent = root / "linked-parent"
+            link_parent.symlink_to(real_parent, target_is_directory=True)
+            component_symlink_root = link_parent / "component-central"
+            runner_status = valid / ".orchestrator" / "worker-runtime" / "status" / "run.json"
+            heartbeat = valid / ".orchestrator" / "worker-runtime" / "heartbeats" / "run.json"
+
+            base_env = os.environ.copy()
+            base_env.update(
+                {
+                    "AI_NAME": "Codex2",
+                    "PANTHEON_WORKTREE_ROOT": str(code_root),
+                    "ORCH_WORKSPACE_PATH": str(code_root),
+                    "ORCH_RUN_ID": "codex-test-run",
+                    "ORCH_RUNNER_STATUS_PATH": str(runner_status),
+                    "ORCH_HEARTBEAT_PATH": str(heartbeat),
+                    "PANTHEON_COMMAND_ROOT": str(code_root),
+                    "PANTHEON_COMMAND_RUNTIME_SHA": command_sha,
+                    "PANTHEON_COMMAND_REMOTE": "ajoe734/pantheon",
+                    "PANTHEON_COMMAND_BASE_REF": "origin/dev",
+                }
+            )
+            cases = [
+                ({}, "PANTHEON_STATUS_ROOT is required"),
+                ({"PANTHEON_STATUS_ROOT": "relative-root"}, "absolute path"),
+                ({"PANTHEON_STATUS_ROOT": str(root / "missing")}, "does not exist"),
+                ({"PANTHEON_STATUS_ROOT": str(symlink)}, "symlink component"),
+                ({"PANTHEON_STATUS_ROOT": str(component_symlink_root)}, "symlink component"),
+                ({"PANTHEON_STATUS_ROOT": str(code_root)}, "not the isolated task worktree"),
+                ({"PANTHEON_STATUS_ROOT": str(other_valid)}, "does not match"),
+                (
+                    {
+                        "PANTHEON_STATUS_ROOT": str(valid),
+                        "ORCH_WORKSPACE_PATH": str(other_valid),
+                    },
+                    "disagree on delivery worktree root",
+                ),
+                (
+                    {
+                        "PANTHEON_STATUS_ROOT": str(root),
+                        "ORCH_RUNNER_STATUS_PATH": "",
+                        "ORCH_HEARTBEAT_PATH": "",
+                    },
+                    "git repository root",
+                ),
+            ]
+            for env_update, expected in cases:
+                with self.subTest(expected=expected):
+                    env = dict(base_env)
+                    env.pop("PANTHEON_STATUS_ROOT", None)
+                    env.update(env_update)
+                    proc = subprocess.run(
+                        [
+                            sys.executable,
+                            str(code_root / "scripts" / "ai_status.py"),
+                            "show",
+                            "CENTRAL-ROOT-001",
+                        ],
+                        cwd=code_root,
+                        env=env,
+                        capture_output=True,
+                        text=True,
+                        timeout=20,
+                        check=False,
+                    )
+                    self.assertNotEqual(proc.returncode, 0)
+                    self.assertIn(expected, proc.stderr + proc.stdout)
+
+    def test_status_root_validation_rejects_symlinked_leaves_and_mirror_children(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-symlink-") as temp_dir:
+            root = Path(temp_dir)
+            code_root = root / "code"
+            self._init_repo(code_root)
+            self._copy_status_tooling(code_root)
+            subprocess.run(["git", "add", "."], cwd=code_root, check=True)
+            subprocess.run(["git", "commit", "-q", "-m", "add status tooling"], cwd=code_root, check=True)
+            subprocess.run(["git", "update-ref", "refs/remotes/origin/dev", "HEAD"], cwd=code_root, check=True)
+            command_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=code_root, text=True).strip()
+
+            valid = root / "central"
+            self._init_repo(valid)
+            self._write_status_state(valid, owner="Codex2", next_value="valid")
+
+            # 1. Test dangling symlink in central root
+            dangling = valid / "current-work.md"
+            if dangling.exists() or dangling.is_symlink():
+                dangling.unlink()
+            dangling.symlink_to(root / "nonexistent-target")
+
+            runner_status = valid / ".orchestrator" / "worker-runtime" / "status" / "run.json"
+            heartbeat = valid / ".orchestrator" / "worker-runtime" / "heartbeats" / "run.json"
+
+            env = os.environ.copy()
+            env.update(
+                {
+                    "AI_NAME": "Codex2",
+                    "PANTHEON_WORKTREE_ROOT": str(code_root),
+                    "ORCH_WORKSPACE_PATH": str(code_root),
+                    "ORCH_RUN_ID": "codex-test-run",
+                    "ORCH_RUNNER_STATUS_PATH": str(runner_status),
+                    "ORCH_HEARTBEAT_PATH": str(heartbeat),
+                    "PANTHEON_STATUS_ROOT": str(valid),
+                    "PANTHEON_COMMAND_ROOT": str(code_root),
+                    "PANTHEON_COMMAND_RUNTIME_SHA": command_sha,
+                    "PANTHEON_COMMAND_REMOTE": "ajoe734/pantheon",
+                    "PANTHEON_COMMAND_BASE_REF": "origin/dev",
+                }
+            )
+
+            # Show command should reject due to dangling symlink
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(code_root / "scripts" / "ai_status.py"),
+                    "show",
+                    "CENTRAL-ROOT-001",
+                ],
+                cwd=code_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("cannot be a symlink", proc.stderr)
+
+            # Clean up dangling symlink
+            dangling.unlink()
+
+            # 2. Test mirror child symlink (e.g. docs-site/ai-status.json)
+            docs_site = valid / "docs-site"
+            docs_site.mkdir(parents=True, exist_ok=True)
+            mirror_child = docs_site / "ai-status.json"
+            mirror_child.symlink_to(root / "nonexistent-target-2")
+
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(code_root / "scripts" / "ai_status.py"),
+                    "show",
+                    "CENTRAL-ROOT-001",
+                ],
+                cwd=code_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("cannot be a symlink", proc.stderr)
+
+            # Clean up mirror child
+            mirror_child.unlink()
+
+            # 3. Test symlink in ai-task-archive/tasks
+            tasks_dir = valid / "ai-task-archive" / "tasks"
+            tasks_dir.mkdir(parents=True, exist_ok=True)
+            archive_leaf = tasks_dir / "bad-leaf.json"
+            archive_leaf.symlink_to(root / "nonexistent-target-3")
+
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(code_root / "scripts" / "ai_status.py"),
+                    "show",
+                    "CENTRAL-ROOT-001",
+                ],
+                cwd=code_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("cannot be a symlink", proc.stderr)
+
+            archive_leaf.unlink()
+
+            # 4. Test symlink in archive/logs
+            logs_dir = valid / "archive" / "logs"
+            logs_dir.mkdir(parents=True, exist_ok=True)
+            log_archive_leaf = logs_dir / "bad-log.gz"
+            log_archive_leaf.symlink_to(root / "nonexistent-target-4")
+
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(code_root / "scripts" / "ai_status.py"),
+                    "show",
+                    "CENTRAL-ROOT-001",
+                ],
+                cwd=code_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("cannot be a symlink", proc.stderr)
+
+            log_archive_leaf.unlink()
+
+            # 5. Test symlink in .orchestrator/worker-runtime
+            runtime_dir = valid / ".orchestrator" / "worker-runtime"
+            runtime_dir.mkdir(parents=True, exist_ok=True)
+            runtime_leaf = runtime_dir / "bad-leaf.json"
+            runtime_leaf.symlink_to(root / "nonexistent-target-5")
+
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(code_root / "scripts" / "ai_status.py"),
+                    "show",
+                    "CENTRAL-ROOT-001",
+                ],
+                cwd=code_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("cannot be a symlink", proc.stderr)
+
+            runtime_leaf.unlink()
+
+
+class CanonicalWriterGuardTests(unittest.TestCase):
+    def test_isolated_override_never_bypasses_a_git_checkout(self) -> None:
+        canonical_status = Path(__file__).resolve().parents[1] / "ai-status.json"
+        with mock.patch.dict(
+            os.environ,
+            {"PANTHEON_ALLOW_ISOLATED_TEST_WRITES": "1"},
+            clear=False,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "canonical state in a git checkout"):
+                assert_isolated_legacy_write_target(
+                    canonical_status,
+                    tool="guard-test",
+                )
+
+    def test_configured_non_git_fixture_requires_explicit_override(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "ai-status.json"
+            with mock.patch.dict(
+                os.environ,
+                {"PANTHEON_STATUS_ROOT": temp_dir},
+                clear=False,
+            ):
+                os.environ.pop("PANTHEON_ALLOW_ISOLATED_TEST_WRITES", None)
+                with self.assertRaisesRegex(RuntimeError, "PANTHEON_STATUS_ROOT"):
+                    assert_isolated_legacy_write_target(target, tool="guard-test")
+                os.environ["PANTHEON_ALLOW_ISOLATED_TEST_WRITES"] = "1"
+                assert_isolated_legacy_write_target(target, tool="guard-test")
+
+    def test_legacy_override_cannot_authorize_configured_status_root_write(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "ai-status.json"
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "PANTHEON_STATUS_ROOT": temp_dir,
+                    "PANTHEON_ALLOW_ISOLATED_LEGACY_WRITES": "1",
+                },
+                clear=False,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "PANTHEON_STATUS_ROOT"):
+                    assert_isolated_legacy_write_target(target, tool="guard-test")
+
 
 class ReviewApprovedWorkflowTests(unittest.TestCase):
     def setUp(self) -> None:
+        _setup_test_isolation(self)
         self.state = {
             "agents": [
                 {"name": "Codex", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
@@ -109,6 +1253,9 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             "workload_summary": {},
         }
 
+    def tearDown(self) -> None:
+        _teardown_test_isolation(self)
+
     def test_approve_creates_owner_finalize_handoff(self) -> None:
         with mock.patch.dict(os.environ, {"AI_NAME": "Claude", "REVIEW_NOTES_ZH": "審查通過||交回 owner 收尾"}, clear=False):
             ai_status.command_approve(self.state, ["REG-002", "Review passed. Owner should finalize."])
@@ -122,6 +1269,26 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(pending[0]["from"], "Claude")
         self.assertEqual(pending[0]["to"], "Codex")
         self.assertIn("finalize", pending[0]["message"].lower())
+
+    def test_progress_promotes_todo_to_in_progress(self) -> None:
+        self.state["tasks"][0]["status"] = "todo"
+
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
+            ai_status.command_progress(self.state, ["REG-002", "Implementation started"])
+
+        task = ai_status.get_task(self.state, "REG-002")
+        self.assertEqual(task["status"], "in_progress")
+        self.assertEqual(task["next"], "Implementation started")
+
+    def test_progress_preserves_review_approved_for_owner_finalize(self) -> None:
+        self.state["tasks"][0]["status"] = "review_approved"
+
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
+            ai_status.command_progress(self.state, ["REG-002", "Checking status before finalization"])
+
+        task = ai_status.get_task(self.state, "REG-002")
+        self.assertEqual(task["status"], "review_approved")
+        self.assertEqual(task["next"], "Checking status before finalization")
 
     def test_done_requires_owner_and_review_approved(self) -> None:
         with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
@@ -137,22 +1304,265 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         with (
             mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
             mock.patch.object(ai_status, "collect_done_delivery_metadata", return_value={}),
-            mock.patch.object(ai_status, "archive_task_snapshot", return_value={"task_id": "REG-002"}) as archive_task_snapshot,
+            mock.patch.object(ai_status, "archived_task_snapshot", return_value=None),
         ):
             ai_status.command_done(self.state, ["REG-002", "Owner finalized approved task"])
 
-        self.assertIsNone(ai_status.get_task(self.state, "REG-002"))
-        self.assertEqual(self.state["handoffs"], [])
-        archive_task = archive_task_snapshot.call_args.args[0]
+        terminal = ai_status.get_task(self.state, "REG-002")
+        self.assertIsNotNone(terminal)
+        self.assertEqual(terminal["status"], "done")
+        self.assertTrue(self.state["handoffs"])
+        archive_task = self.state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY]["snapshots"][0]["task"]
         self.assertEqual(archive_task["status"], "done")
         self.assertEqual(archive_task["terminal_outcome"], "completed")
+
+    def test_reconcile_merged_done_requires_human_ops(self) -> None:
+        self.state["tasks"][0]["status"] = "blocked"
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
+            with self.assertRaisesRegex(SystemExit, "Only Human/Ops"):
+                ai_status.command_reconcile_merged_done(
+                    self.state,
+                    ["REG-002", "Merged delivery reconciled"],
+                )
+
+    def test_reconcile_merged_done_archives_verified_delivery(self) -> None:
+        self.state["tasks"][0]["status"] = "blocked"
+        self.state["tasks"][0]["waiting_for"] = "Claude"
+        self.state["blockers"] = [
+            {
+                "task_id": "REG-002",
+                "owner": "Codex",
+                "waiting_for": "Claude",
+                "message": "stale blocker",
+                "status": "open",
+                "created_at": "2026-04-06T15:00:00Z",
+            }
+        ]
+        delivery = {
+            "reconciled_from_merged_evidence": True,
+            "commit": "a" * 40,
+        }
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False),
+            mock.patch.object(ai_status, "validate_merged_done_evidence", return_value=delivery),
+            mock.patch.object(ai_status, "archived_task_snapshot", return_value=None),
+        ):
+            ai_status.command_reconcile_merged_done(
+                self.state,
+                ["REG-002", "Merged delivery reconciled"],
+            )
+
+        task = ai_status.get_task(self.state, "REG-002")
+        self.assertIsNotNone(task)
+        self.assertEqual(task["status"], "done")
+        self.assertEqual(task["terminal_outcome"], "completed")
+        self.assertNotIn("waiting_for", task)
+        self.assertEqual(task["delivery"]["commit"], "a" * 40)
+        self.assertEqual(self.state["blockers"][0]["status"], "resolved")
+        archive_task = self.state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY]["snapshots"][0]["task"]
+        self.assertEqual(archive_task["status"], "done")
+
+    def _init_repo(self, root: Path, *, remote: str, files: dict[str, str]) -> str:
+        root.mkdir(parents=True)
+        subprocess.run(["git", "init", "-b", "dev"], cwd=root, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=root, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=root, check=True)
+        subprocess.run(["git", "remote", "add", "origin", remote], cwd=root, check=True)
+        for relative, content in files.items():
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=root, check=True)
+        subprocess.run(["git", "commit", "-m", "test merged evidence"], cwd=root, check=True, capture_output=True)
+        sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        subprocess.run(
+            ["git", "update-ref", "refs/remotes/origin/dev", sha],
+            cwd=root,
+            check=True,
+        )
+        return sha
+
+    def test_validates_review_identity_and_both_dev_merges(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="merged-done-evidence-") as temp_dir:
+            base = Path(temp_dir)
+            delivery_root = base / "execute-plans"
+            delivery_sha = self._init_repo(
+                delivery_root,
+                remote="https://github.com/ajoe734/execute-plans.git",
+                files={"src/delivery.ts": "export const delivered = true;\n"},
+            )
+            evidence_root = base / "pantheon"
+            evidence_file = ".orchestrator/task-briefs/reg_002.md"
+            evidence_text = (
+                "# Task Brief: REG-002\n\n"
+                "- Status: review_approved\n"
+                "- Owner: Codex\n"
+                "- Reviewer: Claude\n\n"
+                "Delivery repository: ajoe734/execute-plans\n"
+                f"Delivery commit: {delivery_sha}\n"
+            )
+            evidence_sha = self._init_repo(
+                evidence_root,
+                remote="https://github.com/ajoe734/pantheon.git",
+                files={evidence_file: evidence_text},
+            )
+            task = {
+                "id": "REG-002",
+                "owner": "Codex",
+                "reviewer": "Claude",
+                "artifacts": ["execute-plans:src/delivery.ts"],
+            }
+            config = {
+                "coordination": {
+                    "enabled": True,
+                    "repositories": {
+                        "execute_plans": {
+                            "repo": "ajoe734/execute-plans",
+                            "local_path": str(delivery_root),
+                        }
+                    },
+                }
+            }
+            env = {
+                "RECONCILE_EVIDENCE_FILE": evidence_file,
+                "RECONCILE_EVIDENCE_COMMIT": evidence_sha,
+                "RECONCILE_DELIVERY_REPOSITORY": "ajoe734/execute-plans",
+                "RECONCILE_DELIVERY_ROOT": str(delivery_root),
+                "RECONCILE_DELIVERY_COMMIT": delivery_sha,
+            }
+            with (
+                mock.patch.object(ai_status, "ROOT", evidence_root),
+                mock.patch.object(ai_status, "load_config", return_value=config),
+                mock.patch.dict(os.environ, env, clear=False),
+            ):
+                result = ai_status.validate_merged_done_evidence(task)
+
+            self.assertTrue(result["reconciled_from_merged_evidence"])
+            self.assertEqual(result["commit"], delivery_sha)
+            self.assertEqual(result["review_evidence"]["commit"], evidence_sha)
+            self.assertEqual(result["review_evidence"]["reviewer"], "Claude")
+
+    def test_rejects_review_identity_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="merged-done-reviewer-") as temp_dir:
+            base = Path(temp_dir)
+            delivery_root = base / "execute-plans"
+            delivery_sha = self._init_repo(
+                delivery_root,
+                remote="https://github.com/ajoe734/execute-plans.git",
+                files={"src/delivery.ts": "export const delivered = true;\n"},
+            )
+            evidence_root = base / "pantheon"
+            evidence_file = ".orchestrator/task-briefs/reg_002.md"
+            evidence_sha = self._init_repo(
+                evidence_root,
+                remote="https://github.com/ajoe734/pantheon.git",
+                files={
+                    evidence_file: (
+                        "# Task Brief: REG-002\n\n"
+                        "- Status: review_approved\n"
+                        "- Owner: Codex\n"
+                        "- Reviewer: Gemini\n\n"
+                        "Delivery repository: ajoe734/execute-plans\n"
+                        f"Delivery commit: {delivery_sha}\n"
+                    )
+                },
+            )
+            env = {
+                "RECONCILE_EVIDENCE_FILE": evidence_file,
+                "RECONCILE_EVIDENCE_COMMIT": evidence_sha,
+                "RECONCILE_DELIVERY_REPOSITORY": "ajoe734/execute-plans",
+                "RECONCILE_DELIVERY_ROOT": str(delivery_root),
+                "RECONCILE_DELIVERY_COMMIT": delivery_sha,
+            }
+            with (
+                mock.patch.object(ai_status, "ROOT", evidence_root),
+                mock.patch.dict(os.environ, env, clear=False),
+            ):
+                with self.assertRaisesRegex(SystemExit, "reviewer metadata"):
+                    ai_status.validate_merged_done_evidence(
+                        {
+                            "id": "REG-002",
+                            "owner": "Codex",
+                            "reviewer": "Claude",
+                            "artifacts": ["execute-plans:src/delivery.ts"],
+                        }
+                    )
+
+    def test_accepts_exact_audited_reviewer_reassignment(self) -> None:
+        message = (
+            "Auto-reassigned REG-002 away from unavailable lane Claude; "
+            "reviewer Claude -> Codex2."
+        )
+        event = {
+            "event_id": "supervisor-reassign-test",
+            "ts": "2026-07-19T23:52:06Z",
+            "agent": "Orchestrator",
+            "type": "task_reassigned",
+            "task_id": "REG-002",
+            "old_owner": "Codex",
+            "new_owner": "Codex",
+            "old_reviewer": "Claude",
+            "new_reviewer": "Codex2",
+            "message": message,
+        }
+        self._test_log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+        result = ai_status._verified_reviewer_reassignment(
+            {
+                "id": "REG-002",
+                "owner": "Codex",
+                "reviewer": "Codex2",
+                "last_update": event["ts"],
+                "next": message,
+            },
+            evidence_reviewer="Claude",
+            current_reviewer="Codex2",
+        )
+
+        self.assertEqual(result["event_id"], "supervisor-reassign-test")
+        self.assertEqual(result["old_reviewer"], "Claude")
+        self.assertEqual(result["new_reviewer"], "Codex2")
+
+    def test_reviewer_reassignment_requires_exact_task_readback(self) -> None:
+        event = {
+            "event_id": "supervisor-reassign-test",
+            "ts": "2026-07-19T23:52:06Z",
+            "type": "task_reassigned",
+            "task_id": "REG-002",
+            "old_owner": "Codex",
+            "new_owner": "Codex",
+            "old_reviewer": "Claude",
+            "new_reviewer": "Codex2",
+            "message": "canonical reassignment",
+        }
+        self._test_log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+        with self.assertRaisesRegex(SystemExit, "no exact task_reassigned"):
+            ai_status._verified_reviewer_reassignment(
+                {
+                    "id": "REG-002",
+                    "owner": "Codex",
+                    "reviewer": "Codex2",
+                    "last_update": event["ts"],
+                    "next": "different readback",
+                },
+                evidence_reviewer="Claude",
+                current_reviewer="Codex2",
+            )
 
     def test_handoff_must_go_from_owner_to_reviewer(self) -> None:
         with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
             with self.assertRaises(SystemExit):
                 ai_status.command_handoff(self.state, ["REG-002", "Claude", "Wrong actor"])
 
-        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(ai_status, "archived_task_snapshot", return_value=None),
+        ):
             with self.assertRaises(SystemExit):
                 ai_status.command_handoff(self.state, ["REG-002", "Gemini", "Wrong reviewer"])
 
@@ -200,13 +1610,15 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
 
         with (
             mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
-            mock.patch.object(ai_status, "archive_task_snapshot", return_value={"task_id": "REG-002"}) as archive_task_snapshot,
+            mock.patch.object(ai_status, "archived_task_snapshot", return_value=None),
         ):
             ai_status.command_supersede(self.state, ["REG-002", "Superseded by REG-010 after accepted consensus.", "REG-010"])
 
-        self.assertIsNone(ai_status.get_task(self.state, "REG-002"))
-        self.assertEqual(self.state["blockers"], [])
-        archive_task = archive_task_snapshot.call_args.args[0]
+        terminal = ai_status.get_task(self.state, "REG-002")
+        self.assertIsNotNone(terminal)
+        self.assertEqual(terminal["status"], "done")
+        self.assertTrue(self.state["blockers"])
+        archive_task = self.state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY]["snapshots"][0]["task"]
         self.assertEqual(archive_task["status"], "done")
         self.assertEqual(archive_task["terminal_outcome"], "superseded")
         self.assertEqual(archive_task["superseded_by"], "REG-010")
@@ -341,21 +1753,27 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             ],
         }
         pantheon_root = Path("/tmp/pantheon-task-worktree")
-        missing_execute_plans_root = Path("/tmp/pantheon-worker-worktrees/pantheon/execute-plans")
+        # Use a path guaranteed absent rather than a fixed literal: a real
+        # worker layout with an active execute-plans checkout would make a
+        # hardcoded literal path like that actually exist, silently turning
+        # this into the "active" branch instead of exercising the
+        # missing-repo fallback.
+        with tempfile.TemporaryDirectory() as missing_repo_parent:
+            missing_execute_plans_root = Path(missing_repo_parent) / "execute-plans"
 
-        def fake_repository_local_path(_config: dict[str, object], repo_id: str | None) -> Path | None:
-            if repo_id == "execute_plans":
-                return missing_execute_plans_root
-            if repo_id == "pantheon":
-                return pantheon_root
-            return None
+            def fake_repository_local_path(_config: dict[str, object], repo_id: str | None) -> Path | None:
+                if repo_id == "execute_plans":
+                    return missing_execute_plans_root
+                if repo_id == "pantheon":
+                    return pantheon_root
+                return None
 
-        with (
-            mock.patch.dict(os.environ, {"TASK_REQUIRE_MERGED_PR": "false"}, clear=False),
-            mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
-            mock.patch.object(ai_status, "repository_local_path", side_effect=fake_repository_local_path),
-        ):
-            delivery = ai_status.collect_done_delivery_metadata(task, "Codex2")
+            with (
+                mock.patch.dict(os.environ, {"TASK_REQUIRE_MERGED_PR": "false"}, clear=False),
+                mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
+                mock.patch.object(ai_status, "repository_local_path", side_effect=fake_repository_local_path),
+            ):
+                delivery = ai_status.collect_done_delivery_metadata(task, "Codex2")
 
         self.assertEqual(delivery["repository_id"], "pantheon")
         self.assertEqual(delivery["repository_path"], str(pantheon_root))
@@ -472,9 +1890,22 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
         self.assertEqual(delivery["merge_target_sha"], "devsha")
         self.assertTrue(delivery["head_merged_to_target"])
 
+    def test_delivery_merge_target_branch_uses_dev_for_execute_plans(self) -> None:
+        # execute-plans mirrors Pantheon's per-task-PR-into-dev model; its
+        # GitHub-configured default branch is `dev`, not `main`. Regression
+        # guard for OPS-EP-BRANCH-TARGETING-001: a stale `main` value here
+        # made the done-finalize gate check ancestry against the wrong
+        # branch, which pushed FE task PRs to target `main` directly and
+        # drift it out of sync with `dev`.
+        self.assertEqual(
+            ai_status.delivery_merge_target_branch({}, "execute_plans"),
+            "dev",
+        )
+
 
 class ArchiveWorkflowTests(unittest.TestCase):
     def setUp(self) -> None:
+        _setup_test_isolation(self)
         self.state = {
             "agents": [
                 {"name": "Codex", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
@@ -533,23 +1964,39 @@ class ArchiveWorkflowTests(unittest.TestCase):
             "workload_summary": {},
         }
 
-    def test_archive_migrate_moves_terminal_tasks_out_of_active_state(self) -> None:
-        with (
-            mock.patch.object(ai_status, "archive_task_snapshot", return_value={"task_id": "REG-100"}) as archive_task_snapshot,
-            mock.patch.object(ai_status, "rebuild_archive_index") as rebuild_archive_index,
-        ):
-            ai_status.command_archive_migrate(self.state, [])
+    def tearDown(self) -> None:
+        _teardown_test_isolation(self)
 
-        self.assertEqual([task["id"] for task in self.state["tasks"]], ["REG-101"])
-        self.assertEqual(self.state["handoffs"], [])
-        self.assertEqual(self.state["blockers"], [])
-        archive_task = archive_task_snapshot.call_args.args[0]
+    def test_archive_migrate_moves_terminal_tasks_out_of_active_state(self) -> None:
+        ai_status.command_archive_migrate(self.state, [])
+
+        self.assertEqual(
+            [task["id"] for task in self.state["tasks"]],
+            ["REG-100", "REG-101"],
+        )
+        self.assertTrue(self.state["handoffs"])
+        self.assertTrue(self.state["blockers"])
+        archive_task = self.state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY]["snapshots"][0]["task"]
         self.assertEqual(archive_task["id"], "REG-100")
-        rebuild_archive_index.assert_called_once()
 
     def test_prune_archived_active_tasks_removes_duplicate_active_rows(self) -> None:
+        terminal = deepcopy(self.state["tasks"][0])
+        related_handoffs = deepcopy(self.state["handoffs"])
+        related_blockers = deepcopy(self.state["blockers"])
+
         def fake_archived_snapshot(task_id: str):
-            return {"task_id": task_id} if task_id == "REG-100" else None
+            if task_id != "REG-100":
+                return None
+            return {
+                "version": 1,
+                "task_id": task_id,
+                "archived_at": "2026-04-14T02:01:00Z",
+                "terminal_status": "done",
+                "terminal_outcome": "completed",
+                "task": terminal,
+                "handoffs": related_handoffs,
+                "blockers": related_blockers,
+            }
 
         with mock.patch.object(ai_status, "archived_task_snapshot", side_effect=fake_archived_snapshot):
             pruned = ai_status.prune_archived_active_tasks(self.state)
@@ -592,9 +2039,291 @@ class ArchiveWorkflowTests(unittest.TestCase):
         self.assertIn('"task_id": "REG-100"', rendered)
         self.assertIn("ai-task-archive/tasks", rendered)
 
+    def test_read_only_main_fails_closed_without_recovering_pending_outbox(self) -> None:
+        class NullLock:
+            def __enter__(self):
+                return None
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        pending_state = dict(self.state)
+        pending_state[ai_status.STATUS_ACTIVITY_OUTBOX_KEY] = {
+            "schema_version": 1,
+            "transaction_id": "pending",
+            "events": [{"event_id": "pending-event"}],
+        }
+
+        with (
+            mock.patch.object(ai_status, "validate_status_root_binding"),
+            mock.patch.object(ai_status, "validate_status_command_runtime_binding"),
+            mock.patch.object(
+                ai_status,
+                "canonical_task_state_lock",
+                return_value=NullLock(),
+            ),
+            mock.patch.object(ai_status, "load_state", return_value=pending_state),
+            mock.patch.object(ai_status, "recover_status_archive_outbox") as archive_recovery,
+            mock.patch.object(ai_status, "recover_status_activity_outbox") as activity_recovery,
+            mock.patch("sys.stderr", new_callable=io.StringIO) as stderr,
+        ):
+            rc = ai_status.main(["ai_status.py", "show", "REG-100"])
+
+        self.assertEqual(rc, 2)
+        rendered = json.loads(stderr.getvalue())
+        self.assertEqual(rendered["status"], "fail_closed")
+        diagnostic = rendered["diagnostic"]
+        self.assertEqual(diagnostic["invariant"], "status_recovery_pending")
+        archive_recovery.assert_not_called()
+        activity_recovery.assert_not_called()
+
+    def test_recover_main_replays_pending_outboxes_without_worker_lease(self) -> None:
+        class NullLock:
+            def __enter__(self):
+                return None
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        pending_state = dict(self.state)
+        pending_state[ai_status.STATUS_ACTIVITY_OUTBOX_KEY] = {
+            "schema_version": 1,
+            "transaction_id": "pending",
+            "events": [{"event_id": "pending-event"}],
+        }
+        logs = [{"event_id": "pending-event"}]
+
+        with (
+            mock.patch.object(ai_status, "validate_status_root_binding"),
+            mock.patch.object(ai_status, "validate_status_command_runtime_binding"),
+            mock.patch.object(ai_status, "canonical_task_state_lock", return_value=NullLock()) as lock_mock,
+            mock.patch.object(ai_status, "load_state", return_value=pending_state),
+            mock.patch.object(ai_status, "recover_status_archive_outbox", return_value=False) as archive_recovery,
+            mock.patch.object(ai_status, "recover_status_activity_outbox", return_value=True) as activity_recovery,
+            mock.patch.object(ai_status, "load_logs", return_value=logs),
+            mock.patch.object(ai_status, "write_current_work") as current_work,
+            mock.patch.object(ai_status, "write_dashboard_bundle") as dashboard,
+            mock.patch.object(ai_status, "sync_docs_site") as docs_site,
+            mock.patch.object(ai_status, "validate_active_status_command_lease") as lease_validation,
+            mock.patch("sys.stdout", new_callable=io.StringIO) as stdout,
+        ):
+            rc = ai_status.main(["ai_status.py", "recover"])
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            json.loads(stdout.getvalue()),
+            {
+                "status": "recovered",
+                "archive_outbox_recovered": False,
+                "activity_outbox_recovered": True,
+            },
+        )
+        lock_mock.assert_called_once_with(shared=False, nonblocking=True)
+        archive_recovery.assert_called_once_with(pending_state)
+        activity_recovery.assert_called_once_with(pending_state)
+        current_work.assert_called_once_with(pending_state, logs)
+        dashboard.assert_called_once_with(pending_state)
+        docs_site.assert_called_once_with(pending_state)
+        lease_validation.assert_not_called()
+
+    def test_recover_main_is_noop_without_pending_outbox(self) -> None:
+        class NullLock:
+            def __enter__(self):
+                return None
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        with (
+            mock.patch.object(ai_status, "validate_status_root_binding"),
+            mock.patch.object(ai_status, "validate_status_command_runtime_binding"),
+            mock.patch.object(ai_status, "canonical_task_state_lock", return_value=NullLock()),
+            mock.patch.object(ai_status, "load_state", return_value=self.state),
+            mock.patch.object(ai_status, "recover_status_archive_outbox", return_value=False),
+            mock.patch.object(ai_status, "recover_status_activity_outbox", return_value=False),
+            mock.patch.object(ai_status, "refresh_derived_status_views") as refresh_views,
+            mock.patch.object(ai_status, "validate_active_status_command_lease") as lease_validation,
+            mock.patch("sys.stdout", new_callable=io.StringIO) as stdout,
+        ):
+            rc = ai_status.main(["ai_status.py", "recover"])
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            json.loads(stdout.getvalue()),
+            {
+                "status": "no_pending_recovery",
+                "archive_outbox_recovered": False,
+                "activity_outbox_recovered": False,
+            },
+        )
+        refresh_views.assert_not_called()
+        lease_validation.assert_not_called()
+
+    def test_recover_main_fails_closed_when_task_lock_is_busy(self) -> None:
+        with (
+            mock.patch.object(ai_status, "validate_status_root_binding"),
+            mock.patch.object(ai_status, "validate_status_command_runtime_binding"),
+            mock.patch.object(
+                ai_status,
+                "canonical_task_state_lock",
+                side_effect=BlockingIOError,
+            ),
+            mock.patch("sys.stderr", new_callable=io.StringIO) as stderr,
+        ):
+            rc = ai_status.main(["ai_status.py", "recover"])
+
+        self.assertEqual(rc, 75)
+        self.assertEqual(
+            json.loads(stderr.getvalue())["diagnostic"]["invariant"],
+            "status_task_lock_busy",
+        )
+
+    def test_real_show_is_bounded_and_does_not_mutate_pending_outbox(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_root = Path(tmpdir)
+            subprocess.run(
+                ["git", "init", "-q", str(status_root)],
+                check=True,
+            )
+            (status_root / ".orchestrator").mkdir()
+            (status_root / ".orchestrator" / "task-state.lock").write_bytes(b"")
+            state = deepcopy(self.state)
+            state[ai_status.STATUS_ACTIVITY_OUTBOX_KEY] = {
+                "schema_version": 1,
+                "transaction_id": "pending-read-only-fixture",
+                "events": [{"event_id": "pending-read-only-event"}],
+            }
+            status_file = status_root / "ai-status.json"
+            status_file.write_text(
+                json.dumps(state, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            event_log = status_root / "runtime" / "task-state-events.jsonl"
+            ai_status.append_state_commit(event_log, state, source="test-fixture")
+            before = status_file.read_bytes()
+            env = os.environ.copy()
+            for name in (
+                "ORCH_RUN_ID",
+                "PANTHEON_WORKTREE_ROOT",
+                "ORCH_WORKSPACE_PATH",
+                "ORCH_RUNNER_STATUS_PATH",
+                "ORCH_HEARTBEAT_PATH",
+            ):
+                env.pop(name, None)
+            env.update(
+                {
+                    "AI_NAME": "Codex",
+                    "PANTHEON_STATUS_ROOT": str(status_root),
+                    ai_status.TASK_STATE_STORE_MODE_ENV: "authoritative",
+                    ai_status.TASK_STATE_EVENT_LOG_ENV: str(event_log),
+                }
+            )
+
+            started = time.monotonic()
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(Path(__file__).resolve().parents[1] / "scripts" / "ai-status.sh"),
+                    "show",
+                    "REG-100",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+            elapsed = time.monotonic() - started
+
+            self.assertEqual(result.returncode, 2, result.stderr + result.stdout)
+            self.assertLess(elapsed, 6.0)
+            rendered = json.loads(result.stderr)
+            self.assertEqual(
+                rendered["diagnostic"]["invariant"],
+                "status_recovery_pending",
+            )
+            self.assertEqual(status_file.read_bytes(), before)
+            self.assertFalse(
+                (status_root / ".orchestrator" / "activity-audit.lock").exists()
+            )
+
+    def test_real_show_returns_immediately_when_writer_holds_task_lock(self) -> None:
+        context = multiprocessing.get_context("fork")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_root = Path(tmpdir)
+            subprocess.run(["git", "init", "-q", str(status_root)], check=True)
+            (status_root / ".orchestrator").mkdir()
+            (status_root / ".orchestrator" / "task-state.lock").write_bytes(b"")
+            status_file = status_root / "ai-status.json"
+            status_file.write_text(
+                json.dumps(self.state, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            event_log = status_root / "runtime" / "task-state-events.jsonl"
+            ai_status.append_state_commit(event_log, self.state, source="test-fixture")
+            before = status_file.read_bytes()
+            entered = context.Event()
+            release = context.Event()
+            holder = context.Process(
+                target=_hold_task_state_lock,
+                args=(str(status_file), entered, release),
+            )
+            holder.start()
+            self.assertTrue(entered.wait(timeout=5))
+            env = os.environ.copy()
+            for name in (
+                "ORCH_RUN_ID",
+                "PANTHEON_WORKTREE_ROOT",
+                "ORCH_WORKSPACE_PATH",
+                "ORCH_RUNNER_STATUS_PATH",
+                "ORCH_HEARTBEAT_PATH",
+            ):
+                env.pop(name, None)
+            env.update(
+                {
+                    "AI_NAME": "Codex",
+                    "PANTHEON_STATUS_ROOT": str(status_root),
+                    ai_status.TASK_STATE_STORE_MODE_ENV: "authoritative",
+                    ai_status.TASK_STATE_EVENT_LOG_ENV: str(event_log),
+                }
+            )
+            try:
+                started = time.monotonic()
+                result = subprocess.run(
+                    [
+                        "bash",
+                        str(Path(__file__).resolve().parents[1] / "scripts" / "ai-status.sh"),
+                        "show",
+                        "REG-100",
+                    ],
+                    cwd=Path(__file__).resolve().parents[1],
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+                elapsed = time.monotonic() - started
+            finally:
+                release.set()
+                holder.join(timeout=5)
+                if holder.is_alive():
+                    holder.kill()
+                    holder.join(timeout=5)
+            self.assertEqual(holder.exitcode, 0)
+            self.assertEqual(result.returncode, 75, result.stderr + result.stdout)
+            self.assertLess(elapsed, 6.0)
+            self.assertEqual(
+                json.loads(result.stderr)["diagnostic"]["invariant"],
+                "status_task_lock_busy",
+            )
+            self.assertEqual(status_file.read_bytes(), before)
+
 
 class SidecarTaskTests(unittest.TestCase):
     def setUp(self) -> None:
+        _setup_test_isolation(self)
         self.state = {
             "agents": [
                 {"name": "Codex", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
@@ -609,6 +2338,9 @@ class SidecarTaskTests(unittest.TestCase):
             "workload": {},
             "workload_summary": {},
         }
+
+    def tearDown(self) -> None:
+        _teardown_test_isolation(self)
 
     def test_assign_supports_sidecar_metadata_from_env(self) -> None:
         env = {
@@ -763,6 +2495,12 @@ class RuntimeWorkerLivenessTests(unittest.TestCase):
 
 
 class PortableStateRenderingTests(unittest.TestCase):
+    def setUp(self) -> None:
+        _setup_test_isolation(self)
+
+    def tearDown(self) -> None:
+        _teardown_test_isolation(self)
+
     def test_default_canonical_document_layers_exclude_review_and_session_records(self) -> None:
         layers = ai_status.default_canonical_document_layers()
         flattened = ai_status.flatten_canonical_document_layers(layers)
@@ -2003,7 +3741,12 @@ class PortableStateRenderingTests(unittest.TestCase):
             "provider_guardrails": {"dispatch_pauses": {}},
         }
         approval_state = {"pending": [], "history": []}
-        config = {"ready_dispatcher": {"max_tasks_per_agent_by_agent": {"Codex": 2}}}
+        config = {
+            "ready_dispatcher": {
+                "max_tasks_per_agent_by_agent": {"Codex": 2},
+                "max_concurrent_per_account": {"codex1": 4},
+            }
+        }
 
         with (
             mock.patch.object(ai_status, "load_config", return_value=config),
@@ -2017,6 +3760,8 @@ class PortableStateRenderingTests(unittest.TestCase):
         self.assertEqual(bundle["execution_summary"]["dependency_ready"], 1)
         self.assertEqual(bundle["dispatch_policy"]["max_tasks_per_agent"], None)
         self.assertEqual(bundle["dispatch_policy"]["max_tasks_per_agent_by_agent"], {"Codex": 2})
+        self.assertEqual(bundle["dispatch_policy"]["max_concurrent_per_account"], {"codex1": 4})
+        self.assertEqual(bundle["dispatch_policy"]["max_concurrent_per_quota_group"], {"codex1": 4})
 
     def test_build_dashboard_bundle_includes_coordination_summary(self) -> None:
         state = {
@@ -2731,6 +4476,632 @@ class PortableStateRenderingTests(unittest.TestCase):
         self.assertFalse(any(item["type"] == "worker_task_missing" for item in bundle["truth_mismatches"]))
 
 
+class CanonicalTaskStateAndActivityRecoveryTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory(prefix="ai-status-transaction-")
+        self.addCleanup(self.temp_dir.cleanup)
+        self.root = Path(self.temp_dir.name)
+        self.status_file = self.root / "ai-status.json"
+        self.log_file = self.root / "ai-activity-log.jsonl"
+
+        import subprocess
+        subprocess.run(["git", "init", "-q"], cwd=str(self.root), check=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=str(self.root), check=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=str(self.root), check=True)
+        dummy_file = self.root / "dummy.txt"
+        dummy_file.write_text("dummy", encoding="utf-8")
+        subprocess.run(["git", "add", "dummy.txt"], cwd=str(self.root), check=True)
+        subprocess.run(["git", "commit", "-m", "initial commit", "-q"], cwd=str(self.root), check=True)
+
+    def _fixture_state(self) -> dict[str, object]:
+        state = ai_status.default_state()
+        state["tasks"] = [
+            {
+                "id": "LOCK-ONE",
+                "title": "First task-state writer",
+                "phase": "test",
+                "owner": "Codex2",
+                "reviewer": "Codex",
+                "status": "in_progress",
+                "depends_on": [],
+                "artifacts": [],
+                "acceptance": [],
+                "next": "initial-one",
+                "last_update": "2026-07-14T00:00:00Z",
+            },
+            {
+                "id": "LOCK-TWO",
+                "title": "Second task-state writer",
+                "phase": "test",
+                "owner": "Codex2",
+                "reviewer": "Codex",
+                "status": "in_progress",
+                "depends_on": [],
+                "artifacts": [],
+                "acceptance": [],
+                "next": "initial-two",
+                "last_update": "2026-07-14T00:00:00Z",
+            },
+        ]
+        return state
+
+    def _write_state(self, state: dict[str, object]) -> None:
+        self.status_file.write_text(
+            json.dumps(state, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+
+    @staticmethod
+    def _outbox(events: list[dict[str, object]]) -> dict[str, object]:
+        return {
+            "schema_version": ai_status.STATUS_ACTIVITY_OUTBOX_SCHEMA_VERSION,
+            "transaction_id": "ai-status-tx-" + ai_status._canonical_json_sha256(events),
+            "events": events,
+        }
+
+    def _activity_rows_by_source(self) -> dict[Path, list[dict[str, object]]]:
+        sources = sorted(
+            (self.root / "archive" / "logs").glob(f"{self.log_file.name}-*.gz")
+        )
+        if self.log_file.exists():
+            sources.append(self.log_file)
+        result: dict[Path, list[dict[str, object]]] = {}
+        for source in sources:
+            if source.suffix == ".gz":
+                with gzip.open(source, "rt", encoding="utf-8") as handle:
+                    lines = handle.read().splitlines()
+            else:
+                lines = source.read_text(encoding="utf-8").splitlines()
+            result[source] = [json.loads(line) for line in lines if line.strip()]
+        return result
+
+    def _run_recovery(self, *, rotate_max_bytes: int, rotate_keep_lines: int) -> None:
+        context = multiprocessing.get_context("fork")
+        process = context.Process(
+            target=_recover_pending_status_outbox,
+            args=(
+                str(self.status_file),
+                str(self.log_file),
+                rotate_max_bytes,
+                rotate_keep_lines,
+            ),
+        )
+        process.start()
+        process.join(timeout=10)
+        if process.is_alive():
+            process.kill()
+            process.join(timeout=5)
+            self.fail("status outbox recovery process timed out")
+        self.assertEqual(process.exitcode, 0)
+
+    def test_concurrent_task_mutations_are_serialized_without_lost_update(self) -> None:
+        self._write_state(self._fixture_state())
+        context = multiprocessing.get_context("fork")
+        first_entered = context.Event()
+        first_release = context.Event()
+        second_entered = context.Event()
+        first = context.Process(
+            target=_locked_status_update,
+            args=(
+                str(self.status_file),
+                "LOCK-ONE",
+                "updated-one",
+                first_entered,
+                first_release,
+            ),
+        )
+        second = context.Process(
+            target=_locked_status_update,
+            args=(
+                str(self.status_file),
+                "LOCK-TWO",
+                "updated-two",
+                second_entered,
+                None,
+            ),
+        )
+        first.start()
+        self.assertTrue(first_entered.wait(timeout=5))
+        second.start()
+        try:
+            self.assertFalse(
+                second_entered.wait(timeout=0.25),
+                "second writer crossed the first writer's stable sidecar lock",
+            )
+        finally:
+            first_release.set()
+        first.join(timeout=10)
+        second.join(timeout=10)
+        for process in (first, second):
+            if process.is_alive():
+                process.kill()
+                process.join(timeout=5)
+        self.assertEqual(first.exitcode, 0)
+        self.assertEqual(second.exitcode, 0)
+
+        final = json.loads(self.status_file.read_text(encoding="utf-8"))
+        by_id = {task["id"]: task for task in final["tasks"]}
+        self.assertEqual(by_id["LOCK-ONE"]["next"], "updated-one")
+        self.assertEqual(by_id["LOCK-TWO"]["next"], "updated-two")
+
+    def test_partial_outbox_recovery_is_idempotent_and_emits_each_event_once(self) -> None:
+        events = [
+            {
+                "event_id": "status-event-one",
+                "ts": "2026-07-14T00:01:00Z",
+                "agent": "Codex2",
+                "type": "progress",
+                "task_id": "LOCK-ONE",
+                "message": "first event",
+            },
+            {
+                "event_id": "status-event-two",
+                "ts": "2026-07-14T00:01:01Z",
+                "agent": "Codex2",
+                "type": "progress",
+                "task_id": "LOCK-TWO",
+                "message": "second event",
+            },
+        ]
+        pending = self._outbox(events)
+        state = self._fixture_state()
+        state[ai_status.STATUS_ACTIVITY_OUTBOX_KEY] = pending
+        self._write_state(state)
+        # Represents a process dying after its first append but before clearing
+        # the canonical pending outbox.
+        self.log_file.write_text(
+            json.dumps(events[0], ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+
+        self._run_recovery(rotate_max_bytes=1_000_000, rotate_keep_lines=100)
+        recovered = json.loads(self.status_file.read_text(encoding="utf-8"))
+        self.assertIsNone(recovered[ai_status.STATUS_ACTIVITY_OUTBOX_KEY])
+
+        # Represents another restart from the same pre-clear status image. The
+        # replay must recognize both durable events and append neither again.
+        recovered[ai_status.STATUS_ACTIVITY_OUTBOX_KEY] = pending
+        self._write_state(recovered)
+        self._run_recovery(rotate_max_bytes=1_000_000, rotate_keep_lines=100)
+
+        rows = [
+            row
+            for source_rows in self._activity_rows_by_source().values()
+            for row in source_rows
+            if row.get("event_id") in {"status-event-one", "status-event-two"}
+        ]
+        event_ids = ("status-event-one", "status-event-two")
+        self.assertEqual(
+            {
+                event_id: sum(row.get("event_id") == event_id for row in rows)
+                for event_id in event_ids
+            },
+            {"status-event-one": 1, "status-event-two": 1},
+        )
+        final = json.loads(self.status_file.read_text(encoding="utf-8"))
+        self.assertIsNone(final[ai_status.STATUS_ACTIVITY_OUTBOX_KEY])
+
+    def test_fresh_outbox_commit_never_scans_historical_archives(self) -> None:
+        events = [
+            {
+                "event_id": "fresh-fast-path",
+                "ts": "2026-07-14T00:01:00Z",
+                "agent": "Codex2",
+                "type": "progress",
+                "task_id": "LOCK-ONE",
+                "message": "fresh event",
+            }
+        ]
+        state = self._fixture_state()
+        state[ai_status.STATUS_ACTIVITY_OUTBOX_KEY] = self._outbox(events)
+        self._write_state(state)
+
+        with (
+            mock.patch.object(ai_status, "STATUS_FILE", self.status_file),
+            mock.patch.object(ai_status, "LOG_FILE", self.log_file),
+            mock.patch.object(
+                ai_status,
+                "_activity_event_index_unlocked",
+                side_effect=AssertionError("historical scan must not run"),
+            ) as historical_scan,
+        ):
+            ai_status.recover_status_activity_outbox(
+                state,
+                known_unappended=True,
+            )
+
+        historical_scan.assert_not_called()
+        self.assertIsNone(state[ai_status.STATUS_ACTIVITY_OUTBOX_KEY])
+        rows = [
+            json.loads(line)
+            for line in self.log_file.read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+        self.assertEqual(rows, events)
+
+    def test_outbox_rejects_noncanonical_event_id_before_append(self) -> None:
+        event_id_cases = (
+            [" status-event"],
+            ["status-event "],
+            [" status-event "],
+            ["status-event", " status-event "],
+        )
+        for event_ids in event_id_cases:
+            with self.subTest(event_ids=event_ids):
+                events = [
+                    {
+                        "event_id": event_id,
+                        "ts": "2026-07-14T00:01:00Z",
+                        "agent": "Codex2",
+                        "type": "progress",
+                        "task_id": "LOCK-ONE",
+                        "message": "must not append",
+                    }
+                    for event_id in event_ids
+                ]
+                pending = self._outbox(events)
+                state = self._fixture_state()
+                state[ai_status.STATUS_ACTIVITY_OUTBOX_KEY] = pending
+                self._write_state(state)
+                status_bytes = self.status_file.read_bytes()
+
+                with (
+                    mock.patch.object(ai_status, "STATUS_FILE", self.status_file),
+                    mock.patch.object(ai_status, "LOG_FILE", self.log_file),
+                    mock.patch.object(
+                        ai_status,
+                        "_activity_event_index_unlocked",
+                    ) as event_index,
+                    mock.patch.object(ai_status, "_append_logs_unlocked") as append,
+                    ai_status.canonical_task_state_lock(shared=False),
+                ):
+                    loaded = ai_status.load_state()
+                    with self.assertRaisesRegex(
+                        RuntimeError,
+                        "status activity outbox contract is invalid",
+                    ):
+                        ai_status.recover_status_activity_outbox(loaded)
+
+                event_index.assert_not_called()
+                append.assert_not_called()
+                self.assertFalse(self.log_file.exists())
+                self.assertEqual(self.status_file.read_bytes(), status_bytes)
+
+    def test_interrupted_activity_row_is_truncated_then_replayed_once(self) -> None:
+        events = [
+            {
+                "event_id": "tail-event-one",
+                "ts": "2026-07-14T00:02:00Z",
+                "agent": "Codex2",
+                "type": "progress",
+                "task_id": "LOCK-ONE",
+                "message": "first event",
+            },
+            {
+                "event_id": "tail-event-two",
+                "ts": "2026-07-14T00:02:01Z",
+                "agent": "Codex2",
+                "type": "progress",
+                "task_id": "LOCK-TWO",
+                "message": "second event",
+            },
+        ]
+        state = self._fixture_state()
+        state[ai_status.STATUS_ACTIVITY_OUTBOX_KEY] = self._outbox(events)
+        self._write_state(state)
+        self.log_file.write_bytes(
+            (json.dumps(events[0], ensure_ascii=False) + "\n").encode("utf-8")
+            + b'{"event_id":"tail-event-two"'
+        )
+
+        self._run_recovery(rotate_max_bytes=1_000_000, rotate_keep_lines=100)
+
+        rows = [
+            row
+            for source_rows in self._activity_rows_by_source().values()
+            for row in source_rows
+        ]
+        self.assertEqual(
+            {
+                event_id: sum(row.get("event_id") == event_id for row in rows)
+                for event_id in ("tail-event-one", "tail-event-two")
+            },
+            {"tail-event-one": 1, "tail-event-two": 1},
+        )
+
+    def test_duplicate_event_id_across_sources_fails_closed(self) -> None:
+        event = {
+            "event_id": "duplicate-across-sources",
+            "ts": "2026-07-14T00:02:00Z",
+            "agent": "Codex2",
+            "type": "progress",
+            "task_id": "LOCK-ONE",
+            "message": "must occur once",
+        }
+        state = self._fixture_state()
+        state[ai_status.STATUS_ACTIVITY_OUTBOX_KEY] = self._outbox([event])
+        self._write_state(state)
+        archive = self.root / "archive" / "logs" / (
+            f"{self.log_file.name}-2026-07-16T1130Z.gz"
+        )
+        archive.parent.mkdir(parents=True)
+        with gzip.open(archive, "wt", encoding="utf-8") as handle:
+            handle.write(json.dumps(event) + "\n")
+        self.log_file.write_text(json.dumps(event) + "\n", encoding="utf-8")
+
+        with (
+            mock.patch.object(ai_status, "STATUS_FILE", self.status_file),
+            mock.patch.object(ai_status, "LOG_FILE", self.log_file),
+            ai_status.canonical_task_state_lock(shared=False),
+        ):
+            loaded = ai_status.load_state()
+            with self.assertRaisesRegex(RuntimeError, "duplicate across sources"):
+                ai_status.recover_status_activity_outbox(loaded)
+
+    def test_archive_outbox_restart_recovery_is_idempotent(self) -> None:
+        state = self._fixture_state()
+        terminal = state["tasks"][0]
+        terminal["status"] = "done"
+        terminal["terminal_outcome"] = "completed"
+        archive_dir = self.root / "ai-task-archive"
+        with (
+            mock.patch.object(ai_status, "STATUS_FILE", self.status_file),
+            mock.patch.object(task_archive, "STATUS_ROOT", self.root),
+            mock.patch.object(task_archive, "STATUS_FILE", self.status_file),
+            mock.patch.object(task_archive, "ARCHIVE_DIR", archive_dir),
+            mock.patch.object(task_archive, "ARCHIVE_TASKS_DIR", archive_dir / "tasks"),
+            mock.patch.object(task_archive, "ARCHIVE_INDEX_FILE", archive_dir / "index.json"),
+        ):
+            ai_status.archive_terminal_task_from_state(
+                state,
+                terminal,
+                archived_at="2026-07-14T00:03:00Z",
+            )
+        self._write_state(state)
+        pending_bytes = self.status_file.read_bytes()
+        self.assertIsNotNone(ai_status.get_task(state, "LOCK-ONE"))
+        self.assertFalse(
+            (self.root / "ai-task-archive/tasks/LOCK-ONE.json").exists()
+        )
+
+        context = multiprocessing.get_context("fork")
+        for replay in range(2):
+            with self.subTest(replay=replay):
+                if replay:
+                    # Represents a crash after the archive/index became durable
+                    # but before the status outbox clear was persisted.
+                    self.status_file.write_bytes(pending_bytes)
+                process = context.Process(
+                    target=_recover_pending_archive_outbox,
+                    args=(str(self.status_file), str(self.root)),
+                )
+                process.start()
+                process.join(timeout=10)
+                if process.is_alive():
+                    process.kill()
+                    process.join(timeout=5)
+                    self.fail("archive outbox recovery process timed out")
+                self.assertEqual(process.exitcode, 0)
+
+        final = json.loads(self.status_file.read_text(encoding="utf-8"))
+        self.assertIsNone(final[ai_status.STATUS_ARCHIVE_OUTBOX_KEY])
+        self.assertIsNone(ai_status.get_task(final, "LOCK-ONE"))
+        archived = json.loads(
+            (self.root / "ai-task-archive/tasks/LOCK-ONE.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(archived["task_id"], "LOCK-ONE")
+        index = json.loads(
+            (self.root / "ai-task-archive/index.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(index["counts"]["total"], 1)
+        self.assertEqual(index["recent_terminal_ids"], ["LOCK-ONE"])
+
+    def test_existing_archive_conflict_or_legacy_shape_preserves_active_task(self) -> None:
+        # 1. Version 1 snapshot, no conflict (identical)
+        existing_no_conflict = {
+            "version": 1,
+            "task_id": "LOCK-ONE",
+            "archived_at": "2026-07-14T00:03:00Z",
+            "terminal_status": "done",
+            "terminal_outcome": "completed",
+            "task": {
+                **deepcopy(self._fixture_state()["tasks"][0]),
+                "status": "done",
+                "terminal_outcome": "completed",
+            },
+            "handoffs": [],
+            "blockers": [],
+        }
+        state = self._fixture_state()
+        terminal = state["tasks"][0]
+        terminal["status"] = "done"
+        terminal["terminal_outcome"] = "completed"
+        before = deepcopy(state)
+        with mock.patch.object(
+            ai_status,
+            "archived_task_snapshot",
+            return_value=existing_no_conflict,
+        ):
+            snapshot = ai_status.archive_terminal_task_from_state(state, terminal, archived_at="2026-07-14T00:03:00Z")
+        self.assertEqual(snapshot, existing_no_conflict)
+        self.assertEqual(state["tasks"], before["tasks"])
+        self.assertEqual(state["handoffs"], before["handoffs"])
+        self.assertEqual(state["blockers"], before["blockers"])
+        pending = state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY]
+        self.assertEqual(pending["schema_version"], ai_status.STATUS_ARCHIVE_OUTBOX_SCHEMA_VERSION)
+        self.assertEqual(pending["snapshots"], [existing_no_conflict])
+
+        # 2. Version 1 snapshot, with conflict (raises RuntimeError)
+        existing_conflict = {
+            "version": 1,
+            "task_id": "LOCK-ONE",
+            "archived_at": "2026-07-14T00:03:00Z",
+            "terminal_status": "done",
+            "terminal_outcome": "completed",
+            "task": {
+                **deepcopy(self._fixture_state()["tasks"][0]),
+                "status": "done",
+                "terminal_outcome": "completed",
+            },
+            "handoffs": [],
+            "blockers": [],
+        }
+        state = self._fixture_state()
+        terminal = state["tasks"][0]
+        terminal["status"] = "done"
+        terminal["terminal_outcome"] = "superseded"
+        terminal["superseded_by"] = "LOCK-THREE"
+        before = deepcopy(state)
+        with mock.patch.object(
+            ai_status,
+            "archived_task_snapshot",
+            return_value=existing_conflict,
+        ):
+            with self.assertRaises(RuntimeError):
+                ai_status.archive_terminal_task_from_state(state, terminal)
+        self.assertEqual(state, before)
+
+        # 3. Legacy snapshot (raises RuntimeError)
+        legacy_existing = {
+            "id": "LOCK-ONE",
+            "status": "done",
+            "terminal_outcome": "completed",
+            "archived_at": "2026-07-14T00:03:00Z",
+        }
+        state = self._fixture_state()
+        terminal = state["tasks"][0]
+        terminal["status"] = "done"
+        terminal["terminal_outcome"] = "superseded"
+        terminal["superseded_by"] = "LOCK-THREE"
+        before = deepcopy(state)
+        with mock.patch.object(
+            ai_status,
+            "archived_task_snapshot",
+            return_value=legacy_existing,
+        ):
+            with self.assertRaises(RuntimeError):
+                ai_status.archive_terminal_task_from_state(state, terminal)
+        self.assertEqual(state, before)
+
+    def test_sigkill_at_each_archive_boundary_converges_without_vanishing_task(self) -> None:
+        context = multiprocessing.get_context("fork")
+        for point in ("pending_status", "snapshot", "index", "rebuild"):
+            with self.subTest(point=point):
+                root = self.root / point
+                root.mkdir()
+                status_file = root / "ai-status.json"
+                state = self._fixture_state()
+                terminal = state["tasks"][0]
+                terminal["status"] = "done"
+                terminal["terminal_outcome"] = "completed"
+                status_file.write_text(
+                    json.dumps(state, indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8",
+                )
+                process = context.Process(
+                    target=_commit_terminal_archive_with_sigkill,
+                    args=(str(status_file), str(root), point),
+                )
+                process.start()
+                process.join(timeout=10)
+                if process.is_alive():
+                    process.kill()
+                    process.join(timeout=5)
+                    self.fail(f"archive child hung at {point}")
+                self.assertEqual(process.exitcode, -9)
+
+                pending = json.loads(status_file.read_text(encoding="utf-8"))
+                self.assertIsNotNone(ai_status.get_task(pending, "LOCK-ONE"))
+                self.assertIsNotNone(
+                    pending.get(ai_status.STATUS_ARCHIVE_OUTBOX_KEY)
+                )
+
+                recovery = context.Process(
+                    target=_recover_pending_archive_outbox,
+                    args=(str(status_file), str(root)),
+                )
+                recovery.start()
+                recovery.join(timeout=10)
+                if recovery.is_alive():
+                    recovery.kill()
+                    recovery.join(timeout=5)
+                    self.fail(f"archive recovery hung after {point}")
+                self.assertEqual(recovery.exitcode, 0)
+
+                final = json.loads(status_file.read_text(encoding="utf-8"))
+                self.assertIsNone(ai_status.get_task(final, "LOCK-ONE"))
+                self.assertIsNone(final[ai_status.STATUS_ARCHIVE_OUTBOX_KEY])
+                archived = json.loads(
+                    (root / "ai-task-archive/tasks/LOCK-ONE.json").read_text(
+                        encoding="utf-8"
+                    )
+                )
+                self.assertEqual(archived["task_id"], "LOCK-ONE")
+                index = json.loads(
+                    (root / "ai-task-archive/index.json").read_text(
+                        encoding="utf-8"
+                    )
+                )
+                self.assertEqual(index["counts"]["total"], 1)
+
+    def test_rotation_cannot_split_or_duplicate_one_outbox_transaction(self) -> None:
+        events = [
+            {
+                "event_id": "rotation-event-one",
+                "ts": "2026-07-14T00:02:00Z",
+                "agent": "Codex2",
+                "type": "progress",
+                "task_id": "LOCK-ONE",
+                "message": "rotation first",
+            },
+            {
+                "event_id": "rotation-event-two",
+                "ts": "2026-07-14T00:02:01Z",
+                "agent": "Codex2",
+                "type": "progress",
+                "task_id": "LOCK-TWO",
+                "message": "rotation second",
+            },
+        ]
+        state = self._fixture_state()
+        state[ai_status.STATUS_ACTIVITY_OUTBOX_KEY] = self._outbox(events)
+        self._write_state(state)
+        filler = json.dumps(
+            {"ts": "2026-07-14T00:00:00Z", "type": "fixture", "message": "x" * 256}
+        ) + "\n"
+        self.log_file.write_text(filler, encoding="utf-8")
+
+        # The log starts just below the limit. A per-event rotation check would
+        # append event one, rotate before event two, and split the transaction.
+        self._run_recovery(
+            rotate_max_bytes=len(filler.encode("utf-8")) + 1,
+            rotate_keep_lines=1,
+        )
+
+        rows_by_source = self._activity_rows_by_source()
+        transaction_ids = {"rotation-event-one", "rotation-event-two"}
+        event_sources: dict[str, list[Path]] = {
+            event_id: [] for event_id in transaction_ids
+        }
+        for source, rows in rows_by_source.items():
+            for row in rows:
+                event_id = row.get("event_id")
+                if event_id in event_sources:
+                    event_sources[event_id].append(source)
+        self.assertEqual(
+            {event_id: len(sources) for event_id, sources in event_sources.items()},
+            {"rotation-event-one": 1, "rotation-event-two": 1},
+            "rotation duplicated an outbox event across active and archived logs",
+        )
+        self.assertEqual(
+            len({sources[0] for sources in event_sources.values()}),
+            1,
+            "rotation split one status transaction across audit files",
+        )
+
+
 class ActivityLogRotationTests(unittest.TestCase):
     def _make_log(self, *, size_per_line: int = 200, line_count: int = 100) -> Path:
         tmp = tempfile.TemporaryDirectory(prefix="ai-status-rotate-")
@@ -2765,25 +5136,36 @@ class ActivityLogRotationTests(unittest.TestCase):
         assert archive is not None
         self.assertTrue(archive.exists())
         self.assertTrue(str(archive).endswith(".gz"))
-        # The active log now holds just the tail
+        # The active log now holds a lineage-head control record plus the tail.
         active_lines = log_path.read_bytes().splitlines()
-        self.assertEqual(len(active_lines), 8)
-        # The gzip archive holds the full original
+        self.assertEqual(len(active_lines), 9)
+        control = json.loads(active_lines[0])
+        self.assertEqual(control["record_type"], "pantheon.activity.lineage_head.v1")
+        self.assertEqual(len(active_lines[1:]), 8)
+        # The gzip archive and active tail form one disjoint audit corpus.
         import gzip as _gz
         with _gz.open(archive, "rb") as fh:
             archived = fh.read().splitlines()
-        self.assertEqual(len(archived), 100)
+        self.assertEqual(len(archived), 92)
+        self.assertEqual(len(archived) + len(active_lines[1:]), 100)
 
-    def test_rotation_preserves_inode_for_concurrent_appenders(self) -> None:
+    def test_rotation_preserves_stable_sidecar_inode(self) -> None:
         log_path = self._make_log(line_count=80)
-        before_inode = log_path.stat().st_ino
+        lock_path = log_path.parent / ".orchestrator" / "activity-audit.lock"
+        with ai_status.activity_audit_lock_file(
+            log_path,
+            shared=True,
+            nonblocking=False,
+        ):
+            pass
+        before_inode = lock_path.stat().st_ino
         with (
             mock.patch.object(ai_status, "LOG_FILE", log_path),
             mock.patch.object(ai_status, "LOG_ROTATE_MAX_BYTES", 1),
             mock.patch.object(ai_status, "LOG_ROTATE_KEEP_LINES", 3),
         ):
             ai_status.maybe_rotate_activity_log()
-        after_inode = log_path.stat().st_ino
+        after_inode = lock_path.stat().st_ino
         self.assertEqual(before_inode, after_inode)
 
     def test_append_log_triggers_rotation(self) -> None:
@@ -2795,12 +5177,30 @@ class ActivityLogRotationTests(unittest.TestCase):
         ):
             ai_status.append_log({"ts": "2026-05-18T00:00:00Z", "msg": "new entry"})
         active_lines = log_path.read_text(encoding="utf-8").splitlines()
-        # 4 kept tail lines + 1 new = 5
-        self.assertEqual(len(active_lines), 5)
+        # 1 lineage-head control + 4 kept tail lines + 1 new = 6
+        self.assertEqual(len(active_lines), 6)
+        self.assertEqual(json.loads(active_lines[0])["record_type"], "pantheon.activity.lineage_head.v1")
         self.assertIn("new entry", active_lines[-1])
         archive_dir = log_path.parent / "archive" / "logs"
         archives = list(archive_dir.glob("*.gz"))
         self.assertEqual(len(archives), 1)
+
+    def test_docs_mirror_uses_locked_snapshot_and_atomic_replace(self) -> None:
+        log_path = self._make_log(line_count=5)
+        target = log_path.parent / "docs-site" / log_path.name
+        tail = b"last-two-lines\n"
+        with (
+            mock.patch.object(
+                ai_status,
+                "read_activity_log_tail_bytes",
+                return_value=tail,
+            ) as read_tail,
+            mock.patch.object(ai_status, "durable_write_bytes") as durable_write,
+        ):
+            ai_status._mirror_log_tail(log_path, target, 2)
+
+        read_tail.assert_called_once_with(log_path, max_lines=2)
+        durable_write.assert_called_once_with(target, tail)
 
 
 if __name__ == "__main__":

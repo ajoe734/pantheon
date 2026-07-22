@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import types
 import unittest
 import uuid
@@ -39,6 +40,19 @@ REBASELINE_REQUIRED_EVENT_TYPES = {
     "manual_override",
     "kill_switch_action",
     "telemetry_mirror_mismatch",
+}
+
+LOOP_LIFECYCLE_EVENT_TYPES = {
+    "signal_generation",
+    "trade_decision",
+    "risk_evaluation",
+    "order_submitted",
+    "order_accepted",
+    "order_partially_filled",
+    "order_filled",
+    "position_snapshot",
+    "reconciliation_completed",
+    "reconciliation_failed",
 }
 
 
@@ -141,6 +155,31 @@ def _event(event_type: str) -> dict[str, Any]:
         event["position_qty"] = 10.0
         event["quantity"] = 10.0
         event["price"] = 101.25
+    if event_type == "trade_journey_fixture":
+        event["metadata"].update(
+            fixture_schema_version="pantheon.trade-journey-fixture.v1",
+            fixture_source="tj_e2e_012_hosted_seed_v3",
+            fixture_scope="dev-only",
+            fixture_stage="trade_decision",
+            fixture_stage_status="succeeded",
+            fixture_occurred_at="2026-05-16T00:10:00Z",
+            fixture_recorded_at="2026-05-16T00:10:01Z",
+            fixture_payload={},
+        )
+        event["correlation_envelope"] = {
+            "schema_version": "trade-journey-envelope/1",
+            "tenant_id": "tenant-dev",
+            "environment": "paper",
+            "journey_id": "tj-tel001-fixture",
+            "correlation_id": str(uuid.uuid5(uuid.NAMESPACE_URL, "tel001-fixture-correlation")),
+            "trace_id": str(uuid.uuid5(uuid.NAMESPACE_URL, "tel001-fixture-trace")),
+            "event_id": event["event_id"],
+            "causation_event_id": event["event_id"],
+            "producer": "tel001-schema-test",
+            "event_time": event["created_at"],
+            "received_at": event["created_at"],
+            "producer_revision": 1,
+        }
     return event
 
 
@@ -170,6 +209,89 @@ class TelemetryEventRebaselineSchemaTest(unittest.TestCase):
         missing = REBASELINE_REQUIRED_EVENT_TYPES - declared
         self.assertEqual(missing, set())
 
+        missing_lifecycle = LOOP_LIFECYCLE_EVENT_TYPES - declared
+        self.assertEqual(missing_lifecycle, set())
+
+    @unittest.skipIf(jsonschema is None, "jsonschema is required for lifecycle validation")
+    def test_trade_lifecycle_correlation_envelope_and_ordering_fields_validate(self) -> None:
+        from services.trade_journey.correlation_envelope import mint_trade_envelope
+
+        schema = _schema()
+        validator = jsonschema.Draft7Validator(
+            schema,
+            format_checker=jsonschema.FormatChecker(),
+        )
+        event = _event("signal_generation")
+        event.update(
+            tenant_id="tenant-paper-001",
+            journey_id="tj-paper-001",
+            loop_run_id="lr-paper-001",
+            run_id="lr-paper-001",
+            signal_id="signal-paper-001",
+            aggregate_type="trade_journey",
+            aggregate_id="tj-paper-001",
+            sequence_no=1,
+            causal_parent_id="upstream-signal-input-001",
+            source_mode="live",
+        )
+        event["correlation_envelope"] = mint_trade_envelope(
+            {
+                "tenant_id": "tenant-paper-001",
+                "environment": "paper",
+                "event_id": "upstream-signal-input-001",
+            },
+            producer="execution.signal-decision",
+            journey_id="tj-paper-001",
+            now="2026-05-16T00:10:00Z",
+        )
+
+        validator.validate(event)
+
+        invalid_sequence = dict(event, sequence_no=0)
+        self.assertTrue(
+            any(list(error.path) == ["sequence_no"] for error in validator.iter_errors(invalid_sequence))
+        )
+
+        invalid_envelope = dict(event)
+        invalid_envelope["correlation_envelope"] = dict(event["correlation_envelope"])
+        invalid_envelope["correlation_envelope"].pop("causation_event_id")
+        self.assertTrue(
+            any(
+                list(error.path) == ["correlation_envelope"]
+                for error in validator.iter_errors(invalid_envelope)
+            )
+        )
+
+    @unittest.skipIf(jsonschema is None, "jsonschema is required for format validation")
+    def test_performance_as_of_fields_are_optional_rfc3339_timestamps(self) -> None:
+        schema = _schema()
+        required = set(schema["required"])
+
+        for field_name in ("pnl_as_of", "drawdown_as_of"):
+            self.assertNotIn(field_name, required)
+            self.assertEqual(schema["properties"][field_name]["type"], "string")
+            self.assertEqual(schema["properties"][field_name]["format"], "date-time")
+
+        validator = jsonschema.Draft7Validator(
+            schema,
+            format_checker=jsonschema.FormatChecker(),
+        )
+
+        # Legacy producers remain valid without explicit per-metric timestamps.
+        validator.validate(_event("pnl_snapshot"))
+
+        performance_event = _event("drawdown_snapshot")
+        performance_event["metrics"] = {"pnl": -15.0, "drawdown_pct": 0.08}
+        performance_event["pnl_as_of"] = "2026-05-16T00:08:00Z"
+        performance_event["drawdown_as_of"] = "2026-05-16T00:09:00+00:00"
+        validator.validate(performance_event)
+
+        invalid = dict(performance_event)
+        invalid["pnl_as_of"] = 123
+        self.assertTrue(
+            any(list(error.path) == ["pnl_as_of"] for error in validator.iter_errors(invalid))
+        )
+
     def test_every_declared_event_type_ingests_with_runtime_binding_evidence(self) -> None:
         async def scenario() -> tuple[dict[str, int], list[dict[str, Any]]]:
             svc = TelemetryIngestService(
@@ -189,7 +311,15 @@ class TelemetryEventRebaselineSchemaTest(unittest.TestCase):
             await svc.stop(graceful=True)
             return stats, rejected
 
-        stats, rejected = asyncio.run(scenario())
+        previous_fixture_gate = os.environ.get("PANTHEON_TJ_E2E_FIXTURE_INGEST_ENABLED")
+        os.environ["PANTHEON_TJ_E2E_FIXTURE_INGEST_ENABLED"] = "true"
+        try:
+            stats, rejected = asyncio.run(scenario())
+        finally:
+            if previous_fixture_gate is None:
+                os.environ.pop("PANTHEON_TJ_E2E_FIXTURE_INGEST_ENABLED", None)
+            else:
+                os.environ["PANTHEON_TJ_E2E_FIXTURE_INGEST_ENABLED"] = previous_fixture_gate
 
         self.assertEqual(rejected, [])
         self.assertEqual(stats["total_rejected"], 0)

@@ -18,6 +18,7 @@ APPROVAL_TARGET_TYPES = {
     "allocation_policy",
     "persona_capital_binding",
     "evolution_proposal",
+    "deployment_plan",
 }
 APPROVAL_RISK_LEVELS = {"low", "medium", "high", "critical"}
 
@@ -29,6 +30,7 @@ EVOLUTION_TARGET_TYPES = {
     "persona",
     "persona_capital_binding",
     "capital_pool",
+    "deployment_plan",
 }
 EVOLUTION_RISK_LEVELS = {"low", "medium", "high"}
 EVOLUTION_TARGET_STAGES = {"paper", "canary", "live", "frozen"}

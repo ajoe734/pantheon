@@ -1,0 +1,195 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/agora/winner_branch_completeness/v1",
+  "title": "WinnerBranchCompleteness",
+  "description": "Winner Branch-specific completeness assessment, carrying the 12 named Winner Branch blocks and their compatible mapping to the 7 generic completeness dimensions.",
+  "type": "object",
+  "required": [
+    "spec_version",
+    "completeness_id",
+    "strategy_ref",
+    "assessed_by_persona_id",
+    "overall_grade",
+    "dimensions",
+    "winner_branch_blocks",
+    "assessed_at"
+  ],
+  "properties": {
+    "spec_version": {
+      "type": "string",
+      "enum": ["1.0"]
+    },
+    "completeness_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique identifier for this assessment."
+    },
+    "strategy_ref": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Strategy ID or StrategySpec ref being assessed."
+    },
+    "workshop_id": {
+      "type": "string",
+      "description": "Optional workshop session this assessment was produced in."
+    },
+    "assessed_by_persona_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Persona that produced this assessment."
+    },
+    "overall_grade": {
+      "type": "string",
+      "enum": ["complete", "mostly_complete", "partial", "incomplete"],
+      "description": "Summary completeness grade."
+    },
+    "dimensions": {
+      "type": "array",
+      "minItems": 7,
+      "maxItems": 7,
+      "description": "The 7 generic completeness dimensions for backward compatibility.",
+      "items": {
+        "type": "object",
+        "required": ["dimension", "grade"],
+        "properties": {
+          "dimension": {
+            "type": "string",
+            "enum": [
+              "hypothesis",
+              "data_dependencies",
+              "market_scope",
+              "evaluation_plan",
+              "risk_constraints",
+              "execution_profile",
+              "governance"
+            ]
+          },
+          "grade": {
+            "type": "string",
+            "enum": ["complete", "partial", "missing"]
+          },
+          "gaps": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 },
+            "description": "Free-text gap descriptions for this dimension.",
+            "default": []
+          },
+          "required_actions": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 },
+            "description": "Concrete actions needed to close this dimension's gaps.",
+            "default": []
+          }
+        },
+        "additionalProperties": false
+      },
+      "allOf": [
+        { "contains": { "properties": { "dimension": { "const": "hypothesis" } } } },
+        { "contains": { "properties": { "dimension": { "const": "data_dependencies" } } } },
+        { "contains": { "properties": { "dimension": { "const": "market_scope" } } } },
+        { "contains": { "properties": { "dimension": { "const": "evaluation_plan" } } } },
+        { "contains": { "properties": { "dimension": { "const": "risk_constraints" } } } },
+        { "contains": { "properties": { "dimension": { "const": "execution_profile" } } } },
+        { "contains": { "properties": { "dimension": { "const": "governance" } } } }
+      ]
+    },
+    "winner_branch_blocks": {
+      "type": "array",
+      "minItems": 12,
+      "maxItems": 12,
+      "description": "The 12 named Winner Branch blocks assessed during the workshop.",
+      "items": {
+        "type": "object",
+        "required": ["block_name", "grade", "mapped_dimension"],
+        "properties": {
+          "block_name": {
+            "type": "string",
+            "enum": [
+              "market_scope",
+              "insider_branch_mapping",
+              "winner_branch_scoring",
+              "migration_reverse_flow",
+              "event_lead",
+              "signal_formation",
+              "entry_holding",
+              "add_reduce_exit",
+              "sizing_leverage",
+              "cost_liquidity_capacity",
+              "validation_backtest_refutation",
+              "monitoring_update"
+            ]
+          },
+          "grade": {
+            "type": "string",
+            "enum": [
+              "confirmed",
+              "inferred_needs_confirmation",
+              "missing",
+              "weak",
+              "conflicting",
+              "not_applicable"
+            ]
+          },
+          "mapped_dimension": {
+            "type": "string",
+            "enum": [
+              "hypothesis",
+              "data_dependencies",
+              "market_scope",
+              "evaluation_plan",
+              "risk_constraints",
+              "execution_profile",
+              "governance"
+            ]
+          },
+          "gaps": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 },
+            "description": "Free-text gap descriptions for this Winner Branch block.",
+            "default": []
+          },
+          "required_actions": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 },
+            "description": "Concrete actions needed to close this block's gaps.",
+            "default": []
+          }
+        },
+        "additionalProperties": false
+      },
+      "allOf": [
+        { "contains": { "properties": { "block_name": { "const": "market_scope" } } } },
+        { "contains": { "properties": { "block_name": { "const": "insider_branch_mapping" } } } },
+        { "contains": { "properties": { "block_name": { "const": "winner_branch_scoring" } } } },
+        { "contains": { "properties": { "block_name": { "const": "migration_reverse_flow" } } } },
+        { "contains": { "properties": { "block_name": { "const": "event_lead" } } } },
+        { "contains": { "properties": { "block_name": { "const": "signal_formation" } } } },
+        { "contains": { "properties": { "block_name": { "const": "entry_holding" } } } },
+        { "contains": { "properties": { "block_name": { "const": "add_reduce_exit" } } } },
+        { "contains": { "properties": { "block_name": { "const": "sizing_leverage" } } } },
+        { "contains": { "properties": { "block_name": { "const": "cost_liquidity_capacity" } } } },
+        { "contains": { "properties": { "block_name": { "const": "validation_backtest_refutation" } } } },
+        { "contains": { "properties": { "block_name": { "const": "monitoring_update" } } } }
+      ]
+    },
+    "blockers": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Hard blockers that prevent research or promotion regardless of other grades.",
+      "default": []
+    },
+    "research_ready": {
+      "type": "boolean",
+      "description": "Whether the strategy is ready for a research plan to be emitted."
+    },
+    "assessed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

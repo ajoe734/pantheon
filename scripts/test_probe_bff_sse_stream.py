@@ -171,6 +171,9 @@ def test_stream_soak_counts_heartbeat_and_expected_replay_event(monkeypatch) -> 
     assert result["blocks"]["heartbeat_count"] == 1
     assert result["blocks"]["duplicate_event_ids"] == []
     assert result["missing_expected_event_ids"] == []
+    assert result["duration_ms"] >= 0
+    assert result["timeline"]["requested_seconds"] == 1.0
+    assert result["timeline"]["observed_duration_ms"] == result["duration_ms"]
 
 
 def test_stream_soak_fails_duplicate_replay_ids(monkeypatch) -> None:
@@ -208,7 +211,7 @@ def test_strict_live_evidence_accepts_real_bearer_long_soak(monkeypatch) -> None
     args = argparse.Namespace(
         strict_live_evidence=True,
         soak_seconds=75.0,
-        soak_min_heartbeats=1,
+        soak_min_heartbeats=2,
         reconnect_attempts=5,
     )
 
@@ -222,7 +225,7 @@ def test_strict_live_evidence_rejects_dev_jwt_only(monkeypatch) -> None:
     args = argparse.Namespace(
         strict_live_evidence=True,
         soak_seconds=75.0,
-        soak_min_heartbeats=1,
+        soak_min_heartbeats=2,
         reconnect_attempts=5,
     )
 
@@ -240,7 +243,7 @@ def test_strict_live_evidence_rejects_short_soak(monkeypatch) -> None:
     args = argparse.Namespace(
         strict_live_evidence=True,
         soak_seconds=30.0,
-        soak_min_heartbeats=1,
+        soak_min_heartbeats=2,
         reconnect_attempts=5,
     )
 
@@ -252,13 +255,31 @@ def test_strict_live_evidence_rejects_short_soak(monkeypatch) -> None:
         raise AssertionError("strict SSE live evidence must reject short soak windows")
 
 
-def test_strict_live_evidence_rejects_short_reconnect_sequence(monkeypatch) -> None:
+def test_strict_live_evidence_rejects_single_heartbeat_soak(monkeypatch) -> None:
     probe = _load_probe_module()
     monkeypatch.setenv("PANTHEON_BFF_SMOKE_BEARER_TOKEN", "live-sse-token")
     args = argparse.Namespace(
         strict_live_evidence=True,
         soak_seconds=75.0,
         soak_min_heartbeats=1,
+        reconnect_attempts=5,
+    )
+
+    try:
+        probe.apply_strict_live_evidence(args)
+    except SystemExit as exc:
+        assert "--soak-min-heartbeats >= 2" in str(exc)
+    else:
+        raise AssertionError("strict SSE live evidence must require multiple heartbeat observations")
+
+
+def test_strict_live_evidence_rejects_short_reconnect_sequence(monkeypatch) -> None:
+    probe = _load_probe_module()
+    monkeypatch.setenv("PANTHEON_BFF_SMOKE_BEARER_TOKEN", "live-sse-token")
+    args = argparse.Namespace(
+        strict_live_evidence=True,
+        soak_seconds=75.0,
+        soak_min_heartbeats=2,
         reconnect_attempts=2,
     )
 

@@ -88,6 +88,7 @@ _SENSITIVE_KEY_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"(broker.*(credential|secret|token|key)|shioaji|broker_account)$", re.IGNORECASE), "broker_credential"),
     (re.compile(r"(account[_-]?(number|id)|broker[_-]?account)$", re.IGNORECASE), "account_number"),
     (re.compile(r"(api[_-]?key|x-api-key)$", re.IGNORECASE), "api_key"),
+    (re.compile(r"(authorization[_-]?code|auth[_-]?code)$", re.IGNORECASE), "token"),
     (re.compile(r"(access[_-]?token|refresh[_-]?token|id[_-]?token|bearer|token)$", re.IGNORECASE), "token"),
     (re.compile(r"(secret|password|passwd|pwd)$", re.IGNORECASE), "env_value"),
     (re.compile(r"(private[_-]?key|pem)$", re.IGNORECASE), "private_key"),
@@ -228,6 +229,9 @@ def _redact_value(value: JsonValue, *, stats: _RedactionStats, path: tuple[str, 
         result: dict[Any, Any] = {}
         for key, child in value.items():
             key_label = str(key)
+            if _is_public_reauth_tracking_key(key_label):
+                result[key] = _redact_value(child, stats=stats, path=(*path, key_label))
+                continue
             category = _category_for_key(key_label)
             if category:
                 result[key] = _redact_sensitive_field(key_label, child, category=category, stats=stats)
@@ -256,10 +260,17 @@ def _redact_sensitive_field(key: str, value: JsonValue, *, category: str, stats:
 
 def _category_for_key(key: str) -> str | None:
     normalized = key.strip().replace("-", "_").lower()
+    if normalized in {"requires_authorization_code", "requiresauthorizationcode"}:
+        return None
     for pattern, category in _SENSITIVE_KEY_PATTERNS:
         if pattern.search(normalized):
             return category
     return None
+
+
+def _is_public_reauth_tracking_key(key: str) -> bool:
+    normalized = key.strip().replace("-", "_").lower()
+    return normalized in {"reauth_session_id", "reauthsessionid"}
 
 
 def _redact_auth_header_line(match: re.Match[str]) -> str:

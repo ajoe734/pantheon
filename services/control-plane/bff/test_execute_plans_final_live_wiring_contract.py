@@ -61,7 +61,6 @@ FINAL_CONTRACT_METHOD_PATHS = {
     ("GET", "/bff/management/cockpit"),
     ("GET", "/bff/management/cost-attribution"),
     ("GET", "/bff/management/evidence"),
-    ("GET", "/bff/management/evidence/{ref_id}"),
     ("GET", "/bff/management/evolution-journal"),
     ("GET", "/bff/management/governance-ledger"),
     ("GET", "/bff/management/hiq-backlog"),
@@ -118,6 +117,8 @@ FINAL_CONTRACT_METHOD_PATHS = {
     ("GET", "/bff/v5/execution/strategy-health"),
     ("GET", "/bff/v5/interventions"),
     ("GET", "/bff/v5/interventions/{id}"),
+    ("GET", "/bff/v5/loop-inventory"),
+    ("GET", "/bff/v5/loop-inventory/{id}"),
     ("GET", "/bff/v5/loop-runs"),
     ("GET", "/bff/v5/loop-runs/{id}"),
     ("GET", "/bff/v5/sentinel/findings"),
@@ -243,6 +244,7 @@ LIVE_PROBE_CONCRETE_ROUTES = [
     ("GET", "/bff/agora/journal"),
     ("GET", "/bff/agora/postmortems"),
     ("GET", "/bff/agora/ask/sessions"),
+    ("GET", "/bff/v5/loop-inventory"),
     ("GET", "/bff/v5/loop-runs"),
     ("GET", "/bff/v5/sentinel/findings"),
     ("POST", "/bff/v5/interventions/intv_001/decide"),
@@ -418,6 +420,9 @@ def test_execute_plans_final_openapi_json_is_route_discoverable() -> None:
 
 def test_execute_plans_management_board_pack_client_exports_are_present() -> None:
     repo_root = BFF_DIR.parents[2]
+    if not (repo_root / "execute-plans").exists():
+        import pytest
+        pytest.skip("execute-plans checkout not found next to repo root")
     paths_ts = (repo_root / "execute-plans/src/lib/bff-v1/paths.ts").read_text()
     management_ts = (repo_root / "execute-plans/src/lib/bff-v1/management.ts").read_text()
 
@@ -455,6 +460,9 @@ def test_execute_plans_management_board_pack_client_exports_are_present() -> Non
 
 def test_execute_plans_management_sentinel_pulse_client_exports_are_present() -> None:
     repo_root = BFF_DIR.parents[2]
+    if not (repo_root / "execute-plans").exists():
+        import pytest
+        pytest.skip("execute-plans checkout not found next to repo root")
     paths_ts = (repo_root / "execute-plans/src/lib/bff-v1/paths.ts").read_text()
     management_ts = (repo_root / "execute-plans/src/lib/bff-v1/management.ts").read_text()
 

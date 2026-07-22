@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-11",
+  "archived_at": "2026-07-11T10:10:35Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-11",
+    "title": "Prepare PPL-ALLOC-006 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 PPL-ALLOC-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Persona Promotion Allocation / Wave 2 frontend workbench",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "PPL-ALLOC-003",
+      "PPL-ALLOC-004"
+    ],
+    "artifacts": [
+      "support/sidecars/PPL-ALLOC-006/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-11.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Reviewer-approved support-only BFF/frontend handoff checkpoint finalized via PR #3177 (merge 33b017c828155ec64d709223568cc2a29e7c113d); PR #251 remains open at 436aa32eaa24b4f048ae0b08c8a46686ceb56659 with integration gate successful, so parent absorption remains fail-closed pending separate merge/deploy/hosted evidence.",
+    "last_update": "2026-07-11T10:10:35Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "PPL-ALLOC-006",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "verified PR #251 live via gh pr view: OPEN/non-draft/MERGEABLE, head 436aa32e matches packet, integration-gate SUCCESS, no merge commit",
+      "BFF query-gap disposition and fail-closed operator journey are consistent with Follow-Up 10, no canonical/runtime/registry files touched (single support file added)",
+      "approved for parent-owner absorption; parent still owes merge commit + deploy + browser smoke evidence before hosted claim"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T10:10:35Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ppl-alloc-006-sidecar-bff-handoff-followup-11",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-11",
+      "git_clean_required": false,
+      "commit": "a534c8361e5d6b0ed1366dfcb86a82fd2fa7f065",
+      "commit_subject": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-11: close handoff",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support-only finalization record for the approved BFF/frontend handoff packet.",
+        "Not changing": "canonical truth, BFF/frontend implementation, PR state, or parent lifecycle.",
+        "Composes with": "parent PPL-ALLOC-006 and execute-plans PR #251 delivery evidence.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-11",
+        "Reviewer": "Claude",
+        "Verified": "git diff --check; gh pr view 251 --repo ajoe734/execute-plans"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-11",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "33b017c828155ec64d709223568cc2a29e7c113d",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-11",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review support-only Follow-Up 11 at commit 211f1e21e: verify the no-delta PR #251 checkpoint, BFF query-gap disposition, fail-closed operator journey, and canonical/non-runtime boundary; approve for parent-owner absorption or request concrete changes.",
+      "status": "done",
+      "created_at": "2026-07-11T10:06:01Z",
+      "resolved_at": "2026-07-11T10:07:23Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-11",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: PR #251 no-delta checkpoint verified live, BFF query-gap disposition and fail-closed journey are sound, no canonical truth touched; returned to owner Codex for finalization",
+      "status": "done",
+      "created_at": "2026-07-11T10:07:23Z",
+      "resolved_at": "2026-07-11T10:10:36Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,6 @@
+INFO:agora.strategy_workshop.store:Agora workshop store initialized backend=postgres store=PostgresWorkshopStore schema=agora
+INFO:agora.trading_room.store:Agora trading-room store initialized backend=postgres store=PostgresTradingRoomStore schema=agora
+INFO:agora.dashboard.store:Agora dashboard recipe store initialized backend=postgres store=PostgresDashboardRecipeStore
+INFO:agora.strategy_workshop.store:Agora workshop store initialized backend=postgres store=PostgresWorkshopStore schema=agora
+INFO:agora.trading_room.store:Agora trading-room store initialized backend=postgres store=PostgresTradingRoomStore schema=agora
+INFO:agora.dashboard.store:Agora dashboard recipe store initialized backend=postgres store=PostgresDashboardRecipeStore

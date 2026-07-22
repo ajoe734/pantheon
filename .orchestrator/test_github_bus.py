@@ -463,6 +463,7 @@ class GitHubCoordinationCommandTests(unittest.TestCase):
         root = Path(self.tmpdir.name)
         self.pantheon = root / "pantheon"
         (self.pantheon / "docs-site").mkdir(parents=True, exist_ok=True)
+        (self.pantheon / ".orchestrator").mkdir(parents=True, exist_ok=True)
         (self.pantheon / "ai-status.json").write_text('{"tasks":[],"handoffs":[]}\n', encoding="utf-8")
         (self.pantheon / "current-work.md").write_text("# current work\n", encoding="utf-8")
         (self.pantheon / "ai-activity-log.jsonl").write_text("", encoding="utf-8")

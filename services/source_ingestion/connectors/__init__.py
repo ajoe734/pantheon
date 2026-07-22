@@ -19,6 +19,12 @@ from .base import (
     SourceRecordStatus,
     SourceType,
 )
+from .crypto_coingecko import (
+    COINGECKO_SPOT_CONNECTOR_ID,
+    COINGECKO_SPOT_OHLC_SCHEMA_HASH,
+    COINGECKO_SPOT_PRICE_SCHEMA_HASH,
+    CoinGeckoSpotMarketAdapter,
+)
 from .examples import ExternalFeedProviderExample, StaticRecordsProviderExample, example_provider_catalog
 from .finmind_taiwan import (
     FinMindTaiwanBrokerBulkBackfillAdapter,
@@ -68,6 +74,10 @@ __all__ = [
     "AnueTaiwanRssAdapter",
     "ConnectorMode",
     "ConnectorStatus",
+    "COINGECKO_SPOT_CONNECTOR_ID",
+    "COINGECKO_SPOT_OHLC_SCHEMA_HASH",
+    "COINGECKO_SPOT_PRICE_SCHEMA_HASH",
+    "CoinGeckoSpotMarketAdapter",
     "IngestEvent",
     "IngestRun",
     "IngestRunStatus",

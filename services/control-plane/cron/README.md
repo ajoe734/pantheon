@@ -20,6 +20,7 @@ OpenClaw rewrite.
 | `pantheon.review` | Package candidate review into an approval request instead of auto-approving | `paper` | `approval_request` handoff |
 | `pantheon.retrain` | Trigger batch retraining from governed feedback / datasets | `research` | `registry_submission` handoff |
 | `pantheon.deploy` | Create a governed `DeploymentPlan` for `paper`, `canary`, `live`, or `frozen` | `paper`, `live`, or `status` | deployment-plan-backed deployment request |
+| `pantheon.persona.first-evaluation` | Schedule the first governed observation of a persona's current canonical paper runtime | `paper` | persona evaluation dispatch |
 
 ## Governance Guarantees
 
@@ -60,9 +61,9 @@ the execution substrate:
 The live transport uses the pinned runtime:
 
 - repository: `https://github.com/openclaw/openclaw`
-- tag: `v2026.6.8`
-- commit: `8c802aa683510c7f7503597b54c3021733245e59`
-- image: `ghcr.io/openclaw/openclaw:2026.6.8`
+- tag: `v2026.7.1`
+- commit: `2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4`
+- image: `ghcr.io/openclaw/openclaw:2026.7.1`
 
 ## Local Commands
 

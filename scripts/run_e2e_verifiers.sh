@@ -2,8 +2,11 @@
 # Run all BFF-based E2E business-flow verifiers against a deployed stack.
 # One command to check every e2e invariant the E2E-R1..R10 campaign established.
 #
-# Usage:
+# Usage (read-only verifiers; producer-chain is skipped):
 #   BFF_BASE=https://...sslip.io BFF_TOKEN=op-dev:admin:mfa scripts/run_e2e_verifiers.sh
+# Usage (includes the mutating producer-chain verifier on a dev host):
+#   ALLOW_MUTATING_E2E=1 EVOCHAIN_VERIFY_RUNTIME_ID=<paper-runtime-id> \
+#     BFF_BASE=https://...sslip.io scripts/run_e2e_verifiers.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 : "${BFF_BASE:?set BFF_BASE}"
@@ -23,14 +26,19 @@ VERIFIERS=(
   "verify_e2e_auth_boundary.py:R17 auth boundary"
   "verify_e2e_runtime_state_coherence.py:R18 runtime-state coherence"
   "verify_e2e_telemetry_coverage.py:R19 telemetry coverage"
+  "verify_e2e_producer_chain.py:producer-chain live verifier"
 )
 
-pass=0; fail=0; missing=0
+pass=0; fail=0; missing=0; skipped=0
 for entry in "${VERIFIERS[@]}"; do
   script="${entry%%:*}"; label="${entry#*:}"
   path="$HERE/$script"
   if [[ ! -f "$path" ]]; then
     echo "SKIP  $label ($script not present)"; missing=$((missing+1)); continue
+  fi
+  if [[ "$script" == "verify_e2e_producer_chain.py" && "${ALLOW_MUTATING_E2E:-0}" != "1" ]]; then
+    echo "SKIP  $label (set ALLOW_MUTATING_E2E=1 and EVOCHAIN_VERIFY_RUNTIME_ID to opt in)"
+    skipped=$((skipped+1)); continue
   fi
   if python3 "$path" >/tmp/e2e_v.out 2>&1; then
     echo "PASS  $label"; pass=$((pass+1))
@@ -40,7 +48,8 @@ for entry in "${VERIFIERS[@]}"; do
   fi
 done
 echo "----"
-echo "e2e verifiers: $pass passed, $fail failed, $missing missing"
+echo "e2e verifiers: $pass passed, $fail failed, $skipped opt-in skipped, $missing missing"
 # telemetry DLQ health is internal-only (reads the telemetry service DLQ); run on the VM:
 echo "(note: R7 telemetry-DLQ health runs on the telemetry host - see e2e-r7 doc)"
+echo "(note: producer-chain mutates paper telemetry and requires internal telemetry/incidents/evolution URLs)"
 [[ $fail -eq 0 ]]

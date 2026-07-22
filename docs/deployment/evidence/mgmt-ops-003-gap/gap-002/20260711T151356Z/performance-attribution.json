@@ -1,0 +1,2833 @@
+{
+  "data": {
+    "id": "pm12-performance-attribution",
+    "period": "latest",
+    "dimensions": [
+      "persona",
+      "strategy",
+      "pool",
+      "asset",
+      "broker",
+      "runtime",
+      "regime"
+    ],
+    "items": [
+      {
+        "id": "pm12-performance-attribution-persona-persona-crypto",
+        "dimension": "persona",
+        "dimension_key": "persona-crypto",
+        "label": "Crypto Persona",
+        "period": "latest",
+        "data_confidence": "formal",
+        "source_status": "ok",
+        "rank": 1,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 1,
+          "holding_count": 1,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 0,
+          "latest_telemetry_at": "2026-07-11T14:38:23Z",
+          "data_confidence": "formal",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "runtime-crypto-paper"
+          ],
+          "capital_pool_ids": [
+            "pool-crypto-paper"
+          ],
+          "persona_ids": [
+            "persona-crypto"
+          ],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": null,
+          "persona": "/bff/personas/persona-crypto",
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-persona-persona-tw-equity",
+        "dimension": "persona",
+        "dimension_key": "persona-tw-equity",
+        "label": "Taiwan Equity Persona",
+        "period": "latest",
+        "data_confidence": "formal",
+        "source_status": "ok",
+        "rank": 2,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 1,
+          "holding_count": 1,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 0,
+          "latest_telemetry_at": "2026-07-11T14:38:23Z",
+          "data_confidence": "formal",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "runtime-tw-equity-paper"
+          ],
+          "capital_pool_ids": [
+            "pool-tw-equity-paper"
+          ],
+          "persona_ids": [
+            "persona-tw-equity"
+          ],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": null,
+          "persona": "/bff/personas/persona-tw-equity",
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-persona-persona-us-equity",
+        "dimension": "persona",
+        "dimension_key": "persona-us-equity",
+        "label": "US Equity Persona",
+        "period": "latest",
+        "data_confidence": "formal",
+        "source_status": "ok",
+        "rank": 3,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 1,
+          "holding_count": 1,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 0,
+          "latest_telemetry_at": "2026-07-11T14:38:23Z",
+          "data_confidence": "formal",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "runtime-us-equity-paper"
+          ],
+          "capital_pool_ids": [
+            "pool-us-equity-paper"
+          ],
+          "persona_ids": [
+            "persona-us-equity"
+          ],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": null,
+          "persona": "/bff/personas/persona-us-equity",
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-persona-unassigned",
+        "dimension": "persona",
+        "dimension_key": "unassigned",
+        "label": "Unassigned",
+        "period": "latest",
+        "data_confidence": "formal",
+        "source_status": "ok",
+        "rank": 4,
+        "metrics": {
+          "runtime_count": 11,
+          "telemetry_runtime_count": 11,
+          "holding_count": 19,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 3398,
+          "latest_telemetry_at": "2026-07-11T15:13:56Z",
+          "data_confidence": "formal",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 11,
+        "holding_count": 19,
+        "source_refs": {
+          "runtime_ids": [
+            "rt-devloop-l0-001",
+            "runtime-devloop-l0-001",
+            "runtime-persona-20260528-04688755-paper",
+            "runtime-persona-20260528-5937dea1-paper",
+            "runtime-persona-20260528-597cbad2-paper",
+            "runtime-persona-20260528-6b2e514c-paper",
+            "runtime-persona-20260528-74e8b58f-paper",
+            "runtime-persona-20260528-81c9e6b9-paper",
+            "runtime-persona-20260528-949a890a-paper",
+            "runtime-persona-20260528-ba7de5a4-paper",
+            "runtime-persona-20260528-cfedeed5-paper"
+          ],
+          "capital_pool_ids": [
+            "pool-devloop-l0-rescue-1783168602",
+            "pool-devloop-l0-rescue-1783168661",
+            "pool-persona-20260528-04688755-paper",
+            "pool-persona-20260528-5937dea1-paper",
+            "pool-persona-20260528-597cbad2-paper",
+            "pool-persona-20260528-6b2e514c-paper",
+            "pool-persona-20260528-74e8b58f-paper",
+            "pool-persona-20260528-81c9e6b9-paper",
+            "pool-persona-20260528-949a890a-paper",
+            "pool-persona-20260528-ba7de5a4-paper",
+            "pool-persona-20260528-cfedeed5-paper"
+          ],
+          "persona_ids": [],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": null,
+          "persona": "/bff/personas/unassigned",
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-persona-persona-20260704-5d946ca4",
+        "dimension": "persona",
+        "dimension_key": "persona-20260704-5d946ca4",
+        "label": "Cron Scope Smoke 2",
+        "period": "latest",
+        "data_confidence": "partial",
+        "source_status": "partial",
+        "rank": 5,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 0,
+          "holding_count": 1,
+          "total_pnl": null,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": null,
+          "average_slippage_bps": null,
+          "total_trades": 0,
+          "latest_telemetry_at": null,
+          "data_confidence": "partial",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": null,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "runtime-persona-20260704-5d946ca4-paper"
+          ],
+          "capital_pool_ids": [
+            "paper-pool-persona-20260704-5d946ca4"
+          ],
+          "persona_ids": [
+            "persona-20260704-5d946ca4"
+          ],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": null,
+          "persona": "/bff/personas/persona-20260704-5d946ca4",
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-persona-persona-20260704-99fb0bd4",
+        "dimension": "persona",
+        "dimension_key": "persona-20260704-99fb0bd4",
+        "label": "claude2-review-smoke-persona",
+        "period": "latest",
+        "data_confidence": "partial",
+        "source_status": "partial",
+        "rank": 6,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 0,
+          "holding_count": 1,
+          "total_pnl": null,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": null,
+          "average_slippage_bps": null,
+          "total_trades": 0,
+          "latest_telemetry_at": null,
+          "data_confidence": "partial",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": null,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "runtime-persona-20260704-99fb0bd4-paper"
+          ],
+          "capital_pool_ids": [
+            "paper-pool-persona-20260704-99fb0bd4"
+          ],
+          "persona_ids": [
+            "persona-20260704-99fb0bd4"
+          ],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": null,
+          "persona": "/bff/personas/persona-20260704-99fb0bd4",
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-persona-persona-20260704-f187ac69",
+        "dimension": "persona",
+        "dimension_key": "persona-20260704-f187ac69",
+        "label": "Cron Scope Smoke 3",
+        "period": "latest",
+        "data_confidence": "partial",
+        "source_status": "partial",
+        "rank": 7,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 0,
+          "holding_count": 1,
+          "total_pnl": null,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": null,
+          "average_slippage_bps": null,
+          "total_trades": 0,
+          "latest_telemetry_at": null,
+          "data_confidence": "partial",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": null,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "runtime-persona-20260704-f187ac69-paper"
+          ],
+          "capital_pool_ids": [
+            "paper-pool-persona-20260704-f187ac69"
+          ],
+          "persona_ids": [
+            "persona-20260704-f187ac69"
+          ],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": null,
+          "persona": "/bff/personas/persona-20260704-f187ac69",
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-persona-persona-20260704-fe141b90",
+        "dimension": "persona",
+        "dimension_key": "persona-20260704-fe141b90",
+        "label": "Cron Scope Smoke",
+        "period": "latest",
+        "data_confidence": "partial",
+        "source_status": "partial",
+        "rank": 8,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 0,
+          "holding_count": 1,
+          "total_pnl": null,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": null,
+          "average_slippage_bps": null,
+          "total_trades": 0,
+          "latest_telemetry_at": null,
+          "data_confidence": "partial",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": null,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "runtime-persona-20260704-fe141b90-paper"
+          ],
+          "capital_pool_ids": [
+            "paper-pool-persona-20260704-fe141b90"
+          ],
+          "persona_ids": [
+            "persona-20260704-fe141b90"
+          ],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": null,
+          "persona": "/bff/personas/persona-20260704-fe141b90",
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-persona-persona-20260711-9fba9f55",
+        "dimension": "persona",
+        "dimension_key": "persona-20260711-9fba9f55",
+        "label": "Test-OpenClaw-Reconcile",
+        "period": "latest",
+        "data_confidence": "partial",
+        "source_status": "partial",
+        "rank": 9,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 0,
+          "holding_count": 1,
+          "total_pnl": null,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": null,
+          "average_slippage_bps": null,
+          "total_trades": 0,
+          "latest_telemetry_at": null,
+          "data_confidence": "partial",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": null,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "runtime-persona-20260711-9fba9f55-paper"
+          ],
+          "capital_pool_ids": [
+            "paper-ledger-persona-20260711-9fba9f55"
+          ],
+          "persona_ids": [
+            "persona-20260711-9fba9f55"
+          ],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": null,
+          "persona": "/bff/personas/persona-20260711-9fba9f55",
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-strategy-unassigned",
+        "dimension": "strategy",
+        "dimension_key": "unassigned",
+        "label": "Unassigned",
+        "period": "latest",
+        "data_confidence": "degraded",
+        "source_status": "degraded",
+        "rank": 1,
+        "metrics": {
+          "runtime_count": 19,
+          "telemetry_runtime_count": 14,
+          "holding_count": 27,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 3398,
+          "latest_telemetry_at": "2026-07-11T15:13:56Z",
+          "data_confidence": "degraded",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 19,
+        "holding_count": 27,
+        "source_refs": {
+          "runtime_ids": [
+            "rt-devloop-l0-001",
+            "runtime-crypto-paper",
+            "runtime-devloop-l0-001",
+            "runtime-persona-20260528-04688755-paper",
+            "runtime-persona-20260528-5937dea1-paper",
+            "runtime-persona-20260528-597cbad2-paper",
+            "runtime-persona-20260528-6b2e514c-paper",
+            "runtime-persona-20260528-74e8b58f-paper",
+            "runtime-persona-20260528-81c9e6b9-paper",
+            "runtime-persona-20260528-949a890a-paper",
+            "runtime-persona-20260528-ba7de5a4-paper",
+            "runtime-persona-20260528-cfedeed5-paper",
+            "runtime-persona-20260704-5d946ca4-paper",
+            "runtime-persona-20260704-99fb0bd4-paper",
+            "runtime-persona-20260704-f187ac69-paper",
+            "runtime-persona-20260704-fe141b90-paper",
+            "runtime-persona-20260711-9fba9f55-paper",
+            "runtime-tw-equity-paper",
+            "runtime-us-equity-paper"
+          ],
+          "capital_pool_ids": [
+            "paper-ledger-persona-20260711-9fba9f55",
+            "paper-pool-persona-20260704-5d946ca4",
+            "paper-pool-persona-20260704-99fb0bd4",
+            "paper-pool-persona-20260704-f187ac69",
+            "paper-pool-persona-20260704-fe141b90",
+            "pool-crypto-paper",
+            "pool-devloop-l0-rescue-1783168602",
+            "pool-devloop-l0-rescue-1783168661",
+            "pool-persona-20260528-04688755-paper",
+            "pool-persona-20260528-5937dea1-paper",
+            "pool-persona-20260528-597cbad2-paper",
+            "pool-persona-20260528-6b2e514c-paper",
+            "pool-persona-20260528-74e8b58f-paper",
+            "pool-persona-20260528-81c9e6b9-paper",
+            "pool-persona-20260528-949a890a-paper",
+            "pool-persona-20260528-ba7de5a4-paper",
+            "pool-persona-20260528-cfedeed5-paper",
+            "pool-tw-equity-paper",
+            "pool-us-equity-paper"
+          ],
+          "persona_ids": [
+            "persona-20260704-5d946ca4",
+            "persona-20260704-99fb0bd4",
+            "persona-20260704-f187ac69",
+            "persona-20260704-fe141b90",
+            "persona-20260711-9fba9f55",
+            "persona-crypto",
+            "persona-tw-equity",
+            "persona-us-equity"
+          ],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": null,
+          "persona": null,
+          "strategy": "/bff/strategies/unassigned"
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-pool-pool-crypto-paper",
+        "dimension": "pool",
+        "dimension_key": "pool-crypto-paper",
+        "label": "pool-crypto-paper",
+        "period": "latest",
+        "data_confidence": "formal",
+        "source_status": "ok",
+        "rank": 1,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 1,
+          "holding_count": 1,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 0,
+          "latest_telemetry_at": "2026-07-11T14:38:23Z",
+          "data_confidence": "formal",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "runtime-crypto-paper"
+          ],
+          "capital_pool_ids": [
+            "pool-crypto-paper"
+          ],
+          "persona_ids": [
+            "persona-crypto"
+          ],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": "/bff/capital-pools/pool-crypto-paper",
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-pool-pool-devloop-l0-rescue-1783168602",
+        "dimension": "pool",
+        "dimension_key": "pool-devloop-l0-rescue-1783168602",
+        "label": "pool-devloop-l0-rescue-1783168602",
+        "period": "latest",
+        "data_confidence": "formal",
+        "source_status": "ok",
+        "rank": 2,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 1,
+          "holding_count": 1,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 0,
+          "latest_telemetry_at": "2026-07-04T12:52:50Z",
+          "data_confidence": "formal",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "runtime-devloop-l0-001"
+          ],
+          "capital_pool_ids": [
+            "pool-devloop-l0-rescue-1783168602"
+          ],
+          "persona_ids": [],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": "/bff/capital-pools/pool-devloop-l0-rescue-1783168602",
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-pool-pool-devloop-l0-rescue-1783168661",
+        "dimension": "pool",
+        "dimension_key": "pool-devloop-l0-rescue-1783168661",
+        "label": "pool-devloop-l0-rescue-1783168661",
+        "period": "latest",
+        "data_confidence": "formal",
+        "source_status": "ok",
+        "rank": 3,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 1,
+          "holding_count": 9,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 3398,
+          "latest_telemetry_at": "2026-07-11T15:13:56Z",
+          "data_confidence": "formal",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 9,
+        "source_refs": {
+          "runtime_ids": [
+            "rt-devloop-l0-001"
+          ],
+          "capital_pool_ids": [
+            "pool-devloop-l0-rescue-1783168661"
+          ],
+          "persona_ids": [],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": "/bff/capital-pools/pool-devloop-l0-rescue-1783168661",
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-pool-pool-persona-20260528-04688755-paper",
+        "dimension": "pool",
+        "dimension_key": "pool-persona-20260528-04688755-paper",
+        "label": "pool-persona-20260528-04688755-paper",
+        "period": "latest",
+        "data_confidence": "formal",
+        "source_status": "ok",
+        "rank": 4,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 1,
+          "holding_count": 1,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 0,
+          "latest_telemetry_at": "2026-07-11T14:38:24Z",
+          "data_confidence": "formal",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "runtime-persona-20260528-04688755-paper"
+          ],
+          "capital_pool_ids": [
+            "pool-persona-20260528-04688755-paper"
+          ],
+          "persona_ids": [],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": "/bff/capital-pools/pool-persona-20260528-04688755-paper",
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-pool-pool-persona-20260528-5937dea1-paper",
+        "dimension": "pool",
+        "dimension_key": "pool-persona-20260528-5937dea1-paper",
+        "label": "pool-persona-20260528-5937dea1-paper",
+        "period": "latest",
+        "data_confidence": "formal",
+        "source_status": "ok",
+        "rank": 5,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 1,
+          "holding_count": 1,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 0,
+          "latest_telemetry_at": "2026-07-11T14:38:23Z",
+          "data_confidence": "formal",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "runtime-persona-20260528-5937dea1-paper"
+          ],
+          "capital_pool_ids": [
+            "pool-persona-20260528-5937dea1-paper"
+          ],
+          "persona_ids": [],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": "/bff/capital-pools/pool-persona-20260528-5937dea1-paper",
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-pool-pool-persona-20260528-597cbad2-paper",
+        "dimension": "pool",
+        "dimension_key": "pool-persona-20260528-597cbad2-paper",
+        "label": "pool-persona-20260528-597cbad2-paper",
+        "period": "latest",
+        "data_confidence": "formal",
+        "source_status": "ok",
+        "rank": 6,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 1,
+          "holding_count": 1,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 0,
+          "latest_telemetry_at": "2026-07-11T14:38:23Z",
+          "data_confidence": "formal",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "runtime-persona-20260528-597cbad2-paper"
+          ],
+          "capital_pool_ids": [
+            "pool-persona-20260528-597cbad2-paper"
+          ],
+          "persona_ids": [],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": "/bff/capital-pools/pool-persona-20260528-597cbad2-paper",
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-pool-pool-persona-20260528-6b2e514c-paper",
+        "dimension": "pool",
+        "dimension_key": "pool-persona-20260528-6b2e514c-paper",
+        "label": "pool-persona-20260528-6b2e514c-paper",
+        "period": "latest",
+        "data_confidence": "formal",
+        "source_status": "ok",
+        "rank": 7,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 1,
+          "holding_count": 1,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 0,
+          "latest_telemetry_at": "2026-07-11T14:38:23Z",
+          "data_confidence": "formal",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "runtime-persona-20260528-6b2e514c-paper"
+          ],
+          "capital_pool_ids": [
+            "pool-persona-20260528-6b2e514c-paper"
+          ],
+          "persona_ids": [],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": "/bff/capital-pools/pool-persona-20260528-6b2e514c-paper",
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-pool-pool-persona-20260528-74e8b58f-paper",
+        "dimension": "pool",
+        "dimension_key": "pool-persona-20260528-74e8b58f-paper",
+        "label": "pool-persona-20260528-74e8b58f-paper",
+        "period": "latest",
+        "data_confidence": "formal",
+        "source_status": "ok",
+        "rank": 8,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 1,
+          "holding_count": 1,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 0,
+          "latest_telemetry_at": "2026-07-11T14:38:24Z",
+          "data_confidence": "formal",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "runtime-persona-20260528-74e8b58f-paper"
+          ],
+          "capital_pool_ids": [
+            "pool-persona-20260528-74e8b58f-paper"
+          ],
+          "persona_ids": [],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": "/bff/capital-pools/pool-persona-20260528-74e8b58f-paper",
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-pool-pool-persona-20260528-81c9e6b9-paper",
+        "dimension": "pool",
+        "dimension_key": "pool-persona-20260528-81c9e6b9-paper",
+        "label": "pool-persona-20260528-81c9e6b9-paper",
+        "period": "latest",
+        "data_confidence": "formal",
+        "source_status": "ok",
+        "rank": 9,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 1,
+          "holding_count": 1,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 0,
+          "latest_telemetry_at": "2026-07-11T14:38:23Z",
+          "data_confidence": "formal",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "runtime-persona-20260528-81c9e6b9-paper"
+          ],
+          "capital_pool_ids": [
+            "pool-persona-20260528-81c9e6b9-paper"
+          ],
+          "persona_ids": [],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": "/bff/capital-pools/pool-persona-20260528-81c9e6b9-paper",
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-pool-pool-persona-20260528-949a890a-paper",
+        "dimension": "pool",
+        "dimension_key": "pool-persona-20260528-949a890a-paper",
+        "label": "pool-persona-20260528-949a890a-paper",
+        "period": "latest",
+        "data_confidence": "formal",
+        "source_status": "ok",
+        "rank": 10,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 1,
+          "holding_count": 1,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 0,
+          "latest_telemetry_at": "2026-07-11T14:38:24Z",
+          "data_confidence": "formal",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "runtime-persona-20260528-949a890a-paper"
+          ],
+          "capital_pool_ids": [
+            "pool-persona-20260528-949a890a-paper"
+          ],
+          "persona_ids": [],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": "/bff/capital-pools/pool-persona-20260528-949a890a-paper",
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-pool-pool-persona-20260528-ba7de5a4-paper",
+        "dimension": "pool",
+        "dimension_key": "pool-persona-20260528-ba7de5a4-paper",
+        "label": "pool-persona-20260528-ba7de5a4-paper",
+        "period": "latest",
+        "data_confidence": "formal",
+        "source_status": "ok",
+        "rank": 11,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 1,
+          "holding_count": 1,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 0,
+          "latest_telemetry_at": "2026-07-11T14:38:24Z",
+          "data_confidence": "formal",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "runtime-persona-20260528-ba7de5a4-paper"
+          ],
+          "capital_pool_ids": [
+            "pool-persona-20260528-ba7de5a4-paper"
+          ],
+          "persona_ids": [],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": "/bff/capital-pools/pool-persona-20260528-ba7de5a4-paper",
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-pool-pool-persona-20260528-cfedeed5-paper",
+        "dimension": "pool",
+        "dimension_key": "pool-persona-20260528-cfedeed5-paper",
+        "label": "pool-persona-20260528-cfedeed5-paper",
+        "period": "latest",
+        "data_confidence": "formal",
+        "source_status": "ok",
+        "rank": 12,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 1,
+          "holding_count": 1,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 0,
+          "latest_telemetry_at": "2026-07-11T14:38:23Z",
+          "data_confidence": "formal",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "runtime-persona-20260528-cfedeed5-paper"
+          ],
+          "capital_pool_ids": [
+            "pool-persona-20260528-cfedeed5-paper"
+          ],
+          "persona_ids": [],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": "/bff/capital-pools/pool-persona-20260528-cfedeed5-paper",
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-pool-pool-tw-equity-paper",
+        "dimension": "pool",
+        "dimension_key": "pool-tw-equity-paper",
+        "label": "pool-tw-equity-paper",
+        "period": "latest",
+        "data_confidence": "formal",
+        "source_status": "ok",
+        "rank": 13,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 1,
+          "holding_count": 1,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 0,
+          "latest_telemetry_at": "2026-07-11T14:38:23Z",
+          "data_confidence": "formal",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "runtime-tw-equity-paper"
+          ],
+          "capital_pool_ids": [
+            "pool-tw-equity-paper"
+          ],
+          "persona_ids": [
+            "persona-tw-equity"
+          ],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": "/bff/capital-pools/pool-tw-equity-paper",
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-pool-pool-us-equity-paper",
+        "dimension": "pool",
+        "dimension_key": "pool-us-equity-paper",
+        "label": "pool-us-equity-paper",
+        "period": "latest",
+        "data_confidence": "formal",
+        "source_status": "ok",
+        "rank": 14,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 1,
+          "holding_count": 1,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 0,
+          "latest_telemetry_at": "2026-07-11T14:38:23Z",
+          "data_confidence": "formal",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "runtime-us-equity-paper"
+          ],
+          "capital_pool_ids": [
+            "pool-us-equity-paper"
+          ],
+          "persona_ids": [
+            "persona-us-equity"
+          ],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": "/bff/capital-pools/pool-us-equity-paper",
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-pool-paper-ledger-persona-20260711-9fba9f55",
+        "dimension": "pool",
+        "dimension_key": "paper-ledger-persona-20260711-9fba9f55",
+        "label": "paper-ledger-persona-20260711-9fba9f55",
+        "period": "latest",
+        "data_confidence": "partial",
+        "source_status": "partial",
+        "rank": 15,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 0,
+          "holding_count": 1,
+          "total_pnl": null,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": null,
+          "average_slippage_bps": null,
+          "total_trades": 0,
+          "latest_telemetry_at": null,
+          "data_confidence": "partial",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": null,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "runtime-persona-20260711-9fba9f55-paper"
+          ],
+          "capital_pool_ids": [
+            "paper-ledger-persona-20260711-9fba9f55"
+          ],
+          "persona_ids": [
+            "persona-20260711-9fba9f55"
+          ],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": "/bff/capital-pools/paper-ledger-persona-20260711-9fba9f55",
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-pool-paper-pool-persona-20260704-5d946ca4",
+        "dimension": "pool",
+        "dimension_key": "paper-pool-persona-20260704-5d946ca4",
+        "label": "Cron Scope Smoke 2 paper capital pool",
+        "period": "latest",
+        "data_confidence": "partial",
+        "source_status": "partial",
+        "rank": 16,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 0,
+          "holding_count": 1,
+          "total_pnl": null,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": null,
+          "average_slippage_bps": null,
+          "total_trades": 0,
+          "latest_telemetry_at": null,
+          "data_confidence": "partial",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": null,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "runtime-persona-20260704-5d946ca4-paper"
+          ],
+          "capital_pool_ids": [
+            "paper-pool-persona-20260704-5d946ca4"
+          ],
+          "persona_ids": [
+            "persona-20260704-5d946ca4"
+          ],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": "/bff/capital-pools/paper-pool-persona-20260704-5d946ca4",
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-pool-paper-pool-persona-20260704-99fb0bd4",
+        "dimension": "pool",
+        "dimension_key": "paper-pool-persona-20260704-99fb0bd4",
+        "label": "claude2-review-smoke-persona paper capital pool",
+        "period": "latest",
+        "data_confidence": "partial",
+        "source_status": "partial",
+        "rank": 17,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 0,
+          "holding_count": 1,
+          "total_pnl": null,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": null,
+          "average_slippage_bps": null,
+          "total_trades": 0,
+          "latest_telemetry_at": null,
+          "data_confidence": "partial",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": null,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "runtime-persona-20260704-99fb0bd4-paper"
+          ],
+          "capital_pool_ids": [
+            "paper-pool-persona-20260704-99fb0bd4"
+          ],
+          "persona_ids": [
+            "persona-20260704-99fb0bd4"
+          ],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": "/bff/capital-pools/paper-pool-persona-20260704-99fb0bd4",
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-pool-paper-pool-persona-20260704-f187ac69",
+        "dimension": "pool",
+        "dimension_key": "paper-pool-persona-20260704-f187ac69",
+        "label": "Cron Scope Smoke 3 paper capital pool",
+        "period": "latest",
+        "data_confidence": "partial",
+        "source_status": "partial",
+        "rank": 18,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 0,
+          "holding_count": 1,
+          "total_pnl": null,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": null,
+          "average_slippage_bps": null,
+          "total_trades": 0,
+          "latest_telemetry_at": null,
+          "data_confidence": "partial",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": null,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "runtime-persona-20260704-f187ac69-paper"
+          ],
+          "capital_pool_ids": [
+            "paper-pool-persona-20260704-f187ac69"
+          ],
+          "persona_ids": [
+            "persona-20260704-f187ac69"
+          ],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": "/bff/capital-pools/paper-pool-persona-20260704-f187ac69",
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-pool-paper-pool-persona-20260704-fe141b90",
+        "dimension": "pool",
+        "dimension_key": "paper-pool-persona-20260704-fe141b90",
+        "label": "Cron Scope Smoke paper capital pool",
+        "period": "latest",
+        "data_confidence": "partial",
+        "source_status": "partial",
+        "rank": 19,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 0,
+          "holding_count": 1,
+          "total_pnl": null,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": null,
+          "average_slippage_bps": null,
+          "total_trades": 0,
+          "latest_telemetry_at": null,
+          "data_confidence": "partial",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": null,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "runtime-persona-20260704-fe141b90-paper"
+          ],
+          "capital_pool_ids": [
+            "paper-pool-persona-20260704-fe141b90"
+          ],
+          "persona_ids": [
+            "persona-20260704-fe141b90"
+          ],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": "/bff/capital-pools/paper-pool-persona-20260704-fe141b90",
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-asset-2330.TW",
+        "dimension": "asset",
+        "dimension_key": "2330.TW",
+        "label": "2330.TW",
+        "period": "latest",
+        "data_confidence": "formal",
+        "source_status": "ok",
+        "rank": 1,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 1,
+          "holding_count": 1,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 377,
+          "latest_telemetry_at": "2026-07-11T15:13:56Z",
+          "data_confidence": "formal",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "rt-devloop-l0-001"
+          ],
+          "capital_pool_ids": [
+            "pool-devloop-l0-rescue-1783168661"
+          ],
+          "persona_ids": [],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": null,
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-asset-AAPL",
+        "dimension": "asset",
+        "dimension_key": "AAPL",
+        "label": "AAPL",
+        "period": "latest",
+        "data_confidence": "formal",
+        "source_status": "ok",
+        "rank": 2,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 1,
+          "holding_count": 1,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 377,
+          "latest_telemetry_at": "2026-07-11T15:13:56Z",
+          "data_confidence": "formal",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "rt-devloop-l0-001"
+          ],
+          "capital_pool_ids": [
+            "pool-devloop-l0-rescue-1783168661"
+          ],
+          "persona_ids": [],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": null,
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-asset-AMD",
+        "dimension": "asset",
+        "dimension_key": "AMD",
+        "label": "AMD",
+        "period": "latest",
+        "data_confidence": "formal",
+        "source_status": "ok",
+        "rank": 3,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 1,
+          "holding_count": 1,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 377,
+          "latest_telemetry_at": "2026-07-11T15:13:56Z",
+          "data_confidence": "formal",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "rt-devloop-l0-001"
+          ],
+          "capital_pool_ids": [
+            "pool-devloop-l0-rescue-1783168661"
+          ],
+          "persona_ids": [],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": null,
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-asset-AMZN",
+        "dimension": "asset",
+        "dimension_key": "AMZN",
+        "label": "AMZN",
+        "period": "latest",
+        "data_confidence": "formal",
+        "source_status": "ok",
+        "rank": 4,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 1,
+          "holding_count": 1,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 377,
+          "latest_telemetry_at": "2026-07-11T15:13:56Z",
+          "data_confidence": "formal",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "rt-devloop-l0-001"
+          ],
+          "capital_pool_ids": [
+            "pool-devloop-l0-rescue-1783168661"
+          ],
+          "persona_ids": [],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": null,
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-asset-GOOGL",
+        "dimension": "asset",
+        "dimension_key": "GOOGL",
+        "label": "GOOGL",
+        "period": "latest",
+        "data_confidence": "formal",
+        "source_status": "ok",
+        "rank": 5,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 1,
+          "holding_count": 1,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 377,
+          "latest_telemetry_at": "2026-07-11T15:13:56Z",
+          "data_confidence": "formal",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "rt-devloop-l0-001"
+          ],
+          "capital_pool_ids": [
+            "pool-devloop-l0-rescue-1783168661"
+          ],
+          "persona_ids": [],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": null,
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-asset-META",
+        "dimension": "asset",
+        "dimension_key": "META",
+        "label": "META",
+        "period": "latest",
+        "data_confidence": "formal",
+        "source_status": "ok",
+        "rank": 6,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 1,
+          "holding_count": 1,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 377,
+          "latest_telemetry_at": "2026-07-11T15:13:56Z",
+          "data_confidence": "formal",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "rt-devloop-l0-001"
+          ],
+          "capital_pool_ids": [
+            "pool-devloop-l0-rescue-1783168661"
+          ],
+          "persona_ids": [],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": null,
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-asset-MSFT",
+        "dimension": "asset",
+        "dimension_key": "MSFT",
+        "label": "MSFT",
+        "period": "latest",
+        "data_confidence": "formal",
+        "source_status": "ok",
+        "rank": 7,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 1,
+          "holding_count": 1,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 377,
+          "latest_telemetry_at": "2026-07-11T15:13:56Z",
+          "data_confidence": "formal",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "rt-devloop-l0-001"
+          ],
+          "capital_pool_ids": [
+            "pool-devloop-l0-rescue-1783168661"
+          ],
+          "persona_ids": [],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": null,
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-asset-NVDA",
+        "dimension": "asset",
+        "dimension_key": "NVDA",
+        "label": "NVDA",
+        "period": "latest",
+        "data_confidence": "formal",
+        "source_status": "ok",
+        "rank": 8,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 1,
+          "holding_count": 1,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 377,
+          "latest_telemetry_at": "2026-07-11T15:13:56Z",
+          "data_confidence": "formal",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "rt-devloop-l0-001"
+          ],
+          "capital_pool_ids": [
+            "pool-devloop-l0-rescue-1783168661"
+          ],
+          "persona_ids": [],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": null,
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-asset-TSLA",
+        "dimension": "asset",
+        "dimension_key": "TSLA",
+        "label": "TSLA",
+        "period": "latest",
+        "data_confidence": "formal",
+        "source_status": "ok",
+        "rank": 9,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 1,
+          "holding_count": 1,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 377,
+          "latest_telemetry_at": "2026-07-11T15:13:56Z",
+          "data_confidence": "formal",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "rt-devloop-l0-001"
+          ],
+          "capital_pool_ids": [
+            "pool-devloop-l0-rescue-1783168661"
+          ],
+          "persona_ids": [],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": null,
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-asset-unassigned",
+        "dimension": "asset",
+        "dimension_key": "unassigned",
+        "label": "Unassigned",
+        "period": "latest",
+        "data_confidence": "degraded",
+        "source_status": "degraded",
+        "rank": 10,
+        "metrics": {
+          "runtime_count": 18,
+          "telemetry_runtime_count": 13,
+          "holding_count": 18,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 0,
+          "latest_telemetry_at": "2026-07-11T14:38:24Z",
+          "data_confidence": "degraded",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 18,
+        "holding_count": 18,
+        "source_refs": {
+          "runtime_ids": [
+            "runtime-crypto-paper",
+            "runtime-devloop-l0-001",
+            "runtime-persona-20260528-04688755-paper",
+            "runtime-persona-20260528-5937dea1-paper",
+            "runtime-persona-20260528-597cbad2-paper",
+            "runtime-persona-20260528-6b2e514c-paper",
+            "runtime-persona-20260528-74e8b58f-paper",
+            "runtime-persona-20260528-81c9e6b9-paper",
+            "runtime-persona-20260528-949a890a-paper",
+            "runtime-persona-20260528-ba7de5a4-paper",
+            "runtime-persona-20260528-cfedeed5-paper",
+            "runtime-persona-20260704-5d946ca4-paper",
+            "runtime-persona-20260704-99fb0bd4-paper",
+            "runtime-persona-20260704-f187ac69-paper",
+            "runtime-persona-20260704-fe141b90-paper",
+            "runtime-persona-20260711-9fba9f55-paper",
+            "runtime-tw-equity-paper",
+            "runtime-us-equity-paper"
+          ],
+          "capital_pool_ids": [
+            "paper-ledger-persona-20260711-9fba9f55",
+            "paper-pool-persona-20260704-5d946ca4",
+            "paper-pool-persona-20260704-99fb0bd4",
+            "paper-pool-persona-20260704-f187ac69",
+            "paper-pool-persona-20260704-fe141b90",
+            "pool-crypto-paper",
+            "pool-devloop-l0-rescue-1783168602",
+            "pool-persona-20260528-04688755-paper",
+            "pool-persona-20260528-5937dea1-paper",
+            "pool-persona-20260528-597cbad2-paper",
+            "pool-persona-20260528-6b2e514c-paper",
+            "pool-persona-20260528-74e8b58f-paper",
+            "pool-persona-20260528-81c9e6b9-paper",
+            "pool-persona-20260528-949a890a-paper",
+            "pool-persona-20260528-ba7de5a4-paper",
+            "pool-persona-20260528-cfedeed5-paper",
+            "pool-tw-equity-paper",
+            "pool-us-equity-paper"
+          ],
+          "persona_ids": [
+            "persona-20260704-5d946ca4",
+            "persona-20260704-99fb0bd4",
+            "persona-20260704-f187ac69",
+            "persona-20260704-fe141b90",
+            "persona-20260711-9fba9f55",
+            "persona-crypto",
+            "persona-tw-equity",
+            "persona-us-equity"
+          ],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": null,
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-broker-unassigned",
+        "dimension": "broker",
+        "dimension_key": "unassigned",
+        "label": "Unassigned",
+        "period": "latest",
+        "data_confidence": "degraded",
+        "source_status": "degraded",
+        "rank": 1,
+        "metrics": {
+          "runtime_count": 19,
+          "telemetry_runtime_count": 14,
+          "holding_count": 27,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 3398,
+          "latest_telemetry_at": "2026-07-11T15:13:56Z",
+          "data_confidence": "degraded",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 19,
+        "holding_count": 27,
+        "source_refs": {
+          "runtime_ids": [
+            "rt-devloop-l0-001",
+            "runtime-crypto-paper",
+            "runtime-devloop-l0-001",
+            "runtime-persona-20260528-04688755-paper",
+            "runtime-persona-20260528-5937dea1-paper",
+            "runtime-persona-20260528-597cbad2-paper",
+            "runtime-persona-20260528-6b2e514c-paper",
+            "runtime-persona-20260528-74e8b58f-paper",
+            "runtime-persona-20260528-81c9e6b9-paper",
+            "runtime-persona-20260528-949a890a-paper",
+            "runtime-persona-20260528-ba7de5a4-paper",
+            "runtime-persona-20260528-cfedeed5-paper",
+            "runtime-persona-20260704-5d946ca4-paper",
+            "runtime-persona-20260704-99fb0bd4-paper",
+            "runtime-persona-20260704-f187ac69-paper",
+            "runtime-persona-20260704-fe141b90-paper",
+            "runtime-persona-20260711-9fba9f55-paper",
+            "runtime-tw-equity-paper",
+            "runtime-us-equity-paper"
+          ],
+          "capital_pool_ids": [
+            "paper-ledger-persona-20260711-9fba9f55",
+            "paper-pool-persona-20260704-5d946ca4",
+            "paper-pool-persona-20260704-99fb0bd4",
+            "paper-pool-persona-20260704-f187ac69",
+            "paper-pool-persona-20260704-fe141b90",
+            "pool-crypto-paper",
+            "pool-devloop-l0-rescue-1783168602",
+            "pool-devloop-l0-rescue-1783168661",
+            "pool-persona-20260528-04688755-paper",
+            "pool-persona-20260528-5937dea1-paper",
+            "pool-persona-20260528-597cbad2-paper",
+            "pool-persona-20260528-6b2e514c-paper",
+            "pool-persona-20260528-74e8b58f-paper",
+            "pool-persona-20260528-81c9e6b9-paper",
+            "pool-persona-20260528-949a890a-paper",
+            "pool-persona-20260528-ba7de5a4-paper",
+            "pool-persona-20260528-cfedeed5-paper",
+            "pool-tw-equity-paper",
+            "pool-us-equity-paper"
+          ],
+          "persona_ids": [
+            "persona-20260704-5d946ca4",
+            "persona-20260704-99fb0bd4",
+            "persona-20260704-f187ac69",
+            "persona-20260704-fe141b90",
+            "persona-20260711-9fba9f55",
+            "persona-crypto",
+            "persona-tw-equity",
+            "persona-us-equity"
+          ],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": null,
+          "capital_pool": null,
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-runtime-rt-devloop-l0-001",
+        "dimension": "runtime",
+        "dimension_key": "rt-devloop-l0-001",
+        "label": "rt-devloop-l0-001",
+        "period": "latest",
+        "data_confidence": "formal",
+        "source_status": "ok",
+        "rank": 1,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 1,
+          "holding_count": 9,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 3398,
+          "latest_telemetry_at": "2026-07-11T15:13:56Z",
+          "data_confidence": "formal",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 9,
+        "source_refs": {
+          "runtime_ids": [
+            "rt-devloop-l0-001"
+          ],
+          "capital_pool_ids": [
+            "pool-devloop-l0-rescue-1783168661"
+          ],
+          "persona_ids": [],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": "/bff/runtimes/rt-devloop-l0-001",
+          "capital_pool": null,
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-runtime-runtime-crypto-paper",
+        "dimension": "runtime",
+        "dimension_key": "runtime-crypto-paper",
+        "label": "runtime-crypto-paper",
+        "period": "latest",
+        "data_confidence": "formal",
+        "source_status": "ok",
+        "rank": 2,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 1,
+          "holding_count": 1,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 0,
+          "latest_telemetry_at": "2026-07-11T14:38:23Z",
+          "data_confidence": "formal",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "runtime-crypto-paper"
+          ],
+          "capital_pool_ids": [
+            "pool-crypto-paper"
+          ],
+          "persona_ids": [
+            "persona-crypto"
+          ],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": "/bff/runtimes/runtime-crypto-paper",
+          "capital_pool": null,
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-runtime-runtime-devloop-l0-001",
+        "dimension": "runtime",
+        "dimension_key": "runtime-devloop-l0-001",
+        "label": "runtime-devloop-l0-001",
+        "period": "latest",
+        "data_confidence": "formal",
+        "source_status": "ok",
+        "rank": 3,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 1,
+          "holding_count": 1,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 0,
+          "latest_telemetry_at": "2026-07-04T12:52:50Z",
+          "data_confidence": "formal",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "runtime-devloop-l0-001"
+          ],
+          "capital_pool_ids": [
+            "pool-devloop-l0-rescue-1783168602"
+          ],
+          "persona_ids": [],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": "/bff/runtimes/runtime-devloop-l0-001",
+          "capital_pool": null,
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-runtime-runtime-persona-20260528-04688755-paper",
+        "dimension": "runtime",
+        "dimension_key": "runtime-persona-20260528-04688755-paper",
+        "label": "runtime-persona-20260528-04688755-paper",
+        "period": "latest",
+        "data_confidence": "formal",
+        "source_status": "ok",
+        "rank": 4,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 1,
+          "holding_count": 1,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 0,
+          "latest_telemetry_at": "2026-07-11T14:38:24Z",
+          "data_confidence": "formal",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "runtime-persona-20260528-04688755-paper"
+          ],
+          "capital_pool_ids": [
+            "pool-persona-20260528-04688755-paper"
+          ],
+          "persona_ids": [],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": "/bff/runtimes/runtime-persona-20260528-04688755-paper",
+          "capital_pool": null,
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-runtime-runtime-persona-20260528-5937dea1-paper",
+        "dimension": "runtime",
+        "dimension_key": "runtime-persona-20260528-5937dea1-paper",
+        "label": "runtime-persona-20260528-5937dea1-paper",
+        "period": "latest",
+        "data_confidence": "formal",
+        "source_status": "ok",
+        "rank": 5,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 1,
+          "holding_count": 1,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 0,
+          "latest_telemetry_at": "2026-07-11T14:38:23Z",
+          "data_confidence": "formal",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "runtime-persona-20260528-5937dea1-paper"
+          ],
+          "capital_pool_ids": [
+            "pool-persona-20260528-5937dea1-paper"
+          ],
+          "persona_ids": [],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": "/bff/runtimes/runtime-persona-20260528-5937dea1-paper",
+          "capital_pool": null,
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-runtime-runtime-persona-20260528-597cbad2-paper",
+        "dimension": "runtime",
+        "dimension_key": "runtime-persona-20260528-597cbad2-paper",
+        "label": "runtime-persona-20260528-597cbad2-paper",
+        "period": "latest",
+        "data_confidence": "formal",
+        "source_status": "ok",
+        "rank": 6,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 1,
+          "holding_count": 1,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 0,
+          "latest_telemetry_at": "2026-07-11T14:38:23Z",
+          "data_confidence": "formal",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "runtime-persona-20260528-597cbad2-paper"
+          ],
+          "capital_pool_ids": [
+            "pool-persona-20260528-597cbad2-paper"
+          ],
+          "persona_ids": [],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": "/bff/runtimes/runtime-persona-20260528-597cbad2-paper",
+          "capital_pool": null,
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-runtime-runtime-persona-20260528-6b2e514c-paper",
+        "dimension": "runtime",
+        "dimension_key": "runtime-persona-20260528-6b2e514c-paper",
+        "label": "runtime-persona-20260528-6b2e514c-paper",
+        "period": "latest",
+        "data_confidence": "formal",
+        "source_status": "ok",
+        "rank": 7,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 1,
+          "holding_count": 1,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 0,
+          "latest_telemetry_at": "2026-07-11T14:38:23Z",
+          "data_confidence": "formal",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "runtime-persona-20260528-6b2e514c-paper"
+          ],
+          "capital_pool_ids": [
+            "pool-persona-20260528-6b2e514c-paper"
+          ],
+          "persona_ids": [],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": "/bff/runtimes/runtime-persona-20260528-6b2e514c-paper",
+          "capital_pool": null,
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-runtime-runtime-persona-20260528-74e8b58f-paper",
+        "dimension": "runtime",
+        "dimension_key": "runtime-persona-20260528-74e8b58f-paper",
+        "label": "runtime-persona-20260528-74e8b58f-paper",
+        "period": "latest",
+        "data_confidence": "formal",
+        "source_status": "ok",
+        "rank": 8,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 1,
+          "holding_count": 1,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 0,
+          "latest_telemetry_at": "2026-07-11T14:38:24Z",
+          "data_confidence": "formal",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "runtime-persona-20260528-74e8b58f-paper"
+          ],
+          "capital_pool_ids": [
+            "pool-persona-20260528-74e8b58f-paper"
+          ],
+          "persona_ids": [],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": "/bff/runtimes/runtime-persona-20260528-74e8b58f-paper",
+          "capital_pool": null,
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-runtime-runtime-persona-20260528-81c9e6b9-paper",
+        "dimension": "runtime",
+        "dimension_key": "runtime-persona-20260528-81c9e6b9-paper",
+        "label": "runtime-persona-20260528-81c9e6b9-paper",
+        "period": "latest",
+        "data_confidence": "formal",
+        "source_status": "ok",
+        "rank": 9,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 1,
+          "holding_count": 1,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 0,
+          "latest_telemetry_at": "2026-07-11T14:38:23Z",
+          "data_confidence": "formal",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "runtime-persona-20260528-81c9e6b9-paper"
+          ],
+          "capital_pool_ids": [
+            "pool-persona-20260528-81c9e6b9-paper"
+          ],
+          "persona_ids": [],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": "/bff/runtimes/runtime-persona-20260528-81c9e6b9-paper",
+          "capital_pool": null,
+          "persona": null,
+          "strategy": null
+        }
+      },
+      {
+        "id": "pm12-performance-attribution-runtime-runtime-persona-20260528-949a890a-paper",
+        "dimension": "runtime",
+        "dimension_key": "runtime-persona-20260528-949a890a-paper",
+        "label": "runtime-persona-20260528-949a890a-paper",
+        "period": "latest",
+        "data_confidence": "formal",
+        "source_status": "ok",
+        "rank": 10,
+        "metrics": {
+          "runtime_count": 1,
+          "telemetry_runtime_count": 1,
+          "holding_count": 1,
+          "total_pnl": 0,
+          "unrealized_pnl": null,
+          "realized_pnl": null,
+          "total_notional": null,
+          "total_market_value": null,
+          "total_exposure": null,
+          "worst_drawdown": null,
+          "average_fill_rate": 0,
+          "average_slippage_bps": 0,
+          "total_trades": 0,
+          "latest_telemetry_at": "2026-07-11T14:38:24Z",
+          "data_confidence": "formal",
+          "pnl_contribution_pct": null,
+          "notional_weight": null
+        },
+        "total_pnl": 0,
+        "pnl_contribution_pct": null,
+        "notional_weight": null,
+        "runtime_count": 1,
+        "holding_count": 1,
+        "source_refs": {
+          "runtime_ids": [
+            "runtime-persona-20260528-949a890a-paper"
+          ],
+          "capital_pool_ids": [
+            "pool-persona-20260528-949a890a-paper"
+          ],
+          "persona_ids": [],
+          "strategy_ids": []
+        },
+        "links": {
+          "runtime": "/bff/runtimes/runtime-persona-20260528-949a890a-paper",
+          "capital_pool": null,
+          "persona": null,
+          "strategy": null
+        }
+      }
+    ],
+    "summary": {
+      "period": "latest",
+      "dimensions": [
+        "persona",
+        "strategy",
+        "pool",
+        "asset",
+        "broker",
+        "runtime",
+        "regime"
+      ],
+      "supported_dimensions": [
+        "persona",
+        "strategy",
+        "pool",
+        "asset",
+        "broker",
+        "runtime",
+        "regime"
+      ],
+      "row_count": 60,
+      "returned_row_count": 50,
+      "runtime_count": 19,
+      "telemetry_runtime_count": 14,
+      "holding_count": 27,
+      "total_pnl": 0,
+      "total_notional": null,
+      "total_exposure": null,
+      "worst_drawdown": null,
+      "average_fill_rate": 0,
+      "average_slippage_bps": 0,
+      "total_trades": 3398,
+      "latest_telemetry_at": "2026-07-11T15:13:56Z",
+      "basis": "latest_runtime_telemetry_snapshot"
+    }
+  },
+  "page_info": {
+    "next_page_token": "50",
+    "total": 60,
+    "page_size": 50
+  },
+  "meta": {
+    "snapshot_at": "2026-07-11T15:13:56Z",
+    "surfaces": {
+      "performance_attribution": {
+        "status": "ok",
+        "source": "bff_composed",
+        "observed_time": "2026-07-11T15:13:56Z",
+        "freshness": "bff_composed",
+        "coverage": 1,
+        "missing_bindings": false
+      },
+      "runtime_bindings": {
+        "status": "ok",
+        "source": "service_client",
+        "observed_time": "2026-07-11T15:13:56Z",
+        "freshness": "service_client",
+        "coverage": 1,
+        "missing_bindings": false
+      },
+      "telemetry_summaries": {
+        "status": "ok",
+        "source": "service_client",
+        "observed_time": "2026-07-11T15:13:56Z",
+        "freshness": "service_client",
+        "coverage": 1,
+        "missing_bindings": false
+      },
+      "deployment_plans": {
+        "status": "ok",
+        "source": "service_client",
+        "observed_time": "2026-07-11T15:13:56Z",
+        "freshness": "service_client",
+        "coverage": 1,
+        "missing_bindings": false
+      },
+      "persona_bindings": {
+        "status": "ok",
+        "source": "service_client",
+        "observed_time": "2026-07-11T15:13:56Z",
+        "freshness": "service_client",
+        "coverage": 1,
+        "missing_bindings": false
+      },
+      "capital_pools": {
+        "status": "ok",
+        "source": "service_client",
+        "observed_time": "2026-07-11T15:13:56Z",
+        "freshness": "service_client",
+        "coverage": 1,
+        "missing_bindings": false
+      },
+      "personas": {
+        "status": "ok",
+        "source": "bff_local_dev_store",
+        "observed_time": "2026-07-11T15:13:56Z",
+        "freshness": "bff_local_dev_store",
+        "coverage": 1,
+        "missing_bindings": false
+      },
+      "strategies": {
+        "status": "ok",
+        "source": "service_store",
+        "observed_time": "2026-07-11T15:13:56Z",
+        "freshness": "service_store",
+        "coverage": 1,
+        "missing_bindings": false
+      }
+    },
+    "composition_sources": [
+      "GET /api/v1/runtime-bindings",
+      "GET /api/v1/telemetry/{runtime_id}/summary",
+      "GET /api/v1/deployment-plans",
+      "GET /api/v1/persona-capital-bindings",
+      "GET /bff/capital-pools",
+      "GET /bff/personas",
+      "GET /bff/strategies"
+    ],
+    "period": "latest",
+    "dimensions": [
+      "persona",
+      "strategy",
+      "pool",
+      "asset",
+      "broker",
+      "runtime",
+      "regime"
+    ],
+    "policy": "read_only_performance_attribution"
+  }
+}

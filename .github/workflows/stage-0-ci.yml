@@ -9,13 +9,15 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "Run the normal stage-0 gate or strict BFF live evidence"
+        description: "Run stage-0, strict BFF live evidence, or a task-scoped hosted probe"
         required: true
         default: stage0
         type: choice
         options:
           - stage0
           - live-evidence
+          - loop-prod-per-001-hosted-probe
+          - tj-e2e-012-hosted-acceptance
       environment:
         description: "GitHub environment for live-evidence secrets"
         required: true
@@ -27,8 +29,23 @@ on:
       bff_base_url:
         description: "Target BFF base URL for live evidence"
         required: true
-        default: "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io"
+        default: "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io"
         type: string
+      expected_sha:
+        description: "Expected deployed BFF source commit SHA for task-scoped hosted probes"
+        required: false
+        default: ""
+        type: string
+      expected_fe_sha:
+        description: "Expected deployed execute-plans commit SHA for TJ-E2E-012"
+        required: false
+        default: ""
+        type: string
+      seed_scenarios:
+        description: "Dev only: materialize the deterministic TJ-E2E-012 source scenarios before acceptance"
+        required: false
+        default: false
+        type: boolean
       approval_race_id:
         description: "Expendable approval id for the two-operator race proof"
         required: true
@@ -48,13 +65,13 @@ permissions:
 
 concurrency:
   group: >-
-    pantheon-stage0-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'live-evidence' && format('live-evidence-{0}', inputs.environment) || 'stage0' }}
+    pantheon-stage0-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.mode != 'stage0' && format('{0}-{1}', inputs.mode, inputs.environment) || 'stage0' }}
   cancel-in-progress: true
 
 jobs:
   discover:
     name: Discover changed stage-0 targets
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode != 'live-evidence' }}
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'stage0' }}
     runs-on: ubuntu-latest
     outputs:
       target_ids: ${{ steps.detect.outputs.target_ids }}
@@ -88,7 +105,7 @@ jobs:
 
   baseline:
     name: Run baseline stage-0 gate
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode != 'live-evidence' }}
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'stage0' }}
     runs-on: ubuntu-latest
     needs:
       - discover
@@ -112,7 +129,7 @@ jobs:
     needs:
       - discover
       - baseline
-    if: ${{ (github.event_name != 'workflow_dispatch' || inputs.mode != 'live-evidence') && needs.discover.outputs.verify_count != '0' }}
+    if: ${{ (github.event_name != 'workflow_dispatch' || inputs.mode == 'stage0') && needs.discover.outputs.verify_count != '0' }}
     strategy:
       fail-fast: false
       matrix:
@@ -137,7 +154,7 @@ jobs:
     needs:
       - discover
       - baseline
-    if: ${{ (github.event_name != 'workflow_dispatch' || inputs.mode != 'live-evidence') && needs.discover.outputs.build_count != '0' }}
+    if: ${{ (github.event_name != 'workflow_dispatch' || inputs.mode == 'stage0') && needs.discover.outputs.build_count != '0' }}
     strategy:
       fail-fast: false
       matrix:
@@ -246,15 +263,15 @@ jobs:
             --base-url "$PANTHEON_BFF_BASE_URL" \
             --strict-live-evidence \
             --soak-seconds "${{ inputs.soak_seconds }}" \
-            --soak-min-heartbeats 1 \
-            --reconnect-attempts 5 \
+            --soak-min-heartbeats 2 \
+            --reconnect-attempts 7 \
             --output "${PANTHEON_AUDIT_OUT_DIR}/BFF-CONSOL-011-sse-replay-smoke.json"
 
       - name: Aggregate current-run release evidence
         if: always()
         continue-on-error: true
         run: |
-          node execute-plans/scripts/aggregate-release-gate.mjs \
+          node scripts/aggregate_bff_release_gate.mjs \
             --audit-dir "$PANTHEON_AUDIT_OUT_DIR"
 
       - name: Verify live evidence artifact
@@ -267,5 +284,166 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: bff-live-evidence-current-run
-          path: .lovable/audits/current-run
+          path: |
+            .lovable/audits/current-run/BFF-LIVE-EVIDENCE-PREFLIGHT.json
+            .lovable/audits/current-run/BFF-LIVE-EVIDENCE-ARTIFACT-VERIFY.json
+            .lovable/audits/current-run/release-gate-summary.json
+            .lovable/audits/current-run/release-gate-summary.md
+            .lovable/audits/current-run/BFF-LUV-AUTHED-LIVE-001-live-smoke.json
+            .lovable/audits/current-run/BFF-CONSOL-011-sse-replay-smoke.json
           if-no-files-found: error
+
+  loop-prod-per-001-hosted-probe:
+    name: LOOP-PROD-PER-001 hosted probe
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'loop-prod-per-001-hosted-probe' }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 15
+    env:
+      BFF_BASE_URL: ${{ inputs.bff_base_url }}
+      EXPECTED_SHA: ${{ inputs.expected_sha || github.sha }}
+      TENANT_ID: pantheon-dev
+      DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
+      DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
+      DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
+    steps:
+      - name: Validate hosted probe environment
+        run: |
+          if [[ "${{ inputs.environment }}" != "dev" ]]; then
+            echo "LOOP-PROD-PER-001 hosted probe must run against the dev environment." >&2
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Run hosted persona provisioning probe
+        run: |
+          python3 scripts/probe_loop_prod_per_001_hosted.py \
+            --base-url "${BFF_BASE_URL}" \
+            --expected-sha "${EXPECTED_SHA}" \
+            --tenant-id "${TENANT_ID}" \
+            --run-id "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --output ".artifacts/LOOP-PROD-PER-001/hosted-probe.json"
+
+      - name: Upload hosted probe evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: loop-prod-per-001-hosted-probe
+          path: .artifacts/LOOP-PROD-PER-001/hosted-probe.json
+          if-no-files-found: error
+
+  tj-e2e-012-hosted-acceptance:
+    name: TJ-E2E-012 twelve-scenario hosted evidence
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'tj-e2e-012-hosted-acceptance' }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      BFF_BASE: ${{ inputs.bff_base_url }}
+      TJ_E2E_FE_DEPLOYMENT_URL: ${{ format('{0}/deployment.json', vars.DEV_FE_URL || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io') }}
+      TJ_E2E_ALLOWED_BFF_ORIGIN: ${{ vars.DEV_BFF_URL || 'https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io' }}
+      TJ_E2E_ALLOWED_FE_ORIGIN: ${{ vars.DEV_FE_URL || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
+      TJ_E2E_EXPECTED_BFF_SHA: ${{ inputs.expected_sha }}
+      TJ_E2E_EXPECTED_FE_SHA: ${{ inputs.expected_fe_sha }}
+      TJ_E2E_TENANT_ID: tenant-dev
+      TJ_E2E_FORBIDDEN_TENANT_ID: tenant-forbidden-proof
+      TJ_E2E_REPLAY_AS_OF: "2026-07-12T12:01:30Z"
+      TJ_E2E_AMBIGUITY_IDENTIFIER: ambiguous-scenario-9
+      TJ_E2E_OPERATOR_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID || 'pantheon-dev-operator-a-v1' }}
+      TJ_E2E_OPERATOR_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET }}
+      TJ_E2E_VIEWER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1' }}
+      TJ_E2E_VIEWER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET }}
+      TJ_E2E_EVIDENCE_DIR: .artifacts/TJ-E2E-012/${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Reject non-dev acceptance dispatch
+        if: ${{ inputs.environment != 'dev' }}
+        run: |
+          echo "TJ-E2E-012 hosted acceptance may only use the dev environment." >&2
+          exit 1
+
+      - name: Checkout dispatched revision
+        uses: actions/checkout@v6
+
+      - name: Authenticate to Google Cloud for dev VM loopback seed
+        if: ${{ inputs.seed_scenarios }}
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed
+        with:
+          workload_identity_provider: ${{ vars.DEV_GCP_WIF_PROVIDER || 'projects/317269804408/locations/global/workloadIdentityPools/pantheon-github-pool/providers/pantheon-github-provider' }}
+          service_account: ${{ vars.DEV_GCP_DEPLOY_SERVICE_ACCOUNT || 'pantheon-cloud-build@pantheon-lupin-dev-20260719.iam.gserviceaccount.com' }}
+
+      - name: Set up Cloud SDK for dev VM loopback seed
+        if: ${{ inputs.seed_scenarios }}
+        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f
+
+      - name: Materialize explicitly authorized dev-only source scenarios
+        if: ${{ inputs.seed_scenarios }}
+        env:
+          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
+          DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
+          DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
+          DEV_DEPLOY_WORKTREE: ${{ vars.DEV_DEPLOY_WORKTREE || '/home/lupin/pantheon-ci-deploy/dev-root' }}
+          GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-lupin-dev-20260719' }}
+        run: |
+          set -euo pipefail
+          [[ "${TJ_E2E_EXPECTED_BFF_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          mkdir -p "${TJ_E2E_EVIDENCE_DIR}"
+          seed_evidence="${TJ_E2E_EVIDENCE_DIR}/canonical-seed.json"
+          printf -v worktree_q '%q' "${DEV_DEPLOY_WORKTREE}"
+          printf -v expected_sha_q '%q' "${TJ_E2E_EXPECTED_BFF_SHA}"
+          set +e
+          seed_output="$(gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" \
+            --zone "${DEV_ZONE}" \
+            --project "${GCP_DEPLOY_PROJECT_ID}" \
+            --ssh-flag=-T \
+            --command "set -euo pipefail; cd ${worktree_q}; test \"\$(git rev-parse HEAD)\" = ${expected_sha_q}; GITHUB_REPOSITORY=ajoe734/pantheon TJ_E2E_TENANT_ID=tenant-dev TJ_E2E_EXPECTED_BFF_SHA=${expected_sha_q} TJ_E2E_TELEMETRY_BASE=http://127.0.0.1:18083 TJ_E2E_RUNTIME_MANAGER_BASE=http://127.0.0.1:18081 TJ_E2E_SEED_BFF_BASE=http://127.0.0.1:18001 python3 scripts/seed_tj_e2e_012_hosted_scenarios.py")"
+          seed_status=$?
+          set -e
+          python3 - "${seed_evidence}" "${seed_status}" "${seed_output}" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          path = Path(sys.argv[1])
+          status = int(sys.argv[2])
+          lines = [line for line in sys.argv[3].splitlines() if line.strip()]
+          parsed = None
+          if lines:
+              try:
+                  parsed = json.loads(lines[-1])
+              except json.JSONDecodeError:
+                  parsed = None
+          payload = {
+              "schema_version": "pantheon.tj-e2e-012.canonical-seed-evidence.v1",
+              "result": "passed" if status == 0 and isinstance(parsed, dict) else "failed",
+              "transport": "gcp-wif-ssh-dev-vm-loopback",
+              "expected_bff_sha": __import__("os").environ["TJ_E2E_EXPECTED_BFF_SHA"],
+              "seed": parsed if isinstance(parsed, dict) else None,
+          }
+          path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+          if [[ "${seed_status}" -ne 0 ]]; then
+            echo "Canonical dev telemetry seed failed; redacted evidence was recorded." >&2
+            exit "${seed_status}"
+          fi
+
+      - name: Verify exact hosted pair and all twelve source scenarios
+        run: python3 scripts/verify_hosted_scenarios.py
+
+      - name: Upload immutable redacted acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tj-e2e-012-hosted-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .artifacts/TJ-E2E-012/${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 30

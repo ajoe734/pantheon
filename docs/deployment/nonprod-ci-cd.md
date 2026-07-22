@@ -34,7 +34,8 @@ The script SSHes to the target VM through `gcloud compute ssh`, snapshots the
 current human-facing remote checkout, prepares a managed clean deploy worktree
 under `~/pantheon-ci-deploy`, starts the expected Compose stack from the pinned
 commit, and runs health checks. This keeps CI deploys from overwriting operator
-or agent work in `/home/lupin/code/pantheon`.
+or agent work in the human-facing checkout (`/home/lupin/pantheon` on the
+replacement dev VM; the staging paths remain independently configured).
 
 For private repository fetches on the VM, GitHub Actions passes its short-lived
 `GITHUB_TOKEN` only to the deploy SSH session. The token is used as a temporary
@@ -79,16 +80,17 @@ that VM execution is an implementation detail of the CI deploy lane.
 Target:
 
 - VM: `pantheon-lupin-dev`
+- GCP project: `pantheon-lupin-dev-20260719`
 - compose project: `pantheon`
 - compose file: `docker-compose.yml`
-- public BFF: `https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io`
+- public BFF: `https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io`
 
 Guardrails applied by the deploy script:
 
 ```env
 PANTHEON_ENV=dev
 PANTHEON_LIVE_BROKER_ENABLED=false
-PANTHEON_BFF_CORS_ORIGINS=https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io
+PANTHEON_BFF_CORS_ORIGINS=https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io
 ```
 
 Agora frontend/BFF deploys must also pass the compatibility manifest gate before
@@ -176,7 +178,15 @@ Optional deploy-specific variable:
 GCP_BUILD_STAGING_BUCKET
 GCP_DEPLOY_PROJECT_ID
 GCP_DEPLOY_SERVICE_ACCOUNT
+DEV_GCP_DEPLOY_PROJECT_ID
+DEV_GCP_WIF_PROVIDER
+DEV_GCP_DEPLOY_SERVICE_ACCOUNT
 ```
+
+After the 2026-07-19 dev-project replacement, dev uses its own project and WIF
+defaults (`pantheon-lupin-dev-20260719`) so staging-live remains independent.
+The `DEV_GCP_*` variables may override those dev-only defaults without changing
+staging-live promotion.
 
 `GCP_BUILD_STAGING_BUCKET` is the Cloud Build source staging path used by
 `gcloud builds submit`; the current value is
@@ -184,12 +194,15 @@ GCP_DEPLOY_SERVICE_ACCOUNT
 image publish workflow defaults to that path instead of the absent legacy
 `gs://pantheon-benjamin-20260528_cloudbuild` bucket.
 
-`GCP_DEPLOY_PROJECT_ID` is the VM project for `gcloud compute ssh`; the current
-VMs live in `pantheon-benjamin-20260528`. If it is absent, the deploy workflow
-defaults to `pantheon-benjamin-20260528`.
+`GCP_DEPLOY_PROJECT_ID` remains the staging-live/shared VM project override.
+Dev uses `DEV_GCP_DEPLOY_PROJECT_ID` and defaults to
+`pantheon-lupin-dev-20260719`; this prevents a suspended or stale staging
+project variable from silently redirecting dev deployment.
 
-If `GCP_DEPLOY_SERVICE_ACCOUNT` is absent, the deploy workflow falls back to
-`GCP_SERVICE_ACCOUNT`.
+Dev authenticates through `DEV_GCP_WIF_PROVIDER` and
+`DEV_GCP_DEPLOY_SERVICE_ACCOUNT`, with resource-name defaults for the
+replacement project. Staging-live continues to use `GCP_WIF_PROVIDER` and
+falls back from `GCP_DEPLOY_SERVICE_ACCOUNT` to `GCP_SERVICE_ACCOUNT`.
 
 Recommended GitHub Environments:
 

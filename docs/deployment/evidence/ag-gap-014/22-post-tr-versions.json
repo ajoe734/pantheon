@@ -1,0 +1,1 @@
+{"error":{"code":"RESOURCE_NOT_FOUND","i18nKey":"errors.RESOURCE_NOT_FOUND","message":"TradingRoomWorkspace 'trw_3e141c70552a' not found","retryable":false,"userActionable":true,"details":{"reason":"workspace_not_found","precondition_failed":null,"suggestion":null}},"meta":{"correlationId":"0946e01c-3cc4-415a-9866-5a59bd3ffe61"}}

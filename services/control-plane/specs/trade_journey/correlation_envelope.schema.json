@@ -1,0 +1,69 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/trade_journey/correlation_envelope/v1",
+  "title": "CorrelationEnvelope",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "tenant_id",
+    "environment",
+    "correlation_id",
+    "trace_id",
+    "event_id",
+    "causation_event_id",
+    "producer",
+    "event_time",
+    "received_at",
+    "producer_revision"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["trade-journey-envelope/1"]
+    },
+    "tenant_id": {
+      "type": "string"
+    },
+    "environment": {
+      "type": "string",
+      "enum": ["paper", "broker_sandbox", "canary", "live"]
+    },
+    "research_journey_id": {
+      "type": "string"
+    },
+    "strategy_lifecycle_id": {
+      "type": "string"
+    },
+    "journey_id": {
+      "type": "string"
+    },
+    "correlation_id": {
+      "type": "string"
+    },
+    "trace_id": {
+      "type": "string"
+    },
+    "event_id": {
+      "type": "string"
+    },
+    "causation_event_id": {
+      "type": "string"
+    },
+    "producer": {
+      "type": "string"
+    },
+    "event_time": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "received_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "producer_revision": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "additionalProperties": false
+}

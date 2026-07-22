@@ -53,6 +53,12 @@ Operate Pantheon from this repo. Use `scripts/launch-docs-site.sh`, `scripts/ai-
 Current frontend work targets `ajoe734/execute-plans`
 (`/home/lupin/code/execute-plans`), not `front-ai-trading-system`.
 
+`execute-plans` is a separate repository. There must not be an
+`execute-plans/` source tree inside a Pantheon checkout. Do not copy, mirror,
+or commit frontend source, frontend tests, or frontend build configuration into
+this repository; make those changes in `ajoe734/execute-plans` and coordinate
+cross-repository integration through the existing handoff and CI workflows.
+
 Do not recreate, clone, delete, or assign work to `front-ai-trading-system` for
 current Pantheon frontend delivery. Treat that repo name as historical evidence
 only unless a user explicitly asks for archaeology of old delivery notes.

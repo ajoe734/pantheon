@@ -113,7 +113,7 @@ def test_bff_management_data_sources_returns_canonical_envelope() -> None:
 
             # canonical envelope keys
             assert "data" in payload
-            assert "items" in payload
+            assert "items" not in payload
             assert "page_info" in payload
             assert "meta" in payload
 
@@ -124,22 +124,24 @@ def test_bff_management_data_sources_returns_canonical_envelope() -> None:
             assert len(data["items"]) == 2
             assert data["status"] == "ok"
             assert data["source"] == "service_client"
-
-            # items at top level mirrors data.items
-            assert payload["items"] == data["items"]
+            assert data["summary"]["total_items"] == 2
+            assert data["summary"]["returned_items"] == 2
 
             # page_info
             pi = payload["page_info"]
             assert pi["next_page_token"] is None
             assert pi["total"] == 2
-            assert pi["page_size"] == 2
+            assert pi["page_size"] == 50
+            assert pi["returned"] == 2
+            assert pi["has_more"] is False
 
             # meta
             meta = payload["meta"]
             assert meta["status"] == "ok"
             assert meta["source"] == "service_client"
             assert "snapshot_at" in meta
-            assert meta["surfaces"]["data_sources"] == "ok"
+            assert meta["surfaces"]["data_sources"]["status"] == "ok"
+            assert meta["surfaces"]["data_sources"]["source"] == "service_client"
         finally:
             bff_main.read_store = original
 
@@ -153,7 +155,7 @@ def test_bff_management_data_sources_includes_connector_fields() -> None:
                 "/bff/management/data-sources", headers=OPERATOR_HEADERS
             )
             assert response.status_code == 200, response.text
-            items = response.json()["items"]
+            items = response.json()["data"]["items"]
             assert items[0]["connector_id"] == "conn-ibkr-equity"
             assert items[1]["provider"] == "Kraken"
         finally:
@@ -177,8 +179,9 @@ def test_bff_management_data_sources_degraded_when_source_missing() -> None:
             payload = response.json()
 
             # must NOT be a bare [] — must be a proper degraded envelope
-            assert payload["items"] == []
+            assert "items" not in payload
             assert payload["page_info"]["total"] == 0
+            assert payload["page_info"]["returned"] == 0
 
             data = payload["data"]
             assert data["status"] == "unavailable"
@@ -188,7 +191,9 @@ def test_bff_management_data_sources_degraded_when_source_missing() -> None:
             meta = payload["meta"]
             assert meta["status"] == "unavailable"
             assert meta["source"] == "missing"
-            assert meta["surfaces"]["data_sources"] == "unavailable"
+            assert meta["surfaces"]["data_sources"]["status"] == "unavailable"
+            assert meta["surfaces"]["data_sources"]["source"] == "missing"
+            assert meta["degradation"]["reason"]
         finally:
             bff_main.read_store = original
 
@@ -204,11 +209,13 @@ def test_bff_management_data_sources_degraded_when_source_unavailable() -> None:
             assert response.status_code == 200, response.text
             payload = response.json()
 
-            assert payload["items"] == []
+            assert "items" not in payload
+            assert payload["data"]["items"] == []
             meta = payload["meta"]
             assert meta["status"] == "unavailable"
             assert meta["source"] == "unavailable"
-            assert meta["surfaces"]["data_sources"] == "unavailable"
+            assert meta["surfaces"]["data_sources"]["status"] == "unavailable"
+            assert meta["surfaces"]["data_sources"]["source"] == "unavailable"
         finally:
             bff_main.read_store = original
 

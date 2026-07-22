@@ -1,0 +1,552 @@
+openapi: "3.1.0"
+info:
+  title: Pantheon Agora API v1.5 Extension
+  version: "1.5.0"
+  description: |
+    Additive extension over the Agora v1.4 contract (agora_v1_4.openapi.yaml).
+    It preserves the frozen v1/v1.1/v1.2/v1.3/v1.4 files and adds the V11
+    dynamic Trading Room workspace contract family.
+
+    v1.5 changes:
+    - Complete TradingRoomWorkspaceProposal preview before opening an active
+      Trading Room workspace.
+    - Active TradingRoomWorkspace readback with declarative view/widget specs.
+    - Controlled layout, view, and widget mutation routes.
+    - WidgetRevisionProposal before/after preview and trader acceptance.
+    - Append-only TradingRoomDashboardVersion list and rollback routes.
+
+    Safety contract:
+    - Agora Trading Room remains decision-support and request-only.
+    - Widgets and charts are declarative schema payloads and must pass the
+      allowlist validator before rendering.
+    - Servant-originated widget changes must use WidgetRevisionProposal; direct
+      servant widget patching is not part of this contract.
+
+    v1/v1.1/v1.2/v1.3/v1.4 files remain immutable. This file together with
+    bundle_index.v1_5.json forms the additive v1.5 bundle.
+  contact:
+    name: Pantheon Platform
+  x-extends-contract: "services/control-plane/openapi/agora_v1_4.openapi.yaml"
+  x-capability-manifest: "services/control-plane/specs/agora/v6/capability_manifest_v1_5.json"
+servers:
+  - url: "{bff_base}"
+    variables:
+      bff_base:
+        default: "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io"
+security:
+  - BearerAuth: []
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+  parameters:
+    StrategyId:
+      name: strategy_id
+      in: path
+      required: true
+      schema: { type: string }
+    ProposalId:
+      name: proposal_id
+      in: path
+      required: true
+      schema: { type: string }
+    WorkspaceId:
+      name: workspace_id
+      in: path
+      required: true
+      schema: { type: string }
+    ViewId:
+      name: view_id
+      in: path
+      required: true
+      schema: { type: string }
+    WidgetId:
+      name: widget_id
+      in: path
+      required: true
+      schema: { type: string }
+    VersionId:
+      name: version_id
+      in: path
+      required: true
+      schema: { type: string }
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      schema: { type: string }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema: { type: string }
+  schemas:
+    TradingRoomWorkspaceProposal:
+      $ref: "../specs/agora/trading_room_workspace.schema.json#/definitions/TradingRoomWorkspaceProposal"
+    TradingRoomWorkspace:
+      $ref: "../specs/agora/trading_room_workspace.schema.json#/definitions/TradingRoomWorkspace"
+    TradingRoomViewSpec:
+      $ref: "../specs/agora/trading_room_workspace.schema.json#/definitions/TradingRoomViewSpec"
+    TradingRoomWidgetSpec:
+      $ref: "../specs/agora/trading_room_workspace.schema.json#/definitions/TradingRoomWidgetSpec"
+    WidgetPlacement:
+      $ref: "../specs/agora/trading_room_workspace.schema.json#/definitions/WidgetPlacement"
+    WorkspaceLayoutOperation:
+      $ref: "../specs/agora/trading_room_workspace.schema.json#/definitions/WorkspaceLayoutOperation"
+    WidgetRevisionProposal:
+      $ref: "../specs/agora/trading_room_workspace.schema.json#/definitions/WidgetRevisionProposal"
+    TradingRoomDashboardVersion:
+      $ref: "../specs/agora/trading_room_workspace.schema.json#/definitions/TradingRoomDashboardVersion"
+    CreateTradingRoomWorkspaceProposalRequest:
+      type: object
+      required: [strategyVersion]
+      properties:
+        strategyVersion: { type: string, minLength: 1 }
+        personalizationHints:
+          type: object
+          additionalProperties: true
+        evidenceRefs:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        dataFreshness:
+          type: object
+          additionalProperties: true
+        tradingRoomReady:
+          type: boolean
+          default: true
+      additionalProperties: false
+    AcceptTradingRoomWorkspaceProposalRequest:
+      type: object
+      properties:
+        expectedStatus:
+          type: string
+          enum: [preview]
+      additionalProperties: false
+    PatchWorkspaceLayoutRequest:
+      type: object
+      required: [operations]
+      properties:
+        operations:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/WorkspaceLayoutOperation" }
+      additionalProperties: false
+    AddWorkspaceViewRequest:
+      type: object
+      required: [viewSpec]
+      properties:
+        viewSpec: { $ref: "#/components/schemas/TradingRoomViewSpec" }
+      additionalProperties: false
+    PatchWorkspaceViewRequest:
+      type: object
+      required: [patch]
+      properties:
+        patch:
+          type: object
+          additionalProperties: true
+      additionalProperties: false
+    AddWorkspaceWidgetRequest:
+      type: object
+      required: [viewId, widgetSpec]
+      properties:
+        viewId: { type: string, minLength: 1 }
+        widgetSpec: { $ref: "#/components/schemas/TradingRoomWidgetSpec" }
+      additionalProperties: false
+    PatchWorkspaceWidgetRequest:
+      type: object
+      required: [patch]
+      properties:
+        patch:
+          type: object
+          additionalProperties: true
+      additionalProperties: false
+    CreateWidgetRevisionProposalRequest:
+      type: object
+      required: [instruction, proposedSpec, rationale, dataAvailability]
+      properties:
+        viewId: { type: string }
+        instruction: { type: string, minLength: 1 }
+        proposedSpec: { $ref: "#/components/schemas/TradingRoomWidgetSpec" }
+        rationale: { type: string, minLength: 1 }
+        warnings:
+          type: array
+          items: { type: string }
+        dataAvailability:
+          type: string
+          enum: [complete, partial, unavailable]
+      additionalProperties: false
+    AcceptWidgetRevisionProposalRequest:
+      type: object
+      properties:
+        acceptanceAction:
+          type: string
+          enum: [apply, keep_original_add_modified_copy]
+          default: apply
+        copyWidgetId: { type: string }
+      additionalProperties: false
+    RollbackWorkspaceVersionRequest:
+      type: object
+      properties:
+        reason: { type: string }
+      additionalProperties: false
+    CommandResponse:
+      type: object
+      required: [status, data, meta]
+      properties:
+        status:
+          type: string
+          enum: [accepted, queued, completed]
+        data: {}
+        meta:
+          type: object
+          additionalProperties: true
+      additionalProperties: false
+    DetailEnvelope:
+      type: object
+      required: [data, meta]
+      properties:
+        data: {}
+        meta:
+          type: object
+          additionalProperties: true
+      additionalProperties: false
+    ListEnvelope:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items: {}
+        meta:
+          type: object
+          additionalProperties: true
+      additionalProperties: false
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            details:
+              type: object
+              additionalProperties: true
+      additionalProperties: false
+paths:
+  /bff/agora/strategies/{strategy_id}/trading-room/proposals:
+    post:
+      operationId: createTradingRoomWorkspaceProposal
+      summary: Create a complete Trading Room workspace proposal preview
+      parameters:
+        - $ref: "#/components/parameters/StrategyId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateTradingRoomWorkspaceProposalRequest" }
+      responses:
+        "201":
+          description: Workspace proposal preview
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DetailEnvelope" }
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "422":
+          description: Proposal generation blocked by validation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /bff/agora/strategies/{strategy_id}/trading-room/proposals/{proposal_id}:
+    get:
+      operationId: getTradingRoomWorkspaceProposal
+      summary: Retrieve a Trading Room workspace proposal preview
+      parameters:
+        - $ref: "#/components/parameters/StrategyId"
+        - $ref: "#/components/parameters/ProposalId"
+      responses:
+        "200":
+          description: Workspace proposal preview
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DetailEnvelope" }
+        "404":
+          description: Proposal not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /bff/agora/strategies/{strategy_id}/trading-room/proposals/{proposal_id}/accept:
+    post:
+      operationId: acceptTradingRoomWorkspaceProposal
+      summary: Accept a preview proposal and materialize an active workspace
+      parameters:
+        - $ref: "#/components/parameters/StrategyId"
+        - $ref: "#/components/parameters/ProposalId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AcceptTradingRoomWorkspaceProposalRequest" }
+      responses:
+        "200":
+          description: Accepted proposal and active workspace
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DetailEnvelope" }
+        "409":
+          description: Proposal is not in preview state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /bff/agora/trading-room/workspaces/{workspace_id}:
+    get:
+      operationId: getTradingRoomWorkspace
+      summary: Retrieve an active Trading Room workspace
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          description: Active workspace
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DetailEnvelope" }
+        "404":
+          description: Workspace not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /bff/agora/trading-room/workspaces/{workspace_id}/layout:
+    patch:
+      operationId: patchTradingRoomWorkspaceLayout
+      summary: Apply controlled layout operations to a workspace
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PatchWorkspaceLayoutRequest" }
+      responses:
+        "200":
+          description: Updated workspace
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DetailEnvelope" }
+        "412":
+          description: Workspace ETag mismatch
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "422":
+          description: Operation failed validation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /bff/agora/trading-room/workspaces/{workspace_id}/views:
+    post:
+      operationId: addTradingRoomWorkspaceView
+      summary: Add a schema-valid view to a workspace
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AddWorkspaceViewRequest" }
+      responses:
+        "201":
+          description: Updated workspace
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DetailEnvelope" }
+        "409":
+          description: View already exists
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /bff/agora/trading-room/workspaces/{workspace_id}/views/{view_id}:
+    patch:
+      operationId: patchTradingRoomWorkspaceView
+      summary: Patch supported view fields in a workspace
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/ViewId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PatchWorkspaceViewRequest" }
+      responses:
+        "200":
+          description: Updated workspace
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DetailEnvelope" }
+        "404":
+          description: View not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /bff/agora/trading-room/workspaces/{workspace_id}/widgets:
+    post:
+      operationId: addTradingRoomWorkspaceWidget
+      summary: Add a schema-valid widget to a workspace view
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AddWorkspaceWidgetRequest" }
+      responses:
+        "201":
+          description: Updated workspace
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DetailEnvelope" }
+        "409":
+          description: Widget already exists
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /bff/agora/trading-room/workspaces/{workspace_id}/widgets/{widget_id}:
+    patch:
+      operationId: patchTradingRoomWorkspaceWidget
+      summary: Patch supported widget fields directly by trader action
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/WidgetId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PatchWorkspaceWidgetRequest" }
+      responses:
+        "200":
+          description: Updated workspace
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DetailEnvelope" }
+        "409":
+          description: Servant-originated direct patch is not allowed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /bff/agora/trading-room/workspaces/{workspace_id}/widgets/{widget_id}/revision-proposals:
+    post:
+      operationId: createWidgetRevisionProposal
+      summary: Create a before/after widget revision proposal
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/WidgetId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateWidgetRevisionProposalRequest" }
+      responses:
+        "201":
+          description: Widget revision proposal preview
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DetailEnvelope" }
+        "422":
+          description: Proposed widget failed validation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /bff/agora/trading-room/widget-revision-proposals/{proposal_id}/accept:
+    post:
+      operationId: acceptWidgetRevisionProposal
+      summary: Apply or keep-copy a widget revision proposal
+      parameters:
+        - $ref: "#/components/parameters/ProposalId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AcceptWidgetRevisionProposalRequest" }
+      responses:
+        "200":
+          description: Updated workspace and appended version
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DetailEnvelope" }
+        "412":
+          description: Widget changed after proposal preview
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /bff/agora/trading-room/workspaces/{workspace_id}/versions:
+    get:
+      operationId: listTradingRoomWorkspaceVersions
+      summary: List workspace versions and change log entries
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "200":
+          description: Workspace version list
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ListEnvelope" }
+
+  /bff/agora/trading-room/workspaces/{workspace_id}/versions/{version_id}/rollback:
+    post:
+      operationId: rollbackTradingRoomWorkspaceVersion
+      summary: Restore a prior workspace version by appending a rollback version
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/VersionId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RollbackWorkspaceVersionRequest" }
+      responses:
+        "200":
+          description: Rolled back workspace and appended version
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DetailEnvelope" }
+        "404":
+          description: Version not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }

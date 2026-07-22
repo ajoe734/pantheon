@@ -46,6 +46,11 @@
       "format": "date-time",
       "description": "Timestamp when the postmortem was published. Required when status is published."
     },
+    "published_event_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Durable postmortem.published event identity committed with the publication transition."
+    },
     "incident_id": {
       "type": "string",
       "minLength": 1,
@@ -139,6 +144,28 @@
       "type": "array",
       "items": { "type": "string" },
       "description": "IDs of the authors who contributed to this postmortem."
+    },
+    "telemetry_event_ids": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "TelemetryEvent IDs copied from the parent IncidentCase for machine-readable postmortem evidence linkage."
+    },
+    "reconciliation_ids": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Reconciliation record or DriftReport IDs copied from the parent IncidentCase."
+    },
+    "incident_cluster_id": {
+      "type": "string",
+      "description": "Incident cluster copied from the parent IncidentCase when present."
+    },
+    "incident_evidence_summary": {
+      "type": "string",
+      "description": "Evidence summary copied from the parent IncidentCase for draft context."
+    },
+    "lineage_ref": {
+      "type": "string",
+      "description": "Composite lineage reference copied from the parent IncidentCase when present."
     },
     "linked_evolution_decision_id": {
       "type": "string",

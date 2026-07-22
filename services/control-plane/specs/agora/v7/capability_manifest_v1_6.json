@@ -1,0 +1,76 @@
+{
+  "manifest_version": "1.6",
+  "extends": "v1.5",
+  "description": "Agora BFF capability manifest v1.6 - persona-to-persona opinion consultation, governed action authority event contracts (PINT-001), and 12-block Winner Branch completeness contract (AG-GAP-012). This is a contract freeze only: no new BFF/OpenAPI routes are introduced by this manifest.",
+  "schema_bundle_index": "services/control-plane/specs/agora/bundle_index.v1_6.json",
+  "capabilities": [
+    {
+      "id": "persona_opinion_consultation",
+      "name": "agora.persona.opinion_consultation.v1",
+      "version": "1.0",
+      "description": "Cross-repo event contract for persona-to-persona opinion consultation, operationalizing PERSONA_RUNTIME_MODEL.md section 13 (requester / responder / committee_participant roles) as SessionPersona-mediated events. Distinct from services/consultation's ConsultRequest/ConsultMemo formal governance-review workflow; may escalate into one via escalated_consult_request_id.",
+      "schemas": [
+        "PersonaOpinionConsultationEvent"
+      ],
+      "routes": [],
+      "bff_route_families": [],
+      "implementation_status": "contract_frozen_no_backend_routes"
+    },
+    {
+      "id": "governed_action_authority",
+      "name": "agora.persona.governed_action_authority.v1",
+      "version": "1.0",
+      "description": "Cross-repo event contract that closes persona action authority, operationalizing PERSONA_RUNTIME_MODEL.md section 6 Consult Policy (required reviewers/committees, trigger rules, forbidden solo actions, escalation rules). Records the persona-owned solo_eligibility evaluation and the governance-owned decision outcome; never executes the underlying command.",
+      "schemas": [
+        "GovernedActionAuthorityRequest"
+      ],
+      "routes": [],
+      "bff_route_families": [],
+      "implementation_status": "contract_frozen_no_backend_routes"
+    },
+    {
+      "id": "winner_branch_completeness",
+      "name": "agora.winner_branch.completeness.v1",
+      "version": "1.0",
+      "description": "Cross-repo contract defining the 12 named Winner Branch block completeness assessment, mapped compatibly to the 7 generic completeness dimensions.",
+      "schemas": [
+        "WinnerBranchCompleteness"
+      ],
+      "routes": [],
+      "bff_route_families": [],
+      "implementation_status": "contract_frozen_no_backend_routes"
+    }
+  ],
+  "required_definition_checksums": [
+    "PersonaOpinionConsultationEvent",
+    "GovernedActionAuthorityRequest",
+    "WinnerBranchCompleteness"
+  ],
+  "authority_boundary": {
+    "persona_owned": [
+      "consult_policy_id reference",
+      "persona_lifecycle_state snapshot",
+      "solo_eligibility evaluation (evaluated, forbidden_solo_action, trigger_rules_matched)"
+    ],
+    "governance_owned": [
+      "decision on GovernedActionAuthorityRequest (authorized / authorized_with_conditions / denied / escalated)",
+      "decision_by identity"
+    ],
+    "domain_service_owned": [
+      "command execution once decision is authorized or authorized_with_conditions"
+    ],
+    "source_decisions": [
+      "PERSONA_RUNTIME_MODEL.md#6-consult-policy-模型",
+      "PERSONA_RUNTIME_MODEL.md#13-persona-與-consultation-的關係",
+      "docs/decisions/control-plane-persona-boundary.md",
+      "docs/decisions/control-plane-router-enforcement-ownership.md"
+    ]
+  },
+  "safety_boundary": {
+    "direct_order_route": false,
+    "capital_binding": false,
+    "command_execution": false,
+    "schema_validator_required": true
+  },
+  "note": "The v1.6 surface is additive over v1.5 and freezes three new schemas/contracts. It does not authorize direct trading actions, deployment, rollback, broker, or capital actions, and it does not itself execute the governed action. BFF wiring / route implementation is out of scope for this freeze and is tracked as follow-up execution work."
+}

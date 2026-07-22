@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import pathlib
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -60,6 +61,8 @@ class SignalConsumer:
         schema_path: str | pathlib.Path | None = None,
         rebalance_timeout_bars: int = _REBALANCE_TIMEOUT_BARS,
         binding_id: str | None = None,
+        runtime_id: str | None = None,
+        capital_pool_id: str | None = None,
     ) -> None:
         self._store = store_client
         self._schema = self._load_schema(schema_path)
@@ -67,6 +70,10 @@ class SignalConsumer:
         # When set, signals whose binding_id field doesn't match are discarded
         # as a defense-in-depth layer on top of queue-key isolation.
         self._binding_id: str | None = str(binding_id).strip() if binding_id else None
+        # Runtime-level isolation: reject signals addressed to a different runtime.
+        self._runtime_id: str | None = str(runtime_id).strip() if runtime_id else None
+        # Capital-pool isolation: reject signals scoped to a different pool.
+        self._capital_pool_id: str | None = str(capital_pool_id).strip() if capital_pool_id else None
 
         # run_id → {"signals": [...], "bars_waited": int}
         self._rebalance_buffer: dict[str, dict] = defaultdict(
@@ -94,6 +101,9 @@ class SignalConsumer:
             signal = self._validate(raw)
             if signal is None:
                 continue
+            recorder = getattr(algo, "RecordSignalProcessed", None)
+            if callable(recorder):
+                recorder(signal)
             if self._is_duplicate(signal):
                 self._record_filtered_signal_noop(
                     signal,
@@ -119,6 +129,34 @@ class SignalConsumer:
                         "signal_binding_id": str(signal.get("binding_id") or "").strip(),
                     },
                 )
+                self._enqueue_dlq(signal, "binding_mismatch")
+                continue
+            if self._is_wrong_runtime(signal):
+                self._record_filtered_signal_noop(
+                    signal,
+                    algo,
+                    "runtime_mismatch",
+                    extra_metadata={
+                        "expected_runtime_id": self._runtime_id,
+                        "signal_runtime_id": str(signal.get("runtime_id") or "").strip(),
+                    },
+                )
+                self._enqueue_dlq(signal, "runtime_mismatch")
+                continue
+            if self._is_wrong_capital_pool(signal):
+                signal_pool = str(
+                    (signal.get("metadata") or {}).get("capital_pool_id") or ""
+                ).strip()
+                self._record_filtered_signal_noop(
+                    signal,
+                    algo,
+                    "capital_pool_mismatch",
+                    extra_metadata={
+                        "expected_capital_pool_id": self._capital_pool_id,
+                        "signal_capital_pool_id": signal_pool,
+                    },
+                )
+                self._enqueue_dlq(signal, "capital_pool_mismatch")
                 continue
             if signal.get("run_id"):
                 self._buffer_rebalance(signal)
@@ -138,7 +176,20 @@ class SignalConsumer:
     # ------------------------------------------------------------------
 
     def _validate(self, raw: dict) -> dict | None:
+        if not isinstance(raw, dict):
+            log.error("Signal payload must be an object — discarding")
+            return None
+
         signal_id = raw.get("signal_id", "<unknown>")
+
+        # Python accepts NaN/Infinity by default even though they are not JSON
+        # numbers. Reject them, including inside metadata, before any runtime
+        # recorder or journey event can observe this signal.
+        try:
+            json.dumps(raw, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            log.error("[%s] Signal is not strict JSON: %s — discarding", signal_id, exc)
+            return None
 
         # Schema version check (major version must match)
         version_str = str(raw.get("version", "0.0"))
@@ -173,6 +224,32 @@ class SignalConsumer:
                 log.error("[%s] Missing required field '%s' — discarding", signal_id, field)
                 return None
 
+        if not _is_finite_number(raw["quantity"], minimum=0.0):
+            log.error("[%s] quantity must be a finite non-negative number — discarding", signal_id)
+            return None
+
+        limit_price = raw.get("limit_price")
+        if limit_price is not None and not _is_finite_number(
+            limit_price,
+            minimum=0.0,
+            exclusive=True,
+        ):
+            log.error("[%s] limit_price must be a finite positive number — discarding", signal_id)
+            return None
+
+        metadata = raw.get("metadata")
+        if metadata is not None and not isinstance(metadata, dict):
+            log.error("[%s] metadata must be an object — discarding", signal_id)
+            return None
+        confidence_score = (metadata or {}).get("confidence_score")
+        if confidence_score is not None and not _is_finite_number(
+            confidence_score,
+            minimum=0.0,
+            maximum=1.0,
+        ):
+            log.error("[%s] confidence_score must be finite and within [0, 1] — discarding", signal_id)
+            return None
+
         return raw
 
     def _is_duplicate(self, signal: dict) -> bool:
@@ -203,7 +280,7 @@ class SignalConsumer:
         """
         Staleness check. Uses algo.Time if available (real-time or backtest time),
         falling back to current UTC time.
-        
+
         Note: algo.Time is naive and represents the exchange's local time.
         For accurate staleness checks, we compare against signal's timestamp
         which should also be in a consistent timezone (typically UTC per schema).
@@ -211,7 +288,7 @@ class SignalConsumer:
         datetimes for comparison.
         """
         sid = signal["signal_id"]
-        
+
         # Determine "now" based on algo context
         if algo and hasattr(algo, "Time"):
             now = algo.Time
@@ -221,7 +298,7 @@ class SignalConsumer:
         ts = _parse_dt(signal["timestamp"])
         if not ts:
             return None
-            
+
         # Normalize both to naive datetimes for comparison (strip timezone info)
         # This handles the case where algo.Time is naive but represents exchange time
         if ts.tzinfo is not None:
@@ -230,16 +307,16 @@ class SignalConsumer:
             now = now.replace(tzinfo=None)
 
         diff_seconds = (now - ts).total_seconds()
-        
+
         # Discard signals >24h old
         if diff_seconds > 86400:
-            log.warning("[%s] Signal timestamp >24h old (now=%s, ts=%s) — discarding as stale", 
+            log.warning("[%s] Signal timestamp >24h old (now=%s, ts=%s) — discarding as stale",
                         sid, now.isoformat(), ts.isoformat())
             return "stale_signal"
-            
+
         # Reject signals >1h in future (anomaly check for clock drift)
         if diff_seconds < -3600:
-             log.warning("[%s] Signal timestamp >1h in future (now=%s, ts=%s) — discarding as anomalous", 
+             log.warning("[%s] Signal timestamp >1h in future (now=%s, ts=%s) — discarding as anomalous",
                          sid, now.isoformat(), ts.isoformat())
              return "future_signal_anomaly"
 
@@ -302,6 +379,64 @@ class SignalConsumer:
             signal.get("signal_id", "<unknown>"), self._binding_id, signal_binding,
         )
         return True
+
+    def _is_wrong_runtime(self, signal: dict) -> bool:
+        """Reject signals addressed to a different runtime instance.
+
+        Only active when this consumer was constructed with a *runtime_id*.
+        Signals without a ``runtime_id`` field are unrouted legacy signals and
+        pass through to preserve backward compatibility.
+        """
+        if not self._runtime_id:
+            return False
+        signal_runtime = str(signal.get("runtime_id") or "").strip()
+        if not signal_runtime:
+            return False
+        if signal_runtime == self._runtime_id:
+            return False
+        log.warning(
+            "[%s] Runtime mismatch: expected %s, got %s — discarding",
+            signal.get("signal_id", "<unknown>"), self._runtime_id, signal_runtime,
+        )
+        return True
+
+    def _is_wrong_capital_pool(self, signal: dict) -> bool:
+        """Reject signals scoped to a different capital pool.
+
+        Only active when this consumer was constructed with a *capital_pool_id*.
+        Signals whose metadata carries no ``capital_pool_id`` pass through —
+        they predate the field and must not be silently dropped.
+        """
+        if not self._capital_pool_id:
+            return False
+        signal_pool = str(
+            (signal.get("metadata") or {}).get("capital_pool_id") or ""
+        ).strip()
+        if not signal_pool:
+            return False
+        if signal_pool == self._capital_pool_id:
+            return False
+        log.warning(
+            "[%s] Capital pool mismatch: expected %s, got %s — discarding",
+            signal.get("signal_id", "<unknown>"), self._capital_pool_id, signal_pool,
+        )
+        return True
+
+    def _enqueue_dlq(self, signal: dict, reason: str) -> None:
+        """Best-effort: send an isolation-rejected signal to the store's DLQ.
+
+        Adds a ``dlq_reason`` marker to the payload copy so operators can
+        identify why the signal was dead-lettered without re-parsing logs.
+        """
+        enqueue_dlq = getattr(self._store, "enqueue_dlq", None)
+        if not callable(enqueue_dlq):
+            return
+        try:
+            dlq_payload = {**signal, "_dlq_reason": reason}
+            enqueue_dlq(dlq_payload)
+        except Exception as exc:  # noqa: BLE001 - DLQ write must never break the signal path
+            log.warning("[%s] DLQ enqueue failed (%s): %s",
+                        signal.get("signal_id", "<unknown>"), reason, exc)
 
     # ------------------------------------------------------------------
     # Conflict resolution (same symbol, different signals)
@@ -449,6 +584,26 @@ def _parse_dt(ts_str: str) -> datetime | None:
         return datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
     except Exception:
         return None
+
+
+def _is_finite_number(
+    value: Any,
+    *,
+    minimum: float | None = None,
+    maximum: float | None = None,
+    exclusive: bool = False,
+) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    number = float(value)
+    if not math.isfinite(number):
+        return False
+    if minimum is not None:
+        if exclusive and number <= minimum:
+            return False
+        if not exclusive and number < minimum:
+            return False
+    return maximum is None or number <= maximum
 
 
 def _signal_wins(candidate: dict, incumbent: dict) -> bool:

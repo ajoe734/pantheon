@@ -1,9 +1,9 @@
 # Review: AG-BE-RS-003-SIDECAR-BFF-HANDOFF
 
-> Reviewer: Claude2  
-> Reviewed artifact: `support/sidecars/AG-BE-RS-003/AG-BE-RS-003-SIDECAR-BFF-HANDOFF.md`  
-> Commit reviewed: f6916e31  
-> Date: 2026-06-20  
+> Reviewer: Claude2
+> Reviewed artifact: `support/sidecars/AG-BE-RS-003/AG-BE-RS-003-SIDECAR-BFF-HANDOFF.md`
+> Commit reviewed: f6916e31
+> Date: 2026-06-20
 > Verdict: **APPROVED**
 
 ---

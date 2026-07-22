@@ -262,9 +262,14 @@ class TestPostmortemConstruction(unittest.TestCase):
         pm = _make_postmortem()
         self.assertIsNone(pm.published_at)
         self.assertIsNone(pm.linked_evolution_decision_id)
+        self.assertIsNone(pm.incident_cluster_id)
+        self.assertIsNone(pm.incident_evidence_summary)
+        self.assertIsNone(pm.lineage_ref)
         self.assertEqual(pm.contributing_factors, [])
         self.assertEqual(pm.timeline, [])
         self.assertEqual(pm.action_items, [])
+        self.assertEqual(pm.telemetry_event_ids, [])
+        self.assertEqual(pm.reconciliation_ids, [])
 
     def test_contributing_factors_stored(self):
         pm = _make_postmortem(contributing_factors=["High vol regime", "Oversized position"])
@@ -280,6 +285,20 @@ class TestPostmortemConstruction(unittest.TestCase):
             {"ts": "2026-04-10T14:00:00Z", "description": "Drawdown threshold breached"},
         ])
         self.assertEqual(len(pm.timeline), 2)
+
+    def test_incident_evidence_refs_stored(self):
+        pm = _make_postmortem(
+            telemetry_event_ids=["evt-001"],
+            reconciliation_ids=["drift-report-001", "recon-run-001"],
+            incident_cluster_id="drift:rolling_drawdown_multiple",
+            incident_evidence_summary="threshold breach evidence",
+            lineage_ref="artifact-001@1.2.3",
+        )
+        self.assertEqual(pm.telemetry_event_ids, ["evt-001"])
+        self.assertEqual(pm.reconciliation_ids, ["drift-report-001", "recon-run-001"])
+        self.assertEqual(pm.incident_cluster_id, "drift:rolling_drawdown_multiple")
+        self.assertEqual(pm.incident_evidence_summary, "threshold breach evidence")
+        self.assertEqual(pm.lineage_ref, "artifact-001@1.2.3")
 
 
 # ---------------------------------------------------------------------------
@@ -483,6 +502,20 @@ class TestIncidentStore(unittest.TestCase):
         updated = self.store.link_evolution_decision("pm-001", "evo-dec-001")
         self.assertEqual(updated.linked_evolution_decision_id, "evo-dec-001")
 
+    def test_update_postmortem_draft_refreshes_evidence_refs(self):
+        self.store.create_incident(_make_incident(telemetry_event_ids=["evt-001"]))
+        self.store.create_postmortem(_make_postmortem())
+        updated = self.store.update_postmortem_draft(
+            _make_postmortem(
+                telemetry_event_ids=["evt-001"],
+                reconciliation_ids=["recon-001"],
+                incident_evidence_summary="refreshed incident evidence",
+            )
+        )
+        self.assertEqual(updated.telemetry_event_ids, ["evt-001"])
+        self.assertEqual(updated.reconciliation_ids, ["recon-001"])
+        self.assertEqual(updated.incident_evidence_summary, "refreshed incident evidence")
+
 
 # ---------------------------------------------------------------------------
 # Persistence round-trip
@@ -506,12 +539,21 @@ class TestPersistenceRoundTrip(unittest.TestCase):
         self.assertEqual(restored.deployment_stage, inc.deployment_stage)
 
     def test_postmortem_to_dict_from_dict(self):
-        pm = _make_postmortem(contributing_factors=["vol spike"], action_items=["reduce size"])
+        pm = _make_postmortem(
+            contributing_factors=["vol spike"],
+            action_items=["reduce size"],
+            telemetry_event_ids=["evt-1"],
+            reconciliation_ids=["recon-1"],
+            incident_evidence_summary="incident summary",
+        )
         d = pm.to_dict()
         restored = Postmortem.from_dict(d)
         self.assertEqual(restored.postmortem_id, pm.postmortem_id)
         self.assertEqual(restored.contributing_factors, ["vol spike"])
         self.assertEqual(restored.action_items, ["reduce size"])
+        self.assertEqual(restored.telemetry_event_ids, ["evt-1"])
+        self.assertEqual(restored.reconciliation_ids, ["recon-1"])
+        self.assertEqual(restored.incident_evidence_summary, "incident summary")
 
     def test_postmortem_to_json_from_json(self):
         pm = _make_postmortem()

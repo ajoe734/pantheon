@@ -430,6 +430,69 @@ operator-locked.
 
 ---
 
+## 9.1 Shared Deploy Workflow Ownership (Fleet Infrastructure)
+
+`.github/workflows/nonprod-deploy.yml` (pantheon, workflow id `269991390`)
+and its execute-plans counterpart (`292028803`) are **fleet
+infrastructure**: every task's deploy and proof runs go through them, not
+just the task that last touched one. This is a hard rule, not a style
+preference — a 2026-07-16 incident (`OPS-DEPLOY-WORKFLOW-GUARD-001`) found
+worker-spawned local loops that repeatedly ran `gh workflow disable` on
+both workflows and `gh run cancel` / `gh api .../force-cancel` on runs they
+did not dispatch, in order to protect one task's own proof run. That froze
+the deploy path for the entire fleet — including tasks strictly upstream of
+the worker doing the freezing — and outlived the run it was meant to
+protect.
+
+**Forbidden, unconditionally:**
+
+- `gh workflow disable` (or the equivalent `gh api --method PUT
+  .../actions/workflows/<id>/disable`) against a shared deploy workflow.
+  No task ever owns exclusivity over the workflow itself.
+- `gh run cancel` / `gh run ... force-cancel` against a run your task did
+  not itself dispatch. "Not the run I'm waiting on" is not the same as
+  "mine to cancel."
+- Any loop that keeps re-applying either of the above on a timer. A guard
+  script that outlives its own protected run and re-disables/re-cancels
+  every few seconds is exactly the pattern this section exists to stop.
+
+**Sanctioned isolation, in order of preference:**
+
+1. **The workflow's own `concurrency:` group.** `nonprod-deploy.yml` keys
+   its group on `inputs.environment` for `workflow_dispatch` and on a
+   separate `dev-auto` / `staging-auto` key for push triggers, with
+   `cancel-in-progress` true only for push. A manual proof dispatch to
+   `dev` therefore already queues behind (never cancels, is never
+   cancelled by) any other manual `dev` dispatch, and runs independently
+   of automatic `publish/v*` / `master` push redeploys in their own
+   group. This is usually all a proof run needs: dispatch with the
+   `environment` input that matches what you're proving and let the
+   group serialize it.
+2. **The dev environment lease** (`scripts/dev_environment_lease.py`,
+   compare-and-swap state on the `ajoe734/execute-plans`
+   `environment-coordination` branch). `nonprod-deploy.yml`'s `deploy-dev`
+   job already acquires this lease, holds it with an identity-bound
+   heartbeat, and releases it only after every protected step succeeds —
+   a crashed or killed run's lease self-expires via TTL instead of
+   blocking the fleet. If a task needs exclusivity stronger than the
+   concurrency group (for example, excluding a differently-triggered run
+   that lands in a different group), it must go through this lease, not a
+   home-rolled disable/cancel loop.
+
+Any helper that still needs to watch its own run must be scoped to runs it
+dispatched itself and must exit as soon as that run reaches a terminal
+state (`success` / `failure` / `cancelled`) — never a fixed-duration sleep
+loop that keeps acting after the protected run is done.
+
+**Detecting a stuck disabled workflow:** `scripts/check_shared_deploy_workflow_disabled.py`
+reports (and, with `--enable`, restores) any watched workflow found in
+`disabled_manually` state. Wire it into cron the same way as
+`scripts/reap_hung_workers.py` (see the `pantheon-hung-worker-reap` cron
+line) so a stray disable cannot silently freeze the fleet's deploy path
+until a human happens to notice.
+
+---
+
 ## 10. Recovery Recipes
 
 ### 10.1 Rebase stuck mid-pick
@@ -564,6 +627,8 @@ is retired by OPS-GIT-REDESIGN-001:
 - `scripts/git/worker_commit.py`
 - `scripts/git/check_commit_trailers.py`, `scripts/git/check_commit_scope.py`
 - `scripts/git/publish_promote.py`, `scripts/git/notify_orchestrator.py`
+- `scripts/dev_environment_lease.py`, `scripts/run_with_dev_environment_lease.sh`
+- `scripts/check_shared_deploy_workflow_disabled.py`, `scripts/reap_hung_workers.py`
 - `.orchestrator/templates/wakeup.txt`
 - `.orchestrator/skills/worker-anchor-commit.md`
 - `.orchestrator/skills/task-closeout-finalization.md`

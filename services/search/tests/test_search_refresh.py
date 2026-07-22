@@ -85,6 +85,54 @@ def test_search_index_refresh_records_pipeline_snapshot(tmp_path: Path) -> None:
     assert runs.json()["runs"][0]["pipeline_run_id"] == snapshot["pipeline_run_id"]
 
 
+def test_source_completion_refresh_materializes_and_replays_truth(tmp_path: Path) -> None:
+    evidence_path = tmp_path / "source_evidence.jsonl"
+    materialize_path = tmp_path / "search-materialize.jsonl"
+    pipeline_path = tmp_path / "pipeline.jsonl"
+    _write_source_evidence(evidence_path)
+
+    client = TestClient(
+        create_app(
+            tmp_path / "search-index.jsonl",
+            evidence_path,
+            materialize_path,
+            pipeline_path,
+            freshness_sla_seconds=60,
+        )
+    )
+
+    response = client.post(
+        "/api/search/index/source-completions",
+        json={
+            "ingest_run_id": "ingest-src005-1",
+            "connector_id": "conn-refresh",
+            "source_type": "internal_note",
+            "trace_id": "trace-src005",
+            "normalized_count": 1,
+            "source_ids": ["src-refresh-note"],
+            "evidence_bundle_id": "evbundle-src-refresh-note",
+            "knowledge_object_ids": ["ko-src-refresh-note"],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["schema_version"] == "source_search_completion_refresh.v1"
+    assert payload["pipeline_snapshot"]["triggered_by"] == "ingest_completion"
+    assert payload["pipeline_snapshot"]["trigger_ref"] == "ingest-src005-1"
+    assert payload["freshness"]["status"] == "fresh"
+    assert payload["materialized_index"]["trigger_ref"] == "ingest-src005-1"
+    assert payload["materialized_index"]["source_completion"]["source_ids"] == ["src-refresh-note"]
+    assert payload["truth"]["index_refreshed"] is True
+    assert payload["truth"]["materialized_matches_completion"] is True
+    assert materialize_path.exists()
+
+    replay = client.get("/api/search/index/source-completions/ingest-src005-1")
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["truth"]["pipeline_run_id"] == payload["pipeline_snapshot"]["pipeline_run_id"]
+    assert replay.json()["truth"]["materialized_matches_completion"] is True
+
+
 def test_search_refresh_freshness_starts_closed_then_opens_after_refresh(tmp_path: Path) -> None:
     evidence_path = tmp_path / "source_evidence.jsonl"
     _write_source_evidence(evidence_path)

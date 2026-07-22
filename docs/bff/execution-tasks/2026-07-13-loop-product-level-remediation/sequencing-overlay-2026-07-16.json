@@ -1,0 +1,859 @@
+{
+  "source_hashes": {
+    "tasks_catalog_sha256": "44a893162da5779fc64292a70ba59fb7237eb4102ffb65f8e3ad3b64a8f31357",
+    "sequencing_addendum_sha256": "9a3b735ac161b612e35a1d0e313cc7037da444f8b0311c623d27396a06d4b519",
+    "merge_pr_3737_sha": "a4b5df9a51bc3da6df0d39d422d9db4edc553aba"
+  },
+  "g2_evidence_contract": {
+    "version": 1,
+    "target_task": "LOOP-PROD-CLOSE-001",
+    "tasks_catalog_sha256": "44a893162da5779fc64292a70ba59fb7237eb4102ffb65f8e3ad3b64a8f31357",
+    "sequencing_addendum_sha256": "9a3b735ac161b612e35a1d0e313cc7037da444f8b0311c623d27396a06d4b519",
+    "merge_pr_3737_sha": "a4b5df9a51bc3da6df0d39d422d9db4edc553aba"
+  },
+  "tasks": {
+    "LOOP-PROD-000": {
+      "wave": 0,
+      "depends_on": [],
+      "classification": "permitted before the paper-trade proof",
+      "rationale": "Define the 12 loops and composite OODA overlay.",
+      "original_depends_on": []
+    },
+    "LOOP-PROD-001": {
+      "wave": 0,
+      "depends_on": [
+        "LOOP-PROD-000"
+      ],
+      "classification": "permitted before the paper-trade proof",
+      "rationale": "Set up tenant/env-scoped controller records.",
+      "original_depends_on": [
+        "LOOP-PROD-000"
+      ]
+    },
+    "LOOP-PROD-002": {
+      "wave": 0,
+      "depends_on": [
+        "LOOP-PROD-000",
+        "LOOP-PROD-001"
+      ],
+      "classification": "permitted before the paper-trade proof",
+      "rationale": "Define structured evidence schema rules.",
+      "original_depends_on": [
+        "LOOP-PROD-000",
+        "LOOP-PROD-001"
+      ]
+    },
+    "LOOP-PROD-REC-001": {
+      "wave": 0,
+      "depends_on": [
+        "LOOP-PROD-001",
+        "LOOP-PROD-002"
+      ],
+      "classification": "permitted before the paper-trade proof",
+      "rationale": "Set up full-stack restart/recovery & fault injection.",
+      "original_depends_on": [
+        "LOOP-PROD-001",
+        "LOOP-PROD-002"
+      ]
+    },
+    "LOOP-PROD-SRC-001": {
+      "wave": 1,
+      "depends_on": [
+        "LOOP-PROD-001",
+        "LOOP-PROD-002",
+        "LOOP-PROD-REC-001"
+      ],
+      "classification": "part of the G2 proof path",
+      "rationale": "Permissive auth cutover enables default scheduler/reconciler.",
+      "original_depends_on": [
+        "LOOP-PROD-001",
+        "LOOP-PROD-002",
+        "LOOP-PROD-REC-001",
+        "LOOP-PROD-AUTH-001"
+      ]
+    },
+    "LOOP-PROD-DIST-001": {
+      "wave": 1,
+      "depends_on": [
+        "LOOP-PROD-SRC-001"
+      ],
+      "classification": "part of the G2 proof path",
+      "rationale": "Distillation queue handler.",
+      "original_depends_on": [
+        "LOOP-PROD-SRC-001"
+      ]
+    },
+    "LOOP-PROD-ALPHA-001": {
+      "wave": 1,
+      "depends_on": [
+        "LOOP-PROD-DIST-001"
+      ],
+      "classification": "part of the G2 proof path",
+      "rationale": "Strategy replication processor.",
+      "original_depends_on": [
+        "LOOP-PROD-DIST-001"
+      ]
+    },
+    "LOOP-PROD-TEACH-001": {
+      "wave": 1,
+      "depends_on": [
+        "LOOP-PROD-SRC-001",
+        "LOOP-PROD-REC-001",
+        "LOOP-PROD-ALPHA-001"
+      ],
+      "classification": "permitted before the paper-trade proof",
+      "rationale": "Persona teaching processor on authoritative data.",
+      "original_depends_on": [
+        "LOOP-PROD-SRC-001",
+        "LOOP-PROD-REC-001",
+        "LOOP-PROD-ALPHA-001"
+      ]
+    },
+    "LOOP-PROD-AGORA-001": {
+      "wave": 1,
+      "depends_on": [
+        "LOOP-PROD-001",
+        "LOOP-PROD-002",
+        "LOOP-PROD-REC-001",
+        "LOOP-PROD-TEACH-001",
+        "AG-GAP-014"
+      ],
+      "classification": "permitted before the paper-trade proof",
+      "rationale": "Agora handoff and dataset worker.",
+      "original_depends_on": [
+        "LOOP-PROD-001",
+        "LOOP-PROD-002",
+        "LOOP-PROD-REC-001",
+        "LOOP-PROD-TEACH-001",
+        "LOOP-PROD-AUTH-001",
+        "AG-GAP-014"
+      ]
+    },
+    "LOOP-PROD-CONS-001": {
+      "wave": 1,
+      "depends_on": [
+        "LOOP-PROD-001",
+        "LOOP-PROD-002",
+        "LOOP-PROD-REC-001",
+        "LOOP-PROD-AGORA-001"
+      ],
+      "classification": "permitted before the paper-trade proof",
+      "rationale": "Reconcile participant consultation steps.",
+      "original_depends_on": [
+        "LOOP-PROD-001",
+        "LOOP-PROD-002",
+        "LOOP-PROD-REC-001",
+        "LOOP-PROD-AGORA-001"
+      ]
+    },
+    "LOOP-PROD-AGORA-002": {
+      "wave": 1,
+      "depends_on": [
+        "LOOP-PROD-CONS-001",
+        "LOOP-PROD-ALPHA-001",
+        "AG-GAP-005"
+      ],
+      "classification": "permitted before the paper-trade proof",
+      "rationale": "Implement deferred workshop operations.",
+      "original_depends_on": [
+        "LOOP-PROD-CONS-001",
+        "LOOP-PROD-ALPHA-001",
+        "AG-GAP-005",
+        "LOOP-PROD-ATTEST-001"
+      ]
+    },
+    "LOOP-PROD-AGORA-003": {
+      "wave": 1,
+      "depends_on": [
+        "LOOP-PROD-AGORA-002",
+        "AG-GAP-013",
+        "AG-GAP-014",
+        "OPS-EP-DEV-MAIN-RECONCILE-001"
+      ],
+      "classification": "permitted before the paper-trade proof",
+      "rationale": "Expose workshop controls on execute-plans.",
+      "original_depends_on": [
+        "LOOP-PROD-AGORA-002",
+        "LOOP-PROD-FE-001",
+        "AG-GAP-013",
+        "AG-GAP-014",
+        "OPS-EP-DEV-MAIN-RECONCILE-001"
+      ]
+    },
+    "LOOP-PROD-IMIT-001": {
+      "wave": 1,
+      "depends_on": [
+        "LOOP-PROD-AGORA-001",
+        "LOOP-PROD-TEACH-001",
+        "LOOP-PROD-REC-001",
+        "LOOP-PROD-CONS-001",
+        "LOOP-PROD-AGORA-002"
+      ],
+      "classification": "permitted before the paper-trade proof",
+      "rationale": "Human imitation shadow evaluation algorithm.",
+      "original_depends_on": [
+        "LOOP-PROD-AGORA-001",
+        "LOOP-PROD-TEACH-001",
+        "LOOP-PROD-REC-001",
+        "LOOP-PROD-CONS-001",
+        "LOOP-PROD-AGORA-002"
+      ]
+    },
+    "LOOP-PROD-DEP-001": {
+      "wave": 1,
+      "depends_on": [
+        "LOOP-PROD-001",
+        "LOOP-PROD-002",
+        "LOOP-PROD-REC-001",
+        "LOOP-PROD-IMIT-001"
+      ],
+      "classification": "part of the G2 proof path",
+      "rationale": "Core dispatcher with RuntimeBinding.",
+      "original_depends_on": [
+        "LOOP-PROD-001",
+        "LOOP-PROD-002",
+        "LOOP-PROD-REC-001",
+        "LOOP-PROD-IMIT-001"
+      ]
+    },
+    "LOOP-PROD-CAP-001": {
+      "wave": 1,
+      "depends_on": [
+        "LOOP-PROD-DEP-001",
+        "LOOP-PROD-REC-001",
+        "TJ-E2E-014"
+      ],
+      "classification": "part of the G2 proof path",
+      "rationale": "Bounded paper order placement.",
+      "original_depends_on": [
+        "LOOP-PROD-DEP-001",
+        "LOOP-PROD-REC-001",
+        "TJ-E2E-014"
+      ]
+    },
+    "LOOP-PROD-TEL-001": {
+      "wave": 1,
+      "depends_on": [
+        "LOOP-PROD-001",
+        "LOOP-PROD-002",
+        "LOOP-PROD-REC-001",
+        "LOOP-PROD-CAP-001"
+      ],
+      "classification": "part of the G2 proof path",
+      "rationale": "Telemetry capture & incident pipeline.",
+      "original_depends_on": [
+        "LOOP-PROD-001",
+        "LOOP-PROD-002",
+        "LOOP-PROD-REC-001",
+        "LOOP-PROD-CAP-001"
+      ]
+    },
+    "LOOP-PROD-TEL-002": {
+      "wave": 1,
+      "depends_on": [
+        "LOOP-PROD-CAP-001",
+        "LOOP-PROD-TEL-001",
+        "TJ-E2E-014"
+      ],
+      "classification": "part of the G2 proof path",
+      "rationale": "Loop-run/Trade Journey lifecycle projection.",
+      "original_depends_on": [
+        "LOOP-PROD-CAP-001",
+        "LOOP-PROD-TEL-001",
+        "TJ-E2E-014"
+      ]
+    },
+    "LOOP-PROD-EVO-001": {
+      "wave": 1,
+      "depends_on": [
+        "EVOCHAIN-011",
+        "LOOP-PROD-DEP-001",
+        "LOOP-PROD-TEL-001",
+        "LOOP-PROD-REC-001",
+        "LOOP-PROD-TEL-002"
+      ],
+      "classification": "permitted before the paper-trade proof",
+      "rationale": "Triggers evolution rounds.",
+      "original_depends_on": [
+        "EVOCHAIN-011",
+        "LOOP-PROD-DEP-001",
+        "LOOP-PROD-TEL-001",
+        "LOOP-PROD-REC-001",
+        "LOOP-PROD-TEL-002"
+      ]
+    },
+    "LOOP-PROD-BFF-001": {
+      "wave": 1,
+      "depends_on": [
+        "LOOP-PROD-001",
+        "LOOP-PROD-TEL-001",
+        "LOOP-PROD-REC-001",
+        "LOOP-PROD-EVO-001"
+      ],
+      "classification": "permitted before the paper-trade proof",
+      "rationale": "Exposes loop metrics & health.",
+      "original_depends_on": [
+        "LOOP-PROD-001",
+        "LOOP-PROD-TEL-001",
+        "LOOP-PROD-AUTH-001",
+        "LOOP-PROD-REC-001",
+        "LOOP-PROD-EVO-001"
+      ]
+    },
+    "LOOP-PROD-OODA-001": {
+      "wave": 1,
+      "depends_on": [
+        "LOOP-PROD-000",
+        "LOOP-PROD-001",
+        "LOOP-PROD-002",
+        "LOOP-PROD-REC-001",
+        "OPENCLAW-CRON-WRITE-SCOPE",
+        "OPENCLAW-PERSONA-CRON-BACKFILL",
+        "OPENCLAW-OODA-PACKET-CLOSURE",
+        "LOOP-PROD-BFF-001"
+      ],
+      "classification": "permitted before the paper-trade proof",
+      "rationale": "Multi-persona reconciliation schedule.",
+      "original_depends_on": [
+        "LOOP-PROD-000",
+        "LOOP-PROD-001",
+        "LOOP-PROD-002",
+        "LOOP-PROD-REC-001",
+        "OPENCLAW-CRON-WRITE-SCOPE",
+        "OPENCLAW-PERSONA-CRON-BACKFILL",
+        "OPENCLAW-OODA-PACKET-CLOSURE",
+        "LOOP-PROD-BFF-001"
+      ]
+    },
+    "LOOP-PROD-PER-001": {
+      "wave": 2,
+      "depends_on": [
+        "LOOP-PROD-DEP-001",
+        "LOOP-PROD-CAP-001",
+        "LOOP-PROD-OODA-001",
+        "PPL-ALLOC-010",
+        "PPL-ALLOC-011"
+      ],
+      "classification": "permitted before the paper-trade proof",
+      "rationale": "Binding and evaluation loop setup.",
+      "original_depends_on": [
+        "LOOP-PROD-DEP-001",
+        "LOOP-PROD-CAP-001",
+        "LOOP-PROD-OODA-001",
+        "PPL-ALLOC-010",
+        "PPL-ALLOC-011"
+      ]
+    },
+    "LOOP-PROD-TJ-001": {
+      "wave": 2,
+      "depends_on": [
+        "LOOP-PROD-DEP-001",
+        "LOOP-PROD-CAP-001",
+        "LOOP-PROD-TEL-002",
+        "LOOP-PROD-EVO-001",
+        "TJ-E2E-014",
+        "LOOP-PROD-PER-001"
+      ],
+      "classification": "permitted before the paper-trade proof",
+      "rationale": "Journey-tracking API.",
+      "original_depends_on": [
+        "LOOP-PROD-DEP-001",
+        "LOOP-PROD-CAP-001",
+        "LOOP-PROD-TEL-002",
+        "LOOP-PROD-EVO-001",
+        "LOOP-PROD-AUTH-001",
+        "TJ-E2E-014",
+        "LOOP-PROD-PER-001"
+      ]
+    },
+    "LOOP-PROD-TJ-002": {
+      "wave": 2,
+      "depends_on": [
+        "LOOP-PROD-TJ-001",
+        "MGMT-SSE-001",
+        "OPS-EP-DEV-MAIN-RECONCILE-001",
+        "LOOP-PROD-AGORA-003"
+      ],
+      "classification": "permitted before the paper-trade proof",
+      "rationale": "Expose journey controls on FE.",
+      "original_depends_on": [
+        "LOOP-PROD-TJ-001",
+        "LOOP-PROD-FE-001",
+        "MGMT-SSE-001",
+        "OPS-EP-DEV-MAIN-RECONCILE-001",
+        "LOOP-PROD-AGORA-003"
+      ]
+    },
+    "LOOP-PROD-MAI-001": {
+      "wave": 2,
+      "depends_on": [
+        "LOOP-PROD-001",
+        "LOOP-PROD-002",
+        "LOOP-PROD-REC-001",
+        "LOOP-PROD-TJ-001"
+      ],
+      "classification": "permitted before the paper-trade proof",
+      "rationale": "Dev-bridge backend verification.",
+      "original_depends_on": [
+        "LOOP-PROD-AUTH-001",
+        "LOOP-PROD-001",
+        "LOOP-PROD-002",
+        "LOOP-PROD-REC-001",
+        "LOOP-PROD-TJ-001",
+        "LOOP-PROD-WORKER-001",
+        "LOOP-PROD-BROWSER-AUTH-001"
+      ]
+    },
+    "LOOP-PROD-MAI-002": {
+      "wave": 2,
+      "depends_on": [
+        "LOOP-PROD-MAI-001",
+        "MGMT-SSE-001",
+        "OPS-EP-DEV-MAIN-RECONCILE-001",
+        "LOOP-PROD-TJ-002"
+      ],
+      "classification": "permitted before the paper-trade proof",
+      "rationale": "Management console UI for repair.",
+      "original_depends_on": [
+        "LOOP-PROD-MAI-001",
+        "LOOP-PROD-FE-001",
+        "MGMT-SSE-001",
+        "OPS-EP-DEV-MAIN-RECONCILE-001",
+        "LOOP-PROD-TJ-002"
+      ]
+    },
+    "LOOP-PROD-VERIFY-KNOW-001": {
+      "wave": 2,
+      "depends_on": [
+        "LOOP-PROD-SRC-001",
+        "LOOP-PROD-DIST-001",
+        "LOOP-PROD-ALPHA-001",
+        "LOOP-PROD-TEACH-001",
+        "LOOP-PROD-AGORA-001",
+        "LOOP-PROD-AGORA-002",
+        "LOOP-PROD-AGORA-003",
+        "LOOP-PROD-CONS-001",
+        "LOOP-PROD-IMIT-001",
+        "LOOP-PROD-BFF-001"
+      ],
+      "classification": "permitted before the paper-trade proof",
+      "rationale": "Verify knowledge routing.",
+      "original_depends_on": [
+        "LOOP-PROD-SRC-001",
+        "LOOP-PROD-DIST-001",
+        "LOOP-PROD-ALPHA-001",
+        "LOOP-PROD-TEACH-001",
+        "LOOP-PROD-AGORA-001",
+        "LOOP-PROD-AGORA-002",
+        "LOOP-PROD-AGORA-003",
+        "LOOP-PROD-CONS-001",
+        "LOOP-PROD-IMIT-001",
+        "LOOP-PROD-BFF-001"
+      ]
+    },
+    "LOOP-PROD-VERIFY-EXEC-001": {
+      "wave": 2,
+      "depends_on": [
+        "LOOP-PROD-PER-001",
+        "LOOP-PROD-DEP-001",
+        "LOOP-PROD-CAP-001",
+        "LOOP-PROD-TEL-001",
+        "LOOP-PROD-TEL-002",
+        "LOOP-PROD-EVO-001",
+        "LOOP-PROD-BFF-001",
+        "PPL-ALLOC-012"
+      ],
+      "classification": "permitted before the paper-trade proof",
+      "rationale": "Verify execution routing.",
+      "original_depends_on": [
+        "LOOP-PROD-PER-001",
+        "LOOP-PROD-DEP-001",
+        "LOOP-PROD-CAP-001",
+        "LOOP-PROD-TEL-001",
+        "LOOP-PROD-TEL-002",
+        "LOOP-PROD-EVO-001",
+        "LOOP-PROD-BFF-001",
+        "PPL-ALLOC-012"
+      ]
+    },
+    "LOOP-PROD-VERIFY-HUMAN-001": {
+      "wave": 2,
+      "depends_on": [
+        "LOOP-PROD-TEACH-001",
+        "LOOP-PROD-AGORA-001",
+        "LOOP-PROD-AGORA-003",
+        "LOOP-PROD-CONS-001",
+        "LOOP-PROD-IMIT-001",
+        "PINT-010-R2"
+      ],
+      "classification": "permitted before the paper-trade proof",
+      "rationale": "Verify human action/learning.",
+      "original_depends_on": [
+        "LOOP-PROD-TEACH-001",
+        "LOOP-PROD-AGORA-001",
+        "LOOP-PROD-AGORA-003",
+        "LOOP-PROD-CONS-001",
+        "LOOP-PROD-IMIT-001",
+        "PINT-010-R2"
+      ]
+    },
+    "LOOP-PROD-VERIFY-OODA-001": {
+      "wave": 2,
+      "depends_on": [
+        "LOOP-PROD-OODA-001",
+        "LOOP-PROD-VERIFY-KNOW-001",
+        "LOOP-PROD-VERIFY-EXEC-001",
+        "LOOP-PROD-MAI-001"
+      ],
+      "classification": "permitted before the paper-trade proof",
+      "rationale": "Verify OODA schedule.",
+      "original_depends_on": [
+        "LOOP-PROD-OODA-001",
+        "LOOP-PROD-VERIFY-KNOW-001",
+        "LOOP-PROD-VERIFY-EXEC-001",
+        "LOOP-PROD-MAI-001"
+      ]
+    },
+    "LOOP-PROD-PPL-001": {
+      "wave": 3,
+      "depends_on": [
+        "PPL-ALLOC-009",
+        "PPL-ALLOC-010",
+        "PPL-ALLOC-011",
+        "PPL-ALLOC-012",
+        "PPL-ALLOC-013",
+        "LOOP-PROD-PER-001",
+        "LOOP-PROD-VERIFY-EXEC-001"
+      ],
+      "classification": "permitted before the paper-trade proof",
+      "rationale": "Closeout allocation/promotion goals.",
+      "original_depends_on": [
+        "PPL-ALLOC-009",
+        "PPL-ALLOC-010",
+        "PPL-ALLOC-011",
+        "PPL-ALLOC-012",
+        "PPL-ALLOC-013",
+        "LOOP-PROD-PER-001",
+        "LOOP-PROD-VERIFY-EXEC-001",
+        "LOOP-PROD-FE-001"
+      ]
+    },
+    "LOOP-PROD-TJ-003": {
+      "wave": 3,
+      "depends_on": [
+        "TJ-E2E-012",
+        "TJ-E2E-014",
+        "LOOP-PROD-TJ-001",
+        "LOOP-PROD-TJ-002",
+        "LOOP-PROD-VERIFY-EXEC-001"
+      ],
+      "classification": "permitted before the paper-trade proof",
+      "rationale": "Reconcile trade journey e2e.",
+      "original_depends_on": [
+        "TJ-E2E-012",
+        "TJ-E2E-014",
+        "LOOP-PROD-TJ-001",
+        "LOOP-PROD-TJ-002",
+        "LOOP-PROD-VERIFY-EXEC-001"
+      ]
+    },
+    "LOOP-PROD-PINT-001": {
+      "wave": 3,
+      "depends_on": [
+        "OPS-EP-DEV-MAIN-RECONCILE-001",
+        "PINT-010-R2",
+        "LOOP-PROD-AGORA-003",
+        "LOOP-PROD-VERIFY-HUMAN-001"
+      ],
+      "classification": "permitted before the paper-trade proof",
+      "rationale": "Closeout PINT requirements.",
+      "original_depends_on": [
+        "OPS-EP-DEV-MAIN-RECONCILE-001",
+        "PINT-010-R2",
+        "LOOP-PROD-AGORA-003",
+        "LOOP-PROD-VERIFY-HUMAN-001",
+        "LOOP-PROD-FE-001"
+      ]
+    },
+    "LOOP-PROD-MAI-003": {
+      "wave": 3,
+      "depends_on": [
+        "LOOP-PROD-MAI-001",
+        "LOOP-PROD-MAI-002",
+        "LOOP-PROD-VERIFY-OODA-001"
+      ],
+      "classification": "permitted before the paper-trade proof",
+      "rationale": "Reconcile management console scopes.",
+      "original_depends_on": [
+        "LOOP-PROD-MAI-001",
+        "LOOP-PROD-MAI-002",
+        "LOOP-PROD-VERIFY-OODA-001"
+      ]
+    },
+    "LOOP-PROD-CLOSE-001": {
+      "wave": 4,
+      "depends_on": [
+        "LOOP-PROD-002",
+        "LOOP-PROD-REC-001",
+        "LOOP-PROD-VERIFY-KNOW-001",
+        "LOOP-PROD-VERIFY-EXEC-001",
+        "LOOP-PROD-VERIFY-HUMAN-001",
+        "LOOP-PROD-VERIFY-OODA-001",
+        "LOOP-PROD-PPL-001",
+        "LOOP-PROD-TJ-003",
+        "LOOP-PROD-PINT-001",
+        "LOOP-PROD-MAI-003"
+      ],
+      "classification": "permitted before the paper-trade proof",
+      "rationale": "End of the permissive paper-trade loop.",
+      "original_depends_on": [
+        "LOOP-PROD-002",
+        "LOOP-PROD-AUTH-001",
+        "LOOP-PROD-FE-001",
+        "LOOP-PROD-REC-001",
+        "LOOP-PROD-VERIFY-KNOW-001",
+        "LOOP-PROD-VERIFY-EXEC-001",
+        "LOOP-PROD-VERIFY-HUMAN-001",
+        "LOOP-PROD-VERIFY-OODA-001",
+        "LOOP-PROD-PPL-001",
+        "LOOP-PROD-TJ-003",
+        "LOOP-PROD-PINT-001",
+        "LOOP-PROD-MAI-003"
+      ]
+    },
+    "LOOP-PROD-AUTH-001": {
+      "wave": 5,
+      "depends_on": [
+        "LOOP-PROD-002",
+        "LOOP-PROD-CLOSE-001"
+      ],
+      "classification": "deferred strict-auth/security/governance work",
+      "rationale": "Strict dev auth cutover.",
+      "original_depends_on": [
+        "LOOP-PROD-002"
+      ]
+    },
+    "LOOP-PROD-FE-001": {
+      "wave": 5,
+      "depends_on": [
+        "LOOP-PROD-002",
+        "LOOP-PROD-AUTH-001"
+      ],
+      "classification": "deferred strict-auth/security/governance work",
+      "rationale": "Remove browser development tokens.",
+      "original_depends_on": [
+        "LOOP-PROD-002",
+        "LOOP-PROD-AUTH-001"
+      ]
+    },
+    "LOOP-PROD-DELIVERY-001": {
+      "wave": 5,
+      "depends_on": [
+        "LOOP-PROD-002",
+        "LOOP-PROD-CLOSE-001"
+      ],
+      "classification": "deferred strict-auth/security/governance work",
+      "rationale": "Ensure worker run/scope signing.",
+      "original_depends_on": [
+        "LOOP-PROD-002"
+      ]
+    },
+    "LOOP-PROD-AUTH-BOOT-001": {
+      "wave": 5,
+      "depends_on": [
+        "LOOP-PROD-002",
+        "LOOP-PROD-DELIVERY-001"
+      ],
+      "classification": "deferred strict-auth/security/governance work",
+      "rationale": "Load strict credentials to vault.",
+      "original_depends_on": [
+        "LOOP-PROD-002",
+        "LOOP-PROD-DELIVERY-001"
+      ]
+    },
+    "LOOP-PROD-WORKER-001": {
+      "wave": 5,
+      "depends_on": [
+        "LOOP-PROD-001",
+        "LOOP-PROD-002",
+        "LOOP-PROD-DELIVERY-001"
+      ],
+      "classification": "deferred strict-auth/security/governance work",
+      "rationale": "Fleet container outcome and CAS.",
+      "original_depends_on": [
+        "LOOP-PROD-001",
+        "LOOP-PROD-002",
+        "LOOP-PROD-DELIVERY-001"
+      ]
+    },
+    "LOOP-PROD-LEASE-001": {
+      "wave": 5,
+      "depends_on": [
+        "LOOP-PROD-AUTH-BOOT-001",
+        "LOOP-PROD-AUTH-001",
+        "LOOP-PROD-WORKER-001"
+      ],
+      "classification": "deferred strict-auth/security/governance work",
+      "rationale": "Mutation lease.",
+      "original_depends_on": [
+        "LOOP-PROD-AUTH-BOOT-001",
+        "LOOP-PROD-AUTH-001",
+        "LOOP-PROD-WORKER-001"
+      ]
+    },
+    "LOOP-PROD-FLEET-001": {
+      "wave": 5,
+      "depends_on": [
+        "LOOP-PROD-WORKER-001"
+      ],
+      "classification": "deferred strict-auth/security/governance work",
+      "rationale": "Quota & resource admission boundaries.",
+      "original_depends_on": [
+        "LOOP-PROD-WORKER-001"
+      ]
+    },
+    "LOOP-PROD-ATTEST-001": {
+      "wave": 5,
+      "depends_on": [
+        "LOOP-PROD-002",
+        "LOOP-PROD-WORKER-001",
+        "LOOP-PROD-LEASE-001"
+      ],
+      "classification": "deferred strict-auth/security/governance work",
+      "rationale": "Cryptographic task evidence signer.",
+      "original_depends_on": [
+        "LOOP-PROD-002",
+        "LOOP-PROD-WORKER-001",
+        "LOOP-PROD-LEASE-001"
+      ]
+    },
+    "LOOP-PROD-AUTH-OPS-001": {
+      "wave": 5,
+      "depends_on": [
+        "LOOP-PROD-AUTH-BOOT-001",
+        "LOOP-PROD-AUTH-001",
+        "LOOP-PROD-LEASE-001",
+        "LOOP-PROD-ATTEST-001"
+      ],
+      "classification": "deferred strict-auth/security/governance work",
+      "rationale": "MFA/Ops credentials rotation.",
+      "original_depends_on": [
+        "LOOP-PROD-AUTH-BOOT-001",
+        "LOOP-PROD-AUTH-001",
+        "LOOP-PROD-LEASE-001",
+        "LOOP-PROD-ATTEST-001"
+      ]
+    },
+    "LOOP-PROD-BROWSER-AUTH-001": {
+      "wave": 5,
+      "depends_on": [
+        "LOOP-PROD-AUTH-BOOT-001",
+        "LOOP-PROD-AUTH-001",
+        "LOOP-PROD-FE-001",
+        "LOOP-PROD-DELIVERY-001",
+        "LOOP-PROD-LEASE-001",
+        "LOOP-PROD-AUTH-OPS-001"
+      ],
+      "classification": "deferred strict-auth/security/governance work",
+      "rationale": "BFF cookie/session strict protection.",
+      "original_depends_on": [
+        "LOOP-PROD-AUTH-BOOT-001",
+        "LOOP-PROD-AUTH-001",
+        "LOOP-PROD-FE-001",
+        "LOOP-PROD-DELIVERY-001",
+        "LOOP-PROD-LEASE-001",
+        "LOOP-PROD-AUTH-OPS-001"
+      ]
+    },
+    "LOOP-PROD-FE-EVID-001": {
+      "wave": 6,
+      "depends_on": [
+        "LOOP-PROD-FE-001",
+        "LOOP-PROD-ATTEST-001",
+        "LOOP-PROD-AGORA-003",
+        "LOOP-PROD-TJ-002",
+        "LOOP-PROD-MAI-002"
+      ],
+      "classification": "final verification/closeout after the appropriate gate",
+      "rationale": "Frontend checks attestation digests.",
+      "original_depends_on": [
+        "LOOP-PROD-FE-001",
+        "LOOP-PROD-ATTEST-001",
+        "LOOP-PROD-AGORA-003",
+        "LOOP-PROD-TJ-002",
+        "LOOP-PROD-MAI-002"
+      ]
+    },
+    "LOOP-PROD-FE-BUILD-001": {
+      "wave": 6,
+      "depends_on": [
+        "LOOP-PROD-FE-001",
+        "LOOP-PROD-FE-EVID-001",
+        "LOOP-PROD-AGORA-003",
+        "LOOP-PROD-TJ-002",
+        "LOOP-PROD-MAI-002"
+      ],
+      "classification": "final verification/closeout after the appropriate gate",
+      "rationale": "Strict build budget verification.",
+      "original_depends_on": [
+        "LOOP-PROD-FE-001",
+        "LOOP-PROD-FE-EVID-001",
+        "LOOP-PROD-AGORA-003",
+        "LOOP-PROD-TJ-002",
+        "LOOP-PROD-MAI-002"
+      ]
+    },
+    "LOOP-PROD-SIGNOFF-001": {
+      "wave": 6,
+      "depends_on": [
+        "LOOP-PROD-CLOSE-001",
+        "LOOP-PROD-WORKER-001",
+        "LOOP-PROD-ATTEST-001"
+      ],
+      "classification": "final verification/closeout after the appropriate gate",
+      "rationale": "Enforces manual signoff gating.",
+      "original_depends_on": [
+        "LOOP-PROD-CLOSE-001",
+        "LOOP-PROD-WORKER-001",
+        "LOOP-PROD-ATTEST-001"
+      ]
+    },
+    "LOOP-PROD-CLOSE-002": {
+      "wave": 7,
+      "depends_on": [
+        "EVOCHAIN-011",
+        "EVOLOOP-009",
+        "EVOLOOP-011",
+        "LOOP-PROD-CLOSE-001",
+        "LOOP-PROD-DELIVERY-001",
+        "LOOP-PROD-WORKER-001",
+        "LOOP-PROD-LEASE-001",
+        "LOOP-PROD-BROWSER-AUTH-001",
+        "LOOP-PROD-FLEET-001",
+        "LOOP-PROD-ATTEST-001",
+        "LOOP-PROD-AUTH-OPS-001",
+        "LOOP-PROD-FE-EVID-001",
+        "LOOP-PROD-FE-BUILD-001",
+        "LOOP-PROD-SIGNOFF-001"
+      ],
+      "classification": "final verification/closeout after the appropriate gate",
+      "rationale": "Final program closeout verification.",
+      "original_depends_on": [
+        "EVOCHAIN-011",
+        "EVOLOOP-009",
+        "EVOLOOP-011",
+        "LOOP-PROD-CLOSE-001",
+        "LOOP-PROD-DELIVERY-001",
+        "LOOP-PROD-WORKER-001",
+        "LOOP-PROD-LEASE-001",
+        "LOOP-PROD-BROWSER-AUTH-001",
+        "LOOP-PROD-FLEET-001",
+        "LOOP-PROD-ATTEST-001",
+        "LOOP-PROD-AUTH-OPS-001",
+        "LOOP-PROD-FE-EVID-001",
+        "LOOP-PROD-FE-BUILD-001",
+        "LOOP-PROD-SIGNOFF-001"
+      ]
+    }
+  }
+}

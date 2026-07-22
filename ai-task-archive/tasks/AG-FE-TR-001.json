@@ -1,0 +1,127 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-TR-001",
+  "archived_at": "2026-06-22T12:18:52Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-TR-001",
+    "title": "Trading Room tab + multi-strategy switcher",
+    "summary_zh": "依 SD §10.4/§12.1 在 TradingDeskShell 做交易作戰室頁籤 + 多策略 switcher(每策略獨立 workspace/view set),route /agora/trading-room(:strategyId);資料走 tradingRoom.ts(live strict)。 【有疑問一定要提出,不要自己亂做】動工前先讀完引用的設計稿(SD 對應章節 + docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure/ + canonical services/control-plane/specs/agora/*.schema.json / openapi/agora_v1.openapi.yaml / capability_manifest.json)。只要遇到任何疑問、不確定、設計稿沒寫到、與既有 code 對不上、依賴不清、無法重現或衝突,一律 STOP,用 blocker(或向 reviewer handoff)把問題具體寫出來並等待澄清,絕對不可自行臆測、補洞、繞過或先做再說。可動工的部分必須與引用 spec/schema 逐欄位一致:不得自創 schema/欄位/評分/widget/route、不得擴張 capability allowlist、不得讓 Agora 直接下單/綁資金/寫 RuntimeBinding。 【UI 一律照設計稿,不要自己發想】凡與畫面有關(頁面、route、layout、component、widget、chart、互動、文案、樣式)必須嚴格依 SD §9/§10/§11/§12/§23 的 IA/版面/元件規格、design-closure A3 widget_registry/chart grammar,以及 V10/V11 視覺參考實作;沿用既有 design tokens 與共用元件,不得自創畫面、元件、版面、route 或自由發揮樣式。設計稿沒涵蓋到的畫面或互動,先開 blocker 問清楚再做。",
+    "phase": "EPIC AGORA-FE / Phase 4",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "AG-FE-SW-001",
+      "AG-BE-TR-001",
+      "AG-XR-OPENAPI-004"
+    ],
+    "artifacts": [
+      "execute-plans/src/agora/pages/trading-room/TradingRoomPage.tsx",
+      "execute-plans/src/lib/bff-v1/agora/tradingRoom.ts"
+    ],
+    "acceptance": [
+      "交易作戰室頁籤可多策略切換且 deep-link;資料來自 §17.4 投影;live strict;附 UI 測試;【驗收】實作與引用 spec/schema 逐欄位一致,無自創欄位/route/enum;遇疑問須先開 blocker 澄清而非自行實作;自行臆測或偏離設計稿一律不通過",
+      "無自創欄位/route/enum",
+      "偏離設計稿即不通過"
+    ],
+    "next": "TradingRoomPage + tradingRoom.ts BFF client reviewed and approved by Codex. All findings resolved: dashboard_recipe_id via canonical GET /bff/agora/dashboard-recipes/{recipe_id}, expanded TradingDecisionEvent v4 fields. 97 agora tests passed, build passed. PR #2259 merged to dev at 47b12d58.",
+    "last_update": "2026-06-22T12:18:52Z",
+    "auto_created_by": "dispatch_agora_wave_u1_phase3_4_2026-06-20",
+    "review_notes_zh": [
+      "審查通過：d16ceb85 已改用 aggregate 的 dashboard_recipe_id 並透過 canonical GET /bff/agora/dashboard-recipes/{recipe_id} 載入 DashboardRecipeV2，前兩輪 findings 已解決。",
+      "驗證通過：npm ci；npm test -- src/agora/pages/trading-room/TradingRoomPage.test.tsx；npm test -- src/agora；npm run build:agora。Vite 僅有既有 large chunk warning。"
+    ],
+    "review_file": ".orchestrator/reviews/AG-FE-TR-001-review-codex.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-22T12:18:52Z",
+      "repository_id": "execute_plans",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-tr-001/execute-plans",
+      "repository_slug": "ajoe734/execute-plans",
+      "branch": "task/AG-FE-TR-001",
+      "git_clean_required": false,
+      "commit": "7123aa0a4b00ff5af39870dc0d441941e57a7c7a",
+      "commit_subject": "Merge origin/dev into task/AG-FE-TR-001 for closeout",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/dev",
+      "ahead": 0,
+      "behind": 6,
+      "push_status": "behind",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "68a7f4df3562195896cf7bb1275c6b0017f9b1b0",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-TR-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "AG-FE-TR-001 implementation complete. Commit b69321ac on task/AG-FE-TR-001. New files: tradingRoom.ts BFF client (getTradingRoom, listDecisionEvents, decideOnEvent), TradingRoomPage.tsx (StrategyLensSwitcher multi-strategy switcher with deep-link /agora/trading-room/:strategyId, TradingEventQueue, PositionActionQueue, AggregateView, StrategyWorkspaceView, RiskBanner), TradingRoomPage.test.tsx (18 tests, all pass). Data via tradingRoom.ts only (no direct fetch). Types match v4 schemas (trading_room_aggregate, trading_decision_event, governed_intent_handoff). agora-main.tsx wired. 75 agora tests pass.",
+      "status": "done",
+      "created_at": "2026-06-22T10:27:56Z",
+      "resolved_at": "2026-06-22T10:34:13Z"
+    },
+    {
+      "task_id": "AG-FE-TR-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Changes requested by review: see .orchestrator/reviews/AG-FE-TR-001-review-codex.md. Missing strategy-specific DashboardRecipe workspace and decision-event required fields/decision review UI; pushed review artifact commit 6eadc0bc on task/AG-FE-TR-001.",
+      "status": "done",
+      "created_at": "2026-06-22T10:34:13Z",
+      "resolved_at": "2026-06-22T10:34:13Z"
+    },
+    {
+      "task_id": "AG-FE-TR-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Both review findings addressed and verified (97/97 agora tests pass, commit 18441482). (1) StrategyWorkspaceView calls getTradingRoomStrategy → extracts DashboardRecipeV2 → renders DashboardGridEditor with per-view tab switcher. (2) TradingEventQueue rows expand to show all v4 decision fields: confidence+calibration, probability+CI, EV breakdown (gross/cost/net/downside), suggested action+size, rationale, risk notes, evidence refs, invalidation state, no_order_route_proof, plus trader decision buttons (approve/reject/defer/modify via decideOnEvent). Please approve or reopen with required changes.",
+      "status": "done",
+      "created_at": "2026-06-22T10:48:35Z",
+      "resolved_at": "2026-06-22T11:44:45Z"
+    },
+    {
+      "task_id": "AG-FE-TR-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Second review changes requested. Review artifact updated and pushed at 78fab519; draft PR #2259 opened. Blocker: TradingRoomPage extracts DashboardRecipeV2 from getTradingRoomStrategy, but the real /bff/agora/trading-room/strategies/{strategy_id} DetailEnvelope.data on origin/dev has no recipe/dashboard_recipe, while the test mock returns a bare recipe shape. Owner must use a contract-backed recipe source (e.g. accepted dashboard_recipe_id via canonical dashboard recipe route/client, or a spec/backend projection change) before reviewer approval.",
+      "status": "done",
+      "created_at": "2026-06-22T11:44:45Z",
+      "resolved_at": "2026-06-22T11:44:45Z"
+    },
+    {
+      "task_id": "AG-FE-TR-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Second review finding resolved: recipe source is now contract-backed. StrategyWorkspaceView uses strategy.dashboard_recipe_id from the aggregate and fetches via getDashboardRecipeById (GET /bff/agora/dashboard-recipes/{recipe_id}). extractRecipe helper and getTradingRoomStrategy import removed from the page. Tests pass 40/40 (trading-room), 97/97 (agora suite). Pushed at d16ceb85. Please re-review.",
+      "status": "done",
+      "created_at": "2026-06-22T11:51:25Z",
+      "resolved_at": "2026-06-22T12:01:18Z"
+    },
+    {
+      "task_id": "AG-FE-TR-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Codex final review approved at 760f33ce; owner should run closeout finalization.",
+      "status": "done",
+      "created_at": "2026-06-22T12:01:18Z",
+      "resolved_at": "2026-06-22T12:18:53Z"
+    }
+  ],
+  "blockers": []
+}

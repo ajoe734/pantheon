@@ -1,0 +1,205 @@
+{
+  "probe": "MGMT-LOAD-001 BFF fanout concurrency baseline",
+  "probeTimestamp": "2026-07-01T06:18:50.255Z",
+  "bffBase": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+  "authTokenShape": "op-<id>:admin (dev stub-auth shape; not a production secret)",
+  "fanoutRoutes": [
+    "/health",
+    "/bff/management/evidence",
+    "/bff/alerts",
+    "/bff/approvals",
+    "/bff/jobs"
+  ],
+  "excludedFromFanout": [
+    "/bff/events/stream (long-lived SSE realtime stream; not a bounded request)"
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "wallClockMs": 2157,
+      "results": [
+        {
+          "route": "/health",
+          "status": 200,
+          "ms": 955
+        },
+        {
+          "route": "/bff/management/evidence",
+          "status": 200,
+          "ms": 386
+        },
+        {
+          "route": "/bff/alerts",
+          "status": 200,
+          "ms": 1513
+        },
+        {
+          "route": "/bff/approvals",
+          "status": 200,
+          "ms": 1537
+        },
+        {
+          "route": "/bff/jobs",
+          "status": 200,
+          "ms": 1538
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "wallClockMs": 1431,
+      "results": [
+        {
+          "route": "/health",
+          "status": 200,
+          "ms": 1328
+        },
+        {
+          "route": "/bff/management/evidence",
+          "status": 200,
+          "ms": 1423
+        },
+        {
+          "route": "/bff/alerts",
+          "status": 200,
+          "ms": 1323
+        },
+        {
+          "route": "/bff/approvals",
+          "status": 200,
+          "ms": 1418
+        },
+        {
+          "route": "/bff/jobs",
+          "status": 200,
+          "ms": 1419
+        }
+      ]
+    },
+    {
+      "round": 3,
+      "wallClockMs": 692,
+      "results": [
+        {
+          "route": "/health",
+          "status": 200,
+          "ms": 45
+        },
+        {
+          "route": "/bff/management/evidence",
+          "status": 200,
+          "ms": 656
+        },
+        {
+          "route": "/bff/alerts",
+          "status": 200,
+          "ms": 648
+        },
+        {
+          "route": "/bff/approvals",
+          "status": 200,
+          "ms": 650
+        },
+        {
+          "route": "/bff/jobs",
+          "status": 200,
+          "ms": 646
+        }
+      ]
+    },
+    {
+      "round": 4,
+      "wallClockMs": 876,
+      "results": [
+        {
+          "route": "/health",
+          "status": 200,
+          "ms": 832
+        },
+        {
+          "route": "/bff/management/evidence",
+          "status": 200,
+          "ms": 835
+        },
+        {
+          "route": "/bff/alerts",
+          "status": 200,
+          "ms": 834
+        },
+        {
+          "route": "/bff/approvals",
+          "status": 200,
+          "ms": 834
+        },
+        {
+          "route": "/bff/jobs",
+          "status": 200,
+          "ms": 872
+        }
+      ]
+    },
+    {
+      "round": 5,
+      "wallClockMs": 497,
+      "results": [
+        {
+          "route": "/health",
+          "status": 200,
+          "ms": 486
+        },
+        {
+          "route": "/bff/management/evidence",
+          "status": 200,
+          "ms": 496
+        },
+        {
+          "route": "/bff/alerts",
+          "status": 200,
+          "ms": 493
+        },
+        {
+          "route": "/bff/approvals",
+          "status": 200,
+          "ms": 491
+        },
+        {
+          "route": "/bff/jobs",
+          "status": 200,
+          "ms": 387
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "/health": {
+      "count": 5,
+      "minMs": 45,
+      "maxMs": 1328,
+      "p95Ms": 1328
+    },
+    "/bff/management/evidence": {
+      "count": 5,
+      "minMs": 386,
+      "maxMs": 1423,
+      "p95Ms": 1423
+    },
+    "/bff/alerts": {
+      "count": 5,
+      "minMs": 493,
+      "maxMs": 1513,
+      "p95Ms": 1513
+    },
+    "/bff/approvals": {
+      "count": 5,
+      "minMs": 491,
+      "maxMs": 1537,
+      "p95Ms": 1537
+    },
+    "/bff/jobs": {
+      "count": 5,
+      "minMs": 387,
+      "maxMs": 1538,
+      "p95Ms": 1538
+    }
+  }
+}

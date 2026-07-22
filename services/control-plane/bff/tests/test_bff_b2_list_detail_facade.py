@@ -21,6 +21,7 @@ Covers:
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -436,6 +437,64 @@ def test_bff_persona_memory_found() -> None:
             # memory endpoint returns a list of memory items under data
             assert "data" in body and "meta" in body and "page_info" in body
             assert isinstance(body["data"], list)
+            assert body["meta"]["status"] == "degraded"
+            assert body["meta"]["memory_source"]["reason"] == "memory_plane_unconfigured"
+            assert body["meta"]["memory_source"]["fallback_used"] is False
+        finally:
+            bff_main.read_store = original
+
+
+def test_bff_persona_memory_reads_canonical_memory_plane(monkeypatch) -> None:
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self):
+            return json.dumps(
+                {
+                    "hits": [
+                        {
+                            "type": "persona",
+                            "relevance_score": 0.93,
+                            "entry": {"memory_id": "pmem-1", "persona_id": captured["persona_id"]},
+                        },
+                        {"type": "institutional", "entry": {"entry_id": "inst-1"}},
+                    ],
+                    "authz": {"policy_version": "governance-authz.v1"},
+                }
+            ).encode()
+
+    captured = {}
+
+    def fake_urlopen(request, timeout):
+        captured["url"] = request.full_url
+        captured["timeout"] = timeout
+        return FakeResponse()
+
+    with tempfile.TemporaryDirectory() as td:
+        original = bff_main.read_store
+        try:
+            monkeypatch.setenv("PANTHEON_MEMORY_API_URL", "http://memory:8080")
+            monkeypatch.setattr(bff_main.urllib_request, "urlopen", fake_urlopen)
+            client = _fresh_client(td)
+            pid = _seed_persona(client, "Canonical Memory Persona")
+            captured["persona_id"] = pid
+            resp = client.get(f"/bff/personas/{pid}/memory", headers=OPERATOR_HEADERS)
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert body["data"] == [
+                {"memory_id": "pmem-1", "persona_id": pid, "relevance_score": 0.93}
+            ]
+            assert body["meta"]["status"] == "ok"
+            source = body["meta"]["memory_source"]
+            assert source["kind"] == "canonical_memory_plane"
+            assert source["available"] is True
+            assert source["workspace_is_source_of_truth"] is False
+            assert "scope=persona" in captured["url"]
+            assert f"persona_id={pid}" in captured["url"]
         finally:
             bff_main.read_store = original
 

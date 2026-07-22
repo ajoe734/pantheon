@@ -11,10 +11,10 @@
 #
 # Usage:  bash scripts/audit_deploy_drift.sh
 # Env:    PANTHEON_DEV_SSH_KEY (default ~/.ssh/google_compute_engine)
-#         PANTHEON_DEV_HOST    (default lupin@35.201.239.38)
+#         PANTHEON_DEV_HOST    (default lupin@35.201.204.12)
 set -uo pipefail
 SSH_KEY="${PANTHEON_DEV_SSH_KEY:-$HOME/.ssh/google_compute_engine}"
-DEV_HOST="${PANTHEON_DEV_HOST:-lupin@35.201.239.38}"
+DEV_HOST="${PANTHEON_DEV_HOST:-lupin@35.201.204.12}"
 ssh_vm() { ssh -i "$SSH_KEY" -o BatchMode=yes -o ConnectTimeout=12 "$DEV_HOST" "$@" 2>/dev/null; }
 
 # container -> repo path(s) used to detect drift (space-separated paths).

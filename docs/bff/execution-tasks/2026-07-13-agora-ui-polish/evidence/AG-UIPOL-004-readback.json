@@ -1,0 +1,186 @@
+{
+  "taskId": "AG-UIPOL-004",
+  "capturedAt": "2026-07-14T04:07:10.428Z",
+  "viewport": {
+    "width": 1600,
+    "height": 1000
+  },
+  "deployment": {
+    "app": "execute-plans",
+    "environment": "pantheon-dev-fe",
+    "deployedAt": "20260714T035027Z",
+    "commit": "936f252e09fa3bb887c88e733e24b6941cac644e",
+    "sourceRef": "936f252e09fa3bb887c88e733e24b6941cac644e",
+    "sourceBranch": "dev",
+    "feHost": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io",
+    "bffHost": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+    "bffCommit": "8de9ed3b09ae1002edc74256f33b9bec1fe3b717",
+    "buildMode": {
+      "VITE_BFF_MODE": "live",
+      "VITE_BFF_FALLBACK": "strict",
+      "VITE_BFF_REAL_WRITES": "false",
+      "VITE_BFF_ALLOW_DEV_STUB_WRITES": "false",
+      "VITE_BFF_EMBEDDED_BEARER_TOKEN": "false"
+    }
+  },
+  "bffVersion": {
+    "service": "operator-bff",
+    "version": "0.2.0",
+    "source_commit_sha": "8de9ed3b09ae1002edc74256f33b9bec1fe3b717",
+    "commit": "8de9ed3b09ae1002edc74256f33b9bec1fe3b717",
+    "source_commit_known": true,
+    "environment": "dev"
+  },
+  "verificationRuns": {
+    "frontendBranchCi": {
+      "id": 29304416763,
+      "conclusion": "success"
+    },
+    "frontendDeploy": {
+      "id": 29304416758,
+      "conclusion": "success"
+    },
+    "bffBranchCi": {
+      "id": 29303213895,
+      "conclusion": "success"
+    },
+    "bffDeploy": {
+      "id": 29303223159,
+      "conclusion": "success"
+    }
+  },
+  "workshop": {
+    "route": "/agora/strategy-workshop/b888fb96-12b4-46e1-8def-ffe4f29b5ad7",
+    "navigationStatus": 200,
+    "workshopId": "b888fb96-12b4-46e1-8def-ffe4f29b5ad7",
+    "snapshotId": "8f7dc9e4-108f-4067-8d05-9cad30c7e17a",
+    "strategyVersionId": "full003-postdeploy-1783268578-f4b6f0-v1",
+    "cardId": "card_completeness_8f7dc9e4-108f-4067-8d05-9cad30c7e17a",
+    "subjectProjection": {
+      "bffState": "omitted",
+      "rendered": "Subject: none (none)",
+      "uiError": false
+    },
+    "cardOverallGrade": "complete",
+    "cardResearchReady": "Yes",
+    "railGrade": "Complete",
+    "railPercent": "100%",
+    "railResearchReady": "Yes",
+    "dimensionGrades": [
+      "Complete",
+      "Complete",
+      "Complete",
+      "Complete",
+      "Complete",
+      "Complete",
+      "Complete"
+    ],
+    "readinessGates": [
+      {
+        "gate": "preliminary_research",
+        "state": "ready",
+        "renderState": "active",
+        "className": "border-green-400 bg-green-50/60 text-green-900"
+      },
+      {
+        "gate": "full_validation",
+        "state": "ready",
+        "renderState": "active",
+        "className": "border-green-400 bg-green-50/60 text-green-900"
+      },
+      {
+        "gate": "trading_room",
+        "state": "ready",
+        "renderState": "active",
+        "className": "border-green-400 bg-green-50/60 text-green-900"
+      }
+    ],
+    "networkEvents": [
+      {
+        "method": "GET",
+        "path": "/bff/agora/workshops/b888fb96-12b4-46e1-8def-ffe4f29b5ad7",
+        "authorization": "present",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/bff/agora/workshops/b888fb96-12b4-46e1-8def-ffe4f29b5ad7/completeness",
+        "authorization": "present",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/bff/agora/workshops/b888fb96-12b4-46e1-8def-ffe4f29b5ad7/readiness",
+        "authorization": "present",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/bff/agora/workshops/b888fb96-12b4-46e1-8def-ffe4f29b5ad7/cards",
+        "authorization": "present",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/bff/agora/workshops/b888fb96-12b4-46e1-8def-ffe4f29b5ad7/events",
+        "authorization": "present",
+        "status": 200
+      }
+    ]
+  },
+  "performance": {
+    "route": "/agora/strategy-performance",
+    "navigationStatus": 200,
+    "loadElapsedMs": 12210,
+    "loadingAtCapture": false,
+    "rowOrder": [
+      "Ready strategy full003-live-1783268175-13279b",
+      "Ready strategy full003-postdeploy-1783268578-f4b6f0",
+      "Unassigned"
+    ],
+    "unassignedIndex": 2,
+    "unassignedDescription": "彙整 BFF 無法連結至具名交易操盤室策略的遙測資料。",
+    "unassignedSourceState": "attribution_only",
+    "unassignedTrades": "7,409",
+    "measuredZero": {
+      "count": 2,
+      "text": "$0",
+      "state": "measured",
+      "title": "已量測：零"
+    },
+    "notReported": {
+      "count": 14,
+      "text": "未回報",
+      "state": "not-reported",
+      "title": "BFF 未回報量測值"
+    },
+    "networkEvents": [
+      {
+        "method": "GET",
+        "path": "/bff/agora/trading-room",
+        "authorization": "present",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/bff/management/performance-attribution/by-strategy?period=latest&page_size=50",
+        "authorization": "present",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/bff/agora/trading-room/decision-events",
+        "authorization": "present",
+        "status": 200
+      }
+    ]
+  },
+  "browser": {
+    "workshopConsoleErrors": [
+      "EventSource response used text/html instead of text/event-stream; the stream was aborted."
+    ],
+    "workshopPageErrors": [],
+    "performanceConsoleErrors": [],
+    "performancePageErrors": []
+  }
+}

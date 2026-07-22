@@ -15,6 +15,10 @@ from services.execution.lean_runtime.signal_producer import (
     SignalProducerValidationError,
     build_decision_signals,
 )
+from services.trade_journey.correlation_envelope import (
+    mint_trade_envelope,
+    validate_envelope,
+)
 
 _NOW = "2026-06-14T14:30:00Z"
 
@@ -60,6 +64,14 @@ class TestDecisionSignalProducer(unittest.TestCase):
         self.assertEqual(first["runtime_id"], "runtime-alpha")
         self.assertEqual(first["run_id"], "run-alpha")
         self.assertEqual(first["source_worker"], "unit-test-producer")
+        self.assertEqual(first["tenant_id"], "default")
+        self.assertEqual(first["environment"], "paper")
+        self.assertEqual(
+            first["journey_id"],
+            validate_envelope(first["correlation_envelope"])["journey_id"],
+        )
+        self.assertEqual(first["correlation_envelope"]["event_id"], f"signal:{first['signal_id']}")
+        self.assertNotEqual(first["journey_id"], drained[1]["journey_id"])
         self.assertEqual(first["metadata"]["persona_id"], "persona-alpha")
         self.assertEqual(first["metadata"]["allocation_proposal_id"], "pap-alpha-001")
         self.assertEqual(first["metadata"]["confidence_score"], 0.82)
@@ -101,6 +113,38 @@ class TestDecisionSignalProducer(unittest.TestCase):
         self.assertEqual(signal["binding_id"], "binding-short")
         self.assertEqual(signal["metadata"]["confidence_score"], 0.73)
         self.assertEqual(signal["metadata"]["decision_id"], "decision-short-001")
+        self.assertEqual(signal["correlation_envelope"]["tenant_id"], "default")
+        self.assertEqual(signal["correlation_envelope"]["environment"], "paper")
+
+    def test_existing_decision_envelope_is_propagated_per_signal(self) -> None:
+        upstream = mint_trade_envelope(
+            {"tenant_id": "tenant-alpha", "environment": "paper"},
+            producer="strategy.decision",
+            event_id="decision-event-001",
+            now=_NOW,
+        )
+        [signal] = build_decision_signals(
+            {
+                "decision_id": "decision-envelope-001",
+                "strategy_id": "strategy-envelope",
+                "timestamp": _NOW,
+                "tenant_id": "tenant-alpha",
+                "environment": "paper",
+                "symbol": "AAPL.US",
+                "action": "BUY",
+                "direction": "LONG",
+                "quantity": 1,
+                "quantity_type": "SHARES",
+                "correlation_envelope": upstream,
+                "run_id": "run-envelope-001",
+            }
+        )
+
+        outgoing = validate_envelope(signal["correlation_envelope"])
+        self.assertEqual(outgoing["journey_id"], upstream["journey_id"])
+        self.assertEqual(outgoing["causation_event_id"], upstream["event_id"])
+        self.assertEqual(outgoing["event_id"], f"signal:{signal['signal_id']}")
+        self.assertEqual(signal["run_id"], "run-envelope-001")
 
     def test_limit_signal_without_price_fails_before_enqueue(self) -> None:
         store = InMemoryPendingSignalStore()

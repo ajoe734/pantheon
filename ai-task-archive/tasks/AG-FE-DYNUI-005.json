@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-DYNUI-005",
+  "archived_at": "2026-06-29T13:58:20Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "reconstructed_by": "AG-DYNUI-PROD-001",
+  "reconstruction_sources": [
+    ".orchestrator/task-briefs/ag_fe_dynui_005.md",
+    "support/sidecars/AG-FE-DYNUI-005/AG-FE-DYNUI-005-SIDECAR-REVIEW-FOLLOWUP-2-review.md",
+    "https://github.com/ajoe734/pantheon/pull/2622",
+    "https://github.com/ajoe734/pantheon/pull/2627"
+  ],
+  "task": {
+    "id": "AG-FE-DYNUI-005",
+    "title": "Design-pack visual parity on top of dynamic runtime",
+    "phase": "EPIC AGORA-DESIGN-PACK-DYNUI / Frontend",
+    "owner": "Claude",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "AG-FE-DYNUI-001",
+      "AG-FE-DYNUI-002",
+      "AG-FE-DYNUI-003",
+      "AG-FE-DYNUI-004"
+    ],
+    "artifacts": [
+      ".orchestrator/task-briefs/ag_fe_dynui_005.md",
+      "support/sidecars/AG-FE-DYNUI-005/",
+      "execute-plans/"
+    ],
+    "acceptance": [
+      "Dark AGORA visual parity is layered on existing dynamic runtime.",
+      "Scoped Agora tests, build, browser smoke, and safety grep were recorded.",
+      "E2E/persistence gaps remain downstream."
+    ],
+    "next": "Reconstructed terminal archive: parent PR #2622 and closeout PR #2627 merged; this is visual parity evidence, not production completion.",
+    "last_update": "2026-06-29T13:58:20Z",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-29T13:58:20Z",
+      "reconstructed": true,
+      "repository_id": "pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "implementation_pr": "https://github.com/ajoe734/pantheon/pull/2622",
+      "implementation_merge_commit": "f127bdbedfb4823470ab2453f15485cea001b5a8",
+      "closeout_pr": "https://github.com/ajoe734/pantheon/pull/2627",
+      "commit": "80c24c85079f610715d321b4e96fd2d41cd019dd",
+      "merge_target_branch": "dev",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [],
+  "blockers": []
+}

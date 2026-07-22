@@ -76,6 +76,11 @@ class ProposeRequest(BaseModel):
     evidence_refs: List[EvidenceRefIn] = Field(default_factory=list)
     threshold_snapshots: List[ThresholdSnapshotIn] = Field(default_factory=list)
     metadata: Optional[Dict[str, Any]] = None
+    # Optional durable-delivery envelope.  When present, the evolution service
+    # validates a full foundation EventEnvelope for ``postmortem.published``
+    # and uses its event/idempotency identity for inbox deduplication.  The
+    # ordinary operator/controller proposal path leaves this unset.
+    delivery_event: Optional[Dict[str, Any]] = None
 
 
 class ProposeFromIncidentRequest(BaseModel):
@@ -92,6 +97,14 @@ class ProposeFromIncidentRequest(BaseModel):
     rationale: Optional[str] = None
     has_active_runtime: bool = False
     metadata: Optional[Dict[str, Any]] = None
+
+
+class ProposeFromPostmortemPublishedRequest(BaseModel):
+    postmortem_id: str
+    decision_id: Optional[str] = None
+    publish_event_id: Optional[str] = None
+    created_by_id: str = "postmortem-bridge"
+    created_by_role: str = "evolution_controller"
 
 
 # ---------------------------------------------------------------------------

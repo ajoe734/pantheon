@@ -1,0 +1,157 @@
+{
+  "schema_version": "loop_product_raw_evidence.v1",
+  "task_id": "LOOP-PROD-TEL-002",
+  "captured_at": "2026-07-16T01:31:06Z",
+  "source": "GitHub workflow run metadata, failed-step logs, public workflow state, and environment secret-name APIs via gh CLI",
+  "requested_delivery": {
+    "environment": "dev",
+    "component": "root",
+    "auth_profile": "strict",
+    "requested_ref": "6915f1fe7a2cc9d97e8160af0e351a34cc8e4bd3",
+    "allow_dirty": true,
+    "allow_example_env": false,
+    "run_loop_prod_tel_002_probe": true
+  },
+  "credential_inventory": {
+    "github_environment": "dev",
+    "environment_secret_names": [
+      "DEV_BFF_JWT_SECRET",
+      "DEV_BFF_OIDC_CLIENT_ID",
+      "DEV_BFF_OIDC_CLIENT_SECRET",
+      "DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN"
+    ],
+    "required_strict_secret_names_present": true,
+    "values_read": false,
+    "values_recorded": false
+  },
+  "preceding_dirty_worktree_attempt": {
+    "workflow": "Pantheon Nonprod Deploy",
+    "workflow_database_id": 269991390,
+    "run_id": 29462829652,
+    "job_id": 87509743888,
+    "url": "https://github.com/ajoe734/pantheon/actions/runs/29462829652",
+    "event": "workflow_dispatch",
+    "head_branch": "dev",
+    "head_sha": "6915f1fe7a2cc9d97e8160af0e351a34cc8e4bd3",
+    "created_at": "2026-07-16T00:56:44Z",
+    "completed_at": "2026-07-16T00:57:53Z",
+    "conclusion": "failure",
+    "failed_step": "Deploy requested VM stack",
+    "strict_auth_floor": "passed",
+    "workload_identity_federation": "passed",
+    "terminal_reason": "Managed VM deploy worktree contained untracked seed scripts and deploy refused checkout because allow_dirty=false.",
+    "dirty_paths": [
+      "scripts/seed_market_personas.py",
+      "scripts/seed_nine_personas.py"
+    ],
+    "vm_checkout_completed": false,
+    "hosted_lifecycle_probe_step": "skipped",
+    "public_bff_readback_step": "skipped",
+    "follow_up": "Re-ran through the official --allow-dirty path so the deploy script stashed the dirty managed worktree before checkout."
+  },
+  "strict_allow_dirty_run": {
+    "workflow": "Pantheon Nonprod Deploy",
+    "workflow_database_id": 269991390,
+    "workflow_state_after_capture": "disabled_manually",
+    "run_id": 29462890670,
+    "job_id": 87509926473,
+    "url": "https://github.com/ajoe734/pantheon/actions/runs/29462890670",
+    "event": "workflow_dispatch",
+    "head_branch": "dev",
+    "head_sha": "6915f1fe7a2cc9d97e8160af0e351a34cc8e4bd3",
+    "created_at": "2026-07-16T00:58:07Z",
+    "completed_at": "2026-07-16T01:20:06Z",
+    "conclusion": "failure",
+    "failed_step": "Deploy requested VM stack",
+    "strict_auth_floor": "passed",
+    "workload_identity_federation": "passed",
+    "allow_dirty_effect": {
+      "managed_worktree_dirty_state": "stashed_before_checkout",
+      "stash_label": "deploy-dirty-dev-root-6915f1fe7a2c-20260716T005922Z",
+      "prepared_worktree": "/home/lupin/pantheon-ci-deploy/dev-root",
+      "prepared_sha": "6915f1fe7a2cc9d97e8160af0e351a34cc8e4bd3"
+    },
+    "dev_data_mutation": {
+      "table": "public.telemetry_events",
+      "action": "truncate during deploy maintenance",
+      "size_before": "1705 MB",
+      "size_after": "280 kB",
+      "live_capital_effect": false
+    },
+    "task_relevant_services": {
+      "loop_run_projector_scheduler": "healthy before compose aborted",
+      "operator_bff": "built and recreated, but no public exact-sha proof executed before compose aborted"
+    },
+    "blocking_services": [
+      {
+        "service": "policy-learning-svc",
+        "container": "pantheon-policy-learning-svc-1",
+        "observed_state": "Error/unhealthy during compose health wait",
+        "terminal_log": "dependency failed to start: container pantheon-policy-learning-svc-1 is unhealthy"
+      },
+      {
+        "service": "reconciliation-drift-svc",
+        "container": "pantheon-reconciliation-drift-svc-1",
+        "observed_state": "Up but unhealthy during compose health wait"
+      }
+    ],
+    "hosted_lifecycle_probe_step": "skipped",
+    "hosted_lifecycle_artifact": "not_produced",
+    "public_bff_readback_step": "skipped",
+    "terminal_reason": "The strict dev/root deployment reached VM compose but root stack health failed outside the LOOP-PROD-TEL-002 projector/BFF acceptance surface before the canonical paper lifecycle hosted probe could run."
+  },
+  "later_dev_head_observation": {
+    "origin_dev_sha_at_capture": "55b2202bbf02f1ff58245728447b03320d9705a5",
+    "origin_dev_subject": "EVOCHAIN-011: fix policy-learning missing jsonschema dependency (#3727)",
+    "potentially_related_to_blocking_service": true,
+    "strict_root_runs_at_later_dev_head": [
+      {
+        "run_id": 29464058808,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/29464058808",
+        "requested_ref": "55b2202bbf02f1ff58245728447b03320d9705a5",
+        "allow_dirty": true,
+        "auth_profile": "strict",
+        "created_at": "2026-07-16T01:25:02Z",
+        "completed_at": "2026-07-16T01:27:09Z",
+        "conclusion": "cancelled",
+        "hosted_lifecycle_probe_step": "skipped"
+      },
+      {
+        "run_id": 29464170884,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/29464170884",
+        "requested_ref": "55b2202bbf02f1ff58245728447b03320d9705a5",
+        "allow_dirty": true,
+        "auth_profile": "strict",
+        "created_at": "2026-07-16T01:27:45Z",
+        "completed_at": "2026-07-16T01:28:57Z",
+        "conclusion": "cancelled",
+        "hosted_lifecycle_probe_step": "skipped"
+      }
+    ],
+    "workflow_state_after_cancelled_runs": "disabled_manually"
+  },
+  "admission": {
+    "strict_auth_floor": "passed",
+    "exact_sha_deployed": false,
+    "root_stack_healthy": false,
+    "hosted_probe_executed": false,
+    "public_bff_readback_executed_by_strict_run": false,
+    "overall": "blocked"
+  },
+  "safety": {
+    "rollback_required": "not_proven; compose aborted before hosted proof and public BFF was later restored by a separate permissive-stub BFF-only deploy",
+    "live_broker_enabled": false,
+    "live_capital_effect": false,
+    "permissive_fallback_used_as_product_evidence": false
+  },
+  "operator_action_required": {
+    "owner": "Pantheon dev root stack owners and workflow operator",
+    "action": "Enable the Pantheon Nonprod Deploy workflow, keep strict dev secrets provisioned, repair or confirm the root stack health dependencies, and rerun dev/root/strict at the intended current dev SHA with run_loop_prod_tel_002_probe=true.",
+    "do_not": "Do not accept BFF-only permissive-stub restoration or a cancelled run as LOOP-PROD-TEL-002 product-level hosted proof.",
+    "recheck_by": "2026-07-23T01:31:06Z"
+  },
+  "limitations": [
+    "No secret values were read or recorded; only secret names were queried.",
+    "This artifact proves a blocked strict deployment path after credential provisioning, not a successful target deployment or product-level hosted lifecycle outcome."
+  ]
+}

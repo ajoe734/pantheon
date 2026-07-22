@@ -46,7 +46,7 @@ DEFAULT_MAX_DISPATCHES_PER_TICK = 4
 DEFAULT_ORPHANED_QUEUE_EVENT_GRACE_SECONDS = 300
 DEFAULT_MAX_CONCURRENT_WORKERS: int | None = None
 DEFAULT_WORKER_OS_DUPLICATE_GUARD = True
-DEFAULT_MAX_CONCURRENT_PER_QUOTA_GROUP: dict[str, int] = {}
+DEFAULT_MAX_CONCURRENT_PER_ACCOUNT: dict[str, int] = {}
 DEFAULT_MAX_ACTIVE_WORKERS_PER_TASK = 1
 
 
@@ -84,6 +84,7 @@ def ready_dispatch_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings.setdefault("orphaned_queue_event_grace_seconds", DEFAULT_ORPHANED_QUEUE_EVENT_GRACE_SECONDS)
     settings.setdefault("max_concurrent_workers", DEFAULT_MAX_CONCURRENT_WORKERS)
     settings.setdefault("worker_os_duplicate_guard", DEFAULT_WORKER_OS_DUPLICATE_GUARD)
-    settings.setdefault("max_concurrent_per_quota_group", dict(DEFAULT_MAX_CONCURRENT_PER_QUOTA_GROUP))
+    if "max_concurrent_per_account" not in settings and "max_concurrent_per_quota_group" not in settings:
+        settings["max_concurrent_per_account"] = dict(DEFAULT_MAX_CONCURRENT_PER_ACCOUNT)
     settings.setdefault("max_active_workers_per_task", DEFAULT_MAX_ACTIVE_WORKERS_PER_TASK)
     return settings

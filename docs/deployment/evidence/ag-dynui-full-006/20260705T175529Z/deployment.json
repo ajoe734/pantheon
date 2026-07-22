@@ -1,0 +1,21 @@
+{
+  "app": "execute-plans",
+  "environment": "pantheon-dev-fe",
+  "deployedAt": "20260705T175529Z",
+  "commit": "37f8e320ac9a3fed621bfe3d36d34138f2b7c73d",
+  "sourceRef": "37f8e320ac9a3fed621bfe3d36d34138f2b7c73d",
+  "sourceBranch": "dev",
+  "feHost": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io",
+  "bffHost": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+  "integrationGateRun": "https://github.com/ajoe734/execute-plans/actions/runs/28749332352",
+  "pantheonDeployRuns": [
+    "https://github.com/ajoe734/pantheon/actions/runs/28748417821",
+    "https://github.com/ajoe734/pantheon/actions/runs/28748692234",
+    "https://github.com/ajoe734/pantheon/actions/runs/28748861121"
+  ],
+  "buildMode": {
+    "VITE_BFF_MODE": "live",
+    "VITE_BFF_FALLBACK": "strict",
+    "VITE_BFF_REAL_WRITES": "false"
+  }
+}

@@ -103,7 +103,37 @@ Persona:
   status: enum[active, disabled, archived]
   created_at: datetime
   updated_at: datetime
+  required_data_sources: RequiredDataSource[]   # see §4.7
 ```
+
+### 4.7 `RequiredDataSource`
+
+First-class data requirement declared on a persona. Replaces ad-hoc metadata labels
+as the canonical way to express what data a persona needs before it can operate.
+
+```yaml
+RequiredDataSource:
+  dataset: string                                                 # e.g. tw_price_daily
+  market: string                                                  # e.g. TW, US
+  cadence: enum[realtime, minutely, hourly, daily, weekly, on_demand]
+  source_class: enum[live_push, live_pull, seed_only]
+  connector_candidates: string[]   # ordered connector IDs the reconciler may use
+  policy_gates: string[]           # gate IDs that must pass before binding is active
+```
+
+**source_class semantics:**
+
+| value | meaning | counts as live binding proof? |
+|---|---|---|
+| `live_push` | provider pushes data on schedule; requires approved active connector | yes |
+| `live_pull` | system pulls on schedule; requires approved active connector | yes |
+| `seed_only` | seed label for reference only; no live connector required or expected | **no** |
+
+**Rule:** `seed_only` entries in `required_data_sources` **must not** be used as proof
+that a live data source is bound. The source provisioning reconciler (LOOP-AUTO-SRC-002)
+only creates connectors and schedules for `live_push` and `live_pull` entries.
+
+**Canonical schema:** `services/control-plane/persona/required_data_sources.schema.json`
 
 ### 4.2 `PrivateWorkspace`
 

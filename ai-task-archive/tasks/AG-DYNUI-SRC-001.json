@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "task_id": "AG-DYNUI-SRC-001",
+  "archived_at": "2026-06-28T15:11:35Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DYNUI-SRC-001",
+    "title": "Freeze Agora design-pack dynamic UI source map",
+    "summary_zh": "動工前必讀 /home/lupin/code/pantheon/AI Trading Desk Design.zip；主要檔案為 uploads/Pathreon_Agora_ClaudeDesign_UI_Requirement_V10_Expert_Strategy_Dialogue_2026-06-18.md、uploads/Pathreon_Agora_ClaudeDesign_UI_Requirement_V11_WinnerBranch_TradingRoom_2026-06-19.md、uploads/Pathreon_Agora_ClaudeDesign_UI_Requirement_V6_MultiStrategy_Dashboard_2026-06-18.md、uploads/Pathreon_Agora_ClaudeDesign_UI_Requirement_V4_AI_Dashboard_Control_2026-05-20.md、Agora.dc.html、screenshots/01-v10-mid.png、02-v10-mid.png、01-applied.png、01-aifix.png。 凍結 AI Trading Desk Design.zip 的任務 source map：整理 V10 Strategy Workshop、V11 WinnerBranch TradingRoom、V6/V4 dashboard-control、Agora.dc.html 動態 prototype 與 screenshots 的引用位置；產出 current implementation gap map，明確列出不得用靜態頁替代的 dynamic invariants。若 zip 不在 worker 環境或設計稿與現有 schema 衝突，先 blocker。 【有疑問一定要提出,不要自己亂做】若設計稿讀不到、V10/V11 與既有 schema 或 code 衝突、依賴不清、欄位/route/widget/互動未定義、或驗收不可重現,一律 STOP 並開 blocker；不得自行補欄位、補 route、補 widget、改語意、繞過 validator、或先做再說。 【這不是靜態頁面切版】交付必須支援 V10/V11 的動態 UI 系統：Strategy Workshop 由事件/stream 驅動；Trading Room 由 TradingRoomWorkspaceProposal 生成完整 views/widgets；widget 以受控 WidgetSpec/ChartSpec 宣告；trader 可 drag/resize/add/remove/restore/change chart；點 widget 可開啟帶 context 的 servant adjustment；servant 只能先產生 WidgetRevisionProposal 與 before/after preview；workspace version/change log/rollback 必須可用。 【UI 一律照設計稿,不要自己發想】畫面、版面、元件、widget menu、drawer、preview、文案、樣式、互動狀態都要對齊設計包與 docs/04/agora_design_pack_dynui_2026-06-28/README.md；不得用白底舊版 skeleton、不得做 landing page、不得把設計稿降級為一組硬編 mock cards。 【安全邊界】Agora 不得直接下單、不得綁資金、不得暴露 Management/RuntimeBinding/broker 後台詞彙；agent 不得生成任意 React/JavaScript/HTML 並注入 production；所有 widget/chart 必須通過 allowlist validator。",
+    "phase": "EPIC AGORA-DESIGN-PACK-DYNUI / Intake",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [],
+    "artifacts": [
+      "docs/04/agora_design_pack_dynui_2026-06-28/",
+      "services/control-plane/specs/agora/",
+      "execute-plans/src/agora/"
+    ],
+    "acceptance": [
+      "docs source map 列出 V10/V11/V6/V4/Agora.dc.html/screenshots 引用與重點; gap map 區分已完成 skeleton 與缺失 dynamic behavior; blocker list 已建立或確認無 blocker;【共同驗收】已讀設計包並在交付證據中列出引用檔案；無自創欄位/route/enum/widget；遇疑問先 blocker；local validation + relevant tests + screenshot/E2E evidence 齊全；任何只做靜態頁或硬編 mock state 的交付不通過"
+    ],
+    "next": "Owner finalized approved Agora dynamic UI source map: PR #2538 merged at 64036dbe; closeout evidence PR #2540 merged at 54128abe; checks passed and no intake blocker remains.",
+    "last_update": "2026-06-28T15:11:35Z",
+    "auto_created_by": "dispatch_agora_design_pack_dynui_2026-06-28",
+    "review_notes_zh": [
+      "設計包與 extracted reference 可讀；primary docs、prototype line clusters、四張 screenshot 對應 source map。",
+      "gap map 對現有 schema/frontend 的判斷成立：目前只有 workshop/card/readiness、dashboard recipe、widget registry/validator 等基礎，仍缺 V11 workspace proposal、widget revision resource、workspace version/rollback route family。",
+      "dynamic invariants 明確阻止 static screenshots/mock cards、arbitrary React/JS/HTML injection、direct order/capital/broker/Management exposure。",
+      "非阻塞清理：README task graph 與 dispatch dry-run 中 AG-DYNUI-SRC-001 reviewer 仍顯示 Claude，但中央狀態、task brief、source map 與本次 reviewer gate 均為 Codex2；後續如重跑 dispatch 應以中央狀態為準或另行整理 metadata。"
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-28T15:11:35Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-dynui-src-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-DYNUI-SRC-001",
+      "git_clean_required": false,
+      "repository_fallback": {
+        "from_repository_id": "execute_plans",
+        "missing_repository_path": "/tmp/pantheon-worker-worktrees/pantheon/execute-plans",
+        "reason": "non-Pantheon artifact repository local_path is unavailable; using Pantheon because the task also has Pantheon artifacts"
+      },
+      "commit": "7e43fd0d765c23989b531e95566a4177cfff3121",
+      "commit_subject": "AG-DYNUI-SRC-001: record closeout evidence",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "AG-DYNUI-SRC-001 task closeout evidence and task brief reviewer-approved handoff.",
+        "Not changing": "Agora schemas, OpenAPI, BFF routes, frontend runtime, widget registry, or dispatch graph semantics.",
+        "Composes with": "merged PR #2538 at 64036dbe and downstream AG-*-DYNUI implementation tasks.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "AG-DYNUI-SRC-001",
+        "Reviewer": "Codex2",
+        "Verified": "python3 -m zipfile -l AI Trading Desk Design.zip; test -d /tmp/ai-trading-desk-design; ls required extracted files; rg source-map dynamic invariants; python3 scripts/dispatch_agora_design_pack_dynui_2026-06-28.py --dry-run; gh pr view 2538 checks"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-DYNUI-SRC-001",
+      "ahead": 0,
+      "behind": 3,
+      "push_status": "behind",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "54128abec841aed0aa2a4cb34d0f6a019abc97d3",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-DYNUI-SRC-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Helper-claimed by idle Claude; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-06-28T14:48:22Z",
+      "resolved_at": "2026-06-28T14:48:31Z"
+    },
+    {
+      "task_id": "AG-DYNUI-SRC-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-06-28T14:49:23Z",
+      "resolved_at": "2026-06-28T14:49:29Z"
+    },
+    {
+      "task_id": "AG-DYNUI-SRC-001",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "PR #2538 merged into dev at 64036dbe; source/gap/invariant map is ready for reviewer approval.",
+      "status": "done",
+      "created_at": "2026-06-28T14:58:28Z",
+      "resolved_at": "2026-06-28T15:02:39Z"
+    },
+    {
+      "task_id": "AG-DYNUI-SRC-001",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Review approved: source/gap/invariant map is sufficient; owner should finalize closeout from merged PR #2538 at 64036dbe.",
+      "status": "done",
+      "created_at": "2026-06-28T15:02:39Z",
+      "resolved_at": "2026-06-28T15:11:37Z"
+    }
+  ],
+  "blockers": []
+}

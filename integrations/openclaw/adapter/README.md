@@ -1,6 +1,6 @@
 # openclaw-gateway-adapter Boundary
 
-Last updated: 2026-04-16
+Last updated: 2026-07-21
 Owner: BP5-OSS-002 (Codex)
 Reviewer: Claude
 Status: live gateway adapter implemented and smoke-tested
@@ -30,9 +30,9 @@ The adapter must not:
 
 The adapter may assume only these locked upstream inputs from `BP5-OSS-001`:
 
-- Git tag `v2026.6.8`
-- Commit `8c802aa683510c7f7503597b54c3021733245e59`
-- Container image `ghcr.io/openclaw/openclaw:2026.6.8`
+- Git tag `v2026.7.1`
+- Commit `2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4`
+- Container image `ghcr.io/openclaw/openclaw:2026.7.1`
 - Verified command surface:
   - `openclaw --help`
   - `openclaw gateway --help`

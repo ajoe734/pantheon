@@ -1,0 +1,141 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-RT-005",
+  "archived_at": "2026-06-27T14:56:09Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-RT-005",
+    "title": "Produce runtime fleet evidence packet",
+    "summary_zh": "產出 stack restart、kill-one-worker、retire-binding、heartbeat、signal isolation 的 runtime fleet evidence packet。",
+    "phase": "Global Loop Autopilot / Wave 2 Runtime Fleet",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "LOOP-AUTO-RT-002",
+      "LOOP-AUTO-RT-003",
+      "LOOP-AUTO-RT-004"
+    ],
+    "artifacts": [
+      "docs/deployment/evidence",
+      "docs/deployment/runtime-telemetry-hardening-2026-06-06.md"
+    ],
+    "acceptance": [
+      "Evidence proves stack restart recovery",
+      "Evidence proves killed worker recovery",
+      "Evidence proves retire-binding stop and signal isolation"
+    ],
+    "next": "Finalized runtime fleet evidence packet after PR #2442 merged into dev at 2e46c5cf97350d04aa458e96b6be02aabb07dc63. Closeout verification rerun passed: python3 -m pytest services/execution/runtime-manager/test_paper_fleet_reconciler.py services/execution/lean_runtime/test_signal_isolation.py services/execution/lean_runtime/test_signal_consumer.py services/control-plane/bff/test_pkt010_runtime_state_board_contract.py services/control-plane/bff/test_read_store_service_clients.py services/control-plane/bff/test_loop_health_read_model_contract.py -q (114 passed in 31.63s). Evidence boundaries remain local controller/contract proof only; no dev VM fleet drill or proven-live maturity claim.",
+    "last_update": "2026-06-27T14:56:09Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+    "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+    "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+    "proof_required": [
+      "unit tests",
+      "contract tests",
+      "local service smoke",
+      "restart or replay evidence when worker or runtime behavior changes"
+    ],
+    "non_goals": [
+      "No live-capital execution",
+      "No approval gate bypass",
+      "No panel-only closure",
+      "No seed fixture as live proof"
+    ],
+    "dispatch_rules": [
+      "idempotent duplicate ticks and duplicate events",
+      "operator-visible truth projection required",
+      "maturity cannot rise above collected evidence",
+      "repo workflow closure required before done"
+    ],
+    "loop_ids": [
+      "capital_pool_execution"
+    ],
+    "current_maturity": "reconciled",
+    "target_maturity": "proven-live",
+    "desired_state_sources": [
+      "runtime fleet acceptance criteria"
+    ],
+    "actual_state_sources": [
+      "runtime evidence packet"
+    ],
+    "wave_id": "Wave 2 Runtime Fleet",
+    "mutates_canonical": true,
+    "review_file": "docs/deployment/evidence/loop-auto-rt-005/README.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-27T14:56:09Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-rt-005",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOOP-AUTO-RT-005",
+      "git_clean_required": false,
+      "commit": "2e46c5cf97350d04aa458e96b6be02aabb07dc63",
+      "commit_subject": "Merge pull request #2442 from ajoe734/task/LOOP-AUTO-RT-005",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "LOOP-AUTO-RT-005": "add fleet evidence packet"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LOOP-AUTO-RT-005",
+      "ahead": 1,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "e4ac1551f3bcd4df72300306ad827bc89978e568",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-RT-005",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Auto-reassigned LOOP-AUTO-RT-005 away from unavailable lane Codex2 (disabled, sidecar-only, or auth-down); owner Codex2 -> Codex.",
+      "status": "done",
+      "created_at": "2026-06-27T12:36:53Z",
+      "resolved_at": "2026-06-27T12:36:54Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-RT-005",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "Auto-reassigned LOOP-AUTO-RT-005 away from unavailable lane Codex2 (disabled, sidecar-only, or auth-down); owner Codex2 -> Codex.",
+      "status": "done",
+      "created_at": "2026-06-27T12:36:54Z",
+      "resolved_at": "2026-06-27T14:31:55Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-RT-005",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Runtime fleet evidence packet is ready for review in PR #2442 (head 662192f6). Local focused verification passed after latest dev sync: 114 passed in 32.42s. GitHub auto-merge is enabled; checks are rerunning after branch refresh, and prior rounds were green but repeatedly became BEHIND as dev advanced.",
+      "status": "done",
+      "created_at": "2026-06-27T14:47:28Z",
+      "resolved_at": "2026-06-27T14:51:03Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-RT-005",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved. All 5 acceptance criteria covered by 114 passing tests: stack restart recovery, kill-one-worker recovery, retire-binding stop, heartbeat/session recovery, and signal isolation with DLQ. Boundaries honestly stated — no full Docker Compose restart or dev VM fleet drill executed, maturity stays at reconciled. Owner to finalize and merge PR #2442.",
+      "status": "done",
+      "created_at": "2026-06-27T14:51:03Z",
+      "resolved_at": "2026-06-27T14:56:10Z"
+    }
+  ],
+  "blockers": []
+}

@@ -30,6 +30,8 @@ from services.consultation.client import ConsultationClientError, ConsultationSe
 from services.consultation.store import ConsultationStore
 from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 
+_NOT_SUPPLIED = object()
+
 
 def _first_existing(paths: List[Path]) -> Optional[Path]:
     for path in paths:
@@ -40,7 +42,15 @@ def _first_existing(paths: List[Path]) -> Optional[Path]:
 
 def _record_key(record: Dict[str, Any], candidates: List[str]) -> Optional[str]:
     for key in candidates:
-        value = record.get(key)
+        if "." in key:
+            value: Any = record
+            for part in key.split("."):
+                if not isinstance(value, dict):
+                    value = None
+                    break
+                value = value.get(part)
+        else:
+            value = record.get(key)
         if value not in (None, ""):
             return str(value)
     return None
@@ -520,8 +530,9 @@ def _provider_truth(
     order_path: str,
     read_intent: Optional[Dict[str, Any]] = None,
     reason: Optional[str] = None,
+    secret_ref: Optional[str] = None,
 ) -> Dict[str, Any]:
-    return {
+    result: Dict[str, Any] = {
         "provider_key": provider_key,
         "provider": provider,
         "market": market,
@@ -534,6 +545,9 @@ def _provider_truth(
         "reason": reason,
         **_read_only_side_effect_guard(),
     }
+    if secret_ref is not None:
+        result["secret_ref"] = secret_ref
+    return result
 
 
 def _market_persona_data_truth(item: Dict[str, Any]) -> Dict[str, Any]:
@@ -592,15 +606,15 @@ def _market_persona_data_truth(item: Dict[str, Any]) -> Dict[str, Any]:
                 reason="repo-local smoke has no public-reference readback",
             ),
             _provider_truth(
-                provider_key="tej",
-                provider="TEJ API",
+                provider_key="finmind",
+                provider="FinMind",
                 market="TW",
                 source_class="research_grade",
-                status="credential_unavailable",
-                evidence_ref=f"{_UNAVAILABLE_MARKETDATA_EVIDENCE_BASE}/tej.json",
+                status="read_unavailable",
+                evidence_ref=f"{_UNAVAILABLE_MARKETDATA_EVIDENCE_BASE}/finmind.json",
                 order_capable_provider=False,
                 order_path="not_applicable",
-                reason="required repo-local TEJ credential env var is absent",
+                reason="live FinMind readback overlaid from source-ingest health when available",
             ),
         ]
         provider_statuses = {source["provider_key"]: source["status"] for source in sources}
@@ -617,8 +631,9 @@ def _market_persona_data_truth(item: Dict[str, Any]) -> Dict[str, Any]:
         data_source_status = {
             "state": "partial_readback",
             "summary": (
-                "Shioaji quote readback is present; TWSE, TPEx, MOPS, and TEJ "
-                "are explicit unavailable/credential-unavailable repo-local smoke evidence."
+                "Shioaji quote readback is present; TWSE, TPEx, MOPS, and FinMind "
+                "default to unavailable repo-local smoke evidence; FinMind flips to "
+                "read_ok when source-ingest reports live health."
             ),
             "provider_statuses": provider_statuses,
             "readback_refs": readback_refs,
@@ -656,21 +671,102 @@ def _market_persona_data_truth(item: Dict[str, Any]) -> Dict[str, Any]:
                     "snapshot": True,
                     "readonly": True,
                 },
-            )
+            ),
+            _provider_truth(
+                provider_key="yahoo",
+                provider="Yahoo Finance chart daily OHLCV",
+                market="US",
+                source_class="research_grade",
+                status="read_unavailable",
+                evidence_ref=f"{_UNAVAILABLE_MARKETDATA_EVIDENCE_BASE}/us-yahoo.json",
+                order_capable_provider=False,
+                order_path="not_applicable",
+                reason="Yahoo chart API replaces blocked Stooq CSV; flips to read_ok when source-ingest connector reports live health",
+            ),
+            _provider_truth(
+                provider_key="sec_edgar",
+                provider="SEC EDGAR filings",
+                market="US",
+                source_class="official_reference",
+                status="read_unavailable",
+                evidence_ref=f"{_UNAVAILABLE_MARKETDATA_EVIDENCE_BASE}/us-sec-edgar.json",
+                order_capable_provider=False,
+                order_path="not_applicable",
+                reason="SEC EDGAR batch connector requires configured user-agent; flips to read_ok when source-ingest reports ok",
+            ),
+            _provider_truth(
+                provider_key="finra",
+                provider="FINRA short-sale volume",
+                market="US",
+                source_class="official_reference",
+                status="read_unavailable",
+                evidence_ref=f"{_UNAVAILABLE_MARKETDATA_EVIDENCE_BASE}/us-finra.json",
+                order_capable_provider=False,
+                order_path="not_applicable",
+                reason="FINRA public short-volume files; flips to read_ok when source-ingest connector reports live health",
+            ),
+            _provider_truth(
+                provider_key="fred",
+                provider="FRED macro series",
+                market="GLOBAL",
+                source_class="official_reference",
+                status="credential_unavailable",
+                evidence_ref=f"{_UNAVAILABLE_MARKETDATA_EVIDENCE_BASE}/us-fred.json",
+                order_capable_provider=False,
+                order_path="not_applicable",
+                reason="FRED keyed API requires FRED_API_KEY; flips to read_ok when source-ingest connector reports live health",
+                secret_ref="env://FRED_API_KEY",
+            ),
+            _provider_truth(
+                provider_key="polygon",
+                provider="Polygon.io daily OHLCV",
+                market="US",
+                source_class="research_grade",
+                status="credential_unavailable",
+                evidence_ref=f"{_UNAVAILABLE_MARKETDATA_EVIDENCE_BASE}/us-polygon.json",
+                order_capable_provider=False,
+                order_path="not_applicable",
+                reason="Polygon API key required; set POLYGON_API_KEY (or MASSIVE_API_KEY / US_MARKET_DATA_API_KEY)",
+                secret_ref="env://POLYGON_API_KEY",
+            ),
+            _provider_truth(
+                provider_key="alphavantage",
+                provider="Alpha Vantage daily OHLCV",
+                market="US",
+                source_class="research_grade",
+                status="credential_unavailable",
+                evidence_ref=f"{_UNAVAILABLE_MARKETDATA_EVIDENCE_BASE}/us-alphavantage.json",
+                order_capable_provider=False,
+                order_path="not_applicable",
+                reason="Alpha Vantage API key required; set ALPHA_VANTAGE_API_KEY",
+                secret_ref="env://ALPHA_VANTAGE_API_KEY",
+            ),
+        ]
+        provider_statuses = {src["provider_key"]: src["status"] for src in sources}
+        readback_refs = [
+            src["evidence_ref"] for src in sources if src.get("status") == "read_ok"
+        ]
+        unavailable_refs = [
+            src["evidence_ref"] for src in sources if src.get("status") != "read_ok"
         ]
         data_source_status = {
-            "state": "quote_readback_ok",
-            "summary": "IBKR quote readback is present; order path is disabled for marketdata smoke.",
-            "provider_statuses": {"ibkr": "read_ok"},
-            "readback_refs": [sources[0]["evidence_ref"]],
-            "unavailable_refs": [],
+            "state": "partial_readback",
+            "summary": (
+                "IBKR broker readback is present; Yahoo, SEC EDGAR, and FINRA "
+                "default to read_unavailable and flip to read_ok when source-ingest "
+                "reports live health; FRED, Polygon, and Alpha Vantage require API "
+                "credentials before they can become read_ok."
+            ),
+            "provider_statuses": provider_statuses,
+            "readback_refs": readback_refs,
+            "unavailable_refs": unavailable_refs,
             "readback_captured_at": "2026-05-01T17:20:00Z",
             **_read_only_side_effect_guard(),
         }
         return {
             "data_source_status": data_source_status,
             "data_sources": sources,
-            "data_source_refs": [sources[0]["evidence_ref"]],
+            "data_source_refs": [*readback_refs, *unavailable_refs],
         }
 
     if market == "CRYPTO":
@@ -736,6 +832,44 @@ def _market_persona_data_truth(item: Dict[str, Any]) -> Dict[str, Any]:
         "data_sources": [],
         "data_source_refs": [],
     }
+
+
+def _market_persona_required_data_sources(item: Dict[str, Any]) -> List[Dict[str, Any]]:
+    market = str(item.get("market") or "").upper()
+    if market == "TW":
+        return [
+            {
+                "dataset": "tw_price_daily",
+                "market": "TW",
+                "cadence": "daily",
+                "source_class": "live_pull",
+                "connector_candidates": [
+                    "tw-finmind-datasets",
+                    "tw-twse-tpex-official-market",
+                ],
+                "policy_gates": [
+                    "require_connector_approved",
+                    "require_schedule_active",
+                    "require_source_health_ok",
+                ],
+            },
+            {
+                "dataset": "tw_broker_top",
+                "market": "TW",
+                "cadence": "daily",
+                "source_class": "live_push",
+                "connector_candidates": [
+                    "tw-finmind-broker-daily-report",
+                    "tw-finmind-broker-bulk-parquet",
+                ],
+                "policy_gates": [
+                    "require_connector_approved",
+                    "require_schedule_active",
+                    "require_payload_push_health",
+                ],
+            },
+        ]
+    return []
 
 
 def _market_persona_research_truth(item: Dict[str, Any]) -> Dict[str, Any]:
@@ -903,8 +1037,8 @@ def _merge_market_persona_fleet(
             "violation_count": 0,
             "league_rank": 2,
             "league_score": 87.4,
-            "recommendation": "promote_canary_review",
-            "current_work": "paper observation and OOS cost review",
+            "recommendation": None,
+            "current_work": None,
             "risk_flags": [],
         },
         {
@@ -957,8 +1091,8 @@ def _merge_market_persona_fleet(
             "violation_count": 0,
             "league_rank": 3,
             "league_score": 79.1,
-            "recommendation": "hold_for_risk_owner_review",
-            "current_work": "TW corporate-action and session-boundary evidence review",
+            "recommendation": None,
+            "current_work": None,
             "risk_flags": ["slippage_watch"],
         },
         {
@@ -1011,8 +1145,8 @@ def _merge_market_persona_fleet(
             "violation_count": 0,
             "league_rank": 1,
             "league_score": 91.8,
-            "recommendation": "prepare_canary_packet",
-            "current_work": "paper broker sandbox readback and funding-rate stress review",
+            "recommendation": None,
+            "current_work": None,
             "risk_flags": [],
         },
     ]
@@ -1090,6 +1224,7 @@ def _merge_market_persona_fleet(
                 "created_at": "2026-02-01T00:00:00Z",
                 "updated_at": "2026-06-07T13:00:00Z",
                 "last_active_at": "2026-06-07T13:00:00Z",
+                "required_data_sources": _market_persona_required_data_sources(item),
                 "metadata": metadata,
             },
         )
@@ -1104,6 +1239,7 @@ def _merge_market_persona_fleet(
                 "status": "ready",
                 "owner_id": "pathreon-management",
                 "owner_type": "control-plane",
+                "capital_mode": "paper",
                 "risk_policy_ref": f"risk-policy-{market.lower()}-paper",
                 "single_runtime_enforced": True,
                 "currency": "TWD" if market == "TW" else "USD",
@@ -2116,6 +2252,15 @@ def _records_from_http_payload(payload: Any, *, list_key: Optional[str]) -> Any:
     return payload
 
 
+def _records_from_envelope(payload: Any, spec: Dict[str, Any]) -> Any:
+    envelope_key = str(spec.get("envelope_key") or "").strip()
+    if envelope_key and isinstance(payload, dict):
+        nested = payload.get(envelope_key)
+        if nested is not None:
+            return nested
+    return payload
+
+
 class CanonicalSnapshotAdapter:
     """Best-effort adapter over canonical governance/runtime JSON snapshots.
 
@@ -2132,6 +2277,22 @@ class CanonicalSnapshotAdapter:
             "filenames": ("deployment_plans.json",),
             "keys": ["plan_id", "id"],
             "snapshot_key": "deployment_plans",
+        },
+        "deployment_sagas": {
+            "env": "PANTHEON_BFF_DEPLOYMENT_SAGA_STORE",
+            "dirs": ("PANTHEON_GOVERNANCE_DATA_DIR",),
+            "filenames": ("deployment_sagas.json",),
+            "keys": ["saga_id", "id"],
+            "snapshot_key": "deployment_sagas",
+            "envelope_key": "sagas",
+        },
+        "deployment_saga_outbox": {
+            "env": "PANTHEON_BFF_DEPLOYMENT_SAGA_STORE",
+            "dirs": ("PANTHEON_GOVERNANCE_DATA_DIR",),
+            "filenames": ("deployment_sagas.json",),
+            "keys": ["event.event_id", "event_id", "id"],
+            "snapshot_key": "deployment_saga_outbox",
+            "envelope_key": "outbox",
         },
         "approval_decisions": {
             "env": "PANTHEON_BFF_APPROVAL_DECISION_STORE",
@@ -2153,6 +2314,30 @@ class CanonicalSnapshotAdapter:
             "filenames": ("persona_capital_bindings.json", "bindings.json"),
             "keys": ["binding_id", "id"],
             "snapshot_key": "bindings",
+        },
+        "rebalances": {
+            "env": "PANTHEON_BFF_REBALANCE_STORE",
+            "dirs": ("CAPITAL_DATA_DIR",),
+            "filenames": ("capital_allocation_authority.json",),
+            "keys": ["rebalance_id", "id"],
+            "snapshot_key": "rebalances",
+            "envelope_key": "rebalances",
+        },
+        "capital_allocations": {
+            "env": "PANTHEON_BFF_CAPITAL_ALLOCATION_STORE",
+            "dirs": ("CAPITAL_DATA_DIR",),
+            "filenames": ("capital_allocation_authority.json",),
+            "keys": ["allocation_id", "id"],
+            "snapshot_key": "capital_allocations",
+            "envelope_key": "allocations",
+        },
+        "containments": {
+            "env": "PANTHEON_BFF_CONTAINMENT_STORE",
+            "dirs": ("CAPITAL_DATA_DIR",),
+            "filenames": ("capital_allocation_authority.json",),
+            "keys": ["containment_id", "id"],
+            "snapshot_key": "containments",
+            "envelope_key": "containments",
         },
         "runtime_bindings": {
             "env": "PANTHEON_BFF_RUNTIME_BINDING_STORE",
@@ -2206,6 +2391,19 @@ class CanonicalSnapshotAdapter:
         "persona_bindings": {
             "base_env": ("PANTHEON_CAPITAL_API_URL", "PANTHEON_CAPITAL_SERVICE_URL"),
             "list_path": "/api/bindings",
+        },
+        "rebalances": {
+            "base_env": ("PANTHEON_CAPITAL_API_URL", "PANTHEON_CAPITAL_SERVICE_URL"),
+            "list_path": "/api/rebalances",
+        },
+        "capital_allocations": {
+            "base_env": ("PANTHEON_CAPITAL_API_URL", "PANTHEON_CAPITAL_SERVICE_URL"),
+            "list_path": "/api/allocations",
+            "list_key": "items",
+        },
+        "containments": {
+            "base_env": ("PANTHEON_CAPITAL_API_URL", "PANTHEON_CAPITAL_SERVICE_URL"),
+            "list_path": "/api/containments",
         },
         "runtime_bindings": {
             "base_env": ("PANTHEON_RUNTIME_MANAGER_URL", "PANTHEON_INTERNAL_API_URL"),
@@ -2325,6 +2523,7 @@ class CanonicalSnapshotAdapter:
                         return True, self._cache.get(dataset, {})
                     text = explicit_path.read_text(encoding="utf-8").strip()
                     payload = json.loads(text) if text else {}
+                    payload = _records_from_envelope(payload, spec)
                     normalized = _normalize_records(payload, spec["keys"])
                     self._cache[dataset] = normalized
                     self._cache_meta[dataset] = (cache_key, stat)
@@ -2344,6 +2543,7 @@ class CanonicalSnapshotAdapter:
 
             text = path.read_text(encoding="utf-8").strip()
             payload = json.loads(text) if text else {}
+            payload = _records_from_envelope(payload, self._DATASETS[dataset])
             normalized = _normalize_records(payload, self._DATASETS[dataset]["keys"])
             self._cache[dataset] = normalized
             self._cache_meta[dataset] = (cache_key, stat)
@@ -2368,6 +2568,10 @@ class CanonicalSnapshotAdapter:
 
     def source(self, dataset: str) -> str:
         return self._cache_source.get(dataset, "canonical")
+
+    def cached_source(self, dataset: str) -> Optional[str]:
+        """Return provenance from an earlier read without touching the backend."""
+        return self._cache_source.get(dataset)
 
     def list_records(
         self,
@@ -2397,7 +2601,21 @@ class CanonicalSnapshotAdapter:
             available, _ = self._load_dataset("capital_pools")
             return available, None
         available, records = self._load_dataset("capital_pools")
-        return available, records.get(str(pool_id))
+        if not available:
+            return available, None
+        record = records.get(str(pool_id))
+        if record is not None:
+            return True, record
+        # The dataset dict may be keyed by a value other than the pool's public id: when the
+        # canonical payload is a JSON object, `_normalize_records` keys by the object's own keys
+        # (not `pool_id`/`id`), while `list_capital_pools` exposes each pool as `pool_id or id`.
+        # Resolve by that same identity so every id the list surface returns has a working detail
+        # endpoint (previously such pools 404'd even though they appeared in the list).
+        target = str(pool_id)
+        for candidate in records.values():
+            if str(candidate.get("pool_id") or candidate.get("id") or "") == target:
+                return True, candidate
+        return True, None
 
     def binding(self, binding_id: Optional[str]) -> tuple[bool, Optional[Dict[str, Any]]]:
         if not binding_id:
@@ -2536,6 +2754,20 @@ class ServiceBackedReadAdapter:
             "keys": ["decision_id", "id"],
             "snapshot_key": "evolution_decisions",
         },
+        "freeze_orders": {
+            "env": "PANTHEON_BFF_FREEZE_ORDER_STORE",
+            "dirs": ("PANTHEON_GOVERNANCE_DATA_DIR", "GOVERNANCE_DATA_DIR"),
+            "filenames": ("freeze_orders.json",),
+            "keys": ["freeze_order_id", "id"],
+            "snapshot_key": "freeze_orders",
+        },
+        "all_rollbacks": {
+            "env": "PANTHEON_BFF_ROLLBACK_STORE",
+            "dirs": ("PANTHEON_GOVERNANCE_DATA_DIR", "GOVERNANCE_DATA_DIR"),
+            "filenames": ("rollbacks.json",),
+            "keys": ["rollback_id", "id"],
+            "snapshot_key": "all_rollbacks",
+        },
         "evolution_programs": {
             "env": "PANTHEON_BFF_EVOLUTION_PROGRAM_STORE",
             "dirs": ("EVOLUTION_DATA_DIR",),
@@ -2632,13 +2864,6 @@ class ServiceBackedReadAdapter:
             "filenames": (),
             "keys": ["ref_id", "id"],
             "snapshot_key": "evidence_refs",
-        },
-        "evidence_operations": {
-            "env": "PANTHEON_BFF_EVIDENCE_OPERATION_STORE",
-            "dirs": (),
-            "filenames": (),
-            "keys": ["ref_id", "id"],
-            "snapshot_key": "evidence_operations",
         },
         "insight_cards": {
             "env": "PANTHEON_BFF_INSIGHT_CARD_STORE",
@@ -2830,6 +3055,15 @@ class ServiceBackedReadAdapter:
             "filenames": (),
             "keys": ["id"],
             "snapshot_key": "loop_runs",
+            "nested_key": "records",
+            "snapshot_requires_key": True,
+        },
+        "loop_health": {
+            "env": "PANTHEON_BFF_LOOP_HEALTH_STORE",
+            "dirs": ("PANTHEON_CONTROL_PLANE_DATA_DIR",),
+            "filenames": ("loop_health.json", "loop-health.json"),
+            "keys": ["loop_id", "id"],
+            "snapshot_key": "loop_health",
         },
         "sentinel_findings": {
             "env": "PANTHEON_BFF_SENTINEL_FINDING_STORE",
@@ -2933,6 +3167,22 @@ class ServiceBackedReadAdapter:
             "base_env": ("PANTHEON_EVOLUTION_API_URL", "PANTHEON_GOVERNANCE_API_URL"),
             "list_path": "/api/evolution/proposals",
         },
+        "freeze_orders": {
+            "base_env": (
+                "PANTHEON_GOVERNANCE_APPROVAL_API_URL",
+                "PANTHEON_GOVERNANCE_SERVICE_URL",
+            ),
+            "list_path": "/api/governance/freeze-orders",
+            "require_list_payload": True,
+        },
+        "all_rollbacks": {
+            "base_env": (
+                "PANTHEON_GOVERNANCE_APPROVAL_API_URL",
+                "PANTHEON_GOVERNANCE_SERVICE_URL",
+            ),
+            "list_path": "/api/governance/rollbacks",
+            "require_list_payload": True,
+        },
         "telemetry_summaries": {
             "base_env": ("PANTHEON_TELEMETRY_API_URL", "PANTHEON_TELEMETRY_URL"),
             "list_path": "/api/telemetry/runtime-summaries",
@@ -2984,6 +3234,7 @@ class ServiceBackedReadAdapter:
         self._cache: Dict[str, Dict[str, Dict[str, Any]]] = {}
         self._cache_meta: Dict[str, tuple[str, int]] = {}
         self._cache_source: Dict[str, str] = {}
+        self._cache_envelope_metadata: Dict[str, Dict[str, Any]] = {}
         self._snapshot_path = snapshot_path or _default_bff_snapshot_path()
         self._allow_snapshot_fallback = allow_snapshot_fallback
 
@@ -3005,6 +3256,8 @@ class ServiceBackedReadAdapter:
             payload,
             list_key=spec.get("list_key"),
         )
+        if spec.get("require_list_payload") and not isinstance(records_payload, list):
+            return False, {}
         if dataset == "lineage_edges" and isinstance(records_payload, list):
             records_payload = [
                 {
@@ -3054,6 +3307,15 @@ class ServiceBackedReadAdapter:
                 return True, self._cache.get(dataset, {})
 
             payload = _load_record_store_payload(path)
+            if dataset == "loop_runs" and isinstance(payload, dict):
+                controller = payload.get("controller")
+                self._cache_envelope_metadata[dataset] = {
+                    "schema_version": payload.get("schema_version"),
+                    "generation": payload.get("generation"),
+                    "controller": dict(controller) if isinstance(controller, dict) else {},
+                }
+            else:
+                self._cache_envelope_metadata.pop(dataset, None)
             if dataset == "ooda_packets":
                 payload = _project_ooda_packet_store_payload(payload)
             if dataset == "synthesis_conflict_logs":
@@ -3069,6 +3331,14 @@ class ServiceBackedReadAdapter:
 
         snapshot_key = self._DATASETS[dataset].get("snapshot_key")
         if include_snapshot_fallback and self._allow_snapshot_fallback and snapshot_key:
+            if self._DATASETS[dataset].get("snapshot_requires_key") and self._snapshot_path.exists():
+                try:
+                    snapshot_payload = _load_record_store_payload(self._snapshot_path)
+                except (OSError, ValueError):
+                    snapshot_payload = None
+                if not isinstance(snapshot_payload, dict) or snapshot_key not in snapshot_payload:
+                    self._cache_envelope_metadata.pop(dataset, None)
+                    return False, {}
             available, normalized, cache_meta = _load_snapshot_dataset(
                 self._snapshot_path,
                 str(snapshot_key),
@@ -3079,12 +3349,22 @@ class ServiceBackedReadAdapter:
                     self._cache[dataset] = normalized
                     self._cache_meta[dataset] = cache_meta
                     self._cache_source[dataset] = "local_snapshot"
+                    self._cache_envelope_metadata.pop(dataset, None)
                 return True, self._cache.get(dataset, normalized)
 
+        self._cache_envelope_metadata.pop(dataset, None)
         return False, {}
 
     def source(self, dataset: str) -> str:
         return self._cache_source.get(dataset, "service_store")
+
+    def cached_source(self, dataset: str) -> Optional[str]:
+        """Return provenance from an earlier read without touching the backend."""
+        return self._cache_source.get(dataset)
+
+    def envelope_metadata(self, dataset: str) -> Dict[str, Any]:
+        """Return wrapper metadata retained during the most recent dataset read."""
+        return json.loads(json.dumps(self._cache_envelope_metadata.get(dataset, {})))
 
     def list_records(
         self,
@@ -3130,6 +3410,14 @@ class ServiceBackedReadAdapter:
             "derived_from_incident_id": inc_id,
             "runtime_id": inc.get("runtime_id"),
             "binding_id": inc.get("binding_id"),
+            # Incident reconstruction is retained only as an explicitly
+            # degraded compatibility view.  It is neither the canonical loop
+            # ledger nor evidence that the lifecycle projector is live.
+            "source": "legacy_incident_backfill",
+            "projection_mode": "backfill",
+            "truth_level": "legacy_backfill",
+            "accepted_live": False,
+            "read_state": "degraded",
         }
 
     _SENTINEL_KIND_KEYWORDS: Dict[str, List[str]] = {
@@ -3166,32 +3454,30 @@ class ServiceBackedReadAdapter:
         }
 
     def list_loop_runs(self) -> tuple[bool, List[Dict[str, Any]]]:
-        # Merge the dedicated v5 loop-run ledger (paper-binding execution loops,
-        # populated by the loop-run projector) with incident-derived recovery
-        # loops. Previously incidents short-circuited this method, so the
-        # projector's PANTHEON_BFF_LOOP_RUN_STORE records never surfaced whenever
-        # any incident existed — leaving the ledger blank despite active runtimes.
-        runs: List[Dict[str, Any]] = []
-        seen: set = set()
+        # A configured projector ledger is authoritative, including when it is
+        # valid but empty.  Incident reconstruction is an incident-only legacy
+        # fallback and must never be merged into canonical lifecycle truth.
         avail_lr, lr_data = self._load_dataset("loop_runs")
         if avail_lr:
-            for run in lr_data.values():
-                if isinstance(run, dict):
-                    runs.append(run)
-                    seen.add(str(run.get("id") or ""))
+            return True, [run for run in lr_data.values() if isinstance(run, dict)]
+
         avail_inc, incidents = self._load_dataset("incidents")
-        if avail_inc:
-            for inc in incidents.values():
-                if not isinstance(inc, dict):
-                    continue
-                if "sentinel" in str(inc.get("title") or "").lower():
-                    continue
-                derived = self._derive_loop_run(inc)
-                if str(derived.get("id") or "") not in seen:
-                    runs.append(derived)
-        return (avail_lr or avail_inc), runs
+        if not avail_inc:
+            return False, []
+        return True, [
+            self._derive_loop_run(inc)
+            for inc in incidents.values()
+            if isinstance(inc, dict)
+            and "sentinel" not in str(inc.get("title") or "").lower()
+        ]
 
     def get_loop_run(self, loop_run_id: str) -> tuple[bool, Optional[Dict[str, Any]]]:
+        # Canonical lookup is first and conclusive.  A missing ID in an
+        # available canonical ledger must not resolve to an unrelated incident.
+        avail_lr, lr_data = self._load_dataset("loop_runs")
+        if avail_lr:
+            return True, lr_data.get(loop_run_id)
+
         avail_inc, incidents = self._load_dataset("incidents")
         if avail_inc:
             inc = incidents.get(loop_run_id)
@@ -3206,16 +3492,15 @@ class ServiceBackedReadAdapter:
                 ]
                 if 1 <= n <= len(non_sentinel):
                     return True, self._derive_loop_run(non_sentinel[n - 1], override_id=loop_run_id)
-        # Fall through to the dedicated loop-run ledger for projector-written
-        # records (e.g. lr-rb-*) that are not incident-derived.
-        avail_lr, lr_data = self._load_dataset("loop_runs")
-        if avail_lr and loop_run_id in lr_data:
-            return True, lr_data.get(loop_run_id)
         if avail_inc:
             return True, None
-        if avail_lr:
-            return True, None
         return False, None
+
+    def list_loop_health_records(self) -> tuple[bool, List[Dict[str, Any]]]:
+        return self.list_records("loop_health")
+
+    def get_loop_health_record(self, loop_id: str) -> tuple[bool, Optional[Dict[str, Any]]]:
+        return self.record("loop_health", loop_id)
 
     def list_sentinel_findings(
         self,
@@ -3818,6 +4103,10 @@ def _default_read_data() -> Dict[str, Any]:
             "runtime-042": {
                 "id": "runtime-042",
                 "runtime_id": "runtime-042",
+                "persona_id": "persona-alpha",
+                "binding_id": "binding-042",
+                "runtime_binding_id": "binding-042",
+                "persona_capital_binding_id": "binding-042",
                 "deployment_mode": "paper",
                 "deployment_stage": "none",
                 "status": "idle",
@@ -7053,7 +7342,6 @@ class ReadSurfaceStore:
         "institutional_memory_entries": "institutional_memory_entries",
         "research_analyses": "research_analyses",
         "evidence_refs": "evidence_refs",
-        "evidence_operations": "evidence_operations",
         "insight_cards": "insight_cards",
         "strategy_specs": "strategy_specs",
         "research_search_documents": "research_search_documents",
@@ -7087,9 +7375,12 @@ class ReadSurfaceStore:
         "synthesis_conflict_logs": "synthesis_conflict_logs",
         "ranking_formulas": "ranking_formulas",
         "rebalances": "rebalances",
+        "capital_allocations": "capital_allocations",
+        "containments": "containments",
         "rankings": "rankings",
         "persona_league": "persona_league",
-        "paper_persona_launches": "paper_persona_launches",
+        "ranking_snapshots": "ranking_snapshots",
+        "allocation_evaluations": "allocation_evaluations",
     }
     _MARKET_PERSONA_RECORD_KEYS = {
         "personas": ["persona_id", "id"],
@@ -7114,7 +7405,13 @@ class ReadSurfaceStore:
     ) -> None:
         self._path = Path(storage_path)
         self._data: Dict[str, Any] = {}
-        self._local_overlay_write_datasets: set[str] = set()
+        # These admission records are owned and persisted by the BFF.  They
+        # remain authoritative after restart even when read-model fallback is
+        # disabled.
+        self._local_overlay_write_datasets: set[str] = {
+            "ranking_snapshots",
+            "allocation_evaluations",
+        }
         if allow_local_snapshot_fallback is None:
             allow_local_snapshot_fallback = False
         self._allow_local_snapshot_fallback = allow_local_snapshot_fallback
@@ -8569,6 +8866,9 @@ class ReadSurfaceStore:
             raw = self._path.read_text().strip()
             if raw:
                 self._data = json.loads(raw)
+                for dataset, key in self._LOCAL_DATA_KEYS.items():
+                    if key in self._data:
+                        self._local_overlay_write_datasets.add(dataset)
                 if self._allow_local_snapshot_fallback and self._backfill_local_contract_defaults():
                     self._save()
                 return
@@ -8936,6 +9236,29 @@ class ReadSurfaceStore:
             return records
         return {}
 
+    def _local_bff_write_records(
+        self,
+        dataset: str,
+        key_candidates: Optional[List[str]] = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        records = self._local_dataset(dataset)
+        if not isinstance(records, dict):
+            return {}
+        keys = key_candidates or self._MARKET_PERSONA_RECORD_KEYS.get(dataset, ["id"])
+        out: Dict[str, Dict[str, Any]] = {}
+        for fallback_key, record in records.items():
+            if not isinstance(record, dict):
+                continue
+            metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+            persistence_mode = str(record.get("persistenceMode") or metadata.get("persistenceMode") or "").strip()
+            write_authority = str(record.get("canonicalWriteAuthority") or "").strip()
+            if persistence_mode != "bff_local_dev_store" and not write_authority:
+                continue
+            key = _record_key(record, keys) or str(fallback_key or "").strip()
+            if key:
+                out[key] = json.loads(json.dumps(record))
+        return out
+
     def _local_bff_persona_records(self) -> Dict[str, Dict[str, Any]]:
         records = self._local_dataset("personas")
         if not isinstance(records, dict):
@@ -8946,8 +9269,34 @@ class ReadSurfaceStore:
                 continue
             persona_id = str(record.get("persona_id") or record.get("id") or key or "").strip()
             if persona_id:
-                local_personas[persona_id] = record
+                # Local Persona Registry writes use the same canonical projection
+                # as service-backed records.  In particular, tenant ownership is
+                # copied from canonical metadata to the top-level fields consumed
+                # by fail-closed BFF audience checks.
+                local_personas[persona_id] = self._project_service_persona(record)
         return local_personas
+
+    @staticmethod
+    def _is_bff_local_capability_snapshot(snapshot: Dict[str, Any]) -> bool:
+        metadata = snapshot.get("metadata") if isinstance(snapshot.get("metadata"), dict) else {}
+        return (
+            snapshot.get("persistenceMode") == "bff_local_dev_store"
+            or metadata.get("persistenceMode") == "bff_local_dev_store"
+            or snapshot.get("canonicalWriteAuthority") == "persona_capability_service"
+        )
+
+    def _local_bff_capability_snapshot_records(self) -> Dict[str, Dict[str, Any]]:
+        records = self._local_dataset("capability_snapshots")
+        if not isinstance(records, dict):
+            return {}
+        local_snapshots: Dict[str, Dict[str, Any]] = {}
+        for key, record in records.items():
+            if not isinstance(record, dict) or not self._is_bff_local_capability_snapshot(record):
+                continue
+            snapshot_id = str(record.get("snapshot_id") or record.get("id") or key or "").strip()
+            if snapshot_id:
+                local_snapshots[snapshot_id] = json.loads(json.dumps(record))
+        return local_snapshots
 
     def _market_persona_records(
         self,
@@ -9055,6 +9404,53 @@ class ReadSurfaceStore:
             )
             if available:
                 return self._service.source(dataset)
+        if include_local_fallback and dataset == "personas" and self._local_bff_persona_records():
+            return "bff_local_dev_store"
+        local_payload = self._local_fallback(dataset) if include_local_fallback else None
+        if include_local_fallback and local_payload in (None, "", [], {}):
+            local_payload = self._local_overlay_records(dataset)
+        if local_payload not in (None, "", [], {}):
+            return "local_snapshot"
+        return "missing"
+
+    def dataset_source_cached(
+        self,
+        dataset: str,
+        *,
+        include_local_fallback: bool = True,
+    ) -> str:
+        """Resolve provenance after a read without issuing another backend read.
+
+        Human Inbox contributors already loaded their records. Calling
+        ``dataset_source`` immediately afterward repeats adapter list calls and
+        can double HTTP latency, so hot aggregation paths use this cache-only
+        variant for the provenance envelope.
+        """
+        if dataset == "approval_queue_items":
+            approval_source = self.dataset_source_cached(
+                "approval_decisions",
+                include_local_fallback=include_local_fallback,
+            )
+            if approval_source != "missing":
+                return approval_source
+        if dataset == "governance_review_queue_items":
+            for upstream_dataset in (
+                "deployment_plans",
+                "approval_decisions",
+                "evolution_decisions",
+            ):
+                upstream_source = self.dataset_source_cached(
+                    upstream_dataset,
+                    include_local_fallback=include_local_fallback,
+                )
+                if upstream_source != "missing":
+                    return upstream_source
+        canonical_source = self._canonical.cached_source(dataset)
+        if canonical_source:
+            return canonical_source
+        service_source = self._service.cached_source(dataset)
+        if service_source:
+            return service_source
         if include_local_fallback and dataset == "personas" and self._local_bff_persona_records():
             return "bff_local_dev_store"
         local_payload = self._local_fallback(dataset) if include_local_fallback else None
@@ -10119,11 +10515,12 @@ class ReadSurfaceStore:
     def _project_canonical_deployment_plan(
         raw: Dict[str, Any],
         runtime_binding_id: Optional[str],
+        saga_progress: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         plan_id = str(raw.get("plan_id") or raw.get("id") or "")
         binding_id = raw.get("binding_id")
         binding_ids = [str(binding_id)] if binding_id else []
-        return {
+        projected = {
             "id": plan_id,
             "plan_id": plan_id,
             "stage": raw.get("target_stage") or raw.get("stage") or raw.get("current_stage"),
@@ -10153,12 +10550,36 @@ class ReadSurfaceStore:
                 )
             ),
         }
+        if saga_progress is not None:
+            projected["deployment_saga_id"] = saga_progress.get("saga_id")
+            projected["deployment_saga_status"] = saga_progress.get("saga_status")
+            projected["saga_progress"] = json.loads(json.dumps(saga_progress))
+            projected["saga_progress_status"] = saga_progress.get("progress_status")
+            projected["blocked_reason"] = saga_progress.get("blocked_reason")
+            projected["retry_state"] = json.loads(json.dumps(saga_progress.get("retry_state") or []))
+            projected["dlq_count"] = saga_progress.get("dlq_count", 0)
+        return projected
 
     @staticmethod
     def _project_canonical_approval_decision(raw: Dict[str, Any]) -> Dict[str, Any]:
         decision_id = raw.get("decision_id") or raw.get("id")
         target_type = raw.get("target_type") or raw.get("decision_type")
         target_id = raw.get("target_id")
+        metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+        tenant_id = (
+            raw.get("tenant_id")
+            or raw.get("tenantId")
+            or metadata.get("tenant_id")
+            or metadata.get("tenantId")
+        )
+        owner_user_id = (
+            raw.get("owner_user_id")
+            or raw.get("user_id")
+            or raw.get("userId")
+            or metadata.get("owner_user_id")
+            or metadata.get("user_id")
+            or metadata.get("userId")
+        )
         deployment_ref = {}
         if str(target_type or "") == "DeploymentPlan" and target_id:
             deployment_ref = {
@@ -10172,6 +10593,8 @@ class ReadSurfaceStore:
             "target_type": target_type,
             "target_id": target_id,
             "target_version": raw.get("target_version"),
+            "tenant_id": tenant_id,
+            "owner_user_id": owner_user_id,
             "deployment_ref": deployment_ref,
             "outcome": raw.get("decision") or raw.get("outcome"),
             "reviewer": raw.get("actor_id") or raw.get("reviewer"),
@@ -10180,6 +10603,12 @@ class ReadSurfaceStore:
             "created_at": raw.get("created_at") or raw.get("submitted_at"),
             "submitted_at": raw.get("submitted_at") or raw.get("created_at"),
             "decided_at": raw.get("decided_at"),
+            "expires_at": raw.get("expires_at"),
+            "revoked_at": raw.get("revoked_at"),
+            "proposal_id": raw.get("proposal_id"),
+            "proposal_revision": raw.get("proposal_revision"),
+            "proposal_content_digest": raw.get("proposal_content_digest"),
+            "validation_result_digest": raw.get("validation_result_digest"),
             "risk_level": raw.get("risk_level"),
             "state": raw.get("decision_state") or raw.get("state"),
             "rationale": raw.get("rationale"),
@@ -10200,6 +10629,10 @@ class ReadSurfaceStore:
         projected.setdefault("owner_type", raw.get("owner_type"))
         projected.setdefault("single_runtime_enforced", raw.get("single_runtime_enforced", True))
         projected.setdefault("risk_policy_ref", raw.get("risk_policy_ref"))
+        projected["canonicalWriteAuthority"] = "capital_service"
+        projected["canonical_write_authority"] = "capital_service"
+        projected["persistenceMode"] = "owner_store"
+        projected["persistence_mode"] = "owner_store"
         projected["tenant_id"] = tenant_id
         projected["tenantId"] = tenant_id
         return projected
@@ -10212,18 +10645,23 @@ class ReadSurfaceStore:
         projected["binding_id"] = binding_id
         projected.setdefault("persona_id", raw.get("persona_id"))
         projected.setdefault("capital_pool_id", raw.get("capital_pool_id"))
+        projected.setdefault("capital_sleeve_id", raw.get("capital_sleeve_id"))
         projected.setdefault("role", raw.get("role"))
         projected.setdefault("validity", raw.get("validity"))
         projected.setdefault("status", raw.get("status"))
         projected.setdefault("approval_decision_id", raw.get("approval_decision_id"))
         projected.setdefault("allowed_deployment_scope", raw.get("allowed_deployment_scope"))
+        projected["canonicalWriteAuthority"] = "capital_service"
+        projected["canonical_write_authority"] = "capital_service"
+        projected["persistenceMode"] = "owner_store"
+        projected["persistence_mode"] = "owner_store"
         return projected
 
     @staticmethod
     def _project_canonical_runtime_binding(raw: Dict[str, Any]) -> Dict[str, Any]:
         binding_id = raw.get("binding_id") or raw.get("id")
-        deployment_stage = raw.get("deployment_stage") or raw.get("deployment_mode")
-        deployment_mode = raw.get("deployment_mode") or deployment_stage
+        deployment_stage = raw.get("deployment_stage")
+        deployment_mode = raw.get("deployment_mode")
         metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
         tenant_id = raw.get("tenant_id") or raw.get("tenantId") or metadata.get("tenant_id") or metadata.get("tenantId")
         projected = json.loads(json.dumps(raw))
@@ -10235,7 +10673,7 @@ class ReadSurfaceStore:
         projected.setdefault("state", raw.get("state") or raw.get("status"))
         projected.setdefault("persona_id", raw.get("persona_id"))
         projected.setdefault("deployment_plan_id", raw.get("deployment_plan_id") or raw.get("plan_id"))
-        projected.setdefault("runtime_kind", raw.get("runtime_kind") or deployment_mode)
+        projected.setdefault("runtime_kind", raw.get("runtime_kind"))
         projected["deployment_stage"] = deployment_stage
         projected["deployment_mode"] = deployment_mode
         projected.setdefault("status", raw.get("status"))
@@ -10280,7 +10718,7 @@ class ReadSurfaceStore:
     @staticmethod
     def _project_service_session(raw: Dict[str, Any]) -> Dict[str, Any]:
         session_id = raw.get("session_id") or raw.get("id")
-        return {
+        projected = {
             "id": session_id,
             "session_id": session_id,
             "persona_id": raw.get("persona_id"),
@@ -10292,11 +10730,42 @@ class ReadSurfaceStore:
             "trace_id": raw.get("trace_id"),
             "request_id": raw.get("request_id"),
             "runtime_binding_id": raw.get("runtime_binding_id"),
+            "runtime_id": raw.get("runtime_id"),
+            "persona_capital_binding_id": raw.get("persona_capital_binding_id"),
             "deployment_stage": raw.get("deployment_stage"),
             "capital_pool_id": raw.get("capital_pool_id"),
             "context_bundle_ref": raw.get("context_bundle_ref"),
-            "metadata": raw.get("metadata", {}),
+            "metadata": json.loads(json.dumps(raw.get("metadata", {}))),
         }
+        authoritative_session_fields = (
+            "binding_id",
+            "runtime_identity",
+            "runtime_kind",
+            "deployment_mode",
+            "state",
+            "lifecycle_state",
+            "active",
+            "created_at",
+            "updated_at",
+            "last_heartbeat_at",
+            "last_seen_at",
+            "heartbeat_status",
+            "freshness",
+            "staleness",
+            "stale",
+            "stale_at",
+            "stale_after_seconds",
+            "degraded",
+            "degraded_at",
+            "last_error",
+        )
+        for field in authoritative_session_fields:
+            if field in raw:
+                projected[field] = json.loads(json.dumps(raw[field]))
+        for field, value in raw.items():
+            if field == "reason" or field.endswith("_reason") or field.endswith("_reasons"):
+                projected[field] = json.loads(json.dumps(value))
+        return projected
 
     @staticmethod
     def _project_service_evolution_decision(raw: Dict[str, Any]) -> Dict[str, Any]:
@@ -10308,6 +10777,8 @@ class ReadSurfaceStore:
             "id": decision_id,
             "decision_id": decision_id,
             "program_id": raw.get("program_id"),
+            "persona_id": raw.get("persona_id"),
+            "capital_pool_id": raw.get("capital_pool_id"),
             "action_type": raw.get("action_type"),
             "risk_level": raw.get("risk_level"),
             "status": decision_state,
@@ -10337,6 +10808,8 @@ class ReadSurfaceStore:
             "required_approvals": raw.get("required_approvals"),
             "rollback_followthrough": raw.get("rollback_followthrough"),
             "metadata": raw.get("metadata"),
+            "origin": raw.get("origin"),
+            "provenance": raw.get("provenance"),
             "execution_result": raw.get("execution_result"),
         }
 
@@ -10429,7 +10902,11 @@ class ReadSurfaceStore:
             for persona in personas
             if str(persona.get("id") or persona.get("persona_id") or "") != "persona-alpha"
         ]
-        return anchor + sorted(rest, key=lambda x: x.get("created_at", ""), reverse=True)
+        return anchor + sorted(
+            rest,
+            key=lambda x: str(x.get("created_at") or ""),
+            reverse=True,
+        )
 
     @staticmethod
     def _is_bff_local_persona(persona: Dict[str, Any]) -> bool:
@@ -10452,7 +10929,7 @@ class ReadSurfaceStore:
         strategy_family: Optional[str] = None,
         traits: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        persona_capital_binding_id: Optional[str] = None,
+        required_data_sources: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         timestamp = created_at or _utc_now_rfc3339()
         clean_metadata = json.loads(json.dumps(metadata or {}))
@@ -10478,6 +10955,7 @@ class ReadSurfaceStore:
             "created_at": timestamp,
             "updated_at": timestamp,
             "created_by": actor_id,
+            "required_data_sources": json.loads(json.dumps(required_data_sources or [])),
             "metadata": clean_metadata,
             "canonicalWriteAuthority": "persona_registry_service",
             "persistenceMode": "bff_local_dev_store",
@@ -10552,13 +11030,77 @@ class ReadSurfaceStore:
         self._save()
         return self._project_service_persona(record)
 
+    def upsert_persona_capability_snapshot(
+        self,
+        *,
+        snapshot_id: str,
+        persona_id: str,
+        capabilities: List[str],
+        generated_at: Optional[str] = None,
+        source_refs: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Persist an explicit Persona capability grant in the owner store.
+
+        Lifecycle and deployment metadata never imply a capability.  Callers
+        that provision an interaction-capable Persona must write this separate
+        snapshot so eligibility can remain fail-closed.
+        """
+        clean_snapshot_id = str(snapshot_id or "").strip()
+        clean_persona_id = str(persona_id or "").strip()
+        if not clean_snapshot_id or not clean_persona_id:
+            raise ValueError("snapshot_id and persona_id are required")
+        clean_capabilities = list(dict.fromkeys(
+            str(capability or "").strip()
+            for capability in capabilities
+            if str(capability or "").strip()
+        ))
+        timestamp = generated_at or _utc_now_rfc3339()
+        record = {
+            "id": clean_snapshot_id,
+            "snapshot_id": clean_snapshot_id,
+            "persona_id": clean_persona_id,
+            "capabilities": clean_capabilities,
+            "allowed_capabilities": list(clean_capabilities),
+            "generated_at": timestamp,
+            "updated_at": timestamp,
+            "source_refs": json.loads(json.dumps(source_refs or [])),
+            "metadata": json.loads(json.dumps(metadata or {})),
+            "canonicalWriteAuthority": "persona_capability_service",
+            "persistenceMode": "bff_local_dev_store",
+        }
+
+        service_store_path = self._service._resolve_path("capability_snapshots")
+        if service_store_path is not None:
+            available, service_snapshots = self._service.list_records(
+                "capability_snapshots",
+                include_snapshot_fallback=False,
+            )
+            records = {
+                str(existing.get("snapshot_id") or existing.get("id") or ""): json.loads(json.dumps(existing))
+                for existing in service_snapshots
+                if isinstance(existing, dict)
+                and str(existing.get("snapshot_id") or existing.get("id") or "").strip()
+            } if available else {}
+            records[clean_snapshot_id] = record
+            if self._service.write_records("capability_snapshots", records):
+                return json.loads(json.dumps(record))
+
+        snapshots = self._ensure_local_overlay_records("capability_snapshots")
+        snapshots[clean_snapshot_id] = record
+        self._save()
+        return json.loads(json.dumps(record))
+
     def list_capital_pools(
         self,
         status: Optional[str] = None,
         risk_policy_ref: Optional[str] = None,
         include_market_persona_defaults: bool = False,
     ) -> List[Dict[str, Any]]:
-        local_pools = self._local_overlay_records("capital_pools")
+        local_pools = {
+            **self._local_bff_write_records("capital_pools", ["pool_id", "id"]),
+            **self._local_overlay_records("capital_pools"),
+        }
         available, raw_pools = self._canonical.list_records("capital_pools")
         if available:
             pools_by_id = {
@@ -10600,23 +11142,26 @@ class ReadSurfaceStore:
         validity: Optional[str] = None,
         include_market_persona_defaults: bool = False,
     ) -> List[Dict[str, Any]]:
-        local_bindings = self._local_overlay_records("persona_bindings")
+        local_bindings = {
+            **self._local_bff_write_records("persona_bindings", ["binding_id", "id"]),
+            **self._local_overlay_records("persona_bindings"),
+        }
         available, raw_bindings = self._canonical.list_records("persona_bindings")
         if available:
             bindings_by_id = {
                 str(binding.get("binding_id") or binding.get("id") or ""): binding
                 for binding in (self._project_canonical_binding(binding) for binding in raw_bindings)
             }
-            for binding_id, binding in local_bindings.items():
-                key = str(binding.get("binding_id") or binding.get("id") or binding_id)
-                if key:
-                    bindings_by_id[key] = json.loads(json.dumps(binding))
         else:
             bindings_by_id = {
                 str(binding.get("binding_id") or binding.get("id") or binding_id): binding
-                for binding_id, binding in (local_bindings or self._local_fallback("persona_bindings") or {}).items()
+                for binding_id, binding in (self._local_fallback("persona_bindings") or {}).items()
                 if isinstance(binding, dict)
             }
+        for binding_id, binding in local_bindings.items():
+            key = str(binding.get("binding_id") or binding.get("id") or binding_id)
+            if key:
+                bindings_by_id[key] = json.loads(json.dumps(binding))
         if include_market_persona_defaults:
             bindings_by_id = self._merge_market_persona_records(
                 "persona_bindings",
@@ -10634,12 +11179,165 @@ class ReadSurfaceStore:
             bindings = [b for b in bindings if b.get("validity") == validity]
         return sorted(bindings, key=lambda x: x.get("id", ""))
 
+    def create_persona_binding(
+        self,
+        *,
+        binding_id: str,
+        persona_id: str,
+        capital_pool_id: str,
+        actor_id: str,
+        created_at: Optional[str] = None,
+        role: str = "paper_owner",
+        validity: str = "active",
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        bindings = self._ensure_local_overlay_records("persona_bindings")
+        timestamp = created_at or _utc_now_rfc3339()
+        record = {
+            "id": binding_id,
+            "binding_id": binding_id,
+            "persona_capital_binding_id": binding_id,
+            "persona_id": persona_id,
+            "capital_pool_id": capital_pool_id,
+            "role": role,
+            "validity": validity,
+            "status": validity,
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "created_by": actor_id,
+            "metadata": json.loads(json.dumps(metadata or {})),
+            "canonicalWriteAuthority": "capital_service",
+            "persistenceMode": "bff_local_dev_store",
+        }
+        bindings[binding_id] = record
+        self._save()
+        return record
+
+    def _deployment_saga_progress_for_plan(self, plan_id: str) -> Optional[Dict[str, Any]]:
+        available, sagas = self._canonical.list_records("deployment_sagas")
+        if not available:
+            return None
+        matches = [
+            saga
+            for saga in sagas
+            if str(saga.get("plan_id") or "") == plan_id
+        ]
+        if not matches:
+            return None
+        saga = sorted(
+            matches,
+            key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""),
+            reverse=True,
+        )[0]
+        saga_id = str(saga.get("saga_id") or saga.get("id") or "")
+        outbox_available, outbox = self._canonical.list_records("deployment_saga_outbox")
+        saga_outbox = [
+            record
+            for record in (outbox if outbox_available else [])
+            if str((record.get("event") or {}).get("aggregate_id") or "") == saga_id
+        ]
+        return self._project_deployment_saga_progress(saga, saga_outbox)
+
+    @staticmethod
+    def _project_deployment_saga_progress(
+        saga: Dict[str, Any],
+        outbox: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        saga_status = str(saga.get("status") or "")
+        dlq_records = [
+            record
+            for record in outbox
+            if str(record.get("status") or "").lower() == "dead_lettered"
+        ]
+        if saga_status == "completed":
+            progress_status = "completed"
+        elif saga_status in {"failed", "aborted"}:
+            progress_status = "failed"
+        elif dlq_records:
+            progress_status = "blocked"
+        elif saga_status == "awaiting_binding" and int(saga.get("last_sequence_no") or 0) <= 1:
+            progress_status = "pending"
+        else:
+            progress_status = "running"
+
+        blocked_reason = None
+        if dlq_records:
+            blocked = sorted(
+                dlq_records,
+                key=lambda item: int((item.get("event") or {}).get("sequence_no") or 0),
+            )[-1]
+            blocked_reason = blocked.get("blocked_reason") or blocked.get("last_error")
+        elif saga.get("failure_reason"):
+            blocked_reason = saga.get("failure_reason")
+
+        retry_state = []
+        for record in sorted(
+            outbox,
+            key=lambda item: int((item.get("event") or {}).get("sequence_no") or 0),
+        ):
+            event = record.get("event") if isinstance(record.get("event"), dict) else {}
+            retry_state.append(
+                {
+                    "event_id": event.get("event_id"),
+                    "event_type": event.get("event_type"),
+                    "sequence_no": event.get("sequence_no"),
+                    "status": record.get("status"),
+                    "delivery_attempts": record.get("delivery_attempts", 0),
+                    "replay_count": record.get("replay_count", 0),
+                    "last_error": record.get("last_error"),
+                    "last_attempt_at": record.get("last_attempt_at"),
+                    "next_retry_at": record.get("next_retry_at"),
+                    "blocked_reason": record.get("blocked_reason"),
+                    "dlq_at": record.get("dlq_at"),
+                    "last_replayed_at": record.get("last_replayed_at"),
+                    "retry_policy": json.loads(json.dumps(record.get("retry_policy") or {})),
+                }
+            )
+
+        latest_policy = next(
+            (
+                item.get("retry_policy")
+                for item in reversed(retry_state)
+                if isinstance(item.get("retry_policy"), dict) and item.get("retry_policy")
+            ),
+            {},
+        )
+        return {
+            "saga_id": saga.get("saga_id") or saga.get("id"),
+            "plan_id": saga.get("plan_id"),
+            "progress_status": progress_status,
+            "saga_status": saga_status,
+            "current_step": saga.get("current_step"),
+            "blocked_reason": blocked_reason,
+            "retry_policy": {
+                "max_attempts": int(latest_policy.get("max_attempts") or 3),
+                "retry_delay_seconds": int(latest_policy.get("retry_delay_seconds") or 0),
+                "retryable": bool(latest_policy.get("retryable", True)),
+            },
+            "retry_state": retry_state,
+            "completed_steps": [
+                str(item.get("step"))
+                for item in saga.get("history", [])
+                if isinstance(item, dict) and item.get("step")
+            ],
+            "pending_event_count": sum(
+                1
+                for record in outbox
+                if str(record.get("status") or "").lower() == "pending"
+            ),
+            "dlq_count": len(dlq_records),
+        }
+
     def list_deployment_plans(
         self,
         status: Optional[str] = None,
         capital_pool_id: Optional[str] = None,
         include_fixture_pack: bool = True,
     ) -> List[Dict[str, Any]]:
+        local_plans = {
+            **self._local_bff_write_records("deployment_plans", ["plan_id", "id"]),
+            **self._local_overlay_records("deployment_plans"),
+        }
         available, raw_plans = self._canonical.list_records("deployment_plans")
         if available:
             runtime_by_plan: Dict[str, Dict[str, Any]] = {}
@@ -10656,10 +11354,15 @@ class ReadSurfaceStore:
                 runtime_binding_id = None
                 if runtime_binding:
                     runtime_binding_id = str(runtime_binding.get("binding_id") or runtime_binding.get("id") or "")
-                plans.append(self._project_canonical_deployment_plan(raw, runtime_binding_id))
+                plans.append(
+                    self._project_canonical_deployment_plan(
+                        raw,
+                        runtime_binding_id,
+                        saga_progress=self._deployment_saga_progress_for_plan(plan_id),
+                    )
+                )
         else:
             plans = list((self._local_fallback("deployment_plans") or {}).values())
-        local_plans = self._local_overlay_records("deployment_plans")
         if local_plans:
             plans_by_id = {str(p.get("id") or p.get("plan_id") or ""): p for p in plans}
             for overlay_key, plan in local_plans.items():
@@ -10686,21 +11389,11 @@ class ReadSurfaceStore:
         state: Optional[str] = None,
         include_fixture_pack: bool = True,
     ) -> List[Dict[str, Any]]:
-        local_decisions = self._local_overlay_records("approval_decisions")
         available, raw_decisions = self._canonical.list_records("approval_decisions")
         if available:
-            decisions_by_id = {
-                str(decision.get("decision_id") or decision.get("id") or ""): decision
-                for decision in (self._project_canonical_approval_decision(decision) for decision in raw_decisions)
-                if str(decision.get("decision_id") or decision.get("id") or "").strip()
-            }
-            for decision_id, decision in local_decisions.items():
-                key = str(decision.get("decision_id") or decision.get("id") or decision_id)
-                if key:
-                    decisions_by_id[key] = json.loads(json.dumps(decision))
-            decisions = list(decisions_by_id.values())
+            decisions = [self._project_canonical_approval_decision(decision) for decision in raw_decisions]
         else:
-            decisions = list((local_decisions or self._local_fallback("approval_decisions") or {}).values())
+            decisions = list((self._local_fallback("approval_decisions") or {}).values())
         if outcome:
             decisions = [d for d in decisions if str(d.get("outcome") or "").lower() == outcome.lower()]
         if state:
@@ -10728,7 +11421,10 @@ class ReadSurfaceStore:
         version: Optional[str] = None,
         include_market_persona_defaults: bool = False,
     ) -> List[Dict[str, Any]]:
-        local_bindings = self._local_overlay_records("runtime_bindings")
+        local_bindings = {
+            **self._local_bff_write_records("runtime_bindings", ["runtime_id", "runtime_binding_id", "binding_id", "id"]),
+            **self._local_overlay_records("runtime_bindings"),
+        }
         available, raw_bindings = self._canonical.list_records("runtime_bindings")
         if available:
             bindings_by_id = {
@@ -10769,7 +11465,113 @@ class ReadSurfaceStore:
                 bindings_by_id,
                 ["runtime_id", "runtime_binding_id", "binding_id", "id"],
             )
-        bindings = [binding for key, binding in bindings_by_id.items() if key]
+        persona_capital_bindings = self.list_bindings(
+            include_market_persona_defaults=include_market_persona_defaults,
+        )
+        capital_binding_by_id = {
+            str(binding.get("binding_id") or binding.get("id") or "").strip(): binding
+            for binding in persona_capital_bindings
+            if str(binding.get("binding_id") or binding.get("id") or "").strip()
+        }
+        # Legacy paper runtimes predate the explicit persona_id column.  Reconcile
+        # only through typed, exact identity references.  A canonical
+        # persona-capital binding owner is authoritative even when the runtime
+        # still carries a stale seed persona_id.  Registry declarations are a
+        # fail-closed fallback: a reference must identify exactly one persona.
+        declaration_indexes: Dict[str, Dict[str, set[str]]] = {
+            "runtime_id": {},
+            "runtime_binding_id": {},
+            "persona_capital_binding_id": {},
+        }
+        persona_declarations: Dict[str, Dict[str, Any]] = {}
+        for persona in self.list_personas(
+            include_market_persona_defaults=include_market_persona_defaults,
+        ):
+            persona_id = str(persona.get("persona_id") or persona.get("id") or "").strip()
+            if not persona_id:
+                continue
+            metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
+            declaration = {**persona, **metadata}
+            persona_declarations[persona_id] = declaration
+            declaration_values = {
+                "runtime_id": declaration.get("runtime_id") or declaration.get("runtimeId"),
+                "runtime_binding_id": (
+                    declaration.get("runtime_binding_id")
+                    or declaration.get("runtimeBindingId")
+                ),
+                "persona_capital_binding_id": (
+                    declaration.get("persona_capital_binding_id")
+                    or declaration.get("personaCapitalBindingId")
+                ),
+            }
+            for field, index in declaration_indexes.items():
+                value = str(declaration_values.get(field) or "").strip()
+                if value:
+                    index.setdefault(value, set()).add(persona_id)
+
+        bindings = []
+        for key, binding in bindings_by_id.items():
+            if not key:
+                continue
+            projected = json.loads(json.dumps(binding))
+            persona_binding_id = str(projected.get("persona_capital_binding_id") or "").strip()
+
+            capital_binding = capital_binding_by_id.get(persona_binding_id, {})
+            canonical_persona_id = str(capital_binding.get("persona_id") or "").strip()
+            if (
+                not canonical_persona_id
+                and str(projected.get("canonicalWriteAuthority") or "").strip()
+                == "runtime_manager_service"
+            ):
+                canonical_persona_id = str(projected.get("persona_id") or "").strip()
+            if canonical_persona_id:
+                projected["persona_id"] = canonical_persona_id
+                if not str(projected.get("capital_pool_id") or "").strip():
+                    capital_pool_id = str(capital_binding.get("capital_pool_id") or "").strip()
+                    if capital_pool_id:
+                        projected["capital_pool_id"] = capital_pool_id
+            else:
+                candidates: set[str] = set()
+                typed_references = {
+                    "runtime_id": str(projected.get("runtime_id") or "").strip(),
+                    "runtime_binding_id": str(
+                        projected.get("runtime_binding_id")
+                        or projected.get("binding_id")
+                        or projected.get("id")
+                        or ""
+                    ).strip(),
+                    "persona_capital_binding_id": persona_binding_id,
+                }
+                for field, reference in typed_references.items():
+                    if reference:
+                        candidates.update(declaration_indexes[field].get(reference, set()))
+                if len(candidates) == 1:
+                    resolved_persona_id = next(iter(candidates))
+                    projected["persona_id"] = resolved_persona_id
+                    declaration = persona_declarations.get(resolved_persona_id, {})
+                    if not persona_binding_id:
+                        declared_binding_id = str(
+                            declaration.get("persona_capital_binding_id")
+                            or declaration.get("personaCapitalBindingId")
+                            or ""
+                        ).strip()
+                        if declared_binding_id:
+                            projected["persona_capital_binding_id"] = declared_binding_id
+                    if not str(projected.get("capital_pool_id") or "").strip():
+                        declared_pool_id = str(
+                            declaration.get("capital_pool_id")
+                            or declaration.get("capitalPoolId")
+                            or declaration.get("legacy_paper_capital_pool_id")
+                            or declaration.get("legacyPaperCapitalPoolId")
+                            or ""
+                        ).strip()
+                        if declared_pool_id:
+                            projected["capital_pool_id"] = declared_pool_id
+                else:
+                    # No declaration or conflicting declarations: do not let
+                    # a stale raw persona_id assign ownership.
+                    projected["persona_id"] = None
+            bindings.append(projected)
         if deployment_mode:
             bindings = [
                 b for b in bindings
@@ -10783,17 +11585,29 @@ class ReadSurfaceStore:
         return sorted(bindings, key=lambda x: x.get("id", ""))
 
     @staticmethod
+    def _paper_runtime_monitoring_staleness_marker(session: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        staleness = session.get("staleness")
+        if not isinstance(staleness, dict):
+            return None
+        status = str(staleness.get("status") or "").strip().lower()
+        reason = str(staleness.get("reason") or "").strip()
+        if status == "stale" or reason:
+            return dict(staleness)
+        return None
+
+    @staticmethod
     def _paper_runtime_monitoring_session_active(session: Dict[str, Any]) -> bool:
         if session.get("ended_at") not in (None, ""):
+            return False
+        status = str(session.get("status") or "").strip().lower()
+        if status in {"ended", "stale", "failed"}:
+            return False
+        if ReadSurfaceStore._paper_runtime_monitoring_staleness_marker(session) is not None:
             return False
         explicit = session.get("active")
         if explicit is not None:
             return bool(explicit)
-        status = str(session.get("status") or "").strip().lower()
-        if status in {"ended", "stale", "failed"}:
-            return False
-        staleness = session.get("staleness")
-        return not isinstance(staleness, dict)
+        return True
 
     @staticmethod
     def _paper_runtime_monitoring_sort_key(session: Dict[str, Any]) -> tuple[str, str, str]:
@@ -10828,6 +11642,32 @@ class ReadSurfaceStore:
             )
         return sorted(
             [json.loads(json.dumps(session)) for session in sessions],
+            key=self._paper_runtime_monitoring_sort_key,
+            reverse=True,
+        )
+
+    def list_authoritative_paper_runtime_monitoring_sessions(self) -> List[Dict[str, Any]]:
+        """Return only paper-fleet owner records, never local/snapshot substitutes.
+
+        Persona provisioning is a safety-relevant lifecycle gate.  Local BFF
+        overlays and bundled snapshots remain useful for operator read views,
+        but they cannot prove that the canonical paper worker has joined its
+        RuntimeBinding.  An unavailable owner therefore reads back as no
+        authoritative evidence and leaves provisioning pending.
+        """
+
+        available, raw_sessions = self._canonical.list_records(
+            "paper_runtime_monitoring_sessions",
+            include_snapshot_fallback=False,
+        )
+        if not available:
+            return []
+        return sorted(
+            [
+                json.loads(json.dumps(session))
+                for session in raw_sessions
+                if isinstance(session, dict)
+            ],
             key=self._paper_runtime_monitoring_sort_key,
             reverse=True,
         )
@@ -10881,29 +11721,82 @@ class ReadSurfaceStore:
             runtime_binding_id = None
             if runtime_binding:
                 runtime_binding_id = str(runtime_binding.get("binding_id") or runtime_binding.get("id") or "")
-            return self._project_canonical_deployment_plan(raw, runtime_binding_id or None)
+            return self._project_canonical_deployment_plan(
+                raw,
+                runtime_binding_id or None,
+                saga_progress=self._deployment_saga_progress_for_plan(plan_id),
+            )
         return (self._local_fallback("deployment_plans") or {}).get(plan_id)
 
     def get_approval_decision(self, decision_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not decision_id:
             return None
-        local_decision = self._local_overlay_records("approval_decisions").get(decision_id)
-        if local_decision is not None:
-            return json.loads(json.dumps(local_decision))
         available, raw = self._canonical.approval_decision(decision_id)
         if available:
             return self._project_canonical_approval_decision(raw) if raw else None
         return (self._local_fallback("approval_decisions") or {}).get(decision_id)
 
+    def get_canonical_approval_decision_readback(
+        self, decision_id: Optional[str]
+    ) -> Dict[str, Any]:
+        """Preserve canonical availability; never substitute local fixtures."""
+        if not decision_id:
+            return {"available": False, "record": None, "source": "canonical.approval_decision"}
+        available, raw = self._canonical.approval_decision(decision_id)
+        return {
+            "available": bool(available),
+            "record": self._project_canonical_candidate_approval(raw) if available and raw else None,
+            "source": "canonical.approval_decision",
+        }
+
+    @staticmethod
+    def _project_canonical_candidate_approval(raw: Dict[str, Any]) -> Dict[str, Any]:
+        """Preserve the checksum-covered candidate FormalApprovalReceipt."""
+        metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+        receipt = {
+            "approval_decision_id": raw.get("approval_decision_id") or raw.get("decision_id") or raw.get("id"),
+            "authority": raw.get("authority"),
+            "tenant_id": raw.get("tenant_id") or metadata.get("tenant_id"),
+            "proposal_id": raw.get("proposal_id"),
+            "revision": raw.get("revision") or raw.get("proposal_revision"),
+            "proposal_digest": raw.get("proposal_digest") or raw.get("proposal_content_digest"),
+            "validation_receipt_id": raw.get("validation_receipt_id"),
+            "validation_receipt_sha256": raw.get("validation_receipt_sha256"),
+            "proposer_id": raw.get("proposer_id"),
+            "reviewer_id": raw.get("reviewer_id") or raw.get("actor_id"),
+            "outcome": raw.get("outcome") or raw.get("decision"),
+            "self_approval": raw.get("self_approval"),
+            "decided_at": raw.get("decided_at"),
+            "expires_at": raw.get("expires_at"),
+            "receipt_sha256": raw.get("receipt_sha256"),
+            "execution_authority": raw.get("execution_authority"),
+        }
+        return {
+            **receipt,
+            "revoked_at": raw.get("revoked_at"),
+            "superseded_by": raw.get("superseded_by"),
+            "decision_state": raw.get("decision_state") or raw.get("state"),
+        }
+
     def get_capital_pool(self, pool_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not pool_id:
             return None
+        # Cheap fast paths for the common local/canonical cases.
         local_pool = self._local_overlay_records("capital_pools").get(pool_id)
-        if local_pool is not None:
+        if isinstance(local_pool, dict):
             return local_pool
         available, raw = self._canonical.capital_pool(pool_id)
-        if available:
-            return self._project_canonical_capital_pool(raw) if raw else None
+        if available and raw:
+            return self._project_canonical_capital_pool(raw)
+        # Definitive fallback: resolve against the EXACT set list_capital_pools() surfaces, so any
+        # pool the list shows has a working detail endpoint. This covers every source the list
+        # merges — the BFF local dev write store (persona-created paper pools), market-persona
+        # default pools (pool-*-paper), and canonical — without this method having to re-enumerate
+        # (and inevitably miss) each one. Previously these 404'd even though they appear in the list.
+        target = str(pool_id)
+        for pool in self.list_capital_pools(include_market_persona_defaults=True):
+            if str(pool.get("id") or pool.get("pool_id") or "") == target:
+                return pool
         return None
 
     def create_capital_pool(
@@ -10916,11 +11809,6 @@ class ReadSurfaceStore:
         risk_policy_ref: Optional[str] = None,
         params: Optional[Dict[str, Any]] = None,
         status: str = "draft",
-        capital_scope: Optional[str] = None,
-        live_capital_enabled: Optional[bool] = None,
-        nav: Optional[float] = None,
-        cash: Optional[float] = None,
-        market_scope: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         pools = self._ensure_local_overlay_records("capital_pools")
         timestamp = created_at or _utc_now_rfc3339()
@@ -10931,14 +11819,15 @@ class ReadSurfaceStore:
             "status": status,
             "risk_policy_ref": risk_policy_ref,
             "params": params or {},
-            "capital_scope": capital_scope,
-            "live_capital_enabled": bool(live_capital_enabled) if live_capital_enabled is not None else None,
-            "nav": nav,
-            "cash": cash,
-            "market_scope": list(market_scope or []),
             "created_at": timestamp,
             "updated_at": timestamp,
             "created_by": actor_id,
+            "metadata": {
+                "created_via": "POST /bff/personas",
+                "persistenceMode": "bff_local_dev_store",
+            },
+            "canonicalWriteAuthority": "capital_service",
+            "persistenceMode": "bff_local_dev_store",
         }
         pools[pool_id] = record
         self._save()
@@ -10956,213 +11845,43 @@ class ReadSurfaceStore:
         actor_id: str,
         created_at: Optional[str] = None,
         params: Optional[Dict[str, Any]] = None,
-        status: str = "stopped",
-        state: Optional[str] = None,
-        capital_pool_id: Optional[str] = None,
-        artifact_id: Optional[str] = None,
-        artifact_version: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        persona_capital_binding_id: Optional[str] = None,
+        state: str = "stopped",
     ) -> Dict[str, Any]:
         runtimes = self._ensure_local_overlay_records("runtime_bindings")
         timestamp = created_at or _utc_now_rfc3339()
         clean_params = json.loads(json.dumps(params or {}))
-        clean_metadata = {
-            "created_via": "POST /bff/runtimes",
-            "persistenceMode": "bff_local_dev_store",
-        }
-        if metadata:
-            clean_metadata.update(json.loads(json.dumps(metadata)))
-        clean_state = state or status
-        clean_persona_binding_id = persona_capital_binding_id or binding_id
+        clean_state = str(state or "stopped").strip() or "stopped"
+        capital_pool_id = clean_params.get("capital_pool_id")
         record = {
             "id": runtime_id,
             "runtime_id": runtime_id,
             "name": name,
             "state": clean_state,
-            "status": status,
+            "status": clean_state,
             "persona_id": persona_id,
             "binding_id": binding_id,
             "runtime_binding_id": binding_id,
-            "persona_capital_binding_id": clean_persona_binding_id,
+            "persona_capital_binding_id": binding_id,
             "deployment_plan_id": deployment_plan_id,
             "plan_id": deployment_plan_id,
             "runtime_kind": runtime_kind,
             "deployment_stage": runtime_kind,
             "deployment_mode": runtime_kind,
             "capital_pool_id": capital_pool_id,
-            "artifact_id": artifact_id,
-            "artifact_version": artifact_version,
             "params": clean_params,
             "created_at": timestamp,
             "updated_at": timestamp,
             "created_by": actor_id,
-            "metadata": clean_metadata,
+            "metadata": {
+                "created_via": "POST /bff/runtimes",
+                "persistenceMode": "bff_local_dev_store",
+            },
             "canonicalWriteAuthority": "runtime_manager_service",
             "persistenceMode": "bff_local_dev_store",
         }
         runtimes[runtime_id] = record
         self._save()
         return record
-
-    def create_persona_binding(
-        self,
-        *,
-        binding_id: str,
-        persona_id: str,
-        capital_pool_id: str,
-        actor_id: str,
-        created_at: Optional[str] = None,
-        role: str = "paper_owner",
-        status: str = "active",
-        allowed_deployment_scope: str = "paper",
-        approval_decision_id: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        bindings = self._ensure_local_overlay_records("persona_bindings")
-        timestamp = created_at or _utc_now_rfc3339()
-        record = {
-            "id": binding_id,
-            "binding_id": binding_id,
-            "persona_id": persona_id,
-            "capital_pool_id": capital_pool_id,
-            "role": role,
-            "validity": status,
-            "status": status,
-            "allowed_deployment_scope": allowed_deployment_scope,
-            "deployment_modes": [allowed_deployment_scope],
-            "approval_decision_id": approval_decision_id,
-            "created_at": timestamp,
-            "updated_at": timestamp,
-            "created_by": actor_id,
-            "metadata": json.loads(json.dumps(metadata or {})),
-            "canonicalWriteAuthority": "capital_governance_service",
-            "persistenceMode": "bff_local_dev_store",
-        }
-        bindings[binding_id] = record
-        self._save()
-        return json.loads(json.dumps(record))
-
-    def create_approval_decision(
-        self,
-        *,
-        decision_id: str,
-        actor_id: str,
-        created_at: Optional[str] = None,
-        outcome: str = "approved",
-        state: str = "decided",
-        risk_level: str = "low",
-        decision_type: str = "paper_launch",
-        target_type: str = "DeploymentPlan",
-        target_id: Optional[str] = None,
-        rationale: Optional[str] = None,
-        evidence_refs: Optional[List[Dict[str, Any]]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        approvals = self._ensure_local_overlay_records("approval_decisions")
-        timestamp = created_at or _utc_now_rfc3339()
-        record = {
-            "id": decision_id,
-            "decision_id": decision_id,
-            "decision_type": decision_type,
-            "target_type": target_type,
-            "target_id": target_id,
-            "outcome": outcome,
-            "state": state,
-            "decision_state": state,
-            "reviewer": actor_id,
-            "actor_id": actor_id,
-            "created_by": actor_id,
-            "created_at": timestamp,
-            "submitted_at": timestamp,
-            "decided_at": timestamp if outcome else None,
-            "risk_level": risk_level,
-            "rationale": rationale or "Automated paper-only approval; no real-money authority granted.",
-            "evidence_refs": json.loads(json.dumps(evidence_refs or [])),
-            "metadata": json.loads(json.dumps(metadata or {})),
-            "canonicalWriteAuthority": "governance_service",
-            "persistenceMode": "bff_local_dev_store",
-        }
-        approvals[decision_id] = record
-        self._save()
-        return json.loads(json.dumps(record))
-
-    def list_promotion_reviews(
-        self,
-        *,
-        persona_id: Optional[str] = None,
-        review_type: Optional[str] = None,
-        status: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        records: Dict[str, Dict[str, Any]] = {}
-        fallback = self._local_fallback("promotion_reviews")
-        if isinstance(fallback, dict):
-            for key, record in fallback.items():
-                if isinstance(record, dict):
-                    review_id = str(record.get("review_id") or record.get("id") or key)
-                    if review_id:
-                        records[review_id] = json.loads(json.dumps(record))
-        for key, record in self._local_overlay_records("promotion_reviews").items():
-            if isinstance(record, dict):
-                review_id = str(record.get("review_id") or record.get("id") or key)
-                if review_id:
-                    records[review_id] = json.loads(json.dumps(record))
-        reviews = list(records.values())
-        if persona_id:
-            reviews = [
-                review for review in reviews
-                if str(review.get("persona_id") or "") == str(persona_id)
-            ]
-        if review_type:
-            reviews = [
-                review for review in reviews
-                if str(review.get("review_type") or "") == str(review_type)
-            ]
-        if status:
-            requested = {token.strip().lower() for token in status.split(",") if token.strip()}
-            reviews = [
-                review for review in reviews
-                if str(review.get("status") or "").strip().lower() in requested
-            ]
-        return sorted(
-            [json.loads(json.dumps(review)) for review in reviews],
-            key=lambda review: str(review.get("updated_at") or review.get("created_at") or ""),
-            reverse=True,
-        )
-
-    def get_promotion_review(self, review_id: Optional[str]) -> Optional[Dict[str, Any]]:
-        clean_id = str(review_id or "").strip()
-        if not clean_id:
-            return None
-        for review in self.list_promotion_reviews():
-            if str(review.get("review_id") or review.get("id") or "") == clean_id:
-                return json.loads(json.dumps(review))
-        return None
-
-    def get_promotion_review_by_idempotency_key(self, idempotency_key: Optional[str]) -> Optional[Dict[str, Any]]:
-        clean_key = str(idempotency_key or "").strip()
-        if not clean_key:
-            return None
-        for review in self.list_promotion_reviews():
-            key_map = review.get("idempotency_keys")
-            if isinstance(key_map, dict) and clean_key in key_map:
-                return json.loads(json.dumps(review))
-            if str(review.get("idempotency_key") or "") == clean_key:
-                return json.loads(json.dumps(review))
-            decision_key_map = review.get("decision_idempotency_keys")
-            if isinstance(decision_key_map, dict) and clean_key in decision_key_map:
-                return json.loads(json.dumps(review))
-        return None
-
-    def upsert_promotion_review(self, record: Dict[str, Any]) -> Dict[str, Any]:
-        review_id = str(record.get("review_id") or record.get("id") or "").strip()
-        if not review_id:
-            raise ValueError("promotion review record requires review_id")
-        reviews = self._ensure_local_overlay_records("promotion_reviews")
-        clean_record = json.loads(json.dumps({**record, "id": review_id, "review_id": review_id}))
-        reviews[review_id] = clean_record
-        self._save()
-        return json.loads(json.dumps(clean_record))
 
     def create_deployment_plan(
         self,
@@ -11177,7 +11896,6 @@ class ReadSurfaceStore:
         params: Optional[Dict[str, Any]] = None,
         locked: bool = False,
         status: str = "pending_approval",
-        approval_decision_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         plans = self._ensure_local_overlay_records("deployment_plans")
         timestamp = created_at or _utc_now_rfc3339()
@@ -11194,7 +11912,6 @@ class ReadSurfaceStore:
             "capital_pool_id": capital_pool_id,
             "target_pool_id": capital_pool_id,
             "status": status,
-            "approval_decision_id": approval_decision_id,
             "locked": bool(locked),
             "params": clean_params,
             "created_at": timestamp,
@@ -11210,60 +11927,6 @@ class ReadSurfaceStore:
         plans[plan_id] = record
         self._save()
         return record
-
-    def upsert_paper_runtime_monitoring_session(
-        self,
-        *,
-        session_id: str,
-        runtime_id: str,
-        runtime_binding_id: str,
-        persona_id: str,
-        capital_pool_id: str,
-        actor_id: str,
-        started_at: Optional[str] = None,
-        status: str = "active",
-        heartbeat_status: str = "fresh",
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        sessions = self._ensure_local_overlay_records("paper_runtime_monitoring_sessions")
-        timestamp = started_at or _utc_now_rfc3339()
-        record = {
-            "id": session_id,
-            "session_id": session_id,
-            "runtime_id": runtime_id,
-            "binding_id": runtime_binding_id,
-            "runtime_binding_id": runtime_binding_id,
-            "persona_id": persona_id,
-            "capital_pool_id": capital_pool_id,
-            "status": status,
-            "active": status in {"active", "running", "warming_up"},
-            "started_at": timestamp,
-            "last_heartbeat_at": timestamp,
-            "heartbeat_status": heartbeat_status,
-            "created_by": actor_id,
-            "metadata": json.loads(json.dumps(metadata or {})),
-            "canonicalWriteAuthority": "runtime_manager_service",
-            "persistenceMode": "bff_local_dev_store",
-        }
-        sessions[session_id] = record
-        self._save()
-        return json.loads(json.dumps(record))
-
-    def record_governance_audit_event(self, event: Dict[str, Any]) -> Dict[str, Any]:
-        events = self._local_dataset("governance_audit_events")
-        if not isinstance(events, list):
-            events = []
-            self._data[self._LOCAL_DATA_KEYS["governance_audit_events"]] = events
-        timestamp = str(event.get("timestamp") or event.get("occurred_at") or _utc_now_rfc3339())
-        entry_id = str(event.get("entry_id") or event.get("id") or f"audit-{uuid.uuid4().hex[:12]}")
-        record = {
-            "entry_id": entry_id,
-            "timestamp": timestamp,
-            **json.loads(json.dumps(event)),
-        }
-        events.append(record)
-        self._save()
-        return json.loads(json.dumps(record))
 
     def patch_capital_pool(
         self,
@@ -11407,11 +12070,25 @@ class ReadSurfaceStore:
         pool_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         records = dict(self._local_overlay_records("rebalances"))
-        local_fallback = self._local_fallback("rebalances")
-        if isinstance(local_fallback, dict):
-            merged = dict(local_fallback)
-            merged.update(records)
+        available, authoritative = self._canonical.list_records("rebalances")
+        if available:
+            merged = {
+                str(item.get("rebalance_id") or item.get("id") or ""): item
+                for item in authoritative
+                if isinstance(item, dict)
+                and str(item.get("rebalance_id") or item.get("id") or "").strip()
+            }
+            # Compatibility-only local records may coexist; they cannot replace
+            # an owner record with the same stable identity.
+            for key, item in records.items():
+                merged.setdefault(str(key), item)
             records = merged
+        else:
+            local_fallback = self._local_fallback("rebalances")
+            if isinstance(local_fallback, dict):
+                merged = dict(local_fallback)
+                merged.update(records)
+                records = merged
         items = list(records.values())
         if status:
             items = [i for i in items if i.get("status") == status]
@@ -11422,6 +12099,11 @@ class ReadSurfaceStore:
     def get_rebalance(self, rebalance_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not rebalance_id:
             return None
+        available, authoritative = self._canonical.list_records("rebalances")
+        if available:
+            for item in authoritative:
+                if str(item.get("rebalance_id") or item.get("id") or "") == str(rebalance_id):
+                    return json.loads(json.dumps(item))
         overlay = self._local_overlay_records("rebalances").get(rebalance_id)
         if overlay is not None:
             return overlay
@@ -11429,6 +12111,70 @@ class ReadSurfaceStore:
         if isinstance(local_fallback, dict):
             return local_fallback.get(rebalance_id)
         return None
+
+    def list_capital_allocations(
+        self,
+        *,
+        capital_pool_id: Optional[str] = None,
+        persona_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        available, records = self._canonical.list_records("capital_allocations")
+        if not available:
+            return []
+        items = [json.loads(json.dumps(item)) for item in records if isinstance(item, dict)]
+        if capital_pool_id:
+            items = [
+                item
+                for item in items
+                if str(item.get("capital_pool_id") or "") == str(capital_pool_id)
+            ]
+        if persona_id:
+            items = [
+                item
+                for item in items
+                if str(item.get("persona_id") or "") == str(persona_id)
+            ]
+        return sorted(
+            items,
+            key=lambda item: (
+                str(item.get("capital_pool_id") or ""),
+                str(item.get("persona_id") or ""),
+                str(item.get("capital_sleeve_id") or item.get("sleeve_id") or ""),
+            ),
+        )
+
+    def list_containments(
+        self,
+        *,
+        persona_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        available, records = self._canonical.list_records("containments")
+        if not available:
+            return []
+        items = [json.loads(json.dumps(item)) for item in records if isinstance(item, dict)]
+        if persona_id:
+            items = [
+                item
+                for item in items
+                if str(item.get("persona_id") or "") == str(persona_id)
+            ]
+        return sorted(
+            items,
+            key=lambda item: str(
+                item.get("executed_at")
+                or item.get("updated_at")
+                or item.get("applied_at")
+                or item.get("created_at")
+                or ""
+            ),
+            reverse=True,
+        )
+
+    def get_persona_containment(self, persona_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not persona_id:
+            return None
+        items = self.list_containments(persona_id=str(persona_id))
+        return items[0] if items else None
 
     def create_rebalance(
         self,
@@ -11438,6 +12184,7 @@ class ReadSurfaceStore:
         created_at: Optional[str] = None,
         params: Optional[Dict[str, Any]] = None,
         reason: Optional[str] = None,
+        proposal: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         rebalances = self._ensure_local_overlay_records("rebalances")
         timestamp = created_at or _utc_now_rfc3339()
@@ -11459,9 +12206,95 @@ class ReadSurfaceStore:
                 "submitted_at": timestamp,
             },
         }
+        if proposal:
+            record.update(json.loads(json.dumps(proposal)))
         rebalances[rebalance_id] = record
         self._save()
         return record
+
+    # ------------------------------------------------------------------ #
+    # Ranking snapshot / allocation-evaluation admission records
+    # ------------------------------------------------------------------ #
+
+    def put_ranking_snapshot(self, record: Dict[str, Any]) -> Dict[str, Any]:
+        """Persist an immutable BFF-owned ranking snapshot admission record."""
+        snapshot_id = str(
+            record.get("ranking_snapshot_id") or record.get("snapshot_id") or ""
+        ).strip()
+        content_digest = str(record.get("content_digest") or "").strip()
+        if not snapshot_id or not content_digest:
+            raise ValueError("ranking snapshot id and content_digest are required")
+        snapshots = self._ensure_local_overlay_records("ranking_snapshots")
+        existing = snapshots.get(snapshot_id)
+        if isinstance(existing, dict):
+            if str(existing.get("content_digest") or "") != content_digest:
+                raise ValueError("ranking snapshot id already has different content")
+            changed = False
+            incoming_variants = record.get("evidence_assertion_digests")
+            if isinstance(incoming_variants, dict):
+                existing_variants = existing.setdefault(
+                    "evidence_assertion_digests", {}
+                )
+                if not isinstance(existing_variants, dict):
+                    existing_variants = {}
+                    existing["evidence_assertion_digests"] = existing_variants
+                for persona_id, raw_digests in incoming_variants.items():
+                    if not isinstance(raw_digests, list):
+                        continue
+                    merged = sorted({
+                        str(value).strip()
+                        for value in (
+                            list(existing_variants.get(str(persona_id)) or [])
+                            + raw_digests
+                        )
+                        if str(value).strip()
+                    })
+                    if merged != existing_variants.get(str(persona_id)):
+                        existing_variants[str(persona_id)] = merged
+                        changed = True
+            if changed:
+                self._save()
+            return json.loads(json.dumps(existing))
+        stored = json.loads(json.dumps({**record, "ranking_snapshot_id": snapshot_id}))
+        snapshots[snapshot_id] = stored
+        self._save()
+        return json.loads(json.dumps(stored))
+
+    def get_ranking_snapshot(self, snapshot_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        clean_id = str(snapshot_id or "").strip()
+        if not clean_id:
+            return None
+        record = self._local_overlay_records("ranking_snapshots").get(clean_id)
+        return json.loads(json.dumps(record)) if isinstance(record, dict) else None
+
+    def put_allocation_evaluation(self, record: Dict[str, Any]) -> Dict[str, Any]:
+        """Persist one immutable server-materialized allocation evaluation."""
+        evaluation_id = str(record.get("allocation_evaluation_id") or "").strip()
+        content_digest = str(record.get("content_digest") or "").strip()
+        if not evaluation_id or not content_digest:
+            raise ValueError("allocation evaluation id and content_digest are required")
+        evaluations = self._ensure_local_overlay_records("allocation_evaluations")
+        existing = evaluations.get(evaluation_id)
+        if isinstance(existing, dict):
+            if str(existing.get("content_digest") or "") != content_digest:
+                raise ValueError("allocation evaluation id already has different content")
+            return json.loads(json.dumps(existing))
+        stored = json.loads(
+            json.dumps({**record, "allocation_evaluation_id": evaluation_id})
+        )
+        evaluations[evaluation_id] = stored
+        self._save()
+        return json.loads(json.dumps(stored))
+
+    def get_allocation_evaluation(
+        self,
+        evaluation_id: Optional[str],
+    ) -> Optional[Dict[str, Any]]:
+        clean_id = str(evaluation_id or "").strip()
+        if not clean_id:
+            return None
+        record = self._local_overlay_records("allocation_evaluations").get(clean_id)
+        return json.loads(json.dumps(record)) if isinstance(record, dict) else None
 
     # ------------------------------------------------------------------ #
     # Rankings (full-spec long tail)
@@ -11545,64 +12378,6 @@ class ReadSurfaceStore:
         for item in self.list_persona_league():
             if str(item.get("persona_id") or item.get("id") or "") == str(persona_id):
                 return json.loads(json.dumps(item))
-        return None
-
-    # ------------------------------------------------------------------ #
-    # Paper-first persona launch workflow
-    # ------------------------------------------------------------------ #
-
-    def upsert_paper_persona_launch(self, launch: Dict[str, Any]) -> Dict[str, Any]:
-        launch_id = str(launch.get("launch_id") or launch.get("id") or "").strip()
-        if not launch_id:
-            launch_id = f"launch-{uuid.uuid4().hex[:12]}"
-        record = json.loads(json.dumps({**launch, "id": launch_id, "launch_id": launch_id}))
-        launches = self._ensure_local_overlay_records("paper_persona_launches")
-        launches[launch_id] = record
-        self._save()
-        return json.loads(json.dumps(record))
-
-    def list_paper_persona_launches(self, persona_id: Optional[str] = None) -> List[Dict[str, Any]]:
-        records = list(self._local_overlay_records("paper_persona_launches").values())
-        fallback = self._local_fallback("paper_persona_launches")
-        if not records and isinstance(fallback, dict):
-            records = list(fallback.values())
-        if persona_id:
-            records = [
-                record
-                for record in records
-                if str(record.get("persona_id") or "").strip() == str(persona_id)
-            ]
-        return sorted(
-            [json.loads(json.dumps(record)) for record in records if isinstance(record, dict)],
-            key=lambda record: str(record.get("updated_at") or record.get("created_at") or ""),
-            reverse=True,
-        )
-
-    def get_paper_persona_launch(self, launch_id: Optional[str]) -> Optional[Dict[str, Any]]:
-        if not launch_id:
-            return None
-        launch = self._local_overlay_records("paper_persona_launches").get(str(launch_id))
-        if launch is not None:
-            return json.loads(json.dumps(launch))
-        fallback = self._local_fallback("paper_persona_launches")
-        if isinstance(fallback, dict):
-            record = fallback.get(str(launch_id))
-            return json.loads(json.dumps(record)) if isinstance(record, dict) else None
-        return None
-
-    def get_paper_persona_launch_by_idempotency_key(
-        self,
-        idempotency_key: Optional[str],
-    ) -> Optional[Dict[str, Any]]:
-        if not idempotency_key:
-            return None
-        clean_key = str(idempotency_key).strip()
-        for launch in self.list_paper_persona_launches():
-            if str(launch.get("idempotency_key") or "").strip() == clean_key:
-                return launch
-            key_map = launch.get("idempotency_keys")
-            if isinstance(key_map, dict) and clean_key in key_map:
-                return launch
         return None
 
     # ------------------------------------------------------------------ #
@@ -12248,9 +13023,20 @@ class ReadSurfaceStore:
             return []
         return list((self._local_fallback("rollbacks") or {}).get(runtime_id, []))
 
-    def get_allowed_actions(self, plan_id: str) -> Dict[str, Any]:
-        plan = self.get_deployment_plan(plan_id)
-        decision = self.get_approval_decision(plan.get("approval_decision_id")) if plan else None
+    def get_allowed_actions(
+        self,
+        plan_id: str,
+        *,
+        plan: Optional[Dict[str, Any]] = None,
+        decision: Any = _NOT_SUPPLIED,
+    ) -> Dict[str, Any]:
+        if plan is None:
+            plan = self.get_deployment_plan(plan_id)
+        if decision is _NOT_SUPPLIED:
+            if plan:
+                decision = self.get_approval_decision(plan.get("approval_decision_id"))
+            else:
+                decision = None
         fallback_actions = dict((self._local_fallback("allowed_actions") or {}).get(plan_id, {}))
         if plan and (plan.get("status") is not None or plan.get("target_stage") is not None):
             can_review = self._derive_can_review_deployment_plan(plan, decision)
@@ -12281,10 +13067,21 @@ class ReadSurfaceStore:
             return (self._local_fallback("latest_runs") or {}).get(plan_id, {"progress": 0.0})
         return None
 
-    def get_review_summary(self, plan_id: str) -> Dict[str, Any]:
+    def get_review_summary(
+        self,
+        plan_id: str,
+        *,
+        plan: Optional[Dict[str, Any]] = None,
+        decision: Any = _NOT_SUPPLIED,
+    ) -> Dict[str, Any]:
         summary = dict((self._local_fallback("review_summaries") or {}).get(plan_id, {}))
-        plan = self.get_deployment_plan(plan_id)
-        decision = self.get_approval_decision(plan.get("approval_decision_id")) if plan else None
+        if plan is None:
+            plan = self.get_deployment_plan(plan_id)
+        if decision is _NOT_SUPPLIED:
+            if plan:
+                decision = self.get_approval_decision(plan.get("approval_decision_id"))
+            else:
+                decision = None
         if decision:
             summary.setdefault("governanceOutcome", decision.get("outcome"))
             summary.setdefault("decisionState", decision.get("state"))
@@ -12311,6 +13108,13 @@ class ReadSurfaceStore:
         if not items:
             reviewable_statuses = {"draft", "pending_review", "proposed", "under_review", "reviewed"}
             linked_approval_decision_ids: set[str] = set()
+            decisions = self.list_approval_decisions()
+            decisions_by_id = {}
+            for d in decisions:
+                d_id = str(d.get("decision_id") or d.get("id") or "").strip()
+                if d_id:
+                    decisions_by_id[d_id] = d
+
             for plan in self.list_deployment_plans():
                 status = str(plan.get("status") or "").strip().lower()
                 if status and status not in reviewable_statuses:
@@ -12318,7 +13122,8 @@ class ReadSurfaceStore:
                 plan_id = str(plan.get("plan_id") or plan.get("id") or "").strip()
                 if not plan_id:
                     continue
-                decision = self.get_approval_decision(plan.get("approval_decision_id"))
+                dec_id = str(plan.get("approval_decision_id") or "").strip()
+                decision = decisions_by_id.get(dec_id)
                 decision_id = str((decision or {}).get("decision_id") or (decision or {}).get("id") or "").strip()
                 if decision_id:
                     linked_approval_decision_ids.add(decision_id)
@@ -12330,8 +13135,8 @@ class ReadSurfaceStore:
                         "submitted_at": plan.get("submitted_at") or plan.get("created_at"),
                         "submitted_by": plan.get("created_by") or "deployment-service",
                         "governance_outcome": (decision or {}).get("outcome"),
-                        "allowedActions": self.get_allowed_actions(plan_id),
-                        "review_summary": self.get_review_summary(plan_id) or {},
+                        "allowedActions": self.get_allowed_actions(plan_id, plan=plan, decision=decision),
+                        "review_summary": self.get_review_summary(plan_id, plan=plan, decision=decision) or {},
                     }
                 )
             for decision in self.list_evolution_decisions():
@@ -12949,6 +13754,14 @@ class ReadSurfaceStore:
             },
             "resolved_link": self._kw03_normalize_resolved_link(evidence_ref.get("resolved_link")),
         }
+        artifact_manifest = evidence_ref.get("artifact_manifest")
+        if isinstance(artifact_manifest, dict):
+            payload["artifact_manifest"] = json.loads(json.dumps(artifact_manifest))
+        criteria = evidence_ref.get("criteria")
+        if isinstance(criteria, dict):
+            payload["criteria"] = json.loads(json.dumps(criteria))
+        if "overall" in evidence_ref:
+            payload["overall"] = evidence_ref.get("overall")
         if include_scope_metadata:
             tenant_ids = self._record_tenant_ids(evidence_ref)
             if tenant_ids:
@@ -13098,176 +13911,6 @@ class ReadSurfaceStore:
         if not evidence_ref:
             return None
         return self._project_evidence_ref_detail(evidence_ref)
-
-    def _evidence_operation_store_path(self) -> Optional[Path]:
-        explicit = os.getenv("PANTHEON_BFF_EVIDENCE_OPERATION_STORE", "").strip()
-        return Path(explicit) if explicit else None
-
-    def _load_evidence_operation_records(self) -> Dict[str, Dict[str, Any]]:
-        path = self._evidence_operation_store_path()
-        if path is not None and path.exists():
-            payload = _load_record_store_payload(path)
-            return _normalize_records(payload, ["ref_id", "id"])
-
-        local_payload = self._local_dataset("evidence_operations")
-        if isinstance(local_payload, dict):
-            return {
-                str(key): json.loads(json.dumps(value))
-                for key, value in local_payload.items()
-                if isinstance(value, dict)
-            }
-        if isinstance(local_payload, list):
-            return _normalize_records(local_payload, ["ref_id", "id"])
-        return {}
-
-    def _save_evidence_operation_records(self, records: Dict[str, Dict[str, Any]]) -> None:
-        payload = {
-            str(key): json.loads(json.dumps(value))
-            for key, value in records.items()
-            if isinstance(value, dict)
-        }
-        path = self._evidence_operation_store_path()
-        if path is not None:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
-            self._service._cache.pop("evidence_operations", None)
-            self._service._cache_meta.pop("evidence_operations", None)
-            self._service._cache_source.pop("evidence_operations", None)
-            return
-
-        self._data["evidence_operations"] = payload
-        self._save()
-
-    @staticmethod
-    def _default_evidence_operation_state(ref_id: str) -> Dict[str, Any]:
-        return {
-            "ref_id": ref_id,
-            "status": "none",
-            "owner": None,
-            "reviewer": None,
-            "task_refs": [],
-            "last_action_at": None,
-            "last_reason": None,
-            "command_refs": [],
-            "audit_refs": [],
-            "events": [],
-        }
-
-    @staticmethod
-    def _evidence_operation_status_after(action: str, current_status: str) -> str:
-        action_status = {
-            "mark_stale": "stale",
-            "request_more_evidence": "needs_evidence",
-            "create_disposition_task": "open",
-            "assign_reviewer": "under_review",
-            "resolve": "resolved",
-        }
-        return action_status.get(action, current_status or "open")
-
-    @staticmethod
-    def _append_unique_string(values: Any, value: Optional[str]) -> List[str]:
-        current = [str(item) for item in values if str(item or "").strip()] if isinstance(values, list) else []
-        clean = str(value or "").strip()
-        if clean and clean not in current:
-            current.append(clean)
-        return current
-
-    def get_evidence_operation_state(self, ref_id: Optional[str]) -> Dict[str, Any]:
-        clean_ref_id = str(ref_id or "").strip()
-        if not clean_ref_id:
-            return self._default_evidence_operation_state("")
-        records = self._load_evidence_operation_records()
-        state = records.get(clean_ref_id)
-        if not isinstance(state, dict):
-            return self._default_evidence_operation_state(clean_ref_id)
-        merged = self._default_evidence_operation_state(clean_ref_id)
-        merged.update(json.loads(json.dumps(state)))
-        merged["ref_id"] = clean_ref_id
-        merged["task_refs"] = [
-            str(item) for item in merged.get("task_refs", []) if str(item or "").strip()
-        ] if isinstance(merged.get("task_refs"), list) else []
-        merged["command_refs"] = [
-            str(item) for item in merged.get("command_refs", []) if str(item or "").strip()
-        ] if isinstance(merged.get("command_refs"), list) else []
-        merged["audit_refs"] = [
-            str(item) for item in merged.get("audit_refs", []) if str(item or "").strip()
-        ] if isinstance(merged.get("audit_refs"), list) else []
-        merged["events"] = [
-            event for event in merged.get("events", []) if isinstance(event, dict)
-        ] if isinstance(merged.get("events"), list) else []
-        return merged
-
-    def record_evidence_operation_event(
-        self,
-        *,
-        ref_id: str,
-        action: str,
-        actor_id: str,
-        reason: str,
-        command_id: Optional[str] = None,
-        reviewer: Optional[str] = None,
-        owner: Optional[str] = None,
-        task_ref: Optional[str] = None,
-        idempotency_key: Optional[str] = None,
-        created_at: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        clean_ref_id = str(ref_id or "").strip()
-        if not clean_ref_id:
-            raise ValueError("ref_id is required for an evidence operation event")
-        clean_action = str(action or "").strip().lower()
-        clean_actor = str(actor_id or "").strip() or "operator-command"
-        event_at = (
-            str(created_at or "").strip()
-            or datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-        )
-        records = self._load_evidence_operation_records()
-        state = records.get(clean_ref_id) if isinstance(records.get(clean_ref_id), dict) else None
-        if state is None:
-            state = self._default_evidence_operation_state(clean_ref_id)
-
-        current_status = str(state.get("status") or "none").strip() or "none"
-        status_after = self._evidence_operation_status_after(clean_action, current_status)
-        clean_owner = str(owner or "").strip() or None
-        clean_reviewer = str(reviewer or "").strip() or None
-        clean_task_ref = str(task_ref or "").strip() or None
-        if clean_action == "create_disposition_task" and not clean_task_ref:
-            clean_task_ref = f"EVID-OPS-{event_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
-
-        audit_ref = f"audit:{clean_ref_id}:{event_at.replace(':', '').replace('-', '')}:{clean_action}"
-        event = {
-            "event_id": f"evop-{uuid.uuid4().hex[:12]}",
-            "ref_id": clean_ref_id,
-            "action": clean_action,
-            "actor_id": clean_actor,
-            "created_at": event_at,
-            "reason": str(reason or "").strip(),
-            "status_after": status_after,
-            "owner": clean_owner,
-            "reviewer": clean_reviewer,
-            "task_refs": [clean_task_ref] if clean_task_ref else [],
-            "command_id": str(command_id or "").strip() or None,
-            "audit_ref": audit_ref,
-            "idempotency_key": str(idempotency_key or "").strip() or None,
-            "metadata": json.loads(json.dumps(metadata or {})),
-        }
-
-        events = state.get("events") if isinstance(state.get("events"), list) else []
-        events.append(event)
-        state["events"] = events
-        state["status"] = status_after
-        if clean_owner:
-            state["owner"] = clean_owner
-        if clean_reviewer:
-            state["reviewer"] = clean_reviewer
-        state["task_refs"] = self._append_unique_string(state.get("task_refs") or [], clean_task_ref)
-        state["command_refs"] = self._append_unique_string(state.get("command_refs") or [], command_id)
-        state["audit_refs"] = self._append_unique_string(state.get("audit_refs") or [], audit_ref)
-        state["last_action_at"] = event_at
-        state["last_reason"] = str(reason or "").strip() or None
-        records[clean_ref_id] = state
-        self._save_evidence_operation_records(records)
-        return json.loads(json.dumps({"operation": state, "event": event}))
 
     @staticmethod
     def _kw04_route_href(insight_id: Optional[str]) -> Optional[str]:
@@ -15847,8 +16490,17 @@ class ReadSurfaceStore:
     def list_loop_runs(self) -> tuple[bool, List[Dict[str, Any]]]:
         return self._service.list_loop_runs()
 
+    def loop_run_projection_metadata(self) -> Dict[str, Any]:
+        return self._service.envelope_metadata("loop_runs")
+
     def get_loop_run(self, loop_run_id: str) -> tuple[bool, Optional[Dict[str, Any]]]:
         return self._service.get_loop_run(loop_run_id)
+
+    def list_loop_health_records(self) -> tuple[bool, List[Dict[str, Any]]]:
+        return self._service.list_loop_health_records()
+
+    def get_loop_health_record(self, loop_id: str) -> tuple[bool, Optional[Dict[str, Any]]]:
+        return self._service.get_loop_health_record(loop_id)
 
     def list_sentinel_findings(
         self,
@@ -15950,6 +16602,17 @@ class ReadSurfaceStore:
             return raw
         return (self._local_fallback("telemetry_summaries") or {}).get(runtime_id)
 
+    def list_telemetry_summaries(self) -> List[Dict[str, Any]]:
+        available, raw = self._service.list_records("telemetry_summaries")
+        if available:
+            return [json.loads(json.dumps(summary)) for summary in raw]
+        fallback = self._local_fallback("telemetry_summaries") or {}
+        if isinstance(fallback, dict):
+            return [json.loads(json.dumps(summary)) for summary in fallback.values()]
+        if isinstance(fallback, list):
+            return [json.loads(json.dumps(summary)) for summary in fallback]
+        return []
+
     # ------------------------------------------------------------------ #
     # Evolution surfaces (EV-01 – EV-04)
     # ------------------------------------------------------------------ #
@@ -15991,12 +16654,21 @@ class ReadSurfaceStore:
         status: Optional[str] = None,
         scope: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        orders = list((self._local_fallback("freeze_orders") or {}).values())
+        available, service_orders = self._service.list_records("freeze_orders")
+        if available:
+            orders = list(service_orders)
+        else:
+            local_orders = self._local_fallback("freeze_orders") or {}
+            orders = list(local_orders.values()) if isinstance(local_orders, dict) else list(local_orders)
         if status:
             orders = [o for o in orders if o.get("status") == status]
         if scope:
             orders = [o for o in orders if o.get("scope") == scope]
-        return sorted(orders, key=lambda x: x.get("created_at", ""), reverse=True)
+        return sorted(
+            orders,
+            key=lambda x: str(x.get("created_at") or x.get("issued_at") or x.get("updated_at") or ""),
+            reverse=True,
+        )
 
     def list_all_rollbacks(
         self,
@@ -16004,13 +16676,24 @@ class ReadSurfaceStore:
         action_type: Optional[str] = None,
         time_range: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        rollbacks = list(self._local_fallback("all_rollbacks") or [])
+        available, service_rollbacks = self._service.list_records("all_rollbacks")
+        if available:
+            rollbacks = list(service_rollbacks)
+        else:
+            local_rollbacks = self._local_fallback("all_rollbacks") or []
+            rollbacks = list(local_rollbacks.values()) if isinstance(local_rollbacks, dict) else list(local_rollbacks)
         if runtime_id:
             rollbacks = [r for r in rollbacks if r.get("runtime_id") == runtime_id]
         if action_type:
             rollbacks = [r for r in rollbacks if r.get("action_type") == action_type]
         # time_range filtering deferred in v1
-        return sorted(rollbacks, key=lambda x: x.get("initiated_at", ""), reverse=True)
+        return sorted(
+            rollbacks,
+            key=lambda x: str(
+                x.get("initiated_at") or x.get("requested_at") or x.get("created_at") or x.get("updated_at") or ""
+            ),
+            reverse=True,
+        )
 
     def get_rollback_review(self, rollback_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not rollback_id:
@@ -16526,6 +17209,17 @@ class ReadSurfaceStore:
             return json.loads(json.dumps(raw)) if raw else None
         raw = (self._local_fallback("paper_live_drift_reports") or {}).get(runtime_id)
         return json.loads(json.dumps(raw)) if raw else None
+
+    def list_paper_live_drift_reports(self) -> List[Dict[str, Any]]:
+        available, raw = self._service.list_records("paper_live_drift_reports")
+        if available:
+            return [json.loads(json.dumps(report)) for report in raw]
+        fallback = self._local_fallback("paper_live_drift_reports") or {}
+        if isinstance(fallback, dict):
+            return [json.loads(json.dumps(report)) for report in fallback.values()]
+        if isinstance(fallback, list):
+            return [json.loads(json.dumps(report)) for report in fallback]
+        return []
 
     # ------------------------------------------------------------------ #
     # Persona session surfaces (PS-03, PS-05)
@@ -17350,8 +18044,13 @@ class ReadSurfaceStore:
         if not snapshot_id:
             return None
         available, raw = self._service.record("capability_snapshots", snapshot_id)
-        if available:
+        if available and raw:
             return raw
+        local_owned = self._local_bff_capability_snapshot_records().get(str(snapshot_id))
+        if local_owned:
+            return local_owned
+        if available:
+            return None
         return (self._local_fallback("capability_snapshots") or {}).get(snapshot_id)
 
     def get_capability_snapshot_for_persona(self, persona_id: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -17362,6 +18061,9 @@ class ReadSurfaceStore:
             for snapshot in snapshots:
                 if snapshot.get("persona_id") == persona_id:
                     return snapshot
+        for snapshot in self._local_bff_capability_snapshot_records().values():
+            if snapshot.get("persona_id") == persona_id:
+                return snapshot
         for snapshot in (self._local_fallback("capability_snapshots") or {}).values():
             if snapshot.get("persona_id") == persona_id:
                 return snapshot

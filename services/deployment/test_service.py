@@ -315,6 +315,35 @@ def test_create_plan_from_snapshots(client):
     assert "plan-paper-001" in store_payload
 
 
+def test_create_same_stage_replace_plan_from_service_api(client):
+    test_client, governance_dir = client
+    payload = _plan_payload(
+        plan_id="plan-paper-replace-001",
+        current_stage="paper",
+        target_stage="paper",
+    )
+    payload["binding_id"] = "rb-paper-current"
+    payload["rollback"] = {
+        "target_artifact_id": "artifact-paper-baseline",
+        "target_version": "1.2.0",
+        "action_type": "replace",
+    }
+
+    response = test_client.post("/api/deployment/plans", json=payload)
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["current_stage"] == "paper"
+    assert body["target_stage"] == "paper"
+    assert body["transition_type"] == "replace"
+    assert body["runtime_action"] == "replace_binding"
+    assert body["binding_id"] == "rb-paper-current"
+    persisted = json.loads(
+        (governance_dir / "deployment_plans.json").read_text(encoding="utf-8")
+    )
+    assert persisted["plan-paper-replace-001"]["transition_type"] == "replace"
+
+
 def test_create_plan_rejects_risk_policy_violation(client):
     test_client, _ = client
     payload = _plan_payload(
@@ -877,6 +906,80 @@ def test_saga_progress_and_inbox_replay_receipts(client):
         "applied",
         "applied",
     ]
+
+
+def test_saga_progress_exposes_dlq_block_and_idempotent_replay(client):
+    test_client, _ = client
+    created = test_client.post(
+        "/api/deployment/plans",
+        json=_plan_payload(plan_id="plan-paper-dlq-001"),
+    )
+    assert created.status_code == 201
+
+    dispatch = test_client.post(
+        "/api/deployment/plans/plan-paper-dlq-001/dispatch",
+        json={"trace_id": "trace-dlq-001"},
+    )
+    assert dispatch.status_code == 200, dispatch.text
+    saga_id = dispatch.json()["deployment_saga"]["saga"]["saga_id"]
+    event_id = dispatch.json()["deployment_saga"]["outbox_event"]["event"]["event_id"]
+
+    initial_progress = test_client.get(f"/api/deployment/sagas/{saga_id}/progress")
+    assert initial_progress.status_code == 200
+    assert initial_progress.json()["progress_status"] == "pending"
+    assert initial_progress.json()["pending_event_count"] == 1
+
+    failure = test_client.post(
+        f"/api/deployment/outbox/{event_id}/failure",
+        json={
+            "consumer_name": "deployment-outbox-consumer",
+            "reason": "runtime-manager 503 after retry budget",
+            "retryable": True,
+            "max_attempts": 1,
+            "retry_delay_seconds": 0,
+        },
+    )
+    assert failure.status_code == 200, failure.text
+    assert failure.json()["status"] == "dead_lettered"
+    assert failure.json()["delivery_attempts"] == 1
+    assert failure.json()["blocked_reason"] == "runtime-manager 503 after retry budget"
+
+    blocked = test_client.get(f"/api/deployment/plans/plan-paper-dlq-001/saga-progress")
+    assert blocked.status_code == 200
+    blocked_body = blocked.json()
+    assert blocked_body["progress_status"] == "blocked"
+    assert blocked_body["blocked_reason"] == "runtime-manager 503 after retry budget"
+    assert blocked_body["dlq_count"] == 1
+    assert blocked_body["retry_state"][0]["status"] == "dead_lettered"
+
+    projection = test_client.get("/api/deployment/projections/plan-paper-dlq-001")
+    assert projection.status_code == 200
+    projection_body = projection.json()
+    assert projection_body["deployment_saga_progress"]["progress_status"] == "blocked"
+    assert projection_body["summary"]["saga_progress_status"] == "blocked"
+    assert projection_body["summary"]["blocked_reason"] == "runtime-manager 503 after retry budget"
+
+    dlq = test_client.get("/api/deployment/outbox", params={"status": "dead_lettered"})
+    assert dlq.status_code == 200
+    assert [record["event"]["event_id"] for record in dlq.json()] == [event_id]
+
+    replayed = test_client.post(
+        f"/api/deployment/outbox/{event_id}/replay",
+        json={"reason": "operator retry after runtime-manager recovered"},
+    )
+    assert replayed.status_code == 200, replayed.text
+    assert replayed.json()["replayed"] is True
+    assert replayed.json()["event"]["status"] == "pending"
+    assert replayed.json()["event"]["replay_count"] == 1
+
+    replayed_again = test_client.post(
+        f"/api/deployment/outbox/{event_id}/replay",
+        json={"reason": "operator retried same DLQ replay command"},
+    )
+    assert replayed_again.status_code == 200
+    assert replayed_again.json()["replayed"] is False
+    assert replayed_again.json()["event"]["status"] == "pending"
+    assert replayed_again.json()["event"]["replay_count"] == 1
 
 
 def test_post_activation_failure_uses_plan_rollback_action_and_finalize(client):

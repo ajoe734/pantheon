@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -14,6 +15,35 @@ from typing import Any
 
 DEFAULT_OUTPUT = Path(".lovable") / "audits" / "current-run" / "BFF-LIVE-EVIDENCE-PREFLIGHT.json"
 STRICT_LIVE_SOAK_MIN_SECONDS = 75.0
+MIN_BEARER_TOKEN_LENGTH = 12
+PLACEHOLDER_BEARER_VALUES = {
+    "",
+    "***",
+    "****",
+    "<redacted>",
+    "[redacted]",
+    "change-me",
+    "changeme",
+    "dummy",
+    "example",
+    "fake",
+    "none",
+    "null",
+    "placeholder",
+    "redacted",
+    "secret",
+    "test",
+    "todo",
+    "token",
+}
+PLACEHOLDER_BEARER_PREFIXES = (
+    "dummy-",
+    "example-",
+    "fake-",
+    "placeholder-",
+    "redacted-",
+    "test-",
+)
 
 REQUIRED_SECRET_ENV_VARS = (
     "PANTHEON_BFF_SMOKE_BEARER_TOKEN",
@@ -49,8 +79,19 @@ def present(value: str | None) -> bool:
     return bool((value or "").strip())
 
 
+def strip_bearer_scheme(value: str | None) -> str:
+    token = (value or "").strip()
+    if token[:7].casefold() == "bearer ":
+        return token[7:].strip()
+    return token
+
+
 def bearer_value(value: str | None) -> str:
-    return (value or "").removeprefix("Bearer ").strip()
+    return strip_bearer_scheme(value)
+
+
+def sha256_12(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
 
 
 def parse_args() -> argparse.Namespace:
@@ -82,7 +123,7 @@ def rbac_token_value(value: Any) -> str:
         token = str(value.get("token") or value.get("bearer") or "")
     else:
         token = ""
-    return token.removeprefix("Bearer ").strip()
+    return strip_bearer_scheme(token)
 
 
 def empty_rbac_matrix() -> dict[str, Any]:
@@ -177,12 +218,209 @@ def inspect_approval_race_tokens(token_a: str, token_b: str) -> tuple[dict[str, 
     }, invalid
 
 
+def rbac_tokens_by_label(raw: str) -> dict[str, str]:
+    if not present(raw):
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    return {
+        label: token
+        for label in RBAC_REQUIRED_LABELS
+        for token in [rbac_token_value(parsed.get(label))]
+        if token
+    }
+
+
+def ordered_bearer_sources() -> list[str]:
+    return [
+        "smoke",
+        *(f"rbac:{label}" for label in RBAC_REQUIRED_LABELS),
+        "approval_race:a",
+        "approval_race:b",
+    ]
+
+
+def bearer_tokens_by_source(
+    *,
+    smoke_token: str,
+    rbac_tokens_json: str,
+    approval_token_a: str,
+    approval_token_b: str,
+) -> dict[str, str]:
+    tokens_by_source: dict[str, str] = {}
+    smoke = bearer_value(smoke_token)
+    if smoke:
+        tokens_by_source["smoke"] = smoke
+    for label, token in rbac_tokens_by_label(rbac_tokens_json).items():
+        tokens_by_source[f"rbac:{label}"] = token
+    approval_a = bearer_value(approval_token_a)
+    approval_b = bearer_value(approval_token_b)
+    if approval_a:
+        tokens_by_source["approval_race:a"] = approval_a
+    if approval_b:
+        tokens_by_source["approval_race:b"] = approval_b
+    return tokens_by_source
+
+
+def bearer_source_hashes(tokens_by_source: dict[str, str]) -> dict[str, str]:
+    return {
+        source: sha256_12(tokens_by_source[source])
+        for source in ordered_bearer_sources()
+        if tokens_by_source.get(source)
+    }
+
+
+def secret_source_family(source: str) -> str:
+    if source.startswith("rbac:"):
+        return "rbac"
+    if source.startswith("approval_race:"):
+        return "approval_race"
+    return source
+
+
+def duplicate_secret_source_groups(tokens_by_source: dict[str, str]) -> list[list[str]]:
+    sources_by_token: dict[str, list[str]] = {}
+    for source, token in tokens_by_source.items():
+        if token:
+            sources_by_token.setdefault(token, []).append(source)
+    return [
+        sources
+        for sources in sources_by_token.values()
+        if len(sources) > 1 and len({secret_source_family(source) for source in sources}) > 1
+    ]
+
+
+def inspect_cross_secret_bearers(
+    *,
+    smoke_token: str,
+    rbac_tokens_json: str,
+    approval_token_a: str,
+    approval_token_b: str,
+) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    ordered_sources = ordered_bearer_sources()
+    tokens_by_source = bearer_tokens_by_source(
+        smoke_token=smoke_token,
+        rbac_tokens_json=rbac_tokens_json,
+        approval_token_a=approval_token_a,
+        approval_token_b=approval_token_b,
+    )
+
+    duplicate_groups = duplicate_secret_source_groups(tokens_by_source)
+    present_sources = [source for source in ordered_sources if tokens_by_source.get(source)]
+    distinct_count = len(set(tokens_by_source.values()))
+    expected_count = len(ordered_sources)
+    invalid: list[dict[str, str]] = []
+    if duplicate_groups:
+        invalid.append(
+            {
+                "name": "PANTHEON_BFF_LIVE_EVIDENCE_BEARERS",
+                "reason": "bearer tokens must be unique across smoke, RBAC, and approval race sources: "
+                + "; ".join("/".join(group) for group in duplicate_groups),
+            }
+        )
+    return {
+        "required_sources": ordered_sources,
+        "present_sources": present_sources,
+        "missing_sources": [source for source in ordered_sources if source not in present_sources],
+        "provided_sources": len(present_sources),
+        "expected_sources": expected_count,
+        "distinct_bearers": distinct_count == len(present_sources) == expected_count,
+        "distinct_bearer_count": distinct_count,
+        "duplicate_source_groups": duplicate_groups,
+    }, invalid
+
+
+def unsafe_bearer_token_reason(token: str) -> str:
+    normalized = token.strip()
+    if not normalized:
+        return ""
+    lowered = normalized.casefold()
+    if set(normalized) <= {"*"}:
+        return "placeholder_value"
+    if lowered in PLACEHOLDER_BEARER_VALUES:
+        return "placeholder_value"
+    if any(lowered.startswith(prefix) for prefix in PLACEHOLDER_BEARER_PREFIXES):
+        return "placeholder_prefix"
+    if len(normalized) < MIN_BEARER_TOKEN_LENGTH:
+        return f"too_short_min_{MIN_BEARER_TOKEN_LENGTH}"
+    return ""
+
+
+def inspect_bearer_shape(
+    *,
+    smoke_token: str,
+    rbac_tokens_json: str,
+    approval_token_a: str,
+    approval_token_b: str,
+) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    ordered_sources = ordered_bearer_sources()
+    tokens_by_source = bearer_tokens_by_source(
+        smoke_token=smoke_token,
+        rbac_tokens_json=rbac_tokens_json,
+        approval_token_a=approval_token_a,
+        approval_token_b=approval_token_b,
+    )
+    checked_sources = [source for source in ordered_sources if source in tokens_by_source]
+    invalid_sources = [
+        {"source": source, "reason": reason}
+        for source in ordered_sources
+        for reason in [unsafe_bearer_token_reason(tokens_by_source.get(source, ""))]
+        if reason
+    ]
+    invalid_source_names = {item["source"] for item in invalid_sources}
+    valid_sources = [
+        source
+        for source in checked_sources
+        if source not in invalid_source_names
+    ]
+    invalid: list[dict[str, str]] = []
+    if invalid_sources:
+        invalid.append(
+            {
+                "name": "PANTHEON_BFF_LIVE_EVIDENCE_BEARER_SHAPE",
+                "reason": (
+                    "bearer tokens must not be placeholders and must be at least "
+                    f"{MIN_BEARER_TOKEN_LENGTH} characters: "
+                    + "; ".join(
+                        f"{item['source']}={item['reason']}"
+                        for item in invalid_sources
+                    )
+                ),
+            }
+        )
+    return {
+        "required_sources": ordered_sources,
+        "checked_sources": checked_sources,
+        "valid_sources": valid_sources,
+        "invalid_sources": invalid_sources,
+        "min_length": MIN_BEARER_TOKEN_LENGTH,
+        "placeholder_values_rejected": True,
+    }, invalid
+
+
 def workflow_repository() -> str:
     return os.environ.get("GITHUB_REPOSITORY", "").strip() or DEFAULT_REPOSITORY
 
 
 def live_evidence_environment() -> str:
     return os.environ.get("PANTHEON_LIVE_EVIDENCE_ENVIRONMENT", "").strip() or "dev"
+
+
+def strict_live_evidence_run() -> dict[str, str]:
+    return {
+        "github_environment": live_evidence_environment(),
+        "github_run_id": os.environ.get("GITHUB_RUN_ID", "").strip(),
+        "github_run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT", "").strip(),
+        "github_workflow": os.environ.get("GITHUB_WORKFLOW", "").strip(),
+        "github_job": os.environ.get("GITHUB_JOB", "").strip(),
+        "repository": os.environ.get("GITHUB_REPOSITORY", "").strip(),
+        "ref": (os.environ.get("GITHUB_REF") or os.environ.get("GITHUB_REF_NAME", "")).strip(),
+        "sha": os.environ.get("GITHUB_SHA", "").strip(),
+    }
 
 
 def build_operator_remediation(missing: list[str], invalid: list[dict[str, str]], args: argparse.Namespace) -> dict[str, Any]:
@@ -233,10 +471,32 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
     present_map["TWO_MAN_RACE_ID"] = present(args.two_man_race_id)
     present_map["SOAK_SECONDS"] = present(args.soak_seconds)
     missing = [name for name in required if not present_map[name]]
-    rbac_matrix, rbac_invalid = inspect_rbac_tokens_json(os.environ.get("PANTHEON_BFF_RBAC_TOKENS_JSON", ""))
+    smoke_token = os.environ.get("PANTHEON_BFF_SMOKE_BEARER_TOKEN", "")
+    rbac_tokens_json = os.environ.get("PANTHEON_BFF_RBAC_TOKENS_JSON", "")
+    approval_token_a = os.environ.get("PANTHEON_BFF_APPROVAL_RACE_TOKEN_A", "")
+    approval_token_b = os.environ.get("PANTHEON_BFF_APPROVAL_RACE_TOKEN_B", "")
+    tokens_by_source = bearer_tokens_by_source(
+        smoke_token=smoke_token,
+        rbac_tokens_json=rbac_tokens_json,
+        approval_token_a=approval_token_a,
+        approval_token_b=approval_token_b,
+    )
+    rbac_matrix, rbac_invalid = inspect_rbac_tokens_json(rbac_tokens_json)
     approval_race_tokens, approval_race_invalid = inspect_approval_race_tokens(
-        os.environ.get("PANTHEON_BFF_APPROVAL_RACE_TOKEN_A", ""),
-        os.environ.get("PANTHEON_BFF_APPROVAL_RACE_TOKEN_B", ""),
+        approval_token_a,
+        approval_token_b,
+    )
+    cross_secret_bearers, cross_secret_invalid = inspect_cross_secret_bearers(
+        smoke_token=smoke_token,
+        rbac_tokens_json=rbac_tokens_json,
+        approval_token_a=approval_token_a,
+        approval_token_b=approval_token_b,
+    )
+    bearer_shape, bearer_shape_invalid = inspect_bearer_shape(
+        smoke_token=smoke_token,
+        rbac_tokens_json=rbac_tokens_json,
+        approval_token_a=approval_token_a,
+        approval_token_b=approval_token_b,
     )
     invalid = [
         {"name": "SOAK_SECONDS", "reason": reason}
@@ -245,11 +505,14 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
     ]
     invalid.extend(rbac_invalid)
     invalid.extend(approval_race_invalid)
+    invalid.extend(cross_secret_invalid)
+    invalid.extend(bearer_shape_invalid)
     remediation = build_operator_remediation(missing, invalid, args)
 
     return {
         "task_id": "BFF-LIVE-EVIDENCE-PREFLIGHT",
         "strict_live_evidence_preflight": True,
+        "strict_live_evidence_run": strict_live_evidence_run(),
         "generated_at": utc_now(),
         "github_environment": remediation["github_environment"],
         "target_url": args.base_url.strip(),
@@ -259,6 +522,9 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
         "min_soak_seconds": STRICT_LIVE_SOAK_MIN_SECONDS,
         "rbac_matrix": rbac_matrix,
         "approval_race_tokens": approval_race_tokens,
+        "cross_secret_bearers": cross_secret_bearers,
+        "bearer_shape": bearer_shape,
+        "bearer_source_hashes": bearer_source_hashes(tokens_by_source),
         "ref": os.environ.get("GITHUB_REF") or os.environ.get("GITHUB_REF_NAME", ""),
         "sha": os.environ.get("GITHUB_SHA", ""),
         "required": required,

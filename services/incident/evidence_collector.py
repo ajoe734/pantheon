@@ -193,6 +193,7 @@ class PostmortemEvidenceCollector:
         severity: IncidentSeverity | str,
         incident_id: Optional[str] = None,
         created_at: Optional[str] = None,
+        threshold_identity: Optional[str] = None,
     ) -> IncidentCase:
         """
         Create a validated IncidentCase from an EvidenceBundle.
@@ -228,6 +229,7 @@ class PostmortemEvidenceCollector:
             telemetry_event_ids=all_event_ids,
             evidence_summary=bundle.evidence_summary,
             lineage_ref=bundle.lineage_ref,
+            threshold_identity=threshold_identity,
         )
 
         errors = validate_incident_case(incident)

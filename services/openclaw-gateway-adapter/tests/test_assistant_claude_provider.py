@@ -1,5 +1,6 @@
 """Tests for assistant_claude_provider — Claude Code CLI provider."""
 
+import io
 import json
 import subprocess
 import sys
@@ -12,7 +13,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from assistant_claude_provider import (
     AssistantClaudeProvider,
+    ClaudeProviderError,
     ClaudeProviderResult,
+    _extract_auth_fields,
     _normalize_output,
     invoke_claude,
 )
@@ -97,7 +100,15 @@ def test_readiness_degraded_mount_missing():
 def test_readiness_degraded_auth_failed():
     mounts = _mock_mounts_ready()
     provider = AssistantClaudeProvider(mounts=mounts)
-    mock_result = ClaudeProviderResult(status="degraded", text="", degraded_reason="auth_failure")
+    mock_result = ClaudeProviderResult(
+        status="degraded",
+        text="",
+        degraded_reason="auth_failure",
+        exit_code=1,
+        config_dir="/home/pantheon-assistant/.claude",
+        diagnostic_reason="stderr_auth_failure",
+        diagnostic_message="Error: not authenticated",
+    )
 
     with (
         patch("assistant_claude_provider._resolve_binary", return_value="/usr/bin/claude"),
@@ -110,6 +121,14 @@ def test_readiness_degraded_auth_failed():
     assert result["status"] == "degraded"
     assert result["auth_status"] == "failed"
     assert result["degraded_reason"] == "claude_auth_failure"
+    assert result["auth_probe"] == {
+        "status": "degraded",
+        "degraded_reason": "auth_failure",
+        "config_dir": "claude_config",
+        "exit_code": 1,
+        "diagnostic_reason": "stderr_auth_failure",
+        "diagnostic_message": "Error: not authenticated",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -220,6 +239,163 @@ def _mock_mounts_auth_failed(status="missing_host_mount"):
     return mounts
 
 
+class _FakeLoginProcess:
+    def __init__(self):
+        self.stdout = io.StringIO("Open https://console.anthropic.com/login\nCode: WXYZ-1234\n")
+        self.stderr = io.StringIO("")
+        self.stdin = io.StringIO()
+        self.returncode = None
+        self.terminated = False
+
+    def poll(self):
+        return self.returncode
+
+    def terminate(self):
+        self.terminated = True
+
+    def wait(self, timeout=None):
+        return 0 if self.returncode is None else self.returncode
+
+
+def test_start_device_reauth_runs_claude_auth_login_and_captures_url():
+    fake_process = _FakeLoginProcess()
+    popen_calls = []
+
+    def fake_popen(*args, **kwargs):
+        popen_calls.append((args, kwargs))
+        return fake_process
+
+    provider = AssistantClaudeProvider(
+        mounts=_mock_mounts_ready(),
+        popen_func=fake_popen,
+    )
+    with (
+        patch("assistant_claude_provider._resolve_binary", return_value="/usr/bin/claude"),
+        patch.object(provider, "readiness", return_value={"ready": True, "auth_status": "ready"}),
+    ):
+        result = provider.start_device_reauth(
+            operator_id="op-1",
+            reason="expired",
+            capture_timeout_seconds=2,
+            poll_interval_seconds=1,
+            max_wait_seconds=30,
+        )
+
+    assert result["provider"] == "claude"
+    assert result["status"] in {"pending", "completed"}
+    assert result["verification_uri"] == "https://console.anthropic.com/login"
+    assert result["user_code"] == "WXYZ-1234"
+    assert popen_calls[0][0][0] == ["/usr/bin/claude", "auth", "login"]
+    assert popen_calls[0][1]["stdin"] == subprocess.PIPE
+    assert popen_calls[0][1]["env"]["CLAUDE_CONFIG_DIR"] == "/home/pantheon-assistant/.claude"
+    assert popen_calls[0][1]["env"]["HOME"] == "/home/pantheon-assistant"
+
+
+def test_claude_auth_url_code_true_is_not_treated_as_user_code():
+    fields = _extract_auth_fields(
+        "Open https://console.anthropic.com/oauth/authorize?client_id=abc&code=true to continue"
+    )
+
+    assert fields["verification_uri_complete"].startswith("https://console.anthropic.com/oauth/authorize")
+    assert "user_code" not in fields
+
+
+def test_submit_reauth_code_writes_to_live_claude_auth_process():
+    fake_process = _FakeLoginProcess()
+    fake_process.stdout = io.StringIO(
+        "Open https://console.anthropic.com/oauth/authorize?client_id=abc&code=true\n"
+    )
+
+    provider = AssistantClaudeProvider(
+        mounts=_mock_mounts_ready(),
+        popen_func=lambda *args, **kwargs: fake_process,
+    )
+    with (
+        patch("assistant_claude_provider._resolve_binary", return_value="/usr/bin/claude"),
+        patch.object(provider, "readiness", return_value={"ready": False, "auth_status": "failed"}),
+    ):
+        started = provider.start_device_reauth(
+            operator_id="op-1",
+            capture_timeout_seconds=2,
+            poll_interval_seconds=30,
+            max_wait_seconds=30,
+        )
+        result = provider.submit_reauth_code(
+            started["reauth_session_id"],
+            code="claude-auth-code-123",
+            operator_id="op-1",
+        )
+
+    assert fake_process.stdin.getvalue() == "claude-auth-code-123\n"
+    assert result["status"] == "code_submitted"
+    assert result["code_submitted_at"]
+    rendered = repr(result)
+    assert "claude-auth-code-123" not in rendered
+    assert result.get("user_code") is None
+
+
+def test_submitted_reauth_code_exit_zero_fails_when_probe_degraded():
+    fake_process = _FakeLoginProcess()
+    fake_process.stdout = io.StringIO(
+        "Open https://console.anthropic.com/oauth/authorize?client_id=abc&code=true\n"
+    )
+
+    provider = AssistantClaudeProvider(
+        mounts=_mock_mounts_ready(),
+        popen_func=lambda *args, **kwargs: fake_process,
+    )
+    degraded_readiness = {
+        "ready": False,
+        "auth_status": "failed",
+        "degraded_reason": "claude_auth_probe_non_zero_exit",
+    }
+    with (
+        patch("assistant_claude_provider._resolve_binary", return_value="/usr/bin/claude"),
+        patch.object(provider, "readiness", return_value=degraded_readiness),
+        patch.object(provider, "_readiness_after_process_exit", return_value=degraded_readiness),
+    ):
+        started = provider.start_device_reauth(
+            operator_id="op-1",
+            capture_timeout_seconds=2,
+            poll_interval_seconds=30,
+            max_wait_seconds=30,
+        )
+        provider.submit_reauth_code(
+            started["reauth_session_id"],
+            code="claude-auth-code-123",
+            operator_id="op-1",
+        )
+        fake_process.returncode = 0
+        provider._monitor_reauth_session(started["reauth_session_id"], fake_process, 30, 30)  # noqa: SLF001
+
+    result = provider.reauth_status(started["reauth_session_id"])
+    assert result["status"] == "failed"
+    assert result["code_submitted_at"]
+    assert "completed_at" not in result
+    assert "completedAt" not in result
+    assert result["returncode"] == 0
+    assert result["error_code"] == "CLAUDE_REAUTH_READY_PROBE_DEGRADED"
+    assert "warning_code" not in result
+    assert "warningCode" not in result
+    assert (
+        result["message"]
+        == "Claude auth login accepted the authorization code, but readiness probe is still degraded."
+    )
+    assert result["readiness"]["ready"] is False
+    assert "claude-auth-code-123" not in repr(result)
+
+
+def test_start_device_reauth_requires_writable_claude_mount():
+    provider = AssistantClaudeProvider(mounts=_mock_mounts_ready())
+    provider._mounts.validate_mounts.return_value = {  # noqa: SLF001
+        "claude": _validation(ready=True, mount_mode="ro")
+    }
+    with patch("assistant_claude_provider._resolve_binary", return_value="/usr/bin/claude"):
+        with pytest.raises(ClaudeProviderError) as exc:
+            provider.start_device_reauth(operator_id="op-1")
+    assert exc.value.code == "CLAUDE_REAUTH_MOUNT_READ_ONLY"
+
+
 def test_invoke_claude_binary_not_found():
     with patch("shutil.which", return_value=None):
         result = invoke_claude("hello", mounts=_mock_mounts_ready())
@@ -287,7 +463,44 @@ def test_invoke_claude_non_zero_exit_no_text():
     ):
         result = invoke_claude("hello", mounts=_mock_mounts_ready())
     assert result.status == "degraded"
-    assert result.degraded_reason in {"non_zero_exit", "auth_failure"}
+    assert result.degraded_reason == "non_zero_exit"
+    assert result.diagnostic_reason == "stderr_unclassified"
+    assert result.diagnostic_message == "some error"
+    assert result.exit_code == 1
+
+
+def test_invoke_claude_non_zero_exit_empty_stderr_has_safe_diagnostic():
+    completed = MagicMock()
+    completed.stdout = b""
+    completed.stderr = b""
+    completed.returncode = 1
+
+    with (
+        patch("shutil.which", return_value="/usr/bin/claude"),
+        patch("subprocess.run", return_value=completed),
+    ):
+        result = invoke_claude("hello", mounts=_mock_mounts_ready())
+    assert result.status == "degraded"
+    assert result.degraded_reason == "non_zero_exit_no_stderr"
+    assert result.diagnostic_reason == "stderr_empty"
+    assert result.diagnostic_message is None
+
+
+def test_invoke_claude_permission_denied_stderr_has_safe_diagnostic():
+    completed = MagicMock()
+    completed.stdout = b""
+    completed.stderr = b"EACCES: permission denied, open '/home/pantheon-assistant/.claude.json'"
+    completed.returncode = 1
+
+    with (
+        patch("shutil.which", return_value="/usr/bin/claude"),
+        patch("subprocess.run", return_value=completed),
+    ):
+        result = invoke_claude("hello", mounts=_mock_mounts_ready())
+    assert result.status == "degraded"
+    assert result.degraded_reason == "config_permission_denied"
+    assert result.diagnostic_reason == "stderr_permission_denied"
+    assert result.diagnostic_message == "EACCES: permission denied, open 'claude_config'"
 
 
 def test_invoke_claude_auth_failure_in_stderr():
@@ -303,6 +516,38 @@ def test_invoke_claude_auth_failure_in_stderr():
         result = invoke_claude("hello", mounts=_mock_mounts_ready())
     assert result.status == "degraded"
     assert result.degraded_reason == "auth_failure"
+    assert result.diagnostic_reason == "stderr_auth_failure"
+    assert result.diagnostic_message == "Error: not authenticated, please login first"
+
+
+def test_invoke_claude_redacts_sensitive_stderr_diagnostic_message():
+    completed = MagicMock()
+    completed.stdout = b""
+    completed.stderr = (
+        b"Error for user@example.com: token=sk-ant-1234567890abcdefghijklmnopqrstuvwxyz "
+        b"open https://console.anthropic.com/auth?code=SECRET-CODE "
+        b"at /home/pantheon-assistant/.claude.json "
+        b"raw abcdefghijklmnopqrstuvwxyz1234567890"
+    )
+    completed.returncode = 1
+
+    with (
+        patch("shutil.which", return_value="/usr/bin/claude"),
+        patch("subprocess.run", return_value=completed),
+    ):
+        result = invoke_claude("hello", mounts=_mock_mounts_ready())
+    assert result.status == "degraded"
+    assert result.diagnostic_message
+    assert "user@example.com" not in result.diagnostic_message
+    assert "sk-ant" not in result.diagnostic_message
+    assert "SECRET-CODE" not in result.diagnostic_message
+    assert "https://console.anthropic.com" not in result.diagnostic_message
+    assert "/home/pantheon-assistant/.claude" not in result.diagnostic_message
+    assert "abcdefghijklmnopqrstuvwxyz1234567890" not in result.diagnostic_message
+    assert "[email]" in result.diagnostic_message
+    assert "token=[redacted]" in result.diagnostic_message
+    assert "[url]" in result.diagnostic_message
+    assert "claude_config" in result.diagnostic_message
 
 
 # ---------------------------------------------------------------------------
@@ -357,15 +602,19 @@ def test_invoke_claude_uses_plan_permission_mode():
 
     assert result.status == "ok"
     argv = run_mock.call_args.args[0]
+    env = run_mock.call_args.kwargs["env"]
     assert argv == [
         "/usr/bin/claude",
         "-p",
         "hello",
         "--output-format",
         "stream-json",
+        "--verbose",
         "--permission-mode",
         "plan",
     ]
+    assert env["CLAUDE_CONFIG_DIR"] == "/home/pantheon-assistant/.claude"
+    assert env["HOME"] == "/home/pantheon-assistant"
 
 
 def test_invoke_claude_uses_configured_binary_path(monkeypatch):

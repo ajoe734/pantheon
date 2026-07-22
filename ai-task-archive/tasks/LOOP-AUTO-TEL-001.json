@@ -1,0 +1,127 @@
+{
+  "version": 1,
+  "task_id": "LOOP-AUTO-TEL-001",
+  "archived_at": "2026-07-01T10:21:45Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "LOOP-AUTO-TEL-001",
+    "title": "Audit telemetry readiness and writer durability",
+    "summary_zh": "審計 telemetry readiness、canonical table bootstrap、writer metrics、DLQ 與 replay semantics，作為 reconciliation autopilot 前置。",
+    "phase": "Global Loop Autopilot / Wave 4 Telemetry Reconciliation Incident",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "LOOP-AUTO-000"
+    ],
+    "artifacts": [
+      "services/telemetry",
+      "scripts/db_migrate.sh",
+      "docs/deployment/evidence"
+    ],
+    "acceptance": [
+      "Telemetry ready fails when canonical table is missing",
+      "Writer metrics expose failure DLQ and freshness",
+      "DLQ replay is idempotent by event id"
+    ],
+    "next": "Owner finalized telemetry readiness closeout: PR #2670 merged into dev at 192d656e5519453b4a6c9c97e90732c4f71c4c70; closeout evidence and canonical review file published; local verification reran 75 telemetry unit tests plus ingest smoke.",
+    "last_update": "2026-07-01T10:21:45Z",
+    "task_class": "execution",
+    "auto_created_by": "codex-loop-autopilot-materialization-20260627",
+    "source_plan": "docs/04/pantheon_sa/SA-21_global_loop_inventory_autopilot_execution_plan.md",
+    "execution_task_inventory": "docs/deployment/loop-autopilot-execution-tasks-2026-06-27.md",
+    "proof_required": [
+      "unit tests",
+      "contract tests",
+      "local service smoke",
+      "restart or replay evidence when worker or runtime behavior changes"
+    ],
+    "non_goals": [
+      "No live-capital execution",
+      "No approval gate bypass",
+      "No panel-only closure",
+      "No seed fixture as live proof"
+    ],
+    "dispatch_rules": [
+      "idempotent duplicate ticks and duplicate events",
+      "operator-visible truth projection required",
+      "maturity cannot rise above collected evidence",
+      "repo workflow closure required before done"
+    ],
+    "loop_ids": [
+      "telemetry_reconciliation"
+    ],
+    "current_maturity": "api-only",
+    "target_maturity": "reconciled",
+    "desired_state_sources": [
+      "telemetry schema policy"
+    ],
+    "actual_state_sources": [
+      "telemetry_events",
+      "writer metrics",
+      "DLQ"
+    ],
+    "wave_id": "Wave 4 Telemetry Reconciliation Incident",
+    "mutates_canonical": true,
+    "review_notes_zh": [
+      "三項驗收標準皆已驗證：canonical table readiness probe、writer failure/DLQ/freshness metrics、event_id-idempotent DLQ replay（含 explicit tag filter 分支修正）",
+      "75 unit tests + 4 smoke checks 全數通過",
+      "approved，交回 Codex finalization"
+    ],
+    "review_file": "services/telemetry/review_loop_auto_tel_001_claude_zh.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-01T10:21:45Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/loop-auto-tel-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/LOOP-AUTO-TEL-001",
+      "git_clean_required": false,
+      "commit": "164bf7b85bc54e336f89c7ca983958b9a692fd28",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/LOOP-AUTO-TEL-001",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/LOOP-AUTO-TEL-001",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "192d656e5519453b4a6c9c97e90732c4f71c4c70",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "LOOP-AUTO-TEL-001",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Ready for Claude review: telemetry runtime changes are already merged in PR #2410; revalidated on 2026-07-01 with python3 -m unittest services.telemetry.test_main_routes services.telemetry.test_ingest_shock_absorption (75 tests OK) and python3 services/telemetry/smoke_test_ingest.py (all smoke tests passed). Scope unchanged: readiness canonical table probe, writer freshness/DLQ metrics, and event_id-idempotent DLQ replay.",
+      "status": "done",
+      "created_at": "2026-07-01T06:25:27Z",
+      "resolved_at": "2026-07-01T06:44:04Z"
+    },
+    {
+      "task_id": "LOOP-AUTO-TEL-001",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Review approved: all 3 acceptance criteria verified in code and tests (readyz 503 on missing canonical table, writer freshness/DLQ metrics, event_id-idempotent DLQ replay across both tag-filtered and default paths). 75 unit tests + ingest smoke test pass. Returning to Codex for finalization.",
+      "status": "done",
+      "created_at": "2026-07-01T06:44:04Z",
+      "resolved_at": "2026-07-01T10:21:46Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "task_id": "AG-FE-SW-002",
+  "archived_at": "2026-06-22T11:09:29Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-FE-SW-002",
+    "title": "Conversation/result cards + completeness rail",
+    "summary_zh": "依 SD §11.1/§11.2 實作策略工坊左側對話與結果卡(UserStrategyDescription / ServantReconstruction / CompletenessUpdate / NextQuestion / ResearchPlanProposal / ResearchProgress / ConsultResult / EvidenceSummary / BacktestResult / VersionPatchProposal)與右側 StrategyCompletenessRail(已確認/推定/缺漏/薄弱/衝突 + 下一個高價值決策)。卡片資料來自 AG-BE-SW-004 stream。 【有疑問一定要提出,不要自己亂做】動工前先讀完引用的設計稿(SD 對應章節 + docs/04/pantheon_agora_cross_repo_2026-06-20/design-closure/ + canonical services/control-plane/specs/agora/*.schema.json / openapi/agora_v1.openapi.yaml / capability_manifest.json)。只要遇到任何疑問、不確定、設計稿沒寫到、與既有 code 對不上、依賴不清、無法重現或衝突,一律 STOP,用 blocker(或向 reviewer handoff)把問題具體寫出來並等待澄清,絕對不可自行臆測、補洞、繞過或先做再說。可動工的部分必須與引用 spec/schema 逐欄位一致:不得自創 schema/欄位/評分/widget/route、不得擴張 capability allowlist、不得讓 Agora 直接下單/綁資金/寫 RuntimeBinding。 【UI 一律照設計稿,不要自己發想】凡與畫面有關(頁面、route、layout、component、widget、chart、互動、文案、樣式)必須嚴格依 SD §9/§10/§11/§12/§23 的 IA/版面/元件規格、design-closure A3 widget_registry/chart grammar,以及 V10/V11 視覺參考實作;沿用既有 design tokens 與共用元件,不得自創畫面、元件、版面、route 或自由發揮樣式。設計稿沒涵蓋到的畫面或互動,先開 blocker 問清楚再做。",
+    "owner": "Claude",
+    "reviewer": "Claude2",
+    "phase": "EPIC AGORA-FE / Phase 2",
+    "depends_on": [
+      "AG-FE-SW-001",
+      "AG-XR-OPENAPI-004"
+    ],
+    "acceptance": [
+      "對話卡片型別齊全且由 stream 驅動;completeness rail 反映五態 + next question;卡片可繼續討論(§11.3 入口);附 reducer/UI 測試;【驗收】實作與引用 spec/schema 逐欄位一致,無自創欄位/route/enum;遇疑問須先開 blocker 澄清而非自行實作;自行臆測或偏離設計稿一律不通過"
+    ],
+    "artifacts": [
+      "execute-plans/src/agora/components/StrategyCompletenessRail.tsx",
+      "execute-plans/src/agora/components/ResearchPlanCard.tsx",
+      "execute-plans/src/agora/components/ConsultResultCard.tsx"
+    ],
+    "auto_created_by": "dispatch_agora_phase2_workshop_2026-06-20",
+    "status": "done",
+    "last_update": "2026-06-22T11:09:29Z",
+    "next": "Closeout complete: all 12 workshop card types implemented field-for-field with v4 schema, SSE stream wired, StrategyCompletenessRail reads all five completeness states plus readiness gates and next high-value question. 41 tests pass. Review by Claude2 confirmed schema alignment, boundary compliance, no invented fields or routes. Two non-blocking follow-ups (next_question.updated dispatch, approve/reject onClick) recorded in review doc for next iteration. PR #2252 merged into dev at 2026-06-22T11:00:00Z.",
+    "review_notes_zh": [
+      "審查通過：12種卡片類型與schema逐欄位一致，SSE stream事件覆蓋完整，StrategyCompletenessRail正確讀取completeness/readiness/next_question",
+      "待追蹤：workshop.next_question.updated未觸發refreshCards（低風險）；ResearchPlanCard的approve/reject按鈕無onClick handler（待BFF endpoint就緒後補上）"
+    ],
+    "review_file": "docs/04/reviews/ag_fe_sw_002_review_claude2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-06-22T11:09:29Z",
+      "repository_id": "execute_plans",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-fe-sw-002/execute-plans",
+      "repository_slug": "ajoe734/execute-plans",
+      "branch": "task/AG-FE-SW-002",
+      "git_clean_required": false,
+      "commit": "57307d1549a453f58be5b8349b6ba82aa3fde13a",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-FE-SW-002",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-FE-SW-002",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "bcac3cf4506a52ec5684d69d5a64f2b4a8bdeaca",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-FE-SW-002",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Anchor commit b8f010ec ready for review. All 12 card types + StrategyCompletenessRail + ResearchPlanCard + ConsultResultCard + WorkshopCardRenderer + SSE stream function. 41 tests pass, 0 new TypeScript errors in task files. Please review and approve so finalize can run.",
+      "status": "done",
+      "created_at": "2026-06-22T10:37:43Z",
+      "resolved_at": "2026-06-22T10:38:24Z"
+    },
+    {
+      "task_id": "AG-FE-SW-002",
+      "from": "Codex",
+      "to": "Claude2",
+      "message": "Auto-reassigned review from Codex to Claude2 after repeated Codex terminal: Codex usage limit reached",
+      "status": "done",
+      "created_at": "2026-06-22T10:38:24Z",
+      "resolved_at": "2026-06-22T10:42:31Z"
+    },
+    {
+      "task_id": "AG-FE-SW-002",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Review approved: schema alignment verified, all 12 card types correct, SSE stream wired properly, boundary compliance confirmed. Two non-blocking follow-ups noted. Returning to Claude for closeout.",
+      "status": "done",
+      "created_at": "2026-06-22T10:42:31Z",
+      "resolved_at": "2026-06-22T11:09:30Z"
+    }
+  ],
+  "blockers": []
+}

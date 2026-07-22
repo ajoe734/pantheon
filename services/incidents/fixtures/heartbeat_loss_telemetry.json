@@ -1,0 +1,37 @@
+{
+  "incident_id": "inc-tel005-heartbeat-loss-001",
+  "title": "Runtime heartbeat loss: lag exceeds liveness threshold",
+  "telemetry_event": {
+    "event_id": "tel-tel005-heartbeat-loss-001",
+    "event_type": "runtime.heartbeat_loss",
+    "created_at": "2026-06-27T11:00:00Z",
+    "severity": "critical",
+    "runtime_binding_id": "rtb-tel005-paper-001",
+    "deployment_stage": "paper",
+    "deployment_plan_id": "plan-tel005-001",
+    "capital_pool_id": "pool-tel005-001",
+    "persona_capital_binding_id": "pcb-tel005-001",
+    "artifact_id": "artifact-tel005-001",
+    "artifact_version": "1.0.0",
+    "runtime_id": "runtime-tel005-001",
+    "trace_id": "trace-tel005-heartbeat-loss-001",
+    "heartbeat_lag_ms": 95000,
+    "metrics": {
+      "heartbeat_lag_ms": 95000,
+      "last_heartbeat_age_s": 95,
+      "missed_heartbeat_count": 3
+    },
+    "description": "Runtime heartbeat not received for 95 seconds. Liveness threshold is 30 seconds."
+  },
+  "threshold_snapshot": {
+    "policy_source": "KILL_SWITCH_AND_SAFE_MODE_EXECUTION_POLICY.md section 4.1",
+    "signal_type": "governance_incident",
+    "metric_name": "heartbeat_lag_ms",
+    "comparator": "gt",
+    "observed_value": 95000,
+    "threshold_value": 30000,
+    "window": "liveness-check",
+    "breached": true,
+    "note": "Heartbeat lag of 95s exceeds the 30s liveness threshold. Runtime worker may be unresponsive or dead."
+  }
+}

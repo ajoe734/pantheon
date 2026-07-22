@@ -29,31 +29,55 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
     assert source_ingest_env["SOURCE_INGEST_DATA_DIR"] == "/data/source-ingest"
     assert source_ingest_env["SOURCE_INGEST_CONNECTOR_STORE_PATH"] == "/data/source-ingest/connector_config.jsonl"
     assert source_ingest_env["SOURCE_INGEST_EVIDENCE_STORE_PATH"] == "/data/source-ingest/source_evidence.jsonl"
+    assert source_ingest_env["SOURCE_INGEST_CONTROLLER_STATE_PATH"] == "/data/source-ingest/controller_state.json"
+    assert source_ingest_env["SOURCE_INGEST_REQUIREMENT_STATE_PATH"] == "/data/source-ingest/requirement_snapshots.jsonl"
+    assert source_ingest_env["SOURCE_INGEST_CONTROLLER_TOKEN_FILE"] == "/data/source-ingest/controller_token"
     assert source_ingest_env["SOURCE_INGEST_MAX_RECORDS"] == "${SOURCE_INGEST_MAX_RECORDS:-100}"
     assert source_ingest_env["SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY"] == "${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-2}"
     assert source_ingest_env["SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS"] == "${SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS:-2}"
     assert source_ingest_env["SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS"] == "${SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS:-60}"
+    assert source_ingest_env["SOURCE_INGEST_FRONTIER_RUNNING_TIMEOUT_SECONDS"] == "${SOURCE_INGEST_FRONTIER_RUNNING_TIMEOUT_SECONDS:-300}"
+    assert source_ingest_env["SEARCH_INGEST_NOTIFY_URL"] == "${SEARCH_INGEST_NOTIFY_URL:-http://search-svc:8098}"
     assert source_ingest_env["PANTHEON_SOURCE_SEARCH_POSTURE"] == "${PANTHEON_SOURCE_SEARCH_POSTURE:-dev}"
     assert source_ingest_env["PANTHEON_S3_ENDPOINT"] == "${PANTHEON_S3_ENDPOINT:-http://minio:9000}"
     assert source_ingest_env["PANTHEON_ARTIFACT_BUCKET"] == "${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}"
+    assert source_ingest_env["SOURCE_INGEST_EVIDENCE_BACKEND"] == "${SOURCE_INGEST_EVIDENCE_BACKEND:-postgres}"
+    assert source_ingest_env["PANTHEON_EXTERNAL_EGRESS"] == "${PANTHEON_EXTERNAL_EGRESS:-deny}"
     assert "source-ingest-data:/data/source-ingest" in source_ingest["volumes"]
     assert "${SOURCE_INGEST_PORT:-18097}:8097" in source_ingest["ports"]
     healthcheck = " ".join(source_ingest["healthcheck"]["test"])
     assert "os.environ.get('PORT','8097')" in healthcheck
     assert "/readyz" in healthcheck
 
-    source_ingest_scheduler = services["source-ingest-scheduler"]
-    scheduler_env = _env_map(source_ingest_scheduler)
-    assert source_ingest_scheduler["profiles"] == ["source-ingest-scheduler"]
-    assert source_ingest_scheduler["command"] == ["python", "-m", "services.source_ingestion.scheduler_worker"]
-    assert scheduler_env["SOURCE_INGEST_API_URL"] == "http://source-ingest:8097"
-    assert scheduler_env["SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY"] == "${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-2}"
-    assert "source-ingest" in source_ingest_scheduler["depends_on"]
+    migration = services["source-ingest-controller-migrate"]
+    assert migration["command"] == ["bash", "scripts/db_migrate.sh"]
+    assert migration["restart"] == "no"
+    assert migration["depends_on"]["postgres"]["condition"] == "service_healthy"
+
+    controller = services["source-ingest-scheduler"]
+    controller_env = _env_map(controller)
+    # Opt-in only: an always-on tick crawls third-party providers continuously.
+    assert controller["profiles"] == ["source-ingest-scheduler"]
+    assert controller["command"] == ["python", "-m", "services.source_ingestion.controller_worker"]
+    assert controller_env["SOURCE_INGEST_API_URL"] == "http://source-ingest:8097"
+    assert controller_env["SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL"] == "reconciled_live_proof"
+    assert controller_env["SOURCE_INGEST_CONTROLLER_STATE_PATH"] == "/data/source-ingest/controller_state.json"
+    assert controller_env["SOURCE_INGEST_CONTROLLER_TOKEN_FILE"] == "/data/source-ingest/controller_token"
+    assert controller_env["SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS"] == "${SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS:-30}"
+    assert controller_env["PANTHEON_TENANT_ID"] == "${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}"
+    assert "SOURCE_INGEST_CONTROLLER_LEASE_SECONDS" not in controller_env
+    assert controller_env["SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY"] == "${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-2}"
+    assert controller_env["DATABASE_URL"].startswith("${DATABASE_URL:-postgresql://")
+    assert "source-ingest-data:/data/source-ingest" in controller["volumes"]
+    assert controller["depends_on"]["source-ingest"]["condition"] == "service_healthy"
+    assert controller["depends_on"]["source-ingest-controller-migrate"]["condition"] == "service_completed_successfully"
+    assert "controller_healthcheck" in " ".join(controller["healthcheck"]["test"])
 
     smoke_env = _env_map(services["smoke-stack"])
     assert smoke_env["SOURCE_INGEST_URL"] == "http://source-ingest:8097"
     assert "source-ingest" in services["smoke-stack"]["depends_on"]
     assert "source-ingest-data" in compose["volumes"]
+    assert _env_map(services["search-svc"])["SEARCH_EVIDENCE_BACKEND"] == "${SEARCH_EVIDENCE_BACKEND:-postgres}"
 
     source_search_smoke = services["source-search-bounded-smoke"]
     source_search_smoke_env = _env_map(source_search_smoke)
@@ -90,6 +114,7 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
     assert 'f"{SOURCE_INGEST_URL}/api/source-ingest/run-scheduled"' in bounded_smoke
     assert 'f"{SOURCE_INGEST_URL}/api/source-ingest/audit"' in bounded_smoke
     assert 'f"{SEARCH_URL}/api/search/index/refresh"' in bounded_smoke
+    assert 'f"{SEARCH_URL}/api/search/index/source-completions/{feed_run_id}"' in bounded_smoke
 
     prod_env = (compose_path.parent / "env/prod-control.env.example").read_text(encoding="utf-8")
     assert "PANTHEON_SOURCE_SEARCH_POSTURE=production" in prod_env

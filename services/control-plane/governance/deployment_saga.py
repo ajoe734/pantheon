@@ -16,6 +16,7 @@ from __future__ import annotations
 import copy
 import json
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional
@@ -48,6 +49,7 @@ class OutboxStatus(str, Enum):
     PENDING = "pending"
     PUBLISHED = "published"
     FAILED = "failed"
+    DEAD_LETTERED = "dead_lettered"
 
 
 class ReceiptStatus(str, Enum):
@@ -90,6 +92,14 @@ def _plan_to_dict(plan: Any) -> Dict[str, Any]:
     if callable(to_dict):
         return copy.deepcopy(dict(to_dict()))
     raise DeploymentSagaError("Deployment saga bootstrap requires a DeploymentPlan or mapping payload.")
+
+
+def _utc_after_seconds(seconds: int) -> str:
+    return (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        + timedelta(seconds=max(0, seconds))
+    ).isoformat().replace("+00:00", "Z")
 
 
 @dataclass
@@ -200,6 +210,13 @@ class OutboxRecord:
     delivery_attempts: int = 0
     published_at: Optional[str] = None
     last_error: Optional[str] = None
+    last_attempt_at: Optional[str] = None
+    next_retry_at: Optional[str] = None
+    blocked_reason: Optional[str] = None
+    dlq_at: Optional[str] = None
+    last_replayed_at: Optional[str] = None
+    replay_count: int = 0
+    retry_policy: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         payload = {
@@ -207,11 +224,24 @@ class OutboxRecord:
             "event": self.event.to_dict(),
             "status": _enum_value(self.status),
             "delivery_attempts": self.delivery_attempts,
+            "replay_count": self.replay_count,
         }
         if self.published_at:
             payload["published_at"] = self.published_at
         if self.last_error:
             payload["last_error"] = self.last_error
+        if self.last_attempt_at:
+            payload["last_attempt_at"] = self.last_attempt_at
+        if self.next_retry_at:
+            payload["next_retry_at"] = self.next_retry_at
+        if self.blocked_reason:
+            payload["blocked_reason"] = self.blocked_reason
+        if self.dlq_at:
+            payload["dlq_at"] = self.dlq_at
+        if self.last_replayed_at:
+            payload["last_replayed_at"] = self.last_replayed_at
+        if self.retry_policy:
+            payload["retry_policy"] = copy.deepcopy(self.retry_policy)
         return payload
 
     @classmethod
@@ -223,6 +253,13 @@ class OutboxRecord:
             delivery_attempts=int(data.get("delivery_attempts", 0)),
             published_at=data.get("published_at"),
             last_error=data.get("last_error"),
+            last_attempt_at=data.get("last_attempt_at"),
+            next_retry_at=data.get("next_retry_at"),
+            blocked_reason=data.get("blocked_reason"),
+            dlq_at=data.get("dlq_at"),
+            last_replayed_at=data.get("last_replayed_at"),
+            replay_count=int(data.get("replay_count", 0)),
+            retry_policy=copy.deepcopy(dict(data["retry_policy"])) if isinstance(data.get("retry_policy"), Mapping) else None,
         )
 
 
@@ -696,6 +733,96 @@ class DeploymentSagaStore:
             apply_fn(normalized_event)
         return receipt
 
+    def mark_outbox_published(self, event_id: str) -> OutboxRecord:
+        def mutate(draft: Dict[str, Any]) -> OutboxRecord:
+            record = self._require_outbox_record(draft, event_id)
+            if OutboxStatus(record.status) == OutboxStatus.PUBLISHED:
+                return copy.deepcopy(record)
+            if OutboxStatus(record.status) == OutboxStatus.DEAD_LETTERED:
+                raise DeploymentSagaError(
+                    f"Outbox event '{event_id}' is dead-lettered; replay it before consuming."
+                )
+            record.status = OutboxStatus.PUBLISHED
+            record.published_at = record.published_at or utc_now()
+            record.next_retry_at = None
+            record.blocked_reason = None
+            return copy.deepcopy(record)
+
+        return self._transaction(mutate)
+
+    def record_outbox_failure(
+        self,
+        event_id: str,
+        *,
+        reason: str,
+        consumer_name: str,
+        retryable: bool = True,
+        max_attempts: int = 3,
+        retry_delay_seconds: int = 0,
+    ) -> OutboxRecord:
+        if max_attempts < 1:
+            raise DeploymentSagaError("max_attempts must be >= 1")
+
+        def mutate(draft: Dict[str, Any]) -> OutboxRecord:
+            record = self._require_outbox_record(draft, event_id)
+            status = OutboxStatus(record.status)
+            if status == OutboxStatus.PUBLISHED:
+                return copy.deepcopy(record)
+
+            now = utc_now()
+            record.delivery_attempts += 1
+            record.last_attempt_at = now
+            record.last_error = reason
+            record.retry_policy = {
+                "consumer_name": consumer_name,
+                "retryable": retryable,
+                "max_attempts": max_attempts,
+                "retry_delay_seconds": max(0, retry_delay_seconds),
+            }
+            if retryable and record.delivery_attempts < max_attempts:
+                record.status = OutboxStatus.PENDING
+                record.next_retry_at = (
+                    _utc_after_seconds(retry_delay_seconds)
+                    if retry_delay_seconds > 0
+                    else None
+                )
+                record.blocked_reason = None
+                record.dlq_at = None
+            else:
+                record.status = OutboxStatus.DEAD_LETTERED
+                record.next_retry_at = None
+                record.blocked_reason = reason
+                record.dlq_at = now
+            return copy.deepcopy(record)
+
+        return self._transaction(mutate)
+
+    def replay_outbox_event(
+        self,
+        event_id: str,
+        *,
+        reason: Optional[str] = None,
+    ) -> tuple[OutboxRecord, bool]:
+        def mutate(draft: Dict[str, Any]) -> tuple[OutboxRecord, bool]:
+            record = self._require_outbox_record(draft, event_id)
+            status = OutboxStatus(record.status)
+            if status not in {OutboxStatus.DEAD_LETTERED, OutboxStatus.FAILED}:
+                return copy.deepcopy(record), False
+
+            record.status = OutboxStatus.PENDING
+            record.next_retry_at = None
+            record.blocked_reason = None
+            record.dlq_at = None
+            record.last_replayed_at = utc_now()
+            record.replay_count += 1
+            if reason:
+                policy = dict(record.retry_policy or {})
+                policy["last_replay_reason"] = reason
+                record.retry_policy = policy
+            return copy.deepcopy(record), True
+
+        return self._transaction(mutate)
+
     def get(self, saga_id: str) -> Optional[DeploymentSaga]:
         saga = self._sagas.get(saga_id)
         return copy.deepcopy(saga) if saga else None
@@ -704,10 +831,21 @@ class DeploymentSagaStore:
         return [copy.deepcopy(item) for item in self._sagas.values()]
 
     def pending_outbox(self) -> List[OutboxRecord]:
+        return self.outbox_records(status=OutboxStatus.PENDING.value)
+
+    def outbox_records(self, status: Optional[OutboxStatus | str] = None) -> List[OutboxRecord]:
+        if status is None:
+            records = self._outbox
+        else:
+            expected = OutboxStatus(status)
+            records = [
+                record
+                for record in self._outbox
+                if OutboxStatus(record.status) == expected
+            ]
         return [
             copy.deepcopy(record)
-            for record in self._outbox
-            if OutboxStatus(record.status) == OutboxStatus.PENDING
+            for record in records
         ]
 
     def inbox_receipts(self, consumer_name: Optional[str] = None) -> List[InboxReceipt]:
@@ -877,6 +1015,7 @@ class DeploymentSagaStore:
             if errors:
                 raise DeploymentSagaError("; ".join(errors))
         for record in draft["outbox"]:
+            OutboxStatus(record.status)
             errors = record.event.validate()
             if errors:
                 raise DeploymentSagaError("; ".join(errors))
@@ -914,6 +1053,13 @@ class DeploymentSagaStore:
         if not saga:
             raise DeploymentSagaError(f"Unknown saga: {saga_id}")
         return saga
+
+    @staticmethod
+    def _require_outbox_record(draft: Dict[str, Any], event_id: str) -> OutboxRecord:
+        for record in draft["outbox"]:
+            if record.event.event_id == event_id:
+                return record
+        raise DeploymentSagaError(f"Outbox event '{event_id}' not found")
 
 
 class DeploymentSagaOrchestrator:

@@ -17,6 +17,8 @@ from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from services.external_egress import guard_external_url
+
 
 @dataclass
 class GitHubMetadata:
@@ -119,7 +121,7 @@ class GitHubClient:
         if self.token:
             headers["Authorization"] = f"token {self.token}"
         
-        request = Request(url, headers=headers, method=method)
+        request = Request(guard_external_url(url, caller="research.github_client"), headers=headers, method=method)
         
         try:
             self.last_request_time = time.time()

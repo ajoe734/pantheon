@@ -1,0 +1,155 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon/persona-trade-reflection/v1",
+  "title": "PersonaTradeReflection",
+  "description": "Versioned reflection record produced by a Persona following trade episode closure or periodic pattern review.",
+  "type": "object",
+  "required": [
+    "reflection_id",
+    "trade_episode_id",
+    "persona_id",
+    "reflection_version",
+    "trigger",
+    "facts_snapshot_ref",
+    "facts_snapshot_hash",
+    "expected_vs_actual",
+    "counterfactuals",
+    "attribution",
+    "mistakes",
+    "what_worked",
+    "unknowns",
+    "followups",
+    "lesson_candidates",
+    "model",
+    "provider",
+    "prompt_template",
+    "version",
+    "generated_at",
+    "evidence_coverage",
+    "review_state"
+  ],
+  "properties": {
+    "reflection_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "trade_episode_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "persona_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reflection_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "trigger": {
+      "type": "string",
+      "enum": ["fill_review", "episode_closed", "scheduled_pattern", "manual_retry"]
+    },
+    "facts_snapshot_ref": {
+      "type": "string"
+    },
+    "facts_snapshot_hash": {
+      "type": "string"
+    },
+    "expected_vs_actual": {
+      "type": "object",
+      "required": ["thesis", "entry_quality", "exit_quality", "sizing", "timing", "risk_adherence"],
+      "properties": {
+        "thesis": { "type": ["string", "null"] },
+        "entry_quality": { "type": ["string", "null"] },
+        "exit_quality": { "type": ["string", "null"] },
+        "sizing": { "type": ["string", "null"] },
+        "timing": { "type": ["string", "null"] },
+        "risk_adherence": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "counterfactuals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["alternative_action", "estimated_impact", "assumptions"],
+        "properties": {
+          "alternative_action": { "type": "string" },
+          "estimated_impact": { "type": "string" },
+          "assumptions": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "attribution": {
+      "type": "string"
+    },
+    "mistakes": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "what_worked": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "unknowns": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "followups": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "lesson_candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["lesson_candidate_id", "scope", "proposed_change", "supporting_episode_ids", "confidence", "expiry"],
+        "properties": {
+          "lesson_candidate_id": { "type": "string", "format": "uuid" },
+          "scope": { "type": "string" },
+          "proposed_change": { "type": "string" },
+          "supporting_episode_ids": {
+            "type": "array",
+            "items": { "type": "string", "format": "uuid" }
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "expiry": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "model": {
+      "type": "string"
+    },
+    "provider": {
+      "type": "string"
+    },
+    "prompt_template": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "evidence_coverage": {
+      "type": "string",
+      "enum": ["complete", "partial", "degraded", "unavailable"]
+    },
+    "review_state": {
+      "type": "string",
+      "enum": ["proposed", "pending_review", "endorsed", "merged", "quarantined", "rejected", "expired"]
+    }
+  },
+  "additionalProperties": false
+}

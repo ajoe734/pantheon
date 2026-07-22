@@ -128,10 +128,10 @@ HUMAN_INTERACTION_FLOWS: tuple[HumanInteractionFlow, ...] = (
         stage_hint="learn",
     ),
     HumanInteractionFlow(
-        "persona_fleet_human_inbox",
-        "persona_fleet_human_inbox",
+        "persona_fleet_summary_contract",
+        "persona_fleet_summary_contract",
         "review_persona_human_inbox",
-        "human_inbox_readable",
+        "human_inbox_summary_linked",
     ),
     HumanInteractionFlow(
         "collaboration_compare_stance",
@@ -320,9 +320,14 @@ _SURFACE_CONTRACTS: dict[str, dict[str, Any]] = {
         "selectors": ["items", "meta.related"],
         "asset": "services/control-plane/bff/main.py",
     },
-    "persona_fleet_human_inbox": {
+    "persona_fleet_summary_contract": {
         "route": "/bff/management/persona-fleet",
-        "selectors": ["data.human_inbox", "data.execution_boundary"],
+        "selectors": [
+            "data.items",
+            "data.summary.human_inbox_summary",
+            "data.summary.execution_boundary",
+            "meta.related.human_inbox",
+        ],
         "asset": "services/control-plane/bff/main.py",
     },
     "human_gate_status_component": {

@@ -7,7 +7,7 @@ surface share a single auth contract:
 * Authorization header must be ``Bearer <token>``.
 * The token may be either an HS256 JWT (signed with
   ``PANTHEON_RUNTIME_JWT_SECRET``) or, in permissive mode, a structured legacy
-  token shaped ``actor_id[:role1,role2]``. The structured form is sufficient for
+  token shaped ``actor_id:role1,role2``. The structured form is sufficient for
   internal-zone callers that already authenticate at the network boundary; the
   JWT form is required when ``PANTHEON_RUNTIME_AUTH_MODE=strict``.
 * RBAC: each protected route names the roles permitted to call it. Callers must
@@ -27,6 +27,9 @@ Environment
 PANTHEON_RUNTIME_AUTH_MODE
     ``strict`` (require JWT validated against the configured secret)
     or ``permissive`` (default; accept structured legacy tokens too).
+    Any value outside this allowlist (typos, malformed strings, unset-but-
+    non-empty) fails closed to ``strict`` rather than falling through to
+    permissive structured-token parsing.
 PANTHEON_RUNTIME_JWT_SECRET
     HS256 secret. Required when mode is ``strict`` *and* the inbound token has
     JWT shape. When unset, JWT-shaped tokens cannot be verified and only
@@ -40,8 +43,8 @@ PANTHEON_RUNTIME_MFA_REQUIRED
     Default ``false`` keeps the legacy behaviour of validating only when
     present, which existing integration tests depend on.
 PANTHEON_RUNTIME_DEFAULT_ROLE
-    Role assigned to plain (non-structured, non-JWT) bearer tokens in
-    permissive mode. Defaults to ``operator``.
+    Role assigned to verified JWTs that omit role claims. Plain non-JWT bearer
+    tokens are rejected even in permissive mode.
 PANTHEON_RUNTIME_JWKS_URI
     Optional JWKS endpoint. When set, JWT-shaped bearer tokens are verified
     through the JWKS path instead of the HS256 shared-secret path.
@@ -88,6 +91,7 @@ from typing import Any, Callable, Mapping, Optional, Sequence, Tuple
 
 _DEFAULT_ROLE = "operator"
 _MFA_PATTERN = re.compile(r"\d{6}")
+_VALID_AUTH_MODES = frozenset({"strict", "permissive"})
 
 
 @dataclass(frozen=True)
@@ -118,6 +122,44 @@ class AuthError(Exception):
 
     def as_response(self) -> Tuple[Mapping[str, Any], int]:
         return ({"error": {"code": self.code, "message": self.message}}, self.status_code)
+
+
+def has_claim_bound_mfa(
+    ctx: AuthContext,
+    *,
+    env: Optional[Mapping[str, str]] = None,
+) -> bool:
+    """Return whether a verified JWT itself contains accepted MFA proof.
+
+    ``AuthContext.mfa_verified`` may also be satisfied by the legacy
+    ``X-MFA-Token`` header.  High-risk multi-person approval and stage-cutover
+    boundaries must distinguish that caller-supplied header from MFA asserted
+    by the verified identity token, so they use this stricter helper.
+    """
+
+    if ctx.token_kind != "jwt":
+        return False
+    mfa_claims = _split_csv(
+        _env(
+            env,
+            "PANTHEON_RUNTIME_MFA_CLAIMS",
+            ",".join(_DEFAULT_MFA_CLAIMS),
+        )
+    ) or list(_DEFAULT_MFA_CLAIMS)
+    mfa_values = frozenset(
+        value.lower()
+        for value in _split_csv(
+            _env(
+                env,
+                "PANTHEON_RUNTIME_MFA_VALUES",
+                ",".join(sorted(_DEFAULT_MFA_VALUES)),
+            )
+        )
+    ) or _DEFAULT_MFA_VALUES
+    return any(
+        _claim_indicates_mfa(_claim_path_value(ctx.claims, claim_path), mfa_values)
+        for claim_path in mfa_claims
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -488,7 +530,7 @@ def _verify_jwt_jwks(
 
 
 def _parse_structured_token(token: str, default_role: str) -> AuthContext:
-    """Parse the ``actor_id[:role1,role2[:mfa[:cap1,cap2]]]`` stub shape.
+    """Parse the ``actor_id:role1,role2[:mfa[:cap1,cap2]]`` stub shape.
 
     Splitting on only the first colon glued the ``:mfa`` (and capability)
     suffixes onto the last role, so the canonical dev token
@@ -496,13 +538,33 @@ def _parse_structured_token(token: str, default_role: str) -> AuthContext:
     and every read 403'd in permissive mode. Split all segments: actor id,
     comma-roles, an optional ``mfa`` marker, and optional capabilities.
     """
-    parts = token.split(":")
-    actor_id = parts[0].strip() or "internal-api-operator"
+    if ":" not in token:
+        if token == "runtime-control-internal":
+            parts = [token, default_role]
+        else:
+            raise AuthError(
+                "AUTH_TOKEN_FORMAT",
+                "Permissive auth requires a structured actor:role bearer token or a valid JWT",
+                403,
+            )
+    else:
+        parts = token.split(":")
+    actor_id = parts[0].strip()
+    if not actor_id:
+        raise AuthError(
+            "AUTH_TOKEN_FORMAT",
+            "Structured bearer token requires an actor id",
+            403,
+        )
     raw_roles: list[str] = []
     if len(parts) >= 2:
         raw_roles = [role.strip() for role in parts[1].split(",") if role.strip()]
     if not raw_roles:
-        raw_roles = [default_role]
+        raise AuthError(
+            "AUTH_TOKEN_NO_ROLES",
+            "Structured bearer token requires at least one role",
+            403,
+        )
     mfa_verified = len(parts) >= 3 and parts[2].strip().lower() == "mfa"
     capabilities: list[str] = []
     if len(parts) >= 4:
@@ -660,6 +722,8 @@ def validate_request_auth(
         raise AuthError("401", "Unauthorized: empty token", 401)
 
     mode = _env(env, "PANTHEON_RUNTIME_AUTH_MODE", "permissive").lower()
+    if mode not in _VALID_AUTH_MODES:
+        mode = "strict"
     secret = _env(env, "PANTHEON_RUNTIME_JWT_SECRET")
     issuer = _env(env, "PANTHEON_RUNTIME_JWT_ISSUER") or None
     audience = _env(env, "PANTHEON_RUNTIME_JWT_AUDIENCE") or None

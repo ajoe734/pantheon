@@ -1,0 +1,54 @@
+[
+  {
+    "ref_type": "raw_dataset",
+    "ref_id": "raw-txo-chain-20260413"
+  },
+  {
+    "ref_type": "normalized_dataset",
+    "ref_id": "norm-txo-chain-eod-v1"
+  },
+  {
+    "ref_type": "feature_dataset",
+    "ref_id": "feat-txo-iv-surface-v1"
+  },
+  {
+    "ref_type": "dataset_version",
+    "ref_id": "dv-20260413-tw-derivs-txo-v1"
+  },
+  {
+    "ref_type": "contract_master",
+    "ref_id": "cm-tw-txo-20260413"
+  },
+  {
+    "ref_type": "regime_state",
+    "ref_id": "regime-tw-20260413-001"
+  },
+  {
+    "ref_type": "universe_selection",
+    "ref_id": "universe-tw-20260413-001"
+  },
+  {
+    "ref_type": "signal_inference",
+    "ref_id": "signal-tw-20260413-001"
+  },
+  {
+    "ref_type": "allocation_decision",
+    "ref_id": "alloc-tw-20260413-001"
+  },
+  {
+    "ref_type": "risk_adjudication",
+    "ref_id": "risk-tw-20260413-001"
+  },
+  {
+    "ref_type": "approval_decision",
+    "ref_id": "approval-tw-20260413-001"
+  },
+  {
+    "ref_type": "deployment_plan",
+    "ref_id": "deploy-tw-20260413-001"
+  },
+  {
+    "ref_type": "runtime_binding",
+    "ref_id": "binding-tw-20260413-001"
+  }
+]

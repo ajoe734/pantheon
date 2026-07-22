@@ -1,0 +1,24 @@
+{
+  "probe": "MGMT-LOAD-001 hosted route-load baseline",
+  "probeTimestamp": "2026-07-01T06:18:29.901Z",
+  "feBase": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io",
+  "feCommit": "18b406d9bb3d",
+  "bffBase": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io",
+  "authTokenShape": "op-<id>:admin (dev stub-auth shape; not a production secret)",
+  "routePath": "/management/evidence",
+  "primaryApiPath": "/bff/management/evidence",
+  "navigationWaitUntil": "domcontentloaded",
+  "usedNetworkidle": false,
+  "milestones": {
+    "navigationStartMs": 0,
+    "domContentLoadedMs": 2799,
+    "shellVisibleMs": 4328,
+    "headingVisibleMs": 4508,
+    "primaryApiCompleteMs": 4485,
+    "firstRowOrEmptyVisibleMs": 4668
+  },
+  "requestsBeforeFirstRow": 11,
+  "totalBffOrFeRequests": 11,
+  "error": null,
+  "pass": true
+}

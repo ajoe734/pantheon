@@ -1,0 +1,72 @@
+{
+  "schema_version": "loop_product_raw_evidence.v1",
+  "task_id": "LOOP-PROD-TEL-002",
+  "captured_at": "2026-07-15T14:17:19Z",
+  "source": "GitHub workflow, pull-request, environment-secret-name, and failed-step APIs via gh CLI",
+  "requested_delivery": {
+    "environment": "dev",
+    "component": "root",
+    "auth_profile": "strict",
+    "requested_ref": "d9c4b46d2d28cbb3ba343639fe69f3ab439ee283",
+    "allow_dirty": false,
+    "allow_example_env": false,
+    "run_loop_prod_tel_002_probe": true
+  },
+  "workflow_run": {
+    "workflow": "Pantheon Nonprod Deploy",
+    "workflow_state_after_dispatch": "active",
+    "run_id": 29422676364,
+    "job_id": 87376915755,
+    "url": "https://github.com/ajoe734/pantheon/actions/runs/29422676364",
+    "event": "workflow_dispatch",
+    "head_branch": "dev",
+    "head_sha": "d9c4b46d2d28cbb3ba343639fe69f3ab439ee283",
+    "created_at": "2026-07-15T14:14:31Z",
+    "completed_at": "2026-07-15T14:15:02Z",
+    "conclusion": "failure",
+    "failed_step": "Enforce dev auth deployment floor",
+    "terminal_reason": "Dev BFF deploy credentials are not provisioned; strict deployment refused before WIF authentication or VM mutation.",
+    "vm_deploy_step": "skipped",
+    "hosted_lifecycle_probe_step": "skipped",
+    "public_bff_readback_step": "skipped"
+  },
+  "credential_inventory": {
+    "github_environment": "dev",
+    "environment_secret_names": [],
+    "repository_secret_names": [
+      "COORDINATION_REPO_TOKEN",
+      "FRED_API_KEY"
+    ],
+    "required_but_absent_names": [
+      "DEV_BFF_JWT_SECRET",
+      "DEV_BFF_OIDC_CLIENT_ID",
+      "DEV_BFF_OIDC_CLIENT_SECRET"
+    ],
+    "values_read": false,
+    "values_recorded": false
+  },
+  "admission": {
+    "strict_auth_floor": "blocked",
+    "exact_sha_deployed": false,
+    "hosted_probe_executed": false,
+    "public_bff_readback_executed": false,
+    "overall": "blocked"
+  },
+  "safety": {
+    "deployment_mutation_started": false,
+    "rollback_required": false,
+    "live_broker_enabled": false,
+    "live_capital_effect": false,
+    "permissive_fallback_used": false
+  },
+  "operator_action_required": {
+    "owner": "Pantheon dev environment credential owner",
+    "action": "Provision the three required human-managed GitHub dev environment secrets, then rerun the exact dev/root/strict deployment with the hosted probe enabled.",
+    "do_not": "Do not fabricate credentials in repository files and do not bypass the gate with permissive-stub.",
+    "recheck_by": "2026-07-22T14:15:02Z"
+  },
+  "limitations": [
+    "Only secret names and their absence were queried; no secret values were read, generated, rotated, or written.",
+    "This artifact proves an admission blocker, not a successful target deployment or product-level hosted outcome."
+  ]
+}

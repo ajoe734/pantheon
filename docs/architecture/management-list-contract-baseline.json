@@ -1,0 +1,7 @@
+{
+  "fingerprints": [],
+  "issue_count": 0,
+  "issues": [],
+  "schema": "pantheon.management-list-contract-baseline.v1",
+  "source": "services/control-plane/bff/main.py"
+}

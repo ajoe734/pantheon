@@ -1,16 +1,22 @@
 """Tests for paper_signal_producer (closes the missing-signal-source gap)."""
 import unittest
-from unittest.mock import MagicMock
+from typing import Any
+from unittest.mock import MagicMock, patch
 from datetime import datetime, timezone
+import json
+import io
 
 from services.execution.lean_runtime.paper_signal_producer import (
     BindingRef,
     PaperSignalProducer,
     SmokeStrategy,
+    BoundedPaperStrategy,
     build_smoke_signal,
+    fetch_eligible_paper_bindings,
 )
 from services.execution.lean_runtime.pending_signal_store import InMemoryPendingSignalStore
 from services.execution.lean_runtime.signal_consumer import SignalConsumer
+from services.trade_journey.correlation_envelope import validate_envelope
 
 _NOW = "2026-06-14T10:30:00Z"
 _BINDING = BindingRef(binding_id="rb-test-001", strategy_id="strategy-test-001", symbol="AAPL.US")
@@ -29,14 +35,22 @@ class TestSmokeSignalContract(unittest.TestCase):
         self.assertIsNotNone(validated, "smoke signal must pass consumer _validate")
         self.assertEqual(validated["action"], "BUY")
         self.assertEqual(validated["symbol"], "AAPL.US")
+        envelope = validate_envelope(validated["correlation_envelope"])
+        self.assertEqual(envelope["journey_id"], validated["journey_id"])
+        self.assertEqual(envelope["tenant_id"], "default")
+        self.assertEqual(envelope["environment"], "paper")
+        self.assertTrue(validated["run_id"].startswith("run-rb-test-001-"))
 
 
 class TestPaperSignalProducer(unittest.TestCase):
     def test_producer_enqueues_per_binding(self) -> None:
         stores = {}
 
-        def store_for(binding: BindingRef) -> InMemoryPendingSignalStore:
-            return stores.setdefault(binding.binding_id, InMemoryPendingSignalStore())
+        def store_for(binding: Any) -> InMemoryPendingSignalStore:
+            bid = getattr(binding, "binding_id", "")
+            if not bid and isinstance(binding, dict):
+                bid = binding.get("binding_id", "")
+            return stores.setdefault(bid, InMemoryPendingSignalStore())
 
         bindings = [
             BindingRef("rb-a", "strategy-a"),
@@ -53,6 +67,10 @@ class TestPaperSignalProducer(unittest.TestCase):
         self.assertEqual(len(drained), 1)
         self.assertEqual(drained[0]["strategy_id"], "strategy-a")
         self.assertEqual(drained[0]["binding_id"], "rb-a")
+        self.assertEqual(
+            drained[0]["journey_id"],
+            validate_envelope(drained[0]["correlation_envelope"])["journey_id"],
+        )
 
     def test_smoke_strategy_emits_unique_signal_ids_across_ticks(self) -> None:
         store = InMemoryPendingSignalStore()
@@ -68,6 +86,85 @@ class TestPaperSignalProducer(unittest.TestCase):
         self.assertEqual([b.binding_id for b in out], ["rb-x", "rb-y"])
         self.assertEqual(out[1].symbol, "2330.TW")
         self.assertEqual(parse_bindings_env(""), [])
+
+    @patch.dict("os.environ", {"PANTHEON_TENANT_ID": "test-tenant-123"})
+    def test_bounded_paper_strategy_and_decision_producer_flow(self) -> None:
+        stores = {}
+
+        def store_for(binding: Any) -> InMemoryPendingSignalStore:
+            bid = binding if isinstance(binding, str) else binding.get("binding_id")
+            if not bid:
+                bid = getattr(binding, "binding_id", "")
+            return stores.setdefault(bid, InMemoryPendingSignalStore())
+
+        binding = {
+            "binding_id": "rb-tw-test",
+            "runtime_id": "rt-tw-test",
+            "capital_pool_id": "pool-tw-test",
+            "artifact_id": "art-tw-test",
+            "artifact_version": "2.0.0",
+            "persona_capital_binding_id": "pcb-personaX-001",
+            "symbol": "2330.TW",
+            "metadata": {
+                "strategy_id": "tw_momentum_v1"
+            }
+        }
+
+        producer = PaperSignalProducer(store_for=store_for, strategy=BoundedPaperStrategy())
+        result = producer.produce(binding, _NOW)
+        self.assertEqual(result, 1)
+
+        store = stores["rb-tw-test"]
+        self.assertEqual(store.queue_depth(), 1)
+        [sig] = store.get_pending()
+
+        self.assertEqual(sig["version"], "1.0")
+        self.assertEqual(sig["binding_id"], "rb-tw-test")
+        self.assertEqual(sig["runtime_id"], "rt-tw-test")
+        self.assertEqual(sig["strategy_id"], "tw_momentum_v1")
+        self.assertEqual(sig["symbol"], "2330.TW")
+        self.assertEqual(sig["action"], "BUY")
+        self.assertEqual(sig["direction"], "LONG")
+        envelope = validate_envelope(sig["correlation_envelope"])
+        self.assertEqual(envelope["tenant_id"], "test-tenant-123")
+        self.assertEqual(envelope["environment"], "paper")
+        self.assertEqual(envelope["journey_id"], sig["journey_id"])
+        self.assertTrue(sig["run_id"].startswith("run-rb-tw-test-"))
+
+        # Verify metadata / identities
+        self.assertEqual(sig["metadata"]["tenant_id"], "test-tenant-123")
+        self.assertEqual(sig["metadata"]["persona_id"], "personaX")
+        self.assertEqual(sig["metadata"]["persona_capital_binding_id"], "pcb-personaX-001")
+        self.assertEqual(sig["metadata"]["capital_pool_id"], "pool-tw-test")
+        self.assertEqual(sig["metadata"]["artifact_id"], "art-tw-test")
+        self.assertEqual(sig["metadata"]["artifact_version"], "2.0.0")
+        self.assertFalse(sig["metadata"]["is_real_order"])
+        self.assertFalse(sig["metadata"]["is_real_capital"])
+
+    @patch("urllib.request.urlopen")
+    def test_fetch_eligible_paper_bindings(self, mock_urlopen) -> None:
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps({
+            "bindings": [
+                {
+                    "binding_id": "rb-1",
+                    "status": "active",
+                    "deployment_mode": "paper",
+                },
+                {
+                    "binding_id": "rb-2",
+                    "status": "paused",
+                    "deployment_mode": "paper",
+                }
+            ],
+            "excluded": []
+        }).encode("utf-8")
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
+        bindings = fetch_eligible_paper_bindings("http://runtime-manager:8081", "token-xyz")
+        self.assertEqual(len(bindings), 1)
+        self.assertEqual(bindings[0]["binding_id"], "rb-1")
+        self.assertEqual(bindings[0]["status"], "active")
 
 
 if __name__ == "__main__":

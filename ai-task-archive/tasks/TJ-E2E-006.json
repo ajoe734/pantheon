@@ -1,0 +1,148 @@
+{
+  "version": 1,
+  "task_id": "TJ-E2E-006",
+  "archived_at": "2026-07-12T15:32:43Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "title": "Trade Journey frontend P0 workbench",
+    "summary_zh": "依 Trade Journey E2E gap 規格執行：Trade Journey frontend P0 workbench。",
+    "owner": "Codex2",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "phase": "Trade Journey E2E / Wave 2",
+    "next": "Frontend PR #269 merged at 92a18e7ca5c28e21de92876305ee1185890639e0; approved unit/build/desktop-mobile Playwright evidence recorded; Pantheon closeout PR #3450 merged at 13c9cc63900d1c58585c89c1b810284aa618cd43.",
+    "source_ref": {
+      "doc": "docs/04/pantheon_trade_journey_e2e_observability_gap_2026-07-11/TRADE_JOURNEY_E2E_OBSERVABILITY_GAP.md",
+      "packet": "docs/bff/execution-tasks/2026-07-11-trade-journey-e2e/TJ-E2E-006-frontend-p0-workbench.md",
+      "target_repo": "execute-plans",
+      "merge_target": "main"
+    },
+    "metadata": {
+      "wave": 2,
+      "fleet_lane": "frontend-p0-workbench",
+      "target_repo": "execute-plans"
+    },
+    "created_at": "2026-07-11T22:58:28.902157+00:00",
+    "id": "TJ-E2E-006",
+    "depends_on": [
+      "TJ-E2E-005"
+    ],
+    "last_update": "2026-07-12T15:32:43Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_trade_journey_e2e_2026-07-11",
+    "review_notes_zh": [
+      "E2E 與單元測試均順利通過",
+      "已修正 Playwright E2E 中 **/bff/** 誤攔截前端 module 檔案的問題"
+    ],
+    "review_file": "docs/reviews/2026-07-12-tj-e2e-006-antigravity-review.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-12T15:32:43Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/tj-e2e-006",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/TJ-E2E-006",
+      "git_clean_required": false,
+      "commit": "c7b6235c902eb4788caf1089c52d22cb47ae9773",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/TJ-E2E-006",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/TJ-E2E-006",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "13c9cc63900d1c58585c89c1b810284aa618cd43",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "TJ-E2E-006",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "status": "done",
+      "created_at": "2026-07-12T12:28:18Z",
+      "resolved_at": "2026-07-12T12:28:26Z"
+    },
+    {
+      "task_id": "TJ-E2E-006",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "execute-plans PR #269 ready: canonical list/detail/resolve workbench on dev base; URL filters, server cursor pagination, attention views, honest freshness/degraded/incomplete states, responsive stage rail/timeline/evidence. Commits 4394cfe and 07efe18. Verification: 3 focused tests passed; production build and diff-check passed.",
+      "status": "done",
+      "created_at": "2026-07-12T12:34:52Z",
+      "resolved_at": "2026-07-12T12:39:18Z"
+    },
+    {
+      "task_id": "TJ-E2E-006",
+      "from": "Codex",
+      "to": "Codex2",
+      "message": "Changes requested on execute-plans PR #269: task acceptance requires unit/a11y/build/Playwright coverage and explicit happy-path, risk-reject, broker-reject, partial-fill, and recon-mismatch behavior, but the PR adds only 3 BFF client contract tests and no page/a11y/Playwright tests. Add focused UI coverage for all five scenarios and honest degraded/incomplete/freshness rendering on desktop/mobile. The cursor pager currently exposes only Next and discards the prior token when advancing, so users cannot navigate back; implement reversible server-cursor pagination and test URL/history behavior. Re-request review after the integration gate is green.",
+      "status": "done",
+      "created_at": "2026-07-12T12:39:18Z",
+      "resolved_at": "2026-07-12T12:39:18Z"
+    },
+    {
+      "task_id": "TJ-E2E-006",
+      "from": "Codex2",
+      "to": "Codex",
+      "message": "execute-plans PR #269 updated at 9b48d618 after merging current dev; fixes /bff/me fixture that blocked desktop/mobile. Focused Vitest 6 passed, build passed, Playwright desktop and mobile passed. Integration gate run 29196990940 in progress; please review canonical workbench and gate result.",
+      "status": "done",
+      "created_at": "2026-07-12T14:51:08Z",
+      "resolved_at": "2026-07-12T15:08:16Z"
+    },
+    {
+      "task_id": "TJ-E2E-006",
+      "from": "Codex",
+      "to": "Antigravity",
+      "message": "Auto-reassigned review from Codex to Antigravity after repeated Codex terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-07-12T15:08:16Z",
+      "resolved_at": "2026-07-12T15:28:08Z"
+    },
+    {
+      "task_id": "TJ-E2E-006",
+      "from": "Antigravity",
+      "to": "Codex2",
+      "message": "Review approved and returned to the owner for finalization",
+      "status": "done",
+      "created_at": "2026-07-12T15:28:08Z",
+      "resolved_at": "2026-07-12T15:32:44Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "TJ-E2E-006",
+      "owner": "Codex2",
+      "waiting_for": "Claude",
+      "message": "Dependency merge gate is unmet: TJ-E2E-005 canonical BFF read API remains todo/unmerged. Frontend implementation in execute-plans cannot truthfully bind to the canonical journey contract until TJ-E2E-005 is delivered; no Pantheon/frontend files changed.",
+      "status": "resolved",
+      "created_at": "2026-07-12T12:55:49Z",
+      "resolved_at": "2026-07-12T14:00:20Z"
+    },
+    {
+      "task_id": "TJ-E2E-006",
+      "owner": "Codex2",
+      "waiting_for": "Codex",
+      "message": "Cannot start frontend implementation: canonical ai-status assigns owner/reviewer Antigravity/Claude (not Codex2/Codex), and required dependency TJ-E2E-005 remains todo/unmerged. Target work must occur in separate execute-plans repo only after ownership reconciliation and dependency merge.",
+      "status": "resolved",
+      "created_at": "2026-07-12T14:28:33Z",
+      "resolved_at": "2026-07-12T14:40:02Z"
+    }
+  ]
+}

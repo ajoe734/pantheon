@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -607,7 +608,22 @@ def ensure_clean_targets(target_root: Path, force: bool) -> None:
         )
 
 
+def assert_noncanonical_bundle_target(target_root: Path) -> Path:
+    resolved_target = target_root.expanduser().resolve()
+    protected_roots = {ROOT.resolve()}
+    configured_status_root = str(os.environ.get("PANTHEON_STATUS_ROOT") or "").strip()
+    if configured_status_root:
+        protected_roots.add(Path(configured_status_root).expanduser().resolve())
+    if resolved_target in protected_roots:
+        raise SystemExit(
+            "Refusing to bootstrap over the active Pantheon repository/status root; "
+            "portable bundle writes are not protocol-v1 canonical writers."
+        )
+    return resolved_target
+
+
 def write_bootstrap_files(target_root: Path, project_name: str, objective: str) -> None:
+    target_root = assert_noncanonical_bundle_target(target_root)
     for rel_path in PORTABLE_SCRIPT_FILES:
         copy_file(ROOT / rel_path, target_root / rel_path)
 
@@ -630,10 +646,17 @@ def write_bootstrap_files(target_root: Path, project_name: str, objective: str) 
     write_text(target_root / "LLM_ONBOARDING.md", llm_onboarding_doc(project_name))
     write_text(target_root / "ORCHESTRATOR_QUICKSTART.md", quickstart_doc(project_name))
     write_json(target_root / ".orchestrator" / "bundle-manifest.json", portable_manifest(project_name))
+    subprocess.run(["git", "init"], cwd=str(target_root), check=True, capture_output=True)
 
+    sync_env = os.environ.copy()
+
+    # Portable generation must be self-contained even when the parent worker
+    # is pointed at Pantheon's canonical status root.
+    sync_env["PANTHEON_STATUS_ROOT"] = str(target_root)
     subprocess.run(
         ["bash", str(target_root / "scripts" / "sync-state.sh")],
         cwd=str(target_root),
+        env=sync_env,
         check=True,
         capture_output=True,
         text=True,
@@ -642,6 +665,7 @@ def write_bootstrap_files(target_root: Path, project_name: str, objective: str) 
 
 
 def bootstrap(target_repo: Path, project_name: str, objective: str, force: bool) -> None:
+    target_repo = assert_noncanonical_bundle_target(target_repo)
     target_repo.mkdir(parents=True, exist_ok=True)
     ensure_clean_targets(target_repo, force)
     write_bootstrap_files(target_repo, project_name, objective)

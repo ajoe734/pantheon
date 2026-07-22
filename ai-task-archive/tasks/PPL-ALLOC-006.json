@@ -1,0 +1,183 @@
+{
+  "version": 1,
+  "task_id": "PPL-ALLOC-006",
+  "archived_at": "2026-07-11T16:05:00Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PPL-ALLOC-006",
+    "title": "Promotion and allocation workbench",
+    "summary_zh": "把 Promotion & Allocation 擴成唯一操作工作台：paper candidates、real ranking、quarterly capital、emergency actions。",
+    "phase": "Persona Promotion Allocation / Wave 2 frontend workbench",
+    "owner": "Antigravity",
+    "reviewer": "Codex",
+    "status": "done",
+    "depends_on": [
+      "PPL-ALLOC-003",
+      "PPL-ALLOC-004"
+    ],
+    "artifacts": [
+      "execute-plans:src/management/pages/oversight",
+      "execute-plans:src/lib/v5/management",
+      "execute-plans:src/lib/bff-v1"
+    ],
+    "acceptance": [
+      "workbench distinguishes recommendation/review/approved/applied; real ranking shows current/target weights and cap reasons; rebalance proposal links to detail"
+    ],
+    "next": "Closed PPL-ALLOC-006: execute-plans PR #251 and pantheon PR #3240 are successfully merged after resolving merge conflict in paths.ts and passing all E2E/vitest tests.",
+    "last_update": "2026-07-11T16:05:00Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_persona_promotion_allocation_2026-07-07",
+    "auto_generated": true,
+    "source_ref": {
+      "doc": "docs/04/pantheon_persona_promotion_allocation_gap_2026-07-07/PERSONA_PROMOTION_ALLOCATION_GAP_SPEC.md",
+      "packet": "docs/bff/execution-tasks/2026-07-07-persona-promotion-allocation-gap/INDEX.md",
+      "extends": "docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/PERSONA_PROMOTION_GOVERNANCE_GAP_SPEC.md",
+      "prior_closeout": "docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/archive/PPL-GOV-007-PRODUCTION-CLOSEOUT-2026-07-05.md"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "helper_kind": "persona_promotion_allocation_execution_slice",
+    "wave": 2,
+    "fleet_lane": "fe-promotion-allocation-workbench",
+    "review_notes_zh": [
+      "審查通過：工作台清楚區分 recommendation/review/approved/applied，Real ranking 顯示 current/target weight 與 cap reasons，rebalance 可連到 detail；非同步 stale evaluation 已修正並有回歸測試，完整 integration gate 含 Playwright E2E 通過。",
+      "Owner closeout 前仍需 Pantheon #3130 合併，且 execute-plans #251 依跨 repo 治理由 human merge。"
+    ],
+    "review_file": ".orchestrator/task-briefs/ppl_alloc_006.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T16:05:00Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ppl-alloc-006",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "HEAD",
+      "git_clean_required": false,
+      "commit": "a30ee14056b5fbc858a70f6c77696c0309405c95",
+      "commit_subject": "Merge pull request #3240 from ajoe734/task/PPL-ALLOC-006",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "PPL-ALLOC-006": "record workbench closeout and PR merge"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "a30ee14056b5fbc858a70f6c77696c0309405c95",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PPL-ALLOC-006",
+      "from": "Codex",
+      "to": "Antigravity",
+      "message": "Auto-reassigned PPL-ALLOC-006 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); reviewer Codex -> Antigravity.",
+      "status": "done",
+      "created_at": "2026-07-11T03:00:36Z",
+      "resolved_at": "2026-07-11T04:45:26Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-006",
+      "from": "Claude",
+      "to": "Antigravity",
+      "message": "Implemented the Promotion & Allocation workbench (Real Ranking weights, Quarterly Capital rebalance-proposal workbench, Emergency Actions containment-only tab) in execute-plans PR https://github.com/ajoe734/execute-plans/pull/249 (base dev). Verified locally: tsc --noEmit (no new errors), eslint . (0 errors), vitest run (128 files / 1207 tests incl. new PromotionAllocation.test.tsx), npm run build. Integration Gate CI is running on the PR (was IN_PROGRESS as of handoff); execute-plans PR merges require a human per project governance (AI cannot self-merge), so please review the PR directly and either approve here once merged or request changes.",
+      "status": "done",
+      "created_at": "2026-07-11T05:47:34Z",
+      "resolved_at": "2026-07-11T05:49:37Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-006",
+      "from": "Antigravity",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Antigravity to Codex after repeated Antigravity terminal: Error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 45m20s.",
+      "status": "done",
+      "created_at": "2026-07-11T05:49:37Z",
+      "resolved_at": "2026-07-11T05:59:34Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-006",
+      "from": "Codex",
+      "to": "Antigravity",
+      "message": "Auto-reassigned review from Codex to Antigravity after repeated Codex terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-07-11T05:59:34Z",
+      "resolved_at": "2026-07-11T06:01:49Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-006",
+      "from": "Antigravity",
+      "to": "Codex",
+      "message": "Auto-reassigned review from Antigravity to Codex after repeated Antigravity terminal: Error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 32m56s.",
+      "status": "done",
+      "created_at": "2026-07-11T06:01:49Z",
+      "resolved_at": "2026-07-11T06:03:05Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-006",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review changes requested: add a distinct Real ranking surface with current weight, target weight, proposed delta, cap reason, and approval state; render recommendation/review/approved/applied as explicit lifecycle states and prove capital increases never appear applied before approval; make each rebalance proposal link to /management/rebalance/:id detail; add focused tests for all acceptance clauses. Current implementation only covers paper candidates, promotion review, quarterly capital, and formula policy, with the rebalance route rendered as plain text.",
+      "status": "done",
+      "created_at": "2026-07-11T06:03:05Z",
+      "resolved_at": "2026-07-11T06:03:05Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-006",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implementation complete: ajoe734/execute-plans#251 (Real ranking target-weight panel, read-only Emergency actions tab, rebalance workflow-state/focus, persona-league+quarterly-ranking folded into workbench tabs). tsc/lint/vitest(1214 passed)/build all green. Pantheon evidence PR ajoe734/pantheon#3130. Please review #251; note this AI cannot self-merge execute-plans PRs.",
+      "status": "done",
+      "created_at": "2026-07-11T07:08:12Z",
+      "resolved_at": "2026-07-11T07:15:31Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-006",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Changes still required on execute-plans#251 at HEAD 2dc7e498: key allocation-policy evaluation on the complete inputRows payload (including league-derived tier and score breakdown) and add a fleet-first/league-later regression test proving re-evaluation.",
+      "status": "done",
+      "created_at": "2026-07-11T07:15:31Z",
+      "resolved_at": "2026-07-11T07:15:31Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-006",
+      "from": "Claude",
+      "to": "Codex",
+      "message": "Implementation complete and verified in ajoe734/execute-plans#251 (tsc/lint/vitest 1214 tests/build all green); pantheon-side evidence PR ajoe734/pantheon#3130 open with CI green. Please review both; note execute-plans#251 needs a human merge per cross-repo governance (AI cannot self-merge execute-plans PRs).",
+      "status": "done",
+      "created_at": "2026-07-11T07:32:33Z",
+      "resolved_at": "2026-07-11T07:46:45Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-006",
+      "from": "Codex",
+      "to": "Claude",
+      "message": "Review approved after full diff review and green execute-plans integration gate; returned to Claude for merge-aware owner closeout.",
+      "status": "done",
+      "created_at": "2026-07-11T07:46:45Z",
+      "resolved_at": "2026-07-11T15:41:22Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-006",
+      "from": "Codex",
+      "to": "Antigravity",
+      "message": "Auto-reassigned ownership from Claude to Antigravity after repeated Claude terminal: Worker exited before the task reached a terminal status.",
+      "status": "done",
+      "created_at": "2026-07-11T15:41:22Z",
+      "resolved_at": "2026-07-11T16:05:01Z"
+    }
+  ],
+  "blockers": []
+}

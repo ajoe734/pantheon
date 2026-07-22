@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "task_id": "AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+  "archived_at": "2026-07-04T02:10:40Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+    "title": "Prepare AG-DYNUI-PROD-005 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 AG-DYNUI-PROD-005，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "Agora DYNUI Production Gap / Dynamic Workflow",
+    "owner": "Claude2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "AG-DYNUI-PROD-004"
+    ],
+    "artifacts": [
+      "support/sidecars/AG-DYNUI-PROD-005/AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Closeout finalized: handoff packet (PR #2876) and closeout record (PR #2878) both merged into dev; reviewer Claude approved; no canonical/runtime files touched.",
+    "last_update": "2026-07-04T02:10:40Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "AG-DYNUI-PROD-005",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Support-only follow-up 2 核准：重新驗證原始 packet 的 artifact 路徑更正、元件掛載狀態、V11 client function 缺口、widget allowlist/blocklist 與 SSE stub 現況皆未變動；新增發現 StrategyWorkshopPage 掛載處未傳入 onAddToTradingRoom，且此 handoff 是否屬於 AG-DYNUI-PROD-005 範疇尚未在 task brief 中確認，建議 owner/reviewer 明確決定歸屬而非沿用 PROD-003 sidecar 的推測。獨立複查確認：commit 6b823f3e6 僅新增兩個 doc 檔（249 insertions），未觸碰 canonical/runtime/frontend；agora-main.tsx:87 確認未傳入 onAddToTradingRoom；PROD-005 parent 確認仍為 todo，無自己的 branch/PR。未修改 canonical truth 或 runtime 檔案。"
+    ],
+    "review_file": "support/sidecars/AG-DYNUI-PROD-005/AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-2.md",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-04T02:10:40Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-dynui-prod-005-sidecar-bff-handoff-followup-2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "git_clean_required": false,
+      "commit": "c0f933aa4c929c750b6aae1c391cd702909c53fa",
+      "commit_subject": "AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-2: closeout record",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Claude2",
+        "Task-ID": "AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+        "Reviewer": "Claude",
+        "Verified": "git log/PR check confirms PR #2876 merged into dev at 2026-07-04T02:05:04Z; HEAD is ancestor of origin/dev"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "7d7c67a4e1cc1905a1b9210727164d9162219f0b",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Claude2",
+      "to": "Claude",
+      "message": "Support-only follow-up 2 packet committed at 6b823f3e6, PR #2876 open with auto-merge. Re-verified all original packet findings hold unchanged (artifact paths, component mounting, V11 client-function gap, widget allowlist/blocklist, SSE stub); added a new finding that agora-main.tsx:87 mounts StrategyWorkshopPage without onAddToTradingRoom (confirmed unwired), and flagged that this handoff's inclusion in AG-DYNUI-PROD-005's own scope is not settled by the task brief -- recommend owner/reviewer decide explicitly rather than inherit the PROD-003 sidecar's phrasing. No canonical/runtime/frontend changes made.",
+      "status": "done",
+      "created_at": "2026-07-04T02:04:09Z",
+      "resolved_at": "2026-07-04T02:06:15Z"
+    },
+    {
+      "task_id": "AG-DYNUI-PROD-005-SIDECAR-BFF-HANDOFF-FOLLOWUP-2",
+      "from": "Claude",
+      "to": "Claude2",
+      "message": "Support-only AG-DYNUI-PROD-005 follow-up 2 approved for parent owner absorption.",
+      "status": "done",
+      "created_at": "2026-07-04T02:06:15Z",
+      "resolved_at": "2026-07-04T02:10:41Z"
+    }
+  ],
+  "blockers": []
+}

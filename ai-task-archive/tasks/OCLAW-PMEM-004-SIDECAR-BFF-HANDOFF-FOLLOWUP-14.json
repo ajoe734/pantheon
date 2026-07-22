@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "task_id": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-14",
+  "archived_at": "2026-07-11T10:36:19Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-14",
+    "title": "Prepare OCLAW-PMEM-004 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 OCLAW-PMEM-004，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "OpenClaw Persona Memory Gap / Wave 2 BFF UI surfaces",
+    "owner": "Codex2",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "depends_on": [
+      "OCLAW-PMEM-003"
+    ],
+    "artifacts": [
+      "support/sidecars/OCLAW-PMEM-004/OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-14.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Owner closeout complete: reviewed support-only evidence ledger and frontend dispatch baton; PR #3184 merged into dev at d80063af0171be708fbb5264b0dbab98c796ab47; Branch CI Gate commit trailers, runtime mirror guard, and smoke acceptance passed. Parent Claude2 retains canonical implementation and absorption authority.",
+    "last_update": "2026-07-11T10:36:19Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "OCLAW-PMEM-004",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-11T10:36:19Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/oclaw-pmem-004-sidecar-bff-handoff-followup-14",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-14",
+      "git_clean_required": false,
+      "commit": "4f190e659217e2642e92d9d671bb308662574d79",
+      "commit_subject": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-14: add dispatch baton",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "support-only BFF/frontend evidence ledger and dispatch baton.",
+        "Not changing": "canonical contracts, dependency acceptance, BFF/frontend runtime, or governance implementation.",
+        "Composes with": "OCLAW-PMEM-004 parent implementation owned by Claude2 and review by Antigravity.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-14",
+        "Reviewer": "Antigravity",
+        "Verified": "git diff --check; required heading and boundary assertions"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-14",
+      "ahead": 0,
+      "behind": 3,
+      "push_status": "behind",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "d80063af0171be708fbb5264b0dbab98c796ab47",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-14",
+      "from": "Codex2",
+      "to": "Antigravity",
+      "message": "PR #3184 merged at d80063af0171be708fbb5264b0dbab98c796ab47. Please review the support-only evidence ledger and frontend dispatch baton for scope discipline, accuracy, and usefulness; parent Claude2 retains absorption authority.",
+      "status": "done",
+      "created_at": "2026-07-11T10:33:16Z",
+      "resolved_at": "2026-07-11T10:35:19Z"
+    },
+    {
+      "task_id": "OCLAW-PMEM-004-SIDECAR-BFF-HANDOFF-FOLLOWUP-14",
+      "from": "Antigravity",
+      "to": "Codex2",
+      "message": "Approved sidecar bff_handoff_packet. PR #3184 is merged. The evidence ledger and frontend dispatch baton are complete, accurate, and ready for Claude2's absorption.",
+      "status": "done",
+      "created_at": "2026-07-11T10:35:19Z",
+      "resolved_at": "2026-07-11T10:36:20Z"
+    }
+  ],
+  "blockers": []
+}

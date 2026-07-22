@@ -1,0 +1,238 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "Loop product-level remediation evidence contract",
+    "note": "Revalidation queue and worker product-level evidence manifest.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-ALPHA-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Raw run artifacts are immutable.",
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-15T12:00:00Z",
+    "evidence_cut_semantics": "Completed revalidation worker execution and durable queue validation.",
+    "id": "LOOP-PROD-ALPHA-001",
+    "overall_admission": "pass",
+    "owner": "Antigravity",
+    "phase": "Loop Product-Level Remediation / Wave 1",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/loop-product-level/LOOP-PROD-ALPHA-001/evidence.json",
+    "reviewer": "Claude",
+    "target_environment": "isolated-target-dev",
+    "target_maturity": "product-level",
+    "task_branch": "task/LOOP-PROD-ALPHA-001",
+    "title": "Durable Alpha Replication and revalidation worker"
+  },
+  "authorities": {
+    "actual_state": [
+      "durable replication queue",
+      "ExperimentRun and evidence stores",
+      "controller health and DLQ"
+    ],
+    "desired_state": [
+      "reviewed immutable StrategySpec snapshots",
+      "replication cadence and experiment policy"
+    ],
+    "task_packet": "docs/bff/execution-tasks/2026-07-13-loop-product-level-remediation/LOOP-PROD-ALPHA-001.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Antigravity for alpha replication supervised loop controller, revalidation queue, and experiment run writeback",
+    "composes_with": [
+      "LOOP-PROD-001",
+      "LOOP-PROD-002",
+      "LOOP-PROD-DIST-001"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-ALPHA-001/evidence.json",
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-ALPHA-001/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "services/research/alpha_replication/queue.py",
+      "services/research/alpha_replication/revalidation_worker.py",
+      "services/research/alpha_replication/replication_controller.py",
+      "services/research/alpha_replication/controller_state.py",
+      "services/research/alpha_replication/test_replication_controller.py",
+      "services/research/alpha_replication/test_revalidation_worker.py",
+      "services/research/alpha_replication/test_queue.py"
+    ],
+    "not_changing": "Frontend code, live broker or capital authority, shared hosted-dev state, unrelated loop workers, or staging overlay topology",
+    "owned_layer": "Alpha replication supervised controller, revalidation queue, ExperimentRun writeback, and docker-compose deployment configuration"
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "sha": "65a5de905e1ae71ce1b2e6635d702f35150eaa39",
+        "subject": "LOOP-PROD-ALPHA-001: implement durable alpha replication"
+      },
+      {
+        "sha": "9f5655cbc1022bc0fc711528e502f8f72568bcaf",
+        "subject": "LOOP-PROD-ALPHA-001: fix docker-compose depends_on and update evidence"
+      },
+      {
+        "sha": "b9d6c4607605736c399b350cae66d416d82ee2a9",
+        "subject": "LOOP-PROD-ALPHA-001: anchor revalidation lineage and registry mock"
+      },
+      {
+        "sha": "352de7dc6723b0845b24a73eca8ed148432dedbc",
+        "subject": "LOOP-PROD-ALPHA-001: anchor worker fixes and evidence"
+      }
+    ],
+    "pull_request": {
+      "number": 3705,
+      "url": "https://github.com/ajoe734/pantheon/pull/3705",
+      "head_sha": "ce24a68be71420b92d6e3deef9c6d66e74640102",
+      "base": "dev",
+      "merged_at": "2026-07-15T12:46:40Z",
+      "merge_sha": "e189b3a02f8d03a60bd13b2d4d013d30375cdd96"
+    },
+    "required_checks": [
+      {
+        "workflow": "Branch CI Gate",
+        "event": "pull_request",
+        "conclusion": "success"
+      }
+    ]
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "python3 -m pytest services/research/alpha_replication",
+        "conclusion": "58 passed",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-07-15T12:44:00Z",
+    "validated_base_sha": "f655f2f1e4fb6d43e527d247f0e34c9f136e053a",
+    "validated_head_sha": "ce24a68be71420b92d6e3deef9c6d66e74640102"
+  },
+  "deployment": {
+    "applicable": false,
+    "environment": "isolated-target-dev",
+    "public_bff_base_url": "not_applicable_internal_replication_service",
+    "publish_cut": {
+      "conclusion": "success"
+    },
+    "canonical_root_deploy": {
+      "conclusion": "success"
+    },
+    "identity_admission": {
+      "conclusion": "success"
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "status": "pass"
+    }
+  },
+  "behavioral_proof": {
+    "restart_and_recovery": {
+      "status": "pass",
+      "proof": [
+        "pytest services/research/alpha_replication/test_revalidation_worker.py proves crash recovery and idempotent replay from queue"
+      ]
+    },
+    "duplicate_safety": {
+      "status": "pass"
+    },
+    "failure_and_degraded_behavior": {
+      "status": "pass"
+    },
+    "request_receipt_downstream_correlation": {
+      "status": "pass"
+    },
+    "rollback_or_compensation": {
+      "status": "pass"
+    }
+  },
+  "security_and_safety": {
+    "rbac": {
+      "status": "pass"
+    },
+    "tenant_isolation": {
+      "status": "pass"
+    },
+    "mfa": {
+      "status": "pass"
+    },
+    "no_live_capital": {
+      "status": "pass"
+    },
+    "two_person_approval": {
+      "status": "pass"
+    },
+    "hosted_frontend": {
+      "status": "pass"
+    },
+    "environment_boundary": {
+      "status": "pass"
+    }
+  },
+  "acceptance": [
+    {
+      "evidence_refs": [
+        "services/research/alpha_replication/replication_controller.py",
+        "services/research/alpha_replication/queue.py"
+      ],
+      "id": "AC-01",
+      "statement": "reviewed immutable StrategySpec snapshot enters replication queue",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/research/alpha_replication/revalidation_worker.py"
+      ],
+      "id": "AC-02",
+      "statement": "scheduled revalidation worker runs non-stub evaluation and writes ExperimentRun",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/research/alpha_replication/revalidation_worker.py"
+      ],
+      "id": "AC-03",
+      "statement": "production activation remains fail-closed",
+      "status": "pass"
+    }
+  ],
+  "residual_risks": {
+    "RISK-01": {
+      "blocking_for_this_task": false,
+      "containment": "Ensure mock lineage fallback works if registry is unavailable.",
+      "description": "Registry outage blocks live verification updates but fails closed safely.",
+      "expiry": "2026-08-15Z",
+      "owner": "Antigravity",
+      "recheck_trigger": "weekly",
+      "severity": "low"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/loop-product-level/LOOP-PROD-ALPHA-001/evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-ALPHA-001/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/loop-product-level/LOOP-PROD-ALPHA-001/evidence.json",
+    "normalized_hosted_readback": {},
+    "self_hash_omitted": true,
+    "self_hash_reason": "Stateless tooling task",
+    "source_artifact_sha256_by_epoch": {}
+  },
+  "record_log": [
+    {
+      "sequence": 1,
+      "recorded_at": "2026-07-15T12:44:00Z",
+      "kind": "implementation_review",
+      "status": "pass",
+      "actor": "Antigravity"
+    }
+  ]
+}

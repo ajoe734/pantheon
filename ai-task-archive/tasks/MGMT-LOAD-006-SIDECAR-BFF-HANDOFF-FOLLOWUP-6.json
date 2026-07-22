@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "task_id": "MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+  "archived_at": "2026-07-01T16:16:59Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+    "title": "Prepare MGMT-LOAD-006 BFF and frontend handoff packet",
+    "summary_zh": "平行支援 MGMT-LOAD-006，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
+    "phase": "MGMT Console Load Gap / Wave 3 release gate",
+    "owner": "Codex2",
+    "reviewer": "Claude",
+    "status": "done",
+    "depends_on": [
+      "MGMT-LOAD-001",
+      "MGMT-LOAD-002",
+      "MGMT-LOAD-004",
+      "MGMT-LOAD-005"
+    ],
+    "artifacts": [
+      "support/sidecars/MGMT-LOAD-006/MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6.md"
+    ],
+    "acceptance": [
+      "Create support artifacts only",
+      "Do not edit canonical truth",
+      "Hand off the packet to the assigned reviewer"
+    ],
+    "next": "Support-only Follow-Up 6 closeout merged via PR #2710 at d6afa97b44c082b541fc08c515b945d7fdf60340; validation: git diff --check and GitHub Branch CI Gate passed; artifact remains limited to task brief plus support/sidecars/MGMT-LOAD-006/MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6.md.",
+    "last_update": "2026-07-01T16:16:59Z",
+    "task_class": "sidecar",
+    "auto_generated": true,
+    "helper_parent": "MGMT-LOAD-006",
+    "helper_kind": "bff_handoff_packet",
+    "mutates_canonical": false,
+    "auto_created_by": "supervisor-underutilization",
+    "review_notes_zh": [
+      "Approved: diff limited to task brief + support/sidecars/MGMT-LOAD-006/MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6.md (2 files, 234 insertions); no canonical truth, BFF/FE runtime, CI, or route registry touched. Verified referenced artifact paths exist under docs/bff/execution-tasks/2026-07-01-management-console-load-gap/. Packet correctly frames MGMT-LOAD-003 as review (not yet pass-eligible) as of its observation time; live state has since advanced to review_approved, which is expected drift for a point-in-time sidecar snapshot and does not invalidate the fail-closed guidance given. Downstream MGMT-LOAD-007 artifact-path expectations are concrete and non-conflicting with prior follow-ups."
+    ],
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-01T16:16:59Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/mgmt-load-006-sidecar-bff-handoff-followup-6",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "git_clean_required": false,
+      "commit": "cb8179affff2b3fbafb8ce0cdcdbe27e455840c9",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "commit_author": {
+        "name": "pantheon-release-bot",
+        "email": "pantheon-release-bot@users.noreply.github.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "d6afa97b44c082b541fc08c515b945d7fdf60340",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Support packet ready for review: PR #2708 merged into dev at 169f537a7b806318db8d831e4f816dbab149a871; task commit 7f4ff85c4ecb5e523f979cbeeb63f97dcd5178af is included in origin/dev. Scope is limited to the generated task brief and support/sidecars/MGMT-LOAD-006/MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6.md. Checks passed: Commit trailers, Runtime mirror guard, Smoke acceptance, Forward to orchestrator. Please review support-only scope and parent-gate fail-closed guidance.",
+      "status": "done",
+      "created_at": "2026-07-01T16:10:01Z",
+      "resolved_at": "2026-07-01T16:11:52Z"
+    },
+    {
+      "task_id": "MGMT-LOAD-006-SIDECAR-BFF-HANDOFF-FOLLOWUP-6",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Reviewed support-only handoff packet: scope-compliant, factually consistent, returned to owner Codex2 for finalization",
+      "status": "done",
+      "created_at": "2026-07-01T16:11:52Z",
+      "resolved_at": "2026-07-01T16:17:00Z"
+    }
+  ],
+  "blockers": []
+}

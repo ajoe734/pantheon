@@ -82,18 +82,14 @@ def test_nonprod_deploy_prunes_dev_docker_storage_before_root_build() -> None:
     )
 
 
-def test_nonprod_deploy_removes_stale_paper_runtime_name_conflict_before_root_build() -> None:
+def test_nonprod_deploy_prunes_dev_postgres_telemetry_before_root_build() -> None:
     deploy = _read("scripts/deploy_nonprod_vm.sh")
 
-    assert "remove_dev_paper_runtime_name_conflict" in deploy
-    assert 'container="pantheon-pantheon-paper-runtime-1"' in deploy
-    assert 'com.docker.compose.project' in deploy
-    assert 'com.docker.compose.service' in deploy
-    assert '[[ -n "$project" && "$project" != "pantheon" ]]' in deploy
-    assert '[[ -n "$service" && "$service" != "pantheon-paper-runtime" ]]' in deploy
-    assert 'refusing to remove ${container}; labels project=' in deploy
-    assert 'docker rm -f "$container_id"' in deploy
+    assert "PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE" in deploy
+    assert "prune_dev_management_ai_telemetry_for_disk" in deploy
+    assert "TRUNCATE TABLE %I.%I" in deploy
+    assert "telemetry_events" in deploy
     assert (
-        deploy.index("    remove_dev_paper_runtime_name_conflict")
+        deploy.index("    prune_dev_management_ai_telemetry_for_disk")
         < deploy.index("docker compose -p pantheon -f docker-compose.yml up -d --build")
     )

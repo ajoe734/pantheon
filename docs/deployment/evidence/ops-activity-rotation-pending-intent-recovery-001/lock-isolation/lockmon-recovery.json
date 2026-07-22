@@ -1,0 +1,21 @@
+{
+  "command": [
+    "python3",
+    "-m",
+    "unittest",
+    "test_activity_pending_intent_recovery"
+  ],
+  "exit_code": 0,
+  "candidate_pid_count": 11,
+  "lock_holder_pids_observed": {
+    "/home/lupin/code/pantheon/.orchestrator/activity-audit.lock": [
+      "3486308"
+    ],
+    "/home/lupin/code/pantheon/.orchestrator/task-state.lock": []
+  },
+  "candidate_pids_holding_central_locks": {
+    "/home/lupin/code/pantheon/.orchestrator/activity-audit.lock": [],
+    "/home/lupin/code/pantheon/.orchestrator/task-state.lock": []
+  },
+  "sampling_interval_seconds": 0.2
+}

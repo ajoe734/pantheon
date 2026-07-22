@@ -2,8 +2,25 @@
 set -euo pipefail
 
 host_home="${PANTHEON_HOST_HOME:-/home/lupin}"
-node_bin="$(ls -d "$host_home"/.vscode-server/cli/servers/Stable-*/server/node 2>/dev/null | sort -V | tail -n1)"
-gemini_js="$(ls -d "$host_home"/.local/share/pantheon-orchestrator-tools/gemini-cli-*/package/bundle/gemini.js 2>/dev/null | sort -V | tail -n1)"
+# Use NUL delimiters so malformed vendor directory names cannot be split into
+# invalid executable or bundle paths.
+node_bin=""
+while IFS= read -r -d '' candidate; do
+  [[ -x "${candidate}" ]] || continue
+  node_bin="${candidate}"
+done < <(
+  printf '%s\0' "$host_home"/.vscode-server/cli/servers/Stable-*/server/node \
+    | sort -z -V
+)
+
+gemini_js=""
+while IFS= read -r -d '' candidate; do
+  [[ -f "${candidate}" ]] || continue
+  gemini_js="${candidate}"
+done < <(
+  printf '%s\0' "$host_home"/.local/share/pantheon-orchestrator-tools/gemini-cli-*/package/bundle/gemini.js \
+    | sort -z -V
+)
 
 if [[ -z "${node_bin}" ]]; then
   echo "VS Code server node binary not found." >&2

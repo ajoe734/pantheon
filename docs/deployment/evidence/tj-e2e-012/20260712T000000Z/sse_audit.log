@@ -1,0 +1,27 @@
+=============================================================
+HOSTED SSE STREAM & RECONNECT PROBE
+Target BFF: https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io
+=============================================================
+
+Phase 1: Testing initial SSE connection...
+Connecting to SSE: https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/management/trade-journeys/events?tenant_id=pantheon-dev&environment=paper
+Connection established! Status=200
+Headers: Content-Type=text/event-stream; charset=utf-8
+  Received line: id: 1
+  Received line: event: journeys_changed
+  Received line: data: {"environment":"paper","gap":false,"previous_revision":0,"revision":1,"snapshot_refetch":true,"tenant_id":"pantheon-dev"}
+  --- end of event block ---
+Initial test finished. Received 1 events. Last Event ID: 1
+
+Phase 2: Testing reconnect with Last-Event-ID...
+Connecting to SSE: https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/bff/management/trade-journeys/events?tenant_id=pantheon-dev&environment=paper
+  With Last-Event-ID: 1
+Connection established! Status=200
+Headers: Content-Type=text/event-stream; charset=utf-8
+  Received line: id: 1
+  Received line: event: snapshot_refetch_required
+  Received line: data: {"environment":"paper","gap":true,"previous_revision":1,"revision":1,"snapshot_refetch":true,"tenant_id":"pantheon-dev"}
+  --- end of event block ---
+Reconnection test finished. Received 1 events.
+
+HOSTED SSE RECONNECT PROBE COMPLETED SUCCESSFULLY!

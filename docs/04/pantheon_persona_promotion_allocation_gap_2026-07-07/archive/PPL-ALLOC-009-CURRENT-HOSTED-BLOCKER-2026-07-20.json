@@ -1,0 +1,163 @@
+{
+  "schema_version": 1,
+  "task_id": "PPL-ALLOC-009",
+  "captured_at": "2026-07-20T10:32:30Z",
+  "status": "blocked",
+  "owner": "Codex",
+  "reviewer": "Codex2",
+  "decision": "Not ready for review or done: the current hosted BFF predates the distinct-identity and atomic-promotion deliveries, and the strict deploy containing them fails closed because dedicated proof credentials and the assistant control passphrase hash are absent.",
+  "pantheon_delivery": {
+    "current_dev_sha": "ce31dfcbca508fbaa02dcc6d0a5cc3e69c18e578",
+    "distinct_identity": {
+      "pr": 3896,
+      "task_commit": "f18f7ad224b9787e30ad594eb372bf9023dca0f4",
+      "merge_commit": "a5093897b7bbe6877f8eede538dc7e18c501aea4",
+      "merged": true,
+      "required_checks": "passed"
+    },
+    "atomic_stage_promotion": {
+      "pr": 3897,
+      "task_commit": "3b9336b0dc2929128b17b924921d63e0e5ed7911",
+      "merge_commit": "41c725cbb348b270f5515a80bf38086e1ecce5f7",
+      "merged": true,
+      "required_checks": "passed"
+    },
+    "failed_strict_deploy": {
+      "run_id": 29733822822,
+      "target_sha": "d13c19025e7267c38b9e7b98e4f1b159501ddf2f",
+      "contains_both_ppl_deliveries": true,
+      "conclusion": "failure",
+      "failed_step": "Enforce dev auth deployment floor",
+      "remote_mutation_started": false
+    }
+  },
+  "hosted_frontend": {
+    "repository": "ajoe734/execute-plans",
+    "commit": "dceaaa50638a4ed69ca585e04348737d87ca78e3",
+    "deployment_profile": "read-only",
+    "deployment_state": "accepted",
+    "accepted_at": "2026-07-20T08:25:07Z",
+    "integration_gate_run_id": 29726612084,
+    "deploy_run_id": 29727357250,
+    "build_mode": {
+      "bff_mode": "live",
+      "bff_fallback": "strict",
+      "real_writes": false,
+      "dev_stub_writes": false,
+      "embedded_bearer": false
+    },
+    "candidate_pre_switch": "passed",
+    "post_switch": "passed",
+    "rollback_required": false,
+    "package_lock_sha256": "2d796e302699e72c9b0e731f4bab23b07eefbc007cfbe795dcfc43cd1ff778ad"
+  },
+  "hosted_bff": {
+    "commit": "93c50da6d67560f7035025879af08dfc3197fb76",
+    "source_commit_known": true,
+    "frontend_manifest_matches_runtime": true,
+    "healthz_http": 200,
+    "readyz_http": 200,
+    "dependencies_ready": [
+      "runtime_manager",
+      "governance",
+      "deployment"
+    ],
+    "config_posture": {
+      "auth_stub": false,
+      "auth_mode": "strict",
+      "dev_login_enabled": true,
+      "mfa_required": false,
+      "assistant_kernel_enabled": true
+    },
+    "contains_distinct_identity_delivery": false,
+    "contains_atomic_stage_promotion_delivery": false,
+    "anonymous_protected_routes_http": {
+      "/bff/me": 401,
+      "/bff/auth/readiness": 401,
+      "/bff/assistant/mode": 401,
+      "/bff/management/quarterly-ranking?quarter=2026-Q3": 401
+    }
+  },
+  "credential_inventory": {
+    "dev_environment_present_secret_names": [
+      "DEV_BFF_JWT_SECRET",
+      "DEV_BFF_OIDC_CLIENT_ID",
+      "DEV_BFF_OIDC_CLIENT_SECRET",
+      "DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN"
+    ],
+    "missing_required_secret_names": [
+      "DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET",
+      "DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET",
+      "DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET",
+      "DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET",
+      "DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET",
+      "DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH"
+    ],
+    "secret_values_recorded": false
+  },
+  "current_proof_status": {
+    "release_gate_overall": "warn",
+    "active_release_profile": "read-only",
+    "authenticated_bff_smoke": "skipped",
+    "live_write_probe": "skipped",
+    "authorize_parent_bound_write_proof": "skipped",
+    "one_time_persona_write_proof": "skipped",
+    "pint_source_pair": "skipped",
+    "pint_hosted_desktop_mobile": "skipped",
+    "generic_fixture_mobile": "passed runnable cases; live BFF write cases skipped; excluded from correlated PPL acceptance"
+  },
+  "verification": {
+    "focused_pytest": {
+      "result": "passed",
+      "tests_passed": 108,
+      "warnings": 22,
+      "duration_seconds": 42.41
+    },
+    "git_diff_check": "passed",
+    "hosted_checks": [
+      "frontend deployment manifest",
+      "BFF health/readiness/version",
+      "anonymous protected-route fail-closed envelopes",
+      "GitHub dev-environment secret names",
+      "failed strict-deploy log",
+      "frontend integration evidence artifact",
+      "delivery ancestry",
+      "deployed frontend lockfile hash"
+    ]
+  },
+  "blocking_residuals": [
+    {
+      "id": "B1",
+      "owner": "Persona + Runtime/Telemetry + Capital/BFF owners",
+      "gap": "No one current hosted governed identity joins canonical quarterly ranking through Runtime/Telemetry, target, proposal, distinct approval/apply, receipt, and authoritative Capital readback."
+    },
+    {
+      "id": "B2",
+      "owner": "Human/Ops",
+      "gap": "Five dedicated dev-login client secrets and DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH are absent, so the strict deploy containing the two PPL deliveries fails before mutation."
+    },
+    {
+      "id": "B3",
+      "owner": "Frontend QA after B2",
+      "gap": "Authenticated smoke, live-write proof, PINT proof, and the joined desktop/mobile journey are skipped."
+    },
+    {
+      "id": "B4",
+      "owner": "Frontend Platform/Security",
+      "gap": "Cleared only for the deployed production dependency graph; recheck if the deployed lockfile changes."
+    },
+    {
+      "id": "B5",
+      "owner": "Codex2",
+      "gap": "The current reviewer has not explicitly accepted or reopened the canonical-center IA supersession."
+    }
+  ],
+  "safety": {
+    "credentials_created_or_recovered": false,
+    "real_writes_enabled": false,
+    "persona_promoted": false,
+    "capital_changed": false,
+    "approval_or_second_actor_fabricated": false
+  },
+  "required_next_action": "Human/Ops must provision the five dedicated dev-login client secrets and DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH in the Pantheon dev environment, then rerun a strict deployment at a ref containing PRs 3896 and 3897. After exact hosted identity and distinct actor verification, rerun the correlated B1 chain and authenticated PINT desktop/mobile B3 proof; Codex2 must then make the B5 IA decision."
+}

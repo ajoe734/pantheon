@@ -1,0 +1,63 @@
+{
+  "schema_version": "loop_product_raw_evidence.v1",
+  "captured_at": "2026-07-15T13:47:18Z",
+  "source": "GitHub pull request and check APIs via gh CLI",
+  "repository": "ajoe734/pantheon",
+  "pull_request": {
+    "number": 3713,
+    "url": "https://github.com/ajoe734/pantheon/pull/3713",
+    "base": "dev",
+    "head": "task/LOOP-PROD-PER-001",
+    "head_sha": "34a37f514219a4739153faff6b7c185e2e243bb2",
+    "state": "MERGED",
+    "merged_at": "2026-07-15T13:47:00Z",
+    "merge_sha": "e7a6dfa5cc6bab0fe6a6cf28b0c51ac590dbf8bf"
+  },
+  "required_checks": [
+    {
+      "workflow": "Branch CI Gate",
+      "name": "Commit trailers",
+      "run_id": 29420577144,
+      "conclusion": "SUCCESS"
+    },
+    {
+      "workflow": "Branch CI Gate",
+      "name": "Runtime mirror guard",
+      "run_id": 29420577144,
+      "conclusion": "SUCCESS"
+    },
+    {
+      "workflow": "Branch CI Gate",
+      "name": "Smoke acceptance",
+      "run_id": 29420577144,
+      "conclusion": "SUCCESS"
+    },
+    {
+      "workflow": "Branch CI Gate",
+      "name": "Commit trailers",
+      "run_id": 29420580444,
+      "conclusion": "SUCCESS"
+    },
+    {
+      "workflow": "Branch CI Gate",
+      "name": "Runtime mirror guard",
+      "run_id": 29420580444,
+      "conclusion": "SUCCESS"
+    },
+    {
+      "workflow": "Branch CI Gate",
+      "name": "Smoke acceptance",
+      "run_id": 29420580444,
+      "conclusion": "SUCCESS"
+    },
+    {
+      "workflow": "Orchestrator Sync",
+      "name": "Forward to orchestrator",
+      "run_id": 29420669040,
+      "conclusion": "SUCCESS"
+    }
+  ],
+  "limitations": [
+    "GitHub delivery proves merge and required checks only; it does not prove hosted deployment identity or reviewer approval."
+  ]
+}
