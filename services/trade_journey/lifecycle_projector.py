@@ -6,6 +6,8 @@ The projector consumes committed ``telemetry_events`` rows by the monotonic
 * ``trade_journey_events.json`` -- immutable derived stage events;
 * ``loop_runs.json`` -- one loop run for the same lifecycle identity; and
 * ``controller_state.json`` -- durable checkpoint and live/repair watermarks.
+* ``health_state.json`` -- bounded readiness metadata atomically advanced with
+  the active generation.
 
 Only records consumed in ``live`` mode advance live freshness.  Startup catch-
 up, replay, and manual backfill can repair the read model, but remain explicitly
@@ -44,6 +46,7 @@ PROJECTION_MODES = frozenset({"live", "recovery", "backfill", "replay"})
 
 DEFAULT_ROOT = Path("/data/bff/lifecycle-projection")
 DEFAULT_STATE_PATH = DEFAULT_ROOT / "controller_state.json"
+DEFAULT_HEALTH_STATE_PATH = DEFAULT_ROOT / "health_state.json"
 DEFAULT_CHANNEL = "pantheon_lifecycle_events"
 DEFAULT_GENERATION_RETENTION = 32
 DEFAULT_STAGING_MAX_AGE_SECONDS = 3600.0
@@ -244,7 +247,7 @@ def _first(*values: Any) -> Any:
     return None
 
 
-def _atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:
+def _prepare_atomic_json(path: Path, payload: Mapping[str, Any]) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, raw_tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     tmp = Path(raw_tmp)
@@ -254,12 +257,28 @@ def _atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:
             handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(tmp, path)
-        directory_fd = os.open(path.parent, os.O_RDONLY)
+        return tmp
+    except BaseException:
         try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+
+
+def _commit_prepared_json(path: Path, tmp: Path) -> None:
+    os.replace(tmp, path)
+    directory_fd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
+def _atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:
+    tmp = _prepare_atomic_json(path, payload)
+    try:
+        _commit_prepared_json(path, tmp)
     except BaseException:
         try:
             tmp.unlink()
@@ -496,7 +515,7 @@ class AtomicProjectionBundle:
 
 def projector_readiness(
     *,
-    state_path: str | Path = DEFAULT_STATE_PATH,
+    state_path: str | Path = DEFAULT_HEALTH_STATE_PATH,
     bundle_root: str | Path | None = None,
     max_age_seconds: float | None = None,
     max_backlog: int | None = None,
@@ -751,12 +770,18 @@ class LifecycleProjector:
         self,
         *,
         state_path: str | Path = DEFAULT_STATE_PATH,
+        health_state_path: str | Path | None = None,
         bundle_root: str | Path = DEFAULT_ROOT,
         deployment_sha: str = "unknown",
         clock: Callable[[], str] = _utc_now,
         publisher: AtomicProjectionBundle | None = None,
     ) -> None:
         self.state_path = Path(state_path)
+        self.health_state_path = Path(
+            health_state_path
+            if health_state_path is not None
+            else Path(bundle_root) / "health_state.json"
+        )
         self.bundle = publisher or AtomicProjectionBundle(bundle_root)
         self.deployment_sha = str(deployment_sha or "unknown")
         self.clock = clock
@@ -821,6 +846,53 @@ class LifecycleProjector:
                 f"unsupported projector state; refusing destructive reset: {self.state_path}"
             )
         return payload
+
+    @staticmethod
+    def _health_snapshot(state: Mapping[str, Any]) -> dict[str, Any]:
+        return {
+            "schema_version": STATE_SCHEMA,
+            "checkpoint": int(state.get("checkpoint") or 0),
+            "generation": int(state.get("generation") or 0),
+            "restart_count": int(state.get("restart_count") or 0),
+            "controller": copy.deepcopy(state.get("controller") or {}),
+        }
+
+    def _publish_candidate(
+        self,
+        candidate: Mapping[str, Any],
+        journey_payload: Mapping[str, Any],
+        loop_payload: Mapping[str, Any],
+    ) -> None:
+        """Pre-fsync state, then commit bundle/state/health with short switch gaps."""
+
+        prepared_state: Path | None = _prepare_atomic_json(self.state_path, candidate)
+        prepared_health: Path | None = _prepare_atomic_json(
+            self.health_state_path,
+            self._health_snapshot(candidate),
+        )
+        try:
+            self.bundle.publish(
+                int(candidate.get("generation") or 0),
+                journey_payload,
+                loop_payload,
+            )
+            _commit_prepared_json(self.state_path, prepared_state)
+            prepared_state = None
+            _commit_prepared_json(self.health_state_path, prepared_health)
+            prepared_health = None
+        finally:
+            for prepared in (prepared_state, prepared_health):
+                if prepared is not None:
+                    try:
+                        prepared.unlink()
+                    except OSError:
+                        pass
+
+    def _persist_health_only(self, candidate: Mapping[str, Any]) -> None:
+        _atomic_write_json(
+            self.health_state_path,
+            self._health_snapshot(candidate),
+        )
 
     def project_records(
         self,
@@ -969,8 +1041,7 @@ class LifecycleProjector:
         controller["last_successful_publish_at"] = now
         controller["last_successful_publish_generation"] = int(candidate["generation"])
         journey_payload, loop_payload = self._render(candidate)
-        self.bundle.publish(candidate["generation"], journey_payload, loop_payload)
-        _atomic_write_json(self.state_path, candidate)
+        self._publish_candidate(candidate, journey_payload, loop_payload)
         self.state = candidate
         return ProjectionResult(
             checkpoint=int(candidate["checkpoint"]),
@@ -1048,8 +1119,11 @@ class LifecycleProjector:
             controller["last_successful_publish_at"] = now
             controller["last_successful_publish_generation"] = int(candidate["generation"])
             journey_payload, loop_payload = self._render(candidate)
-            self.bundle.publish(candidate["generation"], journey_payload, loop_payload)
-        _atomic_write_json(self.state_path, candidate)
+            self._publish_candidate(candidate, journey_payload, loop_payload)
+        else:
+            # Only freshness changed.  Keep that hot-path bounded instead of
+            # serializing the full canonical event history every poll.
+            self._persist_health_only(candidate)
         self.state = candidate
 
     def record_source_failure(self, error: str, *, backlog: int | None = None) -> None:
@@ -1083,8 +1157,10 @@ class LifecycleProjector:
             controller["last_successful_publish_at"] = now
             controller["last_successful_publish_generation"] = int(candidate["generation"])
             journey_payload, loop_payload = self._render(candidate)
-            self.bundle.publish(candidate["generation"], journey_payload, loop_payload)
-        _atomic_write_json(self.state_path, candidate)
+            self._publish_candidate(candidate, journey_payload, loop_payload)
+        else:
+            _atomic_write_json(self.state_path, candidate)
+            self._persist_health_only(candidate)
         self.state = candidate
 
     @staticmethod
@@ -1579,8 +1655,15 @@ async def run_worker() -> int:
         raise RuntimeError("TELEMETRY_DB_DSN is required")
     root = Path(os.getenv("LIFECYCLE_PROJECTION_ROOT", str(DEFAULT_ROOT)))
     state_path = Path(os.getenv("LIFECYCLE_PROJECTOR_STATE_PATH", str(root / "controller_state.json")))
+    health_state_path = Path(
+        os.getenv(
+            "LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH",
+            str(root / "health_state.json"),
+        )
+    )
     projector = LifecycleProjector(
         state_path=state_path,
+        health_state_path=health_state_path,
         bundle_root=root,
         deployment_sha=os.getenv("GIT_SHA", "unknown"),
     )
@@ -1620,17 +1703,16 @@ async def run_worker() -> int:
 
 
 def healthcheck() -> int:
+    root = Path(os.getenv("LIFECYCLE_PROJECTION_ROOT", str(DEFAULT_ROOT)))
     state_path = Path(
         os.getenv(
-            "LIFECYCLE_PROJECTOR_STATE_PATH",
-            str(Path(os.getenv("LIFECYCLE_PROJECTION_ROOT", str(DEFAULT_ROOT))) / "controller_state.json"),
+            "LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH",
+            str(root / "health_state.json"),
         )
     )
     readiness = projector_readiness(
         state_path=state_path,
-        bundle_root=Path(
-            os.getenv("LIFECYCLE_PROJECTION_ROOT", str(state_path.parent))
-        ),
+        bundle_root=root,
     )
     if not readiness["ready"]:
         print(f"lifecycle projector unhealthy: {_canonical_json(readiness)}")
@@ -1647,6 +1729,10 @@ def _backfill(input_path: Path, *, mode: str) -> int:
     root = Path(os.getenv("LIFECYCLE_PROJECTION_ROOT", str(DEFAULT_ROOT)))
     projector = LifecycleProjector(
         state_path=os.getenv("LIFECYCLE_PROJECTOR_STATE_PATH", str(root / "controller_state.json")),
+        health_state_path=os.getenv(
+            "LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH",
+            str(root / "health_state.json"),
+        ),
         bundle_root=root,
         deployment_sha=os.getenv("GIT_SHA", "unknown"),
     )

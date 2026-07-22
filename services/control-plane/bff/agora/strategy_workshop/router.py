@@ -1349,9 +1349,28 @@ def create_strategy_workshop_router(
         request_hash: str,
         error: CanonicalOperationError,
         compensation: Optional[Mapping[str, Any]] = None,
+        resume_digest: Optional[str] = None,
     ) -> None:
         from models import ErrorCode
 
+        partial_effects = {
+            key: value
+            for key, value in dict(getattr(error, "partial_effects", None) or {}).items()
+            if value
+        }
+        compensation_payload = dict(compensation or {})
+        resumable = bool(resume_digest) and (bool(partial_effects) or error.retryable)
+        if resumable:
+            # Durable partial-effect lineage: a new-key retry of the same
+            # request body resumes these downstream resources (and reuses the
+            # recorded downstream idempotency digest) instead of duplicating.
+            compensation_payload["resumable"] = True
+            compensation_payload["downstream_idempotency_digest"] = resume_digest
+            if partial_effects:
+                compensation_payload["partial_effects"] = partial_effects
+        fail_kwargs: Dict[str, Any] = {}
+        if partial_effects:
+            fail_kwargs["canonical_refs"] = partial_effects
         store.fail_command(
             workshop_id=workshop_id,
             tenant_id=scope.tenant_id,
@@ -1365,7 +1384,8 @@ def create_strategy_workshop_router(
                 "status_code": error.status_code,
                 "retryable": error.retryable,
             },
-            compensation=dict(compensation or {}),
+            compensation=compensation_payload,
+            **fail_kwargs,
         )
         status_code = 503 if error.retryable else 502
         if error.status_code == 404:
@@ -1376,7 +1396,12 @@ def create_strategy_workshop_router(
             "Canonical downstream operation failed",
             error.reason,
             precondition_failed=error.authority,
-            suggestion="Refetch the workshop before retrying with a new command key",
+            suggestion=(
+                "Refetch the workshop and retry with a new command key; "
+                "recorded partial downstream effects will be resumed, not duplicated"
+                if resumable
+                else "Refetch the workshop before retrying with a new command key"
+            ),
         )
 
     def _fail_domain_command(
@@ -1468,8 +1493,28 @@ def create_strategy_workshop_router(
         version_link: Optional[Mapping[str, Any]] = None,
         session_updates: Optional[Mapping[str, Any]] = None,
         event: Optional[Mapping[str, Any]] = None,
+        downstream_digest: Optional[str] = None,
     ) -> Dict[str, Any]:
         from models import ErrorCode
+
+        def _commit_failure_compensation() -> Dict[str, Any]:
+            # The canonical downstream effect exists; only the local
+            # projection commit failed.  With a downstream digest the
+            # compensation is resumable: a new-key retry adopts the recorded
+            # downstream resources instead of dispatching duplicates.
+            compensation: Dict[str, Any] = {
+                "required": True,
+                "canonical_refs": dict(canonical_refs),
+            }
+            if downstream_digest:
+                compensation["resumable"] = True
+                compensation["downstream_idempotency_digest"] = downstream_digest
+                compensation["partial_effects"] = {
+                    key: value
+                    for key, value in dict(canonical_refs).items()
+                    if value
+                }
+            return compensation
 
         try:
             completed = store.complete_command(
@@ -1495,10 +1540,7 @@ def create_strategy_workshop_router(
                     idempotency_key=idempotency_key,
                     request_hash=request_hash,
                     failure={"reason": "WORKSHOP_COMMIT_EXCEPTION"},
-                    compensation={
-                        "required": True,
-                        "canonical_refs": dict(canonical_refs),
-                    },
+                    compensation=_commit_failure_compensation(),
                 )
             except Exception:
                 pass
@@ -1518,7 +1560,7 @@ def create_strategy_workshop_router(
                 idempotency_key=idempotency_key,
                 request_hash=request_hash,
                 failure={"reason": "WORKSHOP_COMMIT_FAILED"},
-                compensation={"required": True, "canonical_refs": dict(canonical_refs)},
+                compensation=_commit_failure_compensation(),
             )
             raise bff_error(
                 503,
@@ -1536,6 +1578,72 @@ def create_strategy_workshop_router(
                 "COMMAND_RECEIPT_MISSING",
             )
         return receipt
+
+    def _resume_context(
+        *,
+        workshop_id: str,
+        scope: Any,
+        operation: str,
+        request_hash: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Durable partial-effect lineage of the same logical request.
+
+        Matching by ``request_hash`` restricts resume to a retry of the same
+        request body; a genuinely different request never adopts another
+        command's downstream resources.
+        """
+
+        if not hasattr(store, "find_resumable_command"):
+            return None
+        receipt = store.find_resumable_command(
+            workshop_id=workshop_id,
+            tenant_id=scope.tenant_id,
+            user_id=scope.user_id,
+            operation=operation,
+            request_hash=request_hash,
+        )
+        if not receipt:
+            return None
+        compensation = receipt.get("compensation") or {}
+        return {
+            "receipt": receipt,
+            "digest": str(compensation.get("downstream_idempotency_digest") or ""),
+            "partial_effects": {
+                key: value
+                for key, value in dict(
+                    compensation.get("partial_effects") or {}
+                ).items()
+                if value
+            },
+        }
+
+    def _resolve_resumed_compensation(
+        *,
+        workshop_id: str,
+        scope: Any,
+        operation: str,
+        resume: Optional[Dict[str, Any]],
+        resolved_by_idempotency_key: str,
+    ) -> None:
+        if resume is None or not hasattr(store, "resolve_command_compensation"):
+            return
+        try:
+            store.resolve_command_compensation(
+                workshop_id=workshop_id,
+                tenant_id=scope.tenant_id,
+                user_id=scope.user_id,
+                operation=operation,
+                idempotency_key=str(resume["receipt"].get("idempotency_key") or ""),
+                resolution={
+                    "resolved_at": utc_now(),
+                    "resolution": "resumed",
+                    "resolved_by_idempotency_key": resolved_by_idempotency_key,
+                },
+            )
+        except Exception:
+            # Resolution is bookkeeping over an already-failed receipt; the
+            # new completed receipt remains the authoritative delivery truth.
+            pass
 
     @staticmethod
     def _approval_actor(record: Mapping[str, Any]) -> str:
@@ -3009,9 +3117,27 @@ def create_strategy_workshop_router(
                 response=response,
             )
         registry_id = str(link["strategy_spec_registry_id"])
-        digest = hashlib.sha256(f"{workshop_id}:{command_key}".encode()).hexdigest()[:20]
+        resume = _resume_context(
+            workshop_id=workshop_id,
+            scope=scope,
+            operation="dispatch_research",
+            request_hash=request_hash,
+        )
+        # Reusing the recorded downstream idempotency digest keeps the
+        # downstream task/run idempotency keys stable across a new-key retry,
+        # so an unacknowledged prior create is deduplicated downstream.
+        digest = (resume or {}).get("digest") or hashlib.sha256(
+            f"{workshop_id}:{command_key}".encode()
+        ).hexdigest()[:20]
+        dispatch_kwargs: Dict[str, Any] = {}
+        if resume is not None and resume["partial_effects"]:
+            dispatch_kwargs["resume"] = {
+                "research_task_id": resume["partial_effects"].get("research_task_id"),
+                "research_run_id": resume["partial_effects"].get("research_run_id"),
+            }
         try:
             downstream = canonical.dispatch_research_run(
+                **dispatch_kwargs,
                 task_payload={
                     "title": f"Strategy Workshop research {workshop_id}",
                     "objective": body.research_context,
@@ -3057,6 +3183,7 @@ def create_strategy_workshop_router(
                 idempotency_key=command_key,
                 request_hash=request_hash,
                 error=exc,
+                resume_digest=digest,
             )
         run = dict(downstream["run"])
         run_id = str(run.get("run_id") or run.get("id") or "")
@@ -3092,6 +3219,16 @@ def create_strategy_workshop_router(
                 "research_run_id": run_id,
                 "workshop_version_id": str(version_id),
                 "approval_decision_id": approval["approval_decision_id"],
+                **(
+                    {
+                        "resumed_from_command_id": resume["receipt"].get("command_id"),
+                        "resumed_from_idempotency_key": resume["receipt"].get(
+                            "idempotency_key"
+                        ),
+                    }
+                    if resume is not None
+                    else {}
+                ),
             },
             event={
                 "event_id": f"wsevt-research-{digest}",
@@ -3104,6 +3241,14 @@ def create_strategy_workshop_router(
                 },
                 "trace_id": request_id,
             },
+            downstream_digest=digest,
+        )
+        _resolve_resumed_compensation(
+            workshop_id=workshop_id,
+            scope=scope,
+            operation="dispatch_research",
+            resume=resume,
+            resolved_by_idempotency_key=command_key,
         )
         _ws_publish(
             workshop_id,
@@ -3193,10 +3338,28 @@ def create_strategy_workshop_router(
                 canonical_authority="consultation_service",
                 response=response,
             )
-        digest = hashlib.sha256(f"{workshop_id}:{command_key}".encode()).hexdigest()[:20]
-        consultation_id = f"cr-ws-{digest}"
+        resume = _resume_context(
+            workshop_id=workshop_id,
+            scope=scope,
+            operation="open_consultation",
+            request_hash=request_hash,
+        )
+        # Reusing the recorded digest re-derives the same deterministic
+        # consultation request id, so a new-key retry adopts the request a
+        # failed attempt may already have created downstream.
+        digest = (resume or {}).get("digest") or hashlib.sha256(
+            f"{workshop_id}:{command_key}".encode()
+        ).hexdigest()[:20]
+        consultation_id = (
+            str((resume or {}).get("partial_effects", {}).get("consultation_request_id") or "")
+            or f"cr-ws-{digest}"
+        )
+        open_kwargs: Dict[str, Any] = {}
+        if resume is not None:
+            open_kwargs["resume"] = True
         try:
             consultation = canonical.open_consultation(
+                **open_kwargs,
                 request_id=consultation_id,
                 payload={
                     "request_type": "strategy_review",
@@ -3238,6 +3401,7 @@ def create_strategy_workshop_router(
                 idempotency_key=command_key,
                 request_hash=request_hash,
                 error=exc,
+                resume_digest=digest,
             )
         downstream_status = str(consultation.get("status") or "").lower()
         resource = {
@@ -3257,6 +3421,18 @@ def create_strategy_workshop_router(
                 canonical_refs={
                     "consultation_request_id": consultation_id,
                     "workshop_version_id": version_id,
+                    **(
+                        {
+                            "resumed_from_command_id": resume["receipt"].get(
+                                "command_id"
+                            ),
+                            "resumed_from_idempotency_key": resume["receipt"].get(
+                                "idempotency_key"
+                            ),
+                        }
+                        if resume is not None
+                        else {}
+                    ),
                 },
                 event={
                     "event_id": f"wsevt-consult-{digest}",
@@ -3269,30 +3445,49 @@ def create_strategy_workshop_router(
                     },
                     "trace_id": request_id,
                 },
+                downstream_digest=digest,
             )
         except HTTPException:
+            # Compensation-or-resume: cancel the downstream request; on
+            # success seal the failed receipt's compensation as cancelled so
+            # a retry opens a fresh consultation.  If cancellation itself
+            # fails, the receipt keeps its resumable partial-effect lineage
+            # and a new-key retry adopts the recorded request instead of
+            # opening a duplicate.
+            cancelled = False
             try:
                 canonical.cancel_consultation(
                     consultation_id,
                     actor_id=scope.user_id,
                     trace_id=request_id,
                 )
-                store.fail_command(
-                    workshop_id=workshop_id,
-                    tenant_id=scope.tenant_id,
-                    user_id=scope.user_id,
-                    operation="open_consultation",
-                    idempotency_key=command_key,
-                    request_hash=request_hash,
-                    failure={"reason": "WORKSHOP_COMMIT_FAILED"},
-                    compensation={
-                        "consultation_request_id": consultation_id,
-                        "action": "cancelled",
-                    },
-                )
+                cancelled = True
             except Exception:
                 pass
+            if cancelled and hasattr(store, "resolve_command_compensation"):
+                try:
+                    store.resolve_command_compensation(
+                        workshop_id=workshop_id,
+                        tenant_id=scope.tenant_id,
+                        user_id=scope.user_id,
+                        operation="open_consultation",
+                        idempotency_key=command_key,
+                        resolution={
+                            "resolved_at": utc_now(),
+                            "resolution": "cancelled",
+                            "consultation_request_id": consultation_id,
+                        },
+                    )
+                except Exception:
+                    pass
             raise
+        _resolve_resumed_compensation(
+            workshop_id=workshop_id,
+            scope=scope,
+            operation="open_consultation",
+            resume=resume,
+            resolved_by_idempotency_key=command_key,
+        )
         return _command_response(
             receipt=receipt,
             resource=resource,

@@ -29,6 +29,9 @@ def test_canonical_lifecycle_projector_is_default_and_owns_both_read_models():
         environment["LIFECYCLE_PROJECTOR_STATE_PATH"]
         == "/data/bff/lifecycle-projection/controller_state.json"
     )
+    assert environment["LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH"] == (
+        "/data/bff/lifecycle-projection/health_state.json"
+    )
     assert environment["LIFECYCLE_PROJECTOR_POLL_SECONDS"] == "${LIFECYCLE_PROJECTOR_POLL_SECONDS:-1}"
     assert environment["LIFECYCLE_PROJECTOR_GENERATION_RETENTION"] == "${LIFECYCLE_PROJECTOR_GENERATION_RETENTION:-32}"
     assert environment["LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS"] == (
@@ -59,14 +62,17 @@ def test_canonical_lifecycle_projector_is_default_and_owns_both_read_models():
 
     bff = services["operator-bff"]
     bff_environment = bff["environment"]
-    assert bff_environment["PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE"].endswith(
-        ":-/data/bff/lifecycle-projection/current/trade_journey_events.json}"
+    assert bff_environment["PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE"] == (
+        "/data/bff/lifecycle-projection/current/trade_journey_events.json"
     )
-    assert bff_environment["PANTHEON_BFF_LOOP_RUN_STORE"].endswith(
-        ":-/data/bff/lifecycle-projection/current/loop_runs.json}"
+    assert bff_environment["PANTHEON_BFF_LOOP_RUN_STORE"] == (
+        "/data/bff/lifecycle-projection/current/loop_runs.json"
     )
     assert bff_environment["LIFECYCLE_PROJECTOR_STATE_PATH"] == (
         "/data/bff/lifecycle-projection/controller_state.json"
+    )
+    assert bff_environment["LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH"] == (
+        "/data/bff/lifecycle-projection/health_state.json"
     )
     assert bff_environment["LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS"] == (
         "${LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS:-120}"
