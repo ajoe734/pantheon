@@ -2621,7 +2621,7 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
                 record["lease_acquired_at"] = record.get("lease_acquired_at") or active_worker.get("lease_acquired_at") or utc_now()
                 record["lease_expires_at"] = active_worker.get("lease_expires_at") or queue_lease_expiry(config)
                 record["processed_at"] = record.get("processed_at") or utc_now()
-                sync_dispatched_task_status(config, event)
+                sync_dispatched_task_status(config, event, run_id=record["run_id"])
                 changed = True
             continue
         skip_message = stale_dispatch_skip_message(config, event, task_map)
@@ -2921,7 +2921,7 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
         record["lease_expires_at"] = queue_lease_expiry(config, queue_started_at)
         record["processed_at"] = _isoformat_utc(queue_started_at)
         record.pop("last_wait_reason", None)
-        sync_dispatched_task_status(config, event)
+        sync_dispatched_task_status(config, event, run_id=worker_run_id)
         changed = True
     return changed
 
@@ -6549,7 +6549,11 @@ def _status_activity_outbox(events: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def sync_dispatched_task_status(config: dict[str, Any], event: dict[str, Any]) -> bool:
+def sync_dispatched_task_status(
+    config: dict[str, Any],
+    event: dict[str, Any],
+    run_id: str | None = None,
+) -> bool:
     reason = str(event.get("reason") or "").strip()
     action = DISPATCH_STATUS_ACTIONS.get(reason)
     if action is None:
@@ -6589,6 +6593,15 @@ def sync_dispatched_task_status(config: dict[str, Any], event: dict[str, Any]) -
         REASON_OWNED_IN_PROGRESS: f"Supervisor re-dispatched {task_id}; task remains in progress.",
     }[reason]
     env["AI_NAME"] = target_agent
+    # The status command runs as the dispatched agent, so ai_status.py treats it as an
+    # auto worker and requires the supervisor-issued lease. Without ORCH_RUN_ID it took
+    # the no-lease branch and raised "status command lease required for auto worker",
+    # which failed every dispatch sync. Both call sites already hold the worker run id.
+    lease_run_id = str(run_id or "").strip()
+    if lease_run_id:
+        env["ORCH_RUN_ID"] = lease_run_id
+    else:
+        env.pop("ORCH_RUN_ID", None)
     result = subprocess.run(
         [sys.executable, str(script), command_name, task_id, message],
         cwd=str(config_path(config, "status_file").parent),

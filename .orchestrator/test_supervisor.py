@@ -2076,7 +2076,9 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(record["run_id"], "run-123")
         build_request.assert_called_once_with(self.config, queue_payload)
         start_worker.assert_called_once()
-        sync_dispatched_task_status.assert_called_once_with(self.config, queue_payload)
+        sync_dispatched_task_status.assert_called_once_with(
+            self.config, queue_payload, run_id="run-123"
+        )
 
     def test_failed_auto_lane_dispatch_does_not_create_manual_pending_worker(self) -> None:
         current_task = {
@@ -4263,7 +4265,9 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         record = state["queue"]["events"]["evt-current"]
         self.assertEqual(record["status"], "started")
         self.assertEqual(record["run_id"], "gemini-run-1")
-        sync_dispatched_task_status.assert_called_once_with(self.config, queue_payload)
+        sync_dispatched_task_status.assert_called_once_with(
+            self.config, queue_payload, run_id="gemini-run-1"
+        )
 
 
 class DispatchStatusSyncTests(unittest.TestCase):
@@ -4334,6 +4338,57 @@ class DispatchStatusSyncTests(unittest.TestCase):
         self.assertIn("Supervisor auto-started", command[4])
         self.assertEqual(run_mock.call_args.kwargs["env"]["AI_NAME"], "Copilot")
         self.assertEqual(run_mock.call_args.kwargs["env"]["PANTHEON_STATUS_ROOT"], str(self.root))
+
+    def test_sync_dispatched_task_status_issues_worker_lease(self) -> None:
+        # ai_status.py treats the dispatched agent as an auto worker and refuses the
+        # canonical mutation without a supervisor-issued lease, so the run id must
+        # reach the subprocess as ORCH_RUN_ID. Omitting it raised
+        # "status command lease required for auto worker" on every dispatch.
+        event = {
+            "task_id": "APP-002-W1-FRONT-HANDOFF",
+            "target_agent": "copilot",
+            "target_display_name": "Copilot",
+            "reason": "owned_ready_dispatch",
+        }
+        command_env = {
+            "PANTHEON_COMMAND_ROOT": str(self.root),
+            "PANTHEON_COMMAND_RUNTIME_SHA": "installed-sha",
+        }
+
+        with (
+            mock.patch.object(supervisor, "status_command_runtime_env", return_value=command_env),
+            mock.patch.object(supervisor.subprocess, "run", return_value=mock.Mock(returncode=0, stderr="", stdout="")) as run_mock,
+        ):
+            changed = supervisor.sync_dispatched_task_status(
+                self.config, event, run_id="copilot-run-7"
+            )
+
+        self.assertTrue(changed)
+        self.assertEqual(run_mock.call_args.kwargs["env"]["ORCH_RUN_ID"], "copilot-run-7")
+
+    def test_sync_dispatched_task_status_without_run_id_does_not_inherit_lease(self) -> None:
+        # A stray ORCH_RUN_ID in the supervisor environment must not be borrowed as a
+        # lease for a dispatch we have no run id for.
+        event = {
+            "task_id": "APP-002-W1-FRONT-HANDOFF",
+            "target_agent": "copilot",
+            "target_display_name": "Copilot",
+            "reason": "owned_ready_dispatch",
+        }
+        command_env = {
+            "PANTHEON_COMMAND_ROOT": str(self.root),
+            "PANTHEON_COMMAND_RUNTIME_SHA": "installed-sha",
+        }
+
+        with (
+            mock.patch.dict(supervisor.os.environ, {"ORCH_RUN_ID": "inherited-run"}, clear=False),
+            mock.patch.object(supervisor, "status_command_runtime_env", return_value=command_env),
+            mock.patch.object(supervisor.subprocess, "run", return_value=mock.Mock(returncode=0, stderr="", stdout="")) as run_mock,
+        ):
+            changed = supervisor.sync_dispatched_task_status(self.config, event)
+
+        self.assertTrue(changed)
+        self.assertNotIn("ORCH_RUN_ID", run_mock.call_args.kwargs["env"])
 
     def test_sync_status_pipeline_uses_installed_command_runtime(self) -> None:
         command_env = {
