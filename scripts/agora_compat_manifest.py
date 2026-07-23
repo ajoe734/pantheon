@@ -382,6 +382,66 @@ def handoff_blocking_reasons(
     return sorted(set(reasons))
 
 
+def delivery_runtime_blocking_reasons(
+    backend_handoff: dict[str, Any],
+    frontend_handoff: dict[str, Any],
+    *,
+    frontend_root: Path,
+    backend_runtime_commit: str,
+    frontend_runtime_commit: str,
+    backend_dev_ref: str,
+    frontend_dev_ref: str,
+) -> list[str]:
+    """Validate exact delivery payloads against their compatible handoff bases."""
+
+    reasons: list[str] = []
+    backend_handoff_runtime = str(_mapping(backend_handoff, "backend").get("runtime_commit") or "")
+    frontend = _mapping(frontend_handoff, "frontend")
+    frontend_handoff_runtime = str(frontend.get("runtime_commit") or "")
+    runtime_bindings = (
+        (
+            "backend",
+            REPO_ROOT,
+            backend_handoff_runtime,
+            backend_runtime_commit,
+            backend_dev_ref,
+        ),
+        (
+            "frontend",
+            frontend_root,
+            frontend_handoff_runtime,
+            frontend_runtime_commit,
+            frontend_dev_ref,
+        ),
+    )
+    for owner, repo_root, handoff_runtime, delivery_runtime, dev_ref in runtime_bindings:
+        if delivery_runtime in {"", ZERO_COMMIT} or not COMMIT_RE.fullmatch(delivery_runtime):
+            reasons.append(f"{owner}-delivery-runtime-commit-placeholder")
+            continue
+        if not commit_is_reachable(repo_root, delivery_runtime, dev_ref):
+            reasons.append(f"{owner}-delivery-runtime-commit-not-reachable-from-dev")
+            continue
+        if (
+            COMMIT_RE.fullmatch(handoff_runtime)
+            and not commit_is_reachable(repo_root, handoff_runtime, delivery_runtime)
+        ):
+            reasons.append(f"{owner}-delivery-runtime-not-descendant-of-handoff")
+
+    if COMMIT_RE.fullmatch(frontend_runtime_commit):
+        try:
+            actual_types = sha256_git_generated_types(
+                frontend_root,
+                frontend_runtime_commit,
+                list(DEFAULT_GENERATED_TYPE_PATHS),
+            )
+        except ManifestError:
+            reasons.append("frontend-delivery-generated-types-git-bytes-missing")
+        else:
+            if actual_types != frontend.get("generated_types_sha256"):
+                reasons.append("frontend-delivery-generated-types-hash-mismatch")
+    return sorted(set(reasons))
+
+
 def build_manifest(args: argparse.Namespace) -> dict[str, Any]:
     frontend_root = Path(args.frontend_root).expanduser().resolve()
     require_git_repo(REPO_ROOT, "Pantheon root")
@@ -418,14 +478,26 @@ def build_manifest(args: argparse.Namespace) -> dict[str, Any]:
             backend_handoff=backend_handoff,
         )
     )
-    reasons = sorted(set(reasons))
-
     backend = _mapping(backend_handoff, "backend")
     contract = _mapping(backend_handoff, "contract")
     bundle = _mapping(contract, "bundle_index")
     openapi = _mapping(contract, "openapi")
     capability = _mapping(contract, "capability_manifest")
     frontend = _mapping(frontend_handoff, "frontend")
+    backend_runtime_commit = args.backend_runtime_commit or str(backend.get("runtime_commit") or "")
+    frontend_runtime_commit = args.frontend_runtime_commit or str(frontend.get("runtime_commit") or "")
+    reasons.extend(
+        delivery_runtime_blocking_reasons(
+            backend_handoff,
+            frontend_handoff,
+            frontend_root=frontend_root,
+            backend_runtime_commit=backend_runtime_commit,
+            frontend_runtime_commit=frontend_runtime_commit,
+            backend_dev_ref=args.backend_dev_ref,
+            frontend_dev_ref=args.frontend_dev_ref,
+        )
+    )
+    reasons = sorted(set(reasons))
 
     status = args.compatibility_status
     if status == "auto":
@@ -445,7 +517,7 @@ def build_manifest(args: argparse.Namespace) -> dict[str, Any]:
         "backend": {
             "repo": "ajoe734/pantheon",
             "branch": "dev",
-            "runtime_commit": backend["runtime_commit"],
+            "runtime_commit": backend_runtime_commit,
             "contract_commit": backend["contract_commit"],
             "handoff_commit": backend_handoff_commit,
             "bundle_index_sha256": bundle["sha256"],
@@ -455,7 +527,7 @@ def build_manifest(args: argparse.Namespace) -> dict[str, Any]:
         "frontend": {
             "repo": "ajoe734/execute-plans",
             "branch": "dev",
-            "runtime_commit": frontend["runtime_commit"],
+            "runtime_commit": frontend_runtime_commit,
             "handoff_commit": frontend_handoff_commit,
             "generated_from_contract_commit": frontend["generated_from_contract_commit"],
             "bundle_index_sha256": frontend["bundle_index_sha256"],
@@ -666,7 +738,6 @@ def validate_handoff_bindings(
     expected_backend = {
         "repo": "ajoe734/pantheon",
         "branch": "dev",
-        "runtime_commit": backend.get("runtime_commit"),
         "contract_commit": backend.get("contract_commit"),
         "handoff_commit": backend_commit,
         "bundle_index_sha256": _mapping(contract, "bundle_index").get("sha256"),
@@ -676,17 +747,39 @@ def validate_handoff_bindings(
     expected_frontend = {
         "repo": "ajoe734/execute-plans",
         "branch": "dev",
-        "runtime_commit": frontend.get("runtime_commit"),
         "handoff_commit": frontend_commit,
         "generated_from_contract_commit": frontend.get("generated_from_contract_commit"),
         "bundle_index_sha256": frontend.get("bundle_index_sha256"),
         "openapi_sha256": frontend.get("openapi_sha256"),
         "generated_types_sha256": frontend.get("generated_types_sha256"),
     }
-    if manifest.get("backend") != expected_backend:
+    manifest_backend = manifest.get("backend")
+    manifest_frontend = manifest.get("frontend")
+    actual_backend = (
+        {key: value for key, value in manifest_backend.items() if key != "runtime_commit"}
+        if isinstance(manifest_backend, dict)
+        else manifest_backend
+    )
+    actual_frontend = (
+        {key: value for key, value in manifest_frontend.items() if key != "runtime_commit"}
+        if isinstance(manifest_frontend, dict)
+        else manifest_frontend
+    )
+    if actual_backend != expected_backend:
         issues.append("backend identity does not exactly match the backend handoff")
-    if manifest.get("frontend") != expected_frontend:
+    if actual_frontend != expected_frontend:
         issues.append("frontend identity does not exactly match the frontend handoff")
+    if isinstance(manifest_backend, dict) and isinstance(manifest_frontend, dict):
+        runtime_reasons = delivery_runtime_blocking_reasons(
+            backend_handoff,
+            frontend_handoff,
+            frontend_root=frontend_root,
+            backend_runtime_commit=str(manifest_backend.get("runtime_commit") or ""),
+            frontend_runtime_commit=str(manifest_frontend.get("runtime_commit") or ""),
+            backend_dev_ref=backend_dev_ref,
+            frontend_dev_ref=frontend_dev_ref,
+        )
+        issues.extend(f"delivery runtime validation failed: {reason}" for reason in runtime_reasons)
     return issues
 
 
@@ -922,6 +1015,16 @@ def add_write_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentPar
     parser.add_argument("--environment", default="dev", choices=["dev", "staging", "production"])
     parser.add_argument("--backend-handoff-commit", default="")
     parser.add_argument("--frontend-handoff-commit", default="")
+    parser.add_argument(
+        "--backend-runtime-commit",
+        default="",
+        help="exact descendant Pantheon payload to accept instead of the handoff runtime base",
+    )
+    parser.add_argument(
+        "--frontend-runtime-commit",
+        default="",
+        help="exact descendant execute-plans payload to accept instead of the handoff runtime base",
+    )
     parser.add_argument("--generated-at", default="")
     parser.add_argument(
         "--compatibility-status",
