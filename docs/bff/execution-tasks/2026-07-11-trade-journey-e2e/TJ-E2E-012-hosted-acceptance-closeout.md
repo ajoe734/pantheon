@@ -185,7 +185,38 @@ and its scenario-specific assertion.
 
 ## 8. Independent Human/Ops verdict — required
 
-**Current verdict: PENDING.**
+**Current verdict: APPROVED.**
+
+Decision: **APPROVED** — read-only hosted rollout accepted; rollback plan accepted.
+
+- Human/Ops identity: bjoe734@gmail.com (Human/Ops)
+- UTC timestamp: 2026-07-23T08:07:19Z
+- Cited evidence: this packet (TJ-E2E-012-hosted-acceptance-closeout.md);
+  hosted run `29971351535` (artifact `8549806068`, checksum matched,
+  12/12 distinct ledger rows, 98/98 checks,
+  FE `9597d0c3146451a004c30f2e638010c4eec86488` /
+  BFF `c555a14ebbcc2a7504076eeba3d381b016231833`);
+  retained browser run `29856622315` (artifact `8505715242`,
+  desktop/mobile/a11y/viewer-masking proof).
+- Risk decisions:
+  - R1 ACCEPTED — condition upheld: current-pair browser rerun required if
+    Trade Journey UI changes or before any production promotion; expiry
+    2026-08-06.
+  - R2 ACCEPTED — condition upheld: canary soak required before production;
+    p95 samples accepted for this read-only stage only; expiry 2026-08-06.
+  - R3 ACCEPTED — explicitly NOT an authorization of live writes, broker
+    capital, or production default rollout; any live/canary step requires a
+    separate governed decision.
+  - R4 ACCEPTED — Release Engineering to archive artifacts to the governed
+    evidence store before 2026-10-12.
+  - R5 RESOLVED — by this verdict.
+  - R6 ACCEPTED — acceptance applies only to the two proven pairs above; the
+    current hosted tip is not claimed as accepted and requires a rerun of the
+    exact pair before current-tip acceptance, canary, or production promotion.
+- Rollout/rollback: the read-only rollout steps and the rollback record in
+  Section 6 are reviewed and acceptable.
+
+The requirement this verdict satisfies:
 
 Human/Ops must provide an independently attributable decision that cites this
 packet, hosted run `29971351535`, artifact `8549806068`, retained browser run
