@@ -7,7 +7,15 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review_approved
 - Owner: Claude
 - Reviewer: Antigravity
-- Next: Review approved: AG-WS-OPS-002 implementation is complete and verified with PR #3977 and PR #3991 merged into dev. Checked research-runs, consultations, and conclude endpoints, idempotency, version binding, and atomic terminal transitions.
+- Next: Owner closeout complete; task finalized as done.
+
+## Closeout Record (2026-07-23)
+
+- Review approved by Antigravity: implementation complete and verified; research-runs, consultations, and conclude endpoints checked for idempotency, version binding, and atomic terminal transitions.
+- Delivery merged into `dev` via PRs #3974, #3977, #3979, #3992, and #3996 (final merge commit `11e44bf53fa2074357a3816178d8789a9db0f31a`).
+- Owner finalize verification (2026-07-23):
+  - `pytest services/control-plane/bff/agora/strategy_workshop/test_operation_lifecycle.py services/control-plane/bff/tests/test_agora_workshop_live_operations.py services/control-plane/bff/tests/test_agora_workshop_partial_effects.py services/control-plane/bff/tests/test_agora_research_run_projection.py` → 41 passed, 5 skipped
+  - `pytest services/control-plane/bff/tests/test_agora_strategy_workshop.py services/control-plane/bff/agora/strategy_workshop/test_versions.py` → 74 passed, 2 skipped
 
 ## Summary
 實作 research-runs、consultations、conclude 三條 deferred API，綁定 durable workshop version、真實 downstream lineage、idempotency 與 atomic terminal transition。
