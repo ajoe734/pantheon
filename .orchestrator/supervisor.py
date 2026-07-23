@@ -1646,10 +1646,51 @@ def _git_ref_exists(repo_root: Path, ref: str) -> bool:
     return proc.returncode == 0
 
 
+def _quarantine_incomplete_worker_path(path: Path) -> Path | None:
+    """Move an unregistered partial checkout aside so dispatch can recover.
+
+    ``git worktree add`` can leave a populated directory without a ``.git``
+    marker when checkout is interrupted (for example by ENOSPC).  These paths
+    are not reusable worktrees, but refusing them forever wedges every later
+    dispatch for the task.  Preserve the entire directory under the managed
+    root and let the caller create a clean worktree at the canonical path.
+    """
+    if (
+        not path.exists()
+        or path.is_symlink()
+        or not path.is_dir()
+        or not any(path.iterdir())
+        or (path / ".git").exists()
+    ):
+        return None
+
+    quarantine_root = path.parent / ".incomplete-worktree-quarantine"
+    quarantine_root.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    quarantine_path = quarantine_root / f"{path.name}-{stamp}-{os.getpid()}"
+    try:
+        path.replace(quarantine_path)
+    except OSError:
+        return None
+    try:
+        (quarantine_path / "ORCHESTRATOR_QUARANTINE.txt").write_text(
+            "Incomplete worker checkout preserved before automatic redispatch.\n"
+            f"original_path={path}\n"
+            f"quarantined_at={utc_now()}\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        # The recovery must still unblock a fresh checkout when the original
+        # interruption was ENOSPC and even the small marker cannot be written.
+        pass
+    return quarantine_path
+
+
 def _create_worker_worktree(repo_root: Path, path: Path, branch: str, base_ref: str) -> tuple[bool, str | None]:
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists() and (not path.is_dir() or any(path.iterdir())):
-        return False, f"Worker worktree path already exists and is not empty: {path}"
+        if _quarantine_incomplete_worker_path(path) is None:
+            return False, f"Worker worktree path already exists and is not empty: {path}"
 
     remote_ref = f"refs/remotes/origin/{branch}"
     if _git_ref_exists(repo_root, f"refs/heads/{branch}"):
