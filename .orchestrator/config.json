@@ -894,7 +894,6 @@
     ],
     "sidecar_only_agents": [],
     "disabled_agents": [
-      "Claude2",
       "Antigravity2",
       "Copilot"
     ],
@@ -935,7 +934,7 @@
     },
     "target_workload": {
       "Claude": 5,
-      "Claude2": 0,
+      "Claude2": 5,
       "Antigravity": 5,
       "Antigravity2": 0,
       "Codex": 30,
@@ -944,7 +943,7 @@
     },
     "max_tasks_per_agent_by_agent": {
       "Claude": 1,
-      "Claude2": 0,
+      "Claude2": 1,
       "Antigravity": 1,
       "Antigravity2": 0,
       "Codex": 4,

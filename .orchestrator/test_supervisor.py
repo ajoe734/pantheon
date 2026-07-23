@@ -157,29 +157,34 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(supervisor.agent_dispatch_capacity(config, "codex"), 4)
         self.assertEqual(supervisor.agent_dispatch_capacity(config, "codex2"), 4)
 
-    def test_primary_claude_lane_is_enabled_and_alternate_stays_disabled(self) -> None:
+    def test_claude_lanes_are_enabled_with_shared_account_limit(self) -> None:
         config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
 
         ready_dispatcher = config["ready_dispatcher"]
 
-        self.assertEqual(ready_dispatcher["disabled_agents"], ["Claude2", "Antigravity2", "Copilot"])
+        self.assertEqual(ready_dispatcher["disabled_agents"], ["Antigravity2", "Copilot"])
         self.assertEqual(ready_dispatcher["target_workload"]["Claude"], 5)
+        self.assertEqual(ready_dispatcher["target_workload"]["Claude2"], 5)
         self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Claude"], 1)
+        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Claude2"], 1)
         self.assertEqual(ready_dispatcher["max_concurrent_per_account"]["claude_account_shared_max_1"], 1)
         self.assertNotIn("Claude", ready_dispatcher["disabled_agents"])
+        self.assertNotIn("Claude2", ready_dispatcher["disabled_agents"])
         self.assertEqual(ready_dispatcher["target_workload"]["Copilot"], 0)
         self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Copilot"], 0)
         self.assertEqual(ready_dispatcher["max_concurrent_per_account"]["copilot"], 0)
 
-    def test_claude2_lane_is_disabled_with_zero_capacity(self) -> None:
+    def test_claude2_capacity_still_obeys_shared_account_limit(self) -> None:
         config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
 
         ready_dispatcher = config["ready_dispatcher"]
 
-        self.assertEqual(ready_dispatcher["target_workload"]["Claude2"], 0)
-        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Claude2"], 0)
+        self.assertEqual(ready_dispatcher["target_workload"]["Claude2"], 5)
+        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Claude2"], 1)
         self.assertEqual(ready_dispatcher["max_concurrent_per_account"]["claude_account_shared_max_1"], 1)
-        self.assertIn("Claude2", ready_dispatcher["disabled_agents"])
+        self.assertEqual(config["providers"]["claude"]["account"], "claude_account_shared_max_1")
+        self.assertEqual(config["providers"]["claude2"]["account"], "claude_account_shared_max_1")
+        self.assertNotIn("Claude2", ready_dispatcher["disabled_agents"])
 
     def test_primary_antigravity_lane_is_enabled_and_alternate_stays_disabled(self) -> None:
         config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
