@@ -199,12 +199,17 @@ def test_deployment_gate_passes_for_exact_reachable_pair(
         (("frontend", "openapi_sha256"), "e" * 64, "frontend identity does not exactly match"),
         (("backend", "bundle_index_sha256"), "d" * 64, "backend identity does not exactly match"),
         (("backend", "contract_commit"), "c" * 40, "backend identity does not exactly match"),
+        (
+            ("source_handoffs", "backend"),
+            {"path": "docs/contracts/agora/backend-generation-input.v1_13.json", "commit": "c" * 40, "sha256": "0" * 64},
+            "source_handoffs.backend.sha256 must not be a placeholder",
+        ),
     ],
 )
 def test_deployment_gate_rejects_tampered_identity_fields(
     accepted_manifest: dict[str, object],
     path: tuple[str, str],
-    replacement: str,
+    replacement: object,
     message: str,
 ) -> None:
     output = accepted_manifest["path"]

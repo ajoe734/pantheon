@@ -99,15 +99,19 @@ the VM stack is treated as deployable:
 ```bash
 python3 scripts/agora_compat_manifest.py deployment-gate \
   --manifest docs/contracts/agora/dev-compatibility-manifest.json \
-  --frontend-manifest /home/lupin/code/execute-plans/docs/contracts/agora/dev-compatibility-manifest.json \
-  --backend-runtime-commit <pantheon-backend-commit>
+  --frontend-root /home/lupin/code/execute-plans \
+  --backend-dev-ref refs/remotes/origin/dev \
+  --frontend-dev-ref refs/remotes/origin/dev
 ```
 
-Use `verify --allow-pending` only as a repo sanity check while the frontend type
-mirror is still pending. Actual dev deployment requires
-`compatibility_status=compatible`, exact backend/frontend commit pins, matching
-base bundle, extension bundle and OpenAPI hashes, and advertised required Agora
-capabilities.
+Use `verify --allow-pending` only as a repo sanity check for a deliberately
+non-accepted candidate. Actual dev deployment requires
+`compatibility_status=accepted`, exact backend/frontend runtime and handoff
+commits reachable from both protected `dev` branches, matching v1.13
+bundle/OpenAPI/capability/generated-type hashes, exact handoff bytes, and the
+full advertised Agora capability set. The dev workflow performs this check
+before the environment lease and deploy command, so a pending, rejected, or
+tampered candidate cannot reach the switch path.
 
 Latest verified dev root deploy, 2026-06-11:
 

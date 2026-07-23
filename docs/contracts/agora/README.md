@@ -16,9 +16,11 @@ routes without rewriting those frozen source contracts.
 - `backend-generation-input.v1_13.json`: machine-readable execute-plans handoff
   bound to exact, reachable Pantheon runtime and contract commits.
 
-`dev-compatibility-manifest.json` is not accepted by this task. It remains
-pending until `AG-COMPAT-001-FE` supplies frontend runtime, generated-from,
-and generated-type identities and `AG-COMPAT-002-GATE` validates the pair.
+`dev-compatibility-manifest.json` now records the accepted v1.13 pair assembled
+by `AG-COMPAT-002-GATE`. It pins the backend and frontend runtime/handoff
+commits, exact bundle/OpenAPI/capability/type hashes, and both `dev` branches.
+The deployment workflow checks out execute-plans history and runs the
+fail-closed gate before acquiring the environment lease or invoking a deploy.
 
 ## Deterministic generation and verification
 
@@ -46,3 +48,18 @@ required pending compatibility state. Frontend generated output uses
 `sha256-path-tab-filehash-lf-v1`: sort relative paths, write one
 `<path>\t<file-sha256>\n` line per file, then SHA-256 the concatenated UTF-8
 lines.
+
+Generate and verify the accepted pair from both repositories:
+
+```sh
+python3 scripts/agora_compat_manifest.py write \
+  --frontend-root /path/to/execute-plans
+python3 scripts/agora_compat_manifest.py deployment-gate \
+  --manifest docs/contracts/agora/dev-compatibility-manifest.json \
+  --frontend-root /path/to/execute-plans
+```
+
+`write --compatibility-status accepted` and `deployment-gate` reject
+placeholder, mismatched, tampered, or non-`dev`-reachable identities.
+`verify --allow-pending` remains a repository-inspection path only; it is never
+used by the accepting deployment workflow.

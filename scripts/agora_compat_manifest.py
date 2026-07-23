@@ -104,6 +104,8 @@ def git_output(repo_root: Path, args: list[str], default: str = "") -> str:
 
 
 def require_git_repo(repo_root: Path, label: str) -> None:
+    if not repo_root.is_dir():
+        raise ManifestError(f"{label} does not exist: {repo_root}")
     if git_output(repo_root, ["rev-parse", "--show-toplevel"]) == "":
         raise ManifestError(f"{label} is not a Git checkout: {repo_root}")
 
@@ -229,6 +231,37 @@ def load_handoffs(
     backend, backend_sha = git_json(REPO_ROOT, backend_handoff_commit, BACKEND_HANDOFF_PATH)
     frontend, frontend_sha = git_json(frontend_root, frontend_handoff_commit, FRONTEND_HANDOFF_PATH)
     return backend, backend_sha, frontend, frontend_sha
+
+
+def working_tree_binding_reasons(
+    *,
+    frontend_root: Path,
+    backend_handoff_sha: str,
+    frontend_handoff_sha: str,
+    backend_handoff: dict[str, Any],
+) -> list[str]:
+    reasons: list[str] = []
+    backend_contract = _mapping(backend_handoff, "contract")
+    expected_contract_hashes = (
+        (BUNDLE_PATH, _mapping(backend_contract, "bundle_index").get("sha256"), "backend-bundle"),
+        (OPENAPI_PATH, _mapping(backend_contract, "openapi").get("sha256"), "backend-openapi"),
+        (
+            CAPABILITY_PATH,
+            _mapping(backend_contract, "capability_manifest").get("sha256"),
+            "backend-capability",
+        ),
+    )
+    for rel_path, expected, label in expected_contract_hashes:
+        if sha256_file(require_local_file(rel_path)) != expected:
+            reasons.append(f"{label}-working-tree-hash-mismatch")
+    if sha256_file(require_local_file(BACKEND_HANDOFF_PATH)) != backend_handoff_sha:
+        reasons.append("backend-handoff-working-tree-hash-mismatch")
+    frontend_handoff_path = frontend_root / FRONTEND_HANDOFF_PATH
+    if not frontend_handoff_path.is_file():
+        reasons.append("frontend-handoff-working-tree-missing")
+    elif sha256_file(frontend_handoff_path) != frontend_handoff_sha:
+        reasons.append("frontend-handoff-working-tree-hash-mismatch")
+    return reasons
 
 
 def handoff_blocking_reasons(
@@ -369,6 +402,15 @@ def build_manifest(args: argparse.Namespace) -> dict[str, Any]:
         backend_dev_ref=args.backend_dev_ref,
         frontend_dev_ref=args.frontend_dev_ref,
     )
+    reasons.extend(
+        working_tree_binding_reasons(
+            frontend_root=frontend_root,
+            backend_handoff_sha=backend_handoff_sha,
+            frontend_handoff_sha=frontend_handoff_sha,
+            backend_handoff=backend_handoff,
+        )
+    )
+    reasons = sorted(set(reasons))
 
     backend = _mapping(backend_handoff, "backend")
     contract = _mapping(backend_handoff, "contract")
@@ -547,6 +589,8 @@ def validate_manifest_shape(manifest: dict[str, Any]) -> list[str]:
                 issues.append(f"source_handoffs.{owner}.commit must be a git sha")
             if not SHA_RE.fullmatch(str(payload.get("sha256") or "")):
                 issues.append(f"source_handoffs.{owner}.sha256 must be a sha256")
+            elif payload.get("sha256") == ZERO_SHA256:
+                issues.append(f"source_handoffs.{owner}.sha256 must not be a placeholder")
 
     if manifest.get("hash_policy") != {
         "file_hash": "sha256-exact-git-bytes-v1",
@@ -600,6 +644,13 @@ def validate_handoff_bindings(
         issues.append("source_handoffs.backend.sha256 does not match exact Git bytes")
     if frontend_source.get("sha256") != frontend_sha:
         issues.append("source_handoffs.frontend.sha256 does not match exact Git bytes")
+    for reason in working_tree_binding_reasons(
+        frontend_root=frontend_root,
+        backend_handoff_sha=backend_sha,
+        frontend_handoff_sha=frontend_sha,
+        backend_handoff=backend_handoff,
+    ):
+        issues.append(f"working tree validation failed: {reason}")
 
     backend = _mapping(backend_handoff, "backend")
     contract = _mapping(backend_handoff, "contract")
@@ -706,6 +757,8 @@ def verify_manifest(
     deployment_gate: bool = False,
     expected_backend_runtime_commit: str | None = None,
 ) -> list[str]:
+    require_git_repo(REPO_ROOT, "Pantheon root")
+    require_git_repo(frontend_root, "execute-plans root")
     manifest = read_json(manifest_path)
     issues = validate_manifest_shape(manifest)
     issues.extend(validate_local_contract_hashes(manifest))
