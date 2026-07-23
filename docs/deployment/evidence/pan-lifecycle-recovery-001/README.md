@@ -1,7 +1,7 @@
 # PAN-LIFECYCLE-RECOVERY-001 delivery evidence
 
-Status: code delivery and exact-SHA recovery validation complete; final
-canonical lifecycle acceptance rerun in progress.
+Status: accepted on the replacement dev VM; closeout PR and governed task
+finalization in progress.
 
 Environment: replacement Pantheon dev VM only (`pantheon-lupin-dev`, project
 `pantheon-lupin-dev-20260719`). Production, live capital, and order routing are
@@ -110,9 +110,38 @@ paper stimulus was consumed but did not produce its exact target
 `position_snapshot` within 180 seconds. The same binding/runtime continued to
 publish later canonical snapshots, and the identical governed stimulus had
 passed in five seconds during run 29952688803 attempt 2. Because this is not an
-accepted stimulus/readback result, exact-SHA rerun
+accepted stimulus/readback result, it was retained as negative evidence and
+not used for acceptance.
+
+Exact-SHA governed rerun
 [29967962811](https://github.com/ajoe734/pantheon/actions/runs/29967962811)
-is in progress. The task remains open until its immutable artifact passes.
+completed successfully at `2026-07-23T00:21:20Z`. The source artifact observed
+at `00:20:08Z` proved:
+
+- baseline high watermark 719976 advanced through candidate sequence 720119 to
+  source high watermark 720174;
+- generation 5516/checkpoint 720174 was ready, live, accepted, backlog 0, and
+  bound to exact deployment SHA `d7961ed4...`;
+- one stable paper identity linked a canonical sequence of eight events:
+  `signal_generation`, `trade_decision`, `risk_evaluation`,
+  `order_submitted`, `order_accepted`, `paper_fill_simulated`,
+  `position_snapshot`, and terminal `reconciliation_failed`; and
+- the resulting loop/journey was formal `completed_with_variance` truth in
+  generation 5516.
+
+The authenticated public-BFF artifact observed at `00:20:29Z` proved strict
+auth with stub disabled and exact hosted SHA `d7961ed4...`. The MFA-bound
+identity was `operator_a`; missing credentials and arbitrary bearer tokens
+returned 401 for both loop and journey routes. Loop detail, Trade Journey
+detail, and Trade Journey evidence each returned 200 on the first attempt with
+no transient status, the same generation/controller, and exact 8/8 event-ID
+correlation. The artifact records no access token, credentials, response
+payloads, DSN, or source payloads. Its source artifact SHA-256 is
+`961f67afa574a2da3c6543c5526e9125334c51a09f889d4cf4e65d3d47c2d220`.
+
+The same governed run also passed public exact-version proof, OpenClaw smoke,
+Agora restart persistence, lease release, and deployment summary. This is the
+final accepted deployment run.
 
 ## Local verification
 
@@ -146,8 +175,8 @@ git diff --check
 | Three healthy projection cycles | generations 5484, 5486, 5487 on exact final SHA |
 | Fail-closed restart and recovery | 503 recovering, brief 502 restart, then exact-SHA live/accepted 200 |
 | Disk/freshness | healthy in all three samples; values above |
-| New lifecycle stimulus and BFF readback | final exact-SHA rerun 29967962811 pending |
-| Final governed deploy conclusion | pending rerun artifact |
+| New lifecycle stimulus and BFF readback | run 29967962811: generation 5516/checkpoint 720174; 8-event chain; loop/journey/evidence 200; 8/8 correlation |
+| Final governed deploy conclusion | run 29967962811 succeeded at `2026-07-23T00:21:20Z` |
 
 ## Residual risks
 
@@ -160,3 +189,7 @@ git diff --check
   budget required by the gate.
 - Hosted BFF surface convergence is deliberately bounded to four attempts at
   five-second intervals and remains fail closed with redacted diagnostics.
+- One pre-acceptance stimulus attempt was consumed without producing its exact
+  target position snapshot before the 180-second timeout. The identical
+  exact-SHA rerun passed end to end; the failed artifact remains linked above
+  so recurrence can be measured rather than hidden.
