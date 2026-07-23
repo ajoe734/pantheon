@@ -101,6 +101,24 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
+      - name: Checkout accepted Agora gate controller
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          repository: ajoe734/pantheon
+          ref: dev
+          path: .agora-gate-controller
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout accepted Agora frontend history
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          repository: ajoe734/execute-plans
+          ref: dev
+          path: .agora-frontend
+          fetch-depth: 0
+          persist-credentials: false
+
       - name: Resolve and validate dev payload
         id: target
         working-directory: .target
@@ -126,6 +144,17 @@ jobs:
             exit 1
           fi
           echo "sha=${sha}" >> "${GITHUB_OUTPUT}"
+
+      - name: Enforce exact Agora pair before any dev switch
+        working-directory: .agora-gate-controller
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          python3 scripts/agora_compat_manifest.py deployment-gate \
+            --manifest docs/contracts/agora/dev-compatibility-manifest.json \
+            --frontend-root "${GITHUB_WORKSPACE}/.agora-frontend" \
+            --backend-dev-ref refs/remotes/origin/dev \
+            --frontend-dev-ref refs/remotes/origin/dev \
+            --backend-runtime-commit "${{ steps.target.outputs.sha }}"
 
       - name: Enforce dev auth deployment floor
         working-directory: .target
