@@ -586,11 +586,12 @@
       "antigravity": {
         "cli": ".orchestrator/bin/agy",
         "include_directories": true,
+        "model": "gemini-3.6-flash-low",
         "print_timeout": "15m"
       },
       "model_rotation": {
         "enabled": true,
-        "primary": "",
+        "primary": "gemini-3.6-flash-low",
         "fallback": "Claude Sonnet 4.6 (Thinking)",
         "cooldown_seconds": 900
       },

@@ -371,6 +371,7 @@ def test_bundle_failure_never_switches_partial_generation_or_checkpoint(tmp_path
         )
     assert not (tmp_path / "current").exists()
     assert not (tmp_path / "controller_state.json").exists()
+    assert not (tmp_path / "health_state.json").exists()
     assert projector.checkpoint == 0
 
     recovered = _projector(tmp_path)
@@ -379,6 +380,57 @@ def test_bundle_failure_never_switches_partial_generation_or_checkpoint(tmp_path
     )
     assert (tmp_path / "current" / "manifest.json").is_file()
     assert recovered.checkpoint == 1
+
+
+def test_health_snapshot_stays_with_current_during_atomic_generation_switch(tmp_path):
+    projector = _projector(tmp_path)
+    projector.project_records(
+        lifecycle_rows()[:1], mode="live", source_high_watermark=1
+    )
+    health_path = tmp_path / "health_state.json"
+    health = json.loads(health_path.read_text(encoding="utf-8"))
+    assert health["generation"] == 1
+    assert "canonical_events" not in health
+
+    observations: list[dict] = []
+
+    def observe_before_switch(_path: Path) -> None:
+        observations.append(
+            projector_readiness(
+                state_path=health_path,
+                bundle_root=tmp_path,
+                max_age_seconds=30,
+                max_backlog=0,
+                min_free_bytes=0,
+                min_free_percent=0,
+                now=datetime(2026, 7, 15, 0, 1, 2, tzinfo=timezone.utc),
+            )
+        )
+
+    projector.bundle = AtomicProjectionBundle(
+        tmp_path,
+        before_switch=observe_before_switch,
+    )
+    projector.project_records(
+        lifecycle_rows()[1:2], mode="live", source_high_watermark=2
+    )
+
+    assert len(observations) == 1
+    assert observations[0]["ready"] is True
+    assert observations[0]["current_generation"] == 1
+    assert observations[0]["controller_generation"] == 1
+    after = projector_readiness(
+        state_path=health_path,
+        bundle_root=tmp_path,
+        max_age_seconds=30,
+        max_backlog=0,
+        min_free_bytes=0,
+        min_free_percent=0,
+        now=datetime(2026, 7, 15, 0, 1, 2, tzinfo=timezone.utc),
+    )
+    assert after["ready"] is True
+    assert after["current_generation"] == 2
+    assert after["controller_generation"] == 2
 
 
 def test_source_failure_preserves_last_good_bundle(tmp_path):
