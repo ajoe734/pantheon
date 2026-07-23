@@ -101,7 +101,8 @@ python3 scripts/agora_compat_manifest.py deployment-gate \
   --manifest docs/contracts/agora/dev-compatibility-manifest.json \
   --frontend-root /home/lupin/code/execute-plans \
   --backend-dev-ref refs/remotes/origin/dev \
-  --frontend-dev-ref refs/remotes/origin/dev
+  --frontend-dev-ref refs/remotes/origin/dev \
+  --backend-runtime-commit <exact-target-sha>
 ```
 
 Use `verify --allow-pending` only as a repo sanity check for a deliberately
@@ -110,8 +111,10 @@ non-accepted candidate. Actual dev deployment requires
 commits reachable from both protected `dev` branches, matching v1.13
 bundle/OpenAPI/capability/generated-type hashes, exact handoff bytes, and the
 full advertised Agora capability set. The dev workflow performs this check
-before the environment lease and deploy command, so a pending, rejected, or
-tampered candidate cannot reach the switch path.
+from a clean protected-`dev` gate-controller checkout and compares the accepted
+backend runtime identity to the resolved deployment `TARGET_SHA`. It runs
+before the environment lease and deploy command, so a pending, rejected,
+tampered, or later arbitrary payload cannot reach the switch path.
 
 Latest verified dev root deploy, 2026-06-11:
 

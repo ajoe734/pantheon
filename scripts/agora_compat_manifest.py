@@ -50,6 +50,7 @@ SHA_RE = re.compile(r"^[a-f0-9]{64}$")
 COMMIT_RE = re.compile(r"^[a-f0-9]{40}$")
 ACCEPTED_STATUS = "accepted"
 NON_ACCEPTED_STATUSES = {"pending", "rejected"}
+GATE_EVIDENCE_SCHEMA = "pantheon.agora.compatibility-gate-evidence.v1"
 
 
 class ManifestError(ValueError):
@@ -142,6 +143,13 @@ def commit_is_reachable(repo_root: Path, commit: str, dev_ref: str) -> bool:
     if not COMMIT_RE.fullmatch(commit):
         return False
     return git_process(repo_root, ["merge-base", "--is-ancestor", commit, dev_ref]).returncode == 0
+
+
+def git_tree(repo_root: Path, commit: str) -> str:
+    value = git_output(repo_root, ["rev-parse", f"{commit}^{{tree}}"])
+    if not COMMIT_RE.fullmatch(value):
+        raise ManifestError(f"cannot resolve the Git tree for commit {commit}")
+    return value
 
 
 def sha256_git_generated_types(
@@ -700,6 +708,7 @@ def validate_deployment_rules(
     manifest: dict[str, Any],
     *,
     expected_backend_runtime_commit: str | None = None,
+    expected_frontend_runtime_commit: str | None = None,
 ) -> list[str]:
     issues: list[str] = []
     backend = manifest.get("backend") if isinstance(manifest.get("backend"), dict) else {}
@@ -719,6 +728,11 @@ def validate_deployment_rules(
         issues.append(
             "backend.runtime_commit does not match the required runtime identity: "
             f"expected {expected_backend_runtime_commit}, got {backend.get('runtime_commit')}"
+        )
+    if expected_frontend_runtime_commit and frontend.get("runtime_commit") != expected_frontend_runtime_commit:
+        issues.append(
+            "frontend.runtime_commit does not match the required runtime identity: "
+            f"expected {expected_frontend_runtime_commit}, got {frontend.get('runtime_commit')}"
         )
 
     comparisons = (
@@ -756,6 +770,7 @@ def verify_manifest(
     allow_pending: bool = False,
     deployment_gate: bool = False,
     expected_backend_runtime_commit: str | None = None,
+    expected_frontend_runtime_commit: str | None = None,
 ) -> list[str]:
     require_git_repo(REPO_ROOT, "Pantheon root")
     require_git_repo(frontend_root, "execute-plans root")
@@ -775,9 +790,48 @@ def verify_manifest(
             validate_deployment_rules(
                 manifest,
                 expected_backend_runtime_commit=expected_backend_runtime_commit,
+                expected_frontend_runtime_commit=expected_frontend_runtime_commit,
             )
         )
     return issues
+
+
+def build_gate_evidence(
+    manifest_path: Path,
+    *,
+    frontend_root: Path,
+    backend_runtime_commit: str,
+    frontend_runtime_commit: str,
+) -> dict[str, Any]:
+    manifest = read_json(manifest_path)
+    controller_commit = git_output(REPO_ROOT, ["rev-parse", "HEAD"])
+    if not COMMIT_RE.fullmatch(controller_commit):
+        raise ManifestError("cannot resolve the Pantheon gate controller commit")
+    return {
+        "schema_version": GATE_EVIDENCE_SCHEMA,
+        "contract_family": manifest["contract_family"],
+        "environment": manifest["environment"],
+        "compatibility_status": manifest["compatibility_status"],
+        "blocking_reasons": manifest["blocking_reasons"],
+        "manifest_sha256": sha256_file(manifest_path),
+        "gate_controller": {
+            "repo": "ajoe734/pantheon",
+            "commit": controller_commit,
+            "tree": git_tree(REPO_ROOT, controller_commit),
+        },
+        "backend": {
+            "repo": "ajoe734/pantheon",
+            "runtime_commit": backend_runtime_commit,
+            "tree": git_tree(REPO_ROOT, backend_runtime_commit),
+        },
+        "frontend": {
+            "repo": "ajoe734/execute-plans",
+            "runtime_commit": frontend_runtime_commit,
+            "tree": git_tree(frontend_root, frontend_runtime_commit),
+        },
+        "source_handoffs": manifest["source_handoffs"],
+        "hash_policy": manifest["hash_policy"],
+    }
 
 
 def print_issues(issues: list[str]) -> None:
@@ -812,6 +866,7 @@ def _verify_from_args(args: argparse.Namespace, *, deployment_gate: bool) -> int
             allow_pending=getattr(args, "allow_pending", False),
             deployment_gate=deployment_gate,
             expected_backend_runtime_commit=args.backend_runtime_commit or None,
+            expected_frontend_runtime_commit=args.frontend_runtime_commit or None,
         )
     except ManifestError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
@@ -820,6 +875,26 @@ def _verify_from_args(args: argparse.Namespace, *, deployment_gate: bool) -> int
         print_issues(issues)
         return 1
     if deployment_gate:
+        if args.evidence_out:
+            if not args.backend_runtime_commit or not args.frontend_runtime_commit:
+                print(
+                    "ERROR: --evidence-out requires both --backend-runtime-commit "
+                    "and --frontend-runtime-commit",
+                    file=sys.stderr,
+                )
+                return 1
+            try:
+                evidence = build_gate_evidence(
+                    Path(args.manifest),
+                    frontend_root=Path(args.frontend_root).expanduser().resolve(),
+                    backend_runtime_commit=args.backend_runtime_commit,
+                    frontend_runtime_commit=args.frontend_runtime_commit,
+                )
+                write_json(Path(args.evidence_out), evidence)
+            except ManifestError as exc:
+                print(f"ERROR: {exc}", file=sys.stderr)
+                return 1
+            print(f"gate evidence written {Path(args.evidence_out)}")
         print(f"deployment gate passed {Path(args.manifest)}")
     else:
         print(f"ok {Path(args.manifest)}")
@@ -861,6 +936,7 @@ def add_verify_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
     parser = subparsers.add_parser("verify", help="verify handoffs, hashes, and dev reachability")
     parser.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
     parser.add_argument("--backend-runtime-commit", default="")
+    parser.add_argument("--frontend-runtime-commit", default="")
     parser.add_argument(
         "--allow-pending",
         action="store_true",
@@ -879,6 +955,8 @@ def add_deployment_gate_parser(
     )
     parser.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
     parser.add_argument("--backend-runtime-commit", default="")
+    parser.add_argument("--frontend-runtime-commit", default="")
+    parser.add_argument("--evidence-out", default="")
     add_repo_arguments(parser)
     parser.set_defaults(func=command_deployment_gate)
 

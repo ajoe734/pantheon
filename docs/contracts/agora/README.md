@@ -56,10 +56,18 @@ python3 scripts/agora_compat_manifest.py write \
   --frontend-root /path/to/execute-plans
 python3 scripts/agora_compat_manifest.py deployment-gate \
   --manifest docs/contracts/agora/dev-compatibility-manifest.json \
-  --frontend-root /path/to/execute-plans
+  --frontend-root /path/to/execute-plans \
+  --backend-runtime-commit <exact-pantheon-payload-sha> \
+  --frontend-runtime-commit <exact-execute-plans-payload-sha> \
+  --evidence-out /path/to/agora-compatibility-gate.json
 ```
 
 `write --compatibility-status accepted` and `deployment-gate` reject
 placeholder, mismatched, tampered, or non-`dev`-reachable identities.
+The two runtime arguments bind the actual deployment payloads to the accepted
+manifest instead of merely proving that older compatible commits remain in
+`dev` history. With both arguments present, `--evidence-out` records the exact
+manifest digest and backend/frontend Git commit/tree identities for the
+frontend release controller to consume before its hosted symlink switch.
 `verify --allow-pending` remains a repository-inspection path only; it is never
 used by the accepting deployment workflow.
