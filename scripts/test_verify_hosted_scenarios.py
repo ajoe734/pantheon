@@ -234,6 +234,36 @@ def test_sse_frame_parser_preserves_cursor_event_and_json_data() -> None:
     }
 
 
+def test_p95_uses_twenty_samples_without_treating_one_outlier_as_the_p95() -> None:
+    samples = [700.0] * 19 + [6000.0]
+
+    assert verifier_module._percentile_95(samples) == 700.0
+
+
+def test_performance_budget_uses_warmups_and_twenty_samples_per_route(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    calls = []
+
+    def transport(method, url, **_kwargs):
+        calls.append((method, url))
+        return {"status": 200, "headers": {}, "json": {}, "duration_ms": 700.0}
+
+    recorder = verifier_module.EvidenceRecorder(config)
+    verifier = verifier_module.HostedVerifier(config, recorder, transport=transport)
+    verifier.operator_token = "operator-token"
+
+    verifier.verify_performance_budget()
+
+    axis = recorder.axes[-1]
+    assert len(calls) == 45
+    assert axis["name"] == "performance_budget"
+    assert axis["passed"] is True
+    assert axis["details"]["detail"]["sample_count"] == 20
+    assert axis["details"]["detail"]["warmup_count"] == 4
+    assert axis["details"]["resolve"]["sample_count"] == 20
+    assert axis["details"]["resolve"]["warmup_count"] == 1
+
+
 def test_source_has_no_legacy_bearer_or_insecure_tls_override() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
 

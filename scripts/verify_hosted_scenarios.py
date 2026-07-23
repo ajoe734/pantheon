@@ -102,6 +102,8 @@ LEDGER_SOURCE_ID_FIELDS = (
     "correlation_id",
     "event_id",
 )
+PERFORMANCE_DETAIL_SCENARIOS = (1, 4, 7, 11)
+PERFORMANCE_SAMPLE_COUNT = 20
 
 
 class VerificationError(RuntimeError):
@@ -1387,14 +1389,67 @@ class HostedVerifier:
         return None
 
     def verify_performance_budget(self) -> None:
-        detail_labels = [
-            f"scenario-{number:02d}-detail"
-            for number in (*range(1, 10), 11, 12)
-        ]
-        resolve_labels = [
-            f"scenario-09-resolve-{identifier_type}"
-            for identifier_type in RESOLVE_IDENTIFIER_FIELDS
-        ] + ["scenario-09-resolve-ambiguity"]
+        detail_warmup_labels: list[str] = []
+        detail_labels: list[str] = []
+        detail_statuses: list[int | None] = []
+        for number in PERFORMANCE_DETAIL_SCENARIOS:
+            label = f"axis-performance-detail-s{number:02d}-warmup"
+            response = self._bff_call(
+                label,
+                _query(
+                    f"/bff/management/trade-journeys/tj-scenario-{number}",
+                    tenant_id=self.config.tenant_id,
+                    environment="paper",
+                ),
+                token=self.operator_token,
+            )
+            detail_warmup_labels.append(label)
+            detail_statuses.append(response.get("status"))
+
+        for sample_index in range(PERFORMANCE_SAMPLE_COUNT):
+            number = PERFORMANCE_DETAIL_SCENARIOS[
+                sample_index % len(PERFORMANCE_DETAIL_SCENARIOS)
+            ]
+            label = (
+                f"axis-performance-detail-s{number:02d}"
+                f"-sample-{sample_index + 1:02d}"
+            )
+            response = self._bff_call(
+                label,
+                _query(
+                    f"/bff/management/trade-journeys/tj-scenario-{number}",
+                    tenant_id=self.config.tenant_id,
+                    environment="paper",
+                ),
+                token=self.operator_token,
+            )
+            detail_labels.append(label)
+            detail_statuses.append(response.get("status"))
+
+        resolve_path = _query(
+            "/bff/management/trade-journeys/resolve",
+            q=self.config.ambiguity_identifier,
+            tenant_id=self.config.tenant_id,
+            environment="paper",
+        )
+        resolve_warmup_label = "axis-performance-resolve-warmup"
+        resolve_warmup = self._bff_call(
+            resolve_warmup_label,
+            resolve_path,
+            token=self.operator_token,
+        )
+        resolve_labels: list[str] = []
+        resolve_statuses: list[int | None] = [resolve_warmup.get("status")]
+        for sample_index in range(PERFORMANCE_SAMPLE_COUNT):
+            label = f"axis-performance-resolve-sample-{sample_index + 1:02d}"
+            response = self._bff_call(
+                label,
+                resolve_path,
+                token=self.operator_token,
+            )
+            resolve_labels.append(label)
+            resolve_statuses.append(response.get("status"))
+
         detail_samples = [
             value for label in detail_labels if (value := self._duration_for(label)) is not None
         ]
@@ -1404,27 +1459,41 @@ class HostedVerifier:
         detail_p95 = _percentile_95(detail_samples) if detail_samples else float("inf")
         resolve_p95 = _percentile_95(resolve_samples) if resolve_samples else float("inf")
         passed = (
-            len(detail_samples) == len(detail_labels)
-            and len(resolve_samples) == len(resolve_labels)
+            all(status == 200 for status in detail_statuses)
+            and all(status == 200 for status in resolve_statuses)
+            and len(detail_samples) == PERFORMANCE_SAMPLE_COUNT
+            and len(resolve_samples) == PERFORMANCE_SAMPLE_COUNT
             and detail_p95 <= 1500.0
             and resolve_p95 <= 1000.0
         )
         details = {
             "detail": {
                 "sample_count": len(detail_samples),
+                "required_sample_count": PERFORMANCE_SAMPLE_COUNT,
+                "warmup_count": len(detail_warmup_labels),
+                "sampled_scenarios": list(PERFORMANCE_DETAIL_SCENARIOS),
+                "http_statuses": detail_statuses,
                 "p95_ms": detail_p95,
                 "budget_ms": 1500.0,
             },
             "resolve": {
                 "sample_count": len(resolve_samples),
+                "required_sample_count": PERFORMANCE_SAMPLE_COUNT,
+                "warmup_count": 1,
+                "http_statuses": resolve_statuses,
                 "p95_ms": resolve_p95,
                 "budget_ms": 1000.0,
             },
         }
         self.recorder.record_axis(
             "performance_budget",
-            scenario_numbers=(*range(1, 10), 11, 12),
-            evidence_labels=(*detail_labels, *resolve_labels),
+            scenario_numbers=(*PERFORMANCE_DETAIL_SCENARIOS, 9),
+            evidence_labels=(
+                *detail_warmup_labels,
+                *detail_labels,
+                resolve_warmup_label,
+                *resolve_labels,
+            ),
             passed=passed,
             details=details,
         )
