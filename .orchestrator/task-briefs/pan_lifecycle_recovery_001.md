@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review_approved
 - Owner: Codex2
 - Reviewer: Codex
-- Next: Codex2 is pinning the hosted readback's expected login identity to the MFA-bound operator A credential before the final accepted deploy.
+- Next: Codex2 is finalizing the task-scoped evidence PR after exact-SHA governed run 29967962811 passed deployment, canonical stimulus/projection, authenticated BFF readback, restart persistence, and lease release.
 
 ## Summary
 修復 ENOSPC 後仍停更的 lifecycle projector，加入安全 generation retention、可恢復 publish 與 readiness/freshness truth，並把 live rescue 正式經 PR 部署。
