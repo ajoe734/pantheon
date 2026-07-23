@@ -20,13 +20,14 @@ was read or recorded during this recheck.
 | Dispatch/lifecycle dependencies | The functional commits from `OPS-DISPATCH-LEASE-SYNC-001` and `PAN-LIFECYCLE-RECOVERY-001` are ancestors of the hosted BFF source SHA. The final lifecycle PR after that release changed task evidence only. | Pass |
 | Hosted BFF | Public `/bff/version` reports `c555a14ebbcc2a7504076eeba3d381b016231833`, `source_commit_known=true`, strict auth, dev login enabled, MFA required, and assistant kernel enabled. `/healthz` and `/readyz` returned HTTP 200. | Pass |
 | BFF release | Pantheon Dev deploy run [29968941919](https://github.com/ajoe734/pantheon/actions/runs/29968941919) completed successfully, including the auth floor, shared lease, paper baseline, exact version proof, persistence smoke, and lease release. | Pass |
-| Hosted frontend before reconciliation | The accepted read-only manifest reports execute-plans `0cfc3058b1b20bf850b0d5132c250f13cf88421d` and BFF `5004450c5493aa8aef284cf42439c9b27ef54235`, while the live BFF is `c555a14e...`. | Not an accepted exact pair |
-| Frontend reconciliation | execute-plans integration run [29964393757](https://github.com/ajoe734/execute-plans/actions/runs/29964393757) was rerun against the stable live BFF. | In progress at capture time |
+| Hosted frontend | The accepted read-only manifest reports execute-plans `9597d0c3146451a004c30f2e638010c4eec86488`, BFF `c555a14ebbcc2a7504076eeba3d381b016231833`, pair ID `923affa601982724112b1d5bec99d5a261dac33f446441eaca125ec2807d55a0`, and accepted time `2026-07-23T01:06:17Z`. | Exact accepted pair |
+| Frontend reconciliation | execute-plans integration run [29964393757](https://github.com/ajoe734/execute-plans/actions/runs/29964393757) passed against the stable live BFF. Read-only deploy run [29970579394](https://github.com/ajoe734/execute-plans/actions/runs/29970579394) then passed candidate identity, controller regression, switch, post-switch probes, audit sealing, and evidence persistence. | Pass |
 
-The frontend manifest remains safe while reconciliation runs:
+The reconciled frontend manifest remains safe:
 `VITE_BFF_MODE=live`, `VITE_BFF_FALLBACK=strict`, real writes false,
 dev-stub writes false, embedded bearer false, deployment profile `read-only`,
-and deployment state `accepted`.
+deployment state `accepted`, candidate and post-switch probes passed, and
+rollback was not required.
 
 ## Why B1 is fail-closed
 
@@ -73,7 +74,7 @@ side effect was produced during this recheck.
 | --- | --- | --- |
 | B1 | Blocked | No policy-valid same-identity `paper -> canary/live-eligible -> allocation` chain can be produced while the mandated execution switches remain false. |
 | B2 | Cleared | Dedicated clients, strict BFF, MFA, and prior write/read-only restore proof are already provisioned. Do not reopen the credential request. |
-| B3 | Blocked by B1 | The addendum requires the exact B1 chain through the accepted FE/BFF pair on desktop and 393px mobile; an infrastructure-only or PINT paper proof is insufficient. |
+| B3 | Blocked only by B1 | The FE/BFF pair is accepted and its full release-candidate browser/E2E gate passed. The addendum still requires the exact B1 chain on desktop and 393px mobile; an infrastructure-only or PINT paper proof is insufficient. |
 | B4 | Cleared | Prior dependency delivery remains valid; current dispatch/lifecycle functional commits are included in the hosted BFF. |
 | B5 | Not requested | Reviewer `Codex2` must decide IA only after B1/B3 evidence exists. |
 
@@ -94,8 +95,11 @@ fail-closed flags and must not manufacture the missing transition.
 
 ## Validation record
 
-- Public FE manifest, BFF `/bff/version`, `/healthz`, and `/readyz` rechecked on
-  2026-07-23 UTC.
+- Public FE manifest, BFF `/bff/version`, `/healthz`, and `/readyz` rechecked at
+  `2026-07-23T01:06:50Z`.
+- execute-plans integration gate `29964393757` and read-only deploy
+  `29970579394` passed; public manifest readback matches both exact source SHAs
+  and reports `deploymentState=accepted` with no rollback required.
 - Pantheon deploy run `29968941919` conclusion and step outcomes checked through
   GitHub Actions.
 - Git ancestry verified for the two PPL commits and all functional lifecycle
@@ -106,4 +110,3 @@ fail-closed flags and must not manufacture the missing transition.
   this worktree because the system Python has no `pytest` module; their source
   assertions and the successful release CI remain recorded. No package install
   was performed for this documentation-only recheck.
-

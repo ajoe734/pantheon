@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "task_id": "PPL-ALLOC-009",
-  "captured_at": "2026-07-23T00:50:53Z",
+  "captured_at": "2026-07-23T01:06:50Z",
   "status": "blocked",
   "owner": "Codex",
   "reviewer": "Codex2",
@@ -32,13 +32,15 @@
       "atomic_stage_promotion": "3b9336b0dc2929128b17b924921d63e0e5ed7911"
     }
   },
-  "hosted_frontend_before_reconciliation": {
-    "commit": "0cfc3058b1b20bf850b0d5132c250f13cf88421d",
-    "manifest_bff_commit": "5004450c5493aa8aef284cf42439c9b27ef54235",
+  "hosted_frontend": {
+    "commit": "9597d0c3146451a004c30f2e638010c4eec86488",
+    "manifest_bff_commit": "c555a14ebbcc2a7504076eeba3d381b016231833",
     "live_bff_commit": "c555a14ebbcc2a7504076eeba3d381b016231833",
-    "manifest_matches_runtime_bff": false,
+    "manifest_matches_runtime_bff": true,
+    "pair_id": "923affa601982724112b1d5bec99d5a261dac33f446441eaca125ec2807d55a0",
     "deployment_profile": "read-only",
     "deployment_state": "accepted",
+    "accepted_at": "2026-07-23T01:06:17Z",
     "safe_build_mode": {
       "bff_mode": "live",
       "bff_fallback": "strict",
@@ -46,8 +48,13 @@
       "dev_stub_writes": false,
       "embedded_bearer": false
     },
-    "reconciliation_run_id": 29964393757,
-    "reconciliation_run_status_at_capture": "in_progress"
+    "integration_gate_run_id": 29964393757,
+    "integration_gate_conclusion": "success",
+    "deployment_run_id": 29970579394,
+    "deployment_run_conclusion": "success",
+    "candidate_pre_switch": "passed",
+    "post_switch": "passed",
+    "rollback_required": false
   },
   "policy_boundary": {
     "positive_allocation_stages": [
@@ -72,7 +79,7 @@
   "acceptance": {
     "B1": "blocked_policy_boundary",
     "B2": "cleared",
-    "B3": "blocked_by_B1",
+    "B3": "blocked_only_by_B1_exact_pair_cleared",
     "B4": "cleared",
     "B5": "not_requested"
   },
@@ -90,6 +97,9 @@
   },
   "validation": {
     "public_runtime_probes": "passed",
+    "execute_plans_integration_gate": "passed",
+    "execute_plans_read_only_deployment": "passed",
+    "accepted_pair_public_readback": "passed",
     "git_ancestry": "passed",
     "policy_and_deploy_contract_inspection": "passed",
     "focused_pytest": "not_run_pytest_module_missing"
