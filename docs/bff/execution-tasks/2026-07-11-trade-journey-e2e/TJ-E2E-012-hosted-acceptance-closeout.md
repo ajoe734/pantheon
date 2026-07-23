@@ -39,7 +39,7 @@ This recommendation is not an approval. Section 8 remains the terminal gate.
 
 ## 2. Accepted deployment identities
 
-### Current read-only pair used by the twelve-scenario run
+### Run-bound read-only pair used by the twelve-scenario run
 
 | Surface | Immutable identity | Delivery evidence |
 | --- | --- | --- |
@@ -52,6 +52,21 @@ The accepted frontend manifest records `VITE_BFF_MODE=live`,
 `VITE_BFF_ALLOW_DEV_STUB_WRITES=false`, no embedded bearer token, and exact BFF
 commit `c555a14e...`. The public BFF reports strict auth with stub auth disabled.
 
+### Post-run hosted movement
+
+A read-only probe at `2026-07-23T06:59:14Z` found that the dev host had moved
+after run `29971351535` to frontend
+`40bad1f1a3e0c58ae24825364f5eb2cca824fc6d` and BFF
+`b87f3d711e2b8479ce7d68fe8a6228dbe5a2bfe7`, pair ID
+`e224045b8bbc976a4ef68ab5adf5a8e69e724c48e638d8fe84950e45b54bcc60`.
+Its manifest still records strict live-BFF wiring, read-only write defaults,
+known BFF source identity, passed pre/post-switch probes and no rollback.
+
+This later pair is not covered by the immutable twelve-scenario run. Host
+movement does not mutate or invalidate the run-bound evidence, but the packet
+must not be cited as proof of the later hosted tip. A new run is required
+before that exact tip is itself claimed as accepted.
+
 ### Retained browser-proof pair
 
 The already-demonstrated browser axes are bound to the earlier accepted PINT
@@ -60,7 +75,9 @@ pair: frontend `4c71e7934d2455f89a9da536b5c222ed6c60d083`, BFF
 `5162fbbb20ea344826402976728a6659b1dab7fddb3e7af387376f2fe194f68c`.
 The browser run was an explicitly authorized temporary write-proof profile;
 the Trade Journey traces cited here are GET requests. It is not the current
-rollout posture, which is the safe read-only pair above.
+rollout posture, which remains read-only. Neither the retained browser proof nor
+the run-bound API proof is evidence for the post-run hosted tip identified
+above.
 
 ## 3. Immutable hosted artifact
 
@@ -164,6 +181,7 @@ and its scenario-specific assertion.
 | R3 — Deterministic dev scenarios are not live-capital proof | The run proves hosted canonical behavior with safe writes off. It does not authorize live writes, broker capital, or production default rollout. | Human/Ops + Trading Ops | Must be resolved by a separate governed canary/live decision |
 | R4 — GitHub artifacts have finite retention | Browser artifact expires 2026-10-19; final ledger artifact expires 2026-10-21. Archive them in the governed evidence store if retention beyond that date is required. | Release Engineering | 2026-10-12 |
 | R5 — Human/Ops verdict is outstanding | No owner, helper or model assertion can satisfy the independent decision. Task remains open until Section 8 is completed by Human/Ops and the governed reviewer records the result. | Human/Ops | Blocking; no waiver |
+| R6 — Dev hosted tip advanced after the acceptance run | The currently served read-only pair is newer than both retained proof pairs. Preserve the immutable historical result, but do not claim the current tip is covered; rerun the exact pair before claiming it as accepted. | Release Engineering + Trade Journey owners | Before current-tip acceptance, canary or production promotion |
 
 ## 8. Independent Human/Ops verdict — required
 
