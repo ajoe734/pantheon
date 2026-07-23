@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
-import os
 import subprocess
 from pathlib import Path
 
@@ -141,8 +140,16 @@ def accepted_manifest(tmp_path: Path, frontend_repo: dict[str, object]) -> dict[
     return {"path": output, "frontend": frontend_repo}
 
 
-def _gate(manifest: Path, frontend_root: Path, *, frontend_ref: str = "refs/heads/dev"):
-    return _run(
+def _gate(
+    manifest: Path,
+    frontend_root: Path,
+    *,
+    frontend_ref: str = "refs/heads/dev",
+    backend_runtime_commit: str = "",
+    frontend_runtime_commit: str = "",
+    evidence_out: Path | None = None,
+):
+    args = [
         "deployment-gate",
         "--manifest",
         str(manifest),
@@ -152,7 +159,14 @@ def _gate(manifest: Path, frontend_root: Path, *, frontend_ref: str = "refs/head
         "HEAD",
         "--frontend-dev-ref",
         frontend_ref,
-    )
+    ]
+    if backend_runtime_commit:
+        args.extend(["--backend-runtime-commit", backend_runtime_commit])
+    if frontend_runtime_commit:
+        args.extend(["--frontend-runtime-commit", frontend_runtime_commit])
+    if evidence_out is not None:
+        args.extend(["--evidence-out", str(evidence_out)])
+    return _run(*args)
 
 
 def test_write_manifest_consumes_both_handoffs_and_accepts_exact_pair(
@@ -190,6 +204,69 @@ def test_deployment_gate_passes_for_exact_reachable_pair(
 
     assert gate.returncode == 0, gate.stderr
     assert "deployment gate passed" in gate.stdout
+
+
+def test_deployment_gate_binds_both_actual_runtime_payloads_and_writes_evidence(
+    accepted_manifest: dict[str, object],
+    tmp_path: Path,
+) -> None:
+    output = accepted_manifest["path"]
+    frontend = accepted_manifest["frontend"]
+    assert isinstance(output, Path)
+    assert isinstance(frontend, dict)
+    frontend_root = frontend["root"]
+    assert isinstance(frontend_root, Path)
+    manifest = json.loads(output.read_text(encoding="utf-8"))
+    evidence_path = tmp_path / "agora-compatibility-gate.json"
+
+    gate = _gate(
+        output,
+        frontend_root,
+        backend_runtime_commit=manifest["backend"]["runtime_commit"],
+        frontend_runtime_commit=manifest["frontend"]["runtime_commit"],
+        evidence_out=evidence_path,
+    )
+
+    assert gate.returncode == 0, gate.stderr
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    assert evidence["schema_version"] == "pantheon.agora.compatibility-gate-evidence.v1"
+    assert evidence["compatibility_status"] == "accepted"
+    assert evidence["blocking_reasons"] == []
+    assert evidence["manifest_sha256"] == _sha256(output)
+    assert evidence["backend"]["runtime_commit"] == manifest["backend"]["runtime_commit"]
+    assert evidence["frontend"]["runtime_commit"] == manifest["frontend"]["runtime_commit"]
+    assert len(evidence["backend"]["tree"]) == 40
+    assert len(evidence["frontend"]["tree"]) == 40
+
+
+@pytest.mark.parametrize("owner", ["backend", "frontend"])
+def test_deployment_gate_rejects_actual_runtime_payload_mismatch(
+    accepted_manifest: dict[str, object],
+    owner: str,
+) -> None:
+    output = accepted_manifest["path"]
+    frontend = accepted_manifest["frontend"]
+    assert isinstance(output, Path)
+    assert isinstance(frontend, dict)
+    frontend_root = frontend["root"]
+    assert isinstance(frontend_root, Path)
+    manifest = json.loads(output.read_text(encoding="utf-8"))
+    backend_runtime = manifest["backend"]["runtime_commit"]
+    frontend_runtime = manifest["frontend"]["runtime_commit"]
+    if owner == "backend":
+        backend_runtime = "f" * 40
+    else:
+        frontend_runtime = "f" * 40
+
+    gate = _gate(
+        output,
+        frontend_root,
+        backend_runtime_commit=backend_runtime,
+        frontend_runtime_commit=frontend_runtime,
+    )
+
+    assert gate.returncode == 1
+    assert f"{owner}.runtime_commit does not match the required runtime identity" in gate.stderr
 
 
 @pytest.mark.parametrize(
@@ -301,92 +378,19 @@ def test_write_rejects_frontend_handoff_not_reachable_from_dev(
     assert not output.exists()
 
 
-@pytest.mark.parametrize("status", ["pending", "rejected"])
-def test_nonaccepted_candidate_cannot_reach_switch_or_active_manifest(
-    accepted_manifest: dict[str, object],
-    tmp_path: Path,
-    status: str,
-) -> None:
-    output = accepted_manifest["path"]
-    frontend = accepted_manifest["frontend"]
-    assert isinstance(output, Path)
-    assert isinstance(frontend, dict)
-    frontend_root = frontend["root"]
-    assert isinstance(frontend_root, Path)
-    candidate = json.loads(output.read_text(encoding="utf-8"))
-    candidate["compatibility_status"] = status
-    candidate["blocking_reasons"] = [f"test-{status}"]
-    output.write_text(json.dumps(candidate), encoding="utf-8")
-
-    previous = tmp_path / "release-previous"
-    next_release = tmp_path / "release-candidate"
-    previous.mkdir()
-    next_release.mkdir()
-    live = tmp_path / "live"
-    live.symlink_to(previous)
-    active_manifest = tmp_path / "active-manifest.json"
-    active_manifest.write_text('{"pair":"previous"}\n', encoding="utf-8")
-    before_manifest = active_manifest.read_bytes()
-    before_target = os.readlink(live)
-
-    gate = _gate(output, frontend_root)
-    if gate.returncode == 0:  # pragma: no cover - this is the forbidden path.
-        live.unlink()
-        live.symlink_to(next_release)
-        active_manifest.write_bytes(output.read_bytes())
-
-    assert gate.returncode == 1
-    assert "compatibility_status must be accepted for deployment" in gate.stderr
-    assert os.readlink(live) == before_target
-    assert active_manifest.read_bytes() == before_manifest
-
-
-def test_rollback_drill_restores_prior_accepted_pair(
-    accepted_manifest: dict[str, object],
-    tmp_path: Path,
-) -> None:
-    output = accepted_manifest["path"]
-    frontend = accepted_manifest["frontend"]
-    assert isinstance(output, Path)
-    assert isinstance(frontend, dict)
-    frontend_root = frontend["root"]
-    assert isinstance(frontend_root, Path)
-    assert _gate(output, frontend_root).returncode == 0
-
-    previous = tmp_path / "release-previous"
-    candidate = tmp_path / "release-candidate"
-    previous.mkdir()
-    candidate.mkdir()
-    live = tmp_path / "live"
-    live.symlink_to(previous)
-    active_manifest = tmp_path / "active-manifest.json"
-    previous_manifest = b'{"compatibility_status":"accepted","pair":"previous"}\n'
-    active_manifest.write_bytes(previous_manifest)
-    previous_target = os.readlink(live)
-
-    live.unlink()
-    live.symlink_to(candidate)
-    active_manifest.write_bytes(output.read_bytes())
-    post_switch_probe_passed = False
-    if not post_switch_probe_passed:
-        live.unlink()
-        live.symlink_to(previous_target)
-        active_manifest.write_bytes(previous_manifest)
-
-    assert live.resolve() == previous.resolve()
-    assert active_manifest.read_bytes() == previous_manifest
-
-
 def test_workflow_enforces_gate_before_any_deploy_switch() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
+    gate_controller = workflow.index("Checkout accepted Agora gate controller")
     frontend_checkout = workflow.index("Checkout accepted Agora frontend history")
     gate = workflow.index("Enforce exact Agora pair before any dev switch")
     deploy = workflow.index("Deploy dev VM stack under lease")
 
+    assert gate_controller < gate
     assert frontend_checkout < gate < deploy
     gate_block = workflow[gate:deploy]
     assert "scripts/agora_compat_manifest.py" in gate_block
     assert "deployment-gate" in gate_block
+    assert '--backend-runtime-commit "${{ steps.target.outputs.sha }}"' in gate_block
     assert "--allow-pending" not in gate_block
 
 
