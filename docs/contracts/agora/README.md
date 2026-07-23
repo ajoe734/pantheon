@@ -53,7 +53,9 @@ Generate and verify the accepted pair from both repositories:
 
 ```sh
 python3 scripts/agora_compat_manifest.py write \
-  --frontend-root /path/to/execute-plans
+  --frontend-root /path/to/execute-plans \
+  --backend-runtime-commit <exact-pantheon-payload-sha> \
+  --frontend-runtime-commit <exact-execute-plans-payload-sha>
 python3 scripts/agora_compat_manifest.py deployment-gate \
   --manifest docs/contracts/agora/dev-compatibility-manifest.json \
   --frontend-root /path/to/execute-plans \
@@ -64,6 +66,12 @@ python3 scripts/agora_compat_manifest.py deployment-gate \
 
 `write --compatibility-status accepted` and `deployment-gate` reject
 placeholder, mismatched, tampered, or non-`dev`-reachable identities.
+The machine-readable handoffs remain the generated contract/type baselines.
+Explicit runtime commits may advance beyond those baselines only when they are
+reachable from `dev`, descend from the respective handoff runtime, and retain
+the exact generated frontend type bytes. This lets the manifest bind a later
+workflow/controller-only delivery commit without weakening the source
+contract proof or creating a self-referential handoff commit.
 The two runtime arguments bind the actual deployment payloads to the accepted
 manifest instead of merely proving that older compatible commits remain in
 `dev` history. With both arguments present, `--evidence-out` records the exact

@@ -190,6 +190,119 @@ def test_write_manifest_consumes_both_handoffs_and_accepts_exact_pair(
     assert manifest["source_handoffs"]["backend"]["sha256"] == _sha256(BACKEND_HANDOFF)
 
 
+def test_write_manifest_accepts_exact_descendant_delivery_payloads(
+    tmp_path: Path,
+    frontend_repo: dict[str, object],
+) -> None:
+    frontend_root = frontend_repo["root"]
+    assert isinstance(frontend_root, Path)
+    (frontend_root / "delivery-controller.txt").write_text(
+        "compatible delivery-only change\n",
+        encoding="utf-8",
+    )
+    _git(frontend_root, "add", "delivery-controller.txt")
+    _git(frontend_root, "commit", "-m", "test: add compatible delivery controller")
+    frontend_delivery_commit = _git(frontend_root, "rev-parse", "HEAD")
+    backend_delivery_commit = _git(ROOT, "rev-parse", "HEAD")
+    output = tmp_path / "delivery-manifest.json"
+
+    result = _run(
+        "write",
+        "--output",
+        str(output),
+        "--frontend-root",
+        str(frontend_root),
+        "--backend-dev-ref",
+        "HEAD",
+        "--frontend-dev-ref",
+        "refs/heads/dev",
+        "--backend-runtime-commit",
+        backend_delivery_commit,
+        "--frontend-runtime-commit",
+        frontend_delivery_commit,
+        "--compatibility-status",
+        "accepted",
+    )
+
+    assert result.returncode == 0, result.stderr
+    manifest = json.loads(output.read_text(encoding="utf-8"))
+    assert manifest["backend"]["runtime_commit"] == backend_delivery_commit
+    assert manifest["frontend"]["runtime_commit"] == frontend_delivery_commit
+    assert manifest["frontend"]["handoff_commit"] == frontend_repo["handoff_commit"]
+    gate = _gate(
+        output,
+        frontend_root,
+        backend_runtime_commit=backend_delivery_commit,
+        frontend_runtime_commit=frontend_delivery_commit,
+    )
+    assert gate.returncode == 0, gate.stderr
+
+
+def test_write_manifest_rejects_unreachable_delivery_payload(
+    tmp_path: Path,
+    frontend_repo: dict[str, object],
+) -> None:
+    frontend_root = frontend_repo["root"]
+    assert isinstance(frontend_root, Path)
+    output = tmp_path / "unreachable-delivery.json"
+
+    result = _run(
+        "write",
+        "--output",
+        str(output),
+        "--frontend-root",
+        str(frontend_root),
+        "--backend-dev-ref",
+        "HEAD",
+        "--frontend-dev-ref",
+        "refs/heads/dev",
+        "--frontend-runtime-commit",
+        "f" * 40,
+        "--compatibility-status",
+        "accepted",
+    )
+
+    assert result.returncode == 1
+    assert "frontend-delivery-runtime-commit-not-reachable-from-dev" in result.stderr
+    assert not output.exists()
+
+
+def test_write_manifest_rejects_delivery_payload_with_changed_generated_types(
+    tmp_path: Path,
+    frontend_repo: dict[str, object],
+) -> None:
+    frontend_root = frontend_repo["root"]
+    assert isinstance(frontend_root, Path)
+    (frontend_root / TYPE_PATHS[1]).write_text(
+        "export type AgoraV113 = { accepted: false };\n",
+        encoding="utf-8",
+    )
+    _git(frontend_root, "add", TYPE_PATHS[1])
+    _git(frontend_root, "commit", "-m", "test: drift generated types")
+    drifted_delivery_commit = _git(frontend_root, "rev-parse", "HEAD")
+    output = tmp_path / "drifted-delivery.json"
+
+    result = _run(
+        "write",
+        "--output",
+        str(output),
+        "--frontend-root",
+        str(frontend_root),
+        "--backend-dev-ref",
+        "HEAD",
+        "--frontend-dev-ref",
+        "refs/heads/dev",
+        "--frontend-runtime-commit",
+        drifted_delivery_commit,
+        "--compatibility-status",
+        "accepted",
+    )
+
+    assert result.returncode == 1
+    assert "frontend-delivery-generated-types-hash-mismatch" in result.stderr
+    assert not output.exists()
+
+
 def test_deployment_gate_passes_for_exact_reachable_pair(
     accepted_manifest: dict[str, object],
 ) -> None:
