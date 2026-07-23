@@ -1527,6 +1527,65 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         create_worktree.assert_called_once_with(repo_root.resolve(), expected_path, "task/OPS-WORKTREE-001", "origin/dev")
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_worktree_allocated")
 
+    def test_create_worker_worktree_quarantines_incomplete_checkout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "pantheon"
+            repo_root.mkdir()
+            worktree_path = Path(tmpdir) / "workers" / "pantheon" / "ag-ws-ops-002"
+            worktree_path.mkdir(parents=True)
+            (worktree_path / "partial-checkout.txt").write_text("preserve me\n", encoding="utf-8")
+
+            completed = subprocess.CompletedProcess(args=["git"], returncode=0, stdout="", stderr="")
+            with (
+                mock.patch.object(supervisor, "_git_ref_exists", return_value=False),
+                mock.patch.object(supervisor.subprocess, "run", return_value=completed) as run,
+            ):
+                ok, error = supervisor._create_worker_worktree(
+                    repo_root,
+                    worktree_path,
+                    "task/AG-WS-OPS-002",
+                    "origin/dev",
+                )
+
+            self.assertTrue(ok)
+            self.assertIsNone(error)
+            quarantine_root = worktree_path.parent / ".incomplete-worktree-quarantine"
+            quarantined = list(quarantine_root.glob("ag-ws-ops-002-*"))
+            self.assertEqual(len(quarantined), 1)
+            self.assertEqual(
+                (quarantined[0] / "partial-checkout.txt").read_text(encoding="utf-8"),
+                "preserve me\n",
+            )
+            self.assertIn("original_path=", (quarantined[0] / "ORCHESTRATOR_QUARANTINE.txt").read_text(encoding="utf-8"))
+            run.assert_called_once_with(
+                ["git", "worktree", "add", "-b", "task/AG-WS-OPS-002", str(worktree_path), "origin/dev"],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+    def test_create_worker_worktree_does_not_move_git_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "pantheon"
+            repo_root.mkdir()
+            worktree_path = Path(tmpdir) / "workers" / "pantheon" / "active-task"
+            worktree_path.mkdir(parents=True)
+            (worktree_path / ".git").write_text("gitdir: /safe/metadata\n", encoding="utf-8")
+
+            with mock.patch.object(supervisor.subprocess, "run") as run:
+                ok, error = supervisor._create_worker_worktree(
+                    repo_root,
+                    worktree_path,
+                    "task/ACTIVE-TASK",
+                    "origin/dev",
+                )
+
+            self.assertFalse(ok)
+            self.assertIn("already exists and is not empty", error or "")
+            self.assertTrue((worktree_path / ".git").exists())
+            run.assert_not_called()
+
     def test_generated_worker_task_brief_mentions_inherited_status_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
