@@ -3,11 +3,11 @@
 Generated in the worker workspace because the supervisor root did not have a task brief file.
 
 ## Task
-- Title: Governed Workshop research consultation and conclusion
-- Status: in_progress
+- Title: Restore intended reviewer after quota routing and reviewer-role guardrails are live; Claude remains owner and Antigravity performs the independent review.
+- Status: review_approved
 - Owner: Claude
 - Reviewer: Antigravity
-- Next: Supervisor re-dispatched AG-WS-OPS-002; task remains in progress.
+- Next: Review approved: AG-WS-OPS-002 implementation is complete and verified with PR #3977 and PR #3991 merged into dev. Checked research-runs, consultations, and conclude endpoints, idempotency, version binding, and atomic terminal transitions.
 
 ## Summary
 實作 research-runs、consultations、conclude 三條 deferred API，綁定 durable workshop version、真實 downstream lineage、idempotency 與 atomic terminal transition。
