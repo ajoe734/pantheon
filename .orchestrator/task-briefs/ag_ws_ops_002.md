@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: in_progress
 - Owner: Claude
 - Reviewer: Antigravity
-- Next: Ownership updated
+- Next: Supervisor re-dispatched AG-WS-OPS-002; task remains in progress.
 
 ## Summary
 實作 research-runs、consultations、conclude 三條 deferred API，綁定 durable workshop version、真實 downstream lineage、idempotency 與 atomic terminal transition。
