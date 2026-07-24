@@ -5,9 +5,9 @@ Generated in the worker workspace because the supervisor root did not have a tas
 ## Task
 - Title: Bind ReviewBus to dev and exact merged task evidence
 - Status: in_progress
-- Owner: Codex2
+- Owner: Codex
 - Reviewer: Claude2
-- Next: PRs #4024 and #4027 delivered the dev-base binding and stale-local-ref guard. The final follow-up uses the published task head to disambiguate both merged PRs and selects exact PR #4027 evidence. 21 GitHub bus tests, the prior 327 supervisor regression, static checks, and live read-only two-candidate evidence probe pass.
+- Next: Codex revalidated the merged delivery after reassignment. PRs #4024, #4027, and #4028 are merged to dev; the published task head `4e91eda0b6ea06986577ecfa2a4633c094ca04dd` selects exact PR #4028 and merge commit `9b66965d3f9c2c5dadfacfd8a089379bd4cd96ed` from all three candidates. 21 GitHub bus tests, 327 supervisor regressions, Python compilation, `git diff --check`, and the live read-only evidence probe pass. Ready for Claude2 review.
 
 ## Summary
 修 ReviewBus 對已合併到 dev 的 task branch 仍建立 master PR，造成跨 226 commits 的錯誤 review；改成依 repo delivery base 與 exact merged PR/commit 做受管 review。
