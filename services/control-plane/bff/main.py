@@ -5923,7 +5923,7 @@ def _pm12_resolve_quarterly_recommendation_submit_params(
     quarter = str(params.get("quarter") or "").strip().upper()
     if not recommendation_id or not snapshot_id or not quarter:
         return dict(params)
-    snapshot = _pm12_allocation_snapshot_record(snapshot_id)
+    snapshot = _pm12_recommendation_snapshot_record(snapshot_id)
     snapshot_quarter = str(snapshot.get("period") or "").strip().upper()
     if snapshot_quarter != quarter:
         raise _bff_error(
@@ -25948,6 +25948,8 @@ async def bff_ranking_formula_action(
 _PM12_ALLOCATION_POLICY_VERSION = "persona-real-allocation-v1"
 _PPL_ALLOC_009_PAPER_POLICY_VERSION = "persona-paper-allocation-simulation-v1"
 _PPL_ALLOC_009_PAPER_AUTHORITY_MODE = "governed_paper_simulation"
+_PM12_RANKING_SNAPSHOT_DEFAULT_TTL_SECONDS = 24 * 60 * 60
+_PM12_RANKING_SNAPSHOT_MAX_TTL_SECONDS = 7 * 24 * 60 * 60
 _PM12_ALLOCATION_LINE_DIGEST_FIELDS = (
     "ranking_snapshot_id",
     "allocation_evaluation_id",
@@ -26031,6 +26033,45 @@ def _pm12_allocation_snapshot_record(snapshot_id: str) -> Dict[str, Any]:
             ErrorCode.VALIDATION_FAILED,
             "ranking snapshot is not allocation eligible",
             "Only admitted PM-12 quarterly snapshots can feed allocation evaluation.",
+            precondition_failed="ranking_snapshot_id",
+        )
+    return snapshot
+
+
+def _pm12_ranking_snapshot_ttl_seconds() -> int:
+    raw = os.getenv(
+        "PANTHEON_PM12_RANKING_SNAPSHOT_TTL_SECONDS",
+        str(_PM12_RANKING_SNAPSHOT_DEFAULT_TTL_SECONDS),
+    ).strip()
+    try:
+        configured = int(raw)
+    except (TypeError, ValueError):
+        return 0
+    if configured <= 0 or configured > _PM12_RANKING_SNAPSHOT_MAX_TTL_SECONDS:
+        return 0
+    return configured
+
+
+def _pm12_recommendation_snapshot_record(snapshot_id: str) -> Dict[str, Any]:
+    snapshot = _pm12_allocation_snapshot_record(snapshot_id)
+    created_at = _audit_datetime(snapshot.get("created_at"))
+    now = _audit_datetime(utc_now())
+    ttl_seconds = _pm12_ranking_snapshot_ttl_seconds()
+    if created_at is None or now is None or ttl_seconds <= 0:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "ranking snapshot admission window is invalid",
+            "Recommendation submission requires a timestamped snapshot and a valid bounded TTL.",
+            precondition_failed="ranking_snapshot_id",
+        )
+    age_seconds = (now - created_at).total_seconds()
+    if age_seconds < -300 or age_seconds > ttl_seconds:
+        raise _bff_error(
+            409,
+            ErrorCode.PRECONDITION_FAILED,
+            "ranking snapshot admission window expired",
+            "Fetch a current recommendation and submit its immutable admitted snapshot.",
             precondition_failed="ranking_snapshot_id",
         )
     return snapshot
@@ -51611,43 +51652,45 @@ async def bff_management_quarterly_ranking_recommendation_submit(
             ),
         )
 
-    review, _quarter_window, _redacted_count, _evidence_dataset_available = _promotion_review_find(
-        identity,
-        recommendation_id,
-        snapshot_at=snapshot_at,
-        quarter=str(payload.get("quarter") or "").strip() or None,
-    )
-    if review is None:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Quarterly ranking recommendation not found",
-            f"Recommendation {recommendation_id} does not exist",
-            precondition_failed="recommendation_id",
+    if not requested_ranking_snapshot_id:
+        current_review, _, _, _ = _promotion_review_find(
+            identity,
+            recommendation_id,
+            snapshot_at=snapshot_at,
+            quarter=str(payload.get("quarter") or "").strip() or None,
         )
-
-    authoritative_ranking_snapshot_id = str(
-        review.get("ranking_snapshot_id") or ""
-    ).strip()
-    if (
-        requested_ranking_snapshot_id
-        and requested_ranking_snapshot_id != authoritative_ranking_snapshot_id
-    ):
-        raise _bff_error(
-            422,
-            ErrorCode.VALIDATION_FAILED,
-            "ranking_snapshot_id does not match the recommendation",
-            "Submit the immutable ranking snapshot attached to the recommendation.",
-            precondition_failed="ranking_snapshot_id",
-        )
+        if current_review is None:
+            raise _bff_error(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                "Quarterly ranking recommendation not found",
+                f"Recommendation {recommendation_id} does not exist",
+                precondition_failed="recommendation_id",
+            )
+        requested_ranking_snapshot_id = str(
+            current_review.get("ranking_snapshot_id") or ""
+        ).strip()
 
     command_payload = {
         **payload,
-        "quarter": payload.get("quarter") or review.get("quarter"),
-        "recommendation_id": review["recommendation_id"],
-        "ranking_snapshot_id": authoritative_ranking_snapshot_id,
+        "quarter": (
+            payload.get("quarter")
+            or _promotion_review_quarter_from_id(recommendation_id)
+        ),
+        "recommendation_id": recommendation_id,
+        "ranking_snapshot_id": requested_ranking_snapshot_id,
     }
     _validate_quarterly_ranking_recommendation_submit(command_payload, identity)
+    source_recommendation = command_payload.get("source_recommendation")
+    if not isinstance(source_recommendation, dict):
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "admitted ranking snapshot has no recommendation",
+            "The durable snapshot could not materialize the requested recommendation.",
+            precondition_failed="recommendation_id",
+        )
+    review = _promotion_review_item_from_recommendation(source_recommendation)
     command_response = _sem_command_response(
         command_type=CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT,
         target_type=ObjectType.RANKING,
