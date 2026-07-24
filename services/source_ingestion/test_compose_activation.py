@@ -4,6 +4,8 @@ from pathlib import Path
 
 import yaml
 
+from scripts.smoke_source_search_bounded import _run_scoped_connector_ids
+
 
 def _env_map(service: dict) -> dict:
     env = service.get("environment") or {}
@@ -15,6 +17,15 @@ def _env_map(service: dict) -> dict:
             key, value = item.split("=", 1)
             result[key] = value
     return result
+
+
+def test_bounded_smoke_builds_disjoint_run_scoped_connector_ids() -> None:
+    first = _run_scoped_connector_ids("first-run")
+    second = _run_scoped_connector_ids("second-run")
+
+    assert set(first) == {"static", "feed", "replay", "scheduled"}
+    assert all(connector_id.endswith("-first-run") for connector_id in first.values())
+    assert set(first.values()).isdisjoint(second.values())
 
 
 def test_root_compose_wires_source_ingest_service_boundary() -> None:
@@ -122,11 +133,15 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
     assert 'f"{SEARCH_URL}/api/search/query"' in smoke
 
     bounded_smoke = (compose_path.parent / "scripts/smoke_source_search_bounded.py").read_text(encoding="utf-8")
+    assert "suffix = uuid.uuid4().hex" in bounded_smoke
+    assert "connector_ids = _run_scoped_connector_ids(suffix)" in bounded_smoke
+    assert '"connector_id": "conn-bounded-' not in bounded_smoke
     assert '"mode": "static_records"' in bounded_smoke
     assert '"mode": "external_feed"' in bounded_smoke
     assert '"allowed_url_prefixes": [feed_url.rsplit("/", 1)[0] + "/"]' in bounded_smoke
     assert 'f"{SOURCE_INGEST_URL}/api/source-ingest/dlq/replay"' in bounded_smoke
     assert 'f"{SOURCE_INGEST_URL}/api/source-ingest/run-scheduled"' in bounded_smoke
+    assert '"exclusive_connector_ids": [connector_ids["scheduled"]]' in bounded_smoke
     assert 'f"{SOURCE_INGEST_URL}/api/source-ingest/audit"' in bounded_smoke
     assert 'f"{SEARCH_URL}/api/search/index/refresh"' in bounded_smoke
     assert 'f"{SEARCH_URL}/api/search/index/source-completions/{feed_run_id}"' in bounded_smoke
