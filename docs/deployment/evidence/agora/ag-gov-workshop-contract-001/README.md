@@ -1,6 +1,7 @@
 # AG-GOV-WORKSHOP-CONTRACT-001 contract repair evidence
 
-Status: **local implementation verified; ready for independent review**
+Status: **contract delivery merged to `dev`; independent review approved;
+owner closeout verification passed**
 
 This task repairs the two contract defects recorded by
 `AG-HOSTED-CLOSE-001` evidence commit `ce7ba393e`:
@@ -90,16 +91,32 @@ Run from the Pantheon repository root with the repository test environment:
   services/control-plane/bff/tests/test_agora_workshop_live_operations.py
 ```
 
-Result on 2026-07-24 after the fail-closed reviewer follow-up:
-`180 passed, 5 skipped`.
+Result on 2026-07-24 after the fail-closed reviewer follow-up and again during
+owner closeout: `180 passed, 5 skipped`.
 
 The skips are pre-existing optional Postgres cases without
 `TEST_DATABASE_URL`; the non-skipped restart regression uses the real
 file-backed Governance store and reconstructed Workshop routers.
 
-## Remaining publication gate
+## Merged delivery and review
 
-This evidence does not claim a hosted deployment. After independent review,
-task PR merge, compatibility-gate regeneration if required, and exact FE/BFF
-deployment, `AG-HOSTED-CLOSE-001` must rerun its hosted probe with distinct
-Registry/strategy IDs and a real `strategy_workshop` approval.
+- PR #4036 merged head
+  `f592009061c4f0ad8741d03656a0823bc35ffe1c` to `dev` as
+  `0346b28790d9534cfff76625caeadee8d5ea13b8`.
+- Reviewer follow-up PR #4037 merged head
+  `ae6119811ec4299688ac6860a7c38292d539f33e` to `dev` as
+  `49cb982da66ccea5c117a1abc07cb3cb2d345f52`.
+- Commit trailers, Runtime mirror guard, and Smoke acceptance passed for both
+  PRs. Independent review approved the exact target, identity, and
+  fail-closed lifecycle contracts.
+- Owner closeout reran the documented `py_compile` and focused pytest commands,
+  confirmed both PR ranges are `git diff --check` clean, and confirmed the
+  task-owned implementation has no drift from `origin/dev`.
+
+## Remaining downstream publication gate
+
+This evidence does not claim a hosted deployment. Contract review and merge are
+complete; compatibility-gate regeneration and exact FE/BFF deployment remain
+the downstream `AG-GOV-WORKSHOP-COMPAT-DEPLOY-001` /
+`AG-HOSTED-CLOSE-001` requalification. That lane must rerun its hosted probe
+with distinct Registry/strategy IDs and a real `strategy_workshop` approval.

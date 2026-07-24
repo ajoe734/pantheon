@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Repair Governance–Workshop approval and Registry identity contracts
-- Status: in_progress
+- Status: review_approved
 - Owner: Codex2
 - Reviewer: Codex
-- Next: Review failed at pushed f59200906 / merged PR #4036 (merge 0346b28790d9534cfff76625caeadee8d5ea13b8): acceptance requires Workshop research/conclude to accept only a decided approval, but _require_approval uses 'if state and ...' and therefore accepts a missing state, and it also accepts noncanonical state/outcome aliases. Reviewer reproduction against the existing public router harness: approval with state removed returned HTTP 202 and a completed research dispatch; outcome='accepted' also returned HTTP 202/completed. Make the gate fail closed on exact canonical decision_state/state='decided' and canonical outcome in {'approved','approved_with_conditions'}, add negative coverage for both research and conclude proving no downstream dispatch/conclusion for missing/non-decided state and noncanonical outcome, and update the task evidence. Other verification passed: py_compile; focused suite 174 passed, 5 skipped; git diff --check; PR CI green.
+- Next: Independent review approved: PR #4036 head f592009061c4f0ad8741d03656a0823bc35ffe1c merged as 0346b28790d9534cfff76625caeadee8d5ea13b8; follow-up PR #4037 head ae6119811ec4299688ac6860a7c38292d539f33e merged as 49cb982da66ccea5c117a1abc07cb3cb2d345f52, both on dev with Commit trailers, Runtime mirror guard, and Smoke acceptance green. Diff review confirms canonical strategy_workshop schema/API, Registry-vs-strategy identity separation, and exact decided plus approved/approved_with_conditions gating before command admission. Public negative cases prove zero research dispatch, Registry readback, command receipt, session mutation, or event. Independent verification: py_compile passed; focused suite 180 passed/5 skipped with 185 tests collected; direct approved_with_conditions route probe returned research 202 and conclude 200; both PR ranges git diff --check clean. Hosted exact-pair deployment remains the explicitly documented downstream AG-GOV-WORKSHOP-COMPAT-DEPLOY-001 / AG-HOSTED-CLOSE-001 requalification and is not claimed by this contract review.
 
 ## Summary
 修正 Governance approval 與 Strategy Workshop 的空集合 target-type 合約，以及 Registry entry ID 被誤當 strategy ID 的語意錯置；補齊真實 public API、restart persistence 與 exact-pair hosted regression。
