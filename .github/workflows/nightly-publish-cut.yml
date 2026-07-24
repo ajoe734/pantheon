@@ -106,7 +106,11 @@ jobs:
           echo "Dispatching nonprod-deploy for ${branch} -> dev"
           # workflow_dispatch (unlike push) IS triggered by GITHUB_TOKEN, so this
           # reliably rolls the dev VM forward to the freshly cut snapshot.
+          # Note: gh workflow run executes nonprod-deploy.yml using the workflow ref
+          # (e.g. dev tip), while passing `ref="${branch}"` specifies the payload SHA/branch
+          # to deploy.
           gh workflow run nonprod-deploy.yml \
+            --ref dev \
             -f environment=dev \
             -f component=auto \
             -f ref="${branch}"

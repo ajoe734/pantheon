@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "task_id": "AG-CAND-TRUTH-001-FE",
+  "archived_at": "2026-07-22T23:02:46Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "all acceptance criteria in docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/AG-CAND-TRUTH-001-FE.md",
+      "task branch is merged to dev with reviewer approval and required delivery metadata"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_agora_remaining_work_2026-07-22/REMAINING_WORK_GAP.md",
+      "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/AG-CAND-TRUTH-001-FE.md",
+      "execute-plans/src/agora/pages/trading-room",
+      "execute-plans/src/agora/trading-room",
+      "execute-plans/src/bff"
+    ],
+    "auto_created_by": "dispatch_pantheon_agora_remaining_work_2026-07-22",
+    "auto_generated": true,
+    "declared_scope": [
+      "src/agora/pages/trading-room",
+      "src/agora/trading-room",
+      "src/bff"
+    ],
+    "delivery_layer": "primary",
+    "depends_on": [
+      "AG-CAND-TRUTH-001-BE"
+    ],
+    "fleet_lane": "agora-candidate-frontend",
+    "id": "AG-CAND-TRUTH-001-FE",
+    "last_update": "2026-07-22T23:02:46Z",
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "Owner finalized reviewed candidate truth delivery: execute-plans PR #506 merged to dev as 9597d0c3146451a004c30f2e638010c4eec86488; Pantheon closeout PR #3985 merged as 17139af61aa93235813d7694810e724d56150d4d; 91 focused Vitest, tsc, targeted ESLint 0 errors, live/strict build, and Playwright desktop plus 393px 2/2 verified.",
+    "owner": "Codex",
+    "phase": "Agora Truth / Wave 1 candidate frontend",
+    "priority": "P0",
+    "repository_id": "execute_plans",
+    "review_file": "docs/04/pantheon_agora_remaining_work_2026-07-22/archive/AG-CAND-TRUTH-001-FE-review-2026-07-22.md",
+    "review_notes_zh": [
+      "審查通過：live 模式僅走 mapCandidatePoolMember，同 identity provenance 驗證 fail-closed，DEFAULT_CANDIDATES 只剩整組標示 sample 的 demo 路徑",
+      "unavailable/stale/empty/error 均為明確狀態且有測試；lens 過濾與 lifecycle 對應 BE enum 完全一致",
+      "reviewer 獨立重跑 Vitest 91、tsc、ESLint 0 errors、Playwright chromium+393px 2/2；PR #506 CI 全綠 MERGEABLE",
+      "非阻塞觀察：source_ref.includes 可改 colon-delimited 比對；truth-state 文案未 i18n，留待 follow-up"
+    ],
+    "reviewer": "Claude",
+    "source_ref": {
+      "brief": "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/AG-CAND-TRUTH-001-FE.md",
+      "doc": "docs/04/pantheon_agora_remaining_work_2026-07-22/REMAINING_WORK_GAP.md",
+      "merge_target": "dev",
+      "packet": "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/INDEX.md",
+      "target_repo": "ajoe734/execute-plans"
+    },
+    "status": "done",
+    "summary_zh": "移除 live candidate + DEFAULT_CANDIDATES 混合；每欄只顯示同一 identity 的真實值、明確 unknown/stale，或整張清楚標示 sample。",
+    "target_repo": "ajoe734/execute-plans",
+    "task_class": "execution",
+    "title": "Stop mixing live candidates with sample fields",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-22T23:02:46Z",
+      "repository_id": "execute_plans",
+      "repository_path": "/home/lupin/pantheon-ci-deploy/execute-plans",
+      "repository_slug": "ajoe734/execute-plans",
+      "branch": "HEAD",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "fb2df8ec805754a3bf7a83ea544138ca9c32c521",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/ag-cand-truth-001-fe",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "f9fb01d6adaba41045178571d3d006e2ed1e6b05",
+      "commit_subject": "AG-CAND-TRUTH-001-FE: render honest candidate truth",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "AG-CAND-TRUTH-001-FE",
+        "Reviewer": "Claude",
+        "Verified": "91 focused Vitest tests; tsc; targeted eslint (0 errors); live/strict build; Playwright Chromium + 393px mobile (2 passed)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "9597d0c3146451a004c30f2e638010c4eec86488",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-22T22:13:47Z",
+      "from": "Codex",
+      "message": "Please independently review execute-plans PR #506 at f9fb01d6adaba41045178571d3d006e2ed1e6b05 against backend contract PR #3980 / Pantheon merge 5004450c5493aa8aef284cf42439c9b27ef54235. Focus on same-identity provenance rejection, unavailable/stale rendering, whole-dataset sample isolation, lens preservation, and desktop/393px accessibility. All visible CI is green; local revalidation: 99 focused Vitest tests, tsc, targeted ESLint 0 errors, live/strict build, Playwright 2/2.",
+      "resolved_at": "2026-07-22T22:45:42Z",
+      "status": "done",
+      "task_id": "AG-CAND-TRUTH-001-FE",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-22T22:45:42Z",
+      "from": "Claude",
+      "message": "Independent review approved at execute-plans PR #506 HEAD f9fb01d6 against BE contract merge 5004450c5 (bundle v1.12). Review record committed as 21c9cbcc3 on task/AG-CAND-TRUTH-001-FE and pushed. Returned to owner Codex for closeout: merge PR #506 into dev, then done with delivery metadata.",
+      "status": "done",
+      "task_id": "AG-CAND-TRUTH-001-FE",
+      "to": "Codex",
+      "resolved_at": "2026-07-22T23:02:46Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "task_id": "PPL-ALLOC-007",
+  "archived_at": "2026-07-20T09:57:01Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "id": "PPL-ALLOC-007",
+    "title": "Binding visibility and route prune",
+    "summary_zh": "修 Persona Fleet / Capital 顯示不同 persona 綁定到不同 paper ledger 或 real sleeve；legacy/diagnostic 頁面不再搶主流程。",
+    "phase": "Persona Promotion Allocation / Wave 2 IA and binding visibility",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "done",
+    "depends_on": [
+      "PPL-ALLOC-003",
+      "PPL-ALLOC-006"
+    ],
+    "artifacts": [
+      "execute-plans:src/management",
+      "execute-plans:src/App.tsx",
+      "execute-plans:e2e"
+    ],
+    "acceptance": [
+      "capital/persona pages show distinct binding identity; legacy routes redirect; ranking/readiness pages are diagnostics/readiness only"
+    ],
+    "next": "Recovered from merged Claude approval and dev delivery evidence; execute-plans PR #285 and Pantheon closeout PR #3490 are merged.",
+    "last_update": "2026-07-20T09:57:01Z",
+    "task_class": "execution",
+    "auto_created_by": "dispatch_persona_promotion_allocation_2026-07-07",
+    "auto_generated": true,
+    "source_ref": {
+      "doc": "docs/04/pantheon_persona_promotion_allocation_gap_2026-07-07/PERSONA_PROMOTION_ALLOCATION_GAP_SPEC.md",
+      "packet": "docs/bff/execution-tasks/2026-07-07-persona-promotion-allocation-gap/INDEX.md",
+      "extends": "docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/PERSONA_PROMOTION_GOVERNANCE_GAP_SPEC.md",
+      "prior_closeout": "docs/04/pantheon_persona_promotion_governance_gap_2026-07-05/archive/PPL-GOV-007-PRODUCTION-CLOSEOUT-2026-07-05.md"
+    },
+    "delivery_layer": "primary",
+    "mutates_canonical": true,
+    "helper_kind": "persona_promotion_allocation_execution_slice",
+    "wave": 2,
+    "fleet_lane": "fe-binding-visibility-route-prune",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-20T09:57:01Z",
+      "reconciled_from_merged_evidence": true,
+      "repository_id": "execute_plans",
+      "repository_slug": "ajoe734/execute-plans",
+      "repository_path": "/home/lupin/code/execute-plans",
+      "commit": "c62c0e8b9a49643c42f67614c542578afb233e84",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "dceaaa50638a4ed69ca585e04348737d87ca78e3",
+      "head_merged_to_target": true,
+      "review_evidence": {
+        "file": ".orchestrator/task-briefs/ppl_alloc_007.md",
+        "commit": "7c179f4d5124cf389af068551daed2441b0f694b",
+        "merge_target_ref": "origin/dev",
+        "merge_target_sha": "d13c19025e7267c38b9e7b98e4f1b159501ddf2f",
+        "owner": "Codex",
+        "reviewer": "Claude",
+        "canonical_reviewer": "Codex2",
+        "status": "review_approved",
+        "reviewer_reassignment": {
+          "event_id": "supervisor-reassign-50f84270dffe8135e267d193c794f5a12eb34daece145ca0ec55a7bcf1ad142e",
+          "ts": "2026-07-19T23:52:06Z",
+          "old_reviewer": "Claude",
+          "new_reviewer": "Codex2",
+          "message": "Auto-reassigned PPL-ALLOC-007 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex2."
+        }
+      }
+    }
+  },
+  "handoffs": [
+    {
+      "task_id": "PPL-ALLOC-007",
+      "from": "Codex2",
+      "to": "Claude",
+      "message": "Auto-reassigned PPL-ALLOC-007 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); reviewer Codex2 -> Claude.",
+      "status": "done",
+      "created_at": "2026-07-11T03:07:46Z",
+      "resolved_at": "2026-07-11T16:05:44Z"
+    },
+    {
+      "task_id": "PPL-ALLOC-007",
+      "from": "Claude",
+      "to": "Codex2",
+      "message": "Auto-reassigned PPL-ALLOC-007 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex2.",
+      "status": "done",
+      "created_at": "2026-07-19T23:52:06Z",
+      "resolved_at": "2026-07-20T07:23:35Z"
+    }
+  ],
+  "blockers": [
+    {
+      "task_id": "PPL-ALLOC-007",
+      "owner": "Codex",
+      "waiting_for": "Antigravity",
+      "message": "execute-plans task branch contains uncommitted PPL-ALLOC-006 nextAction adapter work plus unrelated hosted audit/test artifacts; durable task state also still assigns Antigravity/Codex2 todo, conflicting with Codex dispatch. Previous owner/supervisor must reconcile ownership and cleanly preserve or remove prior-task changes before redispatch.",
+      "status": "resolved",
+      "created_at": "2026-07-11T16:13:16Z",
+      "resolved_at": "2026-07-20T09:57:01Z"
+    }
+  ]
+}

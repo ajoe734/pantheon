@@ -1,0 +1,210 @@
+{
+  "version": 1,
+  "task_id": "TJ-E2E-012",
+  "archived_at": "2026-07-24T01:04:09Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "all remaining scenario-ledger and independent-verdict criteria in docs/bff/execution-tasks/2026-07-11-trade-journey-e2e/TJ-E2E-012-2026-07-22-acceptance-addendum.md"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_trade_journey_e2e_observability_gap_2026-07-11/TRADE_JOURNEY_E2E_OBSERVABILITY_GAP.md",
+      "docs/bff/execution-tasks/2026-07-11-trade-journey-e2e/TJ-E2E-012-hosted-acceptance-closeout.md",
+      "docs/bff/execution-tasks/2026-07-11-trade-journey-e2e/TJ-E2E-012-2026-07-22-acceptance-addendum.md"
+    ],
+    "auto_created_by": "dispatch_trade_journey_e2e_2026-07-11",
+    "created_at": "2026-07-11T22:58:28.902157+00:00",
+    "depends_on": [
+      "TJ-E2E-001",
+      "TJ-E2E-002",
+      "TJ-E2E-003",
+      "TJ-E2E-004",
+      "TJ-E2E-005",
+      "TJ-E2E-006",
+      "TJ-E2E-007",
+      "TJ-E2E-008",
+      "TJ-E2E-009",
+      "TJ-E2E-010",
+      "TJ-E2E-011",
+      "OPS-DISPATCH-LEASE-SYNC-001",
+      "PAN-LIFECYCLE-RECOVERY-001"
+    ],
+    "id": "TJ-E2E-012",
+    "last_update": "2026-07-24T01:04:09Z",
+    "metadata": {
+      "fleet_lane": "hosted-acceptance-closeout",
+      "target_repo": "pantheon+execute-plans",
+      "wave": 5
+    },
+    "next": "Owner closeout: 兩道 acceptance gate 均已獨立記錄（Human/Ops APPROVED 2026-07-23T08:07:19Z / PR #4011 merge 00b38f41；governed reviewer Codex APPROVED 2026-07-24T00:48:58Z 記於 closeout §10）。closeout 交付 commit 78619b133 已經 PR #4021（merge 3985daead）合入 dev。Verified: python3 -m py_compile scripts/verify_hosted_scenarios.py scripts/test_verify_hosted_scenarios.py; pytest scripts/test_verify_hosted_scenarios.py -q (14 passed); git diff --check clean; worktree clean 且與 origin/dev 一致。封閉範圍僅限兩組已證明 FE/BFF pair 的 read-only hosted rollout，不含 live writes / broker capital / production default rollout；R1-R4、R6 條件續存。",
+    "owner": "Claude2",
+    "phase": "Trade Journey E2E / Wave 5",
+    "priority": "P0",
+    "review_file": "docs/bff/execution-tasks/2026-07-11-trade-journey-e2e/TJ-E2E-012-hosted-acceptance-closeout.md",
+    "review_notes_zh": [
+      "PR #4015 merge 7e269e4d 已入 dev 且 checks 全綠",
+      "Hosted run 29971351535 artifact 8549806068 digest/checksum 核對；12/12 scenario ledger、97 raw calls、98/98 checks、5/5 axes 通過",
+      "精確 FE 9597d0c3 / BFF c555a14e pair、S10 viewer masking/跨 tenant 403、detail p95 874.532ms、resolve p95 736.854ms、SSE Last-Event-ID/reconnect 與 rebuild health 證據成立",
+      "Retained browser run 29856622315 證明 desktop/mobile/a11y；Human/Ops verdict 由 PR #4011 merge 00b38f41 獨立記錄",
+      "Focused pytest 14 passed；TJ-E2E-001..011 均 archived done/completed"
+    ],
+    "reviewer": "Codex",
+    "source_ref": {
+      "acceptance_addendum": "docs/bff/execution-tasks/2026-07-11-trade-journey-e2e/TJ-E2E-012-2026-07-22-acceptance-addendum.md",
+      "doc": "docs/04/pantheon_trade_journey_e2e_observability_gap_2026-07-11/TRADE_JOURNEY_E2E_OBSERVABILITY_GAP.md",
+      "merge_target": "dev",
+      "packet": "docs/bff/execution-tasks/2026-07-11-trade-journey-e2e/TJ-E2E-012-hosted-acceptance-closeout.md",
+      "target_repo": "pantheon+execute-plans"
+    },
+    "status": "done",
+    "summary_zh": "保留 7/21 hosted proof，補齊 12 scenario immutable ledger、security/performance/SSE/rebuild mapping 與獨立 Human/Ops verdict。",
+    "task_class": "execution",
+    "title": "Hosted acceptance and closeout",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-24T01:04:09Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/TJ-E2E-012",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "f4f5f8fce8e85cc500684ceee703231fae71619f",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/tj-e2e-012",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "78619b1337ac5e0efb2147d6e6158c331eeda899",
+      "commit_subject": "TJ-E2E-012: record reviewer approval and close packet",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Closeout packet": "new Section 10 records the governed reviewer verdict",
+        "(Codex APPROVED 2026-07-24T00": "48:58Z, canonical review -> review_approved",
+        "Acceptance addendum": "adds a closeout-status table mapping each of the",
+        "Packet INDEX": "marks the 2026-07-11 Trade Journey E2E packet closed,",
+        "Task brief": "records the governed reviewer verdict alongside the existing",
+        "Evidence immutability re-checked on the closeout packet": "the multiset of",
+        "Both acceptance gates were decided independently": "Human/Ops APPROVED",
+        "2026-07-23T08": "07:19Z (PR #4011, merge 00b38f41) and reviewer Codex",
+        "APPROVED 2026-07-24T00": "48:58Z. Neither was derived from the other or",
+        "LLM-Agent": "Claude2",
+        "Task-ID": "TJ-E2E-012",
+        "Reviewer": "Codex",
+        "Verified": "python3 -m py_compile scripts/verify_hosted_scenarios.py scripts/test_verify_hosted_scenarios.py; pytest scripts/test_verify_hosted_scenarios.py -q (14 passed); git diff --check clean; evidence-identity multiset diff shows additions only"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "3985daeaddcfd8954da8b82609e7a5ac5972b786",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-11T22:59:09Z",
+      "from": "Human/Ops",
+      "message": "Auto-reassigned TJ-E2E-012 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); reviewer Human/Ops -> Claude.",
+      "resolved_at": "2026-07-20T00:50:10Z",
+      "status": "done",
+      "task_id": "TJ-E2E-012",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-20T00:50:10Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned TJ-E2E-012 away from unavailable lane Antigravity, Claude (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex, reviewer Claude -> Codex2.",
+      "resolved_at": "2026-07-20T07:23:35Z",
+      "status": "done",
+      "task_id": "TJ-E2E-012",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-20T00:51:45Z",
+      "from": "Codex",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "resolved_at": "2026-07-22T16:26:01Z",
+      "status": "done",
+      "task_id": "TJ-E2E-012",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-23T00:36:53Z",
+      "from": "Codex",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "resolved_at": "2026-07-23T00:38:25Z",
+      "status": "done",
+      "task_id": "TJ-E2E-012",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-23T01:28:27Z",
+      "from": "Codex2",
+      "message": "Review merged closeout packet PR #4002 and immutable runs 29971351535/29856622315. Verify exact FE/BFF binding, 12 distinct ledger rows, browser/a11y/RBAC/performance/SSE/rebuild mapping, rollout/rollback, and residual risks. Independent Human/Ops verdict remains PENDING and must not be inferred from owner or model review.",
+      "resolved_at": "2026-07-23T01:28:33Z",
+      "status": "done",
+      "task_id": "TJ-E2E-012",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-23T01:28:33Z",
+      "from": "Codex2",
+      "message": "PR #4002 merged. Review run 29971351535 and closeout packet; Human/Ops verdict remains independently pending.",
+      "resolved_at": "2026-07-23T01:59:33Z",
+      "status": "done",
+      "task_id": "TJ-E2E-012",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-23T01:59:33Z",
+      "from": "Codex",
+      "message": "CHANGES REQUIRED after independent review: technical hosted evidence now passes review (PRs #3997/#4000/#4002 merged; run 29971351535 artifact 8549806068 checksum matched, 12/12 distinct ledger rows, 98/98 checks, exact FE 9597d0c3146451a004c30f2e638010c4eec86488 / BFF c555a14ebbcc2a7504076eeba3d381b016231833, hosted RBAC/performance/SSE/rebuild; retained browser run 29856622315 artifact 8505715242 proves direct BFF desktop/mobile/a11y/viewer masking; local verifier tests 14 passed). Acceptance still fails because addendum item 5 and closeout section 8 require an independently attributable Human/Ops verdict, but the packet remains PENDING and task audit/PR #4002 contain no such decision. Obtain a Human/Ops APPROVED or CHANGES REQUIRED decision citing packet, runs 29971351535/29856622315, artifacts 8549806068/8505715242, risks R1-R5, identity plus UTC timestamp, accepted/rejected risks and conditions, and explicit read-only rollout/rollback acceptance; then return for governed review without inferring or owner-authoring the verdict.",
+      "resolved_at": "2026-07-23T01:59:33Z",
+      "status": "done",
+      "task_id": "TJ-E2E-012",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-24T00:17:23Z",
+      "from": "Claude2",
+      "message": "Owner closeout reconciliation complete; handing to governed reviewer Codex. Merged PR #4015 (commit c972c05216f69303f37dcec2ad61fa06be7ecf8e, all 3 required checks green) reconciles the stale PENDING/blocking header wording, the R5 risk row and the Section 8 heading against the Human/Ops APPROVED verdict already recorded in Section 8 (PR #4011, commit 691f2da1e). Documentation only: a before/after comparison of every 40-/64-hex and numeric run/artifact identity in the packet shows additions only (the two verdict-provenance commits); no run ID, artifact ID, digest, deployment commit, ledger row, axis mapping or p95 figure changed. Revalidation: py_compile clean, pytest scripts/test_verify_hosted_scenarios.py -q 14 passed (unchanged), git diff --check clean; recorded in closeout Section 9. Please perform the governed repository review and record review -> review_approved; I will then finalize to done. Note the Human/Ops verdict does not substitute for your gate.",
+      "resolved_at": "2026-07-24T00:48:56Z",
+      "status": "done",
+      "task_id": "TJ-E2E-012",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-24T00:48:56Z",
+      "from": "Codex",
+      "message": "APPROVED: PR #4015 merge 7e269e4d is on dev with green gates; immutable hosted run 29971351535 artifact 8549806068 checksum matches and proves 12 distinct scenarios, 97 redacted raw calls, 98/98 checks, five acceptance axes, exact FE/BFF SHAs, RBAC masking/cross-tenant denial, hosted p95 budgets, SSE reconnect, and rebuild health. Browser run 29856622315 proves desktop/mobile/a11y. Human/Ops verdict is independently recorded by merged PR #4011. Focused pytest: 14 passed; dependencies TJ-E2E-001..011 are archived done.",
+      "status": "done",
+      "task_id": "TJ-E2E-012",
+      "to": "Claude2",
+      "resolved_at": "2026-07-24T01:04:10Z"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-07-23T07:01:55Z",
+      "message": "Technical packet reverified: hosted run 29971351535/artifact 8549806068 and retained browser run 29856622315 remain valid; 14 focused tests pass; post-run hosted-tip movement is documented by merged PR #4005 (b6ad72861dbd07f6c79dda581e98650c43c3b0b2). Blocking only on an independently attributable Human/Ops APPROVED or CHANGES REQUIRED verdict citing the packet, both runs, rollout/rollback, and residual risks R1-R6; governed Codex review must follow.",
+      "owner": "Codex2",
+      "resolved_at": "2026-07-23T23:55:46Z",
+      "status": "resolved",
+      "task_id": "TJ-E2E-012",
+      "waiting_for": "Human/Ops"
+    }
+  ]
+}

@@ -137,6 +137,349 @@ _REVIEW_DECISION_TO_LIFECYCLE = {
     "reject": "rejected",
 }
 
+# ---------------------------------------------------------------------------
+# AG-CAND-TRUTH-001-BE — candidate member truth projection (bundle v1.12)
+#
+# Every rendered candidate field is either linked to a durable record of the
+# same candidate (with provenance + as-of) or explicitly typed unavailable.
+# The BFF never fabricates rationale/concerns/next-event narrative; values are
+# projected verbatim from the candidate's own score result, review, or
+# monitoring records. See:
+#   services/control-plane/specs/agora/v13/candidate_member_truth_projection.schema.json
+# ---------------------------------------------------------------------------
+
+_FIELD_SOURCE_MEMBER = "candidate_pool_member"
+_FIELD_SOURCE_SCORE = "candidate_score_result"
+_FIELD_SOURCE_REVIEW = "candidate_review"
+_FIELD_SOURCE_MONITORING = "candidate_monitoring"
+
+_FIELD_REASON_SCORE_NOT_RUN = "score_not_run"
+_FIELD_REASON_NO_GOVERNED_SOURCE = "no_governed_source"
+_FIELD_REASON_NOT_RECORDED = "not_recorded"
+
+_EVIDENCE_REDACTION_LIST = "list_response"
+_EVIDENCE_REDACTION_VIEWER = "viewer_role"
+
+_MEMBER_PAGE_TOKEN_PREFIX = "cpm-offset-"
+_MEMBER_ORDER_BY = "created_at,artifact_id"
+
+_RATIONALE_TOP_COMPONENT_LIMIT = 3
+
+
+def _available_field(
+    value: Any,
+    *,
+    source_type: str,
+    source_ref: str,
+    as_of: str,
+) -> Dict[str, Any]:
+    return {
+        "availability": "available",
+        "value": value,
+        "provenance": {
+            "source_type": source_type,
+            "source_ref": source_ref,
+            "as_of": as_of,
+        },
+    }
+
+
+def _unavailable_field(reason: str) -> Dict[str, Any]:
+    return {"availability": "unavailable", "reason": reason}
+
+
+def _score_source_ref(pool_id: str, artifact_id: str, score: Dict[str, Any]) -> str:
+    # Matches the last_score_result_id format used by candidate monitoring.
+    return f"candidate-score:{pool_id}:{artifact_id}:{score['scored_at']}"
+
+
+def _component_digest(
+    component: Dict[str, Any],
+    *,
+    include_explanation: bool,
+) -> Dict[str, Any]:
+    return {
+        "component_id": component.get("component_id"),
+        "label": component.get("label"),
+        "contribution": component.get("contribution"),
+        "explanation": component.get("explanation") if include_explanation else None,
+    }
+
+
+def _score_without_private_explanations(score: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a score projection safe for lists and viewer-only detail reads."""
+    projected = dict(score)
+    projected["components"] = [
+        {
+            key: value
+            for key, value in component.items()
+            if key != "explanation"
+        }
+        for component in score.get("components", [])
+    ]
+    return projected
+
+
+def _operator_grade_scope(scope: Any) -> bool:
+    """True when the caller holds an operator-level Agora role.
+
+    Viewer-only callers keep read access but get evidence summaries redacted.
+    """
+    from ..models import AGORA_REQUIRED_ROLES  # noqa: PLC0415 (avoid import cycle)
+    return bool(AGORA_REQUIRED_ROLES.intersection(set(getattr(scope, "roles", []) or [])))
+
+
+def _member_truth_projection(
+    *,
+    pool: Dict[str, Any],
+    member: Dict[str, Any],
+    score: Optional[Dict[str, Any]],
+    reviews: List[Dict[str, Any]],
+    monitoring: Optional[Dict[str, Any]],
+    recipe: Dict[str, Any],
+    evidence_summary_mode: str,
+    operator_grade: bool,
+) -> Dict[str, Any]:
+    """Build the per-field truth projection for one candidate pool member.
+
+    ``evidence_summary_mode`` is ``"list_response"`` (summaries always
+    redacted; no private content in list responses) or ``"detail"``
+    (summaries included only for operator-grade roles).
+    """
+    pool_id = pool["pool_id"]
+    artifact_id = member["artifact_id"]
+    snapshot_at = str(pool.get("snapshot_at") or "")
+    member_as_of = str(
+        member.get("_updated_at")
+        or member.get("created_at")
+        or snapshot_at
+    )
+    include_private_explanations = (
+        evidence_summary_mode == "detail" and operator_grade
+    )
+    penalty_ids = {
+        component["component_id"]
+        for component in recipe.get("penalty_components", [])
+    }
+
+    fields: Dict[str, Any] = {
+        "details": _available_field(
+            {
+                "kind": "candidate_identity",
+                "title": member.get("title"),
+                "strategy_ref": member.get("strategy_ref"),
+                "run_ref": member.get("run_ref"),
+                "producing_persona_id": member.get("producing_persona_id"),
+                "lifecycle_state": member.get("lifecycle_state"),
+                "created_at": member.get("created_at"),
+            },
+            source_type=_FIELD_SOURCE_MEMBER,
+            source_ref=f"candidate-pool-member:{pool_id}:{artifact_id}",
+            as_of=member_as_of,
+        ),
+    }
+
+    rationale_reviews = [
+        review for review in reviews
+        if str(review.get("rationale") or "").strip()
+    ]
+    rationale_reviews.sort(key=lambda review: str(review.get("reviewed_at") or ""))
+    latest_review = rationale_reviews[-1] if rationale_reviews else None
+
+    if latest_review is not None:
+        fields["rationale"] = _available_field(
+            {
+                "kind": "operator_review_rationale",
+                "decision": latest_review.get("decision"),
+                "rationale": latest_review.get("rationale"),
+                "reviewed_by": latest_review.get("reviewed_by"),
+                "reviewed_at": latest_review.get("reviewed_at"),
+            },
+            source_type=_FIELD_SOURCE_REVIEW,
+            source_ref=(
+                f"candidate-review:{pool_id}:{artifact_id}:{latest_review.get('review_id')}"
+            ),
+            as_of=str(latest_review.get("reviewed_at") or ""),
+        )
+    elif score is not None:
+        positives = [
+            component for component in score.get("components", [])
+            if component.get("component_id") not in penalty_ids
+        ]
+        positives.sort(
+            key=lambda component: float(component.get("contribution") or 0.0),
+            reverse=True,
+        )
+        fields["rationale"] = _available_field(
+            {
+                "kind": "score_component_attribution",
+                "band": score.get("band"),
+                "effective_score": score.get("effective_score"),
+                "top_components": [
+                    _component_digest(
+                        component,
+                        include_explanation=include_private_explanations,
+                    )
+                    for component in positives[:_RATIONALE_TOP_COMPONENT_LIMIT]
+                ],
+            },
+            source_type=_FIELD_SOURCE_SCORE,
+            source_ref=_score_source_ref(pool_id, artifact_id, score),
+            as_of=str(score.get("scored_at") or ""),
+        )
+    else:
+        fields["rationale"] = _unavailable_field(_FIELD_REASON_SCORE_NOT_RUN)
+
+    if score is not None:
+        penalties = [
+            component for component in score.get("components", [])
+            if component.get("component_id") in penalty_ids
+            and float(component.get("contribution") or 0.0) > 0.0
+        ]
+        penalties.sort(
+            key=lambda component: float(component.get("contribution") or 0.0),
+            reverse=True,
+        )
+        fields["concerns"] = _available_field(
+            {
+                "kind": "score_risk_attribution",
+                "blockers": [str(blocker) for blocker in (score.get("blockers") or [])],
+                "penalty_components": [
+                    _component_digest(
+                        component,
+                        include_explanation=include_private_explanations,
+                    )
+                    for component in penalties
+                ],
+            },
+            source_type=_FIELD_SOURCE_SCORE,
+            source_ref=_score_source_ref(pool_id, artifact_id, score),
+            as_of=str(score.get("scored_at") or ""),
+        )
+
+        include_summary = evidence_summary_mode == "detail" and operator_grade
+        redaction_reason = (
+            _EVIDENCE_REDACTION_VIEWER
+            if evidence_summary_mode == "detail"
+            else _EVIDENCE_REDACTION_LIST
+        )
+        evidence_items: List[Dict[str, Any]] = []
+        total_refs = 0
+        for component in score.get("components", []):
+            refs = [str(ref) for ref in (component.get("evidence_refs") or [])]
+            if not refs:
+                continue
+            total_refs += len(refs)
+            item: Dict[str, Any] = {
+                "component_id": component.get("component_id"),
+                "label": component.get("label"),
+                "evidence_refs": refs,
+                "summary": component.get("explanation") if include_summary else None,
+                "summary_redacted": not include_summary,
+            }
+            if not include_summary:
+                item["redaction_reason"] = redaction_reason
+            evidence_items.append(item)
+        if total_refs:
+            fields["evidence"] = _available_field(
+                {
+                    "kind": "score_evidence_refs",
+                    "items": evidence_items,
+                    "total_refs": total_refs,
+                },
+                source_type=_FIELD_SOURCE_SCORE,
+                source_ref=_score_source_ref(pool_id, artifact_id, score),
+                as_of=str(score.get("scored_at") or ""),
+            )
+        else:
+            fields["evidence"] = _unavailable_field(
+                _FIELD_REASON_NO_GOVERNED_SOURCE
+            )
+    else:
+        fields["concerns"] = _unavailable_field(_FIELD_REASON_SCORE_NOT_RUN)
+        fields["evidence"] = _unavailable_field(_FIELD_REASON_SCORE_NOT_RUN)
+
+    active_monitoring = (
+        monitoring
+        if monitoring is not None
+        and monitoring.get("monitoring_state") in {"active", "paused"}
+        else None
+    )
+    if active_monitoring is not None and (
+        active_monitoring.get("review_due_at")
+        or active_monitoring.get("trigger_conditions")
+    ):
+        fields["next_event"] = _available_field(
+            {
+                "kind": "monitoring_schedule",
+                "monitoring_state": active_monitoring.get("monitoring_state"),
+                "review_due_at": active_monitoring.get("review_due_at"),
+                "trigger_conditions": list(active_monitoring.get("trigger_conditions") or []),
+                "added_by": active_monitoring.get("added_by"),
+                "added_at": active_monitoring.get("added_at"),
+            },
+            source_type=_FIELD_SOURCE_MONITORING,
+            source_ref=f"candidate-monitoring:{pool_id}:{artifact_id}",
+            as_of=str(active_monitoring.get("added_at") or ""),
+        )
+    else:
+        # No governed source artifact owns a next event for this candidate;
+        # the BFF must not invent one.
+        fields["next_event"] = _unavailable_field(_FIELD_REASON_NO_GOVERNED_SOURCE)
+
+    if score is not None:
+        effective_semantics: Dict[str, Any] = {
+            "kind": "recipe_weighted_score",
+            "availability": "available",
+            "is_confidence_score": False,
+            "scale_min": 0,
+            "scale_max": 100,
+            "recipe_id": score.get("recipe_id"),
+            "recipe_version": score.get("recipe_version"),
+            "source_ref": _score_source_ref(pool_id, artifact_id, score),
+            "as_of": str(score.get("scored_at") or ""),
+        }
+    else:
+        effective_semantics = {
+            "kind": "recipe_weighted_score",
+            "availability": "unavailable",
+            "is_confidence_score": False,
+            "reason": _FIELD_REASON_SCORE_NOT_RUN,
+        }
+    if member.get("sharpe_summary") is not None:
+        sharpe_semantics: Dict[str, Any] = {
+            "kind": "sharpe_ratio",
+            "availability": "available",
+            "is_confidence_score": False,
+            "transformation": "sharpe_ratio_from_producing_research_run",
+            "source_ref": (
+                member.get("run_ref")
+                or f"candidate-pool-member:{pool_id}:{artifact_id}"
+            ),
+            "as_of": snapshot_at,
+        }
+    else:
+        sharpe_semantics = {
+            "kind": "sharpe_ratio",
+            "availability": "unavailable",
+            "is_confidence_score": False,
+            "reason": _FIELD_REASON_NOT_RECORDED,
+        }
+
+    as_of_values = [
+        field["provenance"]["as_of"]
+        for field in fields.values()
+        if field.get("availability") == "available" and field["provenance"].get("as_of")
+    ]
+    return {
+        "fields": fields,
+        "as_of": max(as_of_values) if as_of_values else snapshot_at,
+        "score_semantics": {
+            "effective_score": effective_semantics,
+            "sharpe_summary": sharpe_semantics,
+        },
+    }
+
 
 # ---------------------------------------------------------------------------
 # Request body models
@@ -292,7 +635,10 @@ def _public_candidate_pool(pool: Dict[str, Any]) -> Dict[str, Any]:
         "spec_version": pool.get("spec_version", "1.0"),
         "pool_id": pool["pool_id"],
         "operator_id": pool["operator_id"],
-        "candidates": [dict(candidate) for candidate in pool.get("candidates", [])],
+        "candidates": [
+            _candidate_public_member(candidate)
+            for candidate in pool.get("candidates", [])
+        ],
         "snapshot_at": pool["snapshot_at"],
     }
     if "filter" in pool:
@@ -309,10 +655,12 @@ def _candidate_list_envelope(
     items: List[Dict[str, Any]],
     utc_now: Callable[[], str],
     scope: Any,
+    page_info: Optional[Dict[str, Any]] = None,
+    meta_extra: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     return {
         "items": items,
-        "page_info": {
+        "page_info": page_info if page_info is not None else {
             "next_page_token": None,
             "page_size": len(items),
             "has_more": False,
@@ -323,6 +671,7 @@ def _candidate_list_envelope(
             "capability": _CAPABILITY,
             "audience": f"tenant:{scope.tenant_id}:user:{scope.user_id}",
             "no_order_route_proof": _CANDIDATE_NO_ORDER_ROUTE_PROOF,
+            **(meta_extra or {}),
         },
     }
 
@@ -425,20 +774,19 @@ def _normalize_component_value(component: Dict[str, Any], raw_value: Any) -> Opt
 
 
 def _component_evidence_refs(
-    artifact_id: str,
     component: Dict[str, Any],
     metrics: Dict[str, Any],
 ) -> List[str]:
+    """Return only governed refs persisted with the candidate metrics record.
+
+    Recipe evidence requirements describe what should exist; they are not a
+    durable evidence artifact and must never be converted into synthetic
+    ``evidence://`` references.
+    """
     refs = (metrics.get("evidence_refs") or {}).get(component["component_id"])
     if isinstance(refs, list):
-        return [str(ref) for ref in refs]
-    required_types = component.get("required_evidence_types") or []
-    if required_types:
-        return [
-            f"evidence://{artifact_id}/{component['component_id']}/{evidence_type}"
-            for evidence_type in required_types
-        ]
-    return [f"evidence://{artifact_id}/{component['component_id']}"]
+        return [str(ref) for ref in refs if str(ref).strip()]
+    return []
 
 
 def _score_component(
@@ -478,7 +826,7 @@ def _score_component(
         "weight": float(component["weight"]),
         "contribution": round(contribution, 4),
         "missing_policy": missing_policy,
-        "evidence_refs": _component_evidence_refs(artifact_id, component, metrics),
+        "evidence_refs": _component_evidence_refs(component, metrics),
         "explanation": (
             "A2 CandidateScoringRecipe contribution computed from the stored "
             f"{component_id} normalized component value."
@@ -1068,6 +1416,13 @@ def create_research_router(
             if not _candidate_matches_filter(candidate, pool_filter):
                 continue
             public_candidate = _candidate_public_member(candidate)
+            # Persist the member mutation clock without widening the frozen
+            # v1.4 public member shape. Projection helpers strip private keys.
+            public_candidate["_updated_at"] = str(
+                candidate.get("_updated_at")
+                or public_candidate.get("created_at")
+                or now
+            )
             candidates.append(public_candidate)
             metrics_by_artifact[public_candidate["artifact_id"]] = candidate.get("_metrics") or {}
 
@@ -1142,15 +1497,50 @@ def create_research_router(
         })
         return scores
 
-    def _member_projection(pool_id: str, member: Dict[str, Any]) -> Dict[str, Any]:
-        score = store.get_candidate_score(pool_id, member["artifact_id"])
-        projection = dict(member)
+    def _member_projection(
+        pool: Dict[str, Any],
+        member: Dict[str, Any],
+        scope: Any,
+        recipe: Dict[str, Any],
+        *,
+        evidence_summary_mode: str = "list_response",
+    ) -> Dict[str, Any]:
+        pool_id = pool["pool_id"]
+        artifact_id = member["artifact_id"]
+        score = store.get_candidate_score(pool_id, artifact_id)
+        projection = _candidate_public_member(member)
         if score is not None:
-            projection["current_score"] = score
+            projection["current_score"] = _score_without_private_explanations(score)
             projection["band"] = score["band"]
             projection["rank"] = score["rank"]
             projection["effective_score"] = score["effective_score"]
+        projection.update(
+            _member_truth_projection(
+                pool=pool,
+                member=member,
+                score=score,
+                reviews=store.list_candidate_reviews(pool_id, artifact_id),
+                monitoring=store.get_candidate_monitoring(pool_id, artifact_id),
+                recipe=recipe,
+                evidence_summary_mode=evidence_summary_mode,
+                operator_grade=_operator_grade_scope(scope),
+            )
+        )
         return projection
+
+    def _parse_member_page_token(page_token: Optional[str]) -> int:
+        if page_token in (None, ""):
+            return 0
+        if isinstance(page_token, str) and page_token.startswith(_MEMBER_PAGE_TOKEN_PREFIX):
+            suffix = page_token[len(_MEMBER_PAGE_TOKEN_PREFIX):]
+            if suffix.isdigit():
+                return int(suffix)
+        from models import ErrorCode
+        raise bff_error(
+            422, ErrorCode.VALIDATION_FAILED,
+            "Invalid candidate member page_token",
+            str(page_token),
+        )
 
     def _validate_review_body(body: CandidateMemberReviewRequest) -> None:
         allowed = set(_REVIEW_DECISION_TO_LIFECYCLE)
@@ -1320,7 +1710,11 @@ def create_research_router(
                 -float(score.get("effective_score") or 0.0),
             )
         )
-        return _candidate_list_envelope(items=scores, utc_now=utc_now, scope=scope)
+        return _candidate_list_envelope(
+            items=[_score_without_private_explanations(score) for score in scores],
+            utc_now=utc_now,
+            scope=scope,
+        )
 
     # -------------------------------------------------------------------
     # POST /bff/agora/candidate-pools/{pool_id}/score
@@ -1378,15 +1772,49 @@ def create_research_router(
         scope = _scope(authorization, x_tenant_id)
         pool = _get_candidate_pool_or_404(pool_id)
         _require_pool_access(pool, scope)
+        recipe = _load_default_scoring_recipe()
+        ordered = sorted(
+            pool.get("candidates", []),
+            key=lambda member: (
+                str(member.get("created_at") or ""),
+                str(member.get("artifact_id") or ""),
+            ),
+        )
         members = []
-        for member in pool.get("candidates", []):
+        for member in ordered:
             if lifecycle_state and member.get("lifecycle_state") != lifecycle_state:
                 continue
-            projection = _member_projection(pool_id, member)
+            projection = _member_projection(pool, member, scope, recipe)
             if band and projection.get("band") != band:
                 continue
             members.append(projection)
-        return _candidate_list_envelope(items=members[:page_size], utc_now=utc_now, scope=scope)
+        offset = _parse_member_page_token(page_token)
+        page = members[offset:offset + page_size]
+        next_token = (
+            f"{_MEMBER_PAGE_TOKEN_PREFIX}{offset + page_size}"
+            if offset + page_size < len(members)
+            else None
+        )
+        metadata = pool.get("metadata") or {}
+        return _candidate_list_envelope(
+            items=page,
+            utc_now=utc_now,
+            scope=scope,
+            page_info={
+                "next_page_token": next_token,
+                "page_size": len(page),
+                "has_more": next_token is not None,
+                "total": len(members),
+                "order_by": _MEMBER_ORDER_BY,
+            },
+            meta_extra={
+                "freshness": {
+                    "pool_snapshot_at": pool.get("snapshot_at"),
+                    "data_cutoff": metadata.get("data_cutoff"),
+                    "last_score_run_at": metadata.get("last_score_run_at"),
+                },
+            },
+        )
 
     # -------------------------------------------------------------------
     # GET /bff/agora/candidate-pools/{pool_id}/members/{artifact_id}
@@ -1402,16 +1830,35 @@ def create_research_router(
         pool = _get_candidate_pool_or_404(pool_id)
         _require_pool_access(pool, scope)
         member = _get_member_or_404(pool_id, artifact_id)
+        score = store.get_candidate_score(pool_id, artifact_id)
+        reviews = store.list_candidate_reviews(pool_id, artifact_id)
+        monitoring = store.get_candidate_monitoring(pool_id, artifact_id)
+        operator_grade = _operator_grade_scope(scope)
+        truth = _member_truth_projection(
+            pool=pool,
+            member=member,
+            score=score,
+            reviews=reviews,
+            monitoring=monitoring,
+            recipe=_load_default_scoring_recipe(),
+            evidence_summary_mode="detail",
+            operator_grade=operator_grade,
+        )
         data = {
-            "candidate": dict(member),
-            "score": store.get_candidate_score(pool_id, artifact_id),
-            "reviews": store.list_candidate_reviews(pool_id, artifact_id),
-            "monitoring": store.get_candidate_monitoring(pool_id, artifact_id),
+            "candidate": _candidate_public_member(member),
+            "score": (
+                score
+                if score is None or operator_grade
+                else _score_without_private_explanations(score)
+            ),
+            "reviews": reviews,
+            "monitoring": monitoring,
             "negative_examples": [
-                review for review in store.list_candidate_reviews(pool_id, artifact_id)
+                review for review in reviews
                 if review.get("negative_example") is True
             ],
             "lifecycle_state": member.get("lifecycle_state"),
+            **truth,
         }
         return _candidate_detail_envelope(
             pool=pool,
@@ -1471,7 +1918,10 @@ def create_research_router(
         updated_member = store.update_candidate_member(
             pool_id,
             artifact_id,
-            {"lifecycle_state": next_lifecycle},
+            {
+                "lifecycle_state": next_lifecycle,
+                "_updated_at": now,
+            },
         )
         metadata = dict(pool.get("metadata") or {})
         metadata["last_reviewed_at"] = now
@@ -1485,7 +1935,11 @@ def create_research_router(
                 "pool_id": pool_id,
                 "artifact_id": artifact_id,
                 "decision": body.decision,
-                "candidate": updated_member,
+                "candidate": (
+                    _candidate_public_member(updated_member)
+                    if updated_member is not None
+                    else None
+                ),
                 "review": review,
                 "negative_example": review["negative_example"],
                 "no_order_route_proof": _CANDIDATE_NO_ORDER_ROUTE_PROOF,
