@@ -22,6 +22,10 @@ LIVE_BINDING_ID = "binding-ppl-alloc-012-live"
 LIVE_RUNTIME_ID = "runtime-ppl-alloc-012-live"
 LIVE_SLEEVE_ID = "sleeve-ppl-alloc-012-live"
 LIVE_ARCHETYPE = "ppl_alloc_live"
+PAPER_PERSONA_ID = "persona-ppl-alloc-009-paper"
+PAPER_BINDING_ID = "binding-ppl-alloc-009-paper"
+PAPER_RUNTIME_ID = "runtime-ppl-alloc-009-paper"
+PAPER_POOL_ID = "pool-ppl-alloc-009-paper"
 
 
 def _client(td: str, *, fallback: bool = True) -> TestClient:
@@ -188,6 +192,24 @@ def _install_runtime_observations(
     store.get_telemetry_summary = telemetry_for_runtime  # type: ignore[method-assign]
 
 
+def _strict_test_identity(
+    authorization: str | None,
+    mfa_token: str | None = None,
+    session_cookie: str | None = None,
+) -> bff_main.OperatorIdentity:
+    del session_cookie
+    assert authorization and authorization.startswith("Bearer ")
+    parts = authorization.removeprefix("Bearer ").split(":")
+    roles = parts[1].split(",") if len(parts) > 1 else ["viewer"]
+    return bff_main.OperatorIdentity(
+        operator_id=parts[0],
+        roles=roles,
+        mfa_verified=bool(mfa_token) or "mfa" in parts[2:],
+        claims={"sub": parts[0], "roles": roles},
+        token_kind="structured",
+    )
+
+
 def test_snapshot_id_is_stable_across_semantically_equivalent_item_ordering() -> None:
     items = [
         {
@@ -251,6 +273,359 @@ def test_snapshot_id_is_stable_across_semantically_equivalent_item_ordering() ->
         period="2026-Q3",
     )
     assert permuted_snapshot_id == snapshot_id
+
+
+def test_ppl_alloc_009_governed_paper_chain_applies_without_two_man(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    with CapitalBffAuthorityHarness(tmp_path, seed_allocation=False) as harness:
+        assert harness.client is not None
+        assert harness.capital_client is not None
+        client = harness.client
+
+        pool = client.post(
+            "/bff/capital-pools",
+            headers={
+                "Authorization": "Bearer op-2:operator",
+                "Idempotency-Key": "ppl-alloc-009-paper-pool",
+            },
+            json={
+                "pool_id": PAPER_POOL_ID,
+                "name": "PPL-ALLOC-009 isolated paper ledger",
+                "owner_id": "tenant-dev",
+                "owner_type": "org",
+                "status": "active",
+                "single_runtime_enforced": True,
+                "metadata": {
+                    "internal": True,
+                    "execution_context": "paper",
+                    "tenant_id": "tenant-dev",
+                    "persona_id": PAPER_PERSONA_ID,
+                },
+            },
+        )
+        assert pool.status_code == 201, pool.text
+        binding = client.post(
+            "/api/v1/bindings",
+            headers={
+                "Authorization": "Bearer op-2:operator",
+                "Idempotency-Key": "ppl-alloc-009-paper-binding",
+            },
+            json={
+                "binding_id": PAPER_BINDING_ID,
+                "persona_id": PAPER_PERSONA_ID,
+                "capital_pool_id": PAPER_POOL_ID,
+                "capital_sleeve_id": None,
+                "role": "paper_owner",
+                "allowed_deployment_scope": "paper",
+            },
+        )
+        assert binding.status_code == 201, binding.text
+        activated = harness.capital_client.post(
+            f"/api/bindings/{PAPER_BINDING_ID}/activate",
+                json={
+                    "actor_id": "governance-test",
+                    "actor_role": "persona.admin",
+                    "approval_decision_id": "approval-paper-admission",
+                },
+        )
+        assert activated.status_code == 200, activated.text
+        assert activated.json()["status"] == "active"
+
+        store = bff_main.read_store
+        assert isinstance(store, ReadSurfaceStore)
+        store.create_persona(
+            persona_id=PAPER_PERSONA_ID,
+            name="PPL Alloc 009 Paper",
+            actor_id="persona-registry",
+            archetype="ppl_alloc_paper",
+            lifecycle_state="paper_running",
+            risk_level="low",
+            metadata={
+                "capital_mode": "paper",
+                "deployment_stage": "paper",
+                "binding_id": PAPER_BINDING_ID,
+            },
+        )
+        store.create_runtime_binding(
+            runtime_id=PAPER_RUNTIME_ID,
+            name="PPL Alloc 009 Paper",
+            persona_id=PAPER_PERSONA_ID,
+            binding_id=PAPER_BINDING_ID,
+            deployment_plan_id="plan-ppl-alloc-009-paper",
+            runtime_kind="paper",
+            actor_id="runtime-manager",
+            state="running",
+            params={"capital_pool_id": PAPER_POOL_ID},
+        )
+        original_sessions = store.get_sessions_for_persona
+        original_telemetry = store.get_telemetry_summary
+
+        def sessions_for_persona(
+            persona_id: str | None,
+        ) -> list[dict[str, Any]] | None:
+            if persona_id == PAPER_PERSONA_ID:
+                return [
+                    {
+                        "id": "session-ppl-alloc-009-paper",
+                        "status": "active",
+                        "runtime_binding_id": PAPER_RUNTIME_ID,
+                        "capital_pool_id": PAPER_POOL_ID,
+                        "last_heartbeat_at": "2026-07-24T00:00:00Z",
+                    }
+                ]
+            return original_sessions(persona_id)
+
+        def telemetry_for_runtime(runtime_id: str) -> dict[str, Any] | None:
+            if runtime_id == PAPER_RUNTIME_ID:
+                return {
+                    "runtime_id": PAPER_RUNTIME_ID,
+                    "pnl": 0.80,
+                    "drawdown": 0.01,
+                    "fill_rate": 0.99,
+                    "avg_slippage_bps": 0.5,
+                    "total_trades": 64,
+                    "collected_at": "2026-07-24T00:00:00Z",
+                }
+            return original_telemetry(runtime_id)
+
+        store.get_sessions_for_persona = sessions_for_persona  # type: ignore[method-assign]
+        store.get_telemetry_summary = telemetry_for_runtime  # type: ignore[method-assign]
+
+        monkeypatch.setenv("PANTHEON_ENV", "dev")
+        monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+        monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "false")
+        monkeypatch.setenv("PANTHEON_LIVE_BROKER_ENABLED", "false")
+        monkeypatch.setenv("PANTHEON_CANARY_EXECUTION_ENABLED", "false")
+        monkeypatch.setattr(bff_main, "_extract_identity", _strict_test_identity)
+        operator_headers = {
+            "Authorization": "Bearer paper-operator:operator:mfa",
+        }
+        approver_headers = {
+            "Authorization": "Bearer paper-approver:approver:mfa",
+        }
+
+        quarterly = client.get(
+            "/bff/management/quarterly-ranking",
+            headers=operator_headers,
+            params={"quarter": "2026-Q3", "page_size": 200},
+        )
+        assert quarterly.status_code == 200, quarterly.text
+        quarterly_data = quarterly.json()["data"]
+        snapshot_id = quarterly_data["ranking_snapshot_id"]
+        row = _item_by_persona(quarterly_data["items"], PAPER_PERSONA_ID)
+        assert row["stage"] == "paper_running"
+        assert row["capital_scope"] == "paper_ledger"
+        assert row["capital_pool_id"] is None
+        assert row["capital_sleeve_id"] is None
+        assert row["eligible"] is True
+        paper_bindings = store.list_bindings(
+            persona_id=PAPER_PERSONA_ID,
+            role="paper_owner",
+        )
+        assert len(paper_bindings) == 1, (
+            row.get("binding_ids"),
+            paper_bindings,
+        )
+        assert paper_bindings[0]["status"] == "active"
+        assert paper_bindings[0]["allowed_deployment_scope"] == "paper"
+        assert paper_bindings[0]["capital_sleeve_id"] is None
+        assert PAPER_BINDING_ID in row["binding_ids"], row
+
+        recommendations = client.get(
+            "/bff/management/quarterly-ranking/recommendations",
+            headers=operator_headers,
+            params={
+                "quarter": "2026-Q3",
+                "personaId": PAPER_PERSONA_ID,
+                "page_size": 200,
+            },
+        )
+        assert recommendations.status_code == 200, recommendations.text
+        recommendation = next(
+            item
+            for item in recommendations.json()["data"]["items"]
+            if item["action_id"] == "promote_to_canary_candidate"
+        )
+        review_id = recommendation["recommendation_id"]
+        submitted = client.post(
+            (
+                "/bff/management/quarterly-ranking/recommendations/"
+                f"{review_id}/submit"
+            ),
+            headers={
+                **operator_headers,
+                "Idempotency-Key": "ppl-alloc-009-promotion-submit",
+            },
+            json={
+                "quarter": "2026-Q3",
+                "ranking_snapshot_id": snapshot_id,
+            },
+        )
+        assert submitted.status_code == 202, submitted.text
+        decided = client.post(
+            f"/bff/management/promotion-reviews/{review_id}/decisions",
+            headers={
+                **approver_headers,
+                "Idempotency-Key": "ppl-alloc-009-promotion-decision",
+            },
+            json={
+                "quarter": "2026-Q3",
+                "decision": "approve",
+                "rationale": "Approve governed paper-only simulation",
+            },
+        )
+        assert decided.status_code == 202, decided.text
+
+        evaluated = client.post(
+            "/bff/management/allocation-policy/evaluate",
+            headers={**operator_headers, "X-MFA-Token": "mfa-paper-evaluate"},
+            json={
+                "ranking_snapshot_id": snapshot_id,
+                "rows": [row],
+                "authority_mode": "governed_paper_simulation",
+                "promotion_review_id": review_id,
+            },
+        )
+        assert evaluated.status_code == 200, evaluated.text
+        evaluation = evaluated.json()["data"]
+        assert evaluation["allocation_policy_version"] == (
+            "persona-paper-allocation-simulation-v1"
+        )
+        line = evaluation["lines"][0]
+        assert line["capital_pool_id"] == PAPER_POOL_ID
+        assert line["binding_id"] == PAPER_BINDING_ID
+        assert line["target_weight"] == 1.0
+        assert line["live_capital_side_effects"] is False
+
+        proposal_payload = {
+            "capital_pool_id": PAPER_POOL_ID,
+            "ranking_snapshot_id": snapshot_id,
+            "allocation_evaluation_id": evaluation["allocation_evaluation_id"],
+            "allocation_policy_version": evaluation["allocation_policy_version"],
+            "reason": "PPL-ALLOC-009 governed paper allocation",
+            "lines": evaluation["lines"],
+            "simulation": {
+                "status": "passed",
+                "authority_mode": "governed_paper_simulation",
+            },
+            "constraints": {
+                "paper_only": True,
+                "live_capital_enabled": False,
+                "canary_execution_enabled": False,
+            },
+            "rollback_target": {
+                "paper_ledger_id": row["paper_ledger_id"],
+                "current_weight": 0.0,
+            },
+            "audit_refs": [
+                f"promotion_review:{review_id}",
+                f"ranking_snapshot:{snapshot_id}",
+            ],
+        }
+        proposed = client.post(
+            "/bff/rebalances",
+            headers={
+                **operator_headers,
+                "Idempotency-Key": "ppl-alloc-009-paper-proposal",
+            },
+            json=proposal_payload,
+        )
+        assert proposed.status_code == 202, proposed.text
+        rebalance_id = proposed.json()["rebalance_id"]
+        approved = client.post(
+            f"/bff/rebalances/{rebalance_id}/approve",
+            headers={
+                **approver_headers,
+                "Idempotency-Key": "ppl-alloc-009-paper-approval",
+            },
+            json={
+                "approval_decision_id": "approval-ppl-alloc-009-paper",
+                "memo": "Approve paper-only allocation apply",
+            },
+        )
+        assert approved.status_code == 201, approved.text
+        approval_id = approved.json()["data"]["approval_decision_id"]
+
+        same_actor_token = client.post(
+            "/bff/confirm-tokens",
+            headers={
+                **approver_headers,
+                "Idempotency-Key": "ppl-alloc-009-approver-confirm",
+            },
+            json={
+                "tokenId": "ct-ppl-alloc-009-approver",
+                "command": "ApprovedApply",
+                "target": {"type": "Rebalance", "id": rebalance_id},
+                "operator_id": "paper-approver",
+                "reason": "Negative separation test",
+            },
+        )
+        assert same_actor_token.status_code == 201, same_actor_token.text
+        same_actor_apply = client.post(
+            f"/bff/rebalances/{rebalance_id}/apply",
+            headers={
+                **approver_headers,
+                "X-MFA-Token": "mfa-paper-apply",
+                "X-Confirm-Token": "ct-ppl-alloc-009-approver",
+                "Idempotency-Key": "ppl-alloc-009-same-actor-apply",
+            },
+            json={"approval_decision_id": approval_id},
+        )
+        assert same_actor_apply.status_code == 409, same_actor_apply.text
+        assert (
+            same_actor_apply.json()["error"]["details"]["reason"]
+            == "PAPER_SIMULATION_APPROVAL_APPLY_NOT_DISTINCT"
+        )
+
+        confirmed = client.post(
+            "/bff/confirm-tokens",
+            headers={
+                **operator_headers,
+                "Idempotency-Key": "ppl-alloc-009-operator-confirm",
+            },
+            json={
+                "tokenId": "ct-ppl-alloc-009-operator",
+                "command": "ApprovedApply",
+                "target": {"type": "Rebalance", "id": rebalance_id},
+                "operator_id": "paper-operator",
+                "reason": "Confirm governed paper allocation",
+            },
+        )
+        assert confirmed.status_code == 201, confirmed.text
+        applied = client.post(
+            f"/bff/rebalances/{rebalance_id}/apply",
+            headers={
+                **operator_headers,
+                "X-MFA-Token": "mfa-paper-apply",
+                "X-Confirm-Token": "ct-ppl-alloc-009-operator",
+                "Idempotency-Key": "ppl-alloc-009-paper-apply",
+            },
+            json={"approval_decision_id": approval_id},
+        )
+        assert applied.status_code == 202, applied.text
+        apply_command_id = applied.json()["data"]["command_id"]
+        receipt = client.get(
+            f"/api/v1/operator/commands/{apply_command_id}",
+            headers=operator_headers,
+        )
+        assert receipt.status_code == 200, receipt.text
+        assert receipt.json()["status"] == "executed"
+        result = receipt.json()["result"]
+        assert result["authoritative_capital_readback"] is True
+        assert result["live_capital_side_effects"] is False
+        assert result["allocation_readback"][0]["current_weight"] == 1.0
+        assert result["allocation_readback"][0]["binding_id"] == PAPER_BINDING_ID
+
+        stored = bff_main.command_store.get_command(apply_command_id)
+        assert stored is not None
+        preconditions = stored["audit"]["precondition_evidence"]
+        assert preconditions["approval_decision_id"] == approval_id
+        assert preconditions["paper_simulation_authority"] == (
+            "governed_paper_simulation"
+        )
+        assert "two_man_signature_id" not in preconditions
 
 
 def test_ranking_tuple_and_snapshot_round_trip_into_rebalance_proposal() -> None:
