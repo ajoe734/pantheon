@@ -28,7 +28,7 @@ except ImportError:
 
 TASK_ID = "OSS-RLLIB-001"
 FRAMEWORK = "ray.rllib"
-FRAMEWORK_VERSION_PIN = "2.54.0"
+FRAMEWORK_VERSION_PIN = "2.55.1"
 GYMNASIUM_VERSION_PIN = "1.2.2"
 DEFAULT_ENV_ID = "CartPole-v1"
 DEFAULT_NUM_ITERS = 5
@@ -181,7 +181,6 @@ def _train_with_rllib(
     ray.init(
         **secure_local_ray_init_kwargs(
             ignore_reinit_error=True,
-            local_mode=True,
             logging_level="ERROR",
             num_cpus=1,
         ),

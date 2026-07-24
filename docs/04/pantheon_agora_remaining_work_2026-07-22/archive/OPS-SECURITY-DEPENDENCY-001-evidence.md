@@ -5,6 +5,12 @@ Repository: `ajoe734/pantheon`
 Merge target: `dev`
 Audited baseline: `52d9ed234af280fc239459bfeddf76886ae35f08`
 
+> Supersession notice (2026-07-24): this is point-in-time evidence for the
+> advisories visible on 2026-07-22. Dependabot alert `#38`
+> (`CVE-2026-41486`) later identified Ray 2.54 as vulnerable. Follow-up task
+> `OPS-SECURITY-RAY-2026-41486-001` upgrades the dev graph to Ray 2.55.1.
+> Existing Ray 2.54 promotion candidates must not be treated as secure.
+
 ## Result
 
 The task began with 20 open Dependabot alerts: seven critical, three high,

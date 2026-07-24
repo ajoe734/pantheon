@@ -120,7 +120,7 @@ class TestStubRLlibBackend(unittest.TestCase):
 class TestRLlibPPOBackend(unittest.TestCase):
     def test_real_backend_uses_ray_import_path(self) -> None:
         fake_ray = types.ModuleType("ray")
-        fake_ray.__version__ = "2.54.0"
+        fake_ray.__version__ = "2.55.1"
         fake_rllib = types.ModuleType("ray.rllib")
         prepared = GovernedRLlibTrainEvalAdapter().prepare(MINIMAL_DATASET)
         with patch.dict(os.environ, TEST_RAY_SECURITY_ENV, clear=False):
@@ -133,7 +133,7 @@ class TestRLlibPPOBackend(unittest.TestCase):
 
     def test_real_backend_does_not_delegate_to_stub(self) -> None:
         fake_ray = types.ModuleType("ray")
-        fake_ray.__version__ = "2.54.0"
+        fake_ray.__version__ = "2.55.1"
         fake_rllib = types.ModuleType("ray.rllib")
         prepared = GovernedRLlibTrainEvalAdapter().prepare(MINIMAL_DATASET)
         with patch.dict(os.environ, TEST_RAY_SECURITY_ENV, clear=False):

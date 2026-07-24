@@ -68,9 +68,13 @@ low. The current manifests include MLflow 3.10.1, Ray/RLlib 2.9.3, and Torch
 
 - Task evidence:
   `docs/04/pantheon_agora_remaining_work_2026-07-22/archive/OPS-SECURITY-DEPENDENCY-001-evidence.md`
-- The candidate pins MLflow 3.11.1, Ray/RLlib 2.54.0, Gymnasium 1.2.2, and
-  Torch 2.13.0 CPU, and keeps all research services behind tested dormant,
-  fail-closed boundaries.
+- The 2026-07-22 candidate pinned MLflow 3.11.1, Ray/RLlib 2.54.0, Gymnasium
+  1.2.2, and Torch 2.13.0 CPU, and kept all research services behind tested
+  dormant, fail-closed boundaries.
+- A subsequently surfaced Ray advisory (`CVE-2026-41486`, Dependabot alert
+  `#38`) supersedes the Ray 2.54 point-in-time disposition. Follow-up task
+  `OPS-SECURITY-RAY-2026-41486-001` upgrades the active dev graph to Ray
+  2.55.1; do not reuse 2.54 promotion candidates.
 - The six dismissed npm alerts refer only to the frontend mirror removed from
   Pantheon `dev` by `834318190c90962e024ee9b82243cf31a742f441`.
 - Remediation PR #3968 merged as
