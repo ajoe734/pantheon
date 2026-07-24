@@ -1049,6 +1049,33 @@ EOF
         self.assertFalse(record["ready"])
         self.assertEqual(record["status"], "empty_output")
 
+    def test_antigravity_auth_probe_uses_configured_available_model(self) -> None:
+        config = {
+            "providers": {
+                "antigravity": {
+                    "antigravity": {
+                        "cli": "agy",
+                        "model": "gemini-3.6-flash-low",
+                    }
+                }
+            },
+        }
+        token = Path(os.path.expanduser("~/x-token"))
+        success = subprocess.CompletedProcess(args=["agy"], returncode=0, stdout="OK\n", stderr="")
+        with (
+            mock.patch.object(
+                provider_permissions, "_antigravity_auth_metadata",
+                return_value={"oauth_token_exists": True, "gemini_api_key_present": False, "oauth_token": str(token)},
+            ),
+            mock.patch.object(provider_permissions, "_previous_provider_auth_probe", return_value=None),
+            mock.patch.object(provider_permissions, "run_command", return_value=success) as run_command,
+        ):
+            record = provider_permissions._antigravity_auth_probe(config, "antigravity", "/usr/bin/agy")
+
+        self.assertTrue(record["ready"])
+        command = run_command.call_args.args[0]
+        self.assertEqual(command[command.index("--model") + 1], "gemini-3.6-flash-low")
+
     def test_force_push_is_denied(self) -> None:
         command = "git push --force origin HEAD"
 

@@ -30,6 +30,12 @@ from smoke_test import main as smoke_main
 from worker import main as worker_main
 
 
+TEST_RAY_SECURITY_ENV = {
+    "RAY_AUTH_MODE": "token",
+    "RAY_AUTH_TOKEN": "test-only-ray-auth-token-00000000000000000000",
+}
+
+
 def build_dataset() -> dict:
     series = {
         "AAA": [100.0, 101.5, 102.1, 101.8, 103.4, 104.1, 103.6, 104.8, 105.2],
@@ -114,11 +120,12 @@ class TestStubRLlibBackend(unittest.TestCase):
 class TestRLlibPPOBackend(unittest.TestCase):
     def test_real_backend_uses_ray_import_path(self) -> None:
         fake_ray = types.ModuleType("ray")
-        fake_ray.__version__ = "2.9.3"
+        fake_ray.__version__ = "2.55.1"
         fake_rllib = types.ModuleType("ray.rllib")
         prepared = GovernedRLlibTrainEvalAdapter().prepare(MINIMAL_DATASET)
-        with patch.dict(sys.modules, {"ray": fake_ray, "ray.rllib": fake_rllib}, clear=False):
-            result = RLlibPPOBackend().train_and_evaluate(prepared, RLlibTrainingConfig())
+        with patch.dict(os.environ, TEST_RAY_SECURITY_ENV, clear=False):
+            with patch.dict(sys.modules, {"ray": fake_ray, "ray.rllib": fake_rllib}, clear=False):
+                result = RLlibPPOBackend().train_and_evaluate(prepared, RLlibTrainingConfig())
         self.assertEqual(result.backend, "rllib_ppo")
         self.assertTrue(result.metrics["framework_import_ready"])
         self.assertEqual(result.policy_payload["framework_import"], "ray.rllib")
@@ -126,16 +133,17 @@ class TestRLlibPPOBackend(unittest.TestCase):
 
     def test_real_backend_does_not_delegate_to_stub(self) -> None:
         fake_ray = types.ModuleType("ray")
-        fake_ray.__version__ = "2.9.3"
+        fake_ray.__version__ = "2.55.1"
         fake_rllib = types.ModuleType("ray.rllib")
         prepared = GovernedRLlibTrainEvalAdapter().prepare(MINIMAL_DATASET)
-        with patch.dict(sys.modules, {"ray": fake_ray, "ray.rllib": fake_rllib}, clear=False):
-            with patch.object(
-                StubRLlibBackend,
-                "train_and_evaluate",
-                side_effect=AssertionError("stub called"),
-            ):
-                result = RLlibPPOBackend().train_and_evaluate(prepared, RLlibTrainingConfig())
+        with patch.dict(os.environ, TEST_RAY_SECURITY_ENV, clear=False):
+            with patch.dict(sys.modules, {"ray": fake_ray, "ray.rllib": fake_rllib}, clear=False):
+                with patch.object(
+                    StubRLlibBackend,
+                    "train_and_evaluate",
+                    side_effect=AssertionError("stub called"),
+                ):
+                    result = RLlibPPOBackend().train_and_evaluate(prepared, RLlibTrainingConfig())
         self.assertEqual(result.backend, "rllib_ppo")
 
 
