@@ -165,6 +165,14 @@ from persona_allocation_policy import (
     calculate_target_allocations,
     validate_emergency_lines,
 )
+from paper_eligibility_proof import (
+    BENCHMARK_VERSION as _PPL_ALLOC_009_ELIGIBILITY_BENCHMARK_VERSION,
+    EXPECTED_IDEMPOTENCY_KEY as _PPL_ALLOC_009_ELIGIBILITY_IDEMPOTENCY_KEY,
+    OBSERVED_AT as _PPL_ALLOC_009_ELIGIBILITY_OBSERVED_AT,
+    RUN_KEY as _PPL_ALLOC_009_ELIGIBILITY_RUN_KEY,
+    TASK_ID as _PPL_ALLOC_009_ELIGIBILITY_TASK_ID,
+    build_telemetry_event as _ppl_alloc_009_build_telemetry_event,
+)
 from emergency_containment_policy import validate_emergency_containment
 from session_lifecycle_store import SessionLifecycleStore
 from management_ai_store import ManagementAiAttachmentError, ManagementAiAttachmentStore, ManagementAiConversationStore
@@ -26258,6 +26266,423 @@ def _ppl_alloc_009_paper_environment_guard() -> None:
                 "PANTHEON_CANARY_EXECUTION_ENABLED=false"
             ),
         )
+
+
+def _ppl_alloc_009_eligibility_error(
+    message: str,
+    detail: str,
+    *,
+    precondition: str,
+    status_code: int = 422,
+) -> HTTPException:
+    return _bff_error(
+        status_code,
+        ErrorCode.PRECONDITION_FAILED,
+        message,
+        detail,
+        precondition_failed=precondition,
+    )
+
+
+def _ppl_alloc_009_paper_eligibility_context(
+    *,
+    persona_id: str,
+    identity: OperatorIdentity,
+) -> Dict[str, Any]:
+    raw = read_store.get_persona(persona_id)
+    caller_tenant = str(
+        _bff_me_tenant_payload(identity, requested_tenant=None)["id"]
+    )
+    metadata = (
+        raw.get("metadata")
+        if isinstance(raw, dict) and isinstance(raw.get("metadata"), dict)
+        else {}
+    )
+    if (
+        not isinstance(raw, dict)
+        or _persona_record_tenant_id(raw) != caller_tenant
+        or caller_tenant != "tenant-dev"
+        or str(raw.get("name") or "").strip()
+        != f"PPL ALLOC 009 {_PPL_ALLOC_009_ELIGIBILITY_RUN_KEY}"
+        or str(metadata.get("provisioning_idempotency_key") or "").strip()
+        != "ppl-alloc-009-30095677466-persona-create"
+    ):
+        raise _ppl_alloc_009_eligibility_error(
+            "Persona is outside the PPL-ALLOC-009 proof scope",
+            (
+                "The eligibility producer accepts only the exact tenant-dev "
+                "Persona reserved by the canonical acceptance run."
+            ),
+            precondition="task_scoped_persona",
+            status_code=404,
+        )
+    if (
+        _persona_record_projected_state(raw) != "paper_running"
+        or str(metadata.get("capital_mode") or "").strip().lower() != "paper"
+        or str(metadata.get("deployment_stage") or "").strip().lower() != "paper"
+        or metadata.get("live_capital_enabled") is not False
+        or metadata.get("live_write_enabled") is not False
+        or metadata.get("order_side_effects_allowed") is not False
+        or metadata.get("capital_side_effects_allowed") is not False
+    ):
+        raise _ppl_alloc_009_eligibility_error(
+            "Persona is not in authoritative paper-only state",
+            (
+                "The exact Persona must remain paper_running with every "
+                "live/order/capital side-effect authority disabled."
+            ),
+            precondition="paper_only_persona",
+        )
+
+    league_rows = _pm12_persona_league_rows(q=persona_id)
+    matches = [
+        row
+        for row in league_rows
+        if str(row.get("persona_id") or row.get("id") or "").strip() == persona_id
+    ]
+    if len(matches) != 1:
+        raise _ppl_alloc_009_eligibility_error(
+            "Persona ranking identity is not authoritative",
+            "The task Persona must resolve to exactly one canonical league row.",
+            precondition="persona_league_identity",
+        )
+    ranking_item = _pm12_persona_league_ranking_item(matches[0])
+    runtime_ids = [
+        str(value or "").strip()
+        for value in ranking_item.get("runtime_ids") or []
+        if str(value or "").strip()
+    ]
+    if (
+        str(ranking_item.get("stage") or "").strip().lower() != "paper_running"
+        or str(ranking_item.get("capital_scope") or "").strip().lower()
+        != "paper_ledger"
+        or str(ranking_item.get("runtime_resolution") or "").strip().lower()
+        != "active"
+        or str(ranking_item.get("session_resolution") or "").strip().lower()
+        != "active"
+        or not str(ranking_item.get("session_id") or "").strip()
+        or len(runtime_ids) != 1
+    ):
+        raise _ppl_alloc_009_eligibility_error(
+            "Paper runtime authority is incomplete",
+            (
+                "The task Persona must have one active paper runtime, one active "
+                "owner monitoring session, and one isolated paper ledger."
+            ),
+            precondition="paper_runtime_authority",
+        )
+
+    capital = _ppl_alloc_009_paper_capital_context(
+        persona_id=persona_id,
+        ranking_item=ranking_item,
+    )
+    runtime_id = runtime_ids[0]
+    declared_runtime_binding_id = str(
+        metadata.get("runtime_binding_id") or ""
+    ).strip()
+    runtime_matches = []
+    for runtime in read_store.list_runtime_bindings():
+        if not isinstance(runtime, dict):
+            continue
+        runtime_binding_id = str(
+            runtime.get("runtime_binding_id")
+            or runtime.get("binding_id")
+            or runtime.get("id")
+            or ""
+        ).strip()
+        runtime_stage = str(
+            runtime.get("deployment_stage")
+            or runtime.get("deployment_mode")
+            or runtime.get("execution_mode")
+            or runtime.get("runtime_kind")
+            or ""
+        ).strip().lower()
+        runtime_status = str(
+            runtime.get("status") or runtime.get("state") or ""
+        ).strip().lower()
+        if (
+            str(runtime.get("runtime_id") or "").strip() == runtime_id
+            and runtime_binding_id == declared_runtime_binding_id
+            and str(runtime.get("persona_id") or "").strip() == persona_id
+            and runtime_stage == "paper"
+            and runtime_status in {"active", "running", "idle"}
+        ):
+            runtime_matches.append(dict(runtime))
+    if len(runtime_matches) != 1:
+        raise _ppl_alloc_009_eligibility_error(
+            "RuntimeBinding is not authoritative",
+            "The task Persona must resolve to exactly one active paper RuntimeBinding.",
+            precondition="paper_runtime_binding",
+        )
+    runtime_binding = runtime_matches[0]
+    if (
+        str(runtime_binding.get("capital_pool_id") or "").strip()
+        != capital["capital_pool_id"]
+        or str(runtime_binding.get("persona_capital_binding_id") or "").strip()
+        != capital["binding_id"]
+    ):
+        raise _ppl_alloc_009_eligibility_error(
+            "RuntimeBinding capital lineage does not match",
+            (
+                "RuntimeBinding must join the same internal paper pool and "
+                "PersonaCapitalBinding as the canonical ranking row."
+            ),
+            precondition="paper_runtime_capital_lineage",
+        )
+
+    required_runtime_fields = (
+        "runtime_id",
+        "capital_pool_id",
+        "artifact_id",
+        "artifact_version",
+        "persona_capital_binding_id",
+    )
+    missing = [
+        field
+        for field in required_runtime_fields
+        if not str(runtime_binding.get(field) or "").strip()
+    ]
+    plan_id = str(
+        runtime_binding.get("plan_id")
+        or runtime_binding.get("deployment_plan_id")
+        or ""
+    ).strip()
+    if not plan_id:
+        missing.append("plan_id")
+    plan = read_store.get_deployment_plan(plan_id) if plan_id else None
+    strategy_id = str(
+        runtime_binding.get("strategy_id")
+        or (plan or {}).get("strategy_id")
+        or ""
+    ).strip()
+    if not strategy_id:
+        missing.append("strategy_id")
+    if missing:
+        raise _ppl_alloc_009_eligibility_error(
+            "RuntimeBinding telemetry identity is incomplete",
+            f"Missing canonical telemetry fields: {', '.join(sorted(set(missing)))}.",
+            precondition="telemetry_binding_identity",
+        )
+
+    effective_at = _audit_datetime(runtime_binding.get("effective_at"))
+    observed_at = _audit_datetime(_PPL_ALLOC_009_ELIGIBILITY_OBSERVED_AT)
+    retired_at = _audit_datetime(runtime_binding.get("retired_at"))
+    if (
+        observed_at is None
+        or (effective_at is not None and observed_at < effective_at)
+        or (retired_at is not None and observed_at > retired_at)
+    ):
+        raise _ppl_alloc_009_eligibility_error(
+            "Paper benchmark timestamp is outside RuntimeBinding authority",
+            "The immutable proof observation must fall within the binding window.",
+            precondition="telemetry_binding_window",
+        )
+    return {
+        "ranking_item": ranking_item,
+        "runtime_binding": runtime_binding,
+        "strategy_id": strategy_id,
+        "paper_session_id": str(ranking_item.get("session_id") or "").strip(),
+        "paper_ledger_id": str(ranking_item.get("paper_ledger_id") or "").strip(),
+        "capital": capital,
+    }
+
+
+def _ppl_alloc_009_telemetry_url(path: str) -> str:
+    base = str(
+        os.getenv("PANTHEON_TELEMETRY_API_URL")
+        or os.getenv("PANTHEON_TELEMETRY_URL")
+        or ""
+    ).strip().rstrip("/")
+    if not base:
+        raise _ppl_alloc_009_eligibility_error(
+            "Telemetry owner is unavailable",
+            "PANTHEON_TELEMETRY_API_URL is required for the governed producer.",
+            precondition="telemetry_owner",
+            status_code=503,
+        )
+    return f"{base}{path}"
+
+
+@app.post(
+    "/bff/management/personas/{persona_id}/ppl-alloc-009-paper-eligibility-proof",
+    status_code=202,
+)
+async def bff_ppl_alloc_009_paper_eligibility_proof(
+    persona_id: str,
+    payload: Dict[str, Any] = Body(...),
+    authorization: Optional[str] = Header(default=None),
+    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
+):
+    """Run the exact dev-only paper positive control through telemetry owner."""
+
+    identity = _extract_identity(authorization, mfa_token=x_mfa_token)
+    _require_operator_role(identity)
+    if not identity.mfa_verified:
+        raise _ppl_alloc_009_eligibility_error(
+            "Paper eligibility proof requires MFA",
+            "The authenticated operator identity has no verified MFA claim.",
+            precondition="mfa",
+            status_code=403,
+        )
+    _ppl_alloc_009_paper_environment_guard()
+    _reject_body_idempotency_key(payload)
+    resolved_key = _resolve_final_idempotency_key(
+        idempotency_key,
+        x_idempotency_key,
+    )
+    if resolved_key != _PPL_ALLOC_009_ELIGIBILITY_IDEMPOTENCY_KEY:
+        raise _ppl_alloc_009_eligibility_error(
+            "Idempotency key is outside the task scope",
+            "Use the exact PPL-ALLOC-009 acceptance retry key.",
+            precondition="task_idempotency_key",
+        )
+    expected_payload = {
+        "task_id": _PPL_ALLOC_009_ELIGIBILITY_TASK_ID,
+        "run_key": _PPL_ALLOC_009_ELIGIBILITY_RUN_KEY,
+        "benchmark_version": _PPL_ALLOC_009_ELIGIBILITY_BENCHMARK_VERSION,
+    }
+    if payload != expected_payload:
+        raise _ppl_alloc_009_eligibility_error(
+            "Paper benchmark request is outside the task scope",
+            (
+                "The route accepts only the immutable PPL-ALLOC-009 task, run, "
+                "and benchmark identities; clients cannot submit metrics."
+            ),
+            precondition="paper_benchmark_identity",
+        )
+
+    context = await asyncio.to_thread(
+        _ppl_alloc_009_paper_eligibility_context,
+        persona_id=persona_id,
+        identity=identity,
+    )
+    event, benchmark = _ppl_alloc_009_build_telemetry_event(
+        persona_id=persona_id,
+        actor_id=identity.operator_id,
+        idempotency_key=resolved_key,
+        runtime_binding=context["runtime_binding"],
+        strategy_id=context["strategy_id"],
+    )
+    try:
+        owner_receipt = await asyncio.to_thread(
+            _post_json,
+            _ppl_alloc_009_telemetry_url("/api/telemetry/ingest"),
+            event,
+        )
+        telemetry_readback = await asyncio.to_thread(
+            _get_json,
+            _ppl_alloc_009_telemetry_url(
+                "/api/telemetry/runtime-summaries/"
+                + str(event["runtime_id"])
+            ),
+        )
+    except Exception as exc:
+        raise _ppl_alloc_009_eligibility_error(
+            "Telemetry owner did not accept the paper benchmark",
+            str(exc) or exc.__class__.__name__,
+            precondition="telemetry_owner_receipt",
+            status_code=502,
+        ) from exc
+    if (
+        not isinstance(owner_receipt, dict)
+        or owner_receipt.get("status") != "accepted"
+        or not isinstance(telemetry_readback, dict)
+    ):
+        raise _ppl_alloc_009_eligibility_error(
+            "Telemetry owner readback is incomplete",
+            "The telemetry owner must accept the event and return its runtime summary.",
+            precondition="telemetry_owner_readback",
+            status_code=502,
+        )
+    expected_metrics = benchmark["metrics"]
+    for field, expected in expected_metrics.items():
+        actual = telemetry_readback.get(field)
+        observed_at = telemetry_readback.get(f"{field}_at")
+        binding_id = telemetry_readback.get(f"{field}_binding_id")
+        if (
+            actual != expected
+            or observed_at != _PPL_ALLOC_009_ELIGIBILITY_OBSERVED_AT
+            or binding_id != event["binding_id"]
+        ):
+            raise _ppl_alloc_009_eligibility_error(
+                "Telemetry owner readback changed the benchmark result",
+                (
+                    f"Expected {field}={expected!r} at "
+                    f"{_PPL_ALLOC_009_ELIGIBILITY_OBSERVED_AT} from "
+                    f"{event['binding_id']!r}; got value={actual!r}, "
+                    f"at={observed_at!r}, binding={binding_id!r}."
+                ),
+                precondition="paper_benchmark_readback",
+                status_code=502,
+            )
+
+    refreshed_rows = _pm12_persona_league_rows(q=persona_id)
+    refreshed_matches = [
+        _pm12_persona_league_ranking_item(row)
+        for row in refreshed_rows
+        if str(row.get("persona_id") or row.get("id") or "").strip() == persona_id
+    ]
+    refreshed = refreshed_matches[0] if len(refreshed_matches) == 1 else {}
+    actions = _pm12_recommendation_action_ids(refreshed) if refreshed else []
+    if (
+        refreshed.get("eligible") is not True
+        or "promote_to_canary_candidate" not in actions
+    ):
+        raise _ppl_alloc_009_eligibility_error(
+            "Canonical ranking did not admit the positive control",
+            (
+                "Telemetry was accepted, but the authoritative ranking did not "
+                "produce the required promotion-review recommendation."
+            ),
+            precondition="canonical_promotion_eligibility",
+            status_code=502,
+        )
+
+    return {
+        "data": {
+            "task_id": _PPL_ALLOC_009_ELIGIBILITY_TASK_ID,
+            "run_key": _PPL_ALLOC_009_ELIGIBILITY_RUN_KEY,
+            "benchmark_version": _PPL_ALLOC_009_ELIGIBILITY_BENCHMARK_VERSION,
+            "scenario_digest": benchmark["scenario_digest"],
+            "event_id": event["event_id"],
+            "trace_id": event["trace_id"],
+            "persona_id": persona_id,
+            "runtime_id": event["runtime_id"],
+            "runtime_binding_id": event["binding_id"],
+            "persona_capital_binding_id": event["persona_capital_binding_id"],
+            "capital_pool_id": event["capital_pool_id"],
+            "paper_session_id": context["paper_session_id"],
+            "paper_ledger_id": context["paper_ledger_id"],
+            "metrics": expected_metrics,
+            "ranking": {
+                "eligible": refreshed["eligible"],
+                "overall_score": refreshed["overall_score"],
+                "components": refreshed["components"],
+                "recommendation_action_ids": actions,
+            },
+            "owner_receipt": {
+                "service": "telemetry",
+                "status": owner_receipt["status"],
+                "accepted_event_id": event["event_id"],
+                "readback_last_event_id": telemetry_readback.get("last_event_id"),
+                "readback_collected_at": telemetry_readback.get("collected_at"),
+            },
+            "safety": {
+                "paper_only": True,
+                "real_capital_side_effects": False,
+                "real_order_side_effects": False,
+                "canary_execution_enabled": False,
+                "live_execution_enabled": False,
+            },
+        },
+        "meta": {
+            "snapshot_at": utc_now(),
+            "source": "telemetry_owner_positive_control_readback",
+            "idempotency_key": resolved_key,
+        },
+    }
 
 
 def _ppl_alloc_009_paper_capital_context(
