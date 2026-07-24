@@ -162,6 +162,9 @@ def _install_runtime_observations(
 ) -> None:
     original_sessions = store.get_sessions_for_persona
     original_telemetry = store.get_telemetry_summary
+    original_paper_monitoring = (
+        store.list_authoritative_paper_runtime_monitoring_sessions
+    )
 
     def sessions_for_persona(target_persona_id: str | None) -> list[dict[str, Any]] | None:
         if target_persona_id == persona_id:
@@ -188,8 +191,25 @@ def _install_runtime_observations(
             }
         return original_telemetry(target_runtime_id)
 
+    def paper_monitoring_sessions() -> list[dict[str, Any]]:
+        return [
+            *original_paper_monitoring(),
+            {
+                "id": f"paper-monitoring-{runtime_id}",
+                "session_id": f"paper-monitoring-{runtime_id}",
+                "session_type": "paper_runtime_monitoring",
+                "status": "running",
+                "deployment_stage": "paper",
+                "runtime_id": runtime_id,
+                "last_heartbeat_at": "2026-07-10T00:00:00Z",
+            },
+        ]
+
     store.get_sessions_for_persona = sessions_for_persona  # type: ignore[method-assign]
     store.get_telemetry_summary = telemetry_for_runtime  # type: ignore[method-assign]
+    store.list_authoritative_paper_runtime_monitoring_sessions = (  # type: ignore[method-assign]
+        paper_monitoring_sessions
+    )
 
 
 def _strict_test_identity(
@@ -359,23 +379,21 @@ def test_ppl_alloc_009_governed_paper_chain_applies_without_two_man(
             state="running",
             params={"capital_pool_id": PAPER_POOL_ID},
         )
-        original_sessions = store.get_sessions_for_persona
         original_telemetry = store.get_telemetry_summary
 
-        def sessions_for_persona(
-            persona_id: str | None,
-        ) -> list[dict[str, Any]] | None:
-            if persona_id == PAPER_PERSONA_ID:
-                return [
-                    {
-                        "id": "session-ppl-alloc-009-paper",
-                        "status": "active",
-                        "runtime_binding_id": PAPER_RUNTIME_ID,
-                        "capital_pool_id": PAPER_POOL_ID,
-                        "last_heartbeat_at": "2026-07-24T00:00:00Z",
-                    }
-                ]
-            return original_sessions(persona_id)
+        store.list_authoritative_paper_runtime_monitoring_sessions = lambda: [
+            {
+                "id": "session-ppl-alloc-009-paper",
+                "session_id": "session-ppl-alloc-009-paper",
+                "session_type": "paper_runtime_monitoring",
+                "status": "running",
+                "deployment_stage": "paper",
+                "runtime_id": PAPER_RUNTIME_ID,
+                "runtime_binding_id": PAPER_BINDING_ID,
+                "capital_pool_id": PAPER_POOL_ID,
+                "last_heartbeat_at": "2026-07-24T00:00:00Z",
+            }
+        ]  # type: ignore[method-assign]
 
         def telemetry_for_runtime(runtime_id: str) -> dict[str, Any] | None:
             if runtime_id == PAPER_RUNTIME_ID:
@@ -390,7 +408,6 @@ def test_ppl_alloc_009_governed_paper_chain_applies_without_two_man(
                 }
             return original_telemetry(runtime_id)
 
-        store.get_sessions_for_persona = sessions_for_persona  # type: ignore[method-assign]
         store.get_telemetry_summary = telemetry_for_runtime  # type: ignore[method-assign]
 
         monkeypatch.setenv("PANTHEON_ENV", "dev")
@@ -420,6 +437,11 @@ def test_ppl_alloc_009_governed_paper_chain_applies_without_two_man(
         assert row["capital_pool_id"] is None
         assert row["capital_sleeve_id"] is None
         assert row["eligible"] is True
+        assert row["session_id"] == "session-ppl-alloc-009-paper"
+        assert (
+            row["session_authority"]
+            == "runtime_manager.paper_fleet_monitoring"
+        )
         paper_bindings = store.list_bindings(
             persona_id=PAPER_PERSONA_ID,
             role="paper_owner",
@@ -1390,6 +1412,37 @@ def test_runtime_binding_mode_is_actual_stage_not_binding_ceiling() -> None:
             assert row["current_weight"] is None
             assert row["current_weight_source"] == "not_applicable_paper_ledger"
             assert row["eligible"] is True
+        finally:
+            bff_main.read_store = original_store
+
+
+def test_paper_runtime_session_requires_runtime_manager_monitoring_owner() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.read_store
+        try:
+            _client(td, fallback=False)
+            store = bff_main.read_store
+            assert isinstance(store, ReadSurfaceStore)
+            store.get_sessions_for_persona = lambda _persona_id: [  # type: ignore[method-assign]
+                {
+                    "id": "local-persona-session",
+                    "status": "active",
+                    "runtime_id": PAPER_RUNTIME_ID,
+                }
+            ]
+            store.list_authoritative_paper_runtime_monitoring_sessions = (  # type: ignore[method-assign]
+                lambda: []
+            )
+            session, resolution = bff_main._pm12_runtime_session_resolution(
+                PAPER_PERSONA_ID,
+                {
+                    "runtime_id": PAPER_RUNTIME_ID,
+                    "deployment_mode": "paper",
+                    "state": "running",
+                },
+            )
+            assert session is None
+            assert resolution == "missing"
         finally:
             bff_main.read_store = original_store
 

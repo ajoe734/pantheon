@@ -47987,18 +47987,90 @@ def _pm12_session_runtime_aliases(session: Dict[str, Any]) -> Set[str]:
     }
 
 
+def _pm12_runtime_deployment_mode(runtime: Dict[str, Any]) -> str:
+    mode = str(
+        runtime.get("deployment_mode")
+        or runtime.get("deployment_stage")
+        or runtime.get("runtime_kind")
+        or ""
+    ).strip().lower()
+    return {
+        "paper_running": "paper",
+        "canary_running": "canary",
+        "live_running": "live",
+    }.get(mode, mode)
+
+
+def _pm12_authoritative_paper_monitoring_sessions(
+    runtime_aliases: Set[str],
+    *,
+    authoritative_sessions: Optional[Sequence[Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
+    sessions: List[Dict[str, Any]] = []
+    for raw_session in (
+        authoritative_sessions
+        if authoritative_sessions is not None
+        else (
+            read_store.list_authoritative_paper_runtime_monitoring_sessions()
+            or []
+        )
+    ):
+        if not isinstance(raw_session, dict):
+            continue
+        if (
+            str(raw_session.get("session_type") or "").strip().lower()
+            != "paper_runtime_monitoring"
+        ):
+            continue
+        if (
+            str(raw_session.get("deployment_stage") or "").strip().lower()
+            != "paper"
+        ):
+            continue
+        if not _pm12_session_runtime_aliases(raw_session).intersection(
+            runtime_aliases
+        ):
+            continue
+        session = dict(raw_session)
+        session["session_authority"] = "runtime_manager.paper_fleet_monitoring"
+        session["source_dataset"] = "paper_runtime_monitoring_sessions"
+        sessions.append(session)
+    return sessions
+
+
 def _pm12_runtime_session_resolution(
     persona_id: str,
     runtime: Dict[str, Any],
 ) -> tuple[Optional[Dict[str, Any]], str]:
     if not runtime:
         return None, "missing_runtime"
-    sessions = [
-        session
-        for session in (read_store.get_sessions_for_persona(persona_id) or [])
-        if isinstance(session, dict)
-    ]
     runtime_aliases = _pm12_runtime_identity_aliases(runtime)
+    if _pm12_runtime_deployment_mode(runtime) == "paper":
+        # Runtime Manager's paper-fleet monitoring store is the lifecycle owner
+        # for paper runtimes. A local/persona session may be useful for display,
+        # but it cannot prove that the canonical paper worker joined this exact
+        # RuntimeBinding.
+        authoritative_sessions = (
+            read_store.list_authoritative_paper_runtime_monitoring_sessions() or []
+        )
+        sessions = _pm12_authoritative_paper_monitoring_sessions(
+            runtime_aliases,
+            authoritative_sessions=authoritative_sessions,
+        )
+        if not sessions and any(
+            isinstance(session, dict)
+            and _pm12_session_runtime_aliases(session)
+            for session in authoritative_sessions
+        ):
+            return None, "identity_mismatch"
+    else:
+        sessions = []
+        for raw_session in read_store.get_sessions_for_persona(persona_id) or []:
+            if not isinstance(raw_session, dict):
+                continue
+            session = dict(raw_session)
+            session.setdefault("session_authority", "persona_session_store")
+            sessions.append(session)
     matching = [
         session
         for session in sessions
@@ -48038,12 +48110,54 @@ def _pm12_runtime_session_resolution(
 
 
 def _pm12_persona_session_summary(persona_id: str) -> Dict[str, Any]:
-    sessions = read_store.get_sessions_for_persona(persona_id) or []
+    sessions = [
+        dict(session)
+        for session in (read_store.get_sessions_for_persona(persona_id) or [])
+        if isinstance(session, dict)
+    ]
+    for session in sessions:
+        session.setdefault("session_authority", "persona_session_store")
+    persona_binding_ids = set(
+        _pm12_compact_ids(
+            read_store.get_bindings_for_persona(persona_id) or [],
+            ("persona_capital_binding_id", "binding_id", "id"),
+        )
+    )
+    paper_runtimes = [
+        runtime
+        for runtime in (read_store.list_runtime_bindings() or [])
+        if _pm12_runtime_deployment_mode(runtime) == "paper"
+        and (
+            str(runtime.get("persona_id") or "").strip() == persona_id
+            or str(runtime.get("persona_capital_binding_id") or "").strip()
+            in persona_binding_ids
+        )
+    ]
+    paper_runtime_aliases = {
+        alias
+        for runtime in paper_runtimes
+        for alias in _pm12_runtime_identity_aliases(runtime)
+    }
+    if paper_runtime_aliases:
+        sessions = [
+            session
+            for session in sessions
+            if not _pm12_session_runtime_aliases(session).intersection(
+                paper_runtime_aliases
+            )
+        ]
+        sessions.extend(
+            _pm12_authoritative_paper_monitoring_sessions(paper_runtime_aliases)
+        )
     active = [
         session
         for session in sessions
-        if str(session.get("status") or "").lower() == "active"
+        if str(
+            session.get("status") or session.get("state") or ""
+        ).strip().lower()
+        in {"active", "running"}
         and session.get("ended_at") in (None, "")
+        and session.get("active") is not False
         and _pm12_record_freshness_issue(session) is None
     ]
     return {
@@ -49429,6 +49543,8 @@ _PM12_RANKING_SNAPSHOT_ITEM_FIELDS = (
     "binding_resolution",
     "runtime_resolution",
     "session_resolution",
+    "session_id",
+    "session_authority",
     "telemetry_resolution",
     "binding_ids",
     "runtime_ids",
@@ -49774,7 +49890,10 @@ def _enrich_persona_item_with_bindings(
         runtime_resolution = "identity_mismatch"
     else:
         runtime_resolution = "missing"
-    _, session_resolution = _pm12_runtime_session_resolution(persona_id, runtime)
+    runtime_session, session_resolution = _pm12_runtime_session_resolution(
+        persona_id,
+        runtime,
+    )
     matching_runtimes = [runtime] if runtime else []
 
     strategy_ids = []
@@ -50074,6 +50193,16 @@ def _enrich_persona_item_with_bindings(
         "binding_resolution": binding_resolution,
         "runtime_resolution": runtime_resolution,
         "session_resolution": session_resolution,
+        "session_id": (
+            runtime_session.get("session_id") or runtime_session.get("id")
+            if runtime_session
+            else None
+        ),
+        "session_authority": (
+            runtime_session.get("session_authority")
+            if runtime_session
+            else None
+        ),
         "capital_binding": capital_projection.get("capital_binding"),
         "current_weight_source": current_weight_source,
     })
@@ -51565,6 +51694,8 @@ def _pm12_persona_league_ranking_item(
         "binding_resolution": row.get("binding_resolution"),
         "runtime_resolution": runtime_resolution,
         "session_resolution": session_resolution,
+        "session_id": row.get("session_id"),
+        "session_authority": row.get("session_authority"),
         "telemetry_resolution": telemetry_resolution,
         "current_weight_source": row.get("current_weight_source"),
         "binding_ids": list(row.get("binding_ids") or []),
