@@ -1,0 +1,42 @@
+{
+  "bundle_version": "1.11",
+  "extends": {
+    "bundle_path": "services/control-plane/specs/agora/bundle_index.v1_10.json",
+    "bundle_version": "1.10",
+    "bundle_index_sha256": "b8469492d1f97f99924de9d5f220eaa3ee430c94c8db2fe130a6d0261b33c775"
+  },
+  "files": {
+    "specs/agora/v12/workshop_operation_lifecycle.schema.json": "abdaf6226c230e9628893272c27e2990928b14fbfec3eeef8004f1a2137d9fc3",
+    "specs/agora/v12/capability_manifest_v1_11.json": "dcbe26ba0e3f3529d9ce38590aca16b8c6ae34ff614547b1be1d69894da37a61"
+  },
+  "openapi": {
+    "path": "services/control-plane/openapi/agora_v1_11.openapi.yaml",
+    "sha256": "ce5e8d634c3518579301a3bc3bacc0998104dc483597ce31e1a6c1a2ef4e54a9"
+  },
+  "required_definition_checksums": {
+    "WorkshopOperationCommandReceipt": "3d8faad82cac37b9d45c565ca0bd27e3e0eec69464ee10a490e1a8f1402ca875",
+    "WorkshopResearchRunResource": "41ec44a335db903b8c5e171c35c180d4acb3300fb58f156891af99e24fea0b14",
+    "WorkshopResearchRunEnvelope": "6cb2a0ea0af270c2401f727fcf15c50978bbc970c6d2ee44184ab2c950be79d8",
+    "WorkshopConsultationResource": "8fb67e74112828c4dd5065de82ec0fcb70bd8126477baae691c80a256a2029cc",
+    "WorkshopConsultationEnvelope": "2a29bf9b08936c7e2f749b80277e600974336d34047743a6ab1d966ca04fc82b",
+    "WorkshopConcludeResource": "6941fcc09dde716bdba5a94b2595771b85876ce36a4de71cf08f4ce4cf0ba380",
+    "WorkshopConcludeEnvelope": "94023dbdd4d75bb39bab36800079c936e06b727e8e48ca327627830d7beadc6a",
+    "WorkshopConcludeFinalVersionRule": "baf78e96d8615d524ad6e9241699c4b295fa16634b7f32712bc502532e3a1a6f",
+    "WorkshopOperationDurabilityRule": "5ba628b03ca50bb6842b71a1cf8221a1a87d21324709bdb02c488a3bd758f994"
+  },
+  "route_families": {
+    "durable_workshop_operation_lifecycle": [
+      "POST /bff/agora/workshops/{workshop_id}/research-runs",
+      "POST /bff/agora/workshops/{workshop_id}/consultations",
+      "POST /bff/agora/workshops/{workshop_id}/conclude"
+    ]
+  },
+  "implementation_status": "implemented",
+  "contract_refs": {
+    "implementation_router": "services/control-plane/bff/agora/strategy_workshop/router.py",
+    "durable_store": "services/control-plane/bff/agora/strategy_workshop/store.py",
+    "downstream_adapters": "services/control-plane/bff/agora/strategy_workshop/operations.py",
+    "task_packet": "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/AG-WS-OPS-002.md"
+  },
+  "note": "Additive v1.11 durable operation lifecycle. Existing v1.2/v1.8/v1.9/v1.10 contract bytes remain unchanged."
+}

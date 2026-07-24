@@ -50,7 +50,7 @@ Propose a new ApprovalDecision.
 ```json
 {
   "decision_id":    "apv-<optional>",
-  "target_type":    "registry_entry | strategy_spec | model_artifact | allocation_policy | persona_capital_binding | evolution_proposal",
+  "target_type":    "registry_entry | strategy_spec | strategy_workshop | model_artifact | allocation_policy | persona_capital_binding | evolution_proposal",
   "target_id":      "<artifact or object ID>",
   "target_version": "<version string>",
   "risk_level":     "low | medium | high | critical",

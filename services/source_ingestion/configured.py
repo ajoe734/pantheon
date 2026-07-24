@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
-from services.external_egress import guard_external_url
+from services.external_egress import is_internal_host, open_external_url
 
 from .connectors import SourceConnector, SourceEvidenceError, SourceRecord
 from .external_sources import validate_external_source_connector, validate_external_source_record
@@ -294,6 +294,14 @@ class JsonlConfiguredConnectorStore:
                 _validate_feed_url(prefix, "fetch.allowed_url_prefixes")
             if not _url_is_allowed(url, allowed_prefixes):
                 raise SourceEvidenceError("fetch.url is outside allowed_url_prefixes")
+            network_scope = str(fetch.get("network_scope") or "external").strip()
+            if network_scope not in {"external", "internal_service"}:
+                raise SourceEvidenceError("fetch.network_scope must be external or internal_service")
+            parsed_url = urllib.parse.urlparse(url)
+            if network_scope == "external" and parsed_url.scheme not in {"https", "file"}:
+                raise SourceEvidenceError("external network fetch.url must use https")
+            if network_scope == "internal_service" and not is_internal_host(parsed_url.hostname or ""):
+                raise SourceEvidenceError("internal_service fetch.url must target an internal host")
             timeout_seconds = float(fetch.get("timeout_seconds") or 5.0)
             if timeout_seconds <= 0 or timeout_seconds > 30:
                 raise SourceEvidenceError("fetch.timeout_seconds must be > 0 and <= 30")
@@ -313,6 +321,7 @@ class JsonlConfiguredConnectorStore:
                 "next_watermark": fetch.get("next_watermark"),
                 "default_access_scope": _normalized_string_list(fetch.get("default_access_scope")) or ["public"],
                 "respect_robots_txt": bool(fetch.get("respect_robots_txt", True)),
+                "network_scope": network_scope,
                 "allow_empty": allow_empty,
                 "empty_reason": empty_reason,
                 "fail_until_attempt": fail_until_attempt,
@@ -457,7 +466,12 @@ class ConfiguredConnectorFetcher:
         if not _url_is_allowed(url, allowed_prefixes):
             raise SourceEvidenceError("external feed URL is outside allowed_url_prefixes")
         if bool(fetch.get("respect_robots_txt", True)):
-            _assert_robots_allowed(url, allowed_prefixes, float(fetch["timeout_seconds"]))
+            _assert_robots_allowed(
+                url,
+                allowed_prefixes,
+                float(fetch["timeout_seconds"]),
+                network_scope=str(fetch.get("network_scope") or "external"),
+            )
         max_bytes = int(fetch["max_bytes"])
         raw: bytes
         if url.startswith("file://"):
@@ -466,16 +480,27 @@ class ConfiguredConnectorFetcher:
                 raw = handle.read(max_bytes + 1)
         else:
             request = urllib.request.Request(
-                guard_external_url(url, caller="source_ingest.configured_feed"),
+                url,
                 headers={"Accept": "application/json", "User-Agent": "pantheon-source-ingest/0.1"},
             )
-            with urllib.request.urlopen(request, timeout=float(fetch["timeout_seconds"])) as response:
+            with _open_configured_url(
+                request,
+                caller="source_ingest.configured_feed",
+                timeout=float(fetch["timeout_seconds"]),
+                network_scope=str(fetch.get("network_scope") or "external"),
+                allowed_prefixes=allowed_prefixes,
+            ) as response:
                 final_url = response.geturl()
                 _validate_feed_url(final_url, "external feed redirect")
                 if not _url_is_allowed(final_url, allowed_prefixes):
                     raise SourceEvidenceError("external feed redirect is outside allowed_url_prefixes")
                 if bool(fetch.get("respect_robots_txt", True)):
-                    _assert_robots_allowed(final_url, allowed_prefixes, float(fetch["timeout_seconds"]))
+                    _assert_robots_allowed(
+                        final_url,
+                        allowed_prefixes,
+                        float(fetch["timeout_seconds"]),
+                        network_scope=str(fetch.get("network_scope") or "external"),
+                    )
                 raw = response.read(max_bytes + 1)
         if len(raw) > max_bytes:
             raise SourceEvidenceError(f"external feed response exceeds fetch.max_bytes={max_bytes}")
@@ -543,7 +568,43 @@ def _validate_feed_url(url: str, field_name: str) -> None:
         raise SourceEvidenceError(f"{field_name} must not include inline secret query parameters")
 
 
-def _assert_robots_allowed(url: str, allowed_prefixes: list[str], timeout_seconds: float) -> None:
+def _open_configured_url(
+    request: urllib.request.Request,
+    *,
+    caller: str,
+    timeout: float,
+    network_scope: str,
+    allowed_prefixes: list[str],
+):
+    if network_scope == "internal_service":
+        host = urllib.parse.urlparse(request.full_url).hostname or ""
+        if not is_internal_host(host):
+            raise SourceEvidenceError("internal_service redirect escaped to an external host")
+        opener = urllib.request.build_opener(_InternalServiceRedirectHandler(allowed_prefixes))
+        return opener.open(request, timeout=timeout)
+    return open_external_url(request, caller=caller, timeout=timeout)
+
+
+class _InternalServiceRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def __init__(self, allowed_prefixes: list[str]) -> None:
+        super().__init__()
+        self.allowed_prefixes = allowed_prefixes
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        absolute_url = urllib.parse.urljoin(req.full_url, newurl)
+        host = urllib.parse.urlparse(absolute_url).hostname or ""
+        if not is_internal_host(host) or not _url_is_allowed(absolute_url, self.allowed_prefixes):
+            raise SourceEvidenceError("internal_service redirect escaped its internal URL allowlist")
+        return super().redirect_request(req, fp, code, msg, headers, absolute_url)
+
+
+def _assert_robots_allowed(
+    url: str,
+    allowed_prefixes: list[str],
+    timeout_seconds: float,
+    *,
+    network_scope: str = "external",
+) -> None:
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in {"http", "https"}:
         return
@@ -553,10 +614,16 @@ def _assert_robots_allowed(url: str, allowed_prefixes: list[str], timeout_second
         raise SourceEvidenceError("robots.txt URL is outside allowed_url_prefixes")
     try:
         request = urllib.request.Request(
-            guard_external_url(robots_url, caller="source_ingest.configured_robots"),
+            robots_url,
             headers={"Accept": "text/plain", "User-Agent": "pantheon-source-ingest/0.1"},
         )
-        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        with _open_configured_url(
+            request,
+            caller="source_ingest.configured_robots",
+            timeout=timeout_seconds,
+            network_scope=network_scope,
+            allowed_prefixes=allowed_prefixes,
+        ) as response:
             if response.status >= 400:
                 return
             robots_txt = response.read(100_000).decode("utf-8", errors="replace")

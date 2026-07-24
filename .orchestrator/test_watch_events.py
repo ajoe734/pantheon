@@ -71,6 +71,54 @@ class WatcherBookkeepingTests(unittest.TestCase):
         self.assertIsNotNone(state["last_scan_at"])
 
 
+class WakeupMessageRoleGuardrailTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.config = {
+            "agents": {
+                "antigravity": {
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                    "adapter": "local_cli",
+                }
+            },
+            "branch_workflow": {"dev_branch": "dev", "task_branch_prefix": "task/"},
+        }
+        self.event = {
+            "task_id": "AG-WS-OPS-002",
+            "target_agent": "Antigravity",
+            "context_files": ["AI_COLLABORATION_GUIDE.md"],
+            "task": {
+                "id": "AG-WS-OPS-002",
+                "status": "review",
+                "owner": "Claude",
+                "reviewer": "Antigravity",
+                "artifacts": ["docs/task.md"],
+            },
+        }
+
+    def test_review_dispatch_forbids_ownership_and_closeout_mutations(self) -> None:
+        self.event["reason"] = "review_ready_dispatch"
+
+        message = watch_events.render_wakeup_message(self.config, self.event, "Antigravity")
+
+        self.assertIn("角色是 reviewer，不是 task owner", message)
+        self.assertIn("不得執行 `assign`、`start`、`progress`、`handoff`、`done`", message)
+        self.assertIn("ai-status.sh approve AG-WS-OPS-002", message)
+        self.assertIn("ai-status.sh reopen AG-WS-OPS-002", message)
+        self.assertIn("owner closeout 由 supervisor 另行 dispatch", message)
+        self.assertNotIn("{{dispatch_guardrails}}", message)
+
+    def test_finalize_dispatch_identifies_owner_without_reassignment(self) -> None:
+        self.event["reason"] = "owned_finalize_dispatch"
+
+        message = watch_events.render_wakeup_message(self.config, self.event, "Antigravity")
+
+        self.assertIn("角色是已通過審查後的 task owner", message)
+        self.assertIn("不得重新指派 owner/reviewer", message)
+        self.assertIn("才執行 `done`", message)
+        self.assertNotIn("角色是 reviewer，不是 task owner", message)
+
+
 class WatcherQueueTransactionTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmpdir = tempfile.TemporaryDirectory()
