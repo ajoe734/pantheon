@@ -237,6 +237,19 @@ def branch_head_sha(branch: str) -> str | None:
     return sha or None
 
 
+def remote_branch_head_sha(branch: str, remote: str = "origin") -> str | None:
+    proc = run_command(["git", "ls-remote", "--heads", remote, branch], cwd=ROOT)
+    if proc.returncode != 0:
+        return None
+    expected_ref = f"refs/heads/{branch}"
+    for line in (proc.stdout or "").splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[1] == expected_ref:
+            sha = parts[0].strip()
+            return sha or None
+    return None
+
+
 def branch_has_diff(base: str, branch: str) -> bool:
     proc = run_command(["git", "rev-list", "--count", f"{base}..{branch}"], cwd=ROOT)
     if proc.returncode != 0:
@@ -248,10 +261,7 @@ def branch_has_diff(base: str, branch: str) -> bool:
 
 
 def remote_branch_exists(branch: str, remote: str = "origin") -> bool:
-    proc = run_command(["git", "ls-remote", "--heads", remote, branch], cwd=ROOT)
-    if proc.returncode != 0:
-        return False
-    return bool((proc.stdout or "").strip())
+    return remote_branch_head_sha(branch, remote) is not None
 
 
 def run_gh_process(
@@ -480,21 +490,54 @@ def _select_task_pr_evidence(
 ) -> tuple[dict[str, Any] | None, str | None, str | None]:
     scoped = [item for item in candidates if str(item.get("headRefName") or "") == branch]
     if head_sha:
-        scoped = [item for item in scoped if str(item.get("headRefOid") or "") == head_sha]
-    else:
+        matching_head = [
+            item for item in scoped if str(item.get("headRefOid") or "") == head_sha
+        ]
+        if scoped and not matching_head:
+            details = ", ".join(
+                f"#{item.get('number')} @ {item.get('headRefOid') or '(missing)'}"
+                for item in scoped
+            )
+            return None, "skipped_head_mismatch", (
+                f"ReviewBus found task PR evidence for `{branch}`, but none matches exact "
+                f"task head `{head_sha}` ({details}). Refusing stale or cross-commit review evidence."
+            )
+        scoped = matching_head
+
+    matching_base = [item for item in scoped if str(item.get("baseRefName") or "") == base]
+    if not head_sha:
         candidate_heads = {
             str(item.get("headRefOid") or "").strip()
-            for item in scoped
+            for item in matching_base
             if str(item.get("headRefOid") or "").strip()
         }
         if len(candidate_heads) > 1:
             raise GitHubBusError(
-                f"ReviewBus found multiple commits for `{branch}` while resolving `{task_id}` "
-                "and has no exact local/task head SHA. Preserve explicit task commit evidence "
-                "before requesting review."
+                f"ReviewBus found multiple commits for `{branch}` -> `{base}` while resolving "
+                f"`{task_id}` and has no exact published/task head SHA. Preserve explicit task "
+                "commit evidence before requesting review."
+            )
+        missing_head = [item for item in matching_base if not str(item.get("headRefOid") or "").strip()]
+        if missing_head:
+            numbers = ", ".join(f"#{item.get('number')}" for item in missing_head)
+            return None, "skipped_no_head_sha", (
+                f"ReviewBus found task PR evidence ({numbers}) for `{branch}` -> `{base}` "
+                "without an exact head SHA. Refusing unscoped review evidence."
             )
 
-    matching_base = [item for item in scoped if str(item.get("baseRefName") or "") == base]
+    incomplete_merged = [
+        item
+        for item in matching_base
+        if str(item.get("state") or "").upper() == "MERGED"
+        and (not item.get("mergedAt") or not _pr_merge_commit(item))
+    ]
+    if incomplete_merged:
+        numbers = ", ".join(f"#{item.get('number')}" for item in incomplete_merged)
+        return None, "skipped_incomplete_merge_evidence", (
+            f"ReviewBus found merged task PR evidence ({numbers}) for `{branch}` -> `{base}` "
+            "without both merge time and merge commit. Refusing incomplete delivery evidence."
+        )
+
     merged = [
         item
         for item in matching_base
@@ -773,9 +816,58 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
     base = delivery_base_branch(config, repo)
     title = f"[ReviewBus] {task['id']} {task['title']}"
     task_github = task.get("github") or {}
-    head_sha = str(task_github.get("head_sha") or "").strip() or branch_head_sha(branch)
-    if not head_sha and isinstance(pr_ref, dict) and pr_ref.get("branch") == branch:
-        head_sha = str(pr_ref.get("head_sha") or "").strip() or None
+    explicit_head_sha = str(task_github.get("head_sha") or "").strip() or None
+    local_head_sha = branch_head_sha(branch)
+    prior_head_sha = None
+    if isinstance(pr_ref, dict) and pr_ref.get("branch") == branch:
+        prior_head_sha = str(pr_ref.get("head_sha") or "").strip() or None
+    candidates = find_task_pr_candidates(repo, branch)
+    matching_candidate_heads = {
+        str(item.get("headRefOid") or "").strip()
+        for item in candidates
+        if str(item.get("baseRefName") or "") == base
+        and str(item.get("headRefOid") or "").strip()
+    }
+
+    preliminary_head_sha = explicit_head_sha or prior_head_sha or local_head_sha
+    preliminary_skip_hash = json.dumps(
+        {
+            "state": "skipped_unpublished_branch",
+            "task_id": task["id"],
+            "branch": branch,
+            "base": base,
+            "head_sha": preliminary_head_sha,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    previous_unpublished = (
+        not candidates
+        and isinstance(pr_ref, dict)
+        and pr_ref.get("state") == "skipped_unpublished_branch"
+        and pr_ref.get("branch") == branch
+        and pr_ref.get("head_sha") == preliminary_head_sha
+        and entry.get("last_review_hash") == preliminary_skip_hash
+    )
+    if previous_unpublished:
+        last_check = _parse_iso(str(pr_ref.get("last_remote_branch_check_at") or ""))
+        if last_check and (_iso_now_dt() - last_check).total_seconds() < unpublished_branch_recheck_seconds(config):
+            return False
+
+    published_head_sha = remote_branch_head_sha(branch) if not candidates else None
+    if explicit_head_sha:
+        head_sha = explicit_head_sha
+    elif len(matching_candidate_heads) == 1:
+        # A task integrator may update the remote PR branch after the worker's
+        # local ref was created. The unique PR head on the configured delivery
+        # base is the immutable review identity in that case.
+        head_sha = next(iter(matching_candidate_heads))
+    elif candidates:
+        # Let the selector diagnose multiple heads or base mismatch without a
+        # stale local ref silently filtering the relevant PR evidence.
+        head_sha = None
+    else:
+        head_sha = published_head_sha or prior_head_sha or local_head_sha
 
     if (
         isinstance(pr_ref, dict)
@@ -788,7 +880,6 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
     ):
         return False
 
-    candidates = find_task_pr_candidates(repo, branch)
     selected_pr, diagnostic_state, diagnostic = _select_task_pr_evidence(
         candidates,
         task_id=task["id"],
@@ -868,7 +959,9 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
                 "merge_commit": _pr_merge_commit(item),
             }
             for item in candidates
-            if not head_sha or str(item.get("headRefOid") or "") == head_sha
+            if diagnostic_state == "skipped_head_mismatch"
+            or not head_sha
+            or str(item.get("headRefOid") or "") == head_sha
         ]
         diagnostic_hash = json.dumps(
             {
@@ -927,12 +1020,7 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
         and pr_ref.get("head_sha") == head_sha
         and entry.get("last_review_hash") == skip_hash
     )
-    if previous_unpublished:
-        last_check = _parse_iso(str(pr_ref.get("last_remote_branch_check_at") or ""))
-        if last_check and (_iso_now_dt() - last_check).total_seconds() < unpublished_branch_recheck_seconds(config):
-            return False
-
-    if not remote_branch_exists(branch):
+    if not published_head_sha:
         checked_at = utc_now()
         entry["review_pr"] = {
             "number": (pr_ref or {}).get("number"),
