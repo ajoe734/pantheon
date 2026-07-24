@@ -392,16 +392,23 @@ def test_dev_deploy_plumbs_product_oidc_and_fail_closed_role_mapping() -> None:
         "DEV_BFF_ROLE_MAP",
         "DEV_BFF_ROLE_MAP_MODE",
         "DEV_BFF_DEFAULT_ROLE",
+        "DEV_BFF_MFA_CLAIMS",
+        "DEV_BFF_REQUIRE_EMAIL_VERIFIED",
     ):
         assert name in script
         assert name in workflow
 
     assert 'DEV_BFF_DEFAULT_ROLE="${DEV_BFF_DEFAULT_ROLE:-viewer}"' in script
-    assert "app_metadata.roles,roles" in workflow
+    assert "DEV_BFF_ROLE_CLAIMS || 'roles,role'" in workflow
     assert "pantheon-operator=operator" in workflow
     assert "DEV_BFF_ROLE_MAP_MODE || 'strict'" in workflow
     assert "DEV_BFF_DEFAULT_ROLE || 'viewer'" in workflow
-    assert "kwjtcynauaulrxngyetk.supabase.co/auth/v1/.well-known/openid-configuration" in workflow
+    assert "https://securetoken.google.com/pantheon-lupin-dev-20260719" in workflow
+    assert "pantheon-lupin-dev-20260719" in workflow
+    assert "securetoken@system.gserviceaccount.com" in workflow
+    assert "firebase.sign_in_second_factor" in workflow
+    assert "DEV_BFF_REQUIRE_EMAIL_VERIFIED || 'true'" in workflow
+    assert "supabase.co/auth/v1" not in workflow
     assert "user_metadata.roles" not in workflow
 
 
