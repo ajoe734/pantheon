@@ -319,6 +319,36 @@ class TestMainRoutes(unittest.TestCase):
             "TELEMETRY_EVENT_NOT_FOUND",
         )
 
+    def test_accepted_event_readback_stays_exact_across_replays(self):
+        event = _make_event(
+            binding_id=_KNOWN_BINDING_ID,
+            event_id="route-exact-replay-001",
+        )
+        first = self.client.post("/api/telemetry/ingest", json=event)
+        exact_replay = self.client.post(
+            "/api/telemetry/ingest",
+            json=dict(event),
+        )
+        conflicting_replay = self.client.post(
+            "/api/telemetry/ingest",
+            json={
+                **event,
+                "metrics": {
+                    **event["metrics"],
+                    "pnl": 999.0,
+                },
+            },
+        )
+
+        self.assertEqual(first.status_code, 202)
+        self.assertEqual(exact_replay.status_code, 202)
+        self.assertEqual(conflicting_replay.status_code, 400)
+        readback = self.client.get(
+            "/api/telemetry/events/route-exact-replay-001"
+        )
+        self.assertEqual(readback.status_code, 200)
+        self.assertEqual(readback.get_json(), event)
+
     def test_readyz_exposes_writer_and_dlq_metrics(self):
         resp = self.client.get("/readyz")
         self.assertEqual(resp.status_code, 200)

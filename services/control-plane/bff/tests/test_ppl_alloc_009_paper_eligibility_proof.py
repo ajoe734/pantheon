@@ -742,8 +742,10 @@ def test_route_polls_boundedly_until_exact_owner_event_is_available(
         _http_error(404),
         {"event_id": "wrong-event"},
     ]
+    readback_urls: list[str] = []
 
-    def eventual_readback(_url: str) -> dict[str, Any]:
+    def eventual_readback(url: str) -> dict[str, Any]:
+        readback_urls.append(url)
         result = results.pop(0) if results else dict(emitted[-1])
         if isinstance(result, Exception):
             raise result
@@ -760,6 +762,12 @@ def test_route_polls_boundedly_until_exact_owner_event_is_available(
     assert response.status_code == 202, response.text
     assert response.json()["data"]["owner_receipt"]["readback_attempts"] == 3
     assert results == []
+    assert readback_urls == [
+        (
+            "http://telemetry:8083/api/telemetry/events/"
+            + emitted[-1]["event_id"]
+        )
+    ] * 3
 
 
 @pytest.mark.parametrize(

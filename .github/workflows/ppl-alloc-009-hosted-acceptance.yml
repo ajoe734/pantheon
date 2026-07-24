@@ -65,7 +65,6 @@ jobs:
       PPL_ALLOC_009_FE_BASE_URL: ${{ inputs.fe_base_url }}
       PPL_ALLOC_009_OPERATOR_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID || 'pantheon-dev-operator-a-v1' }}
       PPL_ALLOC_009_OPERATOR_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET }}
-      PPL_ALLOC_009_GCP_IDENTITY_API_KEY: ${{ vars.VITE_GCP_IDENTITY_API_KEY }}
       PPL_ALLOC_009_PUBLIC_SUPABASE_URL: "https://kwjtcynauaulrxngyetk.supabase.co"
       PPL_ALLOC_009_QUARTER: ${{ inputs.quarter }}
       PPL_ALLOC_009_RUN_KEY: ${{ inputs.resume_run_key }}
@@ -73,6 +72,19 @@ jobs:
       PPL_ALLOC_009_TEST_SHA: ${{ inputs.execute_plans_test_sha }}
       PANTHEON_CREDENTIALED_PLAYWRIGHT_NO_ARTIFACTS: "1"
     steps:
+      - name: Load and mask the browser identity key
+        shell: bash
+        env:
+          GCP_IDENTITY_API_KEY: ${{ secrets.PPL_ALLOC_009_GCP_IDENTITY_API_KEY }}
+        run: |
+          set -euo pipefail
+          echo "::add-mask::${GCP_IDENTITY_API_KEY}"
+          if [[ -z "${GCP_IDENTITY_API_KEY}" ]]; then
+            echo "::error::The dev browser identity key is not configured."
+            exit 1
+          fi
+          echo "PPL_ALLOC_009_GCP_IDENTITY_API_KEY=${GCP_IDENTITY_API_KEY}" >> "${GITHUB_ENV}"
+
       - name: Checkout dispatched Pantheon revision
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5a
         with:
@@ -102,7 +114,7 @@ jobs:
           [[ -n "${PPL_ALLOC_009_OPERATOR_CLIENT_SECRET}" ]]
           [[ -n "${PPL_ALLOC_009_APPROVER_CLIENT_ID}" ]]
           [[ -n "${PPL_ALLOC_009_APPROVER_CLIENT_SECRET}" ]]
-          [[ "${PPL_ALLOC_009_GCP_IDENTITY_API_KEY}" =~ ^AIza[A-Za-z0-9_-]{35}$ ]]
+          [[ -n "${PPL_ALLOC_009_GCP_IDENTITY_API_KEY}" ]]
           [[ "${PPL_ALLOC_009_PUBLIC_SUPABASE_URL}" == "https://kwjtcynauaulrxngyetk.supabase.co" ]]
           [[ "${PPL_ALLOC_009_RUN_KEY}" == "30095677466" ]]
           [[ "${PPL_ALLOC_009_TENANT_ID}" == "tenant-dev" ]]
