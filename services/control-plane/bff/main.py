@@ -26247,7 +26247,7 @@ def _ppl_alloc_009_paper_environment_guard() -> None:
     if (
         env_name != "dev"
         or _bff_auth_mode() != "strict"
-        or _bff_auth_stub_enabled()
+        or _bool_from_env(_BFF_AUTH_STUB_ENV, default=False)
         or _bool_from_env("PANTHEON_LIVE_BROKER_ENABLED", default=False)
         or _bool_from_env("PANTHEON_CANARY_EXECUTION_ENABLED", default=False)
     ):
@@ -26450,9 +26450,11 @@ def _ppl_alloc_009_paper_eligibility_context(
     if not plan_id:
         missing.append("plan_id")
     plan = read_store.get_deployment_plan(plan_id) if plan_id else None
+    if not isinstance(plan, dict):
+        missing.append("deployment_plan")
     strategy_id = str(
-        runtime_binding.get("strategy_id")
-        or (plan or {}).get("strategy_id")
+        (plan or {}).get("strategy_id")
+        or runtime_binding.get("strategy_id")
         or ""
     ).strip()
     if not strategy_id:
@@ -26503,6 +26505,102 @@ def _ppl_alloc_009_telemetry_url(path: str) -> str:
     return f"{base}{path}"
 
 
+def _ppl_alloc_009_dev_proof_enabled() -> bool:
+    return _bool_from_env(
+        "PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED",
+        default=False,
+    )
+
+
+def _ppl_alloc_009_readback_timeout_seconds() -> float:
+    raw = str(
+        os.getenv("PANTHEON_PPL_ALLOC_009_READBACK_TIMEOUT_SECONDS") or "10"
+    ).strip()
+    try:
+        return max(0.0, min(float(raw), 30.0))
+    except (TypeError, ValueError):
+        return 10.0
+
+
+def _ppl_alloc_009_readback_poll_seconds() -> float:
+    raw = str(
+        os.getenv("PANTHEON_PPL_ALLOC_009_READBACK_POLL_SECONDS") or "0.25"
+    ).strip()
+    try:
+        return max(0.01, min(float(raw), 2.0))
+    except (TypeError, ValueError):
+        return 0.25
+
+
+def _ppl_alloc_009_attributed_metric_mismatches(
+    *,
+    telemetry_readback: Mapping[str, Any],
+    expected_metrics: Mapping[str, Any],
+    binding_id: str,
+) -> List[str]:
+    mismatches: List[str] = []
+    for field, expected in expected_metrics.items():
+        actual = telemetry_readback.get(field)
+        observed_at = telemetry_readback.get(f"{field}_at")
+        metric_binding_id = telemetry_readback.get(f"{field}_binding_id")
+        if actual != expected:
+            mismatches.append(
+                f"{field}.value expected={expected!r} actual={actual!r}"
+            )
+        if observed_at != _PPL_ALLOC_009_ELIGIBILITY_OBSERVED_AT:
+            mismatches.append(
+                f"{field}.at expected={_PPL_ALLOC_009_ELIGIBILITY_OBSERVED_AT!r} "
+                f"actual={observed_at!r}"
+            )
+        if metric_binding_id != binding_id:
+            mismatches.append(
+                f"{field}.binding expected={binding_id!r} "
+                f"actual={metric_binding_id!r}"
+            )
+    return mismatches
+
+
+def _ppl_alloc_009_wait_for_telemetry_readback(
+    *,
+    runtime_id: str,
+    binding_id: str,
+    expected_metrics: Mapping[str, Any],
+) -> tuple[Dict[str, Any], int]:
+    timeout_seconds = _ppl_alloc_009_readback_timeout_seconds()
+    poll_seconds = _ppl_alloc_009_readback_poll_seconds()
+    deadline = time.monotonic() + timeout_seconds
+    attempts = 0
+    last_error = "summary unavailable"
+    while True:
+        attempts += 1
+        try:
+            candidate = _get_json(
+                _ppl_alloc_009_telemetry_url(
+                    "/api/telemetry/runtime-summaries/" + runtime_id
+                )
+            )
+            if not isinstance(candidate, dict):
+                last_error = "telemetry summary response was not an object"
+            else:
+                mismatches = _ppl_alloc_009_attributed_metric_mismatches(
+                    telemetry_readback=candidate,
+                    expected_metrics=expected_metrics,
+                    binding_id=binding_id,
+                )
+                if not mismatches:
+                    return dict(candidate), attempts
+                last_error = "; ".join(mismatches)
+        except Exception as exc:  # noqa: BLE001 - bounded owner readback
+            last_error = str(exc) or exc.__class__.__name__
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(poll_seconds, remaining))
+    raise RuntimeError(
+        f"telemetry owner readback timed out after {attempts} attempts: {last_error}"
+    )
+
+
 @app.post(
     "/bff/management/personas/{persona_id}/ppl-alloc-009-paper-eligibility-proof",
     status_code=202,
@@ -26527,6 +26625,16 @@ async def bff_ppl_alloc_009_paper_eligibility_proof(
             status_code=403,
         )
     _ppl_alloc_009_paper_environment_guard()
+    if not _ppl_alloc_009_dev_proof_enabled():
+        raise _ppl_alloc_009_eligibility_error(
+            "PPL-ALLOC-009 dev proof is disabled",
+            (
+                "PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED must be explicitly "
+                "enabled for the one bounded acceptance run."
+            ),
+            precondition="dev_proof_feature_flag",
+            status_code=403,
+        )
     _reject_body_idempotency_key(payload)
     resolved_key = _resolve_final_idempotency_key(
         idempotency_key,
@@ -26565,58 +26673,62 @@ async def bff_ppl_alloc_009_paper_eligibility_proof(
         runtime_binding=context["runtime_binding"],
         strategy_id=context["strategy_id"],
     )
+    expected_metrics = benchmark["metrics"]
+    write_reconciliation = "accepted"
     try:
         owner_receipt = await asyncio.to_thread(
             _post_json,
             _ppl_alloc_009_telemetry_url("/api/telemetry/ingest"),
             event,
         )
-        telemetry_readback = await asyncio.to_thread(
-            _get_json,
-            _ppl_alloc_009_telemetry_url(
-                "/api/telemetry/runtime-summaries/"
-                + str(event["runtime_id"])
-            ),
-        )
+    except urllib_error.HTTPError as exc:
+        if exc.code != 409:
+            raise _ppl_alloc_009_eligibility_error(
+                "Telemetry owner rejected the paper benchmark",
+                f"HTTP {exc.code}",
+                precondition="telemetry_owner_receipt",
+                status_code=502,
+            ) from exc
+        owner_receipt = {"status": "idempotent_replay", "http_status": 409}
+        write_reconciliation = "http_409_readback"
+    except (urllib_error.URLError, TimeoutError, OSError) as exc:
+        owner_receipt = {
+            "status": "write_outcome_uncertain",
+            "error_type": exc.__class__.__name__,
+        }
+        write_reconciliation = "uncertain_write_readback"
     except Exception as exc:
         raise _ppl_alloc_009_eligibility_error(
-            "Telemetry owner did not accept the paper benchmark",
+            "Telemetry owner rejected the paper benchmark",
             str(exc) or exc.__class__.__name__,
             precondition="telemetry_owner_receipt",
             status_code=502,
         ) from exc
     if (
         not isinstance(owner_receipt, dict)
-        or owner_receipt.get("status") != "accepted"
-        or not isinstance(telemetry_readback, dict)
+        or owner_receipt.get("status")
+        not in {"accepted", "idempotent_replay", "write_outcome_uncertain"}
     ):
         raise _ppl_alloc_009_eligibility_error(
-            "Telemetry owner readback is incomplete",
-            "The telemetry owner must accept the event and return its runtime summary.",
-            precondition="telemetry_owner_readback",
+            "Telemetry owner returned an invalid receipt",
+            "The ingest response must carry an accepted or reconcilable status.",
+            precondition="telemetry_owner_receipt_schema",
             status_code=502,
         )
-    expected_metrics = benchmark["metrics"]
-    for field, expected in expected_metrics.items():
-        actual = telemetry_readback.get(field)
-        observed_at = telemetry_readback.get(f"{field}_at")
-        binding_id = telemetry_readback.get(f"{field}_binding_id")
-        if (
-            actual != expected
-            or observed_at != _PPL_ALLOC_009_ELIGIBILITY_OBSERVED_AT
-            or binding_id != event["binding_id"]
-        ):
-            raise _ppl_alloc_009_eligibility_error(
-                "Telemetry owner readback changed the benchmark result",
-                (
-                    f"Expected {field}={expected!r} at "
-                    f"{_PPL_ALLOC_009_ELIGIBILITY_OBSERVED_AT} from "
-                    f"{event['binding_id']!r}; got value={actual!r}, "
-                    f"at={observed_at!r}, binding={binding_id!r}."
-                ),
-                precondition="paper_benchmark_readback",
-                status_code=502,
-            )
+    try:
+        telemetry_readback, readback_attempts = await asyncio.to_thread(
+            _ppl_alloc_009_wait_for_telemetry_readback,
+            runtime_id=str(event["runtime_id"]),
+            binding_id=str(event["binding_id"]),
+            expected_metrics=expected_metrics,
+        )
+    except Exception as exc:
+        raise _ppl_alloc_009_eligibility_error(
+            "Telemetry owner readback did not prove the paper benchmark",
+            str(exc) or exc.__class__.__name__,
+            precondition="telemetry_owner_readback",
+            status_code=502,
+        ) from exc
 
     refreshed_rows = _pm12_persona_league_rows(q=persona_id)
     refreshed_matches = [
@@ -26666,6 +26778,8 @@ async def bff_ppl_alloc_009_paper_eligibility_proof(
                 "service": "telemetry",
                 "status": owner_receipt["status"],
                 "accepted_event_id": event["event_id"],
+                "reconciliation": write_reconciliation,
+                "readback_attempts": readback_attempts,
                 "readback_last_event_id": telemetry_readback.get("last_event_id"),
                 "readback_collected_at": telemetry_readback.get("collected_at"),
             },
