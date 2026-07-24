@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
 
-from services.external_egress import guard_external_url
+from services.external_egress import open_external_url
 
 from .base import (
     AuthPolicy,
@@ -150,13 +150,17 @@ def _request_json(
     user_agent: str = "pantheon-source-ingest/0.1",
 ) -> Any:
     request = urllib.request.Request(
-        guard_external_url(url, caller="source_ingest.crypto_coingecko"),
+        url,
         headers={
             "Accept": "application/json",
             "User-Agent": user_agent,
         },
     )
-    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+    with open_external_url(
+        request,
+        caller="source_ingest.crypto_coingecko",
+        timeout=timeout_seconds,
+    ) as response:
         return json.loads(response.read().decode("utf-8"))
 
 

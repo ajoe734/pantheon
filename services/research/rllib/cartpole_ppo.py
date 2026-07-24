@@ -21,10 +21,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
+try:
+    from .security import secure_local_ray_init_kwargs
+except ImportError:
+    from security import secure_local_ray_init_kwargs  # type: ignore
+
 TASK_ID = "OSS-RLLIB-001"
 FRAMEWORK = "ray.rllib"
-FRAMEWORK_VERSION_PIN = "2.9.3"
-GYMNASIUM_VERSION_PIN = "0.28.1"
+FRAMEWORK_VERSION_PIN = "2.55.1"
+GYMNASIUM_VERSION_PIN = "1.2.2"
 DEFAULT_ENV_ID = "CartPole-v1"
 DEFAULT_NUM_ITERS = 5
 MAX_NUM_ITERS = 20
@@ -174,11 +179,11 @@ def _train_with_rllib(
     ppo_config_cls = getattr(ppo_module, "PPOConfig")
 
     ray.init(
-        include_dashboard=False,
-        ignore_reinit_error=True,
-        local_mode=True,
-        logging_level="ERROR",
-        num_cpus=1,
+        **secure_local_ray_init_kwargs(
+            ignore_reinit_error=True,
+            logging_level="ERROR",
+            num_cpus=1,
+        ),
     )
     algo = None
     checkpoint_ref: str | None = None
@@ -186,13 +191,17 @@ def _train_with_rllib(
     try:
         algo_config = (
             ppo_config_cls()
+            .api_stack(
+                enable_rl_module_and_learner=False,
+                enable_env_runner_and_connector_v2=False,
+            )
             .environment(env=config.env_id)
             .framework("torch")
             .resources(num_gpus=0)
             .training(
                 train_batch_size=200,
-                sgd_minibatch_size=64,
-                num_sgd_iter=1,
+                minibatch_size=64,
+                num_epochs=1,
                 lr=5e-4,
             )
             .debugging(seed=config.seed, log_level="ERROR")
