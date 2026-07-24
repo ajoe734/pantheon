@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "task_id": "AG-HOSTED-CLOSE-001",
+  "archived_at": "2026-07-24T10:12:08Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "all acceptance criteria in docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/AG-HOSTED-CLOSE-001.md",
+      "task branch is merged to dev with reviewer approval and required delivery metadata"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_agora_remaining_work_2026-07-22/REMAINING_WORK_GAP.md",
+      "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/AG-HOSTED-CLOSE-001.md"
+    ],
+    "auto_created_by": "dispatch_pantheon_agora_remaining_work_2026-07-22",
+    "auto_generated": true,
+    "declared_scope": [
+      "docs/deployment/evidence/agora",
+      "docs/04/pantheon_agora_remaining_work_2026-07-22"
+    ],
+    "delivery_layer": "primary",
+    "depends_on": [
+      "AG-COMPAT-002-GATE",
+      "PAN-SOURCE-FRESH-001"
+    ],
+    "fleet_lane": "agora-hosted-closeout",
+    "id": "AG-HOSTED-CLOSE-001",
+    "last_update": "2026-07-24T10:12:08Z",
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "Superseded by completed AG-HOSTED-CLOSE-002, which merged the Agora hosted exact-pair acceptance and closeout evidence to dev via PRs #4050 and #4051; predecessor retired without repo changes, hosted-write reruns, or production/EP5 changes.",
+    "owner": "Codex2",
+    "phase": "Agora Completion / Wave 5 hosted closeout",
+    "priority": "P1",
+    "repository_id": "pantheon",
+    "reviewer": "Codex",
+    "source_ref": {
+      "brief": "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/AG-HOSTED-CLOSE-001.md",
+      "doc": "docs/04/pantheon_agora_remaining_work_2026-07-22/REMAINING_WORK_GAP.md",
+      "merge_target": "dev",
+      "packet": "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/INDEX.md",
+      "target_repo": "ajoe734/pantheon"
+    },
+    "status": "done",
+    "summary_zh": "在 replacement VM 重跑 durable stores restart proof、六 API、performance receipt、candidate truth、source freshness、desktop/mobile/a11y/RBAC，釘 exact accepted pair。",
+    "target_repo": "ajoe734/pantheon",
+    "task_class": "execution",
+    "title": "Replacement-VM Agora hosted acceptance and closeout",
+    "terminal_outcome": "superseded",
+    "superseded_by": "AG-HOSTED-CLOSE-002"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-22T17:23:03Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned AG-HOSTED-CLOSE-001 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex.",
+      "resolved_at": "2026-07-23T02:25:28Z",
+      "status": "done",
+      "task_id": "AG-HOSTED-CLOSE-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-23T02:24:53Z",
+      "from": "Claude",
+      "message": "Auto-reassigned AG-HOSTED-CLOSE-001 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex.",
+      "resolved_at": "2026-07-23T06:55:37Z",
+      "status": "done",
+      "task_id": "AG-HOSTED-CLOSE-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-23T03:13:48Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned AG-HOSTED-CLOSE-001 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex2.",
+      "resolved_at": "2026-07-24T01:38:01Z",
+      "status": "done",
+      "task_id": "AG-HOSTED-CLOSE-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-24T10:01:10Z",
+      "from": "Codex",
+      "message": "Reviewer reconciliation: AG-HOSTED-CLOSE-002 is archived done at 2026-07-24T06:23:50Z with accepted FE e4399e3e/BFF f71c1f8b exact-pair evidence merged through PRs #4050/#4051. Owner Codex2 must use authoritative supersede AG-HOSTED-CLOSE-001 ... AG-HOSTED-CLOSE-002, then stop; do not rerun hosted writes or touch production/EP5.",
+      "resolved_at": "2026-07-24T10:01:10Z",
+      "status": "done",
+      "task_id": "AG-HOSTED-CLOSE-001",
+      "to": "Codex2"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-07-24T02:10:20Z",
+      "message": "Hosted exact-pair qualification is blocked: Governance rejects required target_type=strategy_workshop (422), so real research/conclude fail APPROVAL_TARGET_TYPE_MISMATCH (409); distinct Registry/strategy IDs also fail STRATEGY_SPEC_STRATEGY_ID_MISMATCH. Evidence anchor ce7ba393e.",
+      "owner": "Codex2",
+      "resolved_at": "2026-07-24T10:01:10Z",
+      "status": "resolved",
+      "task_id": "AG-HOSTED-CLOSE-001",
+      "waiting_for": "Codex"
+    }
+  ]
+}
