@@ -1,0 +1,203 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon.example/specs/agora/v11/workshop_version_operations.schema.json",
+  "title": "Durable Strategy Workshop version operations",
+  "description": "Additive v1.10 contract for durable WorkshopVersionLink projection. Strategy Registry remains the only authority for StrategySpec JSON; the workshop persists identity, lineage, immutable content digest, creator/time, and selected pointers only.",
+  "definitions": {
+    "WorkshopVersionLink": {
+      "type": "object",
+      "required": [
+        "workshop_version_id",
+        "workshop_id",
+        "strategy_id",
+        "strategy_spec_registry_id",
+        "parent_workshop_version_id",
+        "source_event_id",
+        "sequence_no",
+        "document_sha256",
+        "created_by",
+        "created_at"
+      ],
+      "properties": {
+        "workshop_version_id": {"type": "string", "minLength": 1},
+        "workshop_id": {"type": "string", "minLength": 1},
+        "strategy_id": {"type": "string", "minLength": 1},
+        "strategy_spec_registry_id": {"type": "string", "minLength": 1},
+        "parent_workshop_version_id": {"type": ["string", "null"], "minLength": 1},
+        "source_event_id": {"type": ["string", "null"], "minLength": 1},
+        "sequence_no": {"type": "integer", "minimum": 1},
+        "document_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 of canonical StrategySpec JSON from authoritative Registry readback. Write-once for a workshop version identity."
+        },
+        "created_by": {"type": "string", "minLength": 1},
+        "created_at": {"type": "string", "format": "date-time"}
+      },
+      "additionalProperties": false
+    },
+    "AuthoritativeStrategySpecReadback": {
+      "type": "object",
+      "required": ["entry"],
+      "properties": {
+        "entry": {
+          "type": "object",
+          "required": ["registry_id", "strategy_id", "metadata"],
+          "properties": {
+            "registry_id": {"type": "string", "minLength": 1},
+            "strategy_id": {"type": "string", "minLength": 1},
+            "version": {"type": "string", "minLength": 1},
+            "artifact_state": {"type": "string", "minLength": 1},
+            "lineage": {
+              "type": "object",
+              "properties": {
+                "parent_registry_ids": {
+                  "type": "array",
+                  "items": {"type": "string", "minLength": 1}
+                }
+              },
+              "additionalProperties": true
+            },
+            "metadata": {
+              "type": "object",
+              "required": ["strategy_spec"],
+              "properties": {
+                "tenant_id": {"type": "string", "minLength": 1},
+                "owner_user_id": {"type": "string", "minLength": 1},
+                "workshop_id": {"type": "string", "minLength": 1},
+                "strategy_spec": {"type": "object"}
+              },
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "WorkshopVersionResource": {
+      "type": "object",
+      "required": ["version", "strategy_spec"],
+      "properties": {
+        "version": {"$ref": "#/definitions/WorkshopVersionLink"},
+        "strategy_spec": {"$ref": "#/definitions/AuthoritativeStrategySpecReadback"}
+      },
+      "additionalProperties": false
+    },
+    "WorkshopVersionListEnvelope": {
+      "type": "object",
+      "required": ["data", "meta"],
+      "properties": {
+        "data": {
+          "type": "object",
+          "required": ["versions", "selected_version_id", "active_strategy_spec_registry_id"],
+          "properties": {
+            "versions": {
+              "type": "array",
+              "items": {"$ref": "#/definitions/WorkshopVersionResource"}
+            },
+            "selected_version_id": {"type": ["string", "null"], "minLength": 1},
+            "active_strategy_spec_registry_id": {"type": ["string", "null"], "minLength": 1}
+          },
+          "additionalProperties": false
+        },
+        "meta": {
+          "type": "object",
+          "required": ["capability", "audience", "canonical_authority", "etag", "no_direct_action"],
+          "properties": {
+            "snapshot_at": {"type": "string"},
+            "capability": {"const": "agora.workshop.v1"},
+            "audience": {"type": "string", "pattern": "^tenant:.+:user:.+$"},
+            "request_id": {"type": ["string", "null"]},
+            "canonical_authority": {"const": "strategy_registry"},
+            "etag": {"type": "string", "pattern": "^W/\\\"workshop:.+:v[0-9]+\\\"$"},
+            "no_direct_action": {
+              "$ref": "../v9/workshop_live_operations.schema.json#/definitions/NoDirectActionProof"
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "WorkshopVersionCreateEnvelope": {
+      "type": "object",
+      "required": ["data", "meta"],
+      "properties": {
+        "data": {
+          "type": "object",
+          "required": ["command_receipt", "resource"],
+          "properties": {
+            "command_receipt": {
+              "$ref": "../v9/workshop_live_operations.schema.json#/definitions/WorkshopCommandReceipt"
+            },
+            "resource": {"$ref": "#/definitions/WorkshopVersionResource"}
+          },
+          "additionalProperties": false
+        },
+        "meta": {"type": "object", "additionalProperties": true}
+      },
+      "additionalProperties": false
+    },
+    "WorkshopVersionSelectResource": {
+      "type": "object",
+      "required": ["workshop", "version", "strategy_spec"],
+      "properties": {
+        "workshop": {
+          "type": "object",
+          "required": ["workshop_id", "selected_version_id", "active_workshop_version_id", "active_strategy_spec_registry_id", "lock_version"],
+          "properties": {
+            "workshop_id": {"type": "string", "minLength": 1},
+            "selected_version_id": {"type": "string", "minLength": 1},
+            "active_workshop_version_id": {"type": "string", "minLength": 1},
+            "active_strategy_spec_registry_id": {"type": "string", "minLength": 1},
+            "lock_version": {"type": "integer", "minimum": 1}
+          },
+          "additionalProperties": true
+        },
+        "version": {"$ref": "#/definitions/WorkshopVersionLink"},
+        "strategy_spec": {"$ref": "#/definitions/AuthoritativeStrategySpecReadback"}
+      },
+      "additionalProperties": false
+    },
+    "WorkshopVersionSelectEnvelope": {
+      "type": "object",
+      "required": ["data", "meta"],
+      "properties": {
+        "data": {
+          "type": "object",
+          "required": ["command_receipt", "resource"],
+          "properties": {
+            "command_receipt": {
+              "$ref": "../v9/workshop_live_operations.schema.json#/definitions/WorkshopCommandReceipt"
+            },
+            "resource": {"$ref": "#/definitions/WorkshopVersionSelectResource"}
+          },
+          "additionalProperties": false
+        },
+        "meta": {"type": "object", "additionalProperties": true}
+      },
+      "additionalProperties": false
+    },
+    "LegacyVersionBackfillRule": {
+      "type": "object",
+      "required": ["identity_rule", "selection_rule", "etag_rule", "timestamp_rule"],
+      "properties": {
+        "identity_rule": {"const": "sha256(workshop_id + NUL + active_strategy_spec_registry_id) truncated to 24 hex with wsv-legacy- prefix unless an existing selected alias is present"},
+        "selection_rule": {"const": "create exactly one link for the active Registry pointer and populate null selected-version aliases without overwriting non-null aliases"},
+        "etag_rule": {"const": "migration does not change lock_version"},
+        "timestamp_rule": {"const": "migration reuses workshop created_at and does not change workshop updated_at"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "x-version-projection-semantics": {
+    "strategy_spec_authority": "strategy_registry",
+    "workshop_persists_strategy_spec_json": false,
+    "document_sha256_write_once": true,
+    "tenant_user_scope_required": true,
+    "create_idempotency_required": true,
+    "select_etag_cas_required": true,
+    "restart_store": "postgres"
+  }
+}

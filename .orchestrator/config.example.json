@@ -113,6 +113,7 @@
       "owned_in_progress_dispatch",
       "owned_finalize_dispatch",
       "review_ready_dispatch",
+      "github_retry",
       "chair_review:*"
     ]
   },
@@ -281,7 +282,10 @@
     "command_timeout_seconds": 8,
     "poll_interval_seconds": 30,
     "repo": null,
-    "default_branch": "master",
+    "delivery_base_branches": {
+      "pantheon": "dev",
+      "execute_plans": "dev"
+    },
     "offline_backoff_seconds": 300,
     "auto_request_reviewers": true,
     "close_resolved_issues": true,
