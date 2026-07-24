@@ -393,14 +393,17 @@ def seed() -> dict[str, Any]:
     require_status(report, "workshop_version_created", status, 201, body)
     version = body["data"]["resource"]["version"]
     version_id = str(version["workshop_version_id"])
+    active_registry_id = str(version["strategy_spec_registry_id"])
     require_value(
         report,
         "version_preserves_distinct_registry_strategy_ids",
         version.get("strategy_id") == strategy_id
-        and version.get("strategy_spec_registry_id") == registry_id,
+        and active_registry_id != strategy_id
+        and active_registry_id != registry_id,
         {
             "strategy_id": version.get("strategy_id"),
-            "strategy_spec_registry_id": version.get("strategy_spec_registry_id"),
+            "initial_strategy_spec_registry_id": registry_id,
+            "version_strategy_spec_registry_id": active_registry_id,
         },
     )
     etag = response_headers.get("etag")
@@ -538,7 +541,7 @@ def seed() -> dict[str, Any]:
         "conclusion_preserves_repaired_identity",
         concluded.get("status") == "concluded"
         and concluded.get("strategy_id") == strategy_id
-        and concluded.get("active_strategy_spec_registry_id") == registry_id,
+        and concluded.get("active_strategy_spec_registry_id") == active_registry_id,
         {
             "status": concluded.get("status"),
             "strategy_id": concluded.get("strategy_id"),
@@ -554,7 +557,8 @@ def seed() -> dict[str, Any]:
         "owner_user_id": owner_user_id,
         "approver_user_id": approver_user_id,
         "strategy_id": strategy_id,
-        "registry_id": registry_id,
+        "initial_registry_id": registry_id,
+        "active_registry_id": active_registry_id,
         "workshop_id": workshop_id,
         "workshop_version_id": version_id,
         "approval_id": approval_id,
@@ -570,7 +574,8 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
     report = base_report("verify-after-restart")
     report["resources"] = {
         "strategy_id": args.strategy_id,
-        "registry_id": args.registry_id,
+        "initial_registry_id": args.initial_registry_id,
+        "active_registry_id": args.active_registry_id,
         "workshop_id": args.workshop_id,
         "workshop_version_id": args.version_id,
         "approval_id": args.approval_id,
@@ -615,23 +620,35 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
     tenant_id = str(owner_claims["tenant_id"])
     owner_headers = scoped_headers(owner_token, tenant_id)
 
-    status, registry, _headers = request_json(
-        "GET",
-        f"{REGISTRY_URL}/api/registry/strategy-specs/{args.registry_id}",
-    )
-    require_status(report, "registry_readback_after_restart", status, 200, registry)
-    entry = registry.get("entry") if isinstance(registry.get("entry"), dict) else {}
-    require_value(
-        report,
-        "registry_identity_after_restart",
-        entry.get("registry_id") == args.registry_id
-        and entry.get("strategy_id") == args.strategy_id
-        and args.registry_id != args.strategy_id,
-        {
-            "registry_id": entry.get("registry_id"),
-            "strategy_id": entry.get("strategy_id"),
-        },
-    )
+    for label, registry_id in (
+        ("initial", args.initial_registry_id),
+        ("active_version", args.active_registry_id),
+    ):
+        status, registry, _headers = request_json(
+            "GET",
+            f"{REGISTRY_URL}/api/registry/strategy-specs/{registry_id}",
+        )
+        require_status(
+            report,
+            f"{label}_registry_readback_after_restart",
+            status,
+            200,
+            registry,
+        )
+        entry = (
+            registry.get("entry") if isinstance(registry.get("entry"), dict) else {}
+        )
+        require_value(
+            report,
+            f"{label}_registry_identity_after_restart",
+            entry.get("registry_id") == registry_id
+            and entry.get("strategy_id") == args.strategy_id
+            and registry_id != args.strategy_id,
+            {
+                "registry_id": entry.get("registry_id"),
+                "strategy_id": entry.get("strategy_id"),
+            },
+        )
 
     status, approval, _headers = request_json(
         "GET",
@@ -671,7 +688,7 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
         "concluded_repaired_workshop_after_restart",
         data.get("status") == "concluded"
         and data.get("strategy_id") == args.strategy_id
-        and data.get("active_strategy_spec_registry_id") == args.registry_id
+        and data.get("active_strategy_spec_registry_id") == args.active_registry_id
         and data.get("final_workshop_version_id") == args.version_id,
         {
             "status": data.get("status"),
@@ -692,7 +709,8 @@ def parser() -> argparse.ArgumentParser:
     subparsers.add_parser("seed")
     verify_parser = subparsers.add_parser("verify")
     verify_parser.add_argument("--strategy-id", required=True)
-    verify_parser.add_argument("--registry-id", required=True)
+    verify_parser.add_argument("--initial-registry-id", required=True)
+    verify_parser.add_argument("--active-registry-id", required=True)
     verify_parser.add_argument("--workshop-id", required=True)
     verify_parser.add_argument("--version-id", required=True)
     verify_parser.add_argument("--approval-id", required=True)
