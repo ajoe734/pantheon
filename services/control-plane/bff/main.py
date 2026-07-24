@@ -168,7 +168,7 @@ from persona_allocation_policy import (
 from paper_eligibility_proof import (
     BENCHMARK_VERSION as _PPL_ALLOC_009_ELIGIBILITY_BENCHMARK_VERSION,
     EXPECTED_IDEMPOTENCY_KEY as _PPL_ALLOC_009_ELIGIBILITY_IDEMPOTENCY_KEY,
-    OBSERVED_AT as _PPL_ALLOC_009_ELIGIBILITY_OBSERVED_AT,
+    PaperEligibilityObservationStore,
     RUN_KEY as _PPL_ALLOC_009_ELIGIBILITY_RUN_KEY,
     TASK_ID as _PPL_ALLOC_009_ELIGIBILITY_TASK_ID,
     build_telemetry_event as _ppl_alloc_009_build_telemetry_event,
@@ -1106,6 +1106,9 @@ read_store = ReadSurfaceStore(
     ),
 )
 settings_store = SettingsStore(os.path.join(BFF_DATA_DIR, "settings.json"))
+_ppl_alloc_009_eligibility_observation_store = PaperEligibilityObservationStore(
+    os.path.join(BFF_DATA_DIR, "ppl_alloc_009_proof_observations.sqlite3")
+)
 _COMMAND_AUTH_CONTEXT: Dict[str, Dict[str, Optional[str]]] = {}
 
 downstream_health_monitor = DownstreamHealthMonitor()
@@ -26297,6 +26300,7 @@ def _ppl_alloc_009_paper_eligibility_context(
     *,
     persona_id: str,
     identity: OperatorIdentity,
+    observed_at: str,
 ) -> Dict[str, Any]:
     raw = read_store.get_persona(persona_id)
     caller_tenant = str(
@@ -26476,12 +26480,12 @@ def _ppl_alloc_009_paper_eligibility_context(
         )
 
     effective_at = _audit_datetime(runtime_binding.get("effective_at"))
-    observed_at = _audit_datetime(_PPL_ALLOC_009_ELIGIBILITY_OBSERVED_AT)
+    observed_at_value = _audit_datetime(observed_at)
     retired_at = _audit_datetime(runtime_binding.get("retired_at"))
     if (
-        observed_at is None
-        or (effective_at is not None and observed_at < effective_at)
-        or (retired_at is not None and observed_at > retired_at)
+        observed_at_value is None
+        or (effective_at is not None and observed_at_value < effective_at)
+        or (retired_at is not None and observed_at_value > retired_at)
     ):
         raise _ppl_alloc_009_eligibility_error(
             "Paper benchmark timestamp is outside RuntimeBinding authority",
@@ -26546,6 +26550,7 @@ def _ppl_alloc_009_attributed_metric_mismatches(
     telemetry_readback: Mapping[str, Any],
     expected_metrics: Mapping[str, Any],
     binding_id: str,
+    expected_observed_at: str,
 ) -> List[str]:
     mismatches: List[str] = []
     for field, expected in expected_metrics.items():
@@ -26556,9 +26561,9 @@ def _ppl_alloc_009_attributed_metric_mismatches(
             mismatches.append(
                 f"{field}.value expected={expected!r} actual={actual!r}"
             )
-        if observed_at != _PPL_ALLOC_009_ELIGIBILITY_OBSERVED_AT:
+        if observed_at != expected_observed_at:
             mismatches.append(
-                f"{field}.at expected={_PPL_ALLOC_009_ELIGIBILITY_OBSERVED_AT!r} "
+                f"{field}.at expected={expected_observed_at!r} "
                 f"actual={observed_at!r}"
             )
         if metric_binding_id != binding_id:
@@ -26574,6 +26579,7 @@ def _ppl_alloc_009_wait_for_telemetry_readback(
     runtime_id: str,
     binding_id: str,
     expected_metrics: Mapping[str, Any],
+    observed_at: str,
 ) -> tuple[Dict[str, Any], int]:
     timeout_seconds = _ppl_alloc_009_readback_timeout_seconds()
     poll_seconds = _ppl_alloc_009_readback_poll_seconds()
@@ -26595,6 +26601,7 @@ def _ppl_alloc_009_wait_for_telemetry_readback(
                     telemetry_readback=candidate,
                     expected_metrics=expected_metrics,
                     binding_id=binding_id,
+                    expected_observed_at=observed_at,
                 )
                 if not mismatches:
                     return dict(candidate), attempts
@@ -26670,15 +26677,30 @@ async def bff_ppl_alloc_009_paper_eligibility_proof(
             precondition="paper_benchmark_identity",
         )
 
+    try:
+        observed_at = await asyncio.to_thread(
+            _ppl_alloc_009_eligibility_observation_store.reserve,
+            idempotency_key=resolved_key,
+            proposed_at=utc_now(),
+        )
+    except Exception as exc:
+        raise _ppl_alloc_009_eligibility_error(
+            "Paper benchmark observation could not be reserved",
+            str(exc) or exc.__class__.__name__,
+            precondition="paper_benchmark_observation",
+            status_code=503,
+        ) from exc
     context = await asyncio.to_thread(
         _ppl_alloc_009_paper_eligibility_context,
         persona_id=persona_id,
         identity=identity,
+        observed_at=observed_at,
     )
     event, benchmark = _ppl_alloc_009_build_telemetry_event(
         persona_id=persona_id,
         actor_id=identity.operator_id,
         idempotency_key=resolved_key,
+        observed_at=observed_at,
         runtime_binding=context["runtime_binding"],
         strategy_id=context["strategy_id"],
     )
@@ -26730,6 +26752,7 @@ async def bff_ppl_alloc_009_paper_eligibility_proof(
             runtime_id=str(event["runtime_id"]),
             binding_id=str(event["binding_id"]),
             expected_metrics=expected_metrics,
+            observed_at=observed_at,
         )
     except Exception as exc:
         raise _ppl_alloc_009_eligibility_error(
@@ -26766,6 +26789,7 @@ async def bff_ppl_alloc_009_paper_eligibility_proof(
             "task_id": _PPL_ALLOC_009_ELIGIBILITY_TASK_ID,
             "run_key": _PPL_ALLOC_009_ELIGIBILITY_RUN_KEY,
             "benchmark_version": _PPL_ALLOC_009_ELIGIBILITY_BENCHMARK_VERSION,
+            "observed_at": observed_at,
             "scenario_digest": benchmark["scenario_digest"],
             "event_id": event["event_id"],
             "trace_id": event["trace_id"],
