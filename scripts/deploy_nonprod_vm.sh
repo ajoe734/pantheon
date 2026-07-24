@@ -20,6 +20,10 @@ DEV_BFF_REQUIRED_CORS_ORIGINS="${DEV_BFF_REQUIRED_CORS_ORIGINS:-https://preview-
 DEV_BFF_PUBLIC_HOST="${DEV_BFF_PUBLIC_HOST:-pantheon-lupin-dev-bff.35.201.204.12.sslip.io}"
 DEV_FE_PUBLIC_HOST="${DEV_FE_PUBLIC_HOST:-pantheon-lupin-dev-fe.35.201.204.12.sslip.io}"
 DEV_FE_STATIC_ROOT="${DEV_FE_STATIC_ROOT:-/var/www/pantheon-dev-fe}"
+# Large hosted dev datasets can make one lifecycle projection tick take
+# 150-180 seconds. Keep the compose default fail-closed at 120 seconds, while
+# managed dev deploys explicitly allow one slow tick plus scheduling headroom.
+DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS="${DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS:-300}"
 # Strict by default: the dev deploy must not silently re-force stub/permissive
 # auth on every run. docker-compose.yml's own PANTHEON_BFF_AUTH_STUB/MODE
 # defaults are strict/false, but this script always passes an explicit value
@@ -197,6 +201,7 @@ Environment overrides:
   GITHUB_TOKEN
   DEV_VM DEV_ZONE DEV_REMOTE_DIR
   DEV_BFF_PUBLIC_HOST DEV_FE_PUBLIC_HOST DEV_FE_STATIC_ROOT
+  DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS
   DEV_BFF_CANONICAL_CORS_ORIGIN DEV_BFF_CORS_ORIGINS
   DEV_BFF_REQUIRED_CORS_ORIGINS DEV_BFF_AUTH_STUB DEV_BFF_AUTH_MODE
   DEV_BFF_JWT_SECRET DEV_BFF_JWT_ISSUER DEV_BFF_JWT_AUDIENCE
@@ -530,6 +535,7 @@ ssh_bash() {
   command_prefix+=" PANTHEON_DEV_BFF_PUBLIC_HOST=$(shell_quote "$DEV_BFF_PUBLIC_HOST")"
   command_prefix+=" PANTHEON_DEV_FE_PUBLIC_HOST=$(shell_quote "$DEV_FE_PUBLIC_HOST")"
   command_prefix+=" PANTHEON_DEV_FE_STATIC_ROOT=$(shell_quote "$DEV_FE_STATIC_ROOT")"
+  command_prefix+=" PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS=$(shell_quote "$DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS")"
   command_prefix+=" PANTHEON_DEV_BFF_AUTH_STUB=$(shell_quote "$DEV_BFF_AUTH_STUB")"
   command_prefix+=" PANTHEON_DEV_BFF_AUTH_MODE=$(shell_quote "$DEV_BFF_AUTH_MODE")"
   command_prefix+=" PANTHEON_DEV_BFF_JWT_SECRET=$(shell_quote "$DEV_BFF_JWT_SECRET")"
@@ -1831,6 +1837,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     ensure_dev_management_ai_postgres_role
     prune_dev_management_ai_telemetry_for_disk
     COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES}" \
+      LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS="${PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS}" \
       docker compose -p pantheon -f docker-compose.yml config --quiet
     prune_dev_docker_storage_for_build
     COMPOSE_BAKE=false \
@@ -1838,6 +1845,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     GIT_SHA="${PANTHEON_DEPLOY_SHA}" \
     BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     PANTHEON_ENV=dev \
+    LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS="${PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS}" \
     PANTHEON_EXTERNAL_EGRESS="${PANTHEON_EXTERNAL_EGRESS:-deny}" \
     PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS="${PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS:-}" \
     SOURCE_INGEST_CONTROLLER_MAX_TICKS="${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-1}" \
@@ -1953,6 +1961,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     GIT_SHA="${PANTHEON_DEPLOY_SHA}" \
     BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     PANTHEON_ENV=dev \
+    LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS="${PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS}" \
     PANTHEON_CANARY_EXECUTION_ENABLED=false \
     PANTHEON_LIVE_BROKER_ENABLED=false \
     BROKER_PAPER_ENABLED=true \
