@@ -1949,6 +1949,168 @@ def _public_command_headers(key: str, etag: str) -> dict:
     }
 
 
+class _ApprovalGateCanonicalOperations:
+    """Expose one projected approval while detecting downstream side effects."""
+
+    def __init__(self, approval: dict):
+        self.approval = dict(approval)
+        self.research_dispatches = 0
+        self.registry_reads = 0
+
+    def get_approval_decision(self, decision_id: str) -> dict:
+        assert decision_id == self.approval["decision_id"]
+        return dict(self.approval)
+
+    def dispatch_research_run(self, **_kwargs) -> dict:
+        self.research_dispatches += 1
+        raise AssertionError("invalid approval must not dispatch research")
+
+    def get_strategy_spec(self, _registry_id: str) -> dict:
+        self.registry_reads += 1
+        raise AssertionError("invalid approval must not begin conclusion readback")
+
+
+@pytest.mark.parametrize(
+    ("state", "outcome", "reason"),
+    [
+        pytest.param(None, "approved", "APPROVAL_NOT_DECIDED", id="missing-state"),
+        pytest.param(
+            "under_review",
+            "approved",
+            "APPROVAL_NOT_DECIDED",
+            id="non-decided-state",
+        ),
+        pytest.param(
+            "approved",
+            "approved",
+            "APPROVAL_NOT_DECIDED",
+            id="approved-state-alias",
+        ),
+        pytest.param(
+            "completed",
+            "approved",
+            "APPROVAL_NOT_DECIDED",
+            id="completed-state-alias",
+        ),
+        pytest.param(
+            "decided",
+            "accepted",
+            "APPROVAL_NOT_APPROVED",
+            id="accepted-outcome-alias",
+        ),
+        pytest.param(
+            "decided",
+            "approve",
+            "APPROVAL_NOT_APPROVED",
+            id="approve-outcome-alias",
+        ),
+    ],
+)
+def test_public_workshop_operations_fail_closed_on_noncanonical_approval(
+    state,
+    outcome,
+    reason,
+):
+    """Research and conclude reject invalid approvals before durable effects."""
+
+    from agora.strategy_workshop import MemoryWorkshopStore
+
+    workshop_id = "ws-approval-gate-contract"
+    version_id = "wsv-approval-gate-contract"
+    registry_id = "registry-approval-gate-contract"
+    approval_id = "approval-gate-contract"
+    store = MemoryWorkshopStore()
+    store.create_session(
+        {
+            "workshop_id": workshop_id,
+            "tenant_id": _PUBLIC_TENANT_ID,
+            "user_id": _PUBLIC_USER_ID,
+            "strategy_id": "strategy-approval-gate-contract",
+            "active_strategy_spec_registry_id": registry_id,
+            "active_workshop_version_id": version_id,
+            "selected_version_id": version_id,
+            "status": "in_review",
+        }
+    )
+    store.ensure_current_version_link(
+        workshop_id=workshop_id,
+        strategy_id="strategy-approval-gate-contract",
+        strategy_spec_registry_id=registry_id,
+        document_sha256="a" * 64,
+    )
+    approval = {
+        "decision_id": approval_id,
+        "outcome": outcome,
+        "tenant_id": _PUBLIC_TENANT_ID,
+        "owner_user_id": _PUBLIC_USER_ID,
+        "target_type": "strategy_workshop",
+        "target_id": workshop_id,
+        "target_version": version_id,
+        "reviewer": _PUBLIC_APPROVER_ID,
+    }
+    if state is not None:
+        approval["state"] = state
+    canonical = _ApprovalGateCanonicalOperations(approval)
+    client = _public_workshop_client(store, canonical)
+    etag = f'W/"workshop:{workshop_id}:v1"'
+    session_before = store.get_session(workshop_id)
+    events_before = store.list_events(workshop_id)
+
+    research_key = f"research-invalid-approval-{state}-{outcome}"
+    research = client.post(
+        f"/bff/agora/workshops/{workshop_id}/research-runs",
+        headers=_public_command_headers(research_key, etag),
+        json={
+            "research_context": "Must not dispatch without canonical approval.",
+            "strategy_version_ref": version_id,
+            "parameters": {"environment": "research"},
+            "approval_decision_id": approval_id,
+            "adapter": "handoff_only",
+            "requested_mode": "handoff_only",
+            "dispatch_mode": "handoff_only",
+        },
+    )
+    assert research.status_code == 409, research.text
+    assert research.json()["detail"]["error"]["details"]["reason"] == reason
+    assert canonical.research_dispatches == 0
+    assert (
+        store.get_command_receipt(
+            workshop_id=workshop_id,
+            tenant_id=_PUBLIC_TENANT_ID,
+            user_id=_PUBLIC_USER_ID,
+            operation="dispatch_research",
+            idempotency_key=research_key,
+        )
+        is None
+    )
+
+    conclude_key = f"conclude-invalid-approval-{state}-{outcome}"
+    concluded = client.post(
+        f"/bff/agora/workshops/{workshop_id}/conclude",
+        headers=_public_command_headers(conclude_key, etag),
+        json={
+            "final_version_id": version_id,
+            "conclusion_notes": "Must remain in review.",
+            "approval_decision_id": approval_id,
+        },
+    )
+    assert concluded.status_code == 409, concluded.text
+    assert concluded.json()["detail"]["error"]["details"]["reason"] == reason
+    assert canonical.registry_reads == 0
+    assert (
+        store.get_command_receipt(
+            workshop_id=workshop_id,
+            tenant_id=_PUBLIC_TENANT_ID,
+            user_id=_PUBLIC_USER_ID,
+            operation="conclude",
+            idempotency_key=conclude_key,
+        )
+        is None
+    )
+    assert store.get_session(workshop_id) == session_before
+    assert store.list_events(workshop_id) == events_before
+
+
 def test_public_exact_identity_approval_flow_survives_restart(
     tmp_path,
     monkeypatch,
