@@ -330,7 +330,32 @@ def _required_absolute_path(name: str) -> Path:
     path = Path(os.path.expanduser(raw))
     if not path.is_absolute():
         raise RuntimeError(f"{name} must be an absolute path")
+    current = Path(path.anchor)
+    for part in path.parts[1:]:
+        current = current / part
+        if current.is_symlink():
+            raise RuntimeError(f"{name} cannot include a symlink component: {current}")
     return path.resolve()
+
+
+def _dirty_command_runtime_files(root: Path) -> list[str]:
+    result = subprocess.run(
+        ["git", "status", "--porcelain", "-uall"],
+        cwd=root,
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        raise RuntimeError(f"failed to inspect governed command runtime: {detail}")
+    dirty: list[str] = []
+    for line in result.stdout.splitlines():
+        path = line[3:].strip().strip("\"'")
+        if " -> " in path:
+            path = path.rsplit(" -> ", 1)[1].strip().strip("\"'")
+        if path.endswith((".py", ".sh", ".pyc", ".so", ".pl", ".rb")):
+            dirty.append(path)
+    return dirty
 
 
 def _governed_status_context() -> tuple[Path, Path, dict[str, str]]:
@@ -353,6 +378,12 @@ def _governed_status_context() -> tuple[Path, Path, dict[str, str]]:
         base_ref=base_ref,
         require_merged=True,
     )
+    dirty_runtime_files = _dirty_command_runtime_files(Path(runtime["root"]))
+    if dirty_runtime_files:
+        raise RuntimeError(
+            "governed command runtime contains dirty executable/import files: "
+            + ", ".join(dirty_runtime_files)
+        )
     script = Path(runtime["root"]) / "scripts" / "ai_status.py"
     if script.is_symlink() or not script.is_file():
         raise RuntimeError(f"governed status command is not a regular file: {script}")

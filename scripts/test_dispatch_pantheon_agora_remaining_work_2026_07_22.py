@@ -136,6 +136,51 @@ class PacketTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "PANTHEON_TASK_STATE_STORE_MODE=authoritative"):
                 MODULE._governed_status_context()
 
+    def test_required_absolute_path_rejects_symlink_component(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            target = root / "target"
+            target.mkdir()
+            link = root / "linked"
+            link.symlink_to(target, target_is_directory=True)
+            with mock.patch.dict(os.environ, {MODULE.STATUS_ROOT_ENV: str(link)}):
+                with self.assertRaisesRegex(RuntimeError, "cannot include a symlink component"):
+                    MODULE._required_absolute_path(MODULE.STATUS_ROOT_ENV)
+
+    def test_governed_context_rejects_dirty_runtime_executable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            command_root = root / "command-root"
+            script = command_root / "scripts" / "ai_status.py"
+            script.parent.mkdir(parents=True)
+            script.write_text("# governed runtime\n", encoding="utf-8")
+            status_root = root / "status-root"
+            status_root.mkdir()
+            event_log = root / "events.jsonl"
+            event_log.write_text("", encoding="utf-8")
+            env = {
+                MODULE.TASK_STATE_STORE_MODE_ENV: "authoritative",
+                MODULE.TASK_STATE_EVENT_LOG_ENV: str(event_log),
+                MODULE.STATUS_ROOT_ENV: str(status_root),
+                MODULE.COMMAND_ROOT_ENV: str(command_root),
+                MODULE.COMMAND_SHA_ENV: "a" * 40,
+            }
+            with (
+                mock.patch.dict(os.environ, env, clear=True),
+                mock.patch.object(
+                    MODULE,
+                    "validate_status_command_runtime",
+                    return_value={"root": str(command_root)},
+                ),
+                mock.patch.object(
+                    MODULE,
+                    "_dirty_command_runtime_files",
+                    return_value=["scripts/ai_status.py"],
+                ),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "dirty executable/import files"):
+                    MODULE._governed_status_context()
+
 
 if __name__ == "__main__":
     unittest.main()
