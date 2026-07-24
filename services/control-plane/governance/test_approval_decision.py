@@ -77,6 +77,17 @@ class TestOwnerMatrix(unittest.TestCase):
 class TestApprovalDecisionCreation(unittest.TestCase):
     """Test ApprovalDecision factory and lifecycle methods."""
 
+    def test_create_strategy_workshop_target(self):
+        d = ApprovalDecision.create_proposed(
+            decision_id="approval-workshop-001",
+            target_type=TargetType.STRATEGY_WORKSHOP,
+            target_id="workshop-001",
+            target_version="workshop-version-001",
+        )
+        self.assertEqual(d.target_type, TargetType.STRATEGY_WORKSHOP)
+        self.assertEqual(d.to_dict()["target_type"], "strategy_workshop")
+        self.assertEqual(d.validate(), [])
+
     def test_create_proposed(self):
         d = ApprovalDecision.create_proposed(
             decision_id="approval-001",
@@ -378,6 +389,19 @@ class TestApprovalDecisionSerialization(unittest.TestCase):
 class TestValidateDecisionJSON(unittest.TestCase):
     """Test standalone JSON validation function."""
 
+    def test_strategy_workshop_target_is_valid(self):
+        data = {
+            "decision_id": "approval-workshop-001",
+            "target_type": "strategy_workshop",
+            "target_id": "workshop-001",
+            "target_version": "workshop-version-001",
+            "decision_state": "proposed",
+            "created_at": "2026-07-24T00:00:00Z",
+            "tenant_id": "pantheon-test",
+            "owner_user_id": "test-user",
+        }
+        self.assertEqual(validate_decision_json(data), [])
+
     def test_valid_decision(self):
         data = {
             "decision_id": "approval-001",
@@ -525,6 +549,29 @@ class TestApprovalDecisionStore(unittest.TestCase):
         self.assertIsNotNone(retrieved)
         self.assertEqual(retrieved.decision_id, "approval-001")
 
+    def test_strategy_workshop_approval_persists_across_reload(self):
+        d = ApprovalDecision.create_proposed(
+            decision_id="approval-workshop-restart",
+            target_type=TargetType.STRATEGY_WORKSHOP,
+            target_id="workshop-restart",
+            target_version="workshop-version-restart",
+            tenant_id="tenant-restart",
+            owner_user_id="user-restart",
+        )
+        d.accept_review(ActorRole.GOVERNANCE_REVIEWER, "reviewer-restart")
+        d.decide(DecisionOutcome.APPROVED, "Workshop contract approved")
+        self.store.put(d)
+
+        restarted = ApprovalDecisionStore(self.tmpfile.name)
+        retrieved = restarted.get("approval-workshop-restart")
+
+        self.assertIsNotNone(retrieved)
+        self.assertEqual(retrieved.target_type, "strategy_workshop")
+        self.assertEqual(retrieved.target_id, "workshop-restart")
+        self.assertEqual(retrieved.target_version, "workshop-version-restart")
+        self.assertEqual(retrieved.decision_state, "decided")
+        self.assertEqual(retrieved.decision, "approved")
+
     def test_list_all(self):
         d1 = ApprovalDecision.create_proposed("a1", TargetType.REGISTRY_ENTRY, "reg-001", "1.0.0")
         d2 = ApprovalDecision.create_proposed("a2", TargetType.REGISTRY_ENTRY, "reg-002", "1.0.0")
@@ -586,6 +633,27 @@ class TestSchemaFile(unittest.TestCase):
             "target_version": "v1",
             "decision_state": "proposed",
             "created_at": "2026-04-10T00:00:00Z",
+            "tenant_id": "pantheon-test",
+            "owner_user_id": "test-user",
+        }
+        errors = list(Draft7Validator(schema).iter_errors(payload))
+        self.assertEqual(errors, [])
+
+    def test_schema_accepts_strategy_workshop_target(self):
+        try:
+            from jsonschema import Draft7Validator
+        except ImportError:
+            self.skipTest("jsonschema is not installed")
+
+        schema_path = GOVERNANCE_DIR / "approval_decision.schema.json"
+        schema = json.loads(schema_path.read_text())
+        payload = {
+            "decision_id": "approval-workshop-schema",
+            "target_type": "strategy_workshop",
+            "target_id": "workshop-schema",
+            "target_version": "workshop-version-schema",
+            "decision_state": "proposed",
+            "created_at": "2026-07-24T00:00:00Z",
             "tenant_id": "pantheon-test",
             "owner_user_id": "test-user",
         }

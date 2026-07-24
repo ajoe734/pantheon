@@ -23,6 +23,7 @@
       "enum": [
         "registry_entry",
         "strategy_spec",
+        "strategy_workshop",
         "model_artifact",
         "allocation_policy",
         "persona_capital_binding",
