@@ -1,0 +1,138 @@
+{
+  "version": 1,
+  "task_id": "PAN-LIFECYCLE-RECOVERY-001",
+  "archived_at": "2026-07-23T00:35:09Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "all acceptance criteria in docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/PAN-LIFECYCLE-RECOVERY-001.md",
+      "task branch is merged to dev with reviewer approval and required delivery metadata"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_agora_remaining_work_2026-07-22/REMAINING_WORK_GAP.md",
+      "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/PAN-LIFECYCLE-RECOVERY-001.md"
+    ],
+    "auto_created_by": "dispatch_pantheon_agora_remaining_work_2026-07-22",
+    "auto_generated": true,
+    "declared_scope": [
+      "services/trade_journey/lifecycle_projector.py",
+      "services/control-plane/bff",
+      "docker-compose.yml",
+      "docs/deployment/evidence"
+    ],
+    "delivery_layer": "primary",
+    "depends_on": [
+      "OPS-DISPATCH-LEASE-SYNC-001"
+    ],
+    "fleet_lane": "runtime-lifecycle-recovery",
+    "id": "PAN-LIFECYCLE-RECOVERY-001",
+    "last_update": "2026-07-23T00:35:09Z",
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "Closed after PR #3993 merged to dev at ad62a57dee323507f769c69bd008bb46a6eb2b99; exact-SHA governed run 29967962811 passed deployment, three fresh cycles, canonical lifecycle stimulus, authenticated BFF 8/8 readback, restart persistence, disk/freshness gates, and lease release. Final owner verification: py_compile; 33 focused tests passed; docker compose config; git diff --check.",
+    "owner": "Codex2",
+    "phase": "Pantheon/Agora Recovery / Wave 0 lifecycle",
+    "priority": "P0",
+    "repository_id": "pantheon",
+    "review_file": "docs/deployment/evidence/pan-lifecycle-recovery-001/README.md",
+    "review_notes_zh": [
+      "PR #3958 head e489990ec 與 merge 9a24478ed 已通過 required checks；本地 21 個 focused tests、8 個鄰接 health/BFF tests、py_compile 與 docker compose config 全綠。",
+      "審查確認 retention 只清理嚴格 projector-owned 名稱、永遠保留 current active generation，重複/暫時 ENOSPC 不推進 checkpoint 且 worker 可在同一迴圈收斂；root 與 /bff/readyz 對 stale/error/backlog/disk/current mismatch fail closed。",
+      "Owner closeout 必須先完成 replacement dev VM 部署、cleanup plan/active generation 證據、至少三個連續 fresh cycles、新 lifecycle stimulus 推進並可讀、scheduler restart preservation、disk/freshness readback，並更新 task evidence；merge SHA 目前尚無 nonprod deploy run，因此不得直接 done。",
+      "非阻塞 hardening：schema 正確但 numeric controller 欄位損壞時 projector_readiness 目前拋 ValueError/HTTP 500，而非結構化 degraded payload；內部 atomic writer 只產生受控 integer，故不阻擋本次核准，但 closeout 應列為 residual risk 或後續補測。"
+    ],
+    "reviewer": "Codex",
+    "source_ref": {
+      "brief": "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/PAN-LIFECYCLE-RECOVERY-001.md",
+      "doc": "docs/04/pantheon_agora_remaining_work_2026-07-22/REMAINING_WORK_GAP.md",
+      "merge_target": "dev",
+      "packet": "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/INDEX.md",
+      "target_repo": "ajoe734/pantheon"
+    },
+    "status": "done",
+    "summary_zh": "修復 ENOSPC 後仍停更的 lifecycle projector，加入安全 generation retention、可恢復 publish 與 readiness/freshness truth，並把 live rescue 正式經 PR 部署。",
+    "target_repo": "ajoe734/pantheon",
+    "task_class": "execution",
+    "title": "Recover lifecycle projection and freshness health",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-23T00:35:09Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/pan-lifecycle-recovery-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/PAN-LIFECYCLE-RECOVERY-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "c555a14ebbcc2a7504076eeba3d381b016231833",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/pan-lifecycle-recovery-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "583d2ed616f04ea422d1d806503ba21c11f2c765",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/PAN-LIFECYCLE-RECOVERY-001",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "ad62a57dee323507f769c69bd008bb46a6eb2b99",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-22T17:38:19Z",
+      "from": "Codex2",
+      "message": "PR #3958 head e489990ec is clean and ready for independent review; verify active-safe retention, ENOSPC recovery, readiness fail-closed behavior, and evidence boundary.",
+      "resolved_at": "2026-07-22T17:38:23Z",
+      "status": "done",
+      "task_id": "PAN-LIFECYCLE-RECOVERY-001",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-22T17:38:23Z",
+      "from": "Codex2",
+      "message": "PR #3958 is clean and ready for independent review. Please verify active-safe retention, transient ENOSPC convergence, fail-closed lifecycle readiness, and evidence boundaries; hosted deploy remains pending until approval and merge.",
+      "resolved_at": "2026-07-22T17:40:02Z",
+      "status": "done",
+      "task_id": "PAN-LIFECYCLE-RECOVERY-001",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-22T17:40:02Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned PAN-LIFECYCLE-RECOVERY-001 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); reviewer Antigravity -> Codex.",
+      "resolved_at": "2026-07-22T17:53:56Z",
+      "status": "done",
+      "task_id": "PAN-LIFECYCLE-RECOVERY-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-22T17:53:56Z",
+      "from": "Codex",
+      "message": "Independent repository review approved for PR #3958 / merge 9a24478ed; returned to Codex2 for mandatory hosted deploy and acceptance-evidence closeout before done.",
+      "status": "done",
+      "task_id": "PAN-LIFECYCLE-RECOVERY-001",
+      "to": "Codex2",
+      "resolved_at": "2026-07-23T00:35:10Z"
+    }
+  ],
+  "blockers": []
+}
