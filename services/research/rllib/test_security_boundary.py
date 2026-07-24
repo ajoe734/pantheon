@@ -47,10 +47,11 @@ class RaySecurityBoundaryTests(unittest.TestCase):
             {"RAY_AUTH_MODE": "token", "RAY_AUTH_TOKEN": TEST_TOKEN},
             clear=True,
         ):
-            kwargs = secure_local_ray_init_kwargs(local_mode=True, num_cpus=1)
+            kwargs = secure_local_ray_init_kwargs(num_cpus=1)
         self.assertFalse(kwargs["include_dashboard"])
         self.assertEqual(kwargs["dashboard_host"], "127.0.0.1")
         self.assertEqual(kwargs["_node_ip_address"], "127.0.0.1")
+        self.assertNotIn("local_mode", kwargs)
 
     def test_security_owned_init_options_cannot_be_overridden(self) -> None:
         with patch.dict(

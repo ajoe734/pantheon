@@ -72,6 +72,30 @@ class DependabotReachabilityTests(unittest.TestCase):
         self.assertEqual(results[0].disposition, "reachable_vulnerable")
         self.assertTrue(results[0].violation)
 
+    def test_ray_2_55_1_is_fixed_for_cve_2026_41486(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "requirements.txt").write_text(
+                "ray[rllib]==2.55.1\nray[tune]==2.55.1\n",
+                encoding="utf-8",
+            )
+            results = reconcile_alerts(
+                [
+                    alert(
+                        38,
+                        severity="high",
+                        package="ray",
+                        manifest="requirements.txt",
+                        vulnerable_range=">= 2.49.0, < 2.55.0",
+                    )
+                ],
+                root,
+                {"critical", "high"},
+            )
+        self.assertEqual(results[0].current_version, "2.55.1")
+        self.assertEqual(results[0].disposition, "candidate_fixed")
+        self.assertFalse(results[0].violation)
+
     def test_deleted_manifest_is_inventory_not_violation(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             results = reconcile_alerts(

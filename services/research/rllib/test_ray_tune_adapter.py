@@ -89,7 +89,7 @@ class TestStubRayTuneBackend(unittest.TestCase):
 class TestRayTuneImportBackend(unittest.TestCase):
     def test_real_backend_uses_ray_tune_import_path(self) -> None:
         fake_ray = types.ModuleType("ray")
-        fake_ray.__version__ = "2.54.0"
+        fake_ray.__version__ = "2.55.1"
         fake_tune = types.ModuleType("ray.tune")
         with patch.dict(os.environ, TEST_RAY_SECURITY_ENV, clear=False):
             with patch.dict(sys.modules, {"ray": fake_ray, "ray.tune": fake_tune}, clear=False):
@@ -102,7 +102,7 @@ class TestRayTuneImportBackend(unittest.TestCase):
 
     def test_real_backend_does_not_delegate_to_stub(self) -> None:
         fake_ray = types.ModuleType("ray")
-        fake_ray.__version__ = "2.54.0"
+        fake_ray.__version__ = "2.55.1"
         fake_tune = types.ModuleType("ray.tune")
         with patch.dict(os.environ, TEST_RAY_SECURITY_ENV, clear=False):
             with patch.dict(sys.modules, {"ray": fake_ray, "ray.tune": fake_tune}, clear=False):

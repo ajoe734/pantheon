@@ -25,9 +25,9 @@ except ImportError:
     from security import require_secure_ray_runtime  # type: ignore
 
 RLLIB_PACKAGE = "ray[rllib]"
-RLLIB_VERSION_PIN = "==2.54.0"
+RLLIB_VERSION_PIN = "==2.55.1"
 RAY_TUNE_PACKAGE = "ray[tune]"
-RAY_TUNE_VERSION_PIN = "==2.54.0"
+RAY_TUNE_VERSION_PIN = "==2.55.1"
 PRIMARY_BACKEND = "rllib_ppo"
 STUB_BACKEND = "stub_rllib"
 DEFAULT_ACTION_LABELS = (
