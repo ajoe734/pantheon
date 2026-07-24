@@ -26555,9 +26555,7 @@ def _ppl_alloc_009_accepted_event_mismatches(
         expected = expected_event.get(field)
         actual = telemetry_readback.get(field)
         if actual != expected:
-            mismatches.append(
-                f"{field}.value expected={expected!r} actual={actual!r}"
-            )
+            mismatches.append(f"{field} does not match the immutable event")
     return mismatches
 
 
