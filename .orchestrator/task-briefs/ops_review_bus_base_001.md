@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Bind ReviewBus to dev and exact merged task evidence
-- Status: todo
+- Status: in_progress
 - Owner: Codex2
 - Reviewer: Claude2
-- Next: Assignment created
+- Next: PR #4024 delivered the dev-base review binding; follow-up now preserves the unique merged PR head when an integrator advanced the remote task branch past a stale worker ref. 20 focused tests pass; running broader regression before reviewer handoff.
 
 ## Summary
 修 ReviewBus 對已合併到 dev 的 task branch 仍建立 master PR，造成跨 226 commits 的錯誤 review；改成依 repo delivery base 與 exact merged PR/commit 做受管 review。
