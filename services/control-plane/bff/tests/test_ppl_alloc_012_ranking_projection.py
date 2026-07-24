@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -1987,6 +1988,252 @@ def test_promotion_submit_replay_preserves_original_snapshot_after_ranking_mutat
             assert bff_main.command_store._get_all_commands()[0]["params"][
                 "ranking_snapshot_id"
             ] == original_snapshot_id
+        finally:
+            bff_main.read_store = original_store
+            bff_main.command_store = original_command_store
+            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
+            bff_main._FINAL_CONTRACT_IDEMPOTENCY.update(original_final_idempotency)
+
+
+def test_promotion_first_submit_uses_admitted_snapshot_after_mutation_and_restart(
+    monkeypatch,
+) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.read_store
+        original_command_store = bff_main.command_store
+        original_final_idempotency = dict(bff_main._FINAL_CONTRACT_IDEMPOTENCY)
+        client: TestClient | None = None
+        try:
+            clock = {"now": datetime(2026, 7, 24, 23, 0, tzinfo=timezone.utc)}
+            monkeypatch.setattr(
+                bff_main,
+                "utc_now",
+                lambda: clock["now"].isoformat().replace("+00:00", "Z"),
+            )
+            client = _client(td)
+            command_path = os.path.join(td, "commands.jsonl")
+            bff_main.command_store = CommandStore(command_path)
+            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
+            store = bff_main.read_store
+            assert isinstance(store, ReadSurfaceStore)
+            _seed_live_persona(store)
+
+            original_response = client.get(
+                "/bff/management/quarterly-ranking/recommendations",
+                headers=HEADERS,
+                params={
+                    "quarter": "2026-Q3",
+                    "personaId": LIVE_PERSONA_ID,
+                    "page_size": 200,
+                },
+            )
+            assert original_response.status_code == 200, original_response.text
+            original = original_response.json()["data"]["items"][0]
+            recommendation_id = original["recommendation_id"]
+            original_snapshot_id = original["ranking_snapshot_id"]
+            original_weight = original["current_weight"]
+
+            clock["now"] += timedelta(seconds=30)
+            _write_live_binding(store, current_weight=0.09)
+            mutated_response = client.get(
+                "/bff/management/quarterly-ranking/recommendations",
+                headers=HEADERS,
+                params={
+                    "quarter": "2026-Q3",
+                    "personaId": LIVE_PERSONA_ID,
+                    "page_size": 200,
+                },
+            )
+            assert mutated_response.status_code == 200, mutated_response.text
+            mutated = next(
+                item
+                for item in mutated_response.json()["data"]["items"]
+                if item["recommendation_id"] == recommendation_id
+            )
+            assert mutated["ranking_snapshot_id"] != original_snapshot_id
+            assert mutated["current_weight"] != original_weight
+
+            client.close()
+            client = None
+            bff_main.read_store = ReadSurfaceStore(
+                os.path.join(td, "read-surfaces.json"),
+                allow_local_snapshot_fallback=True,
+            )
+            bff_main.command_store = CommandStore(command_path)
+            client = TestClient(bff_main.app, raise_server_exceptions=False)
+
+            submit = client.post(
+                f"/bff/management/quarterly-ranking/recommendations/{recommendation_id}/submit",
+                headers={
+                    **HEADERS,
+                    "Idempotency-Key": "ppl-alloc-012-submit-original-after-restart",
+                },
+                json={
+                    "quarter": "2026-Q3",
+                    "ranking_snapshot_id": original_snapshot_id,
+                },
+            )
+            assert submit.status_code == 202, submit.text
+            body = submit.json()
+            assert body["data"]["ranking_snapshot_id"] == original_snapshot_id
+            assert body["data"]["review"]["current_weight"] == original_weight
+            assert body["meta"]["live_capital_mutation"] is False
+            commands = bff_main.command_store._get_all_commands()
+            assert len(commands) == 1
+            params = commands[0]["params"]
+            assert params["ranking_snapshot_id"] == original_snapshot_id
+            assert params["source_recommendation"]["current_weight"] == original_weight
+            assert params["live_capital_mutation"] is False
+            assert params["direct_live_capital_mutation"] is False
+            assert params["runtime_mutation"] is False
+        finally:
+            if client is not None:
+                client.close()
+            bff_main.read_store = original_store
+            bff_main.command_store = original_command_store
+            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
+            bff_main._FINAL_CONTRACT_IDEMPOTENCY.update(original_final_idempotency)
+
+
+def test_promotion_first_submit_rejects_expired_snapshot(monkeypatch) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.read_store
+        original_command_store = bff_main.command_store
+        original_final_idempotency = dict(bff_main._FINAL_CONTRACT_IDEMPOTENCY)
+        try:
+            clock = {"now": datetime(2026, 7, 24, 23, 0, tzinfo=timezone.utc)}
+            monkeypatch.setattr(
+                bff_main,
+                "utc_now",
+                lambda: clock["now"].isoformat().replace("+00:00", "Z"),
+            )
+            monkeypatch.setenv("PANTHEON_PM12_RANKING_SNAPSHOT_TTL_SECONDS", "60")
+            client = _client(td)
+            bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
+            store = bff_main.read_store
+            assert isinstance(store, ReadSurfaceStore)
+            _seed_live_persona(store)
+
+            response = client.get(
+                "/bff/management/quarterly-ranking/recommendations",
+                headers=HEADERS,
+                params={
+                    "quarter": "2026-Q3",
+                    "personaId": LIVE_PERSONA_ID,
+                    "page_size": 200,
+                },
+            )
+            assert response.status_code == 200, response.text
+            recommendation = response.json()["data"]["items"][0]
+            clock["now"] += timedelta(seconds=61)
+
+            submit = client.post(
+                (
+                    "/bff/management/quarterly-ranking/recommendations/"
+                    f"{recommendation['recommendation_id']}/submit"
+                ),
+                headers={
+                    **HEADERS,
+                    "Idempotency-Key": "ppl-alloc-012-submit-expired",
+                },
+                json={
+                    "quarter": "2026-Q3",
+                    "ranking_snapshot_id": recommendation["ranking_snapshot_id"],
+                },
+            )
+            assert submit.status_code == 409, submit.text
+            assert submit.json()["error"]["details"]["precondition_failed"] == (
+                "ranking_snapshot_id"
+            )
+            assert bff_main.command_store._get_all_commands() == []
+        finally:
+            bff_main.read_store = original_store
+            bff_main.command_store = original_command_store
+            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
+            bff_main._FINAL_CONTRACT_IDEMPOTENCY.update(original_final_idempotency)
+
+
+def test_promotion_first_submit_rejects_unknown_forged_or_mutated_snapshot_tuple() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        original_store = bff_main.read_store
+        original_command_store = bff_main.command_store
+        original_final_idempotency = dict(bff_main._FINAL_CONTRACT_IDEMPOTENCY)
+        try:
+            client = _client(td)
+            bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
+            store = bff_main.read_store
+            assert isinstance(store, ReadSurfaceStore)
+            _seed_live_persona(store)
+
+            response = client.get(
+                "/bff/management/quarterly-ranking/recommendations",
+                headers=HEADERS,
+                params={
+                    "quarter": "2026-Q3",
+                    "personaId": LIVE_PERSONA_ID,
+                    "page_size": 200,
+                },
+            )
+            assert response.status_code == 200, response.text
+            recommendation = response.json()["data"]["items"][0]
+            recommendation_id = recommendation["recommendation_id"]
+            snapshot_id = recommendation["ranking_snapshot_id"]
+
+            cases = (
+                (recommendation_id, f"{snapshot_id}-unknown", "2026-Q3"),
+                (
+                    recommendation_id.replace(
+                        LIVE_PERSONA_ID,
+                        "persona-ppl-alloc-012-forged",
+                    ),
+                    snapshot_id,
+                    "2026-Q3",
+                ),
+                (
+                    recommendation_id.rsplit("-", 1)[0] + "-forged_action",
+                    snapshot_id,
+                    "2026-Q3",
+                ),
+                (recommendation_id, snapshot_id, "2026-Q2"),
+            )
+            for index, (route_id, asserted_snapshot_id, quarter) in enumerate(cases):
+                submit = client.post(
+                    (
+                        "/bff/management/quarterly-ranking/recommendations/"
+                        f"{route_id}/submit"
+                    ),
+                    headers={
+                        **HEADERS,
+                        "Idempotency-Key": f"ppl-alloc-012-submit-forged-{index}",
+                    },
+                    json={
+                        "quarter": quarter,
+                        "ranking_snapshot_id": asserted_snapshot_id,
+                    },
+                )
+                assert submit.status_code == 422, submit.text
+
+            snapshots = store._ensure_local_overlay_records("ranking_snapshots")
+            snapshots[snapshot_id]["items"][0]["score"] = 0
+            store._save()
+            mutated = client.post(
+                f"/bff/management/quarterly-ranking/recommendations/{recommendation_id}/submit",
+                headers={
+                    **HEADERS,
+                    "Idempotency-Key": "ppl-alloc-012-submit-mutated-digest",
+                },
+                json={
+                    "quarter": "2026-Q3",
+                    "ranking_snapshot_id": snapshot_id,
+                },
+            )
+            assert mutated.status_code == 422, mutated.text
+            assert mutated.json()["error"]["details"]["precondition_failed"] == (
+                "ranking_snapshot_id"
+            )
+            assert bff_main.command_store._get_all_commands() == []
         finally:
             bff_main.read_store = original_store
             bff_main.command_store = original_command_store
