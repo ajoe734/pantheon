@@ -5,9 +5,9 @@ Generated in the worker workspace because the supervisor root did not have a tas
 ## Task
 - Title: Finalize Agora cross-repository compatibility gate
 - Status: in_progress
-- Owner: Codex2
-- Reviewer: Codex
-- Next: Reviewer changes required: (1) cryptographically bind the actual Pantheon deployment payload TARGET_SHA/tree to the accepted manifest pair; the workflow currently omits --backend-runtime-commit, so a later arbitrary dev payload passes even though manifest backend.runtime_commit is 6e08b040eebd2c317a9b44741d8badbf878e26ad. (2) Put the compatibility decision on the real execute-plans hosted switch path before deploy-dev-vm.sh, or supply equivalent immutable gate evidence consumed there; pantheon nonprod-deploy only guards the BFF VM path. Replace the synthetic no-switch/rollback tests that manually mutate symlinks inside the test with production release-harness coverage proving pending/rejected cannot change the hosted symlink/active manifest and rollback restores the prior accepted pair. Preserve the passing exact clean origin/dev gate and 47 focused tests.
+- Owner: Codex
+- Reviewer: Claude2
+- Next: Antigravity verification was insufficient: it only verified stale accepted e4399e3/19d8352 and made no delivery. Required owner delivery is exact: update Pantheon dev compatibility manifest to FE e4399e3ec68f882ace35d0349e6597cdd101525f and BFF 00b38f41ec51296762d502c4bd5732f95ccf2953 in a clean task PR to dev; merge with checks; rerun execute-plans integration gate run 30003411349 to a new attempt; trigger/verify the corresponding FE deploy; prove hosted deployment.json and live /bff/version expose that same exact pair with strict live read-only defaults; update closeout artifacts; then hand off to Claude2. Do not run any bulk dispatch script or create tasks.
 
 ## Summary
 把 pending/zero placeholder manifest 換成 exact FE/BFF pair，部署前驗證 commits/hashes/dev reachability，失配 gate-before-switch 並測 rollback。
