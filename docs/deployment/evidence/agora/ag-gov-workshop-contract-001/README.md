@@ -28,6 +28,18 @@ authoritative fields match:
 The former noncanonical `workshop` target alias and missing owner/version
 bindings are rejected.
 
+The reviewer follow-up now also fails closed on the decision lifecycle fields.
+The gate accepts only the exact canonical value `decided` from
+`decision_state`/`state`, and only `approved` or
+`approved_with_conditions` from `decision`/`outcome`. Missing state,
+non-decided state, and the former `approved`, `completed`, `accepted`, and
+`approve` aliases are rejected before command admission.
+
+`test_public_workshop_operations_fail_closed_on_noncanonical_approval`
+exercises each invalid projection through both public research and conclude
+routes. It proves no research adapter dispatch, no final Registry readback, no
+command receipt, no session mutation, and no Workshop event.
+
 ## Public API regression
 
 `test_public_exact_identity_approval_flow_survives_restart` uses public HTTP
@@ -78,7 +90,8 @@ Run from the Pantheon repository root with the repository test environment:
   services/control-plane/bff/tests/test_agora_workshop_live_operations.py
 ```
 
-Result on 2026-07-24: `174 passed, 5 skipped`.
+Result on 2026-07-24 after the fail-closed reviewer follow-up:
+`180 passed, 5 skipped`.
 
 The skips are pre-existing optional Postgres cases without
 `TEST_DATABASE_URL`; the non-skipped restart regression uses the real

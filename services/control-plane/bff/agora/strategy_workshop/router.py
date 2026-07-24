@@ -1797,9 +1797,20 @@ def create_strategy_workshop_router(
                 exc.reason,
                 precondition_failed="approval_decision_id",
             ) from exc
-        outcome = str(decision.get("outcome") or decision.get("decision") or "").lower()
-        state = str(decision.get("state") or decision.get("decision_state") or "").lower()
-        if outcome not in {"approve", "approved", "accepted", "approved_with_conditions"}:
+        outcome_values = [
+            decision[field]
+            for field in ("decision", "outcome")
+            if field in decision
+        ]
+        state_values = [
+            decision[field]
+            for field in ("decision_state", "state")
+            if field in decision
+        ]
+        if not outcome_values or any(
+            value not in ("approved", "approved_with_conditions")
+            for value in outcome_values
+        ):
             raise bff_error(
                 409,
                 ErrorCode.HUMAN_GATE_PENDING,
@@ -1807,7 +1818,7 @@ def create_strategy_workshop_router(
                 "APPROVAL_NOT_APPROVED",
                 precondition_failed="approval_decision_id",
             )
-        if state and state not in {"decided", "approved", "completed"}:
+        if not state_values or any(value != "decided" for value in state_values):
             raise bff_error(
                 409,
                 ErrorCode.HUMAN_GATE_PENDING,
