@@ -295,12 +295,29 @@ class TestMainRoutes(unittest.TestCase):
     # --- ingest: happy path ---
 
     def test_known_binding_accepted_202(self):
+        event = _make_event(
+            binding_id=_KNOWN_BINDING_ID,
+            event_id="route-known-001",
+        )
         resp = self.client.post(
             "/api/telemetry/ingest",
-            json=_make_event(binding_id=_KNOWN_BINDING_ID, event_id="route-known-001"),
+            json=event,
         )
         self.assertEqual(resp.status_code, 202)
         self.assertEqual(resp.get_json()["status"], "accepted")
+
+        readback = self.client.get("/api/telemetry/events/route-known-001")
+        self.assertEqual(readback.status_code, 200)
+        self.assertEqual(readback.get_json(), event)
+
+    def test_missing_accepted_event_returns_404(self):
+        resp = self.client.get("/api/telemetry/events/route-missing-001")
+
+        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(
+            resp.get_json()["error"]["code"],
+            "TELEMETRY_EVENT_NOT_FOUND",
+        )
 
     def test_readyz_exposes_writer_and_dlq_metrics(self):
         resp = self.client.get("/readyz")
