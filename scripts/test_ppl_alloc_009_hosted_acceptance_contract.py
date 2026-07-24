@@ -27,18 +27,32 @@ def test_hosted_acceptance_preserves_browser_session_and_gcp_identity_contract()
     )
 
     # GCP Identity Platform remains the protected browser identity gate added
-    # by GCP-AUTH-MIGRATION-001; restoring the session-key input must not
-    # weaken or replace it.
+    # by GCP-AUTH-MIGRATION-001. The browser key is deliberately web-public,
+    # but the acceptance workflow must not print it in the runner's job-level
+    # environment. Load it from an auto-masked dev environment secret, add an
+    # explicit runner mask before the generic non-empty guard, then pass it to
+    # later steps through GITHUB_ENV.
     assert (
-        "PPL_ALLOC_009_GCP_IDENTITY_API_KEY: "
-        "${{ vars.VITE_GCP_IDENTITY_API_KEY }}"
+        "GCP_IDENTITY_API_KEY: "
+        "${{ secrets.PPL_ALLOC_009_GCP_IDENTITY_API_KEY }}"
         in workflow
     )
-    assert (
-        '"${PPL_ALLOC_009_GCP_IDENTITY_API_KEY}" '
-        "=~ ^AIza[A-Za-z0-9_-]{35}$"
-        in workflow
+    assert "${{ vars.VITE_GCP_IDENTITY_API_KEY }}" not in workflow
+    mask = 'echo "::add-mask::${GCP_IDENTITY_API_KEY}"'
+    guard = 'if [[ -z "${GCP_IDENTITY_API_KEY}" ]]; then'
+    export = (
+        'echo "PPL_ALLOC_009_GCP_IDENTITY_API_KEY='
+        '${GCP_IDENTITY_API_KEY}" >> "${GITHUB_ENV}"'
     )
+    assert mask in workflow
+    assert guard in workflow
+    assert export in workflow
+    assert workflow.index(mask) < workflow.index(guard) < workflow.index(export)
+    assert (
+        workflow.index(export)
+        < workflow.index("Reject unsafe target or incomplete proof inputs")
+    )
+    assert '[[ -n "${PPL_ALLOC_009_GCP_IDENTITY_API_KEY}" ]]' in workflow
 
     # Keep the public session-key URL fixed by the trusted controller rather
     # than reintroducing an operator-supplied dispatch input.
