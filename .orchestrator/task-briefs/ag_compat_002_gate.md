@@ -7,7 +7,9 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: in_progress
 - Owner: Codex
 - Reviewer: Claude2
-- Next: Antigravity verification was insufficient: it only verified stale accepted e4399e3/19d8352 and made no delivery. Required owner delivery is exact: update Pantheon dev compatibility manifest to FE e4399e3ec68f882ace35d0349e6597cdd101525f and BFF 00b38f41ec51296762d502c4bd5732f95ccf2953 in a clean task PR to dev; merge with checks; rerun execute-plans integration gate run 30003411349 to a new attempt; trigger/verify the corresponding FE deploy; prove hosted deployment.json and live /bff/version expose that same exact pair with strict live read-only defaults; update closeout artifacts; then hand off to Claude2. Do not run any bulk dispatch script or create tasks.
+- Next: Exact FE/BFF pair is deployed and independently read back with sealed
+  gate, no-switch, rollback, and strict read-only evidence; publish this
+  task-scoped delivery record, then hand off to Claude2 for review.
 
 ## Summary
 把 pending/zero placeholder manifest 換成 exact FE/BFF pair，部署前驗證 commits/hashes/dev reachability，失配 gate-before-switch 並測 rollback。
@@ -49,3 +51,20 @@ Verification:
 - Both edited GitHub workflows parse with PyYAML; edited shell scripts pass
   `bash -n`; `release-evidence.mjs` passes `node --check`; both repositories
   pass `git diff --check`.
+
+## Hosted Delivery Record (2026-07-24)
+
+- Pantheon PR #4016 merged as
+  `e2f7e7356b517844a946b780b373492d98af8c30`, pinning FE
+  `e4399e3ec68f882ace35d0349e6597cdd101525f` and BFF
+  `00b38f41ec51296762d502c4bd5732f95ccf2953`.
+- execute-plans integration-gate run `30003411349` attempt 3 passed.
+- execute-plans deploy run `30056451511` attempt 1 rejected an intervening
+  live BFF drift before switch and preserved the previous hosted release.
+- Pantheon BFF-only restore run `30056916386` passed exact-version and
+  restart-persistence probes; deploy run `30056451511` attempt 2 then passed.
+- Hosted `deployment.json` and live `/bff/version` expose the exact FE/BFF
+  pair. The deployment is accepted, live/strict, read-only, and has both real
+  and stub writes disabled.
+- Sealed attempt-2 evidence records 26/26 production controller scenarios
+  passing, including mismatch no-switch and exact previous-release rollback.
