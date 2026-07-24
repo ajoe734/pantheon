@@ -1,14 +1,19 @@
 # TJ-E2E-012 - Hosted Acceptance And Closeout
 
-Date: 2026-07-23 UTC
+Date: 2026-07-23 UTC (header reconciled 2026-07-24 UTC)
 
-Owner: Codex2
+Owner: Claude2 (evidence sections 1-7 authored by Codex2 under the prior
+ownership of this task; authorship is preserved, not reassigned)
 
 Governed reviewer: Codex
 
-Packet disposition: **READY FOR INDEPENDENT REVIEW**
+Packet disposition: **HUMAN/OPS VERDICT RECORDED — READY FOR GOVERNED REVIEWER REVIEW**
 
-Independent Human/Ops verdict: **PENDING — blocks `review_approved` and `done`**
+Independent Human/Ops verdict: **APPROVED** at `2026-07-23T08:07:19Z`, recorded
+in Section 8 and merged to `dev` through
+[PR #4011](https://github.com/ajoe734/pantheon/pull/4011) (merge
+`00b38f41ec51296762d502c4bd5732f95ccf2953`). The remaining gate is the governed
+`Codex` repository review that records `review -> review_approved`.
 
 Wave: 5
 
@@ -17,8 +22,10 @@ Repositories: `ajoe734/pantheon` and `ajoe734/execute-plans`
 This is the single evidence index required by the
 [2026-07-22 acceptance addendum](TJ-E2E-012-2026-07-22-acceptance-addendum.md).
 It supersedes the rejected July 12 owner report for acceptance purposes; it
-does not erase that historical record. The owner has not written or inferred a
-Human/Ops decision.
+does not erase that historical record. No owner has written or inferred a
+Human/Ops decision: the Section 8 verdict transcribes an interactive Human/Ops
+decision of `2026-07-23`, and its provenance is auditable through commit
+`691f2da1e75573fc53afe030b80ed0895f3ca4ae`.
 
 ## 1. Owner technical recommendation
 
@@ -35,7 +42,9 @@ The technical evidence is ready for independent review:
   for another undifferentiated summary;
 - current dev defaults are strict live-BFF and read-only.
 
-This recommendation is not an approval. Section 8 remains the terminal gate.
+This recommendation is not itself an approval. The acceptance gate is Section 8,
+which now records the independent Human/Ops verdict; the owner recommendation
+above was not used to derive it.
 
 ## 2. Accepted deployment identities
 
@@ -180,12 +189,16 @@ and its scenario-specific assertion.
 | R2 — Performance is an acceptance sample, not a soak | Twenty warmed samples per route establish the specified p95 budgets but not long-duration load behavior. Continue dashboard/SLO monitoring and require canary soak before production. | SRE / Trade Journey service owner | 2026-08-06 or before production promotion |
 | R3 — Deterministic dev scenarios are not live-capital proof | The run proves hosted canonical behavior with safe writes off. It does not authorize live writes, broker capital, or production default rollout. | Human/Ops + Trading Ops | Must be resolved by a separate governed canary/live decision |
 | R4 — GitHub artifacts have finite retention | Browser artifact expires 2026-10-19; final ledger artifact expires 2026-10-21. Archive them in the governed evidence store if retention beyond that date is required. | Release Engineering | 2026-10-12 |
-| R5 — Human/Ops verdict is outstanding | No owner, helper or model assertion can satisfy the independent decision. Task remains open until Section 8 is completed by Human/Ops and the governed reviewer records the result. | Human/Ops | Blocking; no waiver |
+| R5 — Human/Ops verdict is outstanding — **RESOLVED 2026-07-23** | No owner, helper or model assertion could satisfy the independent decision. Section 8 was completed by Human/Ops at `2026-07-23T08:07:19Z` and merged through PR #4011. The residual half of the original condition is unchanged: the governed reviewer (`Codex`) must still record the canonical `review -> review_approved` transition. | Human/Ops (verdict, discharged) / Codex (governed review, open) | Verdict discharged; governed review still required before `done` |
 | R6 — Dev hosted tip advanced after the acceptance run | The currently served read-only pair is newer than both retained proof pairs. Preserve the immutable historical result, but do not claim the current tip is covered; rerun the exact pair before claiming it as accepted. | Release Engineering + Trade Journey owners | Before current-tip acceptance, canary or production promotion |
 
-## 8. Independent Human/Ops verdict — required
+## 8. Independent Human/Ops verdict — recorded
 
 **Current verdict: APPROVED.**
+
+Provenance: transcribed verbatim from an interactive Human/Ops decision on
+`2026-07-23` in commit `691f2da1e75573fc53afe030b80ed0895f3ca4ae`, merged to
+`dev` through [PR #4011](https://github.com/ajoe734/pantheon/pull/4011).
 
 Decision: **APPROVED** — read-only hosted rollout accepted; rollback plan accepted.
 
@@ -216,20 +229,21 @@ Decision: **APPROVED** — read-only hosted rollout accepted; rollback plan acce
 - Rollout/rollback: the read-only rollout steps and the rollback record in
   Section 6 are reviewed and acceptable.
 
-The requirement this verdict satisfies:
+The requirement this verdict satisfies — each element is present above:
 
-Human/Ops must provide an independently attributable decision that cites this
-packet, hosted run `29971351535`, artifact `8549806068`, retained browser run
-`29856622315`, and the accepted residual risks above. The decision must include:
+| Required element | Satisfied by |
+| --- | --- |
+| `APPROVED` or `CHANGES REQUIRED` | `APPROVED` |
+| Human/Ops identity and UTC timestamp | bjoe734@gmail.com (Human/Ops), `2026-07-23T08:07:19Z` |
+| Citation of this packet, hosted run `29971351535`, artifact `8549806068`, retained browser run `29856622315` | "Cited evidence" above |
+| Accepted/rejected risk IDs and any additional conditions | "Risk decisions" above: R1, R2, R3, R4, R6 ACCEPTED with stated conditions; R5 RESOLVED |
+| Confirmation that the read-only rollout and rollback plan are acceptable | "Rollout/rollback" above |
 
-- `APPROVED` or `CHANGES REQUIRED`;
-- Human/Ops identity and UTC timestamp;
-- accepted/rejected risk IDs and any additional conditions;
-- confirmation that the read-only rollout and rollback plan are acceptable.
-
-The governed reviewer (`Codex`) must separately perform the repository review
-and record the canonical `review -> review_approved` transition. Reviewer
-approval cannot be used to fabricate a Human/Ops identity or decision.
+The governed reviewer (`Codex`) must still separately perform the repository
+review and record the canonical `review -> review_approved` transition; that
+gate is open. Reviewer approval cannot be used to fabricate a Human/Ops
+identity or decision, and this recorded verdict does not substitute for the
+reviewer transition.
 
 ## 9. Reproduction and validation
 
@@ -246,3 +260,31 @@ sha256sum -c evidence.sha256
 
 Results: 14 local tests passed; PR #4000 gates passed; hosted run passed; the
 downloaded `evidence.json` checksum matched.
+
+### 2026-07-24 header-reconciliation revalidation
+
+The 2026-07-24 change is documentation-only: it reconciles the stale
+`PENDING`/blocking header wording, the R5 risk row and the Section 8 heading
+against the verdict already recorded in Section 8. It adds no evidence claim
+and re-runs no hosted proof.
+
+```text
+python3 -m py_compile scripts/verify_hosted_scenarios.py scripts/test_verify_hosted_scenarios.py
+/tmp/tj-e2e-012-test-env/bin/python -m pytest scripts/test_verify_hosted_scenarios.py -q
+git diff --check
+```
+
+Results: `py_compile` clean; 14 passed (unchanged from the original run);
+`git diff --check` clean.
+
+Evidence-immutability check — the set of 40- and 64-hex identities and numeric
+run/artifact IDs in this file was compared before and after the reconciliation:
+
+```text
+grep -oE '\b[0-9a-f]{40}\b|\b[0-9a-f]{64}\b|\b[0-9]{8,}\b' <file> | sort | uniq -c
+```
+
+The only deltas are two additions — verdict commit
+`691f2da1e75573fc53afe030b80ed0895f3ca4ae` and its `dev` merge
+`00b38f41ec51296762d502c4bd5732f95ccf2953`, both cited as verdict provenance.
+No run ID, artifact ID, digest, or deployment commit was altered or removed.
