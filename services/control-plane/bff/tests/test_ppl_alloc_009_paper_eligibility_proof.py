@@ -458,6 +458,7 @@ def test_route_rejects_wrong_idempotency_key_before_owner_write(monkeypatch) -> 
         "capital_pool",
         "persona_capital_binding",
         "artifact",
+        "strategy_identity",
         "deployment_plan",
         "effective_after_observation",
         "retired_before_observation",
@@ -482,6 +483,9 @@ def test_context_rejects_wrong_authority_and_lineage(
         runtime_binding["persona_capital_binding_id"] = "pcb-other"
     elif invalid_case == "artifact":
         runtime_binding.pop("artifact_id")
+    elif invalid_case == "strategy_identity":
+        runtime_binding.pop("strategy_id")
+        plan.pop("strategy_id")
     elif invalid_case == "deployment_plan":
         plan = None
     elif invalid_case == "effective_after_observation":
@@ -504,6 +508,27 @@ def test_context_rejects_wrong_authority_and_lineage(
         )
 
     assert getattr(exc_info.value, "status_code", None) in {404, 422}
+
+
+def test_context_accepts_authoritative_deployment_plan_strategy_id(
+    monkeypatch,
+) -> None:
+    persona, ranking_item, runtime_binding, plan = _context_records()
+    runtime_binding.pop("strategy_id")
+    _mock_context_dependencies(
+        monkeypatch,
+        persona=persona,
+        ranking_item=ranking_item,
+        runtime_binding=runtime_binding,
+        plan=plan,
+    )
+
+    context = bff_main._ppl_alloc_009_paper_eligibility_context(
+        persona_id=PERSONA_ID,
+        identity=_identity("Bearer paper-operator:mfa"),
+    )
+
+    assert context["strategy_id"] == plan["strategy_id"]
 
 
 def test_route_emits_to_owner_and_returns_governed_response_schema(
