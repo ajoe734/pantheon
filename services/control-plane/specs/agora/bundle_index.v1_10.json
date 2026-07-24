@@ -1,0 +1,60 @@
+{
+  "bundle_version": "1.10",
+  "extends": {
+    "bundle_path": "services/control-plane/specs/agora/bundle_index.v1_9.json",
+    "bundle_version": "1.9",
+    "bundle_index_sha256": "3485acad9de193aff972910e8286193b09924ac6505b06b7debc931211999795"
+  },
+  "files": {
+    "specs/agora/v11/performance_truth.schema.json": "e68c00ba691d020e3d1637739fa2005c233c250a56e28a68e920e320ff3ada8e",
+    "specs/agora/v11/workshop_version_operations.schema.json": "8e4797a787eb0661e8115eeb647dfb46783fd746df6e03170b5c3f138058afbe",
+    "specs/agora/v11/capability_manifest_v1_10.json": "504a30b33a992f0a02bd2feadf35ce2ab29911c7284e64907f704dcab8b2d25e"
+  },
+  "openapi": {
+    "path": "services/control-plane/openapi/agora_v1_10.openapi.yaml",
+    "sha256": "9661492672164de1f79f01c68c6dd5c2d1898404ecda78e60c071aeed8bad69c"
+  },
+  "required_definition_checksums": {
+    "SourceAvailability": "ea6786ca80d701d32e42d14df83d3890aa7c3e8f191d01b22f9d026057ecb543",
+    "ComplianceMetric": "b43047bee764f740e4fc7c6748ab1416a50222b548d2b09e818820536bfbd63c",
+    "InterventionRecord": "cb6d47a6d063574e21314757dfcaaee6ba324928021ebadccdcc601fe2994821",
+    "ExecutionHistoryRow": "1cca8915e988748e56df6603893364212eb035956c141a9e45ee2c33c996a590",
+    "PerformanceWarning": "40fc759d5a57e00e2a8ad7d53458b76ede3ac8367e0c0c1786c389507f6350ce",
+    "SuggestionProvenance": "56c09b2ecde3f96ed3988b7d4fdae5df60c76d8c354ebdf4d31a3fea7c83f47a",
+    "AdjustmentSuggestion": "4beb66a7c297d6fc8471687e8656c3e56725e54259b182b28c4ac749de0cc362",
+    "StrategyPerformanceProjection": "45cba7ea036748885279dab02fe72ac0f77080fc235b5112c49b08dfb8d22e6a",
+    "PerformanceProjectionEnvelope": "4c75bae6d277d2e29811c58f96d8f359448aad1792a3989fb65a30883c6d31ae",
+    "SuggestionActionRequest": "db7af82a71071b0f904b8ed105689b7abce2fdee71ef7aaa18bc3003968e6022",
+    "SuggestionActionReceipt": "cef31a45bd53e84263fa8f62dc3f3c2d58affbdd39607492abc1edd99e2efe4f",
+    "SuggestionActionEnvelope": "6b55f84cb4bee233ee136edbcc0bda6f5183a8f8dfc0d5121a1510b8f2f66f10",
+    "WorkshopVersionLink": "a2488b6b367bb0b3ea21217f904a3246974a595123d46084d8665dbd907fc8a6",
+    "AuthoritativeStrategySpecReadback": "b0268fb83c46067c6a56c235ab0fd08ba08caf81684b185445ceaaeb567be47a",
+    "WorkshopVersionResource": "772e2e763ea8f0e14417b4a44460accdde542d64f4c990bd2d1accf80e44b716",
+    "WorkshopVersionListEnvelope": "167666ab48c6ca012aec3869c69fb2ce15f9b381c59557feb2be00487a2d2b40",
+    "WorkshopVersionCreateEnvelope": "a6f40d565138cb4cf757967b99e6d728477c56a337215600c020f5ffbf130873",
+    "WorkshopVersionSelectResource": "ec774c2ea5868b67a91f8fa30cc5ed3bd14e540888e8c95b6c4a7b612637e889",
+    "WorkshopVersionSelectEnvelope": "b0a7c22b8010a34758ab898889b1a24437dc3b4ef5899df87783560da906393a",
+    "LegacyVersionBackfillRule": "39a7fb43d285f56c0088015bdee1fb5112c20765673c4f1742b8c4a266dd2f6b"
+  },
+  "route_families": {
+    "strategy_performance_truth": [
+      "GET /bff/agora/trading-room/strategies/{strategy_id}/performance",
+      "POST /bff/agora/trading-room/strategies/{strategy_id}/performance/suggestions/{suggestion_id}/actions",
+      "GET /bff/agora/performance/action-receipts/{receipt_id}"
+    ],
+    "durable_workshop_versions": [
+      "GET /bff/agora/workshops/{workshop_id}/versions",
+      "POST /bff/agora/workshops/{workshop_id}/versions",
+      "POST /bff/agora/workshops/{workshop_id}/versions/{version_id}/select"
+    ]
+  },
+  "implementation_status": "implemented",
+  "contract_refs": {
+    "performance_task": "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/AG-PERF-TRUTH-001-BE.md",
+    "workshop_task": "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/AG-WS-OPS-001.md",
+    "performance_router": "services/control-plane/bff/agora/performance/router.py",
+    "workshop_router": "services/control-plane/bff/agora/strategy_workshop/router.py",
+    "gap": "docs/04/pantheon_agora_remaining_work_2026-07-22/REMAINING_WORK_GAP.md"
+  },
+  "note": "Combined additive v1.10 extension over exact v1.9 bytes. Repository implementation does not claim hosted deployment."
+}

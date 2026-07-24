@@ -140,6 +140,130 @@ def test_evidence_manifest_binds_run_and_exact_deployment_pair(tmp_path: Path) -
     assert (tmp_path / "evidence.sha256").read_text(encoding="utf-8").endswith("  evidence.json\n")
 
 
+def test_evidence_writes_exact_twelve_row_ledger_and_axis_mapping(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    recorder = verifier_module.EvidenceRecorder(config)
+
+    for number in range(1, 13):
+        label = f"scenario-{number:02d}-detail"
+        recorder.call(label, {"request": {"url": f"https://bff.example.test/{number}"}, "response": {"status": 200}})
+        recorder.record_scenario(
+            number,
+            journey_id=f"tj-scenario-{number}",
+            actor_identity="operator_a" if number != 10 else "viewer",
+            actor_role="operator" if number != 10 else "viewer",
+            tenant_id="tenant-dev",
+            source_ids={"journey_id": [f"tj-scenario-{number}"]},
+            journey_status="completed",
+            current_stage="reconciliation",
+            reconciliation={"status": "succeeded"},
+            evidence_labels=(label,),
+        )
+        recorder.mark_scenario(number, "passed")
+    recorder.record_axis(
+        "performance_budget",
+        scenario_numbers=(1, 9),
+        evidence_labels=("scenario-01-detail", "scenario-09-detail"),
+        passed=True,
+        details={"p95_ms": 12.5},
+    )
+
+    summary = recorder.write(passed=True)
+    ledger = json.loads((tmp_path / "scenario-ledger.json").read_text(encoding="utf-8"))
+    axes = json.loads((tmp_path / "axis-mapping.json").read_text(encoding="utf-8"))
+
+    assert summary["scenario_ledger"]["row_count"] == 12
+    assert len(ledger["rows"]) == 12
+    assert {row["scenario_number"] for row in ledger["rows"]} == set(range(1, 13))
+    assert all(row["result"] == "passed" for row in ledger["rows"])
+    assert all(len(row["evidence_digest_sha256"]) == 64 for row in ledger["rows"])
+    assert all(row["request_response_or_sse_evidence"] for row in ledger["rows"])
+    assert summary["axis_mapping"]["axis_count"] == 1
+    assert axes["axes"][0]["scenario_ids"] == ["TJ-E2E-012-S01", "TJ-E2E-012-S09"]
+
+
+def test_deployment_rejects_frontend_manifest_bound_to_stale_bff_sha(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+
+    def transport(method, url, **_kwargs):
+        assert method == "GET"
+        if url.endswith("/bff/version"):
+            return {
+                "status": 200,
+                "headers": {},
+                "json": {
+                    "source_commit_sha": config.expected_bff_sha,
+                    "config_posture": {"auth_mode": "strict", "auth_stub": False},
+                },
+            }
+        return {
+            "status": 200,
+            "headers": {},
+            "json": {
+                "commit": config.expected_fe_sha,
+                "bffHost": config.bff_base_url,
+                "bffCommit": "a" * 40,
+                "deploymentState": "accepted",
+                "buildMode": {
+                    "VITE_BFF_MODE": "live",
+                    "VITE_BFF_FALLBACK": "strict",
+                    "VITE_BFF_REAL_WRITES": "false",
+                    "VITE_BFF_ALLOW_DEV_STUB_WRITES": "false",
+                },
+            },
+        }
+
+    recorder = verifier_module.EvidenceRecorder(config)
+    verifier = verifier_module.HostedVerifier(config, recorder, transport=transport)
+
+    with pytest.raises(verifier_module.VerificationError) as exc_info:
+        verifier.verify_deployment()
+
+    assert exc_info.value.code == "deployment.fe_bff_exact_sha"
+
+
+def test_sse_frame_parser_preserves_cursor_event_and_json_data() -> None:
+    frame = verifier_module._parse_sse_frame(
+        'id: 42\nevent: snapshot_refetch_required\ndata: {"revision":42,"previous_revision":41}\n\n'
+    )
+
+    assert frame == {
+        "id": "42",
+        "event": "snapshot_refetch_required",
+        "data": {"revision": 42, "previous_revision": 41},
+    }
+
+
+def test_p95_uses_twenty_samples_without_treating_one_outlier_as_the_p95() -> None:
+    samples = [700.0] * 19 + [6000.0]
+
+    assert verifier_module._percentile_95(samples) == 700.0
+
+
+def test_performance_budget_uses_warmups_and_twenty_samples_per_route(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    calls = []
+
+    def transport(method, url, **_kwargs):
+        calls.append((method, url))
+        return {"status": 200, "headers": {}, "json": {}, "duration_ms": 700.0}
+
+    recorder = verifier_module.EvidenceRecorder(config)
+    verifier = verifier_module.HostedVerifier(config, recorder, transport=transport)
+    verifier.operator_token = "operator-token"
+
+    verifier.verify_performance_budget()
+
+    axis = recorder.axes[-1]
+    assert len(calls) == 45
+    assert axis["name"] == "performance_budget"
+    assert axis["passed"] is True
+    assert axis["details"]["detail"]["sample_count"] == 20
+    assert axis["details"]["detail"]["warmup_count"] == 4
+    assert axis["details"]["resolve"]["sample_count"] == 20
+    assert axis["details"]["resolve"]["warmup_count"] == 1
+
+
 def test_source_has_no_legacy_bearer_or_insecure_tls_override() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
 

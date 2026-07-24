@@ -75,7 +75,12 @@ from services.foundation import (  # noqa: E402
     foundation_id,
     sha256_checksum,
 )
-from services.foundation.health import register_fastapi_health_routes  # noqa: E402
+from services.foundation.health import (  # noqa: E402
+    health_payload,
+    readiness_status_code,
+    register_fastapi_health_routes,
+)
+from services.trade_journey.lifecycle_projector import projector_readiness  # noqa: E402
 from services.source_ingestion.replication_bridge import (  # noqa: E402
     StrategySeedReplicationBridge,
     StrategySeedReplicationBridgeError,
@@ -156,6 +161,7 @@ from command_executor import (
 )
 from persona_allocation_policy import (
     build_pm12_allocation_policy_input,
+    calculate_paper_simulation_allocations,
     calculate_target_allocations,
     validate_emergency_lines,
 )
@@ -678,10 +684,60 @@ async def _bff_session_rbac_contract(request: Request, call_next):
 
 BFF_DATA_DIR = os.getenv("BFF_DATA_DIR", "/tmp/pantheon/bff")
 os.makedirs(BFF_DATA_DIR, exist_ok=True)
-register_fastapi_health_routes(
-    app,
-    "operator-bff",
-    dependencies=lambda: {
+
+
+def _lifecycle_projector_dependency() -> Dict[str, Any]:
+    state_path = Path(
+        os.getenv(
+            "LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH",
+            str(Path(BFF_DATA_DIR) / "lifecycle-projection" / "health_state.json"),
+        )
+    )
+    root = Path(os.getenv("LIFECYCLE_PROJECTION_ROOT", str(state_path.parent)))
+    dependency = projector_readiness(state_path=state_path, bundle_root=root)
+
+    expected_stores = {
+        "trade_journey_events": root / "current" / "trade_journey_events.json",
+        "loop_runs": root / "current" / "loop_runs.json",
+    }
+    configured_stores = {
+        "trade_journey_events": Path(
+            os.getenv(
+                "PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE",
+                str(expected_stores["trade_journey_events"]),
+            )
+        ),
+        "loop_runs": Path(
+            os.getenv(
+                "PANTHEON_BFF_LOOP_RUN_STORE",
+                str(expected_stores["loop_runs"]),
+            )
+        ),
+    }
+    store_status: Dict[str, Dict[str, Any]] = {}
+    mismatches: List[str] = []
+    for name, expected_path in expected_stores.items():
+        configured_path = configured_stores[name]
+        aligned = configured_path.absolute() == expected_path.absolute()
+        store_status[name] = {
+            "configured_path": str(configured_path),
+            "expected_path": str(expected_path),
+            "aligned": aligned,
+        }
+        if not aligned:
+            mismatches.append(name)
+    dependency["read_surface_stores"] = store_status
+    if mismatches:
+        reason = f"read_surface_store_mismatch:{','.join(mismatches)}"
+        dependency["ready"] = False
+        dependency["status"] = "degraded"
+        dependency["reasons"] = [*dependency.get("reasons", []), reason]
+        dependency["error_reason"] = dependency.get("error_reason") or reason
+    return dependency
+
+
+def _bff_readiness_dependencies() -> Dict[str, Dict[str, Any]]:
+    return {
         "runtime_manager": {
             "status": "ok" if os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "").strip() else "degraded",
             "url": os.getenv("PANTHEON_RUNTIME_MANAGER_URL", "").strip(),
@@ -694,7 +750,14 @@ register_fastapi_health_routes(
             "status": "ok" if os.getenv("PANTHEON_DEPLOYMENT_API_URL", "").strip() else "degraded",
             "url": os.getenv("PANTHEON_DEPLOYMENT_API_URL", "").strip(),
         },
-    },
+        "lifecycle_projector": _lifecycle_projector_dependency(),
+    }
+
+
+register_fastapi_health_routes(
+    app,
+    "operator-bff",
+    dependencies=_bff_readiness_dependencies,
     details=lambda: {"version": "0.2.0", "data_dir": BFF_DATA_DIR},
 )
 
@@ -3612,7 +3675,20 @@ def _require_final_command_preconditions(
         evidence["confirm_token_id"] = token_id
 
     params = dict(cmd.params)
+    paper_simulation_authority = _ppl_alloc_009_paper_rebalance_authority(cmd)
+    if paper_simulation_authority and not identity.mfa_verified:
+        raise _final_precondition_error(
+            cmd=cmd,
+            status_code=403,
+            code=ErrorCode.FORBIDDEN,
+            message="Paper allocation apply requires MFA",
+            reason="PAPER_SIMULATION_MFA_REQUIRED",
+            kind="mfa",
+            correlation_id=correlation_id,
+            suggestion="Retry with the strict dev operator identity and verified MFA",
+        )
 
+    approval_decision: Optional[Dict[str, Any]] = None
     if getattr(entry, "requires_approval", False):
         approval_decision_id = _precondition_value(payload, params, _APPROVAL_EVIDENCE_FIELDS)
         if not approval_decision_id:
@@ -3680,6 +3756,30 @@ def _require_final_command_preconditions(
                 details_extra={"approvalDecisionId": approval_decision_id},
             )
         evidence["approval_decision_id"] = approval_decision_id
+        if paper_simulation_authority:
+            approval_actor = str(
+                approval_decision.get("decided_by")
+                or approval_decision.get("actor_id")
+                or approval_decision.get("operator_id")
+                or ""
+            ).strip()
+            if not approval_actor or approval_actor == identity.operator_id:
+                raise _final_precondition_error(
+                    cmd=cmd,
+                    status_code=409,
+                    code=ErrorCode.HUMAN_GATE_PENDING,
+                    message="Paper allocation approval and apply must be distinct",
+                    reason="PAPER_SIMULATION_APPROVAL_APPLY_NOT_DISTINCT",
+                    kind="approval",
+                    correlation_id=correlation_id,
+                    suggestion=(
+                        "Use an approver identity distinct from the authenticated "
+                        "operator applying the paper allocation"
+                    ),
+                )
+            evidence["paper_simulation_authority"] = (
+                _PPL_ALLOC_009_PAPER_AUTHORITY_MODE
+            )
 
     if cmd.command in _HUMAN_GATE_DECISIONS_BY_COMMAND:
         evidence.update(
@@ -3692,7 +3792,7 @@ def _require_final_command_preconditions(
         )
         return evidence
 
-    if getattr(entry, "requires_two_man", False):
+    if getattr(entry, "requires_two_man", False) and not paper_simulation_authority:
         signature_id = _precondition_value(payload, params, _TWO_MAN_EVIDENCE_FIELDS)
         evidence["two_man_signature_id"] = _require_two_man_signature_evidence(
             cmd=cmd,
@@ -15926,15 +16026,24 @@ async def create_binding(
         idempotency_key=resolved_key,
         requested_id=payload.get("binding_id") or payload.get("id"),
     )
-    capital_sleeve_id = str(
-        payload.get("capital_sleeve_id")
-        or payload.get("sleeve_id")
-        or binding_id
-    ).strip()
     role = str(payload.get("role") or "live_owner").strip()
     allowed_scope = str(
         payload.get("allowed_deployment_scope") or "live"
     ).strip()
+    if "capital_sleeve_id" in payload:
+        capital_sleeve_id = (
+            str(payload.get("capital_sleeve_id") or "").strip() or None
+        )
+    elif "sleeve_id" in payload:
+        capital_sleeve_id = (
+            str(payload.get("sleeve_id") or "").strip() or None
+        )
+    elif role == "paper_owner" and allowed_scope == "paper":
+        capital_sleeve_id = None
+    else:
+        # Legacy live-binding callers omitted the sleeve and relied on a stable
+        # binding-scoped default. Paper authority must stay sleeve-less.
+        capital_sleeve_id = binding_id
     metadata = {
         **(payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}),
         "capital_sleeve_id": capital_sleeve_id,
@@ -25817,6 +25926,8 @@ async def bff_ranking_formula_action(
 # -- Rebalances BFF ----------------------------------------------------------
 
 _PM12_ALLOCATION_POLICY_VERSION = "persona-real-allocation-v1"
+_PPL_ALLOC_009_PAPER_POLICY_VERSION = "persona-paper-allocation-simulation-v1"
+_PPL_ALLOC_009_PAPER_AUTHORITY_MODE = "governed_paper_simulation"
 _PM12_ALLOCATION_LINE_DIGEST_FIELDS = (
     "ranking_snapshot_id",
     "allocation_evaluation_id",
@@ -25942,12 +26053,16 @@ def _pm12_allocation_evaluation_record(evaluation_id: str) -> Dict[str, Any]:
                 f"The durable allocation line at index {index} no longer matches its digest.",
                 precondition_failed="allocation_line_digest",
             )
-    expected_content_digest = _stable_json_hash({
+    content_basis = {
         "ranking_snapshot_id": evaluation.get("ranking_snapshot_id"),
         "allocation_evaluation_id": evaluation.get("allocation_evaluation_id"),
         "allocation_policy_version": evaluation.get("allocation_policy_version"),
         "lines": lines,
-    })
+    }
+    for optional_field in ("authority_mode", "promotion_review_id"):
+        if evaluation.get(optional_field) not in (None, ""):
+            content_basis[optional_field] = evaluation.get(optional_field)
+    expected_content_digest = _stable_json_hash(content_basis)
     if str(evaluation.get("content_digest") or "") != expected_content_digest:
         raise _bff_error(
             422,
@@ -26118,14 +26233,517 @@ def _pm12_materialize_allocation_evaluation(
         "applied": False,
     })
 
+
+def _ppl_alloc_009_paper_environment_guard() -> None:
+    env_name = str(os.getenv("PANTHEON_ENV") or "").strip().lower()
+    if (
+        env_name != "dev"
+        or _bff_auth_mode() != "strict"
+        or _bff_auth_stub_enabled()
+        or _bool_from_env("PANTHEON_LIVE_BROKER_ENABLED", default=False)
+        or _bool_from_env("PANTHEON_CANARY_EXECUTION_ENABLED", default=False)
+    ):
+        raise _bff_error(
+            403,
+            ErrorCode.PRECONDITION_FAILED,
+            "Governed paper allocation simulation is unavailable",
+            (
+                "The paper-only authority requires strict dev auth with both "
+                "live broker and canary execution disabled."
+            ),
+            precondition_failed="paper_simulation_environment",
+            suggestion=(
+                "Use the accepted strict dev BFF with "
+                "PANTHEON_LIVE_BROKER_ENABLED=false and "
+                "PANTHEON_CANARY_EXECUTION_ENABLED=false"
+            ),
+        )
+
+
+def _ppl_alloc_009_paper_capital_context(
+    *,
+    persona_id: str,
+    ranking_item: Dict[str, Any],
+) -> Dict[str, Any]:
+    binding_ids = {
+        str(value or "").strip()
+        for value in ranking_item.get("binding_ids") or []
+        if str(value or "").strip()
+    }
+    bindings = [
+        binding
+        for binding in read_store.list_bindings(
+            persona_id=persona_id,
+            role="paper_owner",
+        )
+        if str(binding.get("status") or binding.get("validity") or "").strip().lower()
+        in {"active", "ready", "bound"}
+        and str(binding.get("allowed_deployment_scope") or "").strip().lower()
+        == "paper"
+        and not str(binding.get("capital_sleeve_id") or "").strip()
+        and (
+            not binding_ids
+            or str(binding.get("binding_id") or binding.get("id") or "").strip()
+            in binding_ids
+        )
+    ]
+    if len(bindings) != 1:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Paper allocation binding is not authoritative",
+            (
+                "The ranked Persona must resolve to exactly one active "
+                "paper_owner binding with no capital sleeve."
+            ),
+            precondition_failed="paper_owner_binding",
+        )
+    binding = bindings[0]
+    binding_id = str(binding.get("binding_id") or binding.get("id") or "").strip()
+    pool_id = str(binding.get("capital_pool_id") or "").strip()
+    pool = read_store.get_capital_pool(pool_id)
+    metadata = (
+        pool.get("metadata")
+        if isinstance(pool, dict) and isinstance(pool.get("metadata"), dict)
+        else {}
+    )
+    if (
+        not isinstance(pool, dict)
+        or str(pool.get("status") or "").strip().lower() != "active"
+        or metadata.get("internal") is not True
+        or str(metadata.get("execution_context") or "").strip().lower() != "paper"
+        or str(metadata.get("persona_id") or "").strip() != persona_id
+    ):
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Paper allocation pool is not authoritative",
+            (
+                "The paper_owner binding must resolve to the active internal "
+                "paper pool provisioned for the same Persona."
+            ),
+            precondition_failed="paper_capital_pool",
+        )
+
+    allocations = read_store.list_capital_allocations(
+        capital_pool_id=pool_id,
+        persona_id=persona_id,
+    )
+    if len(allocations) > 1:
+        raise _bff_error(
+            409,
+            ErrorCode.RESOURCE_CONFLICT,
+            "Paper allocation identity is ambiguous",
+            "More than one authoritative Capital allocation matched the paper identity.",
+            precondition_failed="paper_allocation_identity",
+        )
+    current_weight = 0.0
+    if allocations:
+        allocation = allocations[0]
+        if (
+            str(allocation.get("capital_scope") or "").strip().lower()
+            != "paper_ledger"
+            or str(allocation.get("binding_id") or "").strip() != binding_id
+            or str(allocation.get("capital_sleeve_id") or "").strip()
+        ):
+            raise _bff_error(
+                409,
+                ErrorCode.RESOURCE_CONFLICT,
+                "Paper allocation identity is inconsistent",
+                "The existing Capital allocation does not match the governed paper binding.",
+                precondition_failed="paper_allocation_identity",
+            )
+        try:
+            current_weight = float(allocation.get("current_weight") or 0.0)
+        except (TypeError, ValueError) as exc:
+            raise _bff_error(
+                409,
+                ErrorCode.RESOURCE_CONFLICT,
+                "Paper allocation baseline is invalid",
+                "Capital returned a non-numeric paper allocation weight.",
+                precondition_failed="paper_allocation_baseline",
+            ) from exc
+
+    return {
+        "capital_pool_id": pool_id,
+        "binding_id": binding_id,
+        "current_weight": current_weight,
+    }
+
+
+def _ppl_alloc_009_paper_governance_context(
+    *,
+    snapshot_id: str,
+    persona_id: str,
+    ranking_item: Dict[str, Any],
+    promotion_review_id: str,
+) -> Dict[str, Any]:
+    submission = _promotion_review_submission_projection(
+        promotion_review_id,
+        include_source_recommendation=True,
+    )
+    decision = _promotion_review_decision_projection(promotion_review_id)
+    source = (
+        submission.get("source_recommendation")
+        if isinstance(submission, dict)
+        and isinstance(submission.get("source_recommendation"), dict)
+        else {}
+    )
+    if (
+        not isinstance(submission, dict)
+        or str(submission.get("ranking_snapshot_id") or "") != snapshot_id
+        or str(submission.get("persona_id") or "") != persona_id
+        or str(source.get("ranking_snapshot_id") or "") != snapshot_id
+        or str(source.get("persona_id") or "") != persona_id
+        or str(source.get("stage") or "").strip().lower() != "paper_running"
+        or str(source.get("action_id") or "").strip()
+        != "promote_to_canary_candidate"
+    ):
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Promotion review lineage is incomplete",
+            (
+                "Paper allocation requires the immutable submitted "
+                "promote_to_canary_candidate recommendation for this exact "
+                "Persona and ranking snapshot."
+            ),
+            precondition_failed="promotion_review_id",
+        )
+    if (
+        not isinstance(decision, dict)
+        or str(decision.get("decision_status") or "").strip().lower() != "accepted"
+        or str(decision.get("decision") or "").strip().lower()
+        not in {"approve", "approve_with_conditions"}
+    ):
+        raise _bff_error(
+            409,
+            ErrorCode.HUMAN_GATE_PENDING,
+            "Positive promotion decision is required",
+            "The exact promotion review has no accepted positive human decision.",
+            precondition_failed="promotion_review_decision",
+        )
+    submitted_by = str(submission.get("submitted_by") or "").strip()
+    decided_by = str(decision.get("decided_by") or "").strip()
+    if not submitted_by or not decided_by or submitted_by == decided_by:
+        raise _bff_error(
+            409,
+            ErrorCode.HUMAN_GATE_PENDING,
+            "Promotion review requires distinct human authority",
+            "The recommendation submitter and promotion decision actor must be distinct.",
+            precondition_failed="promotion_review_separation",
+        )
+    paper_ledger_id = str(ranking_item.get("paper_ledger_id") or "").strip()
+    if not paper_ledger_id:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Paper ledger identity is missing",
+            "The authoritative paper ranking row has no paper_ledger_id.",
+            precondition_failed="paper_ledger_id",
+        )
+    return {
+        "paper_ledger_id": paper_ledger_id,
+        "submitted_by": submitted_by,
+        "decided_by": decided_by,
+        "submission_command_id": str(submission.get("command_id") or "").strip(),
+        "decision_command_id": str(decision.get("command_id") or "").strip(),
+    }
+
+
+def _pm12_materialize_paper_simulation_evaluation(
+    snapshot: Dict[str, Any],
+    asserted_rows: List[Dict[str, Any]],
+    *,
+    promotion_review_id: str,
+) -> Dict[str, Any]:
+    snapshot_id = str(snapshot.get("ranking_snapshot_id") or "")
+    if len(asserted_rows) != 1 or not isinstance(asserted_rows[0], dict):
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Paper simulation requires one ranking row",
+            "Exactly one authoritative Persona may occupy the isolated paper ledger.",
+            precondition_failed="rows",
+        )
+    asserted = asserted_rows[0]
+    if str(asserted.get("ranking_snapshot_id") or "").strip() != snapshot_id:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Ranking snapshot mismatch",
+            "The paper allocation row must belong to the admitted snapshot.",
+            precondition_failed="ranking_snapshot_id",
+        )
+    persona_id = str(asserted.get("persona_id") or "").strip()
+    matches = [
+        item
+        for item in snapshot.get("items") or []
+        if isinstance(item, dict)
+        and str(item.get("persona_id") or "").strip() == persona_id
+    ]
+    if len(matches) != 1:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Ranking row is not authoritative",
+            "The Persona must occur exactly once in the admitted ranking snapshot.",
+            precondition_failed="persona_id",
+        )
+    ranking_item = matches[0]
+    _pm12_assert_allocation_row(
+        asserted=asserted,
+        authoritative=ranking_item,
+        snapshot=snapshot,
+        index=0,
+    )
+    if (
+        str(ranking_item.get("stage") or "").strip().lower() != "paper_running"
+        or str(ranking_item.get("capital_scope") or "").strip().lower()
+        != "paper_ledger"
+        or ranking_item.get("eligible") is not True
+    ):
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Ranking row is not paper-allocation eligible",
+            (
+                "Paper simulation requires an eligible paper_running row backed "
+                "by an authoritative paper ledger."
+            ),
+            precondition_failed="paper_ranking_eligibility",
+        )
+
+    governance = _ppl_alloc_009_paper_governance_context(
+        snapshot_id=snapshot_id,
+        persona_id=persona_id,
+        ranking_item=ranking_item,
+        promotion_review_id=promotion_review_id,
+    )
+    capital = _ppl_alloc_009_paper_capital_context(
+        persona_id=persona_id,
+        ranking_item=ranking_item,
+    )
+    evidence_refs = list(ranking_item.get("evidence_ref_ids") or [])
+    evidence_refs.extend(
+        [
+            f"ranking_snapshot:{snapshot_id}",
+            f"promotion_review:{promotion_review_id}",
+            f"promotion_submission:{governance['submission_command_id']}",
+            f"promotion_decision:{governance['decision_command_id']}",
+            f"paper_ledger:{governance['paper_ledger_id']}",
+            f"capital_pool:{capital['capital_pool_id']}",
+            f"persona_capital_binding:{capital['binding_id']}",
+        ]
+    )
+    canonical_row = {
+        **json.loads(json.dumps(ranking_item)),
+        "ranking_snapshot_id": snapshot_id,
+        "paper_ledger_id": governance["paper_ledger_id"],
+        "capital_pool_id": capital["capital_pool_id"],
+        "capital_sleeve_id": None,
+        "binding_id": capital["binding_id"],
+        "current_weight": capital["current_weight"],
+        "evidence_refs": list(dict.fromkeys(evidence_refs)),
+    }
+    try:
+        raw_lines = calculate_paper_simulation_allocations([canonical_row])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Paper ranking snapshot cannot be evaluated",
+            str(exc),
+            precondition_failed="paper_allocation_policy_input",
+        ) from exc
+
+    basis = {
+        "ranking_snapshot_id": snapshot_id,
+        "allocation_policy_version": _PPL_ALLOC_009_PAPER_POLICY_VERSION,
+        "authority_mode": _PPL_ALLOC_009_PAPER_AUTHORITY_MODE,
+        "promotion_review_id": promotion_review_id,
+        "lines": raw_lines,
+    }
+    evaluation_id = (
+        "paper-allocation-evaluation-"
+        + _stable_json_hash(basis)[:24]
+    )
+    lines: List[Dict[str, Any]] = []
+    for line in raw_lines:
+        normalized = {
+            **line,
+            "ranking_snapshot_id": snapshot_id,
+            "allocation_evaluation_id": evaluation_id,
+            "allocation_policy_version": _PPL_ALLOC_009_PAPER_POLICY_VERSION,
+            "authority_mode": _PPL_ALLOC_009_PAPER_AUTHORITY_MODE,
+            "promotion_review_id": promotion_review_id,
+        }
+        normalized["allocation_line_digest"] = _pm12_allocation_line_digest(
+            normalized
+        )
+        lines.append(normalized)
+    content_basis = {
+        "ranking_snapshot_id": snapshot_id,
+        "allocation_evaluation_id": evaluation_id,
+        "allocation_policy_version": _PPL_ALLOC_009_PAPER_POLICY_VERSION,
+        "authority_mode": _PPL_ALLOC_009_PAPER_AUTHORITY_MODE,
+        "promotion_review_id": promotion_review_id,
+        "lines": lines,
+    }
+    return read_store.put_allocation_evaluation({
+        **content_basis,
+        "content_digest": _stable_json_hash(content_basis),
+        "created_at": utc_now(),
+        "applied": False,
+    })
+
+
+def _ppl_alloc_009_paper_rebalance_authority(
+    cmd: OperatorCommand,
+) -> bool:
+    if cmd.command != CommandType.APPROVED_APPLY:
+        return False
+    rebalance = read_store.get_rebalance(cmd.target.id)
+    if not isinstance(rebalance, dict):
+        return False
+    policy_version = str(
+        rebalance.get("allocation_policy_version") or ""
+    ).strip()
+    if policy_version != _PPL_ALLOC_009_PAPER_POLICY_VERSION:
+        return False
+
+    _ppl_alloc_009_paper_environment_guard()
+    lines = [
+        line
+        for line in rebalance.get("lines") or []
+        if isinstance(line, dict)
+    ]
+    evaluation_id = str(
+        rebalance.get("allocation_evaluation_id") or ""
+    ).strip()
+    evaluation = _pm12_allocation_evaluation_record(evaluation_id)
+    expected_digests = {
+        str(line.get("allocation_line_digest") or "").strip()
+        for line in evaluation.get("lines") or []
+        if isinstance(line, dict)
+    }
+    actual_digests = {
+        str(line.get("allocation_line_digest") or "").strip()
+        for line in lines
+    }
+    if (
+        len(lines) != 1
+        or len(expected_digests) != 1
+        or actual_digests != expected_digests
+        or str(evaluation.get("allocation_policy_version") or "")
+        != _PPL_ALLOC_009_PAPER_POLICY_VERSION
+        or str(evaluation.get("authority_mode") or "")
+        != _PPL_ALLOC_009_PAPER_AUTHORITY_MODE
+        or not str(evaluation.get("promotion_review_id") or "").strip()
+    ):
+        raise _bff_error(
+            409,
+            ErrorCode.PRECONDITION_FAILED,
+            "Paper rebalance authority is invalid",
+            "The persisted rebalance no longer matches its admitted paper evaluation.",
+            precondition_failed="paper_simulation_lineage",
+        )
+    line = lines[0]
+    pool_id = str(rebalance.get("capital_pool_id") or "").strip()
+    binding_id = str(line.get("binding_id") or "").strip()
+    if (
+        str(line.get("stage") or "").strip().lower() != "paper_running"
+        or str(line.get("capital_scope") or "").strip().lower()
+        != "paper_ledger"
+        or str(line.get("capital_pool_id") or "").strip() != pool_id
+        or str(line.get("capital_sleeve_id") or "").strip()
+        or not str(line.get("paper_ledger_id") or "").strip()
+        or not binding_id
+        or line.get("paper_allocation_eligible") is not True
+        or line.get("live_capital_side_effects") is not False
+        or str(line.get("authority_mode") or "")
+        != _PPL_ALLOC_009_PAPER_AUTHORITY_MODE
+        or str(line.get("promotion_review_id") or "")
+        != str(evaluation.get("promotion_review_id") or "")
+    ):
+        raise _bff_error(
+            409,
+            ErrorCode.PRECONDITION_FAILED,
+            "Paper rebalance scope is invalid",
+            "The admitted paper rebalance contains a non-paper or unbound allocation line.",
+            precondition_failed="paper_simulation_scope",
+        )
+
+    pool = read_store.get_capital_pool(pool_id)
+    metadata = (
+        pool.get("metadata")
+        if isinstance(pool, dict) and isinstance(pool.get("metadata"), dict)
+        else {}
+    )
+    bindings = [
+        binding
+        for binding in read_store.list_bindings(
+            persona_id=str(line.get("persona_id") or "").strip(),
+            capital_pool_id=pool_id,
+            role="paper_owner",
+        )
+        if str(binding.get("binding_id") or binding.get("id") or "").strip()
+        == binding_id
+        and str(binding.get("status") or binding.get("validity") or "")
+        .strip()
+        .lower()
+        in {"active", "ready", "bound"}
+        and str(binding.get("allowed_deployment_scope") or "").strip().lower()
+        == "paper"
+        and not str(binding.get("capital_sleeve_id") or "").strip()
+    ]
+    if (
+        not isinstance(pool, dict)
+        or str(pool.get("status") or "").strip().lower() != "active"
+        or metadata.get("internal") is not True
+        or str(metadata.get("execution_context") or "").strip().lower()
+        != "paper"
+        or len(bindings) != 1
+    ):
+        raise _bff_error(
+            409,
+            ErrorCode.PRECONDITION_FAILED,
+            "Paper rebalance authority is no longer active",
+            "The internal paper pool or its unique paper_owner binding changed.",
+            precondition_failed="paper_simulation_binding",
+        )
+    return True
+
 @app.post("/bff/management/allocation-policy/evaluate")
 async def bff_evaluate_persona_allocation_policy(
     payload: Dict[str, Any] = Body(...),
     authorization: Optional[str] = Header(default=None),
+    x_mfa_token: Optional[str] = Header(default=None, alias="X-MFA-Token"),
 ):
     """Calculate stage-aware targets without changing any capital binding."""
-    identity = _extract_identity(authorization)
-    _require_read_role(identity)
+    identity = _extract_identity(authorization, mfa_token=x_mfa_token)
+    authority_mode = str(payload.get("authority_mode") or "").strip().lower()
+    if authority_mode:
+        if authority_mode != _PPL_ALLOC_009_PAPER_AUTHORITY_MODE:
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "Unknown allocation authority mode",
+                f"Unsupported authority_mode={authority_mode!r}.",
+                precondition_failed="authority_mode",
+            )
+        _require_operator_role(identity)
+        if not identity.mfa_verified:
+            raise _bff_error(
+                403,
+                ErrorCode.FORBIDDEN,
+                "Paper allocation simulation requires MFA",
+                "The authenticated operator identity has no verified MFA claim.",
+                precondition_failed="mfa",
+            )
+        _ppl_alloc_009_paper_environment_guard()
+    else:
+        _require_read_role(identity)
     rows = payload.get("rows")
     if not isinstance(rows, list):
         raise _bff_error(422, ErrorCode.VALIDATION_FAILED, "rows is required", "Allocation evaluation requires a rows array")
@@ -26147,13 +26765,33 @@ async def bff_evaluate_persona_allocation_policy(
             precondition_failed="rows",
         )
     snapshot = _pm12_allocation_snapshot_record(ranking_snapshot_id)
-    evaluation = _pm12_materialize_allocation_evaluation(snapshot, rows)
+    if authority_mode == _PPL_ALLOC_009_PAPER_AUTHORITY_MODE:
+        promotion_review_id = str(
+            payload.get("promotion_review_id") or ""
+        ).strip()
+        if not promotion_review_id:
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "promotion_review_id is required",
+                "Paper simulation must join to the governed promotion review.",
+                precondition_failed="promotion_review_id",
+            )
+        evaluation = _pm12_materialize_paper_simulation_evaluation(
+            snapshot,
+            rows,
+            promotion_review_id=promotion_review_id,
+        )
+    else:
+        evaluation = _pm12_materialize_allocation_evaluation(snapshot, rows)
     return {
         "data": {
             "ranking_snapshot_id": ranking_snapshot_id,
             "allocation_evaluation_id": evaluation["allocation_evaluation_id"],
             "allocation_policy_version": evaluation["allocation_policy_version"],
             "lines": evaluation["lines"],
+            "authority_mode": evaluation.get("authority_mode"),
+            "promotion_review_id": evaluation.get("promotion_review_id"),
             "applied": False,
         },
         "meta": {
@@ -26903,6 +27541,16 @@ async def bff_apply_rebalance_proposal(
         > float(line.get("current_weight") or 0)
         for line in rebalance.get("lines") or []
     )
+    authority_probe = OperatorCommand(
+        command=CommandType.APPROVED_APPLY,
+        target=TargetObject(type=ObjectType.REBALANCE, id=rebalance_id),
+        params={},
+        audit_context=AuditContext(reason="Validate paper allocation authority"),
+    )
+    paper_simulation_authority = _ppl_alloc_009_paper_rebalance_authority(
+        authority_probe
+    )
+    approval_required = increases_live or paper_simulation_authority
     approval_ref = str(
         payload.get("approval_decision_id")
         or payload.get("approvalDecisionId")
@@ -26910,8 +27558,17 @@ async def bff_apply_rebalance_proposal(
         or rebalance.get("approval_ref")
         or ""
     ).strip()
-    if increases_live and not approval_ref:
-        raise _bff_error(409, ErrorCode.PRECONDITION_FAILED, "human approval required", "A human approval reference is required before applying a live capital increase", precondition_failed="approval_ref")
+    if approval_required and not approval_ref:
+        raise _bff_error(
+            409,
+            ErrorCode.PRECONDITION_FAILED,
+            "human approval required",
+            (
+                "A human approval reference is required before applying this "
+                "governed allocation."
+            ),
+            precondition_failed="approval_ref",
+        )
     signature_id = str(
         payload.get("two_man_signature_id")
         or payload.get("twoManSignatureId")
@@ -26925,11 +27582,16 @@ async def bff_apply_rebalance_proposal(
             "rebalance_id": rebalance_id,
             "approval_ref": approval_ref or None,
             "approval_decision_id": approval_ref or None,
-            "approval_required": increases_live,
+            "approval_required": approval_required,
             "capital_pool_id": rebalance.get("capital_pool_id"),
             "proposal_version": rebalance.get("version") or rebalance.get("proposal_version"),
             "rollback_target": rebalance.get("rollback_target"),
             "two_man_signature_id": signature_id or None,
+            "paper_simulation_authority": (
+                _PPL_ALLOC_009_PAPER_AUTHORITY_MODE
+                if paper_simulation_authority
+                else None
+            ),
         },
         "approvalDecisionId": approval_ref or None,
         "twoManSignatureId": signature_id or None,
@@ -47325,18 +47987,90 @@ def _pm12_session_runtime_aliases(session: Dict[str, Any]) -> Set[str]:
     }
 
 
+def _pm12_runtime_deployment_mode(runtime: Dict[str, Any]) -> str:
+    mode = str(
+        runtime.get("deployment_mode")
+        or runtime.get("deployment_stage")
+        or runtime.get("runtime_kind")
+        or ""
+    ).strip().lower()
+    return {
+        "paper_running": "paper",
+        "canary_running": "canary",
+        "live_running": "live",
+    }.get(mode, mode)
+
+
+def _pm12_authoritative_paper_monitoring_sessions(
+    runtime_aliases: Set[str],
+    *,
+    authoritative_sessions: Optional[Sequence[Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
+    sessions: List[Dict[str, Any]] = []
+    for raw_session in (
+        authoritative_sessions
+        if authoritative_sessions is not None
+        else (
+            read_store.list_authoritative_paper_runtime_monitoring_sessions()
+            or []
+        )
+    ):
+        if not isinstance(raw_session, dict):
+            continue
+        if (
+            str(raw_session.get("session_type") or "").strip().lower()
+            != "paper_runtime_monitoring"
+        ):
+            continue
+        if (
+            str(raw_session.get("deployment_stage") or "").strip().lower()
+            != "paper"
+        ):
+            continue
+        if not _pm12_session_runtime_aliases(raw_session).intersection(
+            runtime_aliases
+        ):
+            continue
+        session = dict(raw_session)
+        session["session_authority"] = "runtime_manager.paper_fleet_monitoring"
+        session["source_dataset"] = "paper_runtime_monitoring_sessions"
+        sessions.append(session)
+    return sessions
+
+
 def _pm12_runtime_session_resolution(
     persona_id: str,
     runtime: Dict[str, Any],
 ) -> tuple[Optional[Dict[str, Any]], str]:
     if not runtime:
         return None, "missing_runtime"
-    sessions = [
-        session
-        for session in (read_store.get_sessions_for_persona(persona_id) or [])
-        if isinstance(session, dict)
-    ]
     runtime_aliases = _pm12_runtime_identity_aliases(runtime)
+    if _pm12_runtime_deployment_mode(runtime) == "paper":
+        # Runtime Manager's paper-fleet monitoring store is the lifecycle owner
+        # for paper runtimes. A local/persona session may be useful for display,
+        # but it cannot prove that the canonical paper worker joined this exact
+        # RuntimeBinding.
+        authoritative_sessions = (
+            read_store.list_authoritative_paper_runtime_monitoring_sessions() or []
+        )
+        sessions = _pm12_authoritative_paper_monitoring_sessions(
+            runtime_aliases,
+            authoritative_sessions=authoritative_sessions,
+        )
+        if not sessions and any(
+            isinstance(session, dict)
+            and _pm12_session_runtime_aliases(session)
+            for session in authoritative_sessions
+        ):
+            return None, "identity_mismatch"
+    else:
+        sessions = []
+        for raw_session in read_store.get_sessions_for_persona(persona_id) or []:
+            if not isinstance(raw_session, dict):
+                continue
+            session = dict(raw_session)
+            session.setdefault("session_authority", "persona_session_store")
+            sessions.append(session)
     matching = [
         session
         for session in sessions
@@ -47376,12 +48110,54 @@ def _pm12_runtime_session_resolution(
 
 
 def _pm12_persona_session_summary(persona_id: str) -> Dict[str, Any]:
-    sessions = read_store.get_sessions_for_persona(persona_id) or []
+    sessions = [
+        dict(session)
+        for session in (read_store.get_sessions_for_persona(persona_id) or [])
+        if isinstance(session, dict)
+    ]
+    for session in sessions:
+        session.setdefault("session_authority", "persona_session_store")
+    persona_binding_ids = set(
+        _pm12_compact_ids(
+            read_store.get_bindings_for_persona(persona_id) or [],
+            ("persona_capital_binding_id", "binding_id", "id"),
+        )
+    )
+    paper_runtimes = [
+        runtime
+        for runtime in (read_store.list_runtime_bindings() or [])
+        if _pm12_runtime_deployment_mode(runtime) == "paper"
+        and (
+            str(runtime.get("persona_id") or "").strip() == persona_id
+            or str(runtime.get("persona_capital_binding_id") or "").strip()
+            in persona_binding_ids
+        )
+    ]
+    paper_runtime_aliases = {
+        alias
+        for runtime in paper_runtimes
+        for alias in _pm12_runtime_identity_aliases(runtime)
+    }
+    if paper_runtime_aliases:
+        sessions = [
+            session
+            for session in sessions
+            if not _pm12_session_runtime_aliases(session).intersection(
+                paper_runtime_aliases
+            )
+        ]
+        sessions.extend(
+            _pm12_authoritative_paper_monitoring_sessions(paper_runtime_aliases)
+        )
     active = [
         session
         for session in sessions
-        if str(session.get("status") or "").lower() == "active"
+        if str(
+            session.get("status") or session.get("state") or ""
+        ).strip().lower()
+        in {"active", "running"}
         and session.get("ended_at") in (None, "")
+        and session.get("active") is not False
         and _pm12_record_freshness_issue(session) is None
     ]
     return {
@@ -48767,6 +49543,8 @@ _PM12_RANKING_SNAPSHOT_ITEM_FIELDS = (
     "binding_resolution",
     "runtime_resolution",
     "session_resolution",
+    "session_id",
+    "session_authority",
     "telemetry_resolution",
     "binding_ids",
     "runtime_ids",
@@ -49112,7 +49890,10 @@ def _enrich_persona_item_with_bindings(
         runtime_resolution = "identity_mismatch"
     else:
         runtime_resolution = "missing"
-    _, session_resolution = _pm12_runtime_session_resolution(persona_id, runtime)
+    runtime_session, session_resolution = _pm12_runtime_session_resolution(
+        persona_id,
+        runtime,
+    )
     matching_runtimes = [runtime] if runtime else []
 
     strategy_ids = []
@@ -49412,6 +50193,16 @@ def _enrich_persona_item_with_bindings(
         "binding_resolution": binding_resolution,
         "runtime_resolution": runtime_resolution,
         "session_resolution": session_resolution,
+        "session_id": (
+            runtime_session.get("session_id") or runtime_session.get("id")
+            if runtime_session
+            else None
+        ),
+        "session_authority": (
+            runtime_session.get("session_authority")
+            if runtime_session
+            else None
+        ),
         "capital_binding": capital_projection.get("capital_binding"),
         "current_weight_source": current_weight_source,
     })
@@ -50903,6 +51694,8 @@ def _pm12_persona_league_ranking_item(
         "binding_resolution": row.get("binding_resolution"),
         "runtime_resolution": runtime_resolution,
         "session_resolution": session_resolution,
+        "session_id": row.get("session_id"),
+        "session_authority": row.get("session_authority"),
         "telemetry_resolution": telemetry_resolution,
         "current_weight_source": row.get("current_weight_source"),
         "binding_ids": list(row.get("binding_ids") or []),
@@ -62167,17 +62960,32 @@ async def sem_bff_version():
     }
 
 
-@app.get("/bff/healthz")
-@app.get("/bff/readyz")
-async def sem_bff_health_alias():
+def _sem_bff_health_payload() -> Dict[str, Any]:
     commit = _bff_source_commit()
-    return {
-        "status": "ok",
-        "service": "operator-bff",
-        "version": "0.2.0",
-        "commit": commit,
-        "source_commit_sha": commit,
-    }
+    payload = health_payload(
+        "operator-bff",
+        dependencies=_bff_readiness_dependencies,
+        details={"version": "0.2.0", "data_dir": BFF_DATA_DIR},
+    )
+    payload.update(
+        {
+            "version": "0.2.0",
+            "commit": commit,
+            "source_commit_sha": commit,
+        }
+    )
+    return payload
+
+
+@app.get("/bff/healthz")
+async def sem_bff_health_alias():
+    return _sem_bff_health_payload()
+
+
+@app.get("/bff/readyz")
+async def sem_bff_readiness_alias():
+    payload = _sem_bff_health_payload()
+    return JSONResponse(payload, status_code=readiness_status_code(payload))
 
 
 @app.get("/bff/capabilities")
@@ -66980,6 +67788,7 @@ app.include_router(_create_trade_journal_router(
 
 
 # TJ-E2E-005: canonical Trade Journey read API via isolated module
+import trade_journeys as _trade_journeys  # noqa: E402
 from trade_journeys import create_trade_journeys_router as _create_trade_journeys_router  # noqa: E402
 app.include_router(_create_trade_journeys_router(
     extract_identity=_extract_identity,
@@ -67178,6 +67987,7 @@ app.include_router(
         bff_error=_bff_error,
         utc_now=utc_now,
         get_read_store=lambda: read_store,
+        get_trade_journey_store=lambda: _trade_journeys.EVENT_STORE,
         sync_servant_agent=lambda persona: _ensure_agora_servant_openclaw_agent(dict(persona)),
         canonical_context_ref_resolver=_resolve_agora_interaction_context_ref,
     )

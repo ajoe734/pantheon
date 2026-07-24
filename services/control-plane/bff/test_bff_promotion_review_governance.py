@@ -461,6 +461,24 @@ def test_generic_command_does_not_block_trusted_semantic_submission() -> None:
 
 def test_human_inbox_ignores_decision_with_mismatched_target_aliases() -> None:
     with _isolated_client() as client:
+        # This test needs two independent reviews to exercise alias mismatch.
+        # Seed both through the paper-fleet lifecycle owner so the fixture does
+        # not depend on the deprecated persona-session fallback.
+        bff_main.read_store.list_authoritative_paper_runtime_monitoring_sessions = (  # type: ignore[method-assign]
+            lambda: [
+                {
+                    "session_id": f"monitoring-{runtime_id}",
+                    "session_type": "paper_runtime_monitoring",
+                    "status": "running",
+                    "deployment_stage": "paper",
+                    "runtime_id": runtime_id,
+                }
+                for runtime_id in (
+                    "runtime-us-equity-paper",
+                    "runtime-crypto-paper",
+                )
+            ]
+        )
         response = client.get(
             "/bff/management/promotion-reviews",
             headers=OPERATOR_HEADERS,

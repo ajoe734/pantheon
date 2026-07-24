@@ -397,6 +397,31 @@ _OPERATOR_AUTH = "Bearer agora-test-user:operator"
 def _workshop_client(monkeypatch):
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+    from agora.strategy_workshop.operations import WorkshopCanonicalOperations
+
+    def get_strategy_spec(_self, registry_id):
+        return {
+            "entry": {
+                "registry_id": registry_id,
+                "strategy_id": f"strategy-family-for-{registry_id}",
+                "version": "1.0.0",
+                "artifact_state": "draft",
+                "lineage": {"source_run_ids": ["test-source"]},
+                "metadata": {
+                    "strategy_spec": {
+                        "spec_version": "1.0",
+                        "strategy_id": f"strategy-family-for-{registry_id}",
+                    },
+                },
+            },
+            "deployment_stage": "none",
+        }
+
+    monkeypatch.setattr(
+        WorkshopCanonicalOperations,
+        "get_strategy_spec",
+        get_strategy_spec,
+    )
     import main as bff_main
     return TestClient(bff_main.app, raise_server_exceptions=False)
 
@@ -499,7 +524,9 @@ class TestWorkshopRouterEndpoints:
         )
         assert resp.status_code == 201, resp.text
         data = resp.json()["data"]
-        assert data.get("strategy_id") == "strat-draft-abc" or data.get("active_strategy_spec_registry_id") == "strat-draft-abc"
+        assert data["strategy_id"] == "strategy-family-for-strat-draft-abc"
+        assert data["active_strategy_spec_registry_id"] == "strat-draft-abc"
+        assert data["strategy_id"] != data["active_strategy_spec_registry_id"]
 
     def test_get_workshop_returns_etag_in_meta(self, monkeypatch):
         client = _workshop_client(monkeypatch)
@@ -755,7 +782,8 @@ class TestWorkshopRouterEndpoints:
             headers={"Authorization": _OPERATOR_AUTH},
         )
         strategy_detail = client.get(
-            "/bff/agora/trading-room/strategies/strat-live-materialize-001",
+            "/bff/agora/trading-room/strategies/"
+            "strategy-family-for-strat-live-materialize-001",
             headers={"Authorization": _OPERATOR_AUTH},
         )
 
@@ -769,7 +797,9 @@ class TestWorkshopRouterEndpoints:
         assert "readiness_gate" in card_types
         assert trading_room.status_code == 200, trading_room.text
         strategies = trading_room.json()["strategies"]
-        assert [item["strategy_id"] for item in strategies] == ["strat-live-materialize-001"]
+        assert [item["strategy_id"] for item in strategies] == [
+            "strategy-family-for-strat-live-materialize-001"
+        ]
         assert strategy_detail.status_code == 200, strategy_detail.text
         assert strategy_detail.json()["data"]["strategy_version"] == "wv-live-materialize-001"
 
@@ -834,7 +864,7 @@ class TestWorkshopRouterEndpoints:
         assert readiness_resp.status_code == 200, readiness_resp.text
         readiness = readiness_resp.json()["data"]
         assert readiness["workshop_id"] == workshop_id
-        assert readiness["strategy_id"] == "strat-live-1"
+        assert readiness["strategy_id"] == "strategy-family-for-strat-live-1"
         assert {gate["gate"] for gate in readiness["gates"]} == {
             "preliminary_research",
             "full_validation",
@@ -1709,3 +1739,624 @@ class TestWorkshopMandatoryHeaderEnforcement:
         assert resp.status_code == 400, (
             f"Missing Idempotency-Key must return 400, got {resp.status_code}: {resp.text}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# Public Registry + Governance + Workshop exact-identity contract
+# --------------------------------------------------------------------------- #
+
+_PUBLIC_TENANT_ID = "tenant-workshop-contract"
+_PUBLIC_USER_ID = "operator-workshop-contract"
+_PUBLIC_APPROVER_ID = "reviewer-workshop-contract"
+
+
+def _public_strategy_spec(strategy_id: str) -> dict:
+    return {
+        "spec_version": "1.0",
+        "strategy_id": strategy_id,
+        "title": "Public API workshop contract strategy",
+        "hypothesis": "A bounded momentum effect is suitable for research.",
+        "objective": "Validate the candidate without deployment authority.",
+        "lifecycle_state": "draft",
+        "market_scope": {
+            "symbols": ["RESEARCH_UNIVERSE"],
+            "frequency": "1d",
+        },
+        "data_dependencies": [
+            {"ref": "dataset:workshop-contract", "kind": "dataset"},
+        ],
+        "execution_profile": {
+            "signal_schema_version": "1.0",
+            "quantity_type": "PERCENT_PORTFOLIO",
+            "execution_mode_hint": "research",
+        },
+        "evaluation_plan": {"metrics": ["sharpe_ratio"]},
+        "governance": {
+            "approval_required": True,
+            "policy_id": "research-only-v1",
+        },
+        "provenance": {
+            "source_kind": "manual",
+            "created_at": "2026-07-24T00:00:00Z",
+        },
+    }
+
+
+class _PublicApiCanonicalOperations:
+    """Use real Registry/Governance HTTP APIs for Workshop canonical reads."""
+
+    def __init__(self, registry_client, governance_client):
+        self.registry_client = registry_client
+        self.governance_client = governance_client
+
+    @staticmethod
+    def _require_success(response, authority: str) -> dict:
+        from agora.strategy_workshop.operations import CanonicalOperationError
+
+        if response.status_code >= 400:
+            raise CanonicalOperationError(
+                authority,
+                f"public API returned HTTP {response.status_code}",
+                status_code=response.status_code,
+                retryable=response.status_code >= 500,
+            )
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise CanonicalOperationError(
+                authority,
+                "public API returned a non-object payload",
+            )
+        return payload
+
+    def get_strategy_spec(self, registry_id: str) -> dict:
+        return self._require_success(
+            self.registry_client.get(
+                f"/api/registry/strategy-specs/{registry_id}"
+            ),
+            "strategy_registry",
+        )
+
+    def create_strategy_spec(self, payload: dict) -> dict:
+        self._require_success(
+            self.registry_client.post(
+                "/api/registry/strategy-specs",
+                json=payload,
+            ),
+            "strategy_registry",
+        )
+        return self.get_strategy_spec(str(payload["registry_id"]))
+
+    def get_approval_decision(self, decision_id: str) -> dict:
+        from read_store import ReadSurfaceStore
+
+        raw = self._require_success(
+            self.governance_client.get(
+                f"/api/governance/approvals/{decision_id}"
+            ),
+            "approval_decision_store",
+        )
+        return ReadSurfaceStore._project_canonical_approval_decision(raw)
+
+    def dispatch_research_run(
+        self,
+        *,
+        task_payload: dict,
+        run_payload: dict,
+        resume=None,
+    ) -> dict:
+        assert task_payload["constraints"]["no_live_capital"] is True
+        assert run_payload["dispatch_mode"] == "handoff_only"
+        assert resume is None
+        return {
+            "task": {
+                "task_id": "research-task-public-contract",
+                "status": "accepted",
+            },
+            "run": {
+                "run_id": "research-run-public-contract",
+                "task_id": "research-task-public-contract",
+                "status": "queued",
+            },
+        }
+
+    def open_consultation(
+        self,
+        *,
+        request_id: str,
+        payload: dict,
+        resume: bool = False,
+    ) -> dict:
+        assert payload["target_type"] == "strategy_workshop"
+        assert resume is False
+        return {
+            "request_id": request_id,
+            "target_id": payload["target_id"],
+            "status": "submitted",
+        }
+
+    def cancel_consultation(self, *_args, **_kwargs) -> None:
+        raise AssertionError("Successful public contract flow must not compensate")
+
+
+def _public_contract_bff_error(
+    status_code,
+    code,
+    message,
+    reason,
+    precondition_failed=None,
+    suggestion=None,
+    details_extra=None,
+    **_kwargs,
+):
+    from fastapi import HTTPException
+
+    details = {"reason": reason}
+    if precondition_failed is not None:
+        details["precondition_failed"] = precondition_failed
+    if suggestion is not None:
+        details["suggestion"] = suggestion
+    details.update(details_extra or {})
+    return HTTPException(
+        status_code=status_code,
+        detail={
+            "error": {
+                "code": getattr(code, "value", str(code)),
+                "message": message,
+                "details": details,
+            }
+        },
+    )
+
+
+def _public_workshop_client(workshop_store, canonical_operations):
+    from fastapi import FastAPI
+    from agora.strategy_workshop.router import create_strategy_workshop_router
+
+    identity = {
+        "operator_id": _PUBLIC_USER_ID,
+        "roles": ["operator"],
+        "token_kind": "test",
+        "mfa_verified": True,
+        "claims": {
+            "tenant_id": _PUBLIC_TENANT_ID,
+            "allowed_tenants": [_PUBLIC_TENANT_ID],
+            "user_id": _PUBLIC_USER_ID,
+        },
+    }
+    app = FastAPI()
+    app.include_router(
+        create_strategy_workshop_router(
+            extract_identity=lambda _authorization, **_kwargs: identity,
+            require_read_role=lambda _identity: None,
+            require_write_role=lambda _identity: None,
+            bff_error=_public_contract_bff_error,
+            utc_now=lambda: "2026-07-24T00:00:00Z",
+            workshop_store=workshop_store,
+            canonical_operations=canonical_operations,
+        )
+    )
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def _public_command_headers(key: str, etag: str) -> dict:
+    return {
+        "Authorization": "Bearer workshop-contract",
+        "X-Tenant-Id": _PUBLIC_TENANT_ID,
+        "X-MFA-Token": "mfa-workshop-contract",
+        "If-Match": etag,
+        "Idempotency-Key": key,
+        "X-Request-Id": f"request-{key}",
+    }
+
+
+class _ApprovalGateCanonicalOperations:
+    """Expose one projected approval while detecting downstream side effects."""
+
+    def __init__(self, approval: dict):
+        self.approval = dict(approval)
+        self.research_dispatches = 0
+        self.registry_reads = 0
+
+    def get_approval_decision(self, decision_id: str) -> dict:
+        assert decision_id == self.approval["decision_id"]
+        return dict(self.approval)
+
+    def dispatch_research_run(self, **_kwargs) -> dict:
+        self.research_dispatches += 1
+        raise AssertionError("invalid approval must not dispatch research")
+
+    def get_strategy_spec(self, _registry_id: str) -> dict:
+        self.registry_reads += 1
+        raise AssertionError("invalid approval must not begin conclusion readback")
+
+
+@pytest.mark.parametrize(
+    ("state", "outcome", "reason"),
+    [
+        pytest.param(None, "approved", "APPROVAL_NOT_DECIDED", id="missing-state"),
+        pytest.param(
+            "under_review",
+            "approved",
+            "APPROVAL_NOT_DECIDED",
+            id="non-decided-state",
+        ),
+        pytest.param(
+            "approved",
+            "approved",
+            "APPROVAL_NOT_DECIDED",
+            id="approved-state-alias",
+        ),
+        pytest.param(
+            "completed",
+            "approved",
+            "APPROVAL_NOT_DECIDED",
+            id="completed-state-alias",
+        ),
+        pytest.param(
+            "decided",
+            "accepted",
+            "APPROVAL_NOT_APPROVED",
+            id="accepted-outcome-alias",
+        ),
+        pytest.param(
+            "decided",
+            "approve",
+            "APPROVAL_NOT_APPROVED",
+            id="approve-outcome-alias",
+        ),
+    ],
+)
+def test_public_workshop_operations_fail_closed_on_noncanonical_approval(
+    state,
+    outcome,
+    reason,
+):
+    """Research and conclude reject invalid approvals before durable effects."""
+
+    from agora.strategy_workshop import MemoryWorkshopStore
+
+    workshop_id = "ws-approval-gate-contract"
+    version_id = "wsv-approval-gate-contract"
+    registry_id = "registry-approval-gate-contract"
+    approval_id = "approval-gate-contract"
+    store = MemoryWorkshopStore()
+    store.create_session(
+        {
+            "workshop_id": workshop_id,
+            "tenant_id": _PUBLIC_TENANT_ID,
+            "user_id": _PUBLIC_USER_ID,
+            "strategy_id": "strategy-approval-gate-contract",
+            "active_strategy_spec_registry_id": registry_id,
+            "active_workshop_version_id": version_id,
+            "selected_version_id": version_id,
+            "status": "in_review",
+        }
+    )
+    store.ensure_current_version_link(
+        workshop_id=workshop_id,
+        strategy_id="strategy-approval-gate-contract",
+        strategy_spec_registry_id=registry_id,
+        document_sha256="a" * 64,
+    )
+    approval = {
+        "decision_id": approval_id,
+        "outcome": outcome,
+        "tenant_id": _PUBLIC_TENANT_ID,
+        "owner_user_id": _PUBLIC_USER_ID,
+        "target_type": "strategy_workshop",
+        "target_id": workshop_id,
+        "target_version": version_id,
+        "reviewer": _PUBLIC_APPROVER_ID,
+    }
+    if state is not None:
+        approval["state"] = state
+    canonical = _ApprovalGateCanonicalOperations(approval)
+    client = _public_workshop_client(store, canonical)
+    etag = f'W/"workshop:{workshop_id}:v1"'
+    session_before = store.get_session(workshop_id)
+    events_before = store.list_events(workshop_id)
+
+    research_key = f"research-invalid-approval-{state}-{outcome}"
+    research = client.post(
+        f"/bff/agora/workshops/{workshop_id}/research-runs",
+        headers=_public_command_headers(research_key, etag),
+        json={
+            "research_context": "Must not dispatch without canonical approval.",
+            "strategy_version_ref": version_id,
+            "parameters": {"environment": "research"},
+            "approval_decision_id": approval_id,
+            "adapter": "handoff_only",
+            "requested_mode": "handoff_only",
+            "dispatch_mode": "handoff_only",
+        },
+    )
+    assert research.status_code == 409, research.text
+    assert research.json()["detail"]["error"]["details"]["reason"] == reason
+    assert canonical.research_dispatches == 0
+    assert (
+        store.get_command_receipt(
+            workshop_id=workshop_id,
+            tenant_id=_PUBLIC_TENANT_ID,
+            user_id=_PUBLIC_USER_ID,
+            operation="dispatch_research",
+            idempotency_key=research_key,
+        )
+        is None
+    )
+
+    conclude_key = f"conclude-invalid-approval-{state}-{outcome}"
+    concluded = client.post(
+        f"/bff/agora/workshops/{workshop_id}/conclude",
+        headers=_public_command_headers(conclude_key, etag),
+        json={
+            "final_version_id": version_id,
+            "conclusion_notes": "Must remain in review.",
+            "approval_decision_id": approval_id,
+        },
+    )
+    assert concluded.status_code == 409, concluded.text
+    assert concluded.json()["detail"]["error"]["details"]["reason"] == reason
+    assert canonical.registry_reads == 0
+    assert (
+        store.get_command_receipt(
+            workshop_id=workshop_id,
+            tenant_id=_PUBLIC_TENANT_ID,
+            user_id=_PUBLIC_USER_ID,
+            operation="conclude",
+            idempotency_key=conclude_key,
+        )
+        is None
+    )
+    assert store.get_session(workshop_id) == session_before
+    assert store.list_events(workshop_id) == events_before
+
+
+def test_public_exact_identity_approval_flow_survives_restart(
+    tmp_path,
+    monkeypatch,
+):
+    """Real public APIs compose when Registry and strategy identities differ."""
+
+    from agora.strategy_workshop import MemoryWorkshopStore
+    from services.governance import main as governance_main
+    from services.registry.service import app as registry_app
+    from services.registry.storage import reset_store
+    from services.research.strategy_spec.patching import compute_document_sha256
+
+    ApprovalDecisionStore = governance_main.ApprovalDecisionStore
+    reset_store()
+    governance_path = tmp_path / "approval_decisions.json"
+    monkeypatch.setattr(
+        governance_main,
+        "store",
+        ApprovalDecisionStore(str(governance_path)),
+    )
+    registry_client = TestClient(registry_app)
+    governance_client = TestClient(governance_main.app)
+
+    strategy_id = "strategy-public-workshop-contract"
+    registry_id = "registry-public-workshop-contract"
+    strategy_spec = _public_strategy_spec(strategy_id)
+    registered = registry_client.post(
+        "/api/registry/strategy-specs",
+        json={
+            "registry_id": registry_id,
+            "strategy_id": strategy_id,
+            "version": "1.0.0",
+            "source_seed_id": "seed-public-workshop-contract",
+            "metadata": {
+                "tenant_id": _PUBLIC_TENANT_ID,
+                "owner_user_id": _PUBLIC_USER_ID,
+            },
+            "strategy_spec": strategy_spec,
+        },
+    )
+    assert registered.status_code == 200, registered.text
+    assert registered.json()["entry"]["registry_id"] == registry_id
+    assert registered.json()["entry"]["strategy_id"] == strategy_id
+    assert registry_id != strategy_id
+
+    workshop_store = MemoryWorkshopStore()
+    canonical = _PublicApiCanonicalOperations(
+        registry_client,
+        governance_client,
+    )
+    workshop_client = _public_workshop_client(workshop_store, canonical)
+    created = workshop_client.post(
+        "/bff/agora/workshops",
+        headers={
+            "Authorization": "Bearer workshop-contract",
+            "X-Tenant-Id": _PUBLIC_TENANT_ID,
+            "Idempotency-Key": "create-public-workshop-contract",
+        },
+        json={
+            "initial_message": "Validate this Registry-owned strategy.",
+            "strategy_spec_ref": registry_id,
+        },
+    )
+    assert created.status_code == 201, created.text
+    workshop = created.json()["data"]
+    workshop_id = workshop["workshop_id"]
+    assert workshop["strategy_id"] == strategy_id
+    assert workshop["active_strategy_spec_registry_id"] == registry_id
+
+    listed = workshop_client.get(
+        f"/bff/agora/workshops/{workshop_id}/versions",
+        headers={
+            "Authorization": "Bearer workshop-contract",
+            "X-Tenant-Id": _PUBLIC_TENANT_ID,
+        },
+    )
+    assert listed.status_code == 200, listed.text
+    assert len(listed.json()["data"]["versions"]) == 1
+
+    version_created = workshop_client.post(
+        f"/bff/agora/workshops/{workshop_id}/versions",
+        headers=_public_command_headers(
+            "create-version-public-workshop-contract",
+            listed.headers["etag"],
+        ),
+        json={
+            "patch": [
+                {
+                    "op": "replace",
+                    "path": "/title",
+                    "value": "Selected public API workshop candidate",
+                }
+            ],
+            "base_document_sha256": compute_document_sha256(strategy_spec),
+            "reason": "Exercise distinct Registry and strategy identities",
+        },
+    )
+    assert version_created.status_code == 201, version_created.text
+    version = version_created.json()["data"]["resource"]["version"]
+    version_id = version["workshop_version_id"]
+    assert version["strategy_id"] == strategy_id
+    assert version["strategy_spec_registry_id"] != strategy_id
+
+    selected = workshop_client.post(
+        f"/bff/agora/workshops/{workshop_id}/versions/{version_id}/select",
+        headers=_public_command_headers(
+            "select-version-public-workshop-contract",
+            version_created.headers["etag"],
+        ),
+    )
+    assert selected.status_code == 200, selected.text
+
+    consulted = workshop_client.post(
+        f"/bff/agora/workshops/{workshop_id}/consultations",
+        headers=_public_command_headers(
+            "consult-public-workshop-contract",
+            selected.headers["etag"],
+        ),
+        json={
+            "consultation_type": "committee",
+            "subject": "Review the bounded research candidate",
+            "context_refs": [f"registry:{registry_id}"],
+        },
+    )
+    assert consulted.status_code == 201, consulted.text
+
+    approval_id = "approval-public-workshop-contract"
+    proposed = governance_client.post(
+        "/api/governance/approvals",
+        json={
+            "decision_id": approval_id,
+            "target_type": "strategy_workshop",
+            "target_id": workshop_id,
+            "target_version": version_id,
+            "risk_level": "low",
+            "tenant_id": _PUBLIC_TENANT_ID,
+            "owner_user_id": _PUBLIC_USER_ID,
+        },
+    )
+    assert proposed.status_code == 201, proposed.text
+    reviewed = governance_client.post(
+        f"/api/governance/approvals/{approval_id}/review",
+        json={
+            "actor_role": "governance_reviewer",
+            "actor_id": _PUBLIC_APPROVER_ID,
+        },
+    )
+    assert reviewed.status_code == 200, reviewed.text
+    decided = governance_client.post(
+        f"/api/governance/approvals/{approval_id}/decide",
+        json={
+            "actor_role": "governance_reviewer",
+            "actor_id": _PUBLIC_APPROVER_ID,
+            "outcome": "approved",
+            "rationale": "Approve research-only Workshop operations.",
+        },
+    )
+    assert decided.status_code == 200, decided.text
+
+    # Simulate Governance and BFF process restarts. Governance reconstructs
+    # its owner store from disk; Workshop reconstructs its router over the
+    # durable aggregate store and canonical public API clients.
+    monkeypatch.setattr(
+        governance_main,
+        "store",
+        ApprovalDecisionStore(str(governance_path)),
+    )
+    restarted_governance_client = TestClient(governance_main.app)
+    restarted_approval = restarted_governance_client.get(
+        f"/api/governance/approvals/{approval_id}"
+    )
+    assert restarted_approval.status_code == 200, restarted_approval.text
+    assert restarted_approval.json()["target_type"] == "strategy_workshop"
+    assert restarted_approval.json()["target_id"] == workshop_id
+    assert restarted_approval.json()["target_version"] == version_id
+
+    restarted_canonical = _PublicApiCanonicalOperations(
+        registry_client,
+        restarted_governance_client,
+    )
+    restarted_workshop_client = _public_workshop_client(
+        workshop_store,
+        restarted_canonical,
+    )
+    restarted_readback = restarted_workshop_client.get(
+        f"/bff/agora/workshops/{workshop_id}",
+        headers={
+            "Authorization": "Bearer workshop-contract",
+            "X-Tenant-Id": _PUBLIC_TENANT_ID,
+        },
+    )
+    assert restarted_readback.status_code == 200, restarted_readback.text
+    assert restarted_readback.json()["data"]["strategy_id"] == strategy_id
+    assert (
+        restarted_readback.json()["data"]["active_strategy_spec_registry_id"]
+        == version["strategy_spec_registry_id"]
+    )
+
+    research = restarted_workshop_client.post(
+        f"/bff/agora/workshops/{workshop_id}/research-runs",
+        headers=_public_command_headers(
+            "research-public-workshop-contract",
+            restarted_readback.headers["etag"],
+        ),
+        json={
+            "research_context": "Validate without live execution.",
+            "strategy_version_ref": version_id,
+            "parameters": {"environment": "research"},
+            "approval_decision_id": approval_id,
+            "adapter": "handoff_only",
+            "requested_mode": "handoff_only",
+            "dispatch_mode": "handoff_only",
+        },
+    )
+    assert research.status_code == 202, research.text
+
+    concluded = restarted_workshop_client.post(
+        f"/bff/agora/workshops/{workshop_id}/conclude",
+        headers=_public_command_headers(
+            "conclude-public-workshop-contract",
+            research.headers["etag"],
+        ),
+        json={
+            "final_version_id": version_id,
+            "conclusion_notes": "Approved as research-only.",
+            "approval_decision_id": approval_id,
+        },
+    )
+    assert concluded.status_code == 200, concluded.text
+    resource = concluded.json()["data"]["resource"]
+    assert resource["workshop"]["status"] == "concluded"
+    assert resource["workshop"]["strategy_id"] == strategy_id
+    assert resource["two_person_proof"]["approved_by"] == _PUBLIC_APPROVER_ID
+    assert resource["two_person_proof"]["distinct_actors"] is True
+
+    final_restart_client = _public_workshop_client(
+        workshop_store,
+        restarted_canonical,
+    )
+    final_readback = final_restart_client.get(
+        f"/bff/agora/workshops/{workshop_id}",
+        headers={
+            "Authorization": "Bearer workshop-contract",
+            "X-Tenant-Id": _PUBLIC_TENANT_ID,
+        },
+    )
+    assert final_readback.status_code == 200, final_readback.text
+    assert final_readback.json()["data"]["status"] == "concluded"
+    assert final_readback.json()["data"]["final_workshop_version_id"] == version_id
