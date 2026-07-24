@@ -854,9 +854,14 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
         if last_check and (_iso_now_dt() - last_check).total_seconds() < unpublished_branch_recheck_seconds(config):
             return False
 
-    published_head_sha = remote_branch_head_sha(branch) if not candidates else None
+    published_head_sha = remote_branch_head_sha(branch) if not explicit_head_sha else None
     if explicit_head_sha:
         head_sha = explicit_head_sha
+    elif published_head_sha:
+        # A task branch can carry more than one merged PR when a follow-up is
+        # required. Its published head disambiguates the current immutable
+        # delivery from older PRs for the same exact task branch.
+        head_sha = published_head_sha
     elif len(matching_candidate_heads) == 1:
         # A task integrator may update the remote PR branch after the worker's
         # local ref was created. The unique PR head on the configured delivery

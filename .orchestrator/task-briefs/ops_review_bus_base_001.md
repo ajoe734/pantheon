@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: in_progress
 - Owner: Codex2
 - Reviewer: Claude2
-- Next: PR #4024 delivered the dev-base review binding; follow-up f3e1fd59b preserves the unique merged PR head when an integrator advanced the remote task branch past a stale worker ref. 20 GitHub bus tests, 327 supervisor tests, static checks, and a live read-only PR #4024 evidence probe pass. Ready for Claude2 review after the follow-up PR merges.
+- Next: PRs #4024 and #4027 delivered the dev-base binding and stale-local-ref guard. The final follow-up uses the published task head to disambiguate both merged PRs and selects exact PR #4027 evidence. 21 GitHub bus tests, the prior 327 supervisor regression, static checks, and live read-only two-candidate evidence probe pass.
 
 ## Summary
 修 ReviewBus 對已合併到 dev 的 task branch 仍建立 master PR，造成跨 226 commits 的錯誤 review；改成依 repo delivery base 與 exact merged PR/commit 做受管 review。
