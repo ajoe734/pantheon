@@ -13,7 +13,7 @@ experiment tracking backend selected for a given run.
 The default backend is:
 
 - `MLflow`
-- pinned to `mlflow==3.10.1`
+- pinned to `mlflow==3.11.1`
 - self-hosted first, not SaaS-first
 
 The repo also includes two explicit-gated `W&B` lanes:

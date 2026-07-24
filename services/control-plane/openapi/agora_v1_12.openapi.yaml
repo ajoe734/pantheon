@@ -1,0 +1,243 @@
+openapi: "3.1.0"
+info:
+  title: Pantheon Agora API v1.12 Candidate Truth Extension
+  version: "1.12.0"
+  description: |
+    Contract-first additive extension over the exact Agora v1.11 bundle for
+    honest Trading Room candidate rendering (AG-CAND-TRUTH-001-BE).
+
+    Candidate pool member reads now carry a per-field truth projection: each
+    of rationale, concerns, next_event, evidence, and details is either
+    projected verbatim from a durable record of the same candidate — its own
+    score result, operator review, monitoring entry, or the pool member
+    record — with source_ref and as-of provenance, or explicitly typed
+    unavailable (score_not_run, no_governed_source, not_recorded).
+
+    Guarantees:
+      - Every non-null field is traceable to the requested candidate
+        artifact_id through provenance.source_ref.
+      - The BFF never fabricates narrative and never fills a missing field
+        from another candidate's sample text.
+      - No next event is returned unless a governed monitoring record owns it.
+      - List responses never carry raw private evidence content; evidence
+        summaries and score-component explanations are role-redacted
+        (viewer-only callers receive summary_redacted=true and no component
+        explanations even on detail reads).
+      - Evidence is available only when a governed reference was persisted
+        with the candidate metrics; recipe requirements never become synthetic
+        evidence:// references.
+      - effective_score is identified as a recipe-weighted score and
+        sharpe_summary as a Sharpe ratio from the producing research run;
+        neither may be presented as a generic confidence score.
+      - Member ordering is stable (created_at, artifact_id) with opaque
+        page tokens, honest filtered totals, and observable freshness
+        (pool_snapshot_at, data_cutoff, last_score_run_at).
+  x-extends-contract: "services/control-plane/specs/agora/bundle_index.v1_11.json"
+  x-capability-manifest: "services/control-plane/specs/agora/v13/capability_manifest_v1_12.json"
+  x-implementation-status: implemented
+servers:
+  - url: "{bff_base}"
+    variables:
+      bff_base:
+        default: "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io"
+security:
+  - BearerAuth: []
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+    CookieSession:
+      type: apiKey
+      in: cookie
+      name: pantheon_session
+  parameters:
+    PoolId:
+      name: pool_id
+      in: path
+      required: true
+      schema: {type: string, minLength: 1}
+    ArtifactId:
+      name: artifact_id
+      in: path
+      required: true
+      schema: {type: string, minLength: 1}
+    XTenantId:
+      name: X-Tenant-Id
+      in: header
+      required: false
+      schema: {type: string, minLength: 1}
+    LifecycleState:
+      name: lifecycle_state
+      in: query
+      schema: {type: string, enum: [candidate, review, approved, rejected]}
+    Band:
+      name: band
+      in: query
+      schema: {type: string, enum: [priority_review, discuss, needs_research, park, suppressed]}
+    MemberPageToken:
+      name: page_token
+      in: query
+      schema:
+        type: string
+        pattern: "^cpm-offset-[0-9]+$"
+        description: Opaque stable-order offset token issued by a previous page.
+    MemberPageSize:
+      name: page_size
+      in: query
+      schema: {type: integer, minimum: 1, maximum: 200, default: 50}
+  schemas:
+    CandidateFieldState:
+      $ref: "../specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateFieldState"
+    CandidateRationaleFieldState:
+      $ref: "../specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateRationaleFieldState"
+    CandidateConcernsFieldState:
+      $ref: "../specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateConcernsFieldState"
+    CandidateNextEventFieldState:
+      $ref: "../specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateNextEventFieldState"
+    CandidateEvidenceFieldState:
+      $ref: "../specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateEvidenceFieldState"
+    CandidateDetailsFieldState:
+      $ref: "../specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateDetailsFieldState"
+    CandidateTruthFields:
+      $ref: "../specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateTruthFields"
+    CandidateScoreSemantics:
+      $ref: "../specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateScoreSemantics"
+    CandidateMemberTruthProjection:
+      $ref: "../specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateMemberTruthProjection"
+    CandidateMemberPageInfo:
+      $ref: "../specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateMemberPageInfo"
+    CandidateMemberListFreshness:
+      $ref: "../specs/agora/v13/candidate_member_truth_projection.schema.json#/definitions/CandidateMemberListFreshness"
+    CandidateMemberListItem:
+      description: |
+        Frozen v1.4 member projection (artifact_id, strategy_ref, title,
+        lifecycle_state, producing_persona_id, sharpe_summary, run_ref,
+        created_at, and post-score current_score/band/rank/effective_score)
+        merged with the additive CandidateMemberTruthProjection keys.
+      allOf:
+        - {$ref: "#/components/schemas/CandidateMemberTruthProjection"}
+        - type: object
+          properties:
+            strategy_ref: {type: string}
+            title: {type: [string, "null"]}
+            lifecycle_state: {type: string}
+            producing_persona_id: {type: [string, "null"]}
+            sharpe_summary: {type: [number, "null"]}
+            run_ref: {type: [string, "null"]}
+            created_at: {type: string}
+            current_score:
+              type: object
+              description: Score projection with component explanations omitted on every list response.
+              additionalProperties: true
+            band: {type: [string, "null"]}
+            rank: {type: [integer, "null"]}
+            effective_score: {type: [number, "null"]}
+          additionalProperties: true
+    CandidateMemberListEnvelope:
+      type: object
+      required: [items, page_info, meta]
+      properties:
+        items:
+          type: array
+          items: {$ref: "#/components/schemas/CandidateMemberListItem"}
+        page_info: {$ref: "#/components/schemas/CandidateMemberPageInfo"}
+        meta:
+          type: object
+          required: [snapshot_at, capability, audience, no_order_route_proof, freshness]
+          properties:
+            snapshot_at: {type: string, format: date-time}
+            capability: {const: "agora.research.v1"}
+            audience: {type: string, pattern: "^tenant:.+:user:.+$"}
+            no_order_route_proof: {const: "candidate_pool_bff_request_only_no_order_route"}
+            freshness: {$ref: "#/components/schemas/CandidateMemberListFreshness"}
+          additionalProperties: true
+      additionalProperties: false
+    CandidateMemberDetailEnvelope:
+      type: object
+      required: [object_ref, status, lifecycle_state, allowedActions, data, meta, links]
+      properties:
+        object_ref:
+          type: object
+          required: [type, id]
+          properties:
+            type: {const: candidate_pool_member}
+            id: {type: string, minLength: 1}
+          additionalProperties: false
+        status: {type: string}
+        lifecycle_state: {type: string}
+        allowedActions: {type: object, additionalProperties: {type: boolean}}
+        data:
+          description: |
+            Frozen v1.4 detail keys (candidate, score, reviews, monitoring,
+            negative_examples, lifecycle_state) merged with the additive
+            CandidateMemberTruthProjection keys minus artifact_id (carried by
+            object_ref). Evidence summaries are populated only for
+            operator-grade roles; viewer-only callers receive
+            summary_redacted=true with redaction_reason=viewer_role.
+          type: object
+          required: [candidate, fields, as_of, score_semantics]
+          properties:
+            candidate: {type: object, additionalProperties: true}
+            score:
+              type: [object, "null"]
+              description: Full score for operator-grade callers; component explanations omitted for viewer-only callers.
+              additionalProperties: true
+            reviews: {type: array, items: {type: object, additionalProperties: true}}
+            monitoring: {type: [object, "null"], additionalProperties: true}
+            negative_examples: {type: array, items: {type: object, additionalProperties: true}}
+            lifecycle_state: {type: [string, "null"]}
+            fields: {$ref: "#/components/schemas/CandidateTruthFields"}
+            as_of: {type: string, minLength: 1}
+            score_semantics: {$ref: "#/components/schemas/CandidateScoreSemantics"}
+          additionalProperties: true
+        meta: {type: object, additionalProperties: true}
+        links: {type: object, additionalProperties: {type: string}}
+      additionalProperties: false
+paths:
+  /bff/agora/candidate-pools/{pool_id}/members:
+    get:
+      operationId: listCandidatePoolMembersTruth
+      summary: List candidate pool members with per-field truth projection
+      description: |
+        Stable-order (created_at, artifact_id) paginated member list. Every
+        item carries fields/as_of/score_semantics; incomplete candidates
+        return typed unavailable field states, never static defaults.
+        Evidence summaries are always redacted in list responses.
+      parameters:
+        - {$ref: "#/components/parameters/PoolId"}
+        - {$ref: "#/components/parameters/XTenantId"}
+        - {$ref: "#/components/parameters/LifecycleState"}
+        - {$ref: "#/components/parameters/Band"}
+        - {$ref: "#/components/parameters/MemberPageToken"}
+        - {$ref: "#/components/parameters/MemberPageSize"}
+      responses:
+        "200":
+          description: Candidate member list with truth projection.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/CandidateMemberListEnvelope"}
+        "403":
+          description: Tenant denied or pool not owned by the caller.
+        "404":
+          description: Candidate pool not found.
+        "422":
+          description: Invalid page_token.
+  /bff/agora/candidate-pools/{pool_id}/members/{artifact_id}:
+    get:
+      operationId: getCandidatePoolMemberTruth
+      summary: Get one candidate pool member with per-field truth projection
+      parameters:
+        - {$ref: "#/components/parameters/PoolId"}
+        - {$ref: "#/components/parameters/ArtifactId"}
+        - {$ref: "#/components/parameters/XTenantId"}
+      responses:
+        "200":
+          description: Candidate member detail with truth projection.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/CandidateMemberDetailEnvelope"}
+        "403":
+          description: Tenant denied or pool not owned by the caller.
+        "404":
+          description: Candidate pool or member not found.

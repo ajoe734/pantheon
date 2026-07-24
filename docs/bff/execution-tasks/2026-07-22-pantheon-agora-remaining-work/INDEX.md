@@ -50,7 +50,7 @@ commands. It does not write `ai-status.json` or the activity log directly.
 | P1 | `AG-WS-OPS-002` | Pantheon | Claude | Antigravity | `AG-WS-OPS-001` |
 | P1 | `AG-COMPAT-001-BE` | Pantheon | Codex | Claude | both Agora truth BE tasks, `AG-WS-OPS-002` |
 | P1 | `AG-COMPAT-001-FE` | execute-plans | Antigravity | Codex2 | both Agora truth FE tasks, `AG-COMPAT-001-BE` |
-| P1 | `AG-COMPAT-002-GATE` | Pantheon | Claude | Codex | `AG-COMPAT-001-FE` |
+| P1 | `AG-COMPAT-002-GATE` | Pantheon | Codex | Claude2 | `AG-COMPAT-001-FE` |
 | P1 | `AG-HOSTED-CLOSE-001` | Pantheon evidence | Antigravity | Claude | compatibility gate, source freshness |
 
 The lease repair is the bootstrap frontier because the fleet must not fan out

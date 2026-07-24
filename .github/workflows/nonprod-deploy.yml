@@ -101,6 +101,24 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
+      - name: Checkout accepted Agora gate controller
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          repository: ajoe734/pantheon
+          ref: dev
+          path: .agora-gate-controller
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout accepted Agora frontend history
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          repository: ajoe734/execute-plans
+          ref: dev
+          path: .agora-frontend
+          fetch-depth: 0
+          persist-credentials: false
+
       - name: Resolve and validate dev payload
         id: target
         working-directory: .target
@@ -126,6 +144,17 @@ jobs:
             exit 1
           fi
           echo "sha=${sha}" >> "${GITHUB_OUTPUT}"
+
+      - name: Enforce exact Agora pair before any dev switch
+        working-directory: .agora-gate-controller
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          python3 scripts/agora_compat_manifest.py deployment-gate \
+            --manifest docs/contracts/agora/dev-compatibility-manifest.json \
+            --frontend-root "${GITHUB_WORKSPACE}/.agora-frontend" \
+            --backend-dev-ref refs/remotes/origin/dev \
+            --frontend-dev-ref refs/remotes/origin/dev \
+            --backend-runtime-commit "${{ steps.target.outputs.sha }}"
 
       - name: Enforce dev auth deployment floor
         working-directory: .target
@@ -429,6 +458,7 @@ jobs:
           DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
           DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR || '/home/lupin/pantheon' }}
+          DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS: ${{ vars.DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS || '300' }}
           DEV_BFF_CANONICAL_CORS_ORIGIN: ${{ vars.DEV_BFF_CANONICAL_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
           DEV_BFF_CORS_ORIGINS: ${{ vars.DEV_BFF_CORS_ORIGINS || vars.DEV_BFF_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
           # Governed verifier/dev-login credentials for the strict auth cutover.
@@ -629,8 +659,11 @@ jobs:
           DEV_DEPLOY_WORKTREE: ${{ vars.DEV_DEPLOY_WORKTREE || '/home/lupin/pantheon-ci-deploy/dev-root' }}
           GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-lupin-dev-20260719' }}
           DEV_BFF_PUBLIC_URL: ${{ vars.DEV_BFF_PUBLIC_URL || 'https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io' }}
-          DEV_BFF_OIDC_CLIENT_ID: ${{ secrets.DEV_BFF_OIDC_CLIENT_ID }}
-          DEV_BFF_OIDC_CLIENT_SECRET: ${{ secrets.DEV_BFF_OIDC_CLIENT_SECRET }}
+          # The generic operator identity is intentionally not MFA-verified.
+          # Hosted protected reads use the provisioned governed operator A,
+          # which the strict deploy floor requires and binds to MFA.
+          DEV_BFF_OIDC_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID || 'pantheon-dev-operator-a-v1' }}
+          DEV_BFF_OIDC_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET }}
           DEPLOY_SHA: ${{ steps.target.outputs.sha }}
         run: |
           set -euo pipefail
@@ -668,6 +701,7 @@ jobs:
             --source "${local_evidence}" \
             --output "${readback_evidence}" \
             --expected-sha "${DEPLOY_SHA}" \
+            --expected-login-identity operator_a \
             --base-url "${DEV_BFF_PUBLIC_URL}" || readback_status=$?
           echo "Canonical lifecycle hosted evidence: ${evidence_name}" >> "$GITHUB_STEP_SUMMARY"
           echo "Authenticated public BFF readback evidence: ${readback_name}" >> "$GITHUB_STEP_SUMMARY"
