@@ -556,7 +556,11 @@ class GitHubBusCommandTests(unittest.TestCase):
         with (
             mock.patch.object(github_bus, "branch_head_sha", return_value="c6784286"),
             mock.patch.object(github_bus, "find_task_pr_candidates", return_value=candidates),
-            mock.patch.object(github_bus, "remote_branch_head_sha") as remote_branch_head_sha,
+            mock.patch.object(
+                github_bus,
+                "remote_branch_head_sha",
+                return_value="c6784286",
+            ) as remote_branch_head_sha,
             mock.patch.object(github_bus, "run_gh") as run_gh,
             mock.patch.object(github_bus, "write_activity_log") as write_activity_log,
         ):
@@ -580,7 +584,7 @@ class GitHubBusCommandTests(unittest.TestCase):
             write_activity_log.call_args.args[1]["type"],
             "github_review_pr_bound",
         )
-        remote_branch_head_sha.assert_not_called()
+        remote_branch_head_sha.assert_called_once_with("task/OPS-EXACT-001")
         run_gh.assert_not_called()
 
     def test_upsert_review_pr_uses_unique_merged_head_when_local_ref_is_stale(self) -> None:
@@ -619,7 +623,11 @@ class GitHubBusCommandTests(unittest.TestCase):
         with (
             mock.patch.object(github_bus, "branch_head_sha", return_value="stale-local-head"),
             mock.patch.object(github_bus, "find_task_pr_candidates", return_value=candidates),
-            mock.patch.object(github_bus, "remote_branch_head_sha") as remote_branch_head_sha,
+            mock.patch.object(
+                github_bus,
+                "remote_branch_head_sha",
+                return_value=None,
+            ) as remote_branch_head_sha,
             mock.patch.object(github_bus, "run_gh") as run_gh,
             mock.patch.object(github_bus, "write_activity_log"),
         ):
@@ -637,7 +645,79 @@ class GitHubBusCommandTests(unittest.TestCase):
         self.assertEqual(evidence["head_sha"], "updated-pr-head")
         self.assertEqual(evidence["merge_commit"], "merged-to-dev")
         self.assertEqual(evidence["evidence_kind"], "merged_task_pr")
-        remote_branch_head_sha.assert_not_called()
+        remote_branch_head_sha.assert_called_once_with("task/OPS-EXACT-001")
+        run_gh.assert_not_called()
+
+    def test_upsert_review_pr_uses_published_head_for_latest_merged_followup(self) -> None:
+        config = {
+            "github_bus": {
+                "repo": "ajoe734/pantheon",
+                "default_branch": "master",
+            },
+            "branch_workflow": {
+                "dev_branch": "dev",
+                "task_branch_prefix": "task/",
+            },
+        }
+        bus_state = {"tasks": {}}
+        task = {
+            "id": "OPS-EXACT-001",
+            "title": "Exact merged evidence",
+            "status": "review",
+            "owner": "Codex",
+            "reviewer": "Claude",
+        }
+        candidates = [
+            {
+                "number": 4024,
+                "title": "OPS-EXACT-001: initial delivery",
+                "url": "https://github.com/ajoe734/pantheon/pull/4024",
+                "state": "MERGED",
+                "headRefName": "task/OPS-EXACT-001",
+                "headRefOid": "initial-pr-head",
+                "baseRefName": "dev",
+                "mergedAt": "2026-07-24T01:17:51Z",
+                "mergeCommit": {"oid": "initial-dev-merge"},
+            },
+            {
+                "number": 4027,
+                "title": "OPS-EXACT-001: follow-up delivery",
+                "url": "https://github.com/ajoe734/pantheon/pull/4027",
+                "state": "MERGED",
+                "headRefName": "task/OPS-EXACT-001",
+                "headRefOid": "followup-pr-head",
+                "baseRefName": "dev",
+                "mergedAt": "2026-07-24T01:45:35Z",
+                "mergeCommit": {"oid": "followup-dev-merge"},
+            },
+        ]
+
+        with (
+            mock.patch.object(github_bus, "branch_head_sha", return_value="stale-local-head"),
+            mock.patch.object(github_bus, "find_task_pr_candidates", return_value=candidates),
+            mock.patch.object(
+                github_bus,
+                "remote_branch_head_sha",
+                return_value="followup-pr-head",
+            ) as remote_branch_head_sha,
+            mock.patch.object(github_bus, "run_gh") as run_gh,
+            mock.patch.object(github_bus, "write_activity_log"),
+        ):
+            changed = github_bus.upsert_review_pr(
+                config,
+                bus_state,
+                {"agents": []},
+                "ajoe734/pantheon",
+                task,
+            )
+
+        self.assertTrue(changed)
+        evidence = bus_state["tasks"]["OPS-EXACT-001"]["review_pr"]
+        self.assertEqual(evidence["number"], 4027)
+        self.assertEqual(evidence["head_sha"], "followup-pr-head")
+        self.assertEqual(evidence["merge_commit"], "followup-dev-merge")
+        self.assertEqual(evidence["evidence_kind"], "merged_task_pr")
+        remote_branch_head_sha.assert_called_once_with("task/OPS-EXACT-001")
         run_gh.assert_not_called()
 
     def test_upsert_review_pr_fails_closed_when_explicit_head_mismatches_pr(self) -> None:
@@ -734,7 +814,11 @@ class GitHubBusCommandTests(unittest.TestCase):
         with (
             mock.patch.object(github_bus, "branch_head_sha", return_value="c6784286"),
             mock.patch.object(github_bus, "find_task_pr_candidates", return_value=candidates),
-            mock.patch.object(github_bus, "remote_branch_head_sha") as remote_branch_head_sha,
+            mock.patch.object(
+                github_bus,
+                "remote_branch_head_sha",
+                return_value="c6784286",
+            ) as remote_branch_head_sha,
             mock.patch.object(github_bus, "run_gh") as run_gh,
             mock.patch.object(github_bus, "write_activity_log") as write_activity_log,
         ):
@@ -757,7 +841,7 @@ class GitHubBusCommandTests(unittest.TestCase):
             write_activity_log.call_args.args[1]["type"],
             "github_review_pr_skipped",
         )
-        remote_branch_head_sha.assert_not_called()
+        remote_branch_head_sha.assert_called_once_with("task/OPS-EXACT-001")
         run_gh.assert_not_called()
 
 
