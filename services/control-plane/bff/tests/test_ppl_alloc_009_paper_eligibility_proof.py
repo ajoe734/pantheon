@@ -15,7 +15,7 @@ import main as bff_main
 from paper_eligibility_proof import (
     BENCHMARK_VERSION,
     EXPECTED_IDEMPOTENCY_KEY,
-    OBSERVED_AT,
+    PaperEligibilityObservationStore,
     RUN_KEY,
     TASK_ID,
     build_telemetry_event,
@@ -26,6 +26,7 @@ from paper_eligibility_proof import (
 PERSONA_ID = "persona-34ac77f34d030185079d"
 RUNTIME_BINDING_ID = "00000000-0000-4000-8000-000000000009"
 RUNTIME_ID = "runtime-ppl-alloc-009"
+TEST_OBSERVED_AT = "2026-07-24T17:30:00Z"
 
 
 def _identity(
@@ -86,6 +87,19 @@ def _enable_strict_dev(monkeypatch) -> None:
     monkeypatch.setenv("PANTHEON_TELEMETRY_API_URL", "http://telemetry:8083")
     monkeypatch.setenv("PANTHEON_PPL_ALLOC_009_READBACK_TIMEOUT_SECONDS", "0")
     monkeypatch.setattr(bff_main, "_extract_identity", _identity)
+    monkeypatch.setattr(
+        bff_main,
+        "_ppl_alloc_009_eligibility_observation_store",
+        type(
+            "FixedObservationStore",
+            (),
+            {
+                "reserve": staticmethod(
+                    lambda *, idempotency_key, proposed_at: TEST_OBSERVED_AT
+                )
+            },
+        )(),
+    )
 
 
 def _route_path() -> str:
@@ -123,7 +137,7 @@ def _success_context() -> dict[str, Any]:
 def _attributed_readback(
     *,
     value_overrides: dict[str, Any] | None = None,
-    at: str = OBSERVED_AT,
+    at: str = TEST_OBSERVED_AT,
     binding_id: str = RUNTIME_BINDING_ID,
 ) -> dict[str, Any]:
     benchmark = run_positive_control()
@@ -131,7 +145,7 @@ def _attributed_readback(
         **benchmark["metrics"],
         **(value_overrides or {}),
         "last_event_id": "a-concurrent-heartbeat-may-be-newer",
-        "collected_at": OBSERVED_AT,
+        "collected_at": TEST_OBSERVED_AT,
     }
     for field in benchmark["metrics"]:
         readback[f"{field}_at"] = at
@@ -291,6 +305,7 @@ def test_event_is_immutable_paper_only_and_idempotent() -> None:
         persona_id=PERSONA_ID,
         actor_id="paper-operator",
         idempotency_key=EXPECTED_IDEMPOTENCY_KEY,
+        observed_at=TEST_OBSERVED_AT,
         runtime_binding=_runtime_binding(),
         strategy_id="strategy-persona-ppl-alloc-009",
     )
@@ -298,12 +313,13 @@ def test_event_is_immutable_paper_only_and_idempotent() -> None:
         persona_id=PERSONA_ID,
         actor_id="paper-operator",
         idempotency_key=EXPECTED_IDEMPOTENCY_KEY,
+        observed_at=TEST_OBSERVED_AT,
         runtime_binding=_runtime_binding(),
         strategy_id="strategy-persona-ppl-alloc-009",
     )
 
     assert first == second
-    assert first["created_at"] == OBSERVED_AT
+    assert first["created_at"] == TEST_OBSERVED_AT
     assert first["deployment_stage"] == "paper"
     assert first["execution_mode"] == "paper"
     assert first["metrics"] == benchmark["metrics"]
@@ -311,6 +327,24 @@ def test_event_is_immutable_paper_only_and_idempotent() -> None:
     assert first["metadata"]["is_real_capital"] is False
     assert first["metadata"]["canary_execution_enabled"] is False
     assert first["metadata"]["live_execution_enabled"] is False
+
+
+def test_observation_store_reuses_first_timestamp_across_retries(tmp_path) -> None:
+    store = PaperEligibilityObservationStore(
+        str(tmp_path / "proof-observations.sqlite3")
+    )
+
+    first = store.reserve(
+        idempotency_key=EXPECTED_IDEMPOTENCY_KEY,
+        proposed_at=TEST_OBSERVED_AT,
+    )
+    second = store.reserve(
+        idempotency_key=EXPECTED_IDEMPOTENCY_KEY,
+        proposed_at="2026-07-24T17:31:00Z",
+    )
+
+    assert first == TEST_OBSERVED_AT
+    assert second == TEST_OBSERVED_AT
 
 
 def test_route_feature_flag_defaults_off_before_owner_write(monkeypatch) -> None:
@@ -505,6 +539,7 @@ def test_context_rejects_wrong_authority_and_lineage(
         bff_main._ppl_alloc_009_paper_eligibility_context(
             persona_id=PERSONA_ID,
             identity=_identity("Bearer paper-operator:mfa"),
+            observed_at=TEST_OBSERVED_AT,
         )
 
     assert getattr(exc_info.value, "status_code", None) in {404, 422}
@@ -526,6 +561,7 @@ def test_context_accepts_authoritative_deployment_plan_strategy_id(
     context = bff_main._ppl_alloc_009_paper_eligibility_context(
         persona_id=PERSONA_ID,
         identity=_identity("Bearer paper-operator:mfa"),
+        observed_at=TEST_OBSERVED_AT,
     )
 
     assert context["strategy_id"] == plan["strategy_id"]
@@ -559,7 +595,7 @@ def test_route_emits_to_owner_and_returns_governed_response_schema(
         "reconciliation": "accepted",
         "readback_attempts": 1,
         "readback_last_event_id": "a-concurrent-heartbeat-may-be-newer",
-        "readback_collected_at": OBSERVED_AT,
+        "readback_collected_at": TEST_OBSERVED_AT,
     }
     assert body["safety"] == {
         "paper_only": True,

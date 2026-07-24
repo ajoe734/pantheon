@@ -10,20 +10,68 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import sqlite3
 import uuid
 from typing import Any, Mapping
 
 
 TASK_ID = "PPL-ALLOC-009"
 RUN_KEY = "30095677466"
-BENCHMARK_VERSION = "ppl-alloc-009-paper-positive-control-v1"
-OBSERVED_AT = "2026-07-24T13:40:00Z"
-EXPECTED_IDEMPOTENCY_KEY = "ppl-alloc-009-30095677466-paper-eligibility-proof"
+BENCHMARK_VERSION = "ppl-alloc-009-paper-positive-control-v2"
+EXPECTED_IDEMPOTENCY_KEY = (
+    "ppl-alloc-009-30095677466-paper-eligibility-proof-v2"
+)
 
 _STARTING_CAPITAL = 100_000.0
 _TRADE_COUNT = 64
 _RETURN_PER_TRADE = 0.0125
 _SLIPPAGE_BPS = 0.5
+
+
+class PaperEligibilityObservationStore:
+    """Durably bind one proof retry key to its first observation timestamp."""
+
+    def __init__(self, path: str):
+        self._path = path
+        parent = os.path.dirname(os.path.abspath(path))
+        os.makedirs(parent, exist_ok=True)
+
+    def reserve(self, *, idempotency_key: str, proposed_at: str) -> str:
+        clean_key = str(idempotency_key or "").strip()
+        clean_at = str(proposed_at or "").strip()
+        if not clean_key or not clean_at:
+            raise ValueError("idempotency_key and proposed_at must be non-empty")
+
+        with sqlite3.connect(self._path, timeout=5.0) as connection:
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS proof_observations (
+                    idempotency_key TEXT PRIMARY KEY,
+                    observed_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO proof_observations (
+                    idempotency_key,
+                    observed_at
+                ) VALUES (?, ?)
+                """,
+                (clean_key, clean_at),
+            )
+            row = connection.execute(
+                """
+                SELECT observed_at
+                FROM proof_observations
+                WHERE idempotency_key = ?
+                """,
+                (clean_key,),
+            ).fetchone()
+        if row is None or not str(row[0] or "").strip():
+            raise RuntimeError("proof observation reservation was not persisted")
+        return str(row[0]).strip()
 
 
 def _stable_digest(value: Mapping[str, Any]) -> str:
@@ -87,6 +135,7 @@ def build_telemetry_event(
     persona_id: str,
     actor_id: str,
     idempotency_key: str,
+    observed_at: str,
     runtime_binding: Mapping[str, Any],
     strategy_id: str,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -119,9 +168,9 @@ def build_telemetry_event(
     event = {
         "event_id": event_id,
         "event_type": "pnl_snapshot",
-        "created_at": OBSERVED_AT,
-        "pnl_as_of": OBSERVED_AT,
-        "drawdown_as_of": OBSERVED_AT,
+        "created_at": observed_at,
+        "pnl_as_of": observed_at,
+        "drawdown_as_of": observed_at,
         "execution_mode": "paper",
         "environment": "paper",
         "deployment_stage": "paper",
