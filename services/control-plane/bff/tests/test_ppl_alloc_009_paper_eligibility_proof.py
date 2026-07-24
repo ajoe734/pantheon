@@ -134,23 +134,16 @@ def _success_context() -> dict[str, Any]:
     }
 
 
-def _attributed_readback(
-    *,
-    value_overrides: dict[str, Any] | None = None,
-    at: str = TEST_OBSERVED_AT,
-    binding_id: str = RUNTIME_BINDING_ID,
-) -> dict[str, Any]:
-    benchmark = run_positive_control()
-    readback: dict[str, Any] = {
-        **benchmark["metrics"],
-        **(value_overrides or {}),
-        "last_event_id": "a-concurrent-heartbeat-may-be-newer",
-        "collected_at": TEST_OBSERVED_AT,
-    }
-    for field in benchmark["metrics"]:
-        readback[f"{field}_at"] = at
-        readback[f"{field}_binding_id"] = binding_id
-    return readback
+def _accepted_event_readback() -> dict[str, Any]:
+    event, _benchmark = build_telemetry_event(
+        persona_id=PERSONA_ID,
+        actor_id="paper-operator:mfa",
+        idempotency_key=EXPECTED_IDEMPOTENCY_KEY,
+        observed_at=TEST_OBSERVED_AT,
+        runtime_binding=_runtime_binding(),
+        strategy_id="strategy-persona-ppl-alloc-009",
+    )
+    return event
 
 
 def _mock_success_dependencies(monkeypatch) -> list[dict[str, Any]]:
@@ -169,7 +162,7 @@ def _mock_success_dependencies(monkeypatch) -> list[dict[str, Any]]:
     monkeypatch.setattr(
         bff_main,
         "_get_json",
-        lambda _url: _attributed_readback(),
+        lambda _url: _accepted_event_readback(),
     )
     monkeypatch.setattr(
         bff_main,
@@ -594,8 +587,8 @@ def test_route_emits_to_owner_and_returns_governed_response_schema(
         "accepted_event_id": body["event_id"],
         "reconciliation": "accepted",
         "readback_attempts": 1,
-        "readback_last_event_id": "a-concurrent-heartbeat-may-be-newer",
-        "readback_collected_at": TEST_OBSERVED_AT,
+        "readback_event_id": body["event_id"],
+        "readback_created_at": TEST_OBSERVED_AT,
     }
     assert body["safety"] == {
         "paper_only": True,
@@ -732,11 +725,11 @@ def test_route_fails_closed_when_timeout_has_no_owner_readback(
     assert "readback did not prove" in response.text
 
 
-def test_route_polls_boundedly_until_owner_summary_is_consistent(
+def test_route_polls_boundedly_until_exact_owner_event_is_available(
     monkeypatch,
 ) -> None:
     _enable_strict_dev(monkeypatch)
-    _mock_success_dependencies(monkeypatch)
+    emitted = _mock_success_dependencies(monkeypatch)
     monkeypatch.setenv(
         "PANTHEON_PPL_ALLOC_009_READBACK_TIMEOUT_SECONDS",
         "0.25",
@@ -747,12 +740,11 @@ def test_route_polls_boundedly_until_owner_summary_is_consistent(
     )
     results: list[Exception | dict[str, Any]] = [
         _http_error(404),
-        _attributed_readback(value_overrides={"pnl": 0.1}),
-        _attributed_readback(),
+        {"event_id": "wrong-event"},
     ]
 
     def eventual_readback(_url: str) -> dict[str, Any]:
-        result = results.pop(0)
+        result = results.pop(0) if results else dict(emitted[-1])
         if isinstance(result, Exception):
             raise result
         return result
@@ -771,21 +763,27 @@ def test_route_polls_boundedly_until_owner_summary_is_consistent(
 
 
 @pytest.mark.parametrize(
-    "readback",
+    ("field", "value"),
     [
-        _attributed_readback(value_overrides={"pnl": 0.1}),
-        _attributed_readback(at="2026-07-24T13:39:59Z"),
-        _attributed_readback(binding_id="binding-other"),
+        ("event_id", "event-other"),
+        ("created_at", "2026-07-24T13:39:59Z"),
+        ("binding_id", "binding-other"),
+        ("metrics", {"pnl": 0.1}),
     ],
-    ids=["metric_value", "metric_timestamp", "metric_binding"],
+    ids=["event_id", "created_at", "binding", "metrics"],
 )
-def test_route_rejects_misattributed_owner_readback(
+def test_route_rejects_non_exact_owner_event_readback(
     monkeypatch,
-    readback: dict[str, Any],
+    field: str,
+    value: Any,
 ) -> None:
     _enable_strict_dev(monkeypatch)
-    _mock_success_dependencies(monkeypatch)
-    monkeypatch.setattr(bff_main, "_get_json", lambda _url: readback)
+    emitted = _mock_success_dependencies(monkeypatch)
+
+    def mismatched_readback(_url: str) -> dict[str, Any]:
+        return {**emitted[-1], field: value}
+
+    monkeypatch.setattr(bff_main, "_get_json", mismatched_readback)
 
     response = TestClient(bff_main.app, raise_server_exceptions=False).post(
         _route_path(),

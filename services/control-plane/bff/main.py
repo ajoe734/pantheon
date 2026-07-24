@@ -26545,41 +26545,23 @@ def _ppl_alloc_009_readback_poll_seconds() -> float:
         return 0.25
 
 
-def _ppl_alloc_009_attributed_metric_mismatches(
+def _ppl_alloc_009_accepted_event_mismatches(
     *,
     telemetry_readback: Mapping[str, Any],
-    expected_metrics: Mapping[str, Any],
-    binding_id: str,
-    expected_observed_at: str,
+    expected_event: Mapping[str, Any],
 ) -> List[str]:
     mismatches: List[str] = []
-    for field, expected in expected_metrics.items():
+    for field in sorted(set(expected_event) | set(telemetry_readback)):
+        expected = expected_event.get(field)
         actual = telemetry_readback.get(field)
-        observed_at = telemetry_readback.get(f"{field}_at")
-        metric_binding_id = telemetry_readback.get(f"{field}_binding_id")
         if actual != expected:
-            mismatches.append(
-                f"{field}.value expected={expected!r} actual={actual!r}"
-            )
-        if observed_at != expected_observed_at:
-            mismatches.append(
-                f"{field}.at expected={expected_observed_at!r} "
-                f"actual={observed_at!r}"
-            )
-        if metric_binding_id != binding_id:
-            mismatches.append(
-                f"{field}.binding expected={binding_id!r} "
-                f"actual={metric_binding_id!r}"
-            )
+            mismatches.append(f"{field} does not match the immutable event")
     return mismatches
 
 
 def _ppl_alloc_009_wait_for_telemetry_readback(
     *,
-    runtime_id: str,
-    binding_id: str,
-    expected_metrics: Mapping[str, Any],
-    observed_at: str,
+    expected_event: Mapping[str, Any],
 ) -> tuple[Dict[str, Any], int]:
     timeout_seconds = _ppl_alloc_009_readback_timeout_seconds()
     poll_seconds = _ppl_alloc_009_readback_poll_seconds()
@@ -26591,17 +26573,16 @@ def _ppl_alloc_009_wait_for_telemetry_readback(
         try:
             candidate = _get_json(
                 _ppl_alloc_009_telemetry_url(
-                    "/api/telemetry/runtime-summaries/" + runtime_id
+                    "/api/telemetry/events/"
+                    + quote(str(expected_event.get("event_id") or ""), safe="")
                 )
             )
             if not isinstance(candidate, dict):
-                last_error = "telemetry summary response was not an object"
+                last_error = "telemetry event response was not an object"
             else:
-                mismatches = _ppl_alloc_009_attributed_metric_mismatches(
+                mismatches = _ppl_alloc_009_accepted_event_mismatches(
                     telemetry_readback=candidate,
-                    expected_metrics=expected_metrics,
-                    binding_id=binding_id,
-                    expected_observed_at=observed_at,
+                    expected_event=expected_event,
                 )
                 if not mismatches:
                     return dict(candidate), attempts
@@ -26749,10 +26730,7 @@ async def bff_ppl_alloc_009_paper_eligibility_proof(
     try:
         telemetry_readback, readback_attempts = await asyncio.to_thread(
             _ppl_alloc_009_wait_for_telemetry_readback,
-            runtime_id=str(event["runtime_id"]),
-            binding_id=str(event["binding_id"]),
-            expected_metrics=expected_metrics,
-            observed_at=observed_at,
+            expected_event=event,
         )
     except Exception as exc:
         raise _ppl_alloc_009_eligibility_error(
@@ -26813,8 +26791,8 @@ async def bff_ppl_alloc_009_paper_eligibility_proof(
                 "accepted_event_id": event["event_id"],
                 "reconciliation": write_reconciliation,
                 "readback_attempts": readback_attempts,
-                "readback_last_event_id": telemetry_readback.get("last_event_id"),
-                "readback_collected_at": telemetry_readback.get("collected_at"),
+                "readback_event_id": telemetry_readback.get("event_id"),
+                "readback_created_at": telemetry_readback.get("created_at"),
             },
             "safety": {
                 "paper_only": True,
