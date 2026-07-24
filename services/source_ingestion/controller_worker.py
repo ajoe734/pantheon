@@ -55,6 +55,16 @@ def _env_int(name: str, default: int, *, minimum: int = 0) -> int:
     return value
 
 
+def _env_csv(name: str) -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            value
+            for value in (item.strip() for item in str(os.getenv(name) or "").split(","))
+            if value
+        )
+    )
+
+
 def _canonical_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
@@ -644,6 +654,8 @@ class ControllerConfig:
     lease_seconds: int
     truth_level: str
     controller_token: str
+    force_connector_ids: tuple[str, ...] = ()
+    exclusive_connector_ids: tuple[str, ...] = ()
 
 
 def config_from_env() -> ControllerConfig:
@@ -668,6 +680,8 @@ def config_from_env() -> ControllerConfig:
             or "/data/source-ingest/controller_token",
             create=False,
         ),
+        force_connector_ids=_env_csv("SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS"),
+        exclusive_connector_ids=_env_csv("SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS"),
     )
 
 
@@ -786,11 +800,18 @@ def run_controller_tick(
             controller_token=config.controller_token,
             timeout_seconds=config.timeout_seconds,
         )
+        exclusive_connector_ids = sorted(set(config.exclusive_connector_ids))
+        forced_connector_ids = (
+            exclusive_connector_ids
+            if exclusive_connector_ids
+            else sorted(set(_mutated_connector_ids(reconcile)) | set(config.force_connector_ids))
+        )
         schedule = run_schedule_tick(
             api_url=config.api_url,
             max_concurrency=config.max_concurrency,
             timeout_seconds=config.timeout_seconds,
-            force_connector_ids=_mutated_connector_ids(reconcile),
+            force_connector_ids=forced_connector_ids,
+            exclusive_connector_ids=exclusive_connector_ids,
             controller_token=config.controller_token,
         )
         actual = read_actual_state(api_url=config.api_url, timeout_seconds=config.timeout_seconds)

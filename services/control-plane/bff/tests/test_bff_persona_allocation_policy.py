@@ -2,6 +2,7 @@ import pytest
 
 from persona_allocation_policy import (
     build_pm12_allocation_policy_input,
+    calculate_paper_simulation_allocations,
     calculate_target_allocations,
     stage_recommendation,
 )
@@ -151,3 +152,79 @@ def test_pm12_adapter_rejects_tampered_supplied_schema():
 
     with pytest.raises(ValueError, match="rank_score"):
         build_pm12_allocation_policy_input(row)
+
+
+def test_paper_simulation_uses_distinct_policy_and_isolated_ledger_target():
+    lines = calculate_paper_simulation_allocations(
+        [
+            {
+                "ranking_snapshot_id": "ranking-quarterly-2026-q3-paper",
+                "persona_id": "persona-paper",
+                "stage": "paper_running",
+                "capital_scope": "paper_ledger",
+                "paper_ledger_id": "paper-ledger-persona-paper",
+                "capital_pool_id": "pool-persona-paper",
+                "capital_sleeve_id": None,
+                "binding_id": "binding-persona-paper",
+                "current_weight": 0.0,
+                "eligible": True,
+                "tier": "tier-2",
+                "overall_score": 74.5,
+                "formula_version": "pm12-default-v1",
+                "evidence_refs": ["promotion_decision:cmd-decision"],
+                # The quarterly row may carry the real-policy adapter. The
+                # paper policy must rebuild it under its own authority.
+                "allocation_policy_input": {
+                    "policy_version": "persona-real-allocation-v1",
+                },
+            }
+        ]
+    )
+
+    assert len(lines) == 1
+    line = lines[0]
+    assert line["target_weight"] == 1.0
+    assert line["delta"] == 1.0
+    assert line["capital_scope"] == "paper_ledger"
+    assert line["capital_sleeve_id"] is None
+    assert line["binding_id"] == "binding-persona-paper"
+    assert line["paper_allocation_eligible"] is True
+    assert line["live_capital_side_effects"] is False
+    assert line["allocation_policy_input"]["policy_version"] == (
+        "persona-paper-allocation-simulation-v1"
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("stage", "canary_running", "stage=paper_running"),
+        ("capital_scope", "real", "capital_scope=paper_ledger"),
+        ("capital_sleeve_id", "sleeve-live", "cannot target a capital sleeve"),
+        ("eligible", False, "eligible ranking row"),
+    ],
+)
+def test_paper_simulation_fails_closed_outside_paper_authority(
+    field,
+    value,
+    message,
+):
+    row = {
+        "ranking_snapshot_id": "ranking-quarterly-2026-q3-paper",
+        "persona_id": "persona-paper",
+        "stage": "paper_running",
+        "capital_scope": "paper_ledger",
+        "paper_ledger_id": "paper-ledger-persona-paper",
+        "capital_pool_id": "pool-persona-paper",
+        "capital_sleeve_id": None,
+        "binding_id": "binding-persona-paper",
+        "current_weight": 0.0,
+        "eligible": True,
+        "tier": "tier-2",
+        "overall_score": 74.5,
+        "formula_version": "pm12-default-v1",
+        field: value,
+    }
+
+    with pytest.raises(ValueError, match=message):
+        calculate_paper_simulation_allocations([row])
