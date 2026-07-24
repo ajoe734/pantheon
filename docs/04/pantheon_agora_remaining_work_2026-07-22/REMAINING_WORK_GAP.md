@@ -120,6 +120,10 @@ finding 6, replacement-VM reproof; and the `AG-HOSTED-CLOSE-001` block on
   as-of `2026-07-24T05:58Z` independent read-only re-probe confirming the pair
   is still served, strict, read-only with safe write defaults, and `/readyz`
   healthy.
+- The authoritative lifecycle archived `AG-HOSTED-CLOSE-002` as completed at
+  `2026-07-24T06:23:50Z` and records `AG-HOSTED-CLOSE-001` as its superseded
+  predecessor. The successor evidence merged through PR #4050 (`874103d1a`);
+  independent review state merged through PR #4051 (`cd4f42c4f`).
 
 Accepted hosted pair after this closeout (supersedes the pre-fix baseline in
 § Current accepted dev baseline for the Agora Governance/Workshop surface):

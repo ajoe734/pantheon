@@ -270,7 +270,11 @@ services:
     restart: unless-stopped
     environment:
       SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS: ${SOURCE_INGEST_CONTROLLER_INTERVAL_SECONDS:-60}
-      SOURCE_INGEST_CONTROLLER_MAX_TICKS: ${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-0}
+      # The source-ingest scheduler deliberately sets its shared max-ticks
+      # input to 1 for bounded provider pulls. Distillation is an always-on
+      # controller, so it must not inherit that one-shot value or Docker will
+      # restart the successful process forever under `unless-stopped`.
+      SOURCE_INGEST_CONTROLLER_MAX_TICKS: ${STRATEGY_DISTILLATION_CONTROLLER_MAX_TICKS:-0}
       DISTILLATION_CONTROLLER_STATE_PATH: /data/source-ingest/distill_controller_state.json
       DISTILLATION_CONTROLLER_ALIVE_PATH: /data/source-ingest/distill_controller_alive
       DISTILLATION_JOB_QUEUE_PATH: /data/source-ingest/distill_job_queue.jsonl
