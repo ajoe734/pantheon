@@ -1,5 +1,14 @@
 # AG-HOSTED-CLOSE-001 — Replacement-VM Agora hosted acceptance and closeout
 
+> **Closeout status (2026-07-24):** This lane was blocked on the
+> Governance/Workshop contract defects (`target_type=strategy_workshop` `422` /
+> `APPROVAL_TARGET_TYPE_MISMATCH` `409` / `STRATEGY_SPEC_STRATEGY_ID_MISMATCH`,
+> evidence anchor `ce7ba393e`). The defects were repaired by
+> `AG-GOV-WORKSHOP-CONTRACT-001` and `AG-GOV-WORKSHOP-COMPAT-DEPLOY-001`, and
+> the reviewer-consumable final closeout is archived by the successor task
+> **`AG-HOSTED-CLOSE-002`**. See
+> `docs/deployment/evidence/agora/ag-hosted-close-002.md`.
+
 Priority: P1
 Repository: `ajoe734/pantheon` (evidence and closeout only)
 Merge target: `dev`
