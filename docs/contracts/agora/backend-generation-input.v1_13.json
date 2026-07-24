@@ -1,0 +1,132 @@
+{
+  "input_version": "1.0",
+  "contract_family": "agora.v1.13",
+  "generated": true,
+  "backend": {
+    "repo": "ajoe734/pantheon",
+    "runtime_commit": "6e08b040eebd2c317a9b44741d8badbf878e26ad",
+    "contract_commit": "9e909de182f9f2379d23e8e6b81eefec29ffbce7"
+  },
+  "contract": {
+    "bundle_index": {
+      "path": "services/control-plane/specs/agora/bundle_index.v1_13.json",
+      "sha256": "b1d488c3b35aa1c691e5b464362ac5a2fdd1efc442249e15be9bb143f379f870"
+    },
+    "openapi": {
+      "path": "services/control-plane/openapi/agora_v1_13.openapi.yaml",
+      "sha256": "36d1be5bc033ea1a55610f3f523fc478704fdfad1f06fec620e741bed9bf6f86"
+    },
+    "capability_manifest": {
+      "path": "services/control-plane/specs/agora/v14/capability_manifest_v1_13.json",
+      "sha256": "7dfddaf220c00eddb7cbd0862eaa6f2aba7423dbd02e54d15db1d67a0cb4ded1"
+    }
+  },
+  "frontend_generation": {
+    "entrypoint": "services/control-plane/openapi/agora_v1_13.openapi.yaml",
+    "format": "openapi-3.1",
+    "required_files": [
+      "services/control-plane/openapi/agora_v1_13.openapi.yaml",
+      "services/control-plane/specs/agora/v11/performance_truth.schema.json",
+      "services/control-plane/specs/agora/v11/workshop_version_operations.schema.json",
+      "services/control-plane/specs/agora/v12/workshop_operation_lifecycle.schema.json",
+      "services/control-plane/specs/agora/v13/candidate_member_truth_projection.schema.json",
+      "services/control-plane/specs/agora/v9/workshop_live_operations.schema.json"
+    ],
+    "expected_output_paths": [
+      "src/lib/bff-v1/agora/contract-snapshot.json",
+      "src/lib/bff-v1/agora/types.ts"
+    ],
+    "file_hash_algorithm": "sha256-exact-git-bytes-v1",
+    "generated_types_hash_algorithm": "sha256-path-tab-filehash-lf-v1"
+  },
+  "source_files": [
+    {
+      "path": "docs/contracts/agora/generate_backend_contract.py",
+      "sha256": "96f38baa20d30c7f79f05c87e3ed82f0dddfb6ac12576c41242dae6437743f81"
+    },
+    {
+      "path": "services/control-plane/openapi/agora_v1_10.openapi.yaml",
+      "sha256": "9661492672164de1f79f01c68c6dd5c2d1898404ecda78e60c071aeed8bad69c"
+    },
+    {
+      "path": "services/control-plane/openapi/agora_v1_11.openapi.yaml",
+      "sha256": "ce5e8d634c3518579301a3bc3bacc0998104dc483597ce31e1a6c1a2ef4e54a9"
+    },
+    {
+      "path": "services/control-plane/openapi/agora_v1_12.openapi.yaml",
+      "sha256": "88a707090a1e58ebe3159d530ab437f6f0bb0d130f26e396edf6f1de3678f53f"
+    },
+    {
+      "path": "services/control-plane/openapi/agora_v1_13.openapi.yaml",
+      "sha256": "36d1be5bc033ea1a55610f3f523fc478704fdfad1f06fec620e741bed9bf6f86"
+    },
+    {
+      "path": "services/control-plane/specs/agora/bundle_index.v1_10.json",
+      "sha256": "b8469492d1f97f99924de9d5f220eaa3ee430c94c8db2fe130a6d0261b33c775"
+    },
+    {
+      "path": "services/control-plane/specs/agora/bundle_index.v1_11.json",
+      "sha256": "202f97b5099806849511c69349f9c77e08f2c3420294dbe92ec6b1c2b07679a0"
+    },
+    {
+      "path": "services/control-plane/specs/agora/bundle_index.v1_12.json",
+      "sha256": "25ca80c94a622a0845266cbecab617f96fc47daa8a08736a166d1d88c9dec7c6"
+    },
+    {
+      "path": "services/control-plane/specs/agora/bundle_index.v1_13.json",
+      "sha256": "b1d488c3b35aa1c691e5b464362ac5a2fdd1efc442249e15be9bb143f379f870"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v11/capability_manifest_v1_10.json",
+      "sha256": "504a30b33a992f0a02bd2feadf35ce2ab29911c7284e64907f704dcab8b2d25e"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v11/performance_truth.schema.json",
+      "sha256": "e68c00ba691d020e3d1637739fa2005c233c250a56e28a68e920e320ff3ada8e"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v11/workshop_version_operations.schema.json",
+      "sha256": "8e4797a787eb0661e8115eeb647dfb46783fd746df6e03170b5c3f138058afbe"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v12/capability_manifest_v1_11.json",
+      "sha256": "dcbe26ba0e3f3529d9ce38590aca16b8c6ae34ff614547b1be1d69894da37a61"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v12/workshop_operation_lifecycle.schema.json",
+      "sha256": "abdaf6226c230e9628893272c27e2990928b14fbfec3eeef8004f1a2137d9fc3"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v13/candidate_member_truth_projection.schema.json",
+      "sha256": "7ed59957adc97dd48af20aab19f8476acb84c29e8832d3ad076fe8625e610b00"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v13/capability_manifest_v1_12.json",
+      "sha256": "d35999b82e6b606f22de5baf4e6d260f03ce85d0cc871f5c1aa68145a0543188"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v14/capability_manifest_v1_13.json",
+      "sha256": "7dfddaf220c00eddb7cbd0862eaa6f2aba7423dbd02e54d15db1d67a0cb4ded1"
+    },
+    {
+      "path": "services/control-plane/specs/agora/v9/workshop_live_operations.schema.json",
+      "sha256": "602828f57d03b168c2ea5f6375ab0b141d39635f70ee5140db21f5d7a253fc06"
+    }
+  ],
+  "compatibility": {
+    "status": "pending",
+    "blocking_reasons": [
+      "frontend-generated-contract-commit-not-supplied",
+      "frontend-generated-types-not-supplied",
+      "frontend-runtime-commit-not-supplied"
+    ],
+    "required_frontend_evidence": [
+      "frontend_runtime_commit",
+      "generated_from_contract_commit",
+      "bundle_index_sha256",
+      "openapi_sha256",
+      "generated_types_sha256"
+    ]
+  },
+  "generated_at": "2026-07-23T01:09:22Z"
+}

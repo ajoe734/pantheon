@@ -37,6 +37,7 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
     assert source_ingest_env["SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS"] == "${SOURCE_INGEST_FRONTIER_MAX_ATTEMPTS:-2}"
     assert source_ingest_env["SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS"] == "${SOURCE_INGEST_FRONTIER_BACKOFF_SECONDS:-60}"
     assert source_ingest_env["SOURCE_INGEST_FRONTIER_RUNNING_TIMEOUT_SECONDS"] == "${SOURCE_INGEST_FRONTIER_RUNNING_TIMEOUT_SECONDS:-300}"
+    assert source_ingest_env["SOURCE_INGEST_DEFAULT_STALE_THRESHOLD_SECONDS"] == "${SOURCE_INGEST_DEFAULT_STALE_THRESHOLD_SECONDS:-86400}"
     assert source_ingest_env["SEARCH_INGEST_NOTIFY_URL"] == "${SEARCH_INGEST_NOTIFY_URL:-http://search-svc:8098}"
     assert source_ingest_env["PANTHEON_SOURCE_SEARCH_POSTURE"] == "${PANTHEON_SOURCE_SEARCH_POSTURE:-dev}"
     assert source_ingest_env["PANTHEON_S3_ENDPOINT"] == "${PANTHEON_S3_ENDPOINT:-http://minio:9000}"
@@ -56,8 +57,9 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
 
     controller = services["source-ingest-scheduler"]
     controller_env = _env_map(controller)
-    # Opt-in only: an always-on tick crawls third-party providers continuously.
+    # Opt-in only and finite: third-party pulls cannot become an endless crawl.
     assert controller["profiles"] == ["source-ingest-scheduler"]
+    assert controller["restart"] == "no"
     assert controller["command"] == ["python", "-m", "services.source_ingestion.controller_worker"]
     assert controller_env["SOURCE_INGEST_API_URL"] == "http://source-ingest:8097"
     assert controller_env["SOURCE_INGEST_CONTROLLER_TRUTH_LEVEL"] == "reconciled_live_proof"
@@ -66,12 +68,25 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
     assert controller_env["SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS"] == "${SOURCE_INGEST_CONTROLLER_TIMEOUT_SECONDS:-30}"
     assert controller_env["PANTHEON_TENANT_ID"] == "${PANTHEON_TENANT_ID:-${PANTHEON_BFF_TENANT_ID:-default}}"
     assert "SOURCE_INGEST_CONTROLLER_LEASE_SECONDS" not in controller_env
-    assert controller_env["SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY"] == "${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-2}"
+    assert controller_env["SOURCE_INGEST_CONTROLLER_MAX_TICKS"] == "${SOURCE_INGEST_CONTROLLER_MAX_TICKS:-1}"
+    assert controller_env["SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS"] == "${SOURCE_INGEST_CONTROLLER_FORCE_CONNECTOR_IDS:-}"
+    assert controller_env["SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS"] == "${SOURCE_INGEST_CONTROLLER_EXCLUSIVE_CONNECTOR_IDS:-}"
+    assert controller_env["SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY"] == "${SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY:-1}"
     assert controller_env["DATABASE_URL"].startswith("${DATABASE_URL:-postgresql://")
     assert "source-ingest-data:/data/source-ingest" in controller["volumes"]
     assert controller["depends_on"]["source-ingest"]["condition"] == "service_healthy"
     assert controller["depends_on"]["source-ingest-controller-migrate"]["condition"] == "service_completed_successfully"
     assert "controller_healthcheck" in " ".join(controller["healthcheck"]["test"])
+
+    projector = services["source-ingest-agora-projector"]
+    projector_env = _env_map(projector)
+    assert projector["profiles"] == ["source-ingest-scheduler"]
+    assert projector["restart"] == "no"
+    assert projector["command"] == ["python", "scripts/project_market_data_to_bff_agora_surfaces.py"]
+    assert projector["depends_on"]["source-ingest-scheduler"]["condition"] == "service_completed_successfully"
+    assert projector_env["SOURCE_INGEST_URL"] == "http://source-ingest:8097"
+    assert projector_env["AGORA_MARKET_STALE_THRESHOLD_SECONDS"] == "${AGORA_MARKET_STALE_THRESHOLD_SECONDS:-86400}"
+    assert "bff-data:/data/bff" in projector["volumes"]
 
     smoke_env = _env_map(services["smoke-stack"])
     assert smoke_env["SOURCE_INGEST_URL"] == "http://source-ingest:8097"

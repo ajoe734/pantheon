@@ -191,6 +191,7 @@ def main() -> int:
                 "connector": _connector("conn-bounded-feed", "Pantheon bounded external feed"),
                 "fetch": {
                     "mode": "external_feed",
+                    "network_scope": "internal_service",
                     "url": feed_url,
                     "allowed_url_prefixes": [feed_url.rsplit("/", 1)[0] + "/"],
                     "timeout_seconds": 5,

@@ -29,25 +29,53 @@ def test_canonical_lifecycle_projector_is_default_and_owns_both_read_models():
         environment["LIFECYCLE_PROJECTOR_STATE_PATH"]
         == "/data/bff/lifecycle-projection/controller_state.json"
     )
+    assert environment["LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH"] == (
+        "/data/bff/lifecycle-projection/health_state.json"
+    )
     assert environment["LIFECYCLE_PROJECTOR_POLL_SECONDS"] == "${LIFECYCLE_PROJECTOR_POLL_SECONDS:-1}"
+    assert environment["LIFECYCLE_PROJECTOR_GENERATION_RETENTION"] == "${LIFECYCLE_PROJECTOR_GENERATION_RETENTION:-32}"
+    assert environment["LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS"] == (
+        "${LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS:-3600}"
+    )
+    assert environment["LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS"] == (
+        "${LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS:-120}"
+    )
+    assert environment["LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_BYTES"] == (
+        "${LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_BYTES:-134217728}"
+    )
+    assert environment["LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_PERCENT"] == (
+        "${LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_PERCENT:-5}"
+    )
     assert environment["GIT_SHA"] == "${GIT_SHA:-unknown}"
     assert "bff-data:/data/bff" in projector["volumes"]
     assert projector["depends_on"]["postgres"]["condition"] == "service_healthy"
     assert projector["depends_on"]["telemetry"]["condition"] == "service_healthy"
     assert "operator-bff" not in projector["depends_on"]
     healthcheck = projector["healthcheck"]["test"]
-    assert healthcheck[0] == "CMD-SHELL"
-    assert "controller_state.json" in healthcheck[1]
-    assert "last_error" in healthcheck[1]
-    assert "age < 600" in healthcheck[1]
+    assert healthcheck == [
+        "CMD",
+        "python",
+        "-m",
+        "services.trade_journey.lifecycle_projector",
+        "healthcheck",
+    ]
 
     bff = services["operator-bff"]
     bff_environment = bff["environment"]
-    assert bff_environment["PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE"].endswith(
-        ":-/data/bff/lifecycle-projection/current/trade_journey_events.json}"
+    assert bff_environment["PANTHEON_BFF_TRADE_JOURNEY_EVENTS_STORE"] == (
+        "/data/bff/lifecycle-projection/current/trade_journey_events.json"
     )
-    assert bff_environment["PANTHEON_BFF_LOOP_RUN_STORE"].endswith(
-        ":-/data/bff/lifecycle-projection/current/loop_runs.json}"
+    assert bff_environment["PANTHEON_BFF_LOOP_RUN_STORE"] == (
+        "/data/bff/lifecycle-projection/current/loop_runs.json"
+    )
+    assert bff_environment["LIFECYCLE_PROJECTOR_STATE_PATH"] == (
+        "/data/bff/lifecycle-projection/controller_state.json"
+    )
+    assert bff_environment["LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH"] == (
+        "/data/bff/lifecycle-projection/health_state.json"
+    )
+    assert bff_environment["LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS"] == (
+        "${LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS:-120}"
     )
     assert (
         bff["depends_on"]["loop-run-projector-scheduler"]["condition"]
@@ -85,3 +113,24 @@ def test_default_paper_signal_producer_uses_package_safe_module_entrypoint():
     assert environment["TELEMETRY_DB_DSN"].startswith(
         "${TELEMETRY_DB_DSN:-postgresql://"
     )
+
+
+def test_hosted_lifecycle_probe_uses_mfa_bound_governed_operator():
+    workflow = yaml.safe_load(
+        (ROOT / ".github/workflows/nonprod-deploy.yml").read_text(encoding="utf-8")
+    )
+    steps = workflow["jobs"]["deploy-dev"]["steps"]
+    probe = next(
+        step
+        for step in steps
+        if step.get("name") == "Dev canonical paper lifecycle hosted probe"
+    )
+
+    assert probe["env"]["DEV_BFF_OIDC_CLIENT_ID"] == (
+        "${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID "
+        "|| 'pantheon-dev-operator-a-v1' }}"
+    )
+    assert probe["env"]["DEV_BFF_OIDC_CLIENT_SECRET"] == (
+        "${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET }}"
+    )
+    assert "--expected-login-identity operator_a" in probe["run"]
