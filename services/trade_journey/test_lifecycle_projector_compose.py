@@ -134,3 +134,51 @@ def test_hosted_lifecycle_probe_uses_mfa_bound_governed_operator():
         "${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET }}"
     )
     assert "--expected-login-identity operator_a" in probe["run"]
+
+
+def test_managed_dev_deploy_forwards_lifecycle_freshness_budget():
+    workflow = yaml.safe_load(
+        (ROOT / ".github/workflows/nonprod-deploy.yml").read_text(encoding="utf-8")
+    )
+    deploy = next(
+        step
+        for step in workflow["jobs"]["deploy-dev"]["steps"]
+        if step.get("name") == "Deploy dev VM stack under lease"
+    )
+    assert deploy["env"][
+        "DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS"
+    ] == (
+        "${{ vars.DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS || '300' }}"
+    )
+
+    script = (ROOT / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8")
+    assert (
+        'DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS="'
+        '${DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS:-300}"'
+    ) in script
+    assert (
+        'command_prefix+=" '
+        "PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS="
+        '$(shell_quote "$DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS")"'
+    ) in script
+
+    root_block = script.split("\n  root)", 1)[1].split("\n  bff)", 1)[0]
+    bff_block = script.split("\n  bff)", 1)[1].split("\n  exec)", 1)[0]
+    compose_override = (
+        'LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS="'
+        '${PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS}"'
+    )
+    assert root_block.count(compose_override) == 2
+    assert bff_block.count(compose_override) == 1
+
+
+def test_bff_only_deploy_does_not_rebuild_or_restart_lifecycle_projector():
+    script = (ROOT / "scripts/deploy_nonprod_vm.sh").read_text(encoding="utf-8")
+    bff_block = script.split("\n  bff)", 1)[1].split("\n  exec)", 1)[0]
+
+    compose_up = (
+        "docker compose -p pantheon -f docker-compose.yml "
+        "up -d --build --no-deps operator-bff"
+    )
+    assert bff_block.count(compose_up) == 1
+    assert "loop-run-projector-scheduler" not in bff_block
