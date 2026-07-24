@@ -1432,6 +1432,18 @@ def build_request(
     logical_agent = agent_config_for(config, event["target_agent"])
     agent = agent_config_for(config, agent_id_override or event["target_agent"])
     metadata = dict(event.get("metadata", {}) or {})
+    dispatch_event_key = str(event.get("event_key") or "").strip()
+    if dispatch_event_key:
+        metadata.setdefault("dispatch_event_key", dispatch_event_key)
+    task_metadata = metadata.get("task")
+    review_redispatch = (
+        task_metadata.get("governed_review_redispatch")
+        if isinstance(task_metadata, dict)
+        else None
+    )
+    if isinstance(review_redispatch, dict):
+        metadata["governed_review_redispatch"] = dict(review_redispatch)
+        metadata["require_isolated_worktree"] = True
     model_preference = resolve_agent_model_preference(config, agent)
     if model_preference and "model_preference" not in metadata:
         metadata["model_preference"] = model_preference
@@ -10284,6 +10296,105 @@ def dispatch_event_is_in_unchanged_cooldown(
     return 0 <= elapsed_seconds < cooldown_seconds
 
 
+def pending_review_handoff(
+    config: dict[str, Any],
+    status: dict[str, Any],
+    *,
+    task_id: str,
+    reviewer: str,
+) -> dict[str, Any] | None:
+    schema = config.get("schema", {})
+    handoffs_path = schema.get("handoffs_path", "handoffs")
+    pending_statuses = normalized_status_set(
+        (config.get("events", {}) or {}).get("pending_handoff_statuses"),
+        ["pending"],
+    )
+    matching = [
+        handoff
+        for handoff in status.get(handoffs_path, []) or []
+        if str(handoff.get("task_id") or "") == task_id
+        and str(handoff.get("to") or "") == reviewer
+        and str(handoff.get("status") or "").lower() in pending_statuses
+    ]
+    if not matching:
+        return None
+    return max(
+        matching,
+        key=lambda handoff: str(handoff.get("created_at") or ""),
+    )
+
+
+def terminal_review_worker_for_redispatch(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    task_id: str,
+    reviewer: str,
+    event_key: str,
+    handoff: dict[str, Any],
+) -> dict[str, Any] | None:
+    settings = ready_dispatch_settings(config)
+    terminal_statuses = normalized_status_set(
+        settings.get("review_redispatch_terminal_worker_statuses"),
+        ["completed", "failed"],
+    )
+    handoff_created_at = _parse_iso_utc(str(handoff.get("created_at") or ""))
+    candidates: list[dict[str, Any]] = []
+    for worker in state.get("workers", {}).values():
+        if str(worker.get("task_id") or "") != task_id:
+            continue
+        if str(worker.get("status") or "").lower() not in terminal_statuses:
+            continue
+        if display_name_for(
+            config,
+            worker_logical_dispatch_agent_id(config, worker),
+        ) != reviewer:
+            continue
+        snapshot = worker.get("request_snapshot")
+        if not isinstance(snapshot, dict) or snapshot.get("reason") != REASON_REVIEW_READY:
+            continue
+        snapshot_metadata = snapshot.get("metadata")
+        snapshot_metadata = snapshot_metadata if isinstance(snapshot_metadata, dict) else {}
+        if isinstance(snapshot_metadata.get("governed_review_redispatch"), dict):
+            continue
+        if str(worker.get("review_redispatch_event_key") or "") == event_key:
+            continue
+        worker_event_key = str(snapshot_metadata.get("dispatch_event_key") or "")
+        if worker_event_key:
+            if worker_event_key != event_key:
+                continue
+        elif handoff_created_at is not None:
+            terminal_at = _parse_iso_utc(
+                str(worker.get("runner_finished_at") or worker.get("last_event_at") or "")
+            )
+            if terminal_at is None or terminal_at < handoff_created_at:
+                continue
+        candidates.append(worker)
+    if not candidates:
+        return None
+    return max(
+        candidates,
+        key=lambda worker: str(
+            worker.get("runner_finished_at") or worker.get("last_event_at") or ""
+        ),
+    )
+
+
+def mark_governed_review_redispatch(
+    event: dict[str, Any],
+    *,
+    worker: dict[str, Any],
+    handoff: dict[str, Any],
+) -> None:
+    event.setdefault("task", {})["governed_review_redispatch"] = {
+        "attempt": 1,
+        "parent_worker_run_id": worker.get("run_id"),
+        "parent_worker_status": worker.get("status"),
+        "handoff_created_at": handoff.get("created_at"),
+        "require_isolated_worktree": True,
+    }
+
+
 def agent_dispatch_loads(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -10812,7 +10923,16 @@ def dispatch_ready_tasks(
                 continue
         target_has_primary_work = agent_has_dispatchable_primary_work(config, status, target_agent, task_resolver)
 
-        candidates: list[tuple[int, int, int, dict[str, Any], str]] = []
+        candidates: list[
+            tuple[
+                int,
+                int,
+                int,
+                dict[str, Any],
+                str,
+                tuple[dict[str, Any], dict[str, Any]] | None,
+            ]
+        ] = []
         helper_candidates: list[tuple[int, int, dict[str, Any], str, str, str, bool]] = []
         for index, task in enumerate(tasks):
             task_id = str(task.get(task_id_field) or "")
@@ -10919,13 +11039,35 @@ def dispatch_ready_tasks(
             event = build_dispatch_event(task, target_agent, reason, task_resolver)
             if event["key"] in pending_event_keys:
                 continue
-            if dispatch_event_is_in_unchanged_cooldown(
+            review_redispatch: tuple[dict[str, Any], dict[str, Any]] | None = None
+            in_unchanged_cooldown = dispatch_event_is_in_unchanged_cooldown(
                 seen,
                 event["key"],
                 cooldown_seconds=unchanged_cooldown_seconds,
                 now=dispatch_started_at,
-            ):
-                continue
+            )
+            if in_unchanged_cooldown:
+                if reason != REASON_REVIEW_READY:
+                    continue
+                handoff = pending_review_handoff(
+                    config,
+                    status,
+                    task_id=task_id,
+                    reviewer=target_agent,
+                )
+                if handoff is None:
+                    continue
+                terminal_worker = terminal_review_worker_for_redispatch(
+                    config,
+                    state,
+                    task_id=task_id,
+                    reviewer=target_agent,
+                    event_key=event["key"],
+                    handoff=handoff,
+                )
+                if terminal_worker is None:
+                    continue
+                review_redispatch = (terminal_worker, handoff)
             candidates.append(
                 (
                     priority,
@@ -10933,16 +11075,44 @@ def dispatch_ready_tasks(
                     index,
                     task,
                     reason,
+                    review_redispatch,
                 )
             )
 
         candidates.sort(key=lambda item: (item[0], item[1], item[2]))
         per_occurrence_limit = 1 if weighted_dispatch_enabled else available_agent_slots
         queued_for_agent = 0
-        for _, _, _, task, reason in candidates[:per_occurrence_limit]:
+        for _, _, _, task, reason, review_redispatch in candidates[:per_occurrence_limit]:
             event = build_dispatch_event(task, target_agent, reason, task_resolver)
+            if review_redispatch is not None:
+                terminal_worker, handoff = review_redispatch
+                mark_governed_review_redispatch(
+                    event,
+                    worker=terminal_worker,
+                    handoff=handoff,
+                )
             if queue_delivery_event(config, event):
                 seen[event["key"]] = dispatch_started_at
+                if review_redispatch is not None:
+                    terminal_worker, handoff = review_redispatch
+                    terminal_worker["review_redispatch_event_key"] = event["key"]
+                    terminal_worker["review_redispatched_at"] = dispatch_started_at
+                    write_activity_log(
+                        config,
+                        {
+                            "type": "review_worker_redispatched",
+                            "task_id": task.get(task_id_field),
+                            "target_agent": target_agent,
+                            "worker_run_id": terminal_worker.get("run_id"),
+                            "message": (
+                                "Redispatched an interrupted governed review exactly once "
+                                "from terminal worker and pending handoff evidence."
+                            ),
+                            "handoff_created_at": handoff.get("created_at"),
+                            "event_key": event["key"],
+                            "workspace_mode": "isolated_worktree",
+                        },
+                    )
                 pending_event_keys.add(event["key"])
                 pending_agents.add(agent_id)
                 pending_task_ids.add(str(task.get(task_id_field) or ""))
