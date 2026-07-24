@@ -1432,6 +1432,18 @@ def build_request(
     logical_agent = agent_config_for(config, event["target_agent"])
     agent = agent_config_for(config, agent_id_override or event["target_agent"])
     metadata = dict(event.get("metadata", {}) or {})
+    dispatch_event_key = str(event.get("event_key") or "").strip()
+    if dispatch_event_key:
+        metadata.setdefault("dispatch_event_key", dispatch_event_key)
+    task_metadata = metadata.get("task")
+    review_redispatch = (
+        task_metadata.get("governed_review_redispatch")
+        if isinstance(task_metadata, dict)
+        else None
+    )
+    if isinstance(review_redispatch, dict):
+        metadata["governed_review_redispatch"] = dict(review_redispatch)
+        metadata["require_isolated_worktree"] = True
     model_preference = resolve_agent_model_preference(config, agent)
     if model_preference and "model_preference" not in metadata:
         metadata["model_preference"] = model_preference
@@ -1497,6 +1509,7 @@ WORKER_WORKTREE_EXECUTION_REASONS = [
     REASON_OWNED_IN_PROGRESS,
     REASON_OWNED_FINALIZE,
     REASON_REVIEW_READY,
+    "github_retry",
     "chair_review:*",
 ]
 
@@ -1578,6 +1591,14 @@ def worker_workspace_task_id(request: DeliveryRequest) -> str | None:
     return task_id or None
 
 
+def worker_request_requires_isolated_worktree(request: DeliveryRequest) -> bool:
+    metadata = getattr(request, "metadata", {})
+    return bool(
+        (metadata.get("require_isolated_worktree") if isinstance(metadata, dict) else False)
+        or str(getattr(request, "reason", "") or "").strip() == "github_retry"
+    )
+
+
 def _git_worktree_records(repo_root: Path) -> list[dict[str, str]]:
     proc = subprocess.run(
         ["git", "worktree", "list", "--porcelain"],
@@ -1646,10 +1667,51 @@ def _git_ref_exists(repo_root: Path, ref: str) -> bool:
     return proc.returncode == 0
 
 
+def _quarantine_incomplete_worker_path(path: Path) -> Path | None:
+    """Move an unregistered partial checkout aside so dispatch can recover.
+
+    ``git worktree add`` can leave a populated directory without a ``.git``
+    marker when checkout is interrupted (for example by ENOSPC).  These paths
+    are not reusable worktrees, but refusing them forever wedges every later
+    dispatch for the task.  Preserve the entire directory under the managed
+    root and let the caller create a clean worktree at the canonical path.
+    """
+    if (
+        not path.exists()
+        or path.is_symlink()
+        or not path.is_dir()
+        or not any(path.iterdir())
+        or (path / ".git").exists()
+    ):
+        return None
+
+    quarantine_root = path.parent / ".incomplete-worktree-quarantine"
+    quarantine_root.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    quarantine_path = quarantine_root / f"{path.name}-{stamp}-{os.getpid()}"
+    try:
+        path.replace(quarantine_path)
+    except OSError:
+        return None
+    try:
+        (quarantine_path / "ORCHESTRATOR_QUARANTINE.txt").write_text(
+            "Incomplete worker checkout preserved before automatic redispatch.\n"
+            f"original_path={path}\n"
+            f"quarantined_at={utc_now()}\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        # The recovery must still unblock a fresh checkout when the original
+        # interruption was ENOSPC and even the small marker cannot be written.
+        pass
+    return quarantine_path
+
+
 def _create_worker_worktree(repo_root: Path, path: Path, branch: str, base_ref: str) -> tuple[bool, str | None]:
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists() and (not path.is_dir() or any(path.iterdir())):
-        return False, f"Worker worktree path already exists and is not empty: {path}"
+        if _quarantine_incomplete_worker_path(path) is None:
+            return False, f"Worker worktree path already exists and is not empty: {path}"
 
     remote_ref = f"refs/remotes/origin/{branch}"
     if _git_ref_exists(repo_root, f"refs/heads/{branch}"):
@@ -2074,14 +2136,74 @@ def prepare_worker_workspace(
     target_agent: str | None,
 ) -> tuple[bool, str | None]:
     settings = worker_worktree_settings(config)
+    requires_isolated = worker_request_requires_isolated_worktree(request)
     if not settings.get("enabled"):
+        if requires_isolated:
+            message = (
+                f"Cannot dispatch explicit retry for {request.task_id or 'unknown task'}: "
+                "isolated worker worktrees are disabled. Refusing shared-checkout fallback."
+            )
+            write_activity_log(
+                config,
+                {
+                    "type": "dispatch_blocked_worktree_lease",
+                    "task_id": request.task_id,
+                    "target_agent": target_agent,
+                    "queue_event_id": queue_event_id,
+                    "message": message,
+                    "refresh_status": "isolated_worktrees_disabled",
+                },
+            )
+            return False, message
         return True, None
-    if not worker_worktree_reason_enabled(request.reason, settings):
+    if not requires_isolated and not worker_worktree_reason_enabled(request.reason, settings):
         return True, None
     workspace_task_id = worker_workspace_task_id(request)
     if not workspace_task_id:
+        if requires_isolated:
+            message = (
+                "Cannot dispatch explicit retry without a task-scoped worktree identity. "
+                "Refusing shared-checkout fallback."
+            )
+            write_activity_log(
+                config,
+                {
+                    "type": "dispatch_blocked_worktree_lease",
+                    "task_id": request.task_id,
+                    "target_agent": target_agent,
+                    "queue_event_id": queue_event_id,
+                    "message": message,
+                    "refresh_status": "missing_workspace_task_id",
+                },
+            )
+            return False, message
         return True, None
     if request.metadata.get("workspace_path"):
+        if requires_isolated:
+            repo_root = config_path(config, "status_file").parents[0].resolve()
+            workspace_path = Path(
+                os.path.expanduser(str(request.metadata["workspace_path"]))
+            ).resolve()
+            if workspace_path == repo_root:
+                message = (
+                    f"Cannot dispatch explicit retry for {workspace_task_id}: "
+                    "workspace_path resolves to the shared supervisor checkout. "
+                    "Refusing shared-checkout fallback."
+                )
+                write_activity_log(
+                    config,
+                    {
+                        "type": "dispatch_blocked_worktree_lease",
+                        "task_id": request.task_id,
+                        "workspace_task_id": workspace_task_id,
+                        "target_agent": target_agent,
+                        "queue_event_id": queue_event_id,
+                        "message": message,
+                        "workspace_path": str(workspace_path),
+                        "refresh_status": "shared_checkout_rejected",
+                    },
+                )
+                return False, message
         return True, None
 
     repo_root = config_path(config, "status_file").parents[0].resolve()
@@ -7864,8 +7986,24 @@ def poll_worker_failure_stage(
     provider_report: dict[str, Any],
 ) -> dict[str, bool]:
     """Classify and apply one exited worker's provider failure response."""
+    # A retry parent retains its original PID/log for evidence after the child
+    # launches.  Never classify that stale log again: doing so can cool the
+    # newly selected rotation slot and reassign the task while the retry child
+    # is actively working.  The other statuses below are likewise inactive or
+    # intentionally waiting outside the failure path.
+    if worker.get("status") in {
+        "completed",
+        "failed",
+        "fallback",
+        "manual_pending",
+        "reassigned",
+        "retried",
+        "retry_backoff",
+        "superseded",
+    }:
+        return {"changed": False, "stop": True}
     failure_reason = None if worker_runner_succeeded(worker) else detect_worker_failure(worker)
-    if not failure_reason or worker.get("status") == "failed":
+    if not failure_reason:
         return {"changed": False, "stop": False}
 
     failure = classify_worker_failure(config, worker, failure_reason)
@@ -10158,6 +10296,105 @@ def dispatch_event_is_in_unchanged_cooldown(
     return 0 <= elapsed_seconds < cooldown_seconds
 
 
+def pending_review_handoff(
+    config: dict[str, Any],
+    status: dict[str, Any],
+    *,
+    task_id: str,
+    reviewer: str,
+) -> dict[str, Any] | None:
+    schema = config.get("schema", {})
+    handoffs_path = schema.get("handoffs_path", "handoffs")
+    pending_statuses = normalized_status_set(
+        (config.get("events", {}) or {}).get("pending_handoff_statuses"),
+        ["pending"],
+    )
+    matching = [
+        handoff
+        for handoff in status.get(handoffs_path, []) or []
+        if str(handoff.get("task_id") or "") == task_id
+        and str(handoff.get("to") or "") == reviewer
+        and str(handoff.get("status") or "").lower() in pending_statuses
+    ]
+    if not matching:
+        return None
+    return max(
+        matching,
+        key=lambda handoff: str(handoff.get("created_at") or ""),
+    )
+
+
+def terminal_review_worker_for_redispatch(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    task_id: str,
+    reviewer: str,
+    event_key: str,
+    handoff: dict[str, Any],
+) -> dict[str, Any] | None:
+    settings = ready_dispatch_settings(config)
+    terminal_statuses = normalized_status_set(
+        settings.get("review_redispatch_terminal_worker_statuses"),
+        ["completed", "failed"],
+    )
+    handoff_created_at = _parse_iso_utc(str(handoff.get("created_at") or ""))
+    candidates: list[dict[str, Any]] = []
+    for worker in state.get("workers", {}).values():
+        if str(worker.get("task_id") or "") != task_id:
+            continue
+        if str(worker.get("status") or "").lower() not in terminal_statuses:
+            continue
+        if display_name_for(
+            config,
+            worker_logical_dispatch_agent_id(config, worker),
+        ) != reviewer:
+            continue
+        snapshot = worker.get("request_snapshot")
+        if not isinstance(snapshot, dict) or snapshot.get("reason") != REASON_REVIEW_READY:
+            continue
+        snapshot_metadata = snapshot.get("metadata")
+        snapshot_metadata = snapshot_metadata if isinstance(snapshot_metadata, dict) else {}
+        if isinstance(snapshot_metadata.get("governed_review_redispatch"), dict):
+            continue
+        if str(worker.get("review_redispatch_event_key") or "") == event_key:
+            continue
+        worker_event_key = str(snapshot_metadata.get("dispatch_event_key") or "")
+        if worker_event_key:
+            if worker_event_key != event_key:
+                continue
+        elif handoff_created_at is not None:
+            terminal_at = _parse_iso_utc(
+                str(worker.get("runner_finished_at") or worker.get("last_event_at") or "")
+            )
+            if terminal_at is None or terminal_at < handoff_created_at:
+                continue
+        candidates.append(worker)
+    if not candidates:
+        return None
+    return max(
+        candidates,
+        key=lambda worker: str(
+            worker.get("runner_finished_at") or worker.get("last_event_at") or ""
+        ),
+    )
+
+
+def mark_governed_review_redispatch(
+    event: dict[str, Any],
+    *,
+    worker: dict[str, Any],
+    handoff: dict[str, Any],
+) -> None:
+    event.setdefault("task", {})["governed_review_redispatch"] = {
+        "attempt": 1,
+        "parent_worker_run_id": worker.get("run_id"),
+        "parent_worker_status": worker.get("status"),
+        "handoff_created_at": handoff.get("created_at"),
+        "require_isolated_worktree": True,
+    }
+
+
 def agent_dispatch_loads(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -10686,7 +10923,16 @@ def dispatch_ready_tasks(
                 continue
         target_has_primary_work = agent_has_dispatchable_primary_work(config, status, target_agent, task_resolver)
 
-        candidates: list[tuple[int, int, int, dict[str, Any], str]] = []
+        candidates: list[
+            tuple[
+                int,
+                int,
+                int,
+                dict[str, Any],
+                str,
+                tuple[dict[str, Any], dict[str, Any]] | None,
+            ]
+        ] = []
         helper_candidates: list[tuple[int, int, dict[str, Any], str, str, str, bool]] = []
         for index, task in enumerate(tasks):
             task_id = str(task.get(task_id_field) or "")
@@ -10793,13 +11039,35 @@ def dispatch_ready_tasks(
             event = build_dispatch_event(task, target_agent, reason, task_resolver)
             if event["key"] in pending_event_keys:
                 continue
-            if dispatch_event_is_in_unchanged_cooldown(
+            review_redispatch: tuple[dict[str, Any], dict[str, Any]] | None = None
+            in_unchanged_cooldown = dispatch_event_is_in_unchanged_cooldown(
                 seen,
                 event["key"],
                 cooldown_seconds=unchanged_cooldown_seconds,
                 now=dispatch_started_at,
-            ):
-                continue
+            )
+            if in_unchanged_cooldown:
+                if reason != REASON_REVIEW_READY:
+                    continue
+                handoff = pending_review_handoff(
+                    config,
+                    status,
+                    task_id=task_id,
+                    reviewer=target_agent,
+                )
+                if handoff is None:
+                    continue
+                terminal_worker = terminal_review_worker_for_redispatch(
+                    config,
+                    state,
+                    task_id=task_id,
+                    reviewer=target_agent,
+                    event_key=event["key"],
+                    handoff=handoff,
+                )
+                if terminal_worker is None:
+                    continue
+                review_redispatch = (terminal_worker, handoff)
             candidates.append(
                 (
                     priority,
@@ -10807,16 +11075,44 @@ def dispatch_ready_tasks(
                     index,
                     task,
                     reason,
+                    review_redispatch,
                 )
             )
 
         candidates.sort(key=lambda item: (item[0], item[1], item[2]))
         per_occurrence_limit = 1 if weighted_dispatch_enabled else available_agent_slots
         queued_for_agent = 0
-        for _, _, _, task, reason in candidates[:per_occurrence_limit]:
+        for _, _, _, task, reason, review_redispatch in candidates[:per_occurrence_limit]:
             event = build_dispatch_event(task, target_agent, reason, task_resolver)
+            if review_redispatch is not None:
+                terminal_worker, handoff = review_redispatch
+                mark_governed_review_redispatch(
+                    event,
+                    worker=terminal_worker,
+                    handoff=handoff,
+                )
             if queue_delivery_event(config, event):
                 seen[event["key"]] = dispatch_started_at
+                if review_redispatch is not None:
+                    terminal_worker, handoff = review_redispatch
+                    terminal_worker["review_redispatch_event_key"] = event["key"]
+                    terminal_worker["review_redispatched_at"] = dispatch_started_at
+                    write_activity_log(
+                        config,
+                        {
+                            "type": "review_worker_redispatched",
+                            "task_id": task.get(task_id_field),
+                            "target_agent": target_agent,
+                            "worker_run_id": terminal_worker.get("run_id"),
+                            "message": (
+                                "Redispatched an interrupted governed review exactly once "
+                                "from terminal worker and pending handoff evidence."
+                            ),
+                            "handoff_created_at": handoff.get("created_at"),
+                            "event_key": event["key"],
+                            "workspace_mode": "isolated_worktree",
+                        },
+                    )
                 pending_event_keys.add(event["key"])
                 pending_agents.add(agent_id)
                 pending_task_ids.add(str(task.get(task_id_field) or ""))

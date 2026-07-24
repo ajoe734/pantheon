@@ -150,6 +150,36 @@ class SupervisorRotationHelperTests(unittest.TestCase):
         )
         self.assertEqual(outcome, "exhausted")
 
+    def test_retry_parent_does_not_reprocess_stale_quota_failure(self) -> None:
+        for status in ("retry_backoff", "retried"):
+            with self.subTest(status=status):
+                worker = {
+                    "run_id": "antigravity-old-run",
+                    "task_id": "PAN-SOURCE-FRESH-001",
+                    "provider": "antigravity",
+                    "status": status,
+                }
+                with (
+                    mock.patch.object(
+                        supervisor,
+                        "detect_worker_failure",
+                        side_effect=AssertionError("stale retry-parent log must not be classified"),
+                    ),
+                    mock.patch.object(
+                        supervisor,
+                        "maybe_rotate_provider_model",
+                        side_effect=AssertionError("alternate model must not be cooled by the retry parent"),
+                    ),
+                ):
+                    outcome = supervisor.poll_worker_failure_stage(
+                        self.config,
+                        self.state,
+                        worker,
+                        provider_report={},
+                    )
+
+                self.assertEqual(outcome, {"changed": False, "stop": True})
+
 
 if __name__ == "__main__":
     unittest.main()

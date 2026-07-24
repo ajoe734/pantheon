@@ -946,6 +946,20 @@ class TelemetryIngestService:
             return []
         return self._runtime_summary_store.list()
 
+    def get_accepted_event(self, event_id: str) -> Optional[dict[str, Any]]:
+        """Return the immutable event accepted by this owner process.
+
+        The exact event lookup is deliberately separate from runtime summaries:
+        summaries are continuously updated by concurrent heartbeats and are not
+        a stable acknowledgement surface for one producer event.
+        """
+
+        clean_event_id = str(event_id or "").strip()
+        if not clean_event_id:
+            return None
+        event = self._seen_event_ids.get(clean_event_id)
+        return copy.deepcopy(event) if event is not None else None
+
     def get_trade_episode_projection(
         self,
         trade_episode_id: str,

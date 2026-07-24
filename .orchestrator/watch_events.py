@@ -322,6 +322,26 @@ def render_wakeup_message(config: dict[str, Any], event: dict[str, Any], target_
             "- 完成後請交接給指定 reviewer，由 parent owner 決定是否吸收進主線。\n"
         )
     task_id = str(event.get("task_id") or "").strip()
+    rendered_task_id = task_id or "(none)"
+    reason = str(event.get("reason") or "wakeup")
+    dispatch_guardrails = ""
+    if reason == "review_ready_dispatch":
+        dispatch_guardrails = (
+            "\n這次 dispatch 的角色是 reviewer，不是 task owner。\n"
+            "- 先獨立核對 acceptance、實作 diff、PR/merge evidence 與必要驗證。\n"
+            "- 不得執行 `assign`、`start`、`progress`、`handoff`、`done`，也不得交換 owner/reviewer。\n"
+            "- 審查通過時，只能以你的 reviewer 身分執行 `$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh approve "
+            f"{rendered_task_id} \"<具體審查證據>\"`。\n"
+            "- 審查不通過時，執行 `$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh reopen "
+            f"{rendered_task_id} \"<具體修正要求>\"`，把工作退回原 owner。\n"
+            "- task 進入 `review_approved` 後停止；owner closeout 由 supervisor 另行 dispatch。\n"
+        )
+    elif reason == "owned_finalize_dispatch":
+        dispatch_guardrails = (
+            "\n這次 dispatch 的角色是已通過審查後的 task owner。\n"
+            "- 依 task-closeout-finalization checklist 收尾；不得重新指派 owner/reviewer。\n"
+            "- 只有必要交付與驗證完成後，才執行 `done`。\n"
+        )
     branch_workflow = config.get("branch_workflow") if isinstance(config.get("branch_workflow"), dict) else {}
     base_branch = str(branch_workflow.get("dev_branch") or "dev")
     task_branch_prefix = str(branch_workflow.get("task_branch_prefix") or "task/")
@@ -337,8 +357,9 @@ def render_wakeup_message(config: dict[str, Any], event: dict[str, Any], target_
         "branch_name": branch_name,
         "branch_start_command": f"./scripts/git/task_start.sh \"{task_id}\"" if task_id else "./scripts/git/task_start.sh <TASK-ID>",
         "anchor_commit_subject": f"{task_id}: anchor <scope>" if task_id else "<TASK-ID>: anchor <scope>",
-        "reason": event.get("reason") or "wakeup",
+        "reason": reason,
         "target_files": "\n".join(f"- {path}" for path in target_files) if target_files else "- (none inferred)",
+        "dispatch_guardrails": dispatch_guardrails.rstrip(),
         "sidecar_guardrails": sidecar_guardrails.rstrip(),
         "target_agent_display_name": display_name_for(config, agent["id"]),
     }
