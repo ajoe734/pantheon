@@ -339,6 +339,20 @@ def test_auth_gate_checks_all_dedicated_identities_and_distinct_subjects() -> No
         "${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED || 'true' }}"
         in workflow
     )
+    auth_floor = workflow[
+        workflow.index("- name: Enforce dev auth deployment floor") :
+        workflow.index(
+            "- name: Authenticate to Google Cloud via Workload Identity Federation"
+        )
+    ]
+    deploy_step = workflow[
+        workflow.index("- name: Deploy dev VM stack under lease") :
+        workflow.index("- name: Ensure governed dev paper baseline under lease")
+    ]
+    hosted_probe = workflow[
+        workflow.index("- name: Dev canonical paper lifecycle hosted probe") :
+        workflow.index("- name: Upload canonical paper lifecycle hosted evidence")
+    ]
 
     for identity in ("VIEWER", "APPROVER", "RISK_OWNER", "OPERATOR_A", "OPERATOR_B"):
         client_id = f"DEV_BFF_DEV_LOGIN_{identity}_CLIENT_ID"
@@ -347,7 +361,20 @@ def test_auth_gate_checks_all_dedicated_identities_and_distinct_subjects() -> No
         assert f'{client_secret}="${{{client_secret}:-}}"' in script
         assert f"PANTHEON_{client_id}" in script
         assert script.count(f"{compose_client_id}=") == 2
-        assert workflow.count(f"secrets.{client_secret}") == 2
+        secret_ref = f"secrets.{client_secret}"
+        assert auth_floor.count(secret_ref) == 1
+        assert deploy_step.count(secret_ref) == 1
+        if identity == "OPERATOR_A":
+            assert hosted_probe.count(secret_ref) == 1
+            assert (
+                "DEV_BFF_OIDC_CLIENT_SECRET: "
+                "${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET }}"
+                in hosted_probe
+            )
+            assert workflow.count(secret_ref) == 3
+        else:
+            assert secret_ref not in hosted_probe
+            assert workflow.count(secret_ref) == 2
 
 
 def test_dev_deploy_plumbs_product_oidc_and_fail_closed_role_mapping() -> None:
