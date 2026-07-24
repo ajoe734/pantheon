@@ -122,11 +122,15 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
     assert 'f"{SEARCH_URL}/api/search/query"' in smoke
 
     bounded_smoke = (compose_path.parent / "scripts/smoke_source_search_bounded.py").read_text(encoding="utf-8")
+    assert "suffix = uuid.uuid4().hex" in bounded_smoke
+    assert "connector_ids = _run_scoped_connector_ids(suffix)" in bounded_smoke
+    assert '"connector_id": "conn-bounded-' not in bounded_smoke
     assert '"mode": "static_records"' in bounded_smoke
     assert '"mode": "external_feed"' in bounded_smoke
     assert '"allowed_url_prefixes": [feed_url.rsplit("/", 1)[0] + "/"]' in bounded_smoke
     assert 'f"{SOURCE_INGEST_URL}/api/source-ingest/dlq/replay"' in bounded_smoke
     assert 'f"{SOURCE_INGEST_URL}/api/source-ingest/run-scheduled"' in bounded_smoke
+    assert '"exclusive_connector_ids": [connector_ids["scheduled"]]' in bounded_smoke
     assert 'f"{SOURCE_INGEST_URL}/api/source-ingest/audit"' in bounded_smoke
     assert 'f"{SEARCH_URL}/api/search/index/refresh"' in bounded_smoke
     assert 'f"{SEARCH_URL}/api/search/index/source-completions/{feed_run_id}"' in bounded_smoke
