@@ -4,6 +4,8 @@ from pathlib import Path
 
 import yaml
 
+from scripts.smoke_source_search_bounded import _run_scoped_connector_ids
+
 
 def _env_map(service: dict) -> dict:
     env = service.get("environment") or {}
@@ -15,6 +17,15 @@ def _env_map(service: dict) -> dict:
             key, value = item.split("=", 1)
             result[key] = value
     return result
+
+
+def test_bounded_smoke_builds_disjoint_run_scoped_connector_ids() -> None:
+    first = _run_scoped_connector_ids("first-run")
+    second = _run_scoped_connector_ids("second-run")
+
+    assert set(first) == {"static", "feed", "replay", "scheduled"}
+    assert all(connector_id.endswith("-first-run") for connector_id in first.values())
+    assert set(first.values()).isdisjoint(second.values())
 
 
 def test_root_compose_wires_source_ingest_service_boundary() -> None:
