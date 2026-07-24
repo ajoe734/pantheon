@@ -1,6 +1,6 @@
 # AG-HOSTED-CLOSE-002 — Agora hosted exact-pair final closeout
 
-Status: **owner closeout packet; awaiting independent reviewer approval**
+Status: **completed, independently approved, and archived**
 
 - Task owner: `Claude2`
 - Reviewer: `Antigravity`
@@ -8,9 +8,14 @@ Status: **owner closeout packet; awaiting independent reviewer approval**
 - Merge target: `dev`
 - Environment: Pantheon dev — replacement VM `pantheon-lupin-dev-20260719` /
   `35.201.204.12`
-- Succeeds: `AG-HOSTED-CLOSE-001` (archived blocked; see § Resolved blocker)
+- Succeeds: `AG-HOSTED-CLOSE-001` (superseded predecessor; see § Resolved blocker)
 - Depends on: `AG-GOV-WORKSHOP-COMPAT-DEPLOY-001`,
   `OPS-DEV-LIFECYCLE-FRESHNESS-001`
+- Lifecycle: reviewer `Antigravity` approved the packet at
+  `2026-07-24T06:11:34Z`; owner `Claude2` finalized and archived the task at
+  `2026-07-24T06:23:50Z`.
+- Repository delivery: evidence PR #4050 merged as `874103d1a`; final
+  review-approved brief PR #4051 merged as `cd4f42c4f`.
 
 ## Objective
 
