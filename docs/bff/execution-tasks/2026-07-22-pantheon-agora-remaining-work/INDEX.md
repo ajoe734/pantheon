@@ -121,3 +121,11 @@ tasks are terminal with reviewer approval and repository delivery metadata.
 `AG-HOSTED-CLOSE-001` must archive the accepted FE/BFF pair, compatibility
 hashes, restart-persistence readback on the replacement VM, source freshness,
 and residual risks. EP5 remains outside this packet.
+
+**2026-07-24 update:** `AG-HOSTED-CLOSE-001` was blocked on the
+Governance/Workshop contract defects and superseded for closeout purposes by
+the successor task `AG-HOSTED-CLOSE-002`, which archived the reviewer-consumable
+final closeout for the accepted exact pair (frontend
+`e4399e3ec68f`, BFF `f71c1f8b`, pair `ec91a4aa…c3de2`) after the
+`AG-GOV-WORKSHOP-CONTRACT-001` / `AG-GOV-WORKSHOP-COMPAT-DEPLOY-001` repairs.
+Evidence: `docs/deployment/evidence/agora/ag-hosted-close-002.md`.
