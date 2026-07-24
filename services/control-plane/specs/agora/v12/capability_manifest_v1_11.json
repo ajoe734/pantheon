@@ -1,0 +1,70 @@
+{
+  "manifest_version": "1.11",
+  "capabilities": [
+    {
+      "id": "durable_workshop_operation_lifecycle",
+      "name": "agora.workshop.operations.durable.v1",
+      "implementation_status": "implemented",
+      "routes": [
+        "POST /bff/agora/workshops/{workshop_id}/research-runs",
+        "POST /bff/agora/workshops/{workshop_id}/consultations",
+        "POST /bff/agora/workshops/{workshop_id}/conclude"
+      ],
+      "authoritative_sources": {
+        "strategy_spec_json": "strategy_registry",
+        "research_task_and_run": "research_orchestrator",
+        "consultation_lifecycle": "consultation_service",
+        "approval_decision": "approval_decision_store",
+        "command_receipts_and_terminal_state": "strategy_workshop_postgres"
+      },
+      "durability": {
+        "backend": "postgres",
+        "restart_persistent": true,
+        "downstream_ids_recorded_in_canonical_refs": true,
+        "replay_returns_recorded_downstream_ids": true
+      },
+      "concurrency": {
+        "if_match_required": true,
+        "idempotency_key_required": true,
+        "request_id_required": true,
+        "duplicate_requests_do_not_redispatch_downstream": true,
+        "conclude_atomic_terminal_cas": true
+      },
+      "isolation": {
+        "tenant_scoped": true,
+        "user_scoped": true,
+        "mfa_required": true,
+        "two_person_approval_operations": [
+          "dispatch_research",
+          "conclude"
+        ]
+      },
+      "failure_semantics": {
+        "downstream_failure_records_failed_receipt": true,
+        "failed_key_replay_returns_conflict": true,
+        "consultation_commit_failure_compensates_downstream_cancel": true,
+        "fabricated_completed_results_forbidden": true
+      },
+      "conclusion_rules": {
+        "requires_in_review_status": true,
+        "final_version_must_be_selected": true,
+        "registry_readback_digest_must_match_durable_link": true,
+        "terminal_state": "concluded"
+      },
+      "execution_authority": "none"
+    }
+  ],
+  "required_definition_checksums": {
+    "WorkshopOperationCommandReceipt": "3d8faad82cac37b9d45c565ca0bd27e3e0eec69464ee10a490e1a8f1402ca875",
+    "WorkshopResearchRunResource": "41ec44a335db903b8c5e171c35c180d4acb3300fb58f156891af99e24fea0b14",
+    "WorkshopResearchRunEnvelope": "6cb2a0ea0af270c2401f727fcf15c50978bbc970c6d2ee44184ab2c950be79d8",
+    "WorkshopConsultationResource": "8fb67e74112828c4dd5065de82ec0fcb70bd8126477baae691c80a256a2029cc",
+    "WorkshopConsultationEnvelope": "2a29bf9b08936c7e2f749b80277e600974336d34047743a6ab1d966ca04fc82b",
+    "WorkshopConcludeResource": "6941fcc09dde716bdba5a94b2595771b85876ce36a4de71cf08f4ce4cf0ba380",
+    "WorkshopConcludeEnvelope": "94023dbdd4d75bb39bab36800079c936e06b727e8e48ca327627830d7beadc6a",
+    "WorkshopConcludeFinalVersionRule": "baf78e96d8615d524ad6e9241699c4b295fa16634b7f32712bc502532e3a1a6f",
+    "WorkshopOperationDurabilityRule": "5ba628b03ca50bb6842b71a1cf8221a1a87d21324709bdb02c488a3bd758f994"
+  },
+  "task_id": "AG-WS-OPS-002",
+  "note": "Additive durable lifecycle contract for the three Workshop operations deferred by AG-GAP-005, over v1.10. Deployment, order routing, capital allocation, and live-capital effects remain excluded."
+}

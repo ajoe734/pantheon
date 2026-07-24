@@ -14,9 +14,9 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 from urllib.error import HTTPError
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
-from services.external_egress import guard_external_url
+from services.external_egress import open_external_url
 
 
 @dataclass
@@ -86,13 +86,13 @@ class OpenAlexClient:
         params["mailto"] = self.email
         url = f"{self.BASE_URL}/{endpoint}?{urlencode(params)}"
         
-        request = Request(guard_external_url(url, caller="research.openalex_client"), headers={
+        request = Request(url, headers={
             "User-Agent": "PantheonGrokResearch/1.0 (research-bot@pantheon-system.local)"
         })
         
         try:
             self.last_request_time = time.time()
-            with urlopen(request, timeout=10) as response:
+            with open_external_url(request, caller="research.openalex_client", timeout=10) as response:
                 data = json.loads(response.read().decode('utf-8'))
             return data
         except HTTPError as e:

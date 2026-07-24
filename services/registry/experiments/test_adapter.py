@@ -152,7 +152,7 @@ class TestRegistryExperimentAdapter(unittest.TestCase):
         self.assertEqual(record.tags["pantheon.artifact_state"], "approved")
         self.assertEqual(record.tags["pantheon.deployment_stage"], "paper")
         self.assertEqual(record.tags["pantheon.experiment_backend"], "mlflow")
-        self.assertEqual(record.tags["pantheon.experiment_backend_version"], "3.10.1")
+        self.assertEqual(record.tags["pantheon.experiment_backend_version"], "3.11.1")
         self.assertEqual(record.tags["pantheon.aliases"], "[\"approved\"]")
         self.assertEqual(record.metrics["sharpe_ratio"], 1.34)
         self.assertEqual(
@@ -164,7 +164,7 @@ class TestRegistryExperimentAdapter(unittest.TestCase):
             "object://pantheon/registry/strat-001/1.2.3/artifact.bin",
         )
         self.assertEqual(record.artifacts["artifact_handoff.json"]["backend"], "mlflow")
-        self.assertEqual(record.artifacts["artifact_handoff.json"]["tracking_version"], "3.10.1")
+        self.assertEqual(record.artifacts["artifact_handoff.json"]["tracking_version"], "3.11.1")
 
     def test_sync_registry_entry_returns_promoted_metadata_with_experiment_ref(self):
         backend = InMemoryMlflowBackend()

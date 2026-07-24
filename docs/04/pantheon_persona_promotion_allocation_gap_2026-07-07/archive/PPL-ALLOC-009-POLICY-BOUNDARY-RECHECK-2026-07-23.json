@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "task_id": "PPL-ALLOC-009",
+  "captured_at": "2026-07-23T01:06:50Z",
+  "status": "blocked",
+  "owner": "Codex",
+  "reviewer": "Codex2",
+  "decision": "B1 cannot be executed on the hosted dev stack without violating the canonical canary/live activation policy; B3 requires that same unavailable chain, so B5 is not ready.",
+  "cleared_prerequisites": {
+    "b2_credentials_and_strict_auth": true,
+    "ask_for_existing_credentials_again": false,
+    "raw_secret_values_recorded": false,
+    "ops_dispatch_lease_sync_functional_delivery_hosted": true,
+    "pan_lifecycle_recovery_functional_delivery_hosted": true
+  },
+  "hosted_bff": {
+    "commit": "c555a14ebbcc2a7504076eeba3d381b016231833",
+    "source_commit_known": true,
+    "deployment_run_id": 29968941919,
+    "deployment_run_conclusion": "success",
+    "healthz_http": 200,
+    "readyz_http": 200,
+    "config_posture": {
+      "auth_stub": false,
+      "auth_mode": "strict",
+      "dev_login_enabled": true,
+      "mfa_required": true,
+      "assistant_kernel_enabled": true
+    },
+    "contains_ppl_commits": {
+      "distinct_governed_identities": "f18f7ad224b9787e30ad594eb372bf9023dca0f4",
+      "atomic_stage_promotion": "3b9336b0dc2929128b17b924921d63e0e5ed7911"
+    }
+  },
+  "hosted_frontend": {
+    "commit": "9597d0c3146451a004c30f2e638010c4eec86488",
+    "manifest_bff_commit": "c555a14ebbcc2a7504076eeba3d381b016231833",
+    "live_bff_commit": "c555a14ebbcc2a7504076eeba3d381b016231833",
+    "manifest_matches_runtime_bff": true,
+    "pair_id": "923affa601982724112b1d5bec99d5a261dac33f446441eaca125ec2807d55a0",
+    "deployment_profile": "read-only",
+    "deployment_state": "accepted",
+    "accepted_at": "2026-07-23T01:06:17Z",
+    "safe_build_mode": {
+      "bff_mode": "live",
+      "bff_fallback": "strict",
+      "real_writes": false,
+      "dev_stub_writes": false,
+      "embedded_bearer": false
+    },
+    "integration_gate_run_id": 29964393757,
+    "integration_gate_conclusion": "success",
+    "deployment_run_id": 29970579394,
+    "deployment_run_conclusion": "success",
+    "candidate_pre_switch": "passed",
+    "post_switch": "passed",
+    "rollback_required": false
+  },
+  "policy_boundary": {
+    "positive_allocation_stages": [
+      "canary_running",
+      "live_running"
+    ],
+    "paper_exclusion_code": "stage_not_real_allocation_eligible",
+    "promotion_review_runtime_mutation": false,
+    "canonical_transition_route": "POST /api/runtime-bindings/{binding_id}/promote",
+    "disabled_response": {
+      "http": 409,
+      "code": "STAGE_EXECUTION_DISABLED"
+    },
+    "dev_deploy_flags": {
+      "PANTHEON_CANARY_EXECUTION_ENABLED": false,
+      "PANTHEON_LIVE_BROKER_ENABLED": false
+    },
+    "runbook_requires_flags_false_while_evidence_missing": true,
+    "acceptance_requires_real_live_capital_disabled": true,
+    "shortcut_allowed": false
+  },
+  "acceptance": {
+    "B1": "blocked_policy_boundary",
+    "B2": "cleared",
+    "B3": "blocked_only_by_B1_exact_pair_cleared",
+    "B4": "cleared",
+    "B5": "not_requested"
+  },
+  "side_effects": {
+    "b1_write_sent": false,
+    "execution_switch_changed": false,
+    "live_or_capital_side_effect": false
+  },
+  "external_decision": {
+    "owner": "Human/Ops with Risk, Capital, and Execution owners",
+    "options": [
+      "Authorize a bounded dev canary activation packet with all canonical evidence and four distinct claim-bound MFA authorities.",
+      "Amend B1 to accept a paper-only governance simulation without claiming real-stage eligibility or real allocation."
+    ]
+  },
+  "validation": {
+    "public_runtime_probes": "passed",
+    "execute_plans_integration_gate": "passed",
+    "execute_plans_read_only_deployment": "passed",
+    "accepted_pair_public_readback": "passed",
+    "git_ancestry": "passed",
+    "policy_and_deploy_contract_inspection": "passed",
+    "focused_pytest": "not_run_pytest_module_missing"
+  }
+}
