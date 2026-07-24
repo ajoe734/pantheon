@@ -1497,6 +1497,7 @@ WORKER_WORKTREE_EXECUTION_REASONS = [
     REASON_OWNED_IN_PROGRESS,
     REASON_OWNED_FINALIZE,
     REASON_REVIEW_READY,
+    "github_retry",
     "chair_review:*",
 ]
 
@@ -1576,6 +1577,14 @@ def worker_workspace_task_id(request: DeliveryRequest) -> str | None:
     metadata_task_id = str(request.metadata.get("workspace_task_id") or "").strip()
     task_id = metadata_task_id or str(request.task_id or "").strip()
     return task_id or None
+
+
+def worker_request_requires_isolated_worktree(request: DeliveryRequest) -> bool:
+    metadata = getattr(request, "metadata", {})
+    return bool(
+        (metadata.get("require_isolated_worktree") if isinstance(metadata, dict) else False)
+        or str(getattr(request, "reason", "") or "").strip() == "github_retry"
+    )
 
 
 def _git_worktree_records(repo_root: Path) -> list[dict[str, str]]:
@@ -2115,14 +2124,74 @@ def prepare_worker_workspace(
     target_agent: str | None,
 ) -> tuple[bool, str | None]:
     settings = worker_worktree_settings(config)
+    requires_isolated = worker_request_requires_isolated_worktree(request)
     if not settings.get("enabled"):
+        if requires_isolated:
+            message = (
+                f"Cannot dispatch explicit retry for {request.task_id or 'unknown task'}: "
+                "isolated worker worktrees are disabled. Refusing shared-checkout fallback."
+            )
+            write_activity_log(
+                config,
+                {
+                    "type": "dispatch_blocked_worktree_lease",
+                    "task_id": request.task_id,
+                    "target_agent": target_agent,
+                    "queue_event_id": queue_event_id,
+                    "message": message,
+                    "refresh_status": "isolated_worktrees_disabled",
+                },
+            )
+            return False, message
         return True, None
-    if not worker_worktree_reason_enabled(request.reason, settings):
+    if not requires_isolated and not worker_worktree_reason_enabled(request.reason, settings):
         return True, None
     workspace_task_id = worker_workspace_task_id(request)
     if not workspace_task_id:
+        if requires_isolated:
+            message = (
+                "Cannot dispatch explicit retry without a task-scoped worktree identity. "
+                "Refusing shared-checkout fallback."
+            )
+            write_activity_log(
+                config,
+                {
+                    "type": "dispatch_blocked_worktree_lease",
+                    "task_id": request.task_id,
+                    "target_agent": target_agent,
+                    "queue_event_id": queue_event_id,
+                    "message": message,
+                    "refresh_status": "missing_workspace_task_id",
+                },
+            )
+            return False, message
         return True, None
     if request.metadata.get("workspace_path"):
+        if requires_isolated:
+            repo_root = config_path(config, "status_file").parents[0].resolve()
+            workspace_path = Path(
+                os.path.expanduser(str(request.metadata["workspace_path"]))
+            ).resolve()
+            if workspace_path == repo_root:
+                message = (
+                    f"Cannot dispatch explicit retry for {workspace_task_id}: "
+                    "workspace_path resolves to the shared supervisor checkout. "
+                    "Refusing shared-checkout fallback."
+                )
+                write_activity_log(
+                    config,
+                    {
+                        "type": "dispatch_blocked_worktree_lease",
+                        "task_id": request.task_id,
+                        "workspace_task_id": workspace_task_id,
+                        "target_agent": target_agent,
+                        "queue_event_id": queue_event_id,
+                        "message": message,
+                        "workspace_path": str(workspace_path),
+                        "refresh_status": "shared_checkout_rejected",
+                    },
+                )
+                return False, message
         return True, None
 
     repo_root = config_path(config, "status_file").parents[0].resolve()

@@ -1100,25 +1100,26 @@ def queue_coordination_command(
 
 def queue_resume_for_task(config: dict[str, Any], task: dict[str, Any]) -> bool:
     target_agent = task.get("owner")
-    if not target_agent:
+    task_id = str(task.get("id") or "").strip()
+    if not target_agent or not task_id:
         return False
     event = {
-        "key": f"github-resume:{task['id']}:{target_agent}:{utc_now()}",
-        "task_id": task.get("id"),
+        "key": f"github-resume:{task_id}:{target_agent}:{utc_now()}",
+        "task_id": task_id,
         "target_agent": target_agent,
         "reason": "github_retry",
         "task": {
-            "id": task.get("id"),
+            "id": task_id,
             "artifacts": task.get("artifacts") or [],
             "next": task.get("next"),
         },
     }
     message = render_wakeup_message(config, event, target_agent)
     payload = {
-        "event_id": f"github-{task['id']}-{_iso_now_dt().strftime('%Y%m%dT%H%M%SZ')}",
+        "event_id": f"github-{task_id}-{_iso_now_dt().strftime('%Y%m%dT%H%M%SZ')}",
         "created_at": utc_now(),
         "event_key": event["key"],
-        "task_id": task.get("id"),
+        "task_id": task_id,
         "target_agent": agent_config_for(config, target_agent)["id"],
         "target_display_name": target_agent,
         "provider": agent_config_for(config, target_agent).get("provider", target_agent),
@@ -1126,14 +1127,19 @@ def queue_resume_for_task(config: dict[str, Any], task: dict[str, Any]) -> bool:
         "message": message,
         "context_files": execution_context_files(config, task.get("id")),
         "target_files": task.get("artifacts") or [],
-        "metadata": {"task": {"id": task.get("id")}},
+        "metadata": {
+            "task": {"id": task_id},
+            "workspace_task_id": task_id,
+            "require_isolated_worktree": True,
+            "explicit_retry_source": "github_bus",
+        },
     }
     enqueue_event(config, payload)
     write_activity_log(
         config,
         {
             "type": "github_resume_queued",
-            "task_id": task.get("id"),
+            "task_id": task_id,
             "target_agent": target_agent,
             "message": "Queued resume wake-up from GitHub approval bus.",
             "queue_event_id": payload["event_id"],

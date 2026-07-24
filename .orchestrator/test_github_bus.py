@@ -60,6 +60,50 @@ class GitHubBusCommandTests(unittest.TestCase):
             actor="Claude",
         )
 
+    def test_queue_resume_marks_github_retry_as_isolated_task_work(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            queue_path = root / "event-queue.jsonl"
+            activity_path = root / "activity-log.jsonl"
+            config = {
+                "paths": {
+                    "event_queue": str(queue_path),
+                    "activity_log": str(activity_path),
+                },
+                "agents": {
+                    "codex": {
+                        "id": "codex",
+                        "display_name": "Codex",
+                        "provider": "codex",
+                    }
+                },
+            }
+            task = {
+                "id": "OPS-RETRY-001",
+                "owner": "Codex",
+                "artifacts": [".orchestrator/supervisor.py"],
+                "next": "retry",
+            }
+            with (
+                mock.patch.object(github_bus, "render_wakeup_message", return_value="wake"),
+                mock.patch.object(
+                    github_bus,
+                    "execution_context_files",
+                    return_value=["AI_COLLABORATION_GUIDE.md"],
+                ),
+                mock.patch.object(github_bus, "write_activity_log"),
+            ):
+                queued = github_bus.queue_resume_for_task(config, task)
+
+            events = github_bus.load_jsonl(queue_path)
+
+        self.assertTrue(queued)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["reason"], "github_retry")
+        self.assertEqual(events[0]["metadata"]["workspace_task_id"], "OPS-RETRY-001")
+        self.assertTrue(events[0]["metadata"]["require_isolated_worktree"])
+        self.assertEqual(events[0]["metadata"]["explicit_retry_source"], "github_bus")
+
     def test_poll_pr_reviews_approved_uses_reviewer_approval(self) -> None:
         status = {
             "tasks": [
