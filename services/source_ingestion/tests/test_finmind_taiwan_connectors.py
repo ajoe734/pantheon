@@ -34,7 +34,8 @@ def _allow_guarded_urls(monkeypatch: pytest.MonkeyPatch) -> None:
     leaves the process; the guard would otherwise deny the real FinMind host
     the way it does in dev.
     """
-    monkeypatch.setenv("PANTHEON_EXTERNAL_EGRESS", "allow")
+    monkeypatch.setenv("PANTHEON_EXTERNAL_EGRESS", "allowlist")
+    monkeypatch.setenv("PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS", "api.finmindtrade.com")
 
 
 BROKER_DAILY_REPORT_PAYLOAD = {
@@ -293,7 +294,7 @@ def test_live_fetcher_dataset_returns_payload_and_quota_meta(
     mock_resp = _mock_http_response(price_body, headers=rate_headers)
 
     fetcher = FinMindLiveFetcher()
-    with patch("urllib.request.urlopen", return_value=mock_resp):
+    with patch("services.source_ingestion.connectors.finmind_taiwan.open_external_url", return_value=mock_resp):
         payload, quota_meta = fetcher.fetch_dataset(
             "TaiwanStockPrice", symbol="2330", start_date="2026-06-08", end_date="2026-06-08"
         )
@@ -317,12 +318,13 @@ def test_live_fetcher_sends_token_in_authorization_header_not_request_url(
 
     captured_requests: list[urllib.request.Request] = []
 
-    def capture_urlopen(request: urllib.request.Request, *, timeout: float) -> MagicMock:
+    def capture_urlopen(request: urllib.request.Request, *, caller: str, timeout: float) -> MagicMock:
+        assert caller == "source_ingest.finmind_taiwan"
         captured_requests.append(request)
         return mock_resp
 
     fetcher = FinMindLiveFetcher()
-    with patch("urllib.request.urlopen", side_effect=capture_urlopen):
+    with patch("services.source_ingestion.connectors.finmind_taiwan.open_external_url", side_effect=capture_urlopen):
         payload, quota_meta = fetcher.fetch_dataset("TaiwanStockPrice", symbol="2330")
 
     assert payload["status"] == 200
@@ -345,7 +347,7 @@ def test_live_fetcher_raises_credential_error_on_http_401(
         hdrs=None,
         fp=None,
     )
-    with patch("urllib.request.urlopen", side_effect=exc):
+    with patch("services.source_ingestion.connectors.finmind_taiwan.open_external_url", side_effect=exc):
         with pytest.raises(FinMindCredentialError, match="HTTP 401"):
             fetcher.fetch_dataset("TaiwanStockPrice", symbol="2330")
 
@@ -362,7 +364,7 @@ def test_live_fetcher_raises_quota_error_on_http_402(
         hdrs=None,
         fp=None,
     )
-    with patch("urllib.request.urlopen", side_effect=exc):
+    with patch("services.source_ingestion.connectors.finmind_taiwan.open_external_url", side_effect=exc):
         with pytest.raises(FinMindQuotaError, match="HTTP 402"):
             fetcher.fetch_dataset("TaiwanStockPrice", symbol="2330")
 
@@ -374,7 +376,7 @@ def test_live_fetcher_raises_fetch_error_on_app_level_error(
     error_body = {"msg": "Internal Server Error", "status": 500, "data": []}
     mock_resp = _mock_http_response(error_body)
     fetcher = FinMindLiveFetcher()
-    with patch("urllib.request.urlopen", return_value=mock_resp):
+    with patch("services.source_ingestion.connectors.finmind_taiwan.open_external_url", return_value=mock_resp):
         with pytest.raises(FinMindFetchError, match="500"):
             fetcher.fetch_dataset("TaiwanStockPrice", symbol="2330")
 
@@ -389,7 +391,7 @@ def test_live_fetcher_broker_report_returns_payload_and_quota_meta(
     ]}
     mock_resp = _mock_http_response(broker_body)
     fetcher = FinMindLiveFetcher()
-    with patch("urllib.request.urlopen", return_value=mock_resp):
+    with patch("services.source_ingestion.connectors.finmind_taiwan.open_external_url", return_value=mock_resp):
         payload, quota_meta = fetcher.fetch_broker_report("2330", "2026-06-08")
 
     assert payload["status"] == 200
@@ -407,7 +409,7 @@ def test_live_fetcher_storage_objects_returns_manifest(
     ]}
     mock_resp = _mock_http_response(manifest_body)
     fetcher = FinMindLiveFetcher()
-    with patch("urllib.request.urlopen", return_value=mock_resp):
+    with patch("services.source_ingestion.connectors.finmind_taiwan.open_external_url", return_value=mock_resp):
         payload, quota_meta = fetcher.fetch_storage_objects(
             FINMIND_BROKER_REPORT_DATASET, "2026-06-08"
         )

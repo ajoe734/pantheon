@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
 from urllib.parse import urlencode
 
-from services.external_egress import guard_external_url
+from services.external_egress import open_external_url
 
 from .base import (
     AuthPolicy,
@@ -894,7 +894,7 @@ class FinMindLiveFetcher:
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         """HTTP GET against FinMind API. Token is sent only as Authorization header."""
         request = urllib.request.Request(
-            guard_external_url(url, caller="source_ingest.finmind_taiwan"),
+            url,
             headers={
                 "Accept": "application/json",
                 "Authorization": f"Bearer {token}",
@@ -903,7 +903,11 @@ class FinMindLiveFetcher:
         )
         quota_meta: dict[str, Any] = {"request_url": url}
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+            with open_external_url(
+                request,
+                caller="source_ingest.finmind_taiwan",
+                timeout=self.timeout_seconds,
+            ) as response:
                 quota_meta.update(_extract_quota_meta(response.headers))
                 quota_meta["http_status"] = response.status
                 raw = response.read(_FINMIND_MAX_RESPONSE_BYTES)
