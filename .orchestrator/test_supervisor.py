@@ -2650,6 +2650,102 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             previous_event["key"],
         )
 
+    def test_dispatcher_redispatches_interrupted_governed_review_exactly_once(self) -> None:
+        task = {
+            "id": "INTERRUPTED-REVIEW",
+            "status": "review",
+            "owner": "Claude",
+            "reviewer": "Codex",
+            "depends_on": [],
+            "last_update": "2026-07-24T00:10:00Z",
+            "next": "Review the task without mutating its handoff.",
+        }
+        handoff = {
+            "task_id": task["id"],
+            "from": "Claude",
+            "to": "Codex",
+            "message": task["next"],
+            "status": "pending",
+            "created_at": task["last_update"],
+        }
+        event = supervisor.build_dispatch_event(
+            task,
+            "Codex",
+            "review_ready_dispatch",
+            {task["id"]: task},
+        )
+        worker = {
+            "run_id": "codex-review-interrupted",
+            "task_id": task["id"],
+            "provider": "codex",
+            "agent_id": "codex",
+            "status": "completed",
+            "runner_finished_at": "2026-07-24T00:11:00Z",
+            "last_event_at": "2026-07-24T00:11:00Z",
+            "request_snapshot": {
+                "agent_id": "codex",
+                "provider": "codex",
+                "delivery_mode": "codex",
+                "message": "review",
+                "task_id": task["id"],
+                "reason": "review_ready_dispatch",
+                "metadata": {"dispatch_event_key": event["key"]},
+            },
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {worker["run_id"]: worker},
+            "seen_event_keys": {event["key"]: supervisor.utc_now()},
+        }
+        status = {"tasks": [task], "handoffs": [handoff]}
+        unchanged_status = json.loads(json.dumps(status))
+        config = json.loads(json.dumps(self.config))
+        config["ready_dispatcher"]["unchanged_task_cooldown_seconds"] = 900
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(
+                supervisor,
+                "queue_delivery_event",
+                return_value=True,
+            ) as queue_delivery_event,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            self.assertTrue(supervisor.dispatch_ready_tasks(config, state))
+            self.assertFalse(supervisor.dispatch_ready_tasks(config, state))
+
+        queue_delivery_event.assert_called_once()
+        queued_event = queue_delivery_event.call_args.args[1]
+        redispatch = queued_event["task"]["governed_review_redispatch"]
+        self.assertEqual(redispatch["attempt"], 1)
+        self.assertEqual(redispatch["parent_worker_run_id"], worker["run_id"])
+        self.assertTrue(redispatch["require_isolated_worktree"])
+        self.assertEqual(worker["review_redispatch_event_key"], event["key"])
+        self.assertEqual(status, unchanged_status)
+        self.assertEqual(
+            [call.args[1]["type"] for call in write_activity_log.call_args_list],
+            ["review_worker_redispatched"],
+        )
+
+        request = supervisor.build_request(
+            config,
+            {
+                "event_key": queued_event["key"],
+                "target_agent": "codex",
+                "message": "review",
+                "task_id": task["id"],
+                "reason": "review_ready_dispatch",
+                "context_files": [],
+                "metadata": {"task": queued_event["task"]},
+            },
+        )
+        self.assertTrue(supervisor.worker_request_requires_isolated_worktree(request))
+        self.assertEqual(
+            request.metadata["governed_review_redispatch"]["parent_worker_run_id"],
+            worker["run_id"],
+        )
+
     def test_queue_completion_starts_unchanged_signature_cooldown(self) -> None:
         state = {
             "queue": {
@@ -10696,6 +10792,138 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
             self.assertEqual(
                 metrics["last_measurements"]["boot_reconciliation"]["counts"]["started_queue_records_requeued"],
                 1,
+            )
+
+    def test_reconcile_runtime_redispatches_completed_review_worker_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = self._config(root)
+            config["ready_dispatcher"]["unchanged_task_cooldown_seconds"] = 900
+            task = {
+                "id": "OPS-REVIEW-RECOVERY",
+                "status": "review",
+                "owner": "Claude",
+                "reviewer": "Codex",
+                "depends_on": [],
+                "last_update": "2026-07-24T00:10:00Z",
+                "next": "Review pending after runtime replacement.",
+            }
+            handoff = {
+                "task_id": task["id"],
+                "from": "Claude",
+                "to": "Codex",
+                "message": task["next"],
+                "status": "pending",
+                "created_at": task["last_update"],
+            }
+            status = {"tasks": [task], "handoffs": [handoff]}
+            event = supervisor.build_dispatch_event(
+                task,
+                "Codex",
+                "review_ready_dispatch",
+                {task["id"]: task},
+            )
+            event.update(
+                {
+                    "event_id": "evt-review-recovery",
+                    "created_at": "2026-07-24T00:10:01Z",
+                    "target_agent": "codex",
+                    "target_display_name": "Codex",
+                    "message": "review",
+                }
+            )
+            (root / "ai-status.json").write_text(
+                json.dumps(status),
+                encoding="utf-8",
+            )
+            (root / "event-queue.jsonl").write_text(
+                json.dumps(event) + "\n",
+                encoding="utf-8",
+            )
+            (root / "activity-log.jsonl").write_text("", encoding="utf-8")
+            worker = {
+                "run_id": "codex-review-recovery",
+                "status": "running",
+                "provider": "codex",
+                "agent_id": "codex",
+                "task_id": task["id"],
+                "queue_event_id": event["event_id"],
+                "pid": 987654,
+                "runner_status": "completed",
+                "runner_finished_at": "2026-07-24T00:11:00Z",
+                "exit_code": 0,
+                "request_snapshot": {
+                    "agent_id": "codex",
+                    "provider": "codex",
+                    "delivery_mode": "codex",
+                    "message": "review",
+                    "task_id": task["id"],
+                    "reason": "review_ready_dispatch",
+                    "metadata": {"dispatch_event_key": event["key"]},
+                },
+            }
+            state = {
+                "queue": {
+                    "events": {
+                        event["event_id"]: {
+                            "status": "started",
+                            "run_id": worker["run_id"],
+                            "event_key": event["key"],
+                        }
+                    }
+                },
+                "workers": {worker["run_id"]: worker},
+            }
+
+            with (
+                mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                self.assertTrue(supervisor.reconcile_runtime_on_boot(config, state))
+
+            self.assertEqual(worker["status"], "completed")
+            self.assertEqual(
+                state["seen_event_keys"][event["key"]],
+                state["queue"]["events"][event["event_id"]]["processed_at"],
+            )
+            self.assertTrue(supervisor.prune_event_queue(config, state))
+            self.assertEqual(state["queue"]["events"], {})
+
+            queued: list[dict[str, object]] = []
+            with (
+                mock.patch.object(
+                    supervisor,
+                    "queue_delivery_event",
+                    side_effect=lambda _config, item: queued.append(item) or True,
+                ),
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                self.assertTrue(
+                    supervisor.dispatch_ready_tasks(
+                        config,
+                        state,
+                        provider_report={},
+                        agent_ids_override=["codex"],
+                        max_dispatches_override=1,
+                    )
+                )
+                self.assertFalse(
+                    supervisor.dispatch_ready_tasks(
+                        config,
+                        state,
+                        provider_report={},
+                        agent_ids_override=["codex"],
+                        max_dispatches_override=1,
+                    )
+                )
+
+            self.assertEqual(len(queued), 1)
+            redispatch = queued[0]["task"]["governed_review_redispatch"]
+            self.assertEqual(redispatch["parent_worker_run_id"], worker["run_id"])
+            self.assertTrue(redispatch["require_isolated_worktree"])
+            self.assertEqual(
+                json.loads((root / "ai-status.json").read_text(encoding="utf-8")),
+                status,
             )
 
     def test_reconcile_runtime_fails_running_worker_when_pid_is_missing(self) -> None:
