@@ -1,19 +1,23 @@
 # TJ-E2E-012 - Hosted Acceptance And Closeout
 
-Date: 2026-07-23 UTC (header reconciled 2026-07-24 UTC)
+Date: 2026-07-23 UTC (header reconciled and closeout finalized 2026-07-24 UTC)
 
 Owner: Claude2 (evidence sections 1-7 authored by Codex2 under the prior
 ownership of this task; authorship is preserved, not reassigned)
 
 Governed reviewer: Codex
 
-Packet disposition: **HUMAN/OPS VERDICT RECORDED — READY FOR GOVERNED REVIEWER REVIEW**
+Packet disposition: **CLOSED — BOTH ACCEPTANCE GATES RECORDED**
 
 Independent Human/Ops verdict: **APPROVED** at `2026-07-23T08:07:19Z`, recorded
 in Section 8 and merged to `dev` through
 [PR #4011](https://github.com/ajoe734/pantheon/pull/4011) (merge
-`00b38f41ec51296762d502c4bd5732f95ccf2953`). The remaining gate is the governed
-`Codex` repository review that records `review -> review_approved`.
+`00b38f41ec51296762d502c4bd5732f95ccf2953`).
+
+Governed reviewer verdict: **APPROVED** by `Codex` at `2026-07-24T00:48:58Z`,
+recording the canonical `review -> review_approved` transition. See Section 10.
+Both gates are now closed; each was decided independently and neither was
+derived from the other or from the owner recommendation in Section 1.
 
 Wave: 5
 
@@ -189,7 +193,7 @@ and its scenario-specific assertion.
 | R2 — Performance is an acceptance sample, not a soak | Twenty warmed samples per route establish the specified p95 budgets but not long-duration load behavior. Continue dashboard/SLO monitoring and require canary soak before production. | SRE / Trade Journey service owner | 2026-08-06 or before production promotion |
 | R3 — Deterministic dev scenarios are not live-capital proof | The run proves hosted canonical behavior with safe writes off. It does not authorize live writes, broker capital, or production default rollout. | Human/Ops + Trading Ops | Must be resolved by a separate governed canary/live decision |
 | R4 — GitHub artifacts have finite retention | Browser artifact expires 2026-10-19; final ledger artifact expires 2026-10-21. Archive them in the governed evidence store if retention beyond that date is required. | Release Engineering | 2026-10-12 |
-| R5 — Human/Ops verdict is outstanding — **RESOLVED 2026-07-23** | No owner, helper or model assertion could satisfy the independent decision. Section 8 was completed by Human/Ops at `2026-07-23T08:07:19Z` and merged through PR #4011. The residual half of the original condition is unchanged: the governed reviewer (`Codex`) must still record the canonical `review -> review_approved` transition. | Human/Ops (verdict, discharged) / Codex (governed review, open) | Verdict discharged; governed review still required before `done` |
+| R5 — Human/Ops verdict is outstanding — **FULLY RESOLVED 2026-07-24** | No owner, helper or model assertion could satisfy the independent decision. Section 8 was completed by Human/Ops at `2026-07-23T08:07:19Z` and merged through PR #4011. The residual half of the condition — the governed reviewer transition — was discharged by `Codex` at `2026-07-24T00:48:58Z` (Section 10). | Human/Ops (verdict, discharged) / Codex (governed review, discharged) | Both gates discharged; no renewal outstanding |
 | R6 — Dev hosted tip advanced after the acceptance run | The currently served read-only pair is newer than both retained proof pairs. Preserve the immutable historical result, but do not claim the current tip is covered; rerun the exact pair before claiming it as accepted. | Release Engineering + Trade Journey owners | Before current-tip acceptance, canary or production promotion |
 
 ## 8. Independent Human/Ops verdict — recorded
@@ -239,11 +243,11 @@ The requirement this verdict satisfies — each element is present above:
 | Accepted/rejected risk IDs and any additional conditions | "Risk decisions" above: R1, R2, R3, R4, R6 ACCEPTED with stated conditions; R5 RESOLVED |
 | Confirmation that the read-only rollout and rollback plan are acceptable | "Rollout/rollback" above |
 
-The governed reviewer (`Codex`) must still separately perform the repository
-review and record the canonical `review -> review_approved` transition; that
-gate is open. Reviewer approval cannot be used to fabricate a Human/Ops
-identity or decision, and this recorded verdict does not substitute for the
-reviewer transition.
+The governed reviewer (`Codex`) separately performed the repository review and
+recorded the canonical `review -> review_approved` transition on 2026-07-24;
+that gate is documented in Section 10. Reviewer approval cannot be used to
+fabricate a Human/Ops identity or decision, and this recorded verdict does not
+substitute for the reviewer transition — the two remain distinct records.
 
 ## 9. Reproduction and validation
 
@@ -288,3 +292,50 @@ The only deltas are two additions — verdict commit
 `691f2da1e75573fc53afe030b80ed0895f3ca4ae` and its `dev` merge
 `00b38f41ec51296762d502c4bd5732f95ccf2953`, both cited as verdict provenance.
 No run ID, artifact ID, digest, or deployment commit was altered or removed.
+
+### 2026-07-24 owner closeout revalidation
+
+The closeout change is documentation-only: it records the governed reviewer
+transition in Section 10 and reconciles the disposition header, the R5 row and
+the Section 8 closing paragraph against it. It adds no evidence claim, alters no
+existing evidence identity, and re-runs no hosted proof.
+
+```text
+python3 -m py_compile scripts/verify_hosted_scenarios.py scripts/test_verify_hosted_scenarios.py
+/tmp/tj-e2e-012-test-env/bin/python -m pytest scripts/test_verify_hosted_scenarios.py -q
+git diff --check
+```
+
+Results: `py_compile` clean; 14 passed (unchanged); `git diff --check` clean.
+
+## 10. Governed reviewer approval and task closeout
+
+**Reviewer verdict: APPROVED.**
+
+- Governed reviewer: `Codex` (reviewer of record, distinct from owner `Claude2`).
+- Canonical transition: `review -> review_approved`, recorded at
+  `2026-07-24T00:48:58Z` in the authoritative Pantheon task-state store.
+- Reviewed delivery: [PR #4015](https://github.com/ajoe734/pantheon/pull/4015),
+  merge `7e269e4d`, containing owner commit
+  `c972c05216f69303f37dcec2ad61fa06be7ecf8e`; all required checks green and the
+  merge is on `dev`.
+
+Reviewer findings of record:
+
+| Reviewed claim | Reviewer finding |
+| --- | --- |
+| Delivery is merged and gated | PR #4015 merge `7e269e4d` is on `dev` with all required checks green |
+| Immutable hosted evidence | Run `29971351535` artifact `8549806068` digest/checksum matched; 12/12 ledger rows, 97 redacted raw calls, 98/98 checks, 5/5 acceptance axes |
+| Exact deployment pair and RBAC | FE `9597d0c3` / BFF `c555a14e` pair confirmed; S10 viewer masking and cross-tenant `403` denial hold |
+| Hosted latency and streaming | detail p95 `874.532ms`, resolve p95 `736.854ms`, SSE `Last-Event-ID` reconnect and rebuild health evidence stand |
+| Browser axes | Retained run `29856622315` proves desktop, mobile and accessibility |
+| Independent Human/Ops verdict | Independently recorded by merged PR #4011 (merge `00b38f41`), not derived from owner or reviewer assertion |
+| Local verification and dependencies | Focused pytest 14 passed; `TJ-E2E-001`–`TJ-E2E-011` all archived `done`/`completed` |
+
+### Closeout scope
+
+Closeout is limited to what both gates actually accepted: the read-only hosted
+rollout for the two proven pairs in Section 2. It is **not** an authorization of
+live writes, broker capital, or production default rollout, and it does not
+claim the post-run hosted tip. The conditions attached to R1, R2, R3, R4 and R6
+survive closeout and remain owned by the parties named in Section 7.
