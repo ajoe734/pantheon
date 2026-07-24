@@ -604,7 +604,8 @@
         "fallback_mode": null
       },
       "auth_probe": {
-        "failed_probe_interval_seconds": 3600
+        "probe_timeout_seconds": 120,
+        "failed_probe_interval_seconds": 60
       }
     },
     "antigravity2": {
