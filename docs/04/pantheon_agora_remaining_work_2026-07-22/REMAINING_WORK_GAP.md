@@ -80,6 +80,37 @@ The canonical execution packet is:
    Ray/RLlib, and Torch manifests still require fresh remediation/isolation
    evidence rather than reuse of stale June PR claims.
 
+## Hosted closeout qualification update — 2026-07-24
+
+`AG-HOSTED-CLOSE-001` is blocked on the replacement VM; it is not an accepted
+closeout. Exact pair restore run `30060196528` re-established frontend
+`e4399e3ec68f882ace35d0349e6597cdd101525f` with BFF
+`00b38f41ec51296762d502c4bd5732f95ccf2953`, read-only frontend posture,
+strict auth/MFA, healthy public readback, and the built-in restart-persistence
+smoke.
+
+Task-owned authenticated qualification then exposed two product integration
+defects:
+
+1. Governance rejects the Workshop-required
+   `target_type=strategy_workshop` with `422`; a real approved
+   `strategy_spec` decision is rejected by both Workshop research and conclude
+   with `409 APPROVAL_TARGET_TYPE_MISMATCH`. The producer and consumer approval
+   contracts therefore have no satisfiable common target.
+2. With normal distinct Registry and strategy identities, version list/create
+   fail with `409 STRATEGY_SPEC_STRATEGY_ID_MISMATCH` because Workshop create
+   stores `strategy_spec_ref` in both identity fields.
+
+Registry create, Workshop create/read, versions/select, consultation, four
+distinct MFA identities, viewer denial, and cross-owner denial passed. No
+backing store was edited and no route was intercepted. Full evidence and the
+reusable probe are under
+`docs/deployment/evidence/agora/ag-hosted-close-001/`.
+
+The closeout must remain blocked until both contracts are repaired, a new exact
+pair passes compatibility/deployment gates, and the complete hosted acceptance
+matrix is rerun.
+
 ## Explicit exclusions
 
 - No production or live-capital activation. EP5 remains a Human/Ops gate and

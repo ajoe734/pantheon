@@ -1,0 +1,117 @@
+{
+  "schema_version": "pantheon.agora.hosted-closeout-qualification.v1",
+  "task_id": "AG-HOSTED-CLOSE-001",
+  "accepted": false,
+  "environment": {
+    "project": "pantheon-lupin-dev-20260719",
+    "vm": "pantheon-lupin-dev",
+    "external_ip": "35.201.204.12",
+    "qualified_at": "2026-07-24T02:03:56Z"
+  },
+  "runtime_pair": {
+    "frontend_sha": "e4399e3ec68f882ace35d0349e6597cdd101525f",
+    "backend_sha": "00b38f41ec51296762d502c4bd5732f95ccf2953",
+    "pair_id": "5b5d84cb24e4f7280a02924591d01f570f3d73d791f5761c98dc67a571e9a55f",
+    "compatibility_manifest_sha256": "494980f204f0af21effc018ebbba657c1027b3052e984577833dfa46ab360bb3",
+    "contract_family": "agora.v1.13",
+    "frontend_profile": "read-only",
+    "auth_mode": "strict",
+    "auth_stub": false,
+    "mfa_required": true
+  },
+  "workflow_runs": {
+    "frontend_integration_gate": 30003411349,
+    "exact_pair_restore_and_restart_smoke": 30060196528,
+    "superseded_pair_drift_deploy": 30059251735
+  },
+  "probe": {
+    "run_key": "ag-hosted-close-20260724T020356Z-c15ae7",
+    "script": "docs/deployment/evidence/agora/ag-hosted-close-001/hosted_workshop_probe.py",
+    "identities": {
+      "viewer": {
+        "subject": "pantheon-dev-viewer",
+        "roles": ["viewer"],
+        "mfa_verified": true
+      },
+      "operator_a": {
+        "subject": "pantheon-dev-operator-a",
+        "roles": ["operator"],
+        "mfa_verified": true
+      },
+      "operator_b": {
+        "subject": "pantheon-dev-operator-b",
+        "roles": ["operator"],
+        "mfa_verified": true
+      },
+      "approver": {
+        "subject": "pantheon-dev-approver",
+        "roles": ["approver"],
+        "mfa_verified": true
+      }
+    },
+    "resources": {
+      "strategy_id": "strategy-ag-hosted-close-20260724T020356Z-c15ae7",
+      "registry_id": "strategy-ag-hosted-close-20260724T020356Z-c15ae7",
+      "registry_strategy_identity_coalesced": true,
+      "workshop_id": "ff349acd-9a75-4237-a583-0e283705394c",
+      "workshop_version_id": "wsv-765a593c59a5479213fb",
+      "consultation_request_id": "cr-ws-6128a811275d4fecaea7",
+      "formal_approval_id": "approval-strategy-spec-ag-hosted-close-20260724T020356Z-c15ae7"
+    },
+    "passed_checks": [
+      {"name": "exact_bff_runtime", "http_status": 200},
+      {"name": "anonymous_read_denied", "http_status": 401},
+      {"name": "viewer_write_denied", "http_status": 403},
+      {"name": "registry_strategy_spec_created", "http_status": 200},
+      {"name": "workshop_created", "http_status": 201},
+      {"name": "cross_owner_workshop_read_denied", "http_status": 403},
+      {"name": "workshop_owner_read", "http_status": 200},
+      {"name": "workshop_versions_listed", "http_status": 200},
+      {"name": "workshop_version_created", "http_status": 201},
+      {"name": "workshop_version_selected", "http_status": 200},
+      {"name": "workshop_consultation_created", "http_status": 201},
+      {"name": "formal_approval_closest_supported_target_created", "http_status": 201},
+      {"name": "formal_approval_reviewed_by_distinct_actor", "http_status": 200},
+      {"name": "formal_approval_decided_by_distinct_actor", "http_status": 200}
+    ],
+    "failed_checks": [
+      {
+        "name": "formal_approval_producer_accepts_workshop_target",
+        "http_status": 422,
+        "required_target_type": "strategy_workshop",
+        "reason": "governance TargetType enum does not include strategy_workshop"
+      },
+      {
+        "name": "workshop_research_run_created",
+        "http_status": 409,
+        "code": "HUMAN_GATE_PENDING",
+        "reason": "APPROVAL_TARGET_TYPE_MISMATCH",
+        "precondition_failed": "approval_binding"
+      },
+      {
+        "name": "workshop_concluded",
+        "http_status": 409,
+        "code": "HUMAN_GATE_PENDING",
+        "reason": "APPROVAL_TARGET_TYPE_MISMATCH",
+        "precondition_failed": "approval_binding"
+      }
+    ]
+  },
+  "additional_blocker": {
+    "probe_run_key": "ag-hosted-close-20260724T020155Z-1dee60",
+    "condition": "registry_id and strategy_id are distinct",
+    "versions_http_status": 409,
+    "version_create_http_status": 409,
+    "code": "RESOURCE_CONFLICT",
+    "reason": "STRATEGY_SPEC_STRATEGY_ID_MISMATCH",
+    "precondition_failed": "strategy_version_projection",
+    "root_cause": "workshop create stores strategy_spec_ref in both strategy_id and active_strategy_spec_registry_id"
+  },
+  "safety": {
+    "execution_authority": "none",
+    "live_capital_changed": false,
+    "backing_stores_edited_directly": false,
+    "credentials_or_tokens_recorded": false,
+    "qualification_lease_released_at": "2026-07-24T02:04:21Z"
+  }
+}
