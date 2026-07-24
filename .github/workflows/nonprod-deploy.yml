@@ -45,6 +45,11 @@ on:
         options:
           - strict
           - permissive-stub
+      ppl_alloc_009_dev_proof_enabled:
+        description: "Dev strict/root only: temporarily enable the bounded PPL-ALLOC-009 paper proof producer"
+        required: false
+        default: false
+        type: boolean
       run_evolution_dispatch_probe:
         description: "Dev root only: run and upload the EVOLOOP-001 hosted dispatch probe"
         required: false
@@ -80,6 +85,7 @@ jobs:
       TARGET_REF: ${{ github.event_name == 'push' && github.sha || inputs.ref || github.sha }}
       ALLOW_DIRTY: ${{ github.event_name == 'push' && 'false' || inputs.allow_dirty }}
       DEV_AUTH_PROFILE: ${{ github.event_name == 'workflow_dispatch' && inputs.dev_auth_profile || 'strict' }}
+      PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ github.event_name == 'workflow_dispatch' && inputs.ppl_alloc_009_dev_proof_enabled || false }}
     steps:
       # This checkout is the immutable trust root for every lease operation.
       # It is intentionally separate from the requested deployment payload.
@@ -124,6 +130,7 @@ jobs:
         working-directory: .target
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         env:
+          RUN_EVOLUTION_DISPATCH_PROBE: ${{ github.event_name == 'workflow_dispatch' && inputs.run_evolution_dispatch_probe || false }}
           RUN_LOOP_PROD_TEL_002_PROBE: ${{ github.event_name == 'workflow_dispatch' && inputs.run_loop_prod_tel_002_probe || false }}
         run: |
           sha="$(git rev-parse HEAD)"
@@ -141,6 +148,20 @@ jobs:
           docker compose -f docker-compose.yml config --quiet
           if [[ "${RUN_LOOP_PROD_TEL_002_PROBE}" == "true" && ( "${TARGET_COMPONENT}" != "root" || "${DEV_AUTH_PROFILE}" != "strict" ) ]]; then
             echo "LOOP-PROD-TEL-002 hosted proof requires dev/root with strict auth." >&2
+            exit 1
+          fi
+          case "${PPL_ALLOC_009_DEV_PROOF_ENABLED}" in
+            true|false) ;;
+            *) echo "PPL-ALLOC-009 dev proof flag must be true or false." >&2; exit 1 ;;
+          esac
+          if [[ "${PPL_ALLOC_009_DEV_PROOF_ENABLED}" == "true" && (
+            "${TARGET_COMPONENT}" != "root" ||
+            "${DEV_AUTH_PROFILE}" != "strict" ||
+            "${ALLOW_DIRTY}" != "false" ||
+            "${RUN_EVOLUTION_DISPATCH_PROBE}" != "false" ||
+            "${RUN_LOOP_PROD_TEL_002_PROBE}" != "false"
+          ) ]]; then
+            echo "PPL-ALLOC-009 dev proof requires an isolated clean dev/root deploy with strict auth." >&2
             exit 1
           fi
           echo "sha=${sha}" >> "${GITHUB_OUTPUT}"
@@ -213,6 +234,8 @@ jobs:
                 'DEV_BFF_AUTH_MODE="${DEV_BFF_AUTH_MODE:-strict}"'
                 'no governed verifier/dev-login credentials'
                 'assert_bff_auth_gate'
+                'DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED="${DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED:-false}"'
+                'assert_ppl_alloc_009_dev_proof_gate'
               )
               for marker in "${required_markers[@]}"; do
                 if ! grep -Fq -- "${marker}" "${deploy_script}"; then
@@ -508,6 +531,7 @@ jobs:
           DEV_MANAGEMENT_AI_DATABASE_URL: ${{ secrets.DEV_MANAGEMENT_AI_DATABASE_URL }}
           DEV_MANAGEMENT_AI_ATTACH_BUCKET: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_BUCKET }}
           DEV_MANAGEMENT_AI_ATTACH_LOCATION: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_LOCATION || 'asia-east1' }}
+          DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ env.PPL_ALLOC_009_DEV_PROOF_ENABLED }}
           TARGET_SHA: ${{ steps.target.outputs.sha }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
@@ -534,6 +558,7 @@ jobs:
               ;;
           esac
           echo "Dev BFF auth profile: ${DEV_AUTH_PROFILE} (stub=${DEV_BFF_AUTH_STUB}, mode=${DEV_BFF_AUTH_MODE})"
+          echo "PPL-ALLOC-009 dev proof enabled: ${DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED}"
           args=(
             bash "${GITHUB_WORKSPACE}/.target/scripts/deploy_nonprod_vm.sh"
             --environment dev
@@ -810,6 +835,11 @@ jobs:
           DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io' }}
           DEV_BFF_CANONICAL_CORS_ORIGIN: ${{ vars.DEV_BFF_CANONICAL_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
           DEV_BFF_CORS_ORIGIN: ${{ vars.DEV_BFF_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
+          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
+          DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
+          DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
+          GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-lupin-dev-20260719' }}
+          PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ env.PPL_ALLOC_009_DEV_PROOF_ENABLED }}
           TARGET_SHA: ${{ steps.target.outputs.sha }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
@@ -840,7 +870,37 @@ jobs:
                   -H "Origin: ${origin}" -H "Access-Control-Request-Method: GET" \
                   | grep -qi "access-control-allow-origin: ${origin}"
               done
+              effective_line="$(
+                gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" \
+                  --zone "${DEV_ZONE}" \
+                  --project "${GCP_DEPLOY_PROJECT_ID}" \
+                  --ssh-flag=-T \
+                  --command "docker inspect pantheon-operator-bff-1 --format '\''{{range .Config.Env}}{{println .}}{{end}}'\'' | grep -F -x '\''PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED=${PPL_ALLOC_009_DEV_PROOF_ENABLED}'\''"
+              )"
+              evidence_path="${RUNNER_TEMP}/ppl-alloc-009-deployment-posture-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+              python3 "${GITHUB_WORKSPACE}/.target/scripts/ppl_alloc_009_deployment_evidence.py" \
+                --output "${evidence_path}" \
+                --target-sha "${TARGET_SHA}" \
+                --component "${TARGET_COMPONENT}" \
+                --auth-profile "${DEV_AUTH_PROFILE}" \
+                --expected-enabled "${PPL_ALLOC_009_DEV_PROOF_ENABLED}" \
+                --effective-env-line "${effective_line}" \
+                --workflow-run-id "${GITHUB_RUN_ID}" \
+                --workflow-run-attempt "${GITHUB_RUN_ATTEMPT}" \
+                --workflow-run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+                --bff-url "${DEV_BFF_URL}"
+              echo "deployment_evidence_path=${evidence_path}" >> "${GITHUB_OUTPUT}"
             '
+
+      - name: Upload dev deployment posture evidence
+        id: deploy-posture-evidence
+        if: ${{ steps.public_smoke.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pantheon-dev-deployment-posture-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.public_smoke.outputs.deployment_evidence_path }}
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Dev Agora restart persistence smoke under lease
         id: agora
@@ -955,6 +1015,7 @@ jobs:
           PAPER_BOOTSTRAP_OUTCOME: ${{ steps.paper_bootstrap.outcome }}
           OPENCLAW_OUTCOME: ${{ steps.openclaw.outcome }}
           PUBLIC_SMOKE_OUTCOME: ${{ steps.public_smoke.outcome }}
+          DEPLOY_POSTURE_EVIDENCE_OUTCOME: ${{ steps.deploy-posture-evidence.outcome }}
           AGORA_OUTCOME: ${{ steps.agora.outcome }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
@@ -1009,10 +1070,10 @@ jobs:
           complete_success=false
           case "${TARGET_COMPONENT}" in
             auto|root)
-              [[ "${HEARTBEAT_OUTCOME}:${DEPLOY_OUTCOME}:${PAPER_BOOTSTRAP_OUTCOME}:${OPENCLAW_OUTCOME}:${PUBLIC_SMOKE_OUTCOME}:${AGORA_OUTCOME}" == "success:success:success:success:success:success" ]] && complete_success=true
+              [[ "${HEARTBEAT_OUTCOME}:${DEPLOY_OUTCOME}:${PAPER_BOOTSTRAP_OUTCOME}:${OPENCLAW_OUTCOME}:${PUBLIC_SMOKE_OUTCOME}:${DEPLOY_POSTURE_EVIDENCE_OUTCOME}:${AGORA_OUTCOME}" == "success:success:success:success:success:success:success" ]] && complete_success=true
               ;;
             bff)
-              [[ "${HEARTBEAT_OUTCOME}:${DEPLOY_OUTCOME}:${PAPER_BOOTSTRAP_OUTCOME}:${OPENCLAW_OUTCOME}:${PUBLIC_SMOKE_OUTCOME}:${AGORA_OUTCOME}" == "success:success:skipped:skipped:success:success" ]] && complete_success=true
+              [[ "${HEARTBEAT_OUTCOME}:${DEPLOY_OUTCOME}:${PAPER_BOOTSTRAP_OUTCOME}:${OPENCLAW_OUTCOME}:${PUBLIC_SMOKE_OUTCOME}:${DEPLOY_POSTURE_EVIDENCE_OUTCOME}:${AGORA_OUTCOME}" == "success:success:skipped:skipped:success:success:success" ]] && complete_success=true
               ;;
           esac
 
@@ -1074,6 +1135,7 @@ jobs:
             echo "- Lease: \`${{ steps.lease.outputs.lease_id }}\`"
             echo "- Controller: \`9e564718da8c39199a4c311f1a667b74226e3428\`"
             echo "- Target: \`dev/${TARGET_COMPONENT}\`"
+            echo "- PPL-ALLOC-009 dev proof enabled: \`${PPL_ALLOC_009_DEV_PROOF_ENABLED}\`"
           } >> "${GITHUB_STEP_SUMMARY}"
 
   deploy-staging-live:
@@ -1087,6 +1149,7 @@ jobs:
       TARGET_REF: ${{ github.event_name == 'push' && github.sha || inputs.ref || github.sha }}
       ALLOW_DIRTY: ${{ github.event_name == 'push' && 'false' || inputs.allow_dirty }}
       ALLOW_EXAMPLE_ENV: ${{ github.event_name == 'push' && 'false' || inputs.allow_example_env }}
+      PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ github.event_name == 'workflow_dispatch' && inputs.ppl_alloc_009_dev_proof_enabled || false }}
     steps:
       - name: Checkout requested staging payload
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -1112,6 +1175,10 @@ jobs:
             auto|control|exec|all) ;;
             *) echo "Invalid staging deployment component: ${TARGET_COMPONENT}" >&2; exit 1 ;;
           esac
+          if [[ "${PPL_ALLOC_009_DEV_PROOF_ENABLED}" != "false" ]]; then
+            echo "PPL-ALLOC-009 dev proof cannot be enabled for staging-live." >&2
+            exit 1
+          fi
           bash scripts/validate_split_topology.sh
           echo "sha=${sha}" >> "${GITHUB_OUTPUT}"
 

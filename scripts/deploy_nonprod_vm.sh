@@ -33,6 +33,7 @@ DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS="${DEV_LIFECYCLE_PROJECTOR_HEALTH
 # DEV_BFF_AUTH_STUB=true DEV_BFF_AUTH_MODE=permissive.
 DEV_BFF_AUTH_STUB="${DEV_BFF_AUTH_STUB:-false}"
 DEV_BFF_AUTH_MODE="${DEV_BFF_AUTH_MODE:-strict}"
+DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED="${DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED:-false}"
 # Governed verifier/dev-login credentials for the strict auth cutover. These
 # must come from a secret source (GitHub Actions secrets in CI), never from
 # compose file defaults. When strict mode is requested without them, the
@@ -204,6 +205,7 @@ Environment overrides:
   DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS
   DEV_BFF_CANONICAL_CORS_ORIGIN DEV_BFF_CORS_ORIGINS
   DEV_BFF_REQUIRED_CORS_ORIGINS DEV_BFF_AUTH_STUB DEV_BFF_AUTH_MODE
+  DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED
   DEV_BFF_JWT_SECRET DEV_BFF_JWT_ISSUER DEV_BFF_JWT_AUDIENCE
   DEV_BFF_JWKS_URI DEV_BFF_OIDC_DISCOVERY_URL
   DEV_BFF_OIDC_ISSUER DEV_BFF_OIDC_AUDIENCE
@@ -393,6 +395,20 @@ case "$DEPLOY_ENV" in
     ;;
 esac
 
+case "$DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED" in
+  true|false) ;;
+  *) error "DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED must be true or false" ;;
+esac
+if [[ "$DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED" == "true" && (
+  "$DEPLOY_ENV" != "dev" ||
+  "$COMPONENT" != "root" ||
+  "$DEV_BFF_AUTH_MODE" != "strict" ||
+  "$DEV_BFF_AUTH_STUB" == "true" ||
+  "$ALLOW_DIRTY" == "true"
+) ]]; then
+  error "PPL-ALLOC-009 dev proof requires a clean dev/root deploy with strict non-stub auth"
+fi
+
 configure_management_ai_dev_env
 configure_management_ai_dev_kernel_env
 
@@ -410,6 +426,7 @@ if [[ "$DRY_RUN" == "true" ]]; then
   info "dev_fe_static_root=${DEV_FE_STATIC_ROOT}"
   info "dev_bff_auth_stub=${DEV_BFF_AUTH_STUB}"
   info "dev_bff_auth_mode=${DEV_BFF_AUTH_MODE}"
+  info "dev_ppl_alloc_009_dev_proof_enabled=${DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED}"
   info "dev_bff_mfa_required=${DEV_BFF_MFA_REQUIRED}"
   info "dev_bff_jwt_secret_configured=$([[ -n "$DEV_BFF_JWT_SECRET" ]] && echo true || echo false)"
   info "dev_bff_jwt_issuer_configured=$([[ -n "$DEV_BFF_JWT_ISSUER" ]] && echo true || echo false)"
@@ -538,6 +555,7 @@ ssh_bash() {
   command_prefix+=" PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS=$(shell_quote "$DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS")"
   command_prefix+=" PANTHEON_DEV_BFF_AUTH_STUB=$(shell_quote "$DEV_BFF_AUTH_STUB")"
   command_prefix+=" PANTHEON_DEV_BFF_AUTH_MODE=$(shell_quote "$DEV_BFF_AUTH_MODE")"
+  command_prefix+=" PANTHEON_DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED=$(shell_quote "$DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED")"
   command_prefix+=" PANTHEON_DEV_BFF_JWT_SECRET=$(shell_quote "$DEV_BFF_JWT_SECRET")"
   command_prefix+=" PANTHEON_DEV_BFF_JWT_ISSUER=$(shell_quote "$DEV_BFF_JWT_ISSUER")"
   command_prefix+=" PANTHEON_DEV_BFF_JWT_AUDIENCE=$(shell_quote "$DEV_BFF_JWT_AUDIENCE")"
@@ -923,6 +941,15 @@ assert_bff_source_sha() {
     error "BFF source SHA mismatch: expected ${PANTHEON_DEPLOY_SHA}, got ${actual:-missing}"
   fi
   info "BFF source SHA verified: ${actual}"
+}
+
+assert_ppl_alloc_009_dev_proof_gate() {
+  local expected="PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED=${PANTHEON_DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED}"
+  docker inspect pantheon-operator-bff-1 \
+    --format '{{range .Config.Env}}{{println .}}{{end}}' \
+    | grep -F -x "${expected}" >/dev/null \
+    || error "operator-bff PPL-ALLOC-009 dev proof posture does not match ${expected}"
+  info "operator-bff PPL-ALLOC-009 dev proof posture verified: ${PANTHEON_DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED}"
 }
 
 assert_dedicated_dev_login_identity() {
@@ -1837,6 +1864,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     ensure_dev_management_ai_postgres_role
     prune_dev_management_ai_telemetry_for_disk
     COMPOSE_PROFILES="${PANTHEON_DEV_COMPOSE_PROFILES}" \
+    PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED="${PANTHEON_DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED}" \
       LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS="${PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS}" \
       docker compose -p pantheon -f docker-compose.yml config --quiet
     prune_dev_docker_storage_for_build
@@ -1872,6 +1900,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_DEV_BFF_CORS_ORIGINS}" \
     PANTHEON_BFF_AUTH_STUB="${PANTHEON_DEV_BFF_AUTH_STUB}" \
     PANTHEON_BFF_AUTH_MODE="${PANTHEON_DEV_BFF_AUTH_MODE}" \
+    PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED="${PANTHEON_DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED}" \
     PANTHEON_BFF_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
     PANTHEON_BFF_JWT_ISSUER="${PANTHEON_DEV_BFF_JWT_ISSUER}" \
     PANTHEON_BFF_JWT_AUDIENCE="${PANTHEON_DEV_BFF_JWT_AUDIENCE}" \
@@ -1936,6 +1965,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
       || { dump_dev_root_failure_diagnostics; exit 1; }
     assert_bff_auth_gate http://127.0.0.1:18001 \
       || { dump_dev_root_failure_diagnostics; exit 1; }
+    assert_ppl_alloc_009_dev_proof_gate \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
     ensure_dev_caddy_ingress \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     verify_dev_evolution_daily_sweep \
@@ -1980,6 +2011,7 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     PANTHEON_BFF_CORS_ORIGINS="${PANTHEON_DEV_BFF_CORS_ORIGINS}" \
     PANTHEON_BFF_AUTH_STUB="${PANTHEON_DEV_BFF_AUTH_STUB}" \
     PANTHEON_BFF_AUTH_MODE="${PANTHEON_DEV_BFF_AUTH_MODE}" \
+    PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED="${PANTHEON_DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED}" \
     PANTHEON_BFF_JWT_SECRET="${PANTHEON_DEV_BFF_JWT_SECRET}" \
     PANTHEON_BFF_JWT_ISSUER="${PANTHEON_DEV_BFF_JWT_ISSUER}" \
     PANTHEON_BFF_JWT_AUDIENCE="${PANTHEON_DEV_BFF_JWT_AUDIENCE}" \
@@ -2039,6 +2071,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
     assert_bff_source_sha http://127.0.0.1:18001/bff/version \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     assert_bff_auth_gate http://127.0.0.1:18001 \
+      || { dump_dev_root_failure_diagnostics; exit 1; }
+    assert_ppl_alloc_009_dev_proof_gate \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     ensure_dev_caddy_ingress \
       || { dump_dev_root_failure_diagnostics; exit 1; }
