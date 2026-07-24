@@ -1532,6 +1532,135 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         create_worktree.assert_called_once_with(repo_root.resolve(), expected_path, "task/OPS-WORKTREE-001", "origin/dev")
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_worktree_allocated")
 
+    def test_prepare_github_retry_allocates_isolated_worktree_outside_allowlist(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "pantheon"
+            repo_root.mkdir()
+            worktree_root = Path(tmpdir) / "workers"
+            config = {
+                **self.config,
+                "paths": {"status_file": str(repo_root / "ai-status.json")},
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(worktree_root),
+                    "base_ref": "origin/dev",
+                    "reuse_existing": True,
+                    "execution_reasons": ["owned_ready_dispatch"],
+                },
+            }
+            state: dict[str, object] = {}
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id="OPS-RETRY-001",
+                reason="github_retry",
+                metadata={
+                    "workspace_task_id": "OPS-RETRY-001",
+                    "require_isolated_worktree": True,
+                },
+            )
+
+            with (
+                mock.patch.object(supervisor, "_existing_worktree_for_branch", return_value=None),
+                mock.patch.object(supervisor, "_branch_checked_out_in_root", return_value=False),
+                mock.patch.object(supervisor, "_create_worker_worktree", return_value=(True, None)) as create_worktree,
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                ok, message = supervisor.prepare_worker_workspace(
+                    config,
+                    state,
+                    request,
+                    queue_event_id="evt-github-retry",
+                    target_agent="Codex",
+                )
+
+        expected_path = worktree_root / "pantheon" / "ops-retry-001"
+        self.assertTrue(ok)
+        self.assertIsNone(message)
+        self.assertEqual(request.metadata["workspace_mode"], "isolated_worktree")
+        self.assertEqual(request.metadata["workspace_path"], str(expected_path))
+        create_worktree.assert_called_once_with(
+            repo_root.resolve(),
+            expected_path,
+            "task/OPS-RETRY-001",
+            "origin/dev",
+        )
+
+    def test_prepare_github_retry_refuses_shared_checkout_when_worktrees_disabled(self) -> None:
+        config = {
+            **self.config,
+            "worker_worktrees": {"enabled": False},
+        }
+        request = supervisor.DeliveryRequest(
+            agent_id="codex",
+            provider="codex",
+            delivery_mode="codex",
+            message="wake",
+            task_id="OPS-RETRY-001",
+            reason="github_retry",
+            metadata={
+                "workspace_task_id": "OPS-RETRY-001",
+                "require_isolated_worktree": True,
+            },
+        )
+        with mock.patch.object(supervisor, "write_activity_log") as write_activity_log:
+            ok, message = supervisor.prepare_worker_workspace(
+                config,
+                {},
+                request,
+                queue_event_id="evt-github-retry",
+                target_agent="Codex",
+            )
+
+        self.assertFalse(ok)
+        self.assertIn("Refusing shared-checkout fallback", message or "")
+        self.assertNotIn("workspace_path", request.metadata)
+        self.assertEqual(
+            write_activity_log.call_args.args[1]["refresh_status"],
+            "isolated_worktrees_disabled",
+        )
+
+    def test_prepare_github_retry_rejects_shared_checkout_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "pantheon"
+            repo_root.mkdir()
+            config = {
+                **self.config,
+                "paths": {"status_file": str(repo_root / "ai-status.json")},
+                "worker_worktrees": {"enabled": True},
+            }
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id="OPS-RETRY-001",
+                reason="github_retry",
+                metadata={
+                    "workspace_task_id": "OPS-RETRY-001",
+                    "require_isolated_worktree": True,
+                    "workspace_path": str(repo_root),
+                },
+            )
+            with mock.patch.object(supervisor, "write_activity_log") as write_activity_log:
+                ok, message = supervisor.prepare_worker_workspace(
+                    config,
+                    {},
+                    request,
+                    queue_event_id="evt-github-retry",
+                    target_agent="Codex",
+                )
+
+        self.assertFalse(ok)
+        self.assertIn("shared supervisor checkout", message or "")
+        self.assertEqual(
+            write_activity_log.call_args.args[1]["refresh_status"],
+            "shared_checkout_rejected",
+        )
+
     def test_create_worker_worktree_quarantines_incomplete_checkout(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "pantheon"
