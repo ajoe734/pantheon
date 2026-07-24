@@ -99,6 +99,24 @@ def test_root_compose_wires_source_ingest_service_boundary() -> None:
     assert projector_env["AGORA_MARKET_STALE_THRESHOLD_SECONDS"] == "${AGORA_MARKET_STALE_THRESHOLD_SECONDS:-86400}"
     assert "bff-data:/data/bff" in projector["volumes"]
 
+    distillation = services["strategy-distillation-worker"]
+    distillation_env = _env_map(distillation)
+    assert distillation["restart"] == "unless-stopped"
+    assert distillation["command"] == [
+        "python",
+        "-m",
+        "services.source_ingestion.distillation_controller",
+    ]
+    # Bounded source refreshes export SOURCE_INGEST_CONTROLLER_MAX_TICKS=1.
+    # The always-on distillation controller must remain independently
+    # configurable and default to an unbounded loop.
+    assert distillation_env["SOURCE_INGEST_CONTROLLER_MAX_TICKS"] == (
+        "${STRATEGY_DISTILLATION_CONTROLLER_MAX_TICKS:-0}"
+    )
+    assert "source-ingest-data:/data/source-ingest" in distillation["volumes"]
+    assert distillation["depends_on"]["source-ingest"]["condition"] == "service_healthy"
+    assert distillation["depends_on"]["registry"]["condition"] == "service_healthy"
+
     smoke_env = _env_map(services["smoke-stack"])
     assert smoke_env["SOURCE_INGEST_URL"] == "http://source-ingest:8097"
     assert "source-ingest" in services["smoke-stack"]["depends_on"]
