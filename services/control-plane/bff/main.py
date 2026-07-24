@@ -1204,6 +1204,7 @@ _BFF_FOUNDATION_POLICY_VERSION = "2026-04-27"
 #   PANTHEON_BFF_ROLE_MAP_MODE - passthrough (default) or strict
 #   PANTHEON_BFF_MFA_CLAIMS    - comma-separated MFA claim paths (e.g. amr,acr)
 #   PANTHEON_BFF_MFA_VALUES    - accepted MFA proof values (e.g. mfa,totp,webauthn)
+#   PANTHEON_BFF_REQUIRE_EMAIL_VERIFIED - require email_verified=true in JWT
 #   When JWKS_URI is set, RS256/ES256 JWKS path is used instead of HS256.
 #   Strict default still applies: stub tokens are not accepted in strict mode.
 
@@ -1639,6 +1640,10 @@ def _extract_identity_jwt(
         "PANTHEON_RUNTIME_ROLE_MAP_MODE": os.getenv("PANTHEON_BFF_ROLE_MAP_MODE", ""),
         "PANTHEON_RUNTIME_MFA_CLAIMS": os.getenv("PANTHEON_BFF_MFA_CLAIMS", ""),
         "PANTHEON_RUNTIME_MFA_VALUES": os.getenv("PANTHEON_BFF_MFA_VALUES", ""),
+        "PANTHEON_RUNTIME_REQUIRE_EMAIL_VERIFIED": os.getenv(
+            "PANTHEON_BFF_REQUIRE_EMAIL_VERIFIED",
+            "false",
+        ),
     }
     # External browser JWTs use the configured OIDC/JWKS verifier, while the
     # server-side dev-login exchange deliberately issues a short-lived HS256
@@ -1662,6 +1667,10 @@ def _extract_identity_jwt(
         bff_env["PANTHEON_RUNTIME_ROLE_CLAIMS"] = "roles,role"
         bff_env["PANTHEON_RUNTIME_ROLE_MAP"] = ""
         bff_env["PANTHEON_RUNTIME_ROLE_MAP_MODE"] = "passthrough"
+        # Server-issued dev-login tokens are not browser identity tokens and do
+        # not carry an email address. Keep the browser-only verification policy
+        # on the asymmetric GCP Identity Platform path.
+        bff_env["PANTHEON_RUNTIME_REQUIRE_EMAIL_VERIFIED"] = "false"
 
     mfa_required = bff_env["PANTHEON_RUNTIME_MFA_REQUIRED"].lower() == "true"
     try:
