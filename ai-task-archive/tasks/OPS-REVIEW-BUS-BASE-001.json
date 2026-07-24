@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "task_id": "OPS-REVIEW-BUS-BASE-001",
+  "archived_at": "2026-07-24T02:36:05Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "ReviewBus derives the configured dev delivery base instead of legacy master",
+      "Already merged task PR evidence does not create a synthetic broad integration PR",
+      "Review scope binds the exact task commit and merged PR",
+      "Legacy-base mismatch fails closed with actionable diagnostics",
+      "Focused GitHub bus tests cover dev base and merged-task review"
+    ],
+    "artifacts": [
+      ".orchestrator/github_bus.py",
+      ".orchestrator/test_github_bus.py",
+      ".orchestrator/config.example.json",
+      "docs/github-approval-bus.md"
+    ],
+    "auto_created_by": "operator-review-recovery-20260724",
+    "auto_generated": false,
+    "depends_on": [
+      "OPS-DISPATCH-AUTHORITY-RECOVERY-001"
+    ],
+    "id": "OPS-REVIEW-BUS-BASE-001",
+    "last_update": "2026-07-24T02:36:05Z",
+    "mutates_canonical": true,
+    "next": "Owner closeout complete: PR #4035 merged to dev as 5fab97906236f230ae5bfc0029e79853257630b3 from task head 4ff734453268f6305ae54e00f5737886d0d727f7; 21 github_bus tests, py_compile, config.example.json parse, git diff --check, dev artifact parity, and all required PR gates passed.",
+    "owner": "Codex",
+    "phase": "GitHub review bus reliability",
+    "review_notes_zh": [
+      "五項 acceptance 全數通過，實作與 dev 已交付內容逐位元一致",
+      "非阻斷觀察：remote_branch_exists 已成死碼；explicit head_sha 路徑的 skipped_unpublished_branch 診斷訊息不精確；test_supervisor 有 1 個 pydantic 環境性失敗"
+    ],
+    "reviewer": "Claude2",
+    "status": "done",
+    "summary_zh": "修 ReviewBus 對已合併到 dev 的 task branch 仍建立 master PR，造成跨 226 commits 的錯誤 review；改成依 repo delivery base 與 exact merged PR/commit 做受管 review。",
+    "task_class": "execution",
+    "title": "Bind ReviewBus to dev and exact merged task evidence",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-24T02:36:05Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ops-review-bus-base-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPS-REVIEW-BUS-BASE-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "be3cf913091279fc893846244c422cd50609505e",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/ops-review-bus-base-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "4ff734453268f6305ae54e00f5737886d0d727f7",
+      "commit_subject": "OPS-REVIEW-BUS-BASE-001: finalize approved delivery",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "OPS-REVIEW-BUS-BASE-001",
+        "Reviewer": "Claude2",
+        "Verified": "21 github_bus tests; py_compile; config JSON; diff check; dev artifact parity; PR #4030 gates"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "5fab97906236f230ae5bfc0029e79853257630b3",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-24T02:10:51Z",
+      "from": "Claude2",
+      "message": "PR #4030 is merged to dev after all required checks passed; the isolated task commit contains only the intended brief anchor, so the generated-worktree condition is cleared. Resume reviewer handoff and formal closeout without touching unrelated generated files.",
+      "resolved_at": "2026-07-24T02:10:51Z",
+      "status": "done",
+      "task_id": "OPS-REVIEW-BUS-BASE-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-24T02:17:32Z",
+      "from": "Codex",
+      "message": "ReviewBus delivery-base and exact merged-evidence work is ready for independent review. Merged delivery: PR #4024 merge dadb5240df78cc3412f62ff91da11a8cb87de494, PR #4027 merge dd773b172b3d3c14882dbbe2201a4c042c65d815, and exact published-head PR #4028 head 4e91eda0b6ea06986577ecfa2a4633c094ca04dd / merge 9b66965d3f9c2c5dadfacfd8a089379bd4cd96ed. Reassignment anchor PR #4030 merged as 881954166f92fb04755ac532f837468aec8b2431 with required checks green. Revalidated now: PYTHONPATH=.orchestrator python3 .orchestrator/test_github_bus.py (21 OK); PYTHONPATH=.orchestrator python3 .orchestrator/test_supervisor.py (327 OK); py_compile; config.example.json parse; git diff --check. Please verify all five acceptance items and approve or reopen with concrete findings.",
+      "resolved_at": "2026-07-24T02:27:08Z",
+      "status": "done",
+      "task_id": "OPS-REVIEW-BUS-BASE-001",
+      "to": "Claude2"
+    },
+    {
+      "created_at": "2026-07-24T02:27:08Z",
+      "from": "Claude2",
+      "message": "Independent reviewer verification passed. Delivery: PR #4024/#4027/#4028/#4030 all MERGED with base=dev (final merge 881954166f92fb04755ac532f837468aec8b2431, head d3aec02ee5f838713f7f60c93ad8e8f6dc5475ac); all 3 required checks (Commit trailers / Runtime mirror guard / Smoke acceptance) pass on #4030; reviewed tree 04031f44f is an ancestor of dev tip 657fe342481d292915d639d1ff5245fdf6a2a3bb and the four artifacts are byte-identical to dev. A1 dev delivery base: default_branch() replaced by delivery_base_branch(); live .orchestrator/config.json (no delivery_base_branches) resolves to dev via branch_workflow.dev_branch while legacy github_bus.default_branch=master is explicitly demoted and unconfigured repos raise an actionable GitHubBusError. A2 no synthetic PR: find_existing_pr/edit/create fallback removed; merged candidates bind via _select_task_pr_evidence with run_gh.assert_not_called() asserted. A3 exact scope: review_branch_for_task returns only task/<TASK-ID> (rejects agent/current branch), and state records pr_number, head_sha, merge_commit, merged_at, base_branch, evidence_kind. A4 fail-closed: skipped_base_mismatch / skipped_head_mismatch / skipped_closed_pr / skipped_incomplete_merge_evidence / skipped_no_head_sha plus GitHubBusError on ambiguity, all caught in sync_outbound and logged as github_review_pr_failed / github_review_pr_skipped. A5 tests: 7 new focused tests; re-ran PYTHONPATH=.orchestrator python3 .orchestrator/test_github_bus.py = 21 OK, py_compile OK, config.example.json parse OK, git diff --check clean. Non-blocking notes for follow-up: remote_branch_exists() is now dead code; with task.github.head_sha set and no PR candidates the code never queries remote_branch_head_sha and reports the inaccurate 'not pushed to origin yet' diagnostic (still fail-closed); branch_has_diff now compares local origin/<base> and local task ref, which fails closed to skipped_no_commits in a stale worktree. Environment-only: test_supervisor.py is 326/327 here, test_run_once_watchdog_safe_mode_suppresses_new_dispatch fails from ModuleNotFoundError: No module named 'pydantic', unrelated to this change.",
+      "status": "done",
+      "task_id": "OPS-REVIEW-BUS-BASE-001",
+      "to": "Codex",
+      "resolved_at": "2026-07-24T02:36:06Z"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-07-24T02:04:36Z",
+      "message": "Validation is complete and anchor 04031f44f is task-scoped, but this worktree gained unrelated runtime changes after start: dashboard-bundle.json, docs-site/dashboard-bundle.json, and .orchestrator/assistant-dev-packets lock files. Closeout skill forbids folding, stashing, reverting, or deleting these generated/other-lane artifacts; supervisor/Human Ops must clean or isolate them before task_finalize, reviewer handoff, and done.",
+      "owner": "Codex",
+      "resolved_at": "2026-07-24T02:10:51Z",
+      "status": "resolved",
+      "task_id": "OPS-REVIEW-BUS-BASE-001",
+      "waiting_for": "Human/Ops"
+    }
+  ]
+}

@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "task_id": "OPS-PROMOTE-CONFLICT-RECOVERY-001",
+  "archived_at": "2026-07-22T18:42:14Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "all acceptance criteria in docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/OPS-PROMOTE-CONFLICT-RECOVERY-001.md",
+      "task branch is merged to dev with reviewer approval and required delivery metadata"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_agora_remaining_work_2026-07-22/REMAINING_WORK_GAP.md",
+      "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/OPS-PROMOTE-CONFLICT-RECOVERY-001.md"
+    ],
+    "auto_created_by": "dispatch_pantheon_agora_remaining_work_2026-07-22",
+    "auto_generated": true,
+    "declared_scope": [
+      "scripts/git/publish_promote.py",
+      ".github/workflows/publish-promote.yml"
+    ],
+    "delivery_layer": "primary",
+    "depends_on": [
+      "OPS-DISPATCH-LEASE-SYNC-001"
+    ],
+    "fleet_lane": "ops-promote-recovery",
+    "id": "OPS-PROMOTE-CONFLICT-RECOVERY-001",
+    "last_update": "2026-07-22T18:42:14Z",
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "Owner finalized approved delivery via PR #3972 (merge 17ef5069ccc9a1a2a2e9c8343a362b6a476cd005); 34/34 unittest, py_compile, and diff check passed; protected master ff77abecf2c2c9fe819fd73e0a0be07eb0be3809 matches the immutable release tree, idempotency run 29945824590 is green, and seven stale promote PRs remain closed.",
+    "owner": "Codex2",
+    "phase": "Delivery Control / Wave 0 promote recovery",
+    "priority": "P1",
+    "repository_id": "pantheon",
+    "review_file": "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/OPS-PROMOTE-CONFLICT-RECOVERY-001.md",
+    "review_notes_zh": [
+      "審查通過：disposition 分類完整（legacy_format/soaking/invalid_publish_ref/already_reachable/lookup_failed/blocked/superseded/existing_pr/eligible/conflicted），單一 conflict 不再中斷 promote train；cmd_open_prs 逐筆隔離錯誤並完整回報。",
+      "exact-snapshot bridge 以 commit-tree 建兩-parent commit 並驗證 tree 等於 immutable release tree；parent1=master 保 first-parent rollback，parent2=release 保 reachability；無 force push、無直寫 master、無 tag 改寫。",
+      "獨立驗證：PR #3965 MERGED at ff77abecf；master tree==release tree (ef2ef8a8)；tag object 0df22a28 未變；release commit 52d9ed23 為 master ancestor；prod/v2026.07.22.2 在 protected merge commit；idempotency run 29945824590 success（already_reachable=1、零 eligible）；七個歷史 promote PR (#2817/#2816/#2815/#2814/#2813/#2367/#1495) 全部 CLOSED 且無 branch/tag 刪除。",
+      "Reviewer 重跑 focused verification：python3 -m unittest scripts/git/test_git_workflow_helpers.py = 34/34 OK；py_compile OK；git diff --check 乾淨。"
+    ],
+    "reviewer": "Claude",
+    "source_ref": {
+      "brief": "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/OPS-PROMOTE-CONFLICT-RECOVERY-001.md",
+      "doc": "docs/04/pantheon_agora_remaining_work_2026-07-22/REMAINING_WORK_GAP.md",
+      "merge_target": "dev",
+      "packet": "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/INDEX.md",
+      "target_repo": "ajoe734/pantheon"
+    },
+    "status": "done",
+    "summary_zh": "修復 publish-promote 在第一個 historical conflict 即中止的行為，逐筆分類候選並保留 protected checks、tag immutability 與 rollback safety。",
+    "target_repo": "ajoe734/pantheon",
+    "task_class": "execution",
+    "title": "Recover publish-to-master promote train",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-22T18:42:14Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ops-promote-conflict-recovery-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPS-PROMOTE-CONFLICT-RECOVERY-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "ea1a860738d6ee8bf3fb2456c905531623f94279",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/ops-promote-conflict-recovery-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "5b7b79f22a13f8d101e3b7ac60af333c5ba46156",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/OPS-PROMOTE-CONFLICT-RECOVERY-001",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "17ef5069ccc9a1a2a2e9c8343a362b6a476cd005",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-22T18:23:57Z",
+      "from": "Codex2",
+      "message": "Implementation and evidence are merged to dev via PRs #3959, #3960, #3962, #3966, and #3967. Protected promote PR #3965 merged at ff77abecf2c2c9fe819fd73e0a0be07eb0be3809; run 29945824590 proves idempotent already_reachable handling. Reverified 34 unittest cases, py_compile, diff check, immutable release tag/tree ancestry, and closure of all seven historical promote PRs. Please review the task evidence and exact-snapshot rollback-safe bridge.",
+      "resolved_at": "2026-07-22T18:28:05Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-CONFLICT-RECOVERY-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-22T18:28:05Z",
+      "from": "Claude",
+      "message": "Review approved: deterministic candidate dispositions, exact-snapshot rollback-safe bridge, protected auto-merge terminal at ff77abecf verified (master tree == release tree, tags immutable), idempotency run 29945824590 green, 7 stale promote PRs reconciled, 34/34 focused tests re-run by reviewer. Returned to Codex2 for finalization.",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-CONFLICT-RECOVERY-001",
+      "to": "Codex2",
+      "resolved_at": "2026-07-22T18:42:14Z"
+    }
+  ],
+  "blockers": []
+}
