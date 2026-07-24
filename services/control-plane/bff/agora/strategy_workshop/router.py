@@ -1827,7 +1827,7 @@ def create_strategy_workshop_router(
                 "APPROVAL_TENANT_MISMATCH",
                 precondition_failed="approval_scope",
             )
-        if owner_user_id and owner_user_id != scope.user_id:
+        if not owner_user_id or owner_user_id != scope.user_id:
             raise bff_error(
                 403,
                 ErrorCode.FORBIDDEN,
@@ -1838,7 +1838,7 @@ def create_strategy_workshop_router(
         target_id = str(decision.get("target_id") or "").strip()
         target_version = str(decision.get("target_version") or "").strip()
         target_type = str(decision.get("target_type") or "").strip().lower()
-        if target_type not in {"strategy_workshop", "workshop"}:
+        if target_type != "strategy_workshop":
             raise bff_error(
                 409,
                 ErrorCode.HUMAN_GATE_PENDING,
@@ -1846,7 +1846,7 @@ def create_strategy_workshop_router(
                 "APPROVAL_TARGET_TYPE_MISMATCH",
                 precondition_failed="approval_binding",
             )
-        if target_id != workshop_id or (target_version and target_version != version_id):
+        if target_id != workshop_id or target_version != version_id:
             raise bff_error(
                 409,
                 ErrorCode.HUMAN_GATE_PENDING,
@@ -1930,6 +1930,50 @@ def create_strategy_workshop_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ) -> Dict[str, Any]:
         scope = _scope(authorization, x_tenant_id, write=True)
+        initial_registry_id = str(body.strategy_spec_ref or "").strip()
+        initial_strategy_id: Optional[str] = None
+        if initial_registry_id:
+            try:
+                _, _, initial_strategy_id = _read_strategy_version(
+                    registry_id=initial_registry_id,
+                    scope=scope,
+                )
+            except CanonicalOperationError as exc:
+                from models import ErrorCode
+
+                if exc.status_code == 404:
+                    status_code = 404
+                    code = ErrorCode.RESOURCE_NOT_FOUND
+                elif exc.retryable:
+                    status_code = 503
+                    code = ErrorCode.DEPENDENCY_UNAVAILABLE
+                else:
+                    status_code = 502
+                    code = ErrorCode.UPSTREAM_ERROR
+                raise bff_error(
+                    status_code,
+                    code,
+                    "Referenced StrategySpec is unavailable",
+                    exc.reason,
+                    precondition_failed="strategy_spec_ref",
+                ) from exc
+            except _StrategyVersionProjectionError as exc:
+                from models import ErrorCode
+
+                code = (
+                    ErrorCode.FORBIDDEN
+                    if exc.status_code == 403
+                    else ErrorCode.UPSTREAM_ERROR
+                    if exc.status_code >= 500
+                    else ErrorCode.RESOURCE_CONFLICT
+                )
+                raise bff_error(
+                    exc.status_code,
+                    code,
+                    "Referenced StrategySpec projection is inconsistent",
+                    exc.reason,
+                    precondition_failed="strategy_spec_ref",
+                ) from exc
         # Idempotency-Key is mandatory for all write operations on this endpoint.
         if idempotency_key is None:
             from models import ErrorCode
@@ -1953,8 +1997,8 @@ def create_strategy_workshop_router(
             "workshop_id": workshop_id,
             "tenant_id": scope.tenant_id,
             "user_id": scope.user_id,
-            "strategy_id": body.strategy_spec_ref,
-            "active_strategy_spec_registry_id": body.strategy_spec_ref,
+            "strategy_id": initial_strategy_id,
+            "active_strategy_spec_registry_id": initial_registry_id or None,
             "status": "open",
         })
         try:
