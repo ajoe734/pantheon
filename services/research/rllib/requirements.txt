@@ -6,8 +6,8 @@
 # See: services/learning/DEFERRED_OSS_ACTIVATION_MAP.md §4
 
 --extra-index-url https://download.pytorch.org/whl/cpu
-ray[rllib]==2.54.0
-ray[tune]==2.54.0
+ray[rllib]==2.55.1
+ray[tune]==2.55.1
 torch==2.13.0+cpu
 gymnasium==1.2.2
 pydantic>=2.6.3
