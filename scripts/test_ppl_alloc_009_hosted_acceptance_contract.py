@@ -13,7 +13,7 @@ WORKFLOW = (
     / "ppl-alloc-009-hosted-acceptance.yml"
 )
 PUBLIC_SUPABASE_URL = "https://kwjtcynauaulrxngyetk.supabase.co"
-EXPECTED_FRONTEND_SHA = "2ed6727053a231d61fd5c18e4cff67dde879b624"
+EXPECTED_FRONTEND_SHA = "ef5185148157c422b41cc2a0ee497d2860e002a3"
 STALE_HARNESS_SHA = "7492ad7fd0b430df40dd7fe7b6b0d187d8742350"
 
 
