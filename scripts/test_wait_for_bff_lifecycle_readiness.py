@@ -333,3 +333,58 @@ def test_residual_smoke_uses_bounded_recovery_waiter() -> None:
     assert "--initial-timeout-seconds 120" in script
     assert "--recovery-extension-seconds 120" in script
     assert "--stalled-timeout-seconds 45" in script
+
+
+def _component_block(script: str, component: str, next_component: str) -> str:
+    return script.split(f"\n  {component})", 1)[1].split(
+        f"\n  {next_component})",
+        1,
+    )[0]
+
+
+def test_root_initial_readiness_uses_exact_waiter_before_residual_smoke() -> None:
+    script = Path("scripts/deploy_nonprod_vm.sh").read_text()
+    root = _component_block(script, "root", "bff")
+    helper_call = (
+        "wait_for_exact_bff_lifecycle_readiness \\\n"
+        "      http://127.0.0.1:18001/readyz"
+    )
+    assert helper_call in root
+    assert "curl_with_retry http://127.0.0.1:18001/readyz" not in root
+    assert root.index(helper_call) < root.index(
+        "bash scripts/verify_trade_journey_residual_dev.sh"
+    )
+
+
+def test_root_exact_waiter_is_revision_bound_and_bounded() -> None:
+    script = Path("scripts/deploy_nonprod_vm.sh").read_text()
+    helper = script.split(
+        "\nwait_for_exact_bff_lifecycle_readiness() {",
+        1,
+    )[1].split("\n}", 1)[0]
+    assert "scripts/wait_for_bff_lifecycle_readiness.py" in helper
+    assert '--expected-deployment-sha "${PANTHEON_DEPLOY_SHA}"' in helper
+    assert "--initial-timeout-seconds 120" in helper
+    assert "--recovery-extension-seconds 120" in helper
+    assert "--stalled-timeout-seconds 45" in helper
+
+
+def test_bff_only_readiness_also_uses_exact_waiter() -> None:
+    script = Path("scripts/deploy_nonprod_vm.sh").read_text()
+    bff = _component_block(script, "bff", "exec")
+    assert (
+        "wait_for_exact_bff_lifecycle_readiness \\\n"
+        "      http://127.0.0.1:18001/readyz"
+    ) in bff
+    assert "curl_with_retry http://127.0.0.1:18001/readyz" not in bff
+
+
+def test_non_bff_components_do_not_use_lifecycle_waiter() -> None:
+    script = Path("scripts/deploy_nonprod_vm.sh").read_text()
+    exec_block = _component_block(script, "exec", "control")
+    control_block = script.split("\n  control)", 1)[1].split(
+        "\n  *)",
+        1,
+    )[0]
+    assert "wait_for_exact_bff_lifecycle_readiness" not in exec_block
+    assert "wait_for_exact_bff_lifecycle_readiness" not in control_block
