@@ -945,6 +945,7 @@ jobs:
           DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR || '/home/lupin/pantheon' }}
           DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io' }}
           GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-lupin-dev-20260719' }}
+          PANTHEON_DEPLOY_SHA: ${{ steps.target.outputs.sha }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           lease_token="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"
@@ -969,15 +970,14 @@ jobs:
               gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" --zone "${DEV_ZONE}" \
                 --project "${GCP_DEPLOY_PROJECT_ID}" --ssh-flag=-T \
                 --command "set -euo pipefail; docker inspect pantheon-operator-bff-1 --format '\''{{range .Config.Env}}{{println .}}{{end}}'\'' | grep -F -x '\''AGORA_WORKSHOP_STORE_BACKEND=postgres'\'' >/dev/null; docker inspect pantheon-operator-bff-1 --format '\''{{range .Config.Env}}{{println .}}{{end}}'\'' | grep -F -x '\''AGORA_GOVERNANCE_STORE_BACKEND=postgres'\'' >/dev/null; docker inspect pantheon-operator-bff-1 --format '\''{{range .Config.Env}}{{println .}}{{end}}'\'' | grep -F -x '\''AGORA_DATASET_STORE_BACKEND=postgres'\'' >/dev/null; docker logs pantheon-operator-bff-1 2>&1 | grep -F '\''Agora workshop store initialized backend=postgres'\'' >/dev/null; docker logs pantheon-operator-bff-1 2>&1 | grep -F '\''Agora governance store initialized backend=postgres'\'' >/dev/null; docker logs pantheon-operator-bff-1 2>&1 | grep -F '\''Agora dataset store initialized backend=postgres'\'' >/dev/null; cd ${remote_dir_q}; docker compose -p pantheon -f docker-compose.yml exec -T operator-bff python /workspace/scripts/agora_workshop_restart_persistence_smoke.py seed --workshop-id ${workshop_id_q} --tenant-id ${tenant_id_q} --user-id ${user_id_q}; docker compose -p pantheon -f docker-compose.yml restart operator-bff"
-              ready=false
-              for _ in $(seq 1 30); do
-                if curl -fsS "${DEV_BFF_URL}/readyz" >/dev/null; then
-                  ready=true
-                  break
-                fi
-                sleep 2
-              done
-              test "${ready}" = true
+              python3 "${GITHUB_WORKSPACE}/.target/scripts/wait_for_bff_lifecycle_readiness.py" \
+                --url "${DEV_BFF_URL}/readyz" \
+                --expected-deployment-sha "${PANTHEON_DEPLOY_SHA}" \
+                --initial-timeout-seconds 120 \
+                --recovery-extension-seconds 120 \
+                --stalled-timeout-seconds 45 \
+                --poll-interval-seconds 2 \
+                --request-timeout-seconds 2
               gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" --zone "${DEV_ZONE}" \
                 --project "${GCP_DEPLOY_PROJECT_ID}" --ssh-flag=-T \
                 --command "set -euo pipefail; cd ${remote_dir_q}; docker compose -p pantheon -f docker-compose.yml exec -T operator-bff python /workspace/scripts/agora_workshop_restart_persistence_smoke.py verify --workshop-id ${workshop_id_q} --tenant-id ${tenant_id_q} --user-id ${user_id_q}"
