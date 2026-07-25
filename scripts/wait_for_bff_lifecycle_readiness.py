@@ -118,9 +118,14 @@ def classify_readiness(
         )
         backlog = _integer(projector, "backlog")
         if checkpoint != source_high_watermark or backlog != 0:
-            raise ReadinessError(
-                "HTTP 200 readiness projector is not caught up"
-            )
+            # The projector health file is assembled from independently
+            # advancing counters.  An exact/live/accepted response can
+            # therefore briefly expose a mixed snapshot (including
+            # checkpoint > source_high_watermark).  It is not safe to accept,
+            # but it is also not a structural readiness failure.  Keep it
+            # inside the ordinary restart budget; this state must never grant
+            # the trusted recovery extension.
+            return "snapshot_inconsistent", None
         return "ready", None
 
     # A non-200 response is ordinary while the BFF and its projector are
@@ -205,8 +210,10 @@ def wait_for_readiness(
     initial_deadline = started_at + initial_timeout_seconds
     recovery_deadline = initial_deadline + recovery_extension_seconds
     recovery_seen = False
+    recovery_progress_seen = False
     last_observation: RecoveryObservation | None = None
     last_progress_at = started_at
+    consecutive_ready_samples = 0
 
     while True:
         now = monotonic()
@@ -217,7 +224,11 @@ def wait_for_readiness(
             expected_deployment_sha=expected_deployment_sha,
         )
         if state == "ready":
-            return
+            consecutive_ready_samples += 1
+            if consecutive_ready_samples >= 2:
+                return
+        else:
+            consecutive_ready_samples = 0
         if state == "recovering":
             assert observation is not None
             recovery_seen = True
@@ -234,7 +245,7 @@ def wait_for_readiness(
                 raise ReadinessError(
                     "lifecycle projector recovery regressed"
                 )
-            progressed = last_observation is None or (
+            progressed = last_observation is not None and (
                 observation.checkpoint > last_observation.checkpoint
                 or observation.backlog < last_observation.backlog
                 or observation.current_generation
@@ -245,6 +256,9 @@ def wait_for_readiness(
                 != last_observation.last_successful_publish_at
             )
             if progressed:
+                recovery_progress_seen = True
+                last_progress_at = now
+            elif last_observation is None:
                 last_progress_at = now
             elif (
                 not observation.caught_up
@@ -265,7 +279,17 @@ def wait_for_readiness(
                 "lifecycle projector recovery stopped making progress"
             )
         if now >= initial_deadline:
-            if state != "recovering":
+            recovery_extension_eligible = (
+                recovery_seen
+                and last_observation is not None
+                and (
+                    last_observation.caught_up
+                    or recovery_progress_seen
+                )
+            )
+            if state == "ready" and recovery_extension_eligible:
+                pass
+            elif state != "recovering":
                 raise ReadinessError(
                     "BFF readiness exceeded the ordinary restart budget "
                     "without current exact-deployment trusted lifecycle "
@@ -275,6 +299,17 @@ def wait_for_readiness(
                 raise ReadinessError(
                     "BFF readiness exceeded the ordinary restart budget "
                     "without trusted lifecycle recovery evidence"
+                )
+            elif (
+                last_observation is None
+                or (
+                    not last_observation.caught_up
+                    and not recovery_progress_seen
+                )
+            ):
+                raise ReadinessError(
+                    "BFF readiness exceeded the ordinary restart budget "
+                    "without monotonic lifecycle recovery convergence"
                 )
         if now >= recovery_deadline:
             raise ReadinessError(
