@@ -18,6 +18,7 @@ Backend env:
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -39,6 +40,25 @@ IDEMPOTENCY_AGGREGATE_TYPE = "strategy_workshop"
 WORKSHOP_STATUSES = ("open", "in_review", "concluded", "archived")
 TERMINAL_WORKSHOP_STATUSES = frozenset({"concluded", "archived"})
 COMMAND_STATUSES = ("admitted", "completed", "failed")
+_DOCUMENT_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+class WorkshopVersionProjectionConflict(ValueError):
+    """A durable version link disagrees with authoritative Registry identity."""
+
+
+def _document_sha256(value: Any) -> str:
+    digest = str(value or "").strip().lower()
+    if not _DOCUMENT_SHA256_RE.fullmatch(digest):
+        raise ValueError("document_sha256 must be 64 lowercase hexadecimal characters")
+    return digest
+
+
+def _legacy_workshop_version_id(workshop_id: str, registry_id: str) -> str:
+    digest = hashlib.sha256(
+        f"{workshop_id}\x00{registry_id}".encode("utf-8")
+    ).hexdigest()[:24]
+    return f"wsv-legacy-{digest}"
 
 
 @dataclass(frozen=True)
@@ -236,10 +256,13 @@ def build_strategy_workshop_table_ddl(schema: Optional[str] = None) -> List[str]
             parent_workshop_version_id TEXT NULL,
             source_event_id TEXT NULL,
             sequence_no BIGINT NOT NULL,
+            document_sha256 CHAR(64) NOT NULL,
             created_by TEXT NOT NULL,
             created_at TIMESTAMPTZ NOT NULL,
             CONSTRAINT ux_workshop_version_sequence UNIQUE (workshop_id, sequence_no),
-            CONSTRAINT ux_workshop_registry_version UNIQUE (workshop_id, strategy_spec_registry_id)
+            CONSTRAINT ux_workshop_registry_version UNIQUE (workshop_id, strategy_spec_registry_id),
+            CONSTRAINT ck_workshop_version_document_sha256
+                CHECK (document_sha256 ~ '^[0-9a-f]{{64}}$')
         )
         """,
         f"""
@@ -363,7 +386,7 @@ _CARD_COLS = [
 _VERSION_LINK_COLS = [
     "workshop_version_id", "workshop_id", "strategy_id",
     "strategy_spec_registry_id", "parent_workshop_version_id",
-    "source_event_id", "sequence_no", "created_by", "created_at",
+    "source_event_id", "sequence_no", "document_sha256", "created_by", "created_at",
 ]
 _COMMAND_RECEIPT_COLS = [
     "command_id", "tenant_id", "user_id", "workshop_id", "operation",
@@ -589,6 +612,168 @@ class MemoryWorkshopStore:
             )
             return _deep_copy_dict(row) if row is not None else None
 
+    def ensure_current_version_link(
+        self,
+        *,
+        workshop_id: str,
+        strategy_id: str,
+        strategy_spec_registry_id: str,
+        document_sha256: str,
+    ) -> Dict[str, Any]:
+        """Backfill the active Registry pointer into one immutable link.
+
+        Legacy sessions stored only ``active_strategy_spec_registry_id``.  The
+        deterministic id and session timestamps make repeated startup/readback
+        migration byte-stable without advancing the workshop ETag.
+        """
+
+        digest = _document_sha256(document_sha256)
+        with self._lock:
+            session = self._sessions.get(workshop_id)
+            if session is None:
+                raise KeyError(workshop_id)
+            active_registry_id = str(
+                session.get("active_strategy_spec_registry_id") or ""
+            )
+            if active_registry_id != strategy_spec_registry_id:
+                raise WorkshopVersionProjectionConflict(
+                    "active StrategySpec Registry identity changed during backfill"
+                )
+            session_strategy_id = str(session.get("strategy_id") or "")
+            if session_strategy_id and session_strategy_id != strategy_id:
+                raise WorkshopVersionProjectionConflict(
+                    "workshop and Registry strategy identities disagree"
+                )
+
+            links = self._version_links.setdefault(workshop_id, [])
+            existing = next(
+                (
+                    item
+                    for item in links
+                    if item["strategy_spec_registry_id"] == strategy_spec_registry_id
+                ),
+                None,
+            )
+            if existing is None:
+                pointer_ids = {
+                    str(value)
+                    for value in (
+                        session.get("active_workshop_version_id"),
+                        session.get("selected_version_id"),
+                    )
+                    if value
+                }
+                if len(pointer_ids) > 1:
+                    raise WorkshopVersionProjectionConflict(
+                        "legacy selected-version aliases disagree"
+                    )
+                workshop_version_id = next(iter(pointer_ids), None) or (
+                    _legacy_workshop_version_id(
+                        workshop_id, strategy_spec_registry_id
+                    )
+                )
+                collision = next(
+                    (
+                        item
+                        for item in links
+                        if item["workshop_version_id"] == workshop_version_id
+                    ),
+                    None,
+                )
+                if collision is not None:
+                    raise WorkshopVersionProjectionConflict(
+                        "selected workshop version points to another Registry version"
+                    )
+                latest = max(
+                    links,
+                    key=lambda item: int(item["sequence_no"]),
+                    default=None,
+                )
+                existing = {
+                    "workshop_version_id": workshop_version_id,
+                    "workshop_id": workshop_id,
+                    "strategy_id": strategy_id,
+                    "strategy_spec_registry_id": strategy_spec_registry_id,
+                    "parent_workshop_version_id": (
+                        latest["workshop_version_id"] if latest else None
+                    ),
+                    "source_event_id": None,
+                    "sequence_no": int(latest["sequence_no"]) + 1 if latest else 1,
+                    "document_sha256": digest,
+                    "created_by": session["user_id"],
+                    "created_at": session["created_at"],
+                }
+                links.append(existing)
+            else:
+                self._validate_version_link_identity(
+                    existing,
+                    strategy_id=strategy_id,
+                    document_sha256=digest,
+                )
+                if existing.get("document_sha256") is None:
+                    existing["document_sha256"] = digest
+
+            link_id = existing["workshop_version_id"]
+            for pointer_name in (
+                "active_workshop_version_id",
+                "selected_version_id",
+            ):
+                pointer = session.get(pointer_name)
+                if pointer and pointer != link_id:
+                    raise WorkshopVersionProjectionConflict(
+                        f"{pointer_name} disagrees with active Registry version"
+                    )
+                session[pointer_name] = link_id
+            if not session.get("strategy_id"):
+                session["strategy_id"] = strategy_id
+            return _deep_copy_dict(existing)
+
+    @staticmethod
+    def _validate_version_link_identity(
+        link: Dict[str, Any],
+        *,
+        strategy_id: str,
+        document_sha256: str,
+    ) -> None:
+        if str(link.get("strategy_id") or "") != strategy_id:
+            raise WorkshopVersionProjectionConflict(
+                "workshop version strategy identity is immutable"
+            )
+        stored_digest = str(link.get("document_sha256") or "")
+        if stored_digest and stored_digest != document_sha256:
+            raise WorkshopVersionProjectionConflict(
+                "authoritative StrategySpec bytes changed for an immutable version"
+            )
+
+    def ensure_version_link_digest(
+        self,
+        *,
+        workshop_id: str,
+        workshop_version_id: str,
+        strategy_id: str,
+        document_sha256: str,
+    ) -> Dict[str, Any]:
+        digest = _document_sha256(document_sha256)
+        with self._lock:
+            link = next(
+                (
+                    item
+                    for item in self._version_links.get(workshop_id, [])
+                    if item["workshop_version_id"] == workshop_version_id
+                ),
+                None,
+            )
+            if link is None:
+                raise KeyError(workshop_version_id)
+            self._validate_version_link_identity(
+                link,
+                strategy_id=strategy_id,
+                document_sha256=digest,
+            )
+            if link.get("document_sha256") is None:
+                link["document_sha256"] = digest
+            return _deep_copy_dict(link)
+
     # --- durable governed-command ledger ---
 
     @staticmethod
@@ -716,6 +901,33 @@ class MemoryWorkshopStore:
             receipt = self._command_receipts.get(composite)
             return _deep_copy_dict(receipt) if receipt is not None else None
 
+    def _resolve_compensation_locked(
+        self,
+        *,
+        workshop_id: str,
+        tenant_id: str,
+        user_id: str,
+        operation: str,
+        idempotency_key: str,
+        resolution: Dict[str, Any],
+    ) -> None:
+        """Merge a resolution into a failed source receipt under self._lock.
+
+        Bookkeeping over lineage: a missing or non-failed source is skipped so
+        the successor's own terminal write stays authoritative.
+        """
+
+        composite = self._command_key(
+            tenant_id, user_id, workshop_id, operation, idempotency_key
+        )
+        receipt = self._command_receipts.get(composite)
+        if receipt is None or receipt["status"] != "failed":
+            return
+        compensation = dict(receipt.get("compensation") or {})
+        compensation.update(deepcopy(dict(resolution)))
+        receipt["compensation"] = compensation
+        receipt["updated_at"] = _utc_now()
+
     def complete_command(
         self,
         *,
@@ -730,8 +942,15 @@ class MemoryWorkshopStore:
         version_link: Optional[Dict[str, Any]] = None,
         session_updates: Optional[Dict[str, Any]] = None,
         event: Optional[Dict[str, Any]] = None,
+        resolve_compensation: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Complete an admitted command and its authoritative readback atomically."""
+        """Complete an admitted command and its authoritative readback atomically.
+
+        ``resolve_compensation`` resolves the adopted lineage source
+        (``{"operation", "idempotency_key", "resolution"}``) in the same
+        critical section as the successor's completion, so a committed
+        successor and a still-resumable source can never coexist.
+        """
 
         composite = self._command_key(
             tenant_id, user_id, workshop_id, operation, idempotency_key
@@ -777,7 +996,7 @@ class MemoryWorkshopStore:
             if version_link is not None:
                 required = {
                     "workshop_version_id", "strategy_id",
-                    "strategy_spec_registry_id", "created_by",
+                    "strategy_spec_registry_id", "document_sha256", "created_by",
                 }
                 missing = required - set(version_link)
                 if missing:
@@ -794,6 +1013,9 @@ class MemoryWorkshopStore:
                     ),
                     "source_event_id": version_link.get("source_event_id"),
                     "sequence_no": int(version_link.get("sequence_no") or (len(links) + 1)),
+                    "document_sha256": _document_sha256(
+                        version_link["document_sha256"]
+                    ),
                     "created_by": version_link["created_by"],
                     "created_at": version_link.get("created_at") or _utc_now(),
                 }
@@ -820,8 +1042,16 @@ class MemoryWorkshopStore:
             prepared_event: Optional[Dict[str, Any]] = None
             if event is not None:
                 bucket = self._events.setdefault(workshop_id, [])
+                requested_event_id = event.get("event_id") or _new_id()
+                if any(row["event_id"] == requested_event_id for row in bucket):
+                    # Parity with the Postgres event_id primary key: a
+                    # colliding digest-derived event id must abort the commit
+                    # instead of silently duplicating the event stream.
+                    raise ValueError(
+                        f"workshop event_id already exists: {requested_event_id!r}"
+                    )
                 prepared_event = {
-                    "event_id": event.get("event_id") or _new_id(),
+                    "event_id": requested_event_id,
                     "workshop_id": workshop_id,
                     "sequence_no": len(bucket) + 1,
                     "actor_type": event["actor_type"],
@@ -850,6 +1080,19 @@ class MemoryWorkshopStore:
                     "updated_at": now,
                 }
             )
+            if resolve_compensation is not None:
+                self._resolve_compensation_locked(
+                    workshop_id=workshop_id,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    operation=str(
+                        resolve_compensation.get("operation") or operation
+                    ),
+                    idempotency_key=str(
+                        resolve_compensation.get("idempotency_key") or ""
+                    ),
+                    resolution=dict(resolve_compensation.get("resolution") or {}),
+                )
             return {
                 "outcome": "completed",
                 "receipt": _deep_copy_dict(receipt),
@@ -873,9 +1116,19 @@ class MemoryWorkshopStore:
         request_hash: str,
         failure: Dict[str, Any],
         compensation: Optional[Dict[str, Any]] = None,
+        canonical_refs: Optional[Any] = None,
         event: Optional[Dict[str, Any]] = None,
+        resolve_compensation: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Persist failure/compensation without rolling the workshop lock back."""
+        """Persist failure/compensation without rolling the workshop lock back.
+
+        ``canonical_refs`` records downstream identifiers that were already
+        created before the failure (partial effects), keeping the failed
+        receipt truthful about what exists downstream.
+        ``resolve_compensation`` resolves (or releases the claim on) the
+        adopted lineage source in the same critical section, so the lineage
+        moves to exactly one live receipt.
+        """
 
         composite = self._command_key(
             tenant_id, user_id, workshop_id, operation, idempotency_key
@@ -907,6 +1160,8 @@ class MemoryWorkshopStore:
                     "updated_at": now,
                 }
             )
+            if canonical_refs is not None:
+                receipt["canonical_refs"] = deepcopy(canonical_refs)
             prepared_event: Optional[Dict[str, Any]] = None
             if event is not None:
                 bucket = self._events.setdefault(workshop_id, [])
@@ -923,6 +1178,19 @@ class MemoryWorkshopStore:
                     "created_at": event.get("created_at") or now,
                 }
                 bucket.append(prepared_event)
+            if resolve_compensation is not None:
+                self._resolve_compensation_locked(
+                    workshop_id=workshop_id,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    operation=str(
+                        resolve_compensation.get("operation") or operation
+                    ),
+                    idempotency_key=str(
+                        resolve_compensation.get("idempotency_key") or ""
+                    ),
+                    resolution=dict(resolve_compensation.get("resolution") or {}),
+                )
             return {
                 "outcome": "failed",
                 "receipt": _deep_copy_dict(receipt),
@@ -931,6 +1199,128 @@ class MemoryWorkshopStore:
                     "lock_version"
                 ),
             }
+
+    def find_resumable_command(
+        self,
+        *,
+        workshop_id: str,
+        tenant_id: str,
+        user_id: str,
+        operation: str,
+        request_hash: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Latest failed receipt of the same logical request with unresolved
+        resumable compensation (recorded partial downstream effects)."""
+
+        with self._lock:
+            candidates = [
+                receipt
+                for receipt in self._command_receipts.values()
+                if receipt["workshop_id"] == workshop_id
+                and receipt["tenant_id"] == tenant_id
+                and receipt["user_id"] == user_id
+                and receipt["operation"] == operation
+                and receipt["request_hash"] == request_hash
+                and receipt["status"] == "failed"
+                and isinstance(receipt.get("compensation"), dict)
+                and receipt["compensation"].get("resumable") is True
+                and not receipt["compensation"].get("resolved_at")
+            ]
+            if not candidates:
+                return None
+            candidates.sort(
+                key=lambda row: str(row.get("failed_at") or row.get("updated_at") or "")
+            )
+            return _deep_copy_dict(candidates[-1])
+
+    def claim_resumable_command(
+        self,
+        *,
+        workshop_id: str,
+        tenant_id: str,
+        user_id: str,
+        operation: str,
+        request_hash: str,
+        claimed_by_idempotency_key: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Atomically claim the latest resumable lineage for one successor.
+
+        The find and the claim stamp are one critical section: while a
+        successor holds the claim, a concurrent new-key retry gets ``None``
+        and must open fresh downstream resources instead of adopting shared
+        ones.  Re-claim by the same successor key succeeds so an exact
+        command replay can recover after a crash mid-flight.  The claim is
+        released or resolved transactionally by the successor's terminal
+        ``complete_command`` / ``fail_command`` write.
+        """
+
+        if not claimed_by_idempotency_key:
+            raise ValueError("claimed_by_idempotency_key is required")
+        with self._lock:
+            candidates = [
+                receipt
+                for receipt in self._command_receipts.values()
+                if receipt["workshop_id"] == workshop_id
+                and receipt["tenant_id"] == tenant_id
+                and receipt["user_id"] == user_id
+                and receipt["operation"] == operation
+                and receipt["request_hash"] == request_hash
+                and receipt["status"] == "failed"
+                and isinstance(receipt.get("compensation"), dict)
+                and receipt["compensation"].get("resumable") is True
+                and not receipt["compensation"].get("resolved_at")
+            ]
+            if not candidates:
+                return None
+            candidates.sort(
+                key=lambda row: str(row.get("failed_at") or row.get("updated_at") or "")
+            )
+            receipt = candidates[-1]
+            claimed_by = str(
+                receipt["compensation"].get("claimed_by_idempotency_key") or ""
+            )
+            if claimed_by and claimed_by != claimed_by_idempotency_key:
+                # The whole lineage chain shares one downstream digest, so a
+                # claim on the latest receipt blocks adoption outright rather
+                # than falling back to an older receipt of the same chain.
+                return None
+            compensation = dict(receipt["compensation"])
+            compensation["claimed_by_idempotency_key"] = claimed_by_idempotency_key
+            compensation["claimed_at"] = _utc_now()
+            receipt["compensation"] = compensation
+            receipt["updated_at"] = _utc_now()
+            return _deep_copy_dict(receipt)
+
+    def resolve_command_compensation(
+        self,
+        *,
+        workshop_id: str,
+        tenant_id: str,
+        user_id: str,
+        operation: str,
+        idempotency_key: str,
+        resolution: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Merge a resolution (resumed / cancelled) into a failed receipt's
+        compensation so partial effects are not adopted twice."""
+
+        composite = self._command_key(
+            tenant_id, user_id, workshop_id, operation, idempotency_key
+        )
+        with self._lock:
+            receipt = self._command_receipts.get(composite)
+            if receipt is None:
+                return {"outcome": "not_found", "receipt": None}
+            if receipt["status"] != "failed":
+                return {
+                    "outcome": "invalid_state",
+                    "receipt": _deep_copy_dict(receipt),
+                }
+            compensation = dict(receipt.get("compensation") or {})
+            compensation.update(deepcopy(dict(resolution)))
+            receipt["compensation"] = compensation
+            receipt["updated_at"] = _utc_now()
+            return {"outcome": "resolved", "receipt": _deep_copy_dict(receipt)}
 
     # --- event ---
 
@@ -1300,13 +1690,42 @@ class PostgresWorkshopStore:
                     parent_workshop_version_id   TEXT,
                     source_event_id              TEXT,
                     sequence_no                  BIGINT NOT NULL,
+                    document_sha256              CHAR(64) NOT NULL,
                     created_by                   TEXT NOT NULL,
                     created_at                   TIMESTAMPTZ NOT NULL DEFAULT now(),
                     CONSTRAINT uq_ws_version_sequence
                         UNIQUE (workshop_id, sequence_no),
                     CONSTRAINT uq_ws_registry_version
-                        UNIQUE (workshop_id, strategy_spec_registry_id)
+                        UNIQUE (workshop_id, strategy_spec_registry_id),
+                    CONSTRAINT ck_ws_version_document_sha256
+                        CHECK (document_sha256 ~ '^[0-9a-f]{{64}}$')
                 )
+            """)
+            # Legacy rows predate immutable StrategySpec digests.  Keep the
+            # migration column nullable until authoritative Registry readback
+            # deterministically hydrates each row; every new write requires a
+            # validated digest in ``complete_command``.
+            conn.execute(f"""
+                ALTER TABLE {self._vlt}
+                    ADD COLUMN IF NOT EXISTS document_sha256 CHAR(64)
+            """)
+            conn.execute(f"""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1
+                          FROM pg_constraint
+                         WHERE conname = 'ck_ws_version_document_sha256'
+                           AND conrelid = '"{self.schema}"."strategy_workshop_version_link"'::regclass
+                    ) THEN
+                        ALTER TABLE {self._vlt}
+                            ADD CONSTRAINT ck_ws_version_document_sha256
+                            CHECK (
+                                document_sha256 IS NULL
+                                OR document_sha256 ~ '^[0-9a-f]{{64}}$'
+                            ) NOT VALID;
+                    END IF;
+                END $$
             """)
             conn.execute(f"""
                 CREATE INDEX IF NOT EXISTS idx_ws_version_workshop_sequence
@@ -1693,7 +2112,8 @@ class PostgresWorkshopStore:
                 f"""
                 SELECT workshop_version_id, workshop_id, strategy_id,
                        strategy_spec_registry_id, parent_workshop_version_id,
-                       source_event_id, sequence_no, created_by, created_at::text
+                       source_event_id, sequence_no, document_sha256,
+                       created_by, created_at::text
                   FROM {self._vlt}
                  WHERE workshop_id = %s
                  ORDER BY sequence_no ASC
@@ -1713,7 +2133,8 @@ class PostgresWorkshopStore:
                 f"""
                 SELECT workshop_version_id, workshop_id, strategy_id,
                        strategy_spec_registry_id, parent_workshop_version_id,
-                       source_event_id, sequence_no, created_by, created_at::text
+                       source_event_id, sequence_no, document_sha256,
+                       created_by, created_at::text
                   FROM {self._vlt}
                  WHERE workshop_id = %s AND workshop_version_id = %s
                 """,
@@ -1721,6 +2142,217 @@ class PostgresWorkshopStore:
             )
             row = cur.fetchone()
         return _row_to_dict(row, _VERSION_LINK_COLS) if row is not None else None
+
+    @staticmethod
+    def _validate_version_link_identity(
+        link: Dict[str, Any],
+        *,
+        strategy_id: str,
+        document_sha256: str,
+    ) -> None:
+        if str(link.get("strategy_id") or "") != strategy_id:
+            raise WorkshopVersionProjectionConflict(
+                "workshop version strategy identity is immutable"
+            )
+        stored_digest = str(link.get("document_sha256") or "").strip()
+        if stored_digest and stored_digest != document_sha256:
+            raise WorkshopVersionProjectionConflict(
+                "authoritative StrategySpec bytes changed for an immutable version"
+            )
+
+    def ensure_current_version_link(
+        self,
+        *,
+        workshop_id: str,
+        strategy_id: str,
+        strategy_spec_registry_id: str,
+        document_sha256: str,
+    ) -> Dict[str, Any]:
+        digest = _document_sha256(document_sha256)
+        with self._connect() as conn:
+            session_row = conn.execute(
+                f"""
+                SELECT tenant_id, user_id, strategy_id,
+                       active_strategy_spec_registry_id, selected_version_id,
+                       active_workshop_version_id, created_at::text
+                  FROM {self._st}
+                 WHERE workshop_id = %s
+                   FOR UPDATE
+                """,
+                (workshop_id,),
+            ).fetchone()
+            if session_row is None:
+                raise KeyError(workshop_id)
+            if str(session_row[3] or "") != strategy_spec_registry_id:
+                raise WorkshopVersionProjectionConflict(
+                    "active StrategySpec Registry identity changed during backfill"
+                )
+            if session_row[2] and str(session_row[2]) != strategy_id:
+                raise WorkshopVersionProjectionConflict(
+                    "workshop and Registry strategy identities disagree"
+                )
+
+            link_row = conn.execute(
+                f"""
+                SELECT workshop_version_id, workshop_id, strategy_id,
+                       strategy_spec_registry_id, parent_workshop_version_id,
+                       source_event_id, sequence_no, document_sha256,
+                       created_by, created_at::text
+                  FROM {self._vlt}
+                 WHERE workshop_id = %s AND strategy_spec_registry_id = %s
+                   FOR UPDATE
+                """,
+                (workshop_id, strategy_spec_registry_id),
+            ).fetchone()
+            if link_row is None:
+                pointer_ids = {
+                    str(value) for value in (session_row[4], session_row[5]) if value
+                }
+                if len(pointer_ids) > 1:
+                    raise WorkshopVersionProjectionConflict(
+                        "legacy selected-version aliases disagree"
+                    )
+                workshop_version_id = next(iter(pointer_ids), None) or (
+                    _legacy_workshop_version_id(
+                        workshop_id, strategy_spec_registry_id
+                    )
+                )
+                collision = conn.execute(
+                    f"""
+                    SELECT strategy_spec_registry_id
+                      FROM {self._vlt}
+                     WHERE workshop_version_id = %s
+                    """,
+                    (workshop_version_id,),
+                ).fetchone()
+                if collision is not None:
+                    raise WorkshopVersionProjectionConflict(
+                        "selected workshop version points to another Registry version"
+                    )
+                latest = conn.execute(
+                    f"""
+                    SELECT workshop_version_id, sequence_no
+                      FROM {self._vlt}
+                     WHERE workshop_id = %s
+                     ORDER BY sequence_no DESC
+                     LIMIT 1
+                    """,
+                    (workshop_id,),
+                ).fetchone()
+                parent_id = latest[0] if latest is not None else None
+                sequence_no = int(latest[1]) + 1 if latest is not None else 1
+                conn.execute(
+                    f"""
+                    INSERT INTO {self._vlt}
+                        (workshop_version_id, workshop_id, strategy_id,
+                         strategy_spec_registry_id, parent_workshop_version_id,
+                         source_event_id, sequence_no, document_sha256,
+                         created_by, created_at)
+                    VALUES (%s,%s,%s,%s,%s,NULL,%s,%s,%s,%s)
+                    """,
+                    (
+                        workshop_version_id, workshop_id, strategy_id,
+                        strategy_spec_registry_id, parent_id, sequence_no,
+                        digest, session_row[1], session_row[6],
+                    ),
+                )
+                link_row = conn.execute(
+                    f"""
+                    SELECT workshop_version_id, workshop_id, strategy_id,
+                           strategy_spec_registry_id, parent_workshop_version_id,
+                           source_event_id, sequence_no, document_sha256,
+                           created_by, created_at::text
+                      FROM {self._vlt}
+                     WHERE workshop_id = %s AND strategy_spec_registry_id = %s
+                    """,
+                    (workshop_id, strategy_spec_registry_id),
+                ).fetchone()
+
+            link = _row_to_dict(link_row, _VERSION_LINK_COLS)
+            self._validate_version_link_identity(
+                link,
+                strategy_id=strategy_id,
+                document_sha256=digest,
+            )
+            if not link.get("document_sha256"):
+                conn.execute(
+                    f"""
+                    UPDATE {self._vlt}
+                       SET document_sha256 = %s
+                     WHERE workshop_id = %s AND workshop_version_id = %s
+                       AND document_sha256 IS NULL
+                    """,
+                    (digest, workshop_id, link["workshop_version_id"]),
+                )
+                link["document_sha256"] = digest
+
+            link_id = str(link["workshop_version_id"])
+            for pointer_name, pointer in (
+                ("selected_version_id", session_row[4]),
+                ("active_workshop_version_id", session_row[5]),
+            ):
+                if pointer and str(pointer) != link_id:
+                    raise WorkshopVersionProjectionConflict(
+                        f"{pointer_name} disagrees with active Registry version"
+                    )
+            # This is an additive data migration, not a workshop command:
+            # preserve lock_version and timestamps so existing payload bytes
+            # outside the newly populated pointers remain unchanged.
+            conn.execute(
+                f"""
+                UPDATE {self._st}
+                   SET strategy_id = COALESCE(strategy_id, %s),
+                       selected_version_id = COALESCE(selected_version_id, %s),
+                       active_workshop_version_id =
+                           COALESCE(active_workshop_version_id, %s)
+                 WHERE workshop_id = %s
+                """,
+                (strategy_id, link_id, link_id, workshop_id),
+            )
+            return link
+
+    def ensure_version_link_digest(
+        self,
+        *,
+        workshop_id: str,
+        workshop_version_id: str,
+        strategy_id: str,
+        document_sha256: str,
+    ) -> Dict[str, Any]:
+        digest = _document_sha256(document_sha256)
+        with self._connect() as conn:
+            row = conn.execute(
+                f"""
+                SELECT workshop_version_id, workshop_id, strategy_id,
+                       strategy_spec_registry_id, parent_workshop_version_id,
+                       source_event_id, sequence_no, document_sha256,
+                       created_by, created_at::text
+                  FROM {self._vlt}
+                 WHERE workshop_id = %s AND workshop_version_id = %s
+                   FOR UPDATE
+                """,
+                (workshop_id, workshop_version_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError(workshop_version_id)
+            link = _row_to_dict(row, _VERSION_LINK_COLS)
+            self._validate_version_link_identity(
+                link,
+                strategy_id=strategy_id,
+                document_sha256=digest,
+            )
+            if not link.get("document_sha256"):
+                conn.execute(
+                    f"""
+                    UPDATE {self._vlt}
+                       SET document_sha256 = %s
+                     WHERE workshop_id = %s AND workshop_version_id = %s
+                       AND document_sha256 IS NULL
+                    """,
+                    (digest, workshop_id, workshop_version_id),
+                )
+                link["document_sha256"] = digest
+            return link
 
     # --- durable governed-command ledger ---
 
@@ -1943,6 +2575,7 @@ class PostgresWorkshopStore:
         version_link: Optional[Dict[str, Any]] = None,
         session_updates: Optional[Dict[str, Any]] = None,
         event: Optional[Dict[str, Any]] = None,
+        resolve_compensation: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         updates = self._validate_session_updates(session_updates)
         with self._connect() as conn:
@@ -1975,7 +2608,7 @@ class PostgresWorkshopStore:
             if version_link is not None:
                 required = {
                     "workshop_version_id", "strategy_id",
-                    "strategy_spec_registry_id", "created_by",
+                    "strategy_spec_registry_id", "document_sha256", "created_by",
                 }
                 missing = required - set(version_link)
                 if missing:
@@ -1992,14 +2625,18 @@ class PostgresWorkshopStore:
                     version_link.get("sequence_no")
                     or (sequence_row[0] if sequence_row else 1)
                 )
+                document_sha256 = _document_sha256(
+                    version_link["document_sha256"]
+                )
                 created_at = version_link.get("created_at") or _utc_now()
                 inserted = conn.execute(
                     f"""
                     INSERT INTO {self._vlt}
                         (workshop_version_id, workshop_id, strategy_id,
                          strategy_spec_registry_id, parent_workshop_version_id,
-                         source_event_id, sequence_no, created_by, created_at)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                         source_event_id, sequence_no, document_sha256,
+                         created_by, created_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     ON CONFLICT DO NOTHING
                     RETURNING workshop_version_id
                     """,
@@ -2009,14 +2646,15 @@ class PostgresWorkshopStore:
                         version_link["strategy_spec_registry_id"],
                         version_link.get("parent_workshop_version_id"),
                         version_link.get("source_event_id"), sequence_no,
-                        version_link["created_by"], created_at,
+                        document_sha256, version_link["created_by"], created_at,
                     ),
                 ).fetchone()
                 candidate = conn.execute(
                     f"""
                     SELECT workshop_version_id, workshop_id, strategy_id,
                            strategy_spec_registry_id, parent_workshop_version_id,
-                           source_event_id, sequence_no, created_by, created_at::text
+                           source_event_id, sequence_no, document_sha256,
+                           created_by, created_at::text
                       FROM {self._vlt}
                      WHERE workshop_id = %s
                        AND (
@@ -2048,6 +2686,7 @@ class PostgresWorkshopStore:
                     ),
                     "source_event_id": version_link.get("source_event_id"),
                     "sequence_no": sequence_no,
+                    "document_sha256": document_sha256,
                     "created_by": version_link["created_by"],
                 }
                 if any(stored_link.get(key) != value for key, value in comparable.items()):
@@ -2121,6 +2760,22 @@ class PostgresWorkshopStore:
                     now, now, receipt["command_id"],
                 ),
             )
+            if resolve_compensation is not None:
+                # Same transaction as the successor's completion: a committed
+                # successor and a still-resumable source can never coexist.
+                self._resolve_compensation_in_txn(
+                    conn,
+                    workshop_id=workshop_id,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    operation=str(
+                        resolve_compensation.get("operation") or operation
+                    ),
+                    idempotency_key=str(
+                        resolve_compensation.get("idempotency_key") or ""
+                    ),
+                    resolution=dict(resolve_compensation.get("resolution") or {}),
+                )
             completed = self._fetch_command_receipt(
                 conn,
                 workshop_id=workshop_id,
@@ -2148,7 +2803,9 @@ class PostgresWorkshopStore:
         request_hash: str,
         failure: Dict[str, Any],
         compensation: Optional[Dict[str, Any]] = None,
+        canonical_refs: Optional[Any] = None,
         event: Optional[Dict[str, Any]] = None,
+        resolve_compensation: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         with self._connect() as conn:
             receipt = self._fetch_command_receipt(
@@ -2210,19 +2867,52 @@ class PostgresWorkshopStore:
                     "created_at": created_at,
                 }
             now = _utc_now()
-            conn.execute(
-                f"""
-                UPDATE {self._crt}
-                   SET status = 'failed', failure_json = %s::jsonb,
-                       compensation_json = %s::jsonb, failed_at = %s,
-                       updated_at = %s
-                 WHERE command_id = %s AND status = 'admitted'
-                """,
-                (
-                    _json_dumps(failure), _json_dumps(compensation), now, now,
-                    receipt["command_id"],
-                ),
-            )
+            if canonical_refs is not None:
+                conn.execute(
+                    f"""
+                    UPDATE {self._crt}
+                       SET status = 'failed', failure_json = %s::jsonb,
+                           compensation_json = %s::jsonb,
+                           canonical_refs_json = %s::jsonb, failed_at = %s,
+                           updated_at = %s
+                     WHERE command_id = %s AND status = 'admitted'
+                    """,
+                    (
+                        _json_dumps(failure), _json_dumps(compensation),
+                        _json_dumps(canonical_refs), now, now,
+                        receipt["command_id"],
+                    ),
+                )
+            else:
+                conn.execute(
+                    f"""
+                    UPDATE {self._crt}
+                       SET status = 'failed', failure_json = %s::jsonb,
+                           compensation_json = %s::jsonb, failed_at = %s,
+                           updated_at = %s
+                     WHERE command_id = %s AND status = 'admitted'
+                    """,
+                    (
+                        _json_dumps(failure), _json_dumps(compensation), now, now,
+                        receipt["command_id"],
+                    ),
+                )
+            if resolve_compensation is not None:
+                # Same transaction as the successor's failure write: the
+                # lineage moves to exactly one live receipt.
+                self._resolve_compensation_in_txn(
+                    conn,
+                    workshop_id=workshop_id,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    operation=str(
+                        resolve_compensation.get("operation") or operation
+                    ),
+                    idempotency_key=str(
+                        resolve_compensation.get("idempotency_key") or ""
+                    ),
+                    resolution=dict(resolve_compensation.get("resolution") or {}),
+                )
             failed = self._fetch_command_receipt(
                 conn,
                 workshop_id=workshop_id,
@@ -2237,6 +2927,209 @@ class PostgresWorkshopStore:
                 "event": stored_event,
                 "current_lock_version": lock_row[0] if lock_row else None,
             }
+
+    def find_resumable_command(
+        self,
+        *,
+        workshop_id: str,
+        tenant_id: str,
+        user_id: str,
+        operation: str,
+        request_hash: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Latest failed receipt of the same logical request with unresolved
+        resumable compensation (recorded partial downstream effects)."""
+
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"""
+                SELECT command_id, tenant_id, user_id, workshop_id, operation,
+                       idempotency_key, request_hash, request_payload_json::text,
+                       request_id, trace_id, status, expected_lock_version,
+                       admitted_lock_version, resulting_lock_version,
+                       result_json::text, canonical_refs_json::text,
+                       failure_json::text, compensation_json::text,
+                       admitted_at::text, completed_at::text, failed_at::text,
+                       updated_at::text
+                  FROM {self._crt}
+                 WHERE tenant_id = %s AND user_id = %s AND workshop_id = %s
+                   AND operation = %s AND request_hash = %s
+                   AND status = 'failed'
+                   AND compensation_json->>'resumable' = 'true'
+                   AND compensation_json->>'resolved_at' IS NULL
+                 ORDER BY failed_at DESC NULLS LAST, updated_at DESC
+                 LIMIT 1
+                """,
+                (tenant_id, user_id, workshop_id, operation, request_hash),
+            )
+            row = cur.fetchone()
+            return _decode_command_receipt_row(row) if row is not None else None
+
+    def claim_resumable_command(
+        self,
+        *,
+        workshop_id: str,
+        tenant_id: str,
+        user_id: str,
+        operation: str,
+        request_hash: str,
+        claimed_by_idempotency_key: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Atomically claim the latest resumable lineage for one successor.
+
+        ``SELECT ... FOR UPDATE`` plus the claim stamp run in one
+        transaction: while a successor holds the claim, a concurrent new-key
+        retry gets ``None`` and must open fresh downstream resources instead
+        of adopting shared ones.  Re-claim by the same successor key succeeds
+        so an exact command replay can recover after a crash mid-flight.
+        """
+
+        if not claimed_by_idempotency_key:
+            raise ValueError("claimed_by_idempotency_key is required")
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"""
+                SELECT command_id, tenant_id, user_id, workshop_id, operation,
+                       idempotency_key, request_hash, request_payload_json::text,
+                       request_id, trace_id, status, expected_lock_version,
+                       admitted_lock_version, resulting_lock_version,
+                       result_json::text, canonical_refs_json::text,
+                       failure_json::text, compensation_json::text,
+                       admitted_at::text, completed_at::text, failed_at::text,
+                       updated_at::text
+                  FROM {self._crt}
+                 WHERE tenant_id = %s AND user_id = %s AND workshop_id = %s
+                   AND operation = %s AND request_hash = %s
+                   AND status = 'failed'
+                   AND compensation_json->>'resumable' = 'true'
+                   AND compensation_json->>'resolved_at' IS NULL
+                 ORDER BY failed_at DESC NULLS LAST, updated_at DESC
+                 LIMIT 1
+                   FOR UPDATE
+                """,
+                (tenant_id, user_id, workshop_id, operation, request_hash),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return None
+            receipt = _decode_command_receipt_row(row)
+            claimed_by = str(
+                (receipt.get("compensation") or {}).get(
+                    "claimed_by_idempotency_key"
+                )
+                or ""
+            )
+            if claimed_by and claimed_by != claimed_by_idempotency_key:
+                # The whole lineage chain shares one downstream digest, so a
+                # claim on the latest receipt blocks adoption outright rather
+                # than falling back to an older receipt of the same chain.
+                return None
+            now = _utc_now()
+            claim = {
+                "claimed_by_idempotency_key": claimed_by_idempotency_key,
+                "claimed_at": now,
+            }
+            conn.execute(
+                f"""
+                UPDATE {self._crt}
+                   SET compensation_json =
+                           COALESCE(compensation_json, '{{}}'::jsonb) || %s::jsonb,
+                       updated_at = %s
+                 WHERE command_id = %s AND status = 'failed'
+                """,
+                (_json_dumps(claim), now, receipt["command_id"]),
+            )
+            claimed = self._fetch_command_receipt(
+                conn,
+                workshop_id=workshop_id,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                operation=operation,
+                idempotency_key=str(receipt["idempotency_key"]),
+            )
+            return claimed
+
+    def _resolve_compensation_in_txn(
+        self,
+        conn: Any,
+        *,
+        workshop_id: str,
+        tenant_id: str,
+        user_id: str,
+        operation: str,
+        idempotency_key: str,
+        resolution: Dict[str, Any],
+    ) -> None:
+        """Merge a resolution into a failed source receipt inside *conn*.
+
+        Bookkeeping over lineage: a missing or non-failed source is skipped so
+        the successor's own terminal write stays authoritative.  ``conn`` is
+        the caller's open transaction — this never commits or rolls back.
+        """
+
+        conn.execute(
+            f"""
+            UPDATE {self._crt}
+               SET compensation_json =
+                       COALESCE(compensation_json, '{{}}'::jsonb) || %s::jsonb,
+                   updated_at = %s
+             WHERE tenant_id = %s AND user_id = %s AND workshop_id = %s
+               AND operation = %s AND idempotency_key = %s
+               AND status = 'failed'
+            """,
+            (
+                _json_dumps(dict(resolution)), _utc_now(),
+                tenant_id, user_id, workshop_id, operation, idempotency_key,
+            ),
+        )
+
+    def resolve_command_compensation(
+        self,
+        *,
+        workshop_id: str,
+        tenant_id: str,
+        user_id: str,
+        operation: str,
+        idempotency_key: str,
+        resolution: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Merge a resolution (resumed / cancelled) into a failed receipt's
+        compensation so partial effects are not adopted twice."""
+
+        with self._connect() as conn:
+            receipt = self._fetch_command_receipt(
+                conn,
+                workshop_id=workshop_id,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                operation=operation,
+                idempotency_key=idempotency_key,
+                for_update=True,
+            )
+            if receipt is None:
+                return {"outcome": "not_found", "receipt": None}
+            if receipt["status"] != "failed":
+                return {"outcome": "invalid_state", "receipt": receipt}
+            now = _utc_now()
+            conn.execute(
+                f"""
+                UPDATE {self._crt}
+                   SET compensation_json =
+                           COALESCE(compensation_json, '{{}}'::jsonb) || %s::jsonb,
+                       updated_at = %s
+                 WHERE command_id = %s AND status = 'failed'
+                """,
+                (_json_dumps(dict(resolution)), now, receipt["command_id"]),
+            )
+            resolved = self._fetch_command_receipt(
+                conn,
+                workshop_id=workshop_id,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                operation=operation,
+                idempotency_key=idempotency_key,
+            )
+            return {"outcome": "resolved", "receipt": resolved}
 
     # --- event ---
 

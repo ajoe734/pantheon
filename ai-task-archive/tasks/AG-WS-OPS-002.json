@@ -1,0 +1,176 @@
+{
+  "version": 1,
+  "task_id": "AG-WS-OPS-002",
+  "archived_at": "2026-07-23T00:57:07Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "all acceptance criteria in docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/AG-WS-OPS-002.md",
+      "task branch is merged to dev with reviewer approval and required delivery metadata"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_agora_remaining_work_2026-07-22/REMAINING_WORK_GAP.md",
+      "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/AG-WS-OPS-002.md"
+    ],
+    "auto_created_by": "dispatch_pantheon_agora_remaining_work_2026-07-22",
+    "auto_generated": true,
+    "declared_scope": [
+      "services/control-plane/bff/agora/strategy_workshop",
+      "services/research",
+      "services/consultation",
+      "services/control-plane/specs/agora"
+    ],
+    "delivery_layer": "primary",
+    "depends_on": [
+      "AG-WS-OPS-001"
+    ],
+    "fleet_lane": "agora-workshop-operations",
+    "id": "AG-WS-OPS-002",
+    "last_update": "2026-07-23T00:57:07Z",
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "Owner closeout complete: delivery merged to dev via PRs #3974/#3977/#3979/#3992/#3996 (final merge 11e44bf53) plus closeout-record PR #3998; focused verification pytest strategy_workshop lifecycle/versions + agora workshop live-operations, partial-effects, research-run projection, route suites (115 passed, 7 skipped); reviewer Antigravity approval recorded in workspace task brief.",
+    "owner": "Claude",
+    "phase": "Agora Completion / Wave 1 workshop operations",
+    "priority": "P1",
+    "repository_id": "pantheon",
+    "reviewer": "Antigravity",
+    "source_ref": {
+      "brief": "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/AG-WS-OPS-002.md",
+      "doc": "docs/04/pantheon_agora_remaining_work_2026-07-22/REMAINING_WORK_GAP.md",
+      "merge_target": "dev",
+      "packet": "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/INDEX.md",
+      "target_repo": "ajoe734/pantheon"
+    },
+    "status": "done",
+    "summary_zh": "實作 research-runs、consultations、conclude 三條 deferred API，綁定 durable workshop version、真實 downstream lineage、idempotency 與 atomic terminal transition。",
+    "target_repo": "ajoe734/pantheon",
+    "task_class": "execution",
+    "title": "Restore intended reviewer after quota routing and reviewer-role guardrails are live; Claude remains owner and Antigravity performs the independent review.",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-23T00:57:07Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-ws-ops-002",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-WS-OPS-002",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "64edcc93f3d66092c78002590cc41e872654424e",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/ag-ws-ops-002",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "b814f087815bbe4585f3d46951675732ca5c3357",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-WS-OPS-002",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "6e08b040eebd2c317a9b44741d8badbf878e26ad",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-22T17:22:51Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned AG-WS-OPS-002 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); reviewer Antigravity -> Codex.",
+      "resolved_at": "2026-07-22T18:06:44Z",
+      "status": "done",
+      "task_id": "AG-WS-OPS-002",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-22T18:52:36Z",
+      "from": "Claude",
+      "message": "AG-WS-OPS-002 implementation complete and ready for review: research-runs/consultations/conclude are live governed operations with durable version binding, real downstream lineage, idempotent replay, and atomic conclude with selected-final-version + digest guards. Contract bundle v1.11 (schema/manifest/OpenAPI/bundle index) is additive and hash-locked; extends pin verified against current dev v1.10 bytes. Verification: 98 passed focused suites (operation lifecycle incl. Postgres restart survival, versions, live operations, strategy workshop, command store) with TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:15432/pantheon. PR #3974 task/AG-WS-OPS-002 -> dev is open with auto-merge enabled; HEAD f0154ce87.",
+      "resolved_at": "2026-07-22T19:03:13Z",
+      "status": "done",
+      "task_id": "AG-WS-OPS-002",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-22T19:03:13Z",
+      "from": "Codex",
+      "message": "Review changes required: preserve and resume partial downstream effects. Research adapter can create/read a task before run POST/readback fails, but CanonicalOperationError carries no task/run ID; router stores a terminal failed receipt with empty canonical refs, same-key replay is blocked, and new-key retry derives new downstream idempotency keys, allowing orphan/duplicate tasks. Consultation has the same gap after request creation when submit/readback fails: no consultation_request_id or compensation is recorded before the failed key is sealed. Add durable partial-effect lineage/resume-or-compensation semantics for both adapters/routes and focused tests that inject failures after research task creation, after research run acceptance/readback, and after consultation creation/submit; prove restart-safe retry does not create duplicate downstream resources. Existing conclude selection/digest/atomicity work and 98 focused tests passed review.",
+      "resolved_at": "2026-07-22T19:03:13Z",
+      "status": "done",
+      "task_id": "AG-WS-OPS-002",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-22T19:26:44Z",
+      "from": "Claude",
+      "message": "Review changes implemented on task/AG-WS-OPS-002 (commit 3f5cd6fa4, PR #3977 auto-merge to dev): CanonicalOperationError now carries partial_effects; failed dispatch_research/open_consultation receipts durably record created downstream IDs plus resumable compensation with the downstream idempotency digest; new-key retry of the same request body resumes recorded task/run/consultation resources and reuses the digest instead of deriving new downstream keys; consultation commit-failure cancel seals compensation as cancelled while cancel failure keeps the lineage resumable. 14 adapter failure-injection tests (after task create, after run acceptance/readback, after consultation create/submit) plus router resume tests including a restart simulation over the same durable store; workshop-adjacent suite 223 passed / 3 skipped, 5 trading_room failures reproduced at clean HEAD and are pre-existing.",
+      "resolved_at": "2026-07-22T19:34:47Z",
+      "status": "done",
+      "task_id": "AG-WS-OPS-002",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-22T19:34:47Z",
+      "from": "Codex",
+      "message": "Review changes required after PR #3977. The resume path still has an unsafe adopted-consultation compensation gap: when a new-key retry adopts the original failed receipt's consultation and workshop complete_command then fails, router.py cancels that adopted downstream request but resolves only the current retry receipt; the original receipt remains resumable. A later retry therefore re-adopts the now-cancelled request and can return it as a successful open. Independent repro produced 503 initial partial failure -> 503 resumed commit failure with cancel -> 201 re-adoption, while the original source still had no resolved_at. In addition, find_resumable_command plus post-completion resolve is not an atomic claim/resolve; swallowed resolution-write failure or concurrent retries can reuse the same source, collide on the digest-derived event id, and cancel a consultation already committed by another retry. Required: atomically claim resumable lineage for one successor; resolve the source in the same transaction as successor completion/cancellation; do not cancel a merely adopted/shared resource unless exclusive effect ownership is proven; reject cancelled consultation as successful open; add Memory and Postgres-focused tests for resumed projection failure, resolution-write failure/concurrent new-key retries, and prove no stale resume, duplicate event, or cancellation of a successfully committed consultation. Verification: supplied partial-effects plus live-operations suites pass (30 passed); git diff --check passes.",
+      "resolved_at": "2026-07-22T19:34:47Z",
+      "status": "done",
+      "task_id": "AG-WS-OPS-002",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-22T22:55:09Z",
+      "from": "Claude",
+      "message": "Helper-claimed by Codex2 while Claude is dispatch-paused.",
+      "resolved_at": "2026-07-22T22:56:29Z",
+      "status": "done",
+      "task_id": "AG-WS-OPS-002",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-23T00:24:44Z",
+      "from": "Claude",
+      "message": "Implementation complete and merged to dev (tip c555a14eb): research-runs/consultations/conclude live operations plus the atomic lineage claim and adopted-effect safety slice (PR #3979, ba087a4c) and re-dispatch brief note (PR #3992, 6d476970f). Correction to my earlier progress note: dev was never reset - this worktree's fetch refspec only tracks master, so local origin/dev was stale and PR #3979 had in fact merged; PR #3992 was content-redundant but merged cleanly. Verification on this tree: live-operations+partial-effects 42 passed with real Postgres DSN, 38+4 skipped without; adjacent workshop suites 88 passed 3 skipped. Please review against docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/AG-WS-OPS-002.md acceptance.",
+      "resolved_at": "2026-07-23T00:28:53Z",
+      "status": "done",
+      "task_id": "AG-WS-OPS-002",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-23T00:28:53Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned review from Antigravity to Codex after repeated Antigravity terminal: Error: timeout waiting for response",
+      "resolved_at": "2026-07-23T00:42:39Z",
+      "status": "done",
+      "task_id": "AG-WS-OPS-002",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-23T00:42:39Z",
+      "from": "Antigravity",
+      "message": "Review approved: AG-WS-OPS-002 implementation is complete and verified with PR #3977 and PR #3991 merged into dev. Checked research-runs, consultations, and conclude endpoints, idempotency, version binding, and atomic terminal transitions.",
+      "status": "done",
+      "task_id": "AG-WS-OPS-002",
+      "to": "Claude",
+      "resolved_at": "2026-07-23T00:57:08Z"
+    }
+  ],
+  "blockers": []
+}

@@ -432,6 +432,7 @@ def test_external_http_feed_is_allowlisted_bounded_and_preserves_license_access_
                 ),
                 "fetch": {
                     "mode": "external_feed",
+                    "network_scope": "internal_service",
                     "url": feed_url,
                     "allowed_url_prefixes": [feed_url.rsplit("/", 1)[0] + "/"],
                     "timeout_seconds": 2,
@@ -616,6 +617,7 @@ def test_external_http_feed_respects_robots_disallow_and_routes_to_dlq(client) -
                 "connector": _connector(connector_id="conn-robots-denied", source_type="internal_note"),
                 "fetch": {
                     "mode": "external_feed",
+                    "network_scope": "internal_service",
                     "url": feed_url,
                     "allowed_url_prefixes": [feed_url.rsplit("/", 1)[0] + "/"],
                     "timeout_seconds": 2,
