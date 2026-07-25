@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "task_id": "AG-PERF-TRUTH-001-BE",
+  "archived_at": "2026-07-22T18:18:40Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "all acceptance criteria in docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/AG-PERF-TRUTH-001-BE.md",
+      "task branch is merged to dev with reviewer approval and required delivery metadata"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_agora_remaining_work_2026-07-22/REMAINING_WORK_GAP.md",
+      "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/AG-PERF-TRUTH-001-BE.md"
+    ],
+    "auto_created_by": "dispatch_pantheon_agora_remaining_work_2026-07-22",
+    "auto_generated": true,
+    "declared_scope": [
+      "services/control-plane/bff",
+      "services/control-plane/specs/agora",
+      "services/control-plane/openapi"
+    ],
+    "delivery_layer": "primary",
+    "depends_on": [
+      "OPS-DISPATCH-LEASE-SYNC-001"
+    ],
+    "fleet_lane": "agora-performance-backend",
+    "id": "AG-PERF-TRUTH-001-BE",
+    "last_update": "2026-07-22T18:18:40Z",
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "Owner closeout complete: PR #3964 merged to dev as 00537d77b84a813382c0ad93764fd8a1bf784230; approved v1.10 performance projection/action handoff is durable; 13 focused tests, compileall, JSON/YAML parse, three-route 401 fail-closed smoke, and git diff --check passed.",
+    "owner": "Codex",
+    "phase": "Agora Truth / Wave 0 performance backend",
+    "priority": "P0",
+    "repository_id": "pantheon",
+    "review_notes_zh": [
+      "審查通過:tenant/user 精確 scoping 與 live operator gate 驗證無誤;execution lineage 僅接受 canonical_trade_journey_projector 且衝突 identity fail-closed",
+      "缺料回 typed unavailable/null,無造數路徑;idempotency key+request_hash、expected_version CAS、terminal-state 防重複 disposition 均有測試;SQLite restart readback 通過",
+      "v1.10 additive contract 之 schema/manifest/bundle/OpenAPI hash 鎖定測試通過;reviewer 獨立重跑 13 focused tests 全綠並以 main.app 未授權 smoke 確認三 route 註冊且 401 fail-closed",
+      "非阻斷:action route 的 400/404/409 為 raw HTTPException 非 bff_error envelope;replay 的 idempotent_replay 僅 response 層標記,建議在 FE handoff 註明"
+    ],
+    "reviewer": "Claude",
+    "source_ref": {
+      "brief": "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/AG-PERF-TRUTH-001-BE.md",
+      "doc": "docs/04/pantheon_agora_remaining_work_2026-07-22/REMAINING_WORK_GAP.md",
+      "merge_target": "dev",
+      "packet": "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/INDEX.md",
+      "target_repo": "ajoe734/pantheon"
+    },
+    "status": "done",
+    "summary_zh": "新增真實績效/介入/執行歷史/調整建議 projection 與 governed apply/reject/return receipt；缺資料回 unavailable，不得造數或造結論。",
+    "target_repo": "ajoe734/pantheon",
+    "task_class": "execution",
+    "title": "Governed Agora performance projection and actions",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-22T18:18:40Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-perf-truth-001-be",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-PERF-TRUTH-001-BE",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "9a24478ed2570cfa542977deaa35942bc612ffe2",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/ag-perf-truth-001-be",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "799ddbcf2c7fe7a02444b15ff63bde4d69ace6ee",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-PERF-TRUTH-001-BE",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "ea1a860738d6ee8bf3fb2456c905531623f94279",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-22T17:46:04Z",
+      "from": "Codex",
+      "message": "Review commits 79d1513b6, 1813c845c, and 5f2872ac2. Routes: GET strategy performance, POST suggestion actions, GET receipt readback. Verify exact tenant/user/role scoping, live identity operator gate, canonical Trade Journey-only lineage, typed unavailable/null instead of generated values, durable SQLite restart readback, idempotency/CAS/no duplicate action, viewer write refusal, and no-order/execution authority proofs. Additive contract is Agora v1.10 with locked schema/manifest/bundle hashes. Evidence: 48 focused plus existing regression tests passed; main.app three-route/typed-unavailable smoke passed; compileall, JSON parse, and git diff checks passed. Full legacy trading-room suite separately reaches an existing v1.1 cross-file WidgetPlacement resolver failure under jsonschema 4.26 after 24 passes; no touched v1.1 files.",
+      "resolved_at": "2026-07-22T17:55:54Z",
+      "status": "done",
+      "task_id": "AG-PERF-TRUTH-001-BE",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-22T17:55:54Z",
+      "from": "Claude",
+      "message": "Review approved: scoping, live gate, canonical lineage, typed unavailable, durable receipts, idempotency/CAS, viewer refusal, and no-order proofs all verified; reviewer independently re-ran 13 focused tests (all green) and smoked the three main.app routes (401 fail-closed). Returned to Codex for finalization.",
+      "status": "done",
+      "task_id": "AG-PERF-TRUTH-001-BE",
+      "to": "Codex",
+      "resolved_at": "2026-07-22T18:18:41Z"
+    }
+  ],
+  "blockers": []
+}
