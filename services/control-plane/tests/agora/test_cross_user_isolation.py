@@ -133,6 +133,26 @@ def client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[TestClient,
     dashboard_router._recipe_versions.clear()
     dashboard_router._seen_idempotency_keys.clear()
 
+    monkeypatch.setattr(
+        "agora.strategy_workshop.operations.WorkshopCanonicalOperations.get_strategy_spec",
+        lambda _self, registry_id: {
+            "entry": {
+                "registry_id": registry_id,
+                "strategy_id": f"strategy-family-for-{registry_id}",
+                "version": "1.0.0",
+                "artifact_state": "draft",
+                "lineage": {"source_run_ids": ["test-source"]},
+                "metadata": {
+                    "strategy_spec": {
+                        "spec_version": "1.0",
+                        "strategy_id": f"strategy-family-for-{registry_id}",
+                    },
+                },
+            },
+            "deployment_stage": "none",
+        },
+    )
+
     try:
         yield TestClient(bff_main.app, raise_server_exceptions=False), fake_openclaw
     finally:

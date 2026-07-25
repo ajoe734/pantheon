@@ -6,6 +6,8 @@ The projector consumes committed ``telemetry_events`` rows by the monotonic
 * ``trade_journey_events.json`` -- immutable derived stage events;
 * ``loop_runs.json`` -- one loop run for the same lifecycle identity; and
 * ``controller_state.json`` -- durable checkpoint and live/repair watermarks.
+* ``health_state.json`` -- bounded readiness metadata atomically advanced with
+  the active generation.
 
 Only records consumed in ``live`` mode advance live freshness.  Startup catch-
 up, replay, and manual backfill can repair the read model, but remain explicitly
@@ -24,6 +26,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import sys
 import tempfile
 import time
 from typing import Any, Callable, Iterable, Mapping, Sequence
@@ -43,7 +46,14 @@ PROJECTION_MODES = frozenset({"live", "recovery", "backfill", "replay"})
 
 DEFAULT_ROOT = Path("/data/bff/lifecycle-projection")
 DEFAULT_STATE_PATH = DEFAULT_ROOT / "controller_state.json"
+DEFAULT_HEALTH_STATE_PATH = DEFAULT_ROOT / "health_state.json"
 DEFAULT_CHANNEL = "pantheon_lifecycle_events"
+DEFAULT_GENERATION_RETENTION = 32
+DEFAULT_STAGING_MAX_AGE_SECONDS = 3600.0
+DEFAULT_HEALTH_MAX_AGE_SECONDS = 120.0
+DEFAULT_HEALTH_MAX_BACKLOG = 5000
+DEFAULT_HEALTH_MIN_FREE_BYTES = 128 * 1024 * 1024
+DEFAULT_HEALTH_MIN_FREE_PERCENT = 5.0
 
 LIFECYCLE_EVENT_TYPES = frozenset(
     {
@@ -237,7 +247,7 @@ def _first(*values: Any) -> Any:
     return None
 
 
-def _atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:
+def _prepare_atomic_json(path: Path, payload: Mapping[str, Any]) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, raw_tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     tmp = Path(raw_tmp)
@@ -247,12 +257,28 @@ def _atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:
             handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(tmp, path)
-        directory_fd = os.open(path.parent, os.O_RDONLY)
+        return tmp
+    except BaseException:
         try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+
+
+def _commit_prepared_json(path: Path, tmp: Path) -> None:
+    os.replace(tmp, path)
+    directory_fd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
+def _atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:
+    tmp = _prepare_atomic_json(path, payload)
+    try:
+        _commit_prepared_json(path, tmp)
     except BaseException:
         try:
             tmp.unlink()
@@ -269,11 +295,178 @@ class AtomicProjectionBundle:
         root: str | Path,
         *,
         before_switch: Callable[[Path], None] | None = None,
+        generation_retention: int | None = None,
+        staging_max_age_seconds: float | None = None,
+        epoch_clock: Callable[[], float] = time.time,
     ) -> None:
         self.root = Path(root)
         self.generations = self.root / "generations"
         self.current = self.root / "current"
         self._before_switch = before_switch
+        configured_retention = (
+            generation_retention
+            if generation_retention is not None
+            else int(
+                os.getenv(
+                    "LIFECYCLE_PROJECTOR_GENERATION_RETENTION",
+                    str(DEFAULT_GENERATION_RETENTION),
+                )
+            )
+        )
+        configured_staging_age = (
+            staging_max_age_seconds
+            if staging_max_age_seconds is not None
+            else float(
+                os.getenv(
+                    "LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS",
+                    str(DEFAULT_STAGING_MAX_AGE_SECONDS),
+                )
+            )
+        )
+        self.generation_retention = max(1, int(configured_retention))
+        self.staging_max_age_seconds = max(0.0, float(configured_staging_age))
+        self._epoch_clock = epoch_clock
+
+    @staticmethod
+    def _generation_number(path: Path) -> int | None:
+        name = path.name
+        if not name.startswith("g") or "-" not in name:
+            return None
+        raw_generation, suffix = name[1:].split("-", 1)
+        if (
+            len(raw_generation) != 12
+            or not raw_generation.isdigit()
+            or len(suffix) != 12
+            or any(
+                character not in "0123456789abcdef"
+                for character in suffix.lower()
+            )
+        ):
+            return None
+        return int(raw_generation)
+
+    def _active_generation_name(self) -> str | None:
+        if not self.current.is_symlink():
+            return None
+        try:
+            target = (self.root / os.readlink(self.current)).resolve(strict=False)
+            generations_root = self.generations.resolve(strict=False)
+            relative = target.relative_to(generations_root)
+        except (OSError, ValueError):
+            return None
+        if len(relative.parts) != 1:
+            return None
+        return relative.name
+
+    def _generation_directories(self) -> list[Path]:
+        if not self.generations.is_dir():
+            return []
+        return [
+            path
+            for path in self.generations.iterdir()
+            if path.is_dir()
+            and not path.is_symlink()
+            and self._generation_number(path) is not None
+        ]
+
+    def _staging_candidates(self) -> list[Path]:
+        if not self.generations.is_dir():
+            return []
+        now = self._epoch_clock()
+        candidates: list[Path] = []
+        for path in self.generations.iterdir():
+            if not path.name.startswith(".g") or not path.name.endswith(".tmp"):
+                continue
+            if self._generation_number(Path(path.name[1:-4])) is None:
+                continue
+            try:
+                age = now - path.lstat().st_mtime
+            except OSError:
+                continue
+            if age >= self.staging_max_age_seconds:
+                candidates.append(path)
+        return sorted(candidates, key=lambda path: path.name)
+
+    def _temporary_link_candidates(self) -> list[Path]:
+        if not self.root.is_dir():
+            return []
+        now = self._epoch_clock()
+        candidates: list[Path] = []
+        for path in self.root.iterdir():
+            if not path.name.startswith(".current.") or not path.name.endswith(".tmp"):
+                continue
+            suffix = path.name[len(".current.") : -len(".tmp")]
+            if len(suffix) != 32 or any(
+                character not in "0123456789abcdef" for character in suffix.lower()
+            ):
+                continue
+            try:
+                age = now - path.lstat().st_mtime
+            except OSError:
+                continue
+            if age >= self.staging_max_age_seconds:
+                candidates.append(path)
+        return sorted(candidates, key=lambda path: path.name)
+
+    def _retention_removals(self, *, max_count: int) -> list[Path]:
+        generations = sorted(
+            self._generation_directories(),
+            key=lambda path: (self._generation_number(path) or -1, path.name),
+            reverse=True,
+        )
+        active_name = self._active_generation_name()
+        retained: set[str] = set()
+        if active_name is not None and any(path.name == active_name for path in generations):
+            retained.add(active_name)
+        for path in generations:
+            if len(retained) >= max(1, max_count):
+                break
+            retained.add(path.name)
+        return [path for path in generations if path.name not in retained]
+
+    def maintain(self, *, reserve_for_publish: bool = False) -> dict[str, Any]:
+        """Bound debris while preserving the generation referenced by ``current``."""
+
+        self.generations.mkdir(parents=True, exist_ok=True)
+        staging = self._staging_candidates()
+        temporary_links = self._temporary_link_candidates()
+        max_count = (
+            max(1, self.generation_retention - 1)
+            if reserve_for_publish
+            else self.generation_retention
+        )
+        generation_removals = self._retention_removals(max_count=max_count)
+        report = {
+            "active_generation": self._active_generation_name(),
+            "generation_retention": self.generation_retention,
+            "reserve_for_publish": reserve_for_publish,
+            "abandoned_staging_count": len(staging),
+            "abandoned_staging": [path.name for path in staging[:100]],
+            "temporary_link_count": len(temporary_links),
+            "temporary_links": [path.name for path in temporary_links[:100]],
+            "generation_removal_count": len(generation_removals),
+            "oldest_generation_removed": (
+                generation_removals[-1].name if generation_removals else None
+            ),
+            "newest_generation_removed": (
+                generation_removals[0].name if generation_removals else None
+            ),
+        }
+        if staging or temporary_links or generation_removals:
+            print(
+                f"lifecycle projector cleanup plan: {_canonical_json(report)}",
+                flush=True,
+            )
+        for path in staging:
+            if path.is_dir() and not path.is_symlink():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+        for path in temporary_links:
+            path.unlink()
+        for path in generation_removals:
+            shutil.rmtree(path)
+        return report
 
     def publish(
         self,
@@ -281,10 +474,11 @@ class AtomicProjectionBundle:
         journey_payload: Mapping[str, Any],
         loop_payload: Mapping[str, Any],
     ) -> Path:
-        self.generations.mkdir(parents=True, exist_ok=True)
+        self.maintain(reserve_for_publish=True)
         generation_name = f"g{generation:012d}-{uuid.uuid4().hex[:12]}"
         staging = self.generations / f".{generation_name}.tmp"
         final = self.generations / generation_name
+        tmp_link: Path | None = None
         staging.mkdir()
         try:
             _atomic_write_json(staging / "trade_journey_events.json", journey_payload)
@@ -311,7 +505,262 @@ class AtomicProjectionBundle:
         except BaseException:
             if staging.exists():
                 shutil.rmtree(staging, ignore_errors=True)
+            if tmp_link is not None:
+                try:
+                    tmp_link.unlink()
+                except OSError:
+                    pass
             raise
+
+
+def projector_readiness(
+    *,
+    state_path: str | Path = DEFAULT_HEALTH_STATE_PATH,
+    bundle_root: str | Path | None = None,
+    max_age_seconds: float | None = None,
+    max_backlog: int | None = None,
+    min_free_bytes: int | None = None,
+    min_free_percent: float | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Return fail-closed worker, projection, freshness, and disk truth."""
+
+    resolved_state_path = Path(state_path)
+    resolved_root = Path(bundle_root) if bundle_root is not None else resolved_state_path.parent
+    configured_max_age = (
+        float(max_age_seconds)
+        if max_age_seconds is not None
+        else float(
+            os.getenv(
+                "LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS",
+                str(DEFAULT_HEALTH_MAX_AGE_SECONDS),
+            )
+        )
+    )
+    configured_max_backlog = (
+        int(max_backlog)
+        if max_backlog is not None
+        else int(
+            os.getenv(
+                "LIFECYCLE_PROJECTOR_HEALTH_MAX_BACKLOG",
+                str(DEFAULT_HEALTH_MAX_BACKLOG),
+            )
+        )
+    )
+    configured_min_free_bytes = (
+        int(min_free_bytes)
+        if min_free_bytes is not None
+        else int(
+            os.getenv(
+                "LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_BYTES",
+                str(DEFAULT_HEALTH_MIN_FREE_BYTES),
+            )
+        )
+    )
+    configured_min_free_percent = (
+        float(min_free_percent)
+        if min_free_percent is not None
+        else float(
+            os.getenv(
+                "LIFECYCLE_PROJECTOR_HEALTH_MIN_FREE_PERCENT",
+                str(DEFAULT_HEALTH_MIN_FREE_PERCENT),
+            )
+        )
+    )
+    observed_at = now or datetime.now(timezone.utc)
+    if observed_at.tzinfo is None:
+        observed_at = observed_at.replace(tzinfo=timezone.utc)
+
+    base_payload: dict[str, Any] = {
+        "state_path": str(resolved_state_path),
+        "bundle_root": str(resolved_root),
+        "worker_status": "unavailable",
+        "controller_status": "unavailable",
+        "mode": None,
+        "accepted_live": False,
+        "checkpoint": None,
+        "source_high_watermark": None,
+        "backlog": None,
+        "current_generation": None,
+        "controller_generation": None,
+        "last_poll_at": None,
+        "last_successful_publish_at": None,
+        "deployment_sha": None,
+        "freshness": {
+            "age_seconds": None,
+            "max_age_seconds": configured_max_age,
+            "stale": True,
+        },
+        "disk": {
+            "free_bytes": None,
+            "free_percent": None,
+            "min_free_bytes": configured_min_free_bytes,
+            "min_free_percent": configured_min_free_percent,
+            "low": True,
+        },
+        "retention": {
+            "generation_limit": max(
+                1,
+                int(
+                    os.getenv(
+                        "LIFECYCLE_PROJECTOR_GENERATION_RETENTION",
+                        str(DEFAULT_GENERATION_RETENTION),
+                    )
+                ),
+            ),
+            "staging_max_age_seconds": max(
+                0.0,
+                float(
+                    os.getenv(
+                        "LIFECYCLE_PROJECTOR_STAGING_MAX_AGE_SECONDS",
+                        str(DEFAULT_STAGING_MAX_AGE_SECONDS),
+                    )
+                ),
+            ),
+        },
+        "stale_reason": "projector_state_unavailable",
+        "error_reason": "projector_state_unavailable",
+        "reasons": ["projector_state_unavailable"],
+        "status": "unavailable",
+        "ready": False,
+    }
+    try:
+        payload = json.loads(resolved_state_path.read_text(encoding="utf-8"))
+        if not isinstance(payload, Mapping) or payload.get("schema_version") != STATE_SCHEMA:
+            raise LifecycleProjectionError("unsupported projector state schema")
+        controller = payload.get("controller")
+        if not isinstance(controller, Mapping):
+            raise LifecycleProjectionError("projector controller state is missing")
+    except Exception as exc:  # noqa: BLE001 - readiness must fail closed
+        reason = f"projector_state_unavailable: {type(exc).__name__}: {exc}"
+        base_payload.update(
+            {
+                "stale_reason": reason,
+                "error_reason": reason,
+                "reasons": [reason],
+            }
+        )
+        return base_payload
+
+    reasons: list[str] = []
+    last_poll_at = controller.get("last_poll_at")
+    age_seconds: float | None = None
+    try:
+        age_seconds = max(0.0, (observed_at - _parse_iso(last_poll_at)).total_seconds())
+        if age_seconds > configured_max_age:
+            reasons.append(f"last_poll_stale:{age_seconds:.3f}s")
+    except Exception as exc:  # noqa: BLE001 - malformed freshness is unavailable truth
+        reasons.append(f"last_poll_invalid:{type(exc).__name__}")
+
+    controller_status = str(controller.get("status") or "unavailable")
+    mode = str(controller.get("mode") or "unknown")
+    accepted_live = bool(controller.get("accepted_live"))
+    backlog = int(controller.get("backlog") or 0)
+    controller_generation = int(
+        controller.get("generation")
+        if controller.get("generation") is not None
+        else payload.get("generation") or 0
+    )
+    if controller.get("last_error"):
+        reasons.append(f"last_error:{controller.get('last_error')}")
+    if backlog > configured_max_backlog:
+        reasons.append(f"backlog_exceeds_policy:{backlog}>{configured_max_backlog}")
+    if controller_status != "ready":
+        reasons.append(f"controller_not_ready:{controller_status}")
+    if mode != "live" or not accepted_live:
+        reasons.append(f"live_truth_not_accepted:{mode}:{str(accepted_live).lower()}")
+
+    current_generation: int | None = None
+    current = resolved_root / "current"
+    generations_root = resolved_root / "generations"
+    try:
+        if not current.is_symlink():
+            raise LifecycleProjectionError("current is not a symlink")
+        current_target = current.resolve(strict=True)
+        relative = current_target.relative_to(generations_root.resolve(strict=True))
+        if len(relative.parts) != 1:
+            raise LifecycleProjectionError("current points outside the generation root")
+        manifest = json.loads((current_target / "manifest.json").read_text(encoding="utf-8"))
+        current_generation = int(manifest["generation"])
+        if current_generation != controller_generation:
+            reasons.append(
+                f"current_generation_mismatch:{current_generation}!={controller_generation}"
+            )
+    except Exception as exc:  # noqa: BLE001 - a broken active bundle is not ready
+        reasons.append(f"current_generation_unavailable:{type(exc).__name__}:{exc}")
+
+    disk_path = resolved_root if resolved_root.exists() else resolved_root.parent
+    free_bytes: int | None = None
+    free_percent: float | None = None
+    disk_low = True
+    try:
+        disk = shutil.disk_usage(disk_path)
+        free_bytes = int(disk.free)
+        free_percent = (float(disk.free) / float(disk.total) * 100.0) if disk.total else 0.0
+        disk_low = (
+            free_bytes < configured_min_free_bytes
+            or free_percent < configured_min_free_percent
+        )
+        if disk_low:
+            reasons.append(
+                "disk_below_policy:"
+                f"{free_bytes}B/{free_percent:.3f}%"
+            )
+    except OSError as exc:
+        reasons.append(f"disk_unavailable:{type(exc).__name__}:{exc}")
+
+    stale_reason = next(
+        (
+            reason
+            for reason in reasons
+            if reason.startswith("last_poll_") or reason.startswith("projector_state_")
+        ),
+        None,
+    )
+    worker_status = (
+        "stale"
+        if stale_reason is not None
+        else "error"
+        if controller.get("last_error")
+        else controller_status
+    )
+    base_payload.update(
+        {
+            "worker_status": worker_status,
+            "controller_status": controller_status,
+            "mode": mode,
+            "accepted_live": accepted_live,
+            "checkpoint": int(payload.get("checkpoint") or 0),
+            "source_high_watermark": int(controller.get("source_high_watermark") or 0),
+            "backlog": backlog,
+            "current_generation": current_generation,
+            "controller_generation": controller_generation,
+            "last_poll_at": last_poll_at,
+            "last_successful_publish_at": (
+                controller.get("last_successful_publish_at")
+                or controller.get("last_projection_success_at")
+            ),
+            "deployment_sha": controller.get("deployment_sha"),
+            "freshness": {
+                "age_seconds": age_seconds,
+                "max_age_seconds": configured_max_age,
+                "stale": stale_reason is not None,
+            },
+            "disk": {
+                "free_bytes": free_bytes,
+                "free_percent": free_percent,
+                "min_free_bytes": configured_min_free_bytes,
+                "min_free_percent": configured_min_free_percent,
+                "low": disk_low,
+            },
+            "stale_reason": stale_reason,
+            "error_reason": reasons[0] if reasons else None,
+            "reasons": reasons,
+            "status": "ok" if not reasons else "degraded",
+            "ready": not reasons,
+        }
+    )
+    return base_payload
 
 
 class LifecycleProjector:
@@ -321,12 +770,18 @@ class LifecycleProjector:
         self,
         *,
         state_path: str | Path = DEFAULT_STATE_PATH,
+        health_state_path: str | Path | None = None,
         bundle_root: str | Path = DEFAULT_ROOT,
         deployment_sha: str = "unknown",
         clock: Callable[[], str] = _utc_now,
         publisher: AtomicProjectionBundle | None = None,
     ) -> None:
         self.state_path = Path(state_path)
+        self.health_state_path = Path(
+            health_state_path
+            if health_state_path is not None
+            else Path(bundle_root) / "health_state.json"
+        )
         self.bundle = publisher or AtomicProjectionBundle(bundle_root)
         self.deployment_sha = str(deployment_sha or "unknown")
         self.clock = clock
@@ -364,6 +819,8 @@ class LifecycleProjector:
                 "quarantine_count": 0,
                 "last_poll_at": None,
                 "last_projection_success_at": None,
+                "last_successful_publish_at": None,
+                "last_successful_publish_generation": None,
                 "last_live_success_at": None,
                 "last_live_event_at": None,
                 "last_recovery_at": None,
@@ -371,6 +828,7 @@ class LifecycleProjector:
                 "last_replay_at": None,
                 "last_failure_at": None,
                 "last_error": None,
+                "error_publication_failure": None,
             },
         }
 
@@ -388,6 +846,53 @@ class LifecycleProjector:
                 f"unsupported projector state; refusing destructive reset: {self.state_path}"
             )
         return payload
+
+    @staticmethod
+    def _health_snapshot(state: Mapping[str, Any]) -> dict[str, Any]:
+        return {
+            "schema_version": STATE_SCHEMA,
+            "checkpoint": int(state.get("checkpoint") or 0),
+            "generation": int(state.get("generation") or 0),
+            "restart_count": int(state.get("restart_count") or 0),
+            "controller": copy.deepcopy(state.get("controller") or {}),
+        }
+
+    def _publish_candidate(
+        self,
+        candidate: Mapping[str, Any],
+        journey_payload: Mapping[str, Any],
+        loop_payload: Mapping[str, Any],
+    ) -> None:
+        """Pre-fsync state, then commit bundle/state/health with short switch gaps."""
+
+        prepared_state: Path | None = _prepare_atomic_json(self.state_path, candidate)
+        prepared_health: Path | None = _prepare_atomic_json(
+            self.health_state_path,
+            self._health_snapshot(candidate),
+        )
+        try:
+            self.bundle.publish(
+                int(candidate.get("generation") or 0),
+                journey_payload,
+                loop_payload,
+            )
+            _commit_prepared_json(self.state_path, prepared_state)
+            prepared_state = None
+            _commit_prepared_json(self.health_state_path, prepared_health)
+            prepared_health = None
+        finally:
+            for prepared in (prepared_state, prepared_health):
+                if prepared is not None:
+                    try:
+                        prepared.unlink()
+                    except OSError:
+                        pass
+
+    def _persist_health_only(self, candidate: Mapping[str, Any]) -> None:
+        _atomic_write_json(
+            self.health_state_path,
+            self._health_snapshot(candidate),
+        )
 
     def project_records(
         self,
@@ -490,6 +995,7 @@ class LifecycleProjector:
                 "last_poll_at": now,
                 "last_projection_success_at": now,
                 "last_error": None,
+                "error_publication_failure": None,
                 "quarantine_count": len(candidate.get("quarantine") or []),
                 "generation": int(candidate.get("generation", 0)),
                 "restart_count": int(candidate.get("restart_count", 0)),
@@ -532,9 +1038,10 @@ class LifecycleProjector:
             else "repair_only"
         )
 
+        controller["last_successful_publish_at"] = now
+        controller["last_successful_publish_generation"] = int(candidate["generation"])
         journey_payload, loop_payload = self._render(candidate)
-        self.bundle.publish(candidate["generation"], journey_payload, loop_payload)
-        _atomic_write_json(self.state_path, candidate)
+        self._publish_candidate(candidate, journey_payload, loop_payload)
         self.state = candidate
         return ProjectionResult(
             checkpoint=int(candidate["checkpoint"]),
@@ -580,6 +1087,7 @@ class LifecycleProjector:
                 "mode": mode,
                 "checkpoint": int(candidate.get("checkpoint", 0)),
                 "last_error": None,
+                "error_publication_failure": None,
             }
         )
         historic_live = bool(controller.get("last_live_success_at"))
@@ -608,30 +1116,51 @@ class LifecycleProjector:
         if current_semantics != previous_semantics:
             candidate["generation"] = int(candidate.get("generation", 0)) + 1
             controller["generation"] = int(candidate["generation"])
+            controller["last_successful_publish_at"] = now
+            controller["last_successful_publish_generation"] = int(candidate["generation"])
             journey_payload, loop_payload = self._render(candidate)
-            self.bundle.publish(candidate["generation"], journey_payload, loop_payload)
-        _atomic_write_json(self.state_path, candidate)
+            self._publish_candidate(candidate, journey_payload, loop_payload)
+        else:
+            # Only freshness changed.  Keep that hot-path bounded instead of
+            # serializing the full canonical event history every poll.
+            self._persist_health_only(candidate)
         self.state = candidate
 
     def record_source_failure(self, error: str, *, backlog: int | None = None) -> None:
         """Record source failure while preserving the last-good read-model bundle."""
         candidate = copy.deepcopy(self.state)
-        candidate["generation"] = int(candidate.get("generation", 0)) + 1
         controller = candidate.setdefault("controller", {})
+        previous_semantics = (
+            controller.get("status"),
+            controller.get("last_error"),
+            int(controller.get("backlog") or 0),
+        )
+        now = self.clock()
         controller.update(
             {
                 "status": "degraded",
-                "last_failure_at": self.clock(),
+                "last_failure_at": now,
                 "last_error": str(error),
-                "generation": int(candidate["generation"]),
                 "restart_count": int(candidate.get("restart_count", 0)),
             }
         )
         if backlog is not None:
             controller["backlog"] = max(0, int(backlog))
-        journey_payload, loop_payload = self._render(candidate)
-        self.bundle.publish(candidate["generation"], journey_payload, loop_payload)
-        _atomic_write_json(self.state_path, candidate)
+        current_semantics = (
+            controller.get("status"),
+            controller.get("last_error"),
+            int(controller.get("backlog") or 0),
+        )
+        if current_semantics != previous_semantics:
+            candidate["generation"] = int(candidate.get("generation", 0)) + 1
+            controller["generation"] = int(candidate["generation"])
+            controller["last_successful_publish_at"] = now
+            controller["last_successful_publish_generation"] = int(candidate["generation"])
+            journey_payload, loop_payload = self._render(candidate)
+            self._publish_candidate(candidate, journey_payload, loop_payload)
+        else:
+            _atomic_write_json(self.state_path, candidate)
+            self._persist_health_only(candidate)
         self.state = candidate
 
     @staticmethod
@@ -1091,14 +1620,50 @@ class PostgresLifecycleSource:
             self._listener = None
 
 
+def _record_worker_failure(projector: LifecycleProjector, error: BaseException) -> bool:
+    """Publish one durable error transition without allowing it to crash the worker."""
+
+    error_message = f"{type(error).__name__}: {error}"
+    try:
+        projector.record_source_failure(error_message)
+        return True
+    except Exception as record_error:  # noqa: BLE001 - disk recovery happens in-loop
+        now = projector.clock()
+        controller = projector.state.setdefault("controller", {})
+        controller.update(
+            {
+                "status": "degraded",
+                "last_failure_at": now,
+                "last_error": error_message,
+                "error_publication_failure": (
+                    f"{type(record_error).__name__}: {record_error}"
+                ),
+            }
+        )
+        print(
+            "lifecycle projector error publication failed; retaining worker for retry: "
+            f"{type(record_error).__name__}: {record_error}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return False
+
+
 async def run_worker() -> int:
     dsn = os.getenv("TELEMETRY_DB_DSN", "").strip()
     if not dsn:
         raise RuntimeError("TELEMETRY_DB_DSN is required")
     root = Path(os.getenv("LIFECYCLE_PROJECTION_ROOT", str(DEFAULT_ROOT)))
     state_path = Path(os.getenv("LIFECYCLE_PROJECTOR_STATE_PATH", str(root / "controller_state.json")))
+    health_state_path = Path(
+        os.getenv(
+            "LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH",
+            str(root / "health_state.json"),
+        )
+    )
     projector = LifecycleProjector(
         state_path=state_path,
+        health_state_path=health_state_path,
         bundle_root=root,
         deployment_sha=os.getenv("GIT_SHA", "unknown"),
     )
@@ -1129,7 +1694,7 @@ async def run_worker() -> int:
                 if projector.checkpoint >= recovery_target:
                     recovery_target = projector.checkpoint
             except Exception as exc:  # noqa: BLE001 - durable controller records failure
-                projector.record_source_failure(f"{type(exc).__name__}: {exc}")
+                _record_worker_failure(projector, exc)
             if max_ticks and tick >= max_ticks:
                 return 0
             await source.wait(interval)
@@ -1138,43 +1703,21 @@ async def run_worker() -> int:
 
 
 def healthcheck() -> int:
+    root = Path(os.getenv("LIFECYCLE_PROJECTION_ROOT", str(DEFAULT_ROOT)))
     state_path = Path(
         os.getenv(
-            "LIFECYCLE_PROJECTOR_STATE_PATH",
-            str(Path(os.getenv("LIFECYCLE_PROJECTION_ROOT", str(DEFAULT_ROOT))) / "controller_state.json"),
+            "LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH",
+            str(root / "health_state.json"),
         )
     )
-    try:
-        payload = json.loads(state_path.read_text(encoding="utf-8"))
-        controller = payload["controller"]
-        last_poll = _parse_iso(controller["last_poll_at"])
-        max_age = float(os.getenv("LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS", "30"))
-        age = (datetime.now(timezone.utc) - last_poll).total_seconds()
-        if age > max_age:
-            raise RuntimeError(f"last poll is stale ({age:.3f}s)")
-        if controller.get("last_error"):
-            raise RuntimeError(str(controller["last_error"]))
-        if int(controller.get("backlog") or 0) > int(
-            os.getenv("LIFECYCLE_PROJECTOR_HEALTH_MAX_BACKLOG", "5000")
-        ):
-            raise RuntimeError("projector backlog exceeds health policy")
-        if controller.get("status") not in {"ready", "recovering", "repair_only"}:
-            raise RuntimeError(f"invalid controller status: {controller.get('status')}")
-    except Exception as exc:  # noqa: BLE001
-        print(f"lifecycle projector unhealthy: {exc}")
+    readiness = projector_readiness(
+        state_path=state_path,
+        bundle_root=root,
+    )
+    if not readiness["ready"]:
+        print(f"lifecycle projector unhealthy: {_canonical_json(readiness)}")
         return 1
-    print(
-        _canonical_json(
-            {
-                "status": controller.get("status"),
-                "mode": controller.get("mode"),
-                "checkpoint": controller.get("checkpoint"),
-                "backlog": controller.get("backlog"),
-                "accepted_live": controller.get("accepted_live"),
-                "deployment_sha": controller.get("deployment_sha"),
-            }
-        )
-    )
+    print(_canonical_json(readiness))
     return 0
 
 
@@ -1186,6 +1729,10 @@ def _backfill(input_path: Path, *, mode: str) -> int:
     root = Path(os.getenv("LIFECYCLE_PROJECTION_ROOT", str(DEFAULT_ROOT)))
     projector = LifecycleProjector(
         state_path=os.getenv("LIFECYCLE_PROJECTOR_STATE_PATH", str(root / "controller_state.json")),
+        health_state_path=os.getenv(
+            "LIFECYCLE_PROJECTOR_HEALTH_STATE_PATH",
+            str(root / "health_state.json"),
+        ),
         bundle_root=root,
         deployment_sha=os.getenv("GIT_SHA", "unknown"),
     )

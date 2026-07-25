@@ -10,8 +10,10 @@ from __future__ import annotations
 import copy
 import os
 import sys
+import uuid
 from typing import Any, Dict, Optional
 
+import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
@@ -93,6 +95,9 @@ class FakeCanonicalOperations:
         self.calls: list[tuple[str, Dict[str, Any]]] = []
         self.research_status = "queued"
         self.raise_research_error = False
+        self.research_error: Optional[CanonicalOperationError] = None
+        self.consultation_error: Optional[CanonicalOperationError] = None
+        self.consultation_status = "submitted"
         self.forbidden_execution_calls: list[str] = []
 
     def _record(self, name: str, payload: Optional[Dict[str, Any]] = None) -> None:
@@ -168,10 +173,15 @@ class FakeCanonicalOperations:
         *,
         task_payload: Dict[str, Any],
         run_payload: Dict[str, Any],
+        resume: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         self._record(
             "dispatch_research_run",
-            {"task_payload": task_payload, "run_payload": run_payload},
+            {
+                "task_payload": task_payload,
+                "run_payload": run_payload,
+                "resume": copy.deepcopy(resume),
+            },
         )
         if self.raise_research_error:
             raise CanonicalOperationError(
@@ -179,6 +189,9 @@ class FakeCanonicalOperations:
                 "research service unavailable",
                 retryable=True,
             )
+        if self.research_error is not None:
+            error, self.research_error = self.research_error, None
+            raise error
         return {
             "task": {
                 "task_id": "research-task-001",
@@ -198,14 +211,18 @@ class FakeCanonicalOperations:
         *,
         request_id: str,
         payload: Dict[str, Any],
+        resume: bool = False,
     ) -> Dict[str, Any]:
         self._record(
             "open_consultation",
-            {"request_id": request_id, "payload": payload},
+            {"request_id": request_id, "payload": payload, "resume": resume},
         )
+        if self.consultation_error is not None:
+            error, self.consultation_error = self.consultation_error, None
+            raise error
         return {
             "request_id": request_id,
-            "status": "submitted",
+            "status": self.consultation_status,
             "target_id": WORKSHOP_ID,
             "authoritative_readback": True,
         }
@@ -288,16 +305,19 @@ def _harness(
     store: Optional[MemoryWorkshopStore] = None,
 ) -> tuple[TestClient, MemoryWorkshopStore, FakeCanonicalOperations]:
     workshop_store = store or MemoryWorkshopStore()
-    workshop_store.create_session(
-        {
-            "workshop_id": WORKSHOP_ID,
-            "tenant_id": TENANT_ID,
-            "user_id": USER_ID,
-            "strategy_id": STRATEGY_ID,
-            "active_strategy_spec_registry_id": BASE_REGISTRY_ID,
-            "status": "open",
-        }
-    )
+    if workshop_store.get_session(WORKSHOP_ID) is None:
+        # Reusing a populated store simulates a BFF restart: receipts,
+        # version links, and the session survive; only process state resets.
+        workshop_store.create_session(
+            {
+                "workshop_id": WORKSHOP_ID,
+                "tenant_id": TENANT_ID,
+                "user_id": USER_ID,
+                "strategy_id": STRATEGY_ID,
+                "active_strategy_spec_registry_id": BASE_REGISTRY_ID,
+                "status": "open",
+            }
+        )
     canonical = FakeCanonicalOperations()
     identity = {
         "operator_id": USER_ID,
@@ -421,7 +441,22 @@ def test_all_six_operations_read_back_canonical_state_and_never_execute() -> Non
         },
     )
     assert listed.status_code == 200, listed.text
-    assert listed.json()["data"]["versions"] == [created_resource]
+    versions = listed.json()["data"]["versions"]
+    assert len(versions) == 2
+    legacy_base, created_readback = versions
+    assert created_readback == created_resource
+    assert legacy_base["version"]["strategy_spec_registry_id"] == BASE_REGISTRY_ID
+    assert legacy_base["version"]["document_sha256"] == compute_document_sha256(
+        _base_strategy_spec()
+    )
+    assert created_resource["version"]["parent_workshop_version_id"] == (
+        legacy_base["version"]["workshop_version_id"]
+    )
+    assert created_resource["version"]["document_sha256"] == (
+        compute_document_sha256(
+            created_resource["strategy_spec"]["entry"]["metadata"]["strategy_spec"]
+        )
+    )
 
     selected = client.post(
         f"/bff/agora/workshops/{WORKSHOP_ID}/versions/{version_id}/select",
@@ -608,6 +643,57 @@ def test_command_guards_reject_stale_etag_wrong_tenant_and_missing_mfa() -> None
     assert mfa_canonical.calls == []
 
 
+def test_version_read_scope_and_select_cas_leave_projection_unchanged() -> None:
+    tenant_client, _tenant_store, tenant_canonical = _harness()
+    denied = tenant_client.get(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/versions",
+        headers={
+            "Authorization": "Bearer workshop-test",
+            "X-Tenant-Id": "tenant-beta",
+        },
+    )
+    assert denied.status_code == 403, denied.text
+    assert _reason(denied) == "CROSS_USER_ACCESS_FORBIDDEN"
+    assert tenant_canonical.calls == []
+
+    client, store, _canonical = _harness()
+    created, version_id = _create_version(client, store, key="select-cas-create")
+    selected_before = store.get_session(WORKSHOP_ID)["selected_version_id"]
+    stale = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/versions/{version_id}/select",
+        headers=_command_headers(
+            "select-cas-stale",
+            f'W/"workshop:{WORKSHOP_ID}:v1"',
+        ),
+    )
+    assert stale.status_code == 409, stale.text
+    assert _reason(stale) == "CONCURRENT_MODIFICATION"
+    assert store.get_session(WORKSHOP_ID)["selected_version_id"] == selected_before
+    assert store.get_session(WORKSHOP_ID)["lock_version"] == 2
+    assert created.headers["etag"] == f'W/"workshop:{WORKSHOP_ID}:v2"'
+
+
+def test_immutable_version_digest_rejects_changed_registry_bytes() -> None:
+    client, store, canonical = _harness()
+    created, _version_id = _create_version(client, store, key="digest-create")
+    registry_id = created.json()["data"]["resource"]["version"][
+        "strategy_spec_registry_id"
+    ]
+    canonical.registry[registry_id]["entry"]["metadata"]["strategy_spec"][
+        "title"
+    ] = "Mutated behind immutable Registry identity"
+
+    listed = client.get(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/versions",
+        headers={
+            "Authorization": "Bearer workshop-test",
+            "X-Tenant-Id": TENANT_ID,
+        },
+    )
+    assert listed.status_code == 409, listed.text
+    assert _reason(listed) == "WORKSHOP_VERSION_PROJECTION_CONFLICT"
+
+
 def test_research_requires_an_authoritative_distinct_approver() -> None:
     client, store, canonical = _harness()
     created, version_id = _create_version(client, store)
@@ -686,6 +772,186 @@ def test_downstream_rejection_has_durable_failure_receipt_and_safe_compensation(
     assert canonical.forbidden_execution_calls == []
 
 
+def test_conclude_refuses_missing_and_unselected_final_versions() -> None:
+    client, store, canonical = _harness()
+    _created_a, version_a = _create_version(client, store, key="conclude-guard-a")
+    created_b, version_b = _create_version(
+        client,
+        store,
+        key="conclude-guard-b",
+        body=_version_body("Second Candidate"),
+    )
+    selected = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/versions/{version_b}/select",
+        headers=_command_headers("conclude-guard-select", created_b.headers["etag"]),
+    )
+    assert selected.status_code == 200, selected.text
+    canonical.add_approval("approval-guard-conclude", version_id=version_a)
+    baseline_readbacks = canonical.call_count("get_strategy_spec")
+
+    missing = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/conclude",
+        headers=_command_headers("conclude-guard-missing", selected.headers["etag"]),
+        json={
+            "final_version_id": "wsv-does-not-exist",
+            "approval_decision_id": "approval-guard-conclude",
+        },
+    )
+    assert missing.status_code == 409, missing.text
+    assert _reason(missing) == "WORKSHOP_VERSION_REQUIRED"
+
+    unselected = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/conclude",
+        headers=_command_headers("conclude-guard-unselected", selected.headers["etag"]),
+        json={
+            "final_version_id": version_a,
+            "approval_decision_id": "approval-guard-conclude",
+        },
+    )
+    assert unselected.status_code == 409, unselected.text
+    assert _reason(unselected) == "WORKSHOP_FINAL_VERSION_NOT_SELECTED"
+    details = unselected.json()["detail"]["error"]["details"]
+    assert details["selected_version_id"] == version_b
+
+    cross_tenant = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/conclude",
+        headers=_command_headers(
+            "conclude-guard-tenant",
+            selected.headers["etag"],
+            tenant_id="tenant-beta",
+        ),
+        json={
+            "final_version_id": version_b,
+            "approval_decision_id": "approval-guard-conclude",
+        },
+    )
+    assert cross_tenant.status_code == 403, cross_tenant.text
+    assert _reason(cross_tenant) == "CROSS_USER_ACCESS_FORBIDDEN"
+
+    # None of the refused conclusions admitted a command or touched the
+    # Registry; the workshop is still reviewable.
+    session = store.get_session(WORKSHOP_ID)
+    assert session["status"] == "in_review"
+    assert session["selected_version_id"] == version_b
+    assert canonical.call_count("get_strategy_spec") == baseline_readbacks
+    assert canonical.forbidden_execution_calls == []
+
+
+def test_conclude_refuses_mutated_or_incomplete_final_version_with_durable_receipt() -> None:
+    client, store, canonical = _harness()
+    created, version_id = _create_version(client, store, key="conclude-digest-create")
+    registry_id = created.json()["data"]["resource"]["version"][
+        "strategy_spec_registry_id"
+    ]
+    selected = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/versions/{version_id}/select",
+        headers=_command_headers("conclude-digest-select", created.headers["etag"]),
+    )
+    assert selected.status_code == 200, selected.text
+    canonical.add_approval("approval-digest-conclude", version_id=version_id)
+    canonical.registry[registry_id]["entry"]["metadata"]["strategy_spec"][
+        "title"
+    ] = "Mutated behind immutable Registry identity"
+
+    mutated = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/conclude",
+        headers=_command_headers("conclude-digest-key", selected.headers["etag"]),
+        json={
+            "final_version_id": version_id,
+            "approval_decision_id": "approval-digest-conclude",
+        },
+    )
+    assert mutated.status_code == 409, mutated.text
+    assert _reason(mutated) == "WORKSHOP_VERSION_PROJECTION_CONFLICT"
+
+    receipt = store.get_command_receipt(
+        workshop_id=WORKSHOP_ID,
+        tenant_id=TENANT_ID,
+        user_id=USER_ID,
+        operation="conclude",
+        idempotency_key="conclude-digest-key",
+    )
+    assert receipt is not None
+    assert receipt["status"] == "failed"
+    assert receipt["failure"]["reason"] == "WORKSHOP_VERSION_PROJECTION_CONFLICT"
+    session = store.get_session(WORKSHOP_ID)
+    assert session["status"] == "in_review"
+    assert session.get("final_workshop_version_id") is None
+
+    # An incomplete Registry readback (document removed) is also refused with
+    # its own durable failed receipt.
+    canonical.registry[registry_id]["entry"]["metadata"].pop("strategy_spec")
+    incomplete = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/conclude",
+        headers=_command_headers("conclude-incomplete-key", _etag(store)),
+        json={
+            "final_version_id": version_id,
+            "approval_decision_id": "approval-digest-conclude",
+        },
+    )
+    assert incomplete.status_code == 502, incomplete.text
+    assert _reason(incomplete) == "STRATEGY_SPEC_DOCUMENT_REQUIRED"
+    incomplete_receipt = store.get_command_receipt(
+        workshop_id=WORKSHOP_ID,
+        tenant_id=TENANT_ID,
+        user_id=USER_ID,
+        operation="conclude",
+        idempotency_key="conclude-incomplete-key",
+    )
+    assert incomplete_receipt is not None
+    assert incomplete_receipt["status"] == "failed"
+    assert store.get_session(WORKSHOP_ID)["status"] == "in_review"
+    assert canonical.forbidden_execution_calls == []
+
+
+def test_research_timeout_is_durable_and_new_key_retry_succeeds() -> None:
+    client, store, canonical = _harness()
+    created, version_id = _create_version(client, store, key="research-timeout-create")
+    canonical.add_approval("approval-timeout-run", version_id=version_id)
+    canonical.raise_research_error = True
+    body = _research_body(version_id, "approval-timeout-run")
+
+    timed_out = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/research-runs",
+        headers=_command_headers("research-timeout", created.headers["etag"]),
+        json=body,
+    )
+    assert timed_out.status_code == 503, timed_out.text
+    assert _reason(timed_out) == "research service unavailable"
+
+    receipt = store.get_command_receipt(
+        workshop_id=WORKSHOP_ID,
+        tenant_id=TENANT_ID,
+        user_id=USER_ID,
+        operation="dispatch_research",
+        idempotency_key="research-timeout",
+    )
+    assert receipt is not None
+    assert receipt["status"] == "failed"
+    assert receipt["failure"]["retryable"] is True
+
+    same_key = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/research-runs",
+        headers=_command_headers("research-timeout", _etag(store)),
+        json=body,
+    )
+    assert same_key.status_code == 409, same_key.text
+    assert _reason(same_key) == "COMMAND_PREVIOUSLY_FAILED"
+
+    canonical.raise_research_error = False
+    retried = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/research-runs",
+        headers=_command_headers("research-timeout-retry", _etag(store)),
+        json=body,
+    )
+    assert retried.status_code == 202, retried.text
+    retried_resource = retried.json()["data"]["resource"]
+    assert retried_resource["run"]["run_id"] == "research-run-001"
+    assert retried_resource["downstream_terminal"] is False
+    assert canonical.call_count("dispatch_research_run") == 2
+    assert canonical.forbidden_execution_calls == []
+
+
 def test_consultation_projection_failure_cancels_downstream_and_keeps_receipt() -> None:
     client, store, canonical = _harness(store=ConsultationCommitFailingStore())
     created, version_id = _create_version(client, store)
@@ -724,6 +990,17 @@ def test_consultation_projection_failure_cancels_downstream_and_keeps_receipt() 
     assert receipt["compensation"]["canonical_refs"][
         "consultation_request_id"
     ].startswith("cr-ws-")
+    # Successful downstream cancellation seals the compensation: the failed
+    # attempt is resolved and is no longer resumable partial-effect lineage.
+    assert receipt["compensation"]["resolution"] == "cancelled"
+    assert receipt["compensation"]["resolved_at"]
+    assert store.find_resumable_command(
+        workshop_id=WORKSHOP_ID,
+        tenant_id=TENANT_ID,
+        user_id=USER_ID,
+        operation="open_consultation",
+        request_hash=receipt["request_hash"],
+    ) is None
 
     replay = client.post(
         f"/bff/agora/workshops/{WORKSHOP_ID}/consultations",
@@ -735,3 +1012,856 @@ def test_consultation_projection_failure_cancels_downstream_and_keeps_receipt() 
     assert canonical.call_count("open_consultation") == 1
     assert canonical.call_count("cancel_consultation") == 1
     assert canonical.forbidden_execution_calls == []
+
+
+def _last_call(canonical: FakeCanonicalOperations, name: str) -> Dict[str, Any]:
+    return next(
+        payload for call_name, payload in reversed(canonical.calls) if call_name == name
+    )
+
+
+def _receipt(
+    store: MemoryWorkshopStore, operation: str, idempotency_key: str
+) -> Dict[str, Any]:
+    receipt = store.get_command_receipt(
+        workshop_id=WORKSHOP_ID,
+        tenant_id=TENANT_ID,
+        user_id=USER_ID,
+        operation=operation,
+        idempotency_key=idempotency_key,
+    )
+    assert receipt is not None
+    return receipt
+
+
+def test_research_partial_failure_records_lineage_and_new_key_retry_resumes() -> None:
+    client, store, canonical = _harness()
+    created, version_id = _create_version(client, store, key="research-partial-create")
+    canonical.add_approval("approval-partial-run", version_id=version_id)
+    body = _research_body(version_id, "approval-partial-run")
+    canonical.research_error = CanonicalOperationError(
+        "research_orchestrator",
+        "canonical research dispatch response is missing run_id",
+        retryable=True,
+        partial_effects={"research_task_id": "research-task-001"},
+    )
+
+    failed = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/research-runs",
+        headers=_command_headers("research-partial", created.headers["etag"]),
+        json=body,
+    )
+    assert failed.status_code == 503, failed.text
+    first_task_key = _last_call(canonical, "dispatch_research_run")[
+        "task_payload"
+    ]["idempotency_key"]
+
+    # The failed receipt carries durable partial-effect lineage: the created
+    # downstream task id and a resumable compensation with the downstream
+    # idempotency digest.
+    receipt = _receipt(store, "dispatch_research", "research-partial")
+    assert receipt["status"] == "failed"
+    assert receipt["canonical_refs"] == {"research_task_id": "research-task-001"}
+    assert receipt["compensation"]["resumable"] is True
+    assert receipt["compensation"]["partial_effects"] == {
+        "research_task_id": "research-task-001"
+    }
+    assert receipt["compensation"]["downstream_idempotency_digest"]
+
+    retried = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/research-runs",
+        headers=_command_headers("research-partial-retry", _etag(store)),
+        json=body,
+    )
+    assert retried.status_code == 202, retried.text
+    retry_call = _last_call(canonical, "dispatch_research_run")
+    # The retry adopts the recorded task instead of creating a duplicate and
+    # reuses the same downstream idempotency key.
+    assert retry_call["resume"] == {
+        "research_task_id": "research-task-001",
+        "research_run_id": None,
+    }
+    assert retry_call["task_payload"]["idempotency_key"] == first_task_key
+
+    retry_receipt = _receipt(store, "dispatch_research", "research-partial-retry")
+    assert retry_receipt["status"] == "completed"
+    assert retry_receipt["canonical_refs"]["research_task_id"] == "research-task-001"
+    assert (
+        retry_receipt["canonical_refs"]["resumed_from_idempotency_key"]
+        == "research-partial"
+    )
+
+    resolved = _receipt(store, "dispatch_research", "research-partial")
+    assert resolved["compensation"]["resolution"] == "resumed"
+    assert (
+        resolved["compensation"]["resolved_by_idempotency_key"]
+        == "research-partial-retry"
+    )
+    assert store.find_resumable_command(
+        workshop_id=WORKSHOP_ID,
+        tenant_id=TENANT_ID,
+        user_id=USER_ID,
+        operation="dispatch_research",
+        request_hash=receipt["request_hash"],
+    ) is None
+    assert canonical.forbidden_execution_calls == []
+
+
+def test_research_partial_failure_after_run_acceptance_resumes_both_ids() -> None:
+    client, store, canonical = _harness()
+    created, version_id = _create_version(client, store, key="research-run-partial-create")
+    canonical.add_approval("approval-run-partial", version_id=version_id)
+    body = _research_body(version_id, "approval-run-partial")
+    canonical.research_error = CanonicalOperationError(
+        "research_orchestrator",
+        "authoritative research run readback id mismatch",
+        retryable=True,
+        partial_effects={
+            "research_task_id": "research-task-001",
+            "research_run_id": "research-run-001",
+        },
+    )
+
+    failed = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/research-runs",
+        headers=_command_headers("research-run-partial", created.headers["etag"]),
+        json=body,
+    )
+    assert failed.status_code == 503, failed.text
+    receipt = _receipt(store, "dispatch_research", "research-run-partial")
+    assert receipt["canonical_refs"] == {
+        "research_task_id": "research-task-001",
+        "research_run_id": "research-run-001",
+    }
+
+    retried = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/research-runs",
+        headers=_command_headers("research-run-partial-retry", _etag(store)),
+        json=body,
+    )
+    assert retried.status_code == 202, retried.text
+    retry_call = _last_call(canonical, "dispatch_research_run")
+    assert retry_call["resume"] == {
+        "research_task_id": "research-task-001",
+        "research_run_id": "research-run-001",
+    }
+    assert canonical.call_count("dispatch_research_run") == 2
+
+
+def test_resume_requires_the_same_request_body() -> None:
+    client, store, canonical = _harness()
+    created, version_id = _create_version(client, store, key="research-hash-create")
+    canonical.add_approval("approval-hash-guard", version_id=version_id)
+    body = _research_body(version_id, "approval-hash-guard")
+    canonical.research_error = CanonicalOperationError(
+        "research_orchestrator",
+        "run dispatch lost",
+        retryable=True,
+        partial_effects={"research_task_id": "research-task-001"},
+    )
+
+    failed = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/research-runs",
+        headers=_command_headers("research-hash-a", created.headers["etag"]),
+        json=body,
+    )
+    assert failed.status_code == 503, failed.text
+
+    different_body = {**body, "research_context": "A different research request."}
+    fresh = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/research-runs",
+        headers=_command_headers("research-hash-b", _etag(store)),
+        json=different_body,
+    )
+    assert fresh.status_code == 202, fresh.text
+    dispatch_calls = [
+        payload
+        for name, payload in canonical.calls
+        if name == "dispatch_research_run"
+    ]
+    assert len(dispatch_calls) == 2
+    # A different logical request never adopts another command's downstream
+    # resources or its downstream idempotency keys.
+    assert dispatch_calls[-1]["resume"] is None
+    assert (
+        dispatch_calls[-1]["task_payload"]["idempotency_key"]
+        != dispatch_calls[0]["task_payload"]["idempotency_key"]
+    )
+
+
+def test_consultation_partial_failure_retry_adopts_recorded_request() -> None:
+    client, store, canonical = _harness()
+    created, version_id = _create_version(client, store, key="consult-partial-create")
+    selected = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/versions/{version_id}/select",
+        headers=_command_headers("consult-partial-select", created.headers["etag"]),
+    )
+    assert selected.status_code == 200, selected.text
+    body = {
+        "consultation_type": "advisory",
+        "subject": "Resume after partial submit failure",
+    }
+    canonical.consultation_error = CanonicalOperationError(
+        "consultation_service",
+        "canonical service is unavailable",
+        retryable=True,
+        partial_effects={"consultation_request_id": "__pending__"},
+    )
+
+    failed = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/consultations",
+        headers=_command_headers("consult-partial", selected.headers["etag"]),
+        json=body,
+    )
+    assert failed.status_code == 503, failed.text
+    first_request_id = _last_call(canonical, "open_consultation")["request_id"]
+    assert first_request_id.startswith("cr-ws-")
+
+    receipt = _receipt(store, "open_consultation", "consult-partial")
+    assert receipt["status"] == "failed"
+    assert receipt["canonical_refs"] == {
+        "consultation_request_id": "__pending__"
+    }
+    assert receipt["compensation"]["resumable"] is True
+
+    retried = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/consultations",
+        headers=_command_headers("consult-partial-retry", _etag(store)),
+        json=body,
+    )
+    assert retried.status_code == 201, retried.text
+    retry_call = _last_call(canonical, "open_consultation")
+    assert retry_call["resume"] is True
+    # The retry re-uses the recorded consultation request id, adopting the
+    # possibly-created downstream request instead of opening a second one.
+    assert retry_call["request_id"] == "__pending__"
+
+    resolved = _receipt(store, "open_consultation", "consult-partial")
+    assert resolved["compensation"]["resolution"] == "resumed"
+    assert canonical.call_count("cancel_consultation") == 0
+    assert canonical.forbidden_execution_calls == []
+
+
+def test_restart_safe_retry_resumes_from_durable_state_without_duplicates() -> None:
+    client, store, canonical = _harness()
+    created, version_id = _create_version(client, store, key="restart-partial-create")
+    canonical.add_approval("approval-restart-run", version_id=version_id)
+    body = _research_body(version_id, "approval-restart-run")
+    canonical.research_error = CanonicalOperationError(
+        "research_orchestrator",
+        "run acceptance lost before readback",
+        retryable=True,
+        partial_effects={"research_task_id": "research-task-001"},
+    )
+
+    failed = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/research-runs",
+        headers=_command_headers("restart-partial", created.headers["etag"]),
+        json=body,
+    )
+    assert failed.status_code == 503, failed.text
+    first_task_key = _last_call(canonical, "dispatch_research_run")[
+        "task_payload"
+    ]["idempotency_key"]
+
+    # Simulate a BFF restart: a brand-new router and canonical adapter over
+    # the same durable store.  Resume state must come from the store alone.
+    restarted_client, _, restarted_canonical = _harness(store=store)
+    restarted_canonical.add_approval("approval-restart-run", version_id=version_id)
+
+    retried = restarted_client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/research-runs",
+        headers=_command_headers("restart-partial-retry", _etag(store)),
+        json=body,
+    )
+    assert retried.status_code == 202, retried.text
+    assert restarted_canonical.call_count("dispatch_research_run") == 1
+    retry_call = _last_call(restarted_canonical, "dispatch_research_run")
+    assert retry_call["resume"] == {
+        "research_task_id": "research-task-001",
+        "research_run_id": None,
+    }
+    assert retry_call["task_payload"]["idempotency_key"] == first_task_key
+    assert retry_call["run_payload"]["idempotency_key"].endswith("-run")
+
+    retry_receipt = _receipt(store, "dispatch_research", "restart-partial-retry")
+    assert retry_receipt["status"] == "completed"
+    assert (
+        retry_receipt["canonical_refs"]["resumed_from_idempotency_key"]
+        == "restart-partial"
+    )
+    resolved = _receipt(store, "dispatch_research", "restart-partial")
+    assert resolved["compensation"]["resolution"] == "resumed"
+    assert restarted_canonical.forbidden_execution_calls == []
+
+
+# --------------------------------------------------------------------------- #
+# Adopted-lineage safety: atomic claim, transactional source resolution,
+# exclusive-ownership compensation (review follow-up after PR #3977).
+# --------------------------------------------------------------------------- #
+
+
+class FlakyConsultationCommitStore(MemoryWorkshopStore):
+    """Fail the open_consultation projection commit a set number of times."""
+
+    def __init__(self, failures: int = 1) -> None:
+        super().__init__()
+        self.failures = failures
+
+    def complete_command(self, **kwargs: Any) -> Dict[str, Any]:
+        if kwargs.get("operation") == "open_consultation" and self.failures > 0:
+            self.failures -= 1
+            return {
+                "outcome": "projection_unavailable",
+                "receipt": self.get_command_receipt(
+                    workshop_id=kwargs["workshop_id"],
+                    tenant_id=kwargs["tenant_id"],
+                    user_id=kwargs["user_id"],
+                    operation=kwargs["operation"],
+                    idempotency_key=kwargs["idempotency_key"],
+                ),
+            }
+        return super().complete_command(**kwargs)
+
+
+class ResolutionWriteFailingStore(MemoryWorkshopStore):
+    """Simulate the transactional source-resolution write failing on commit."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.fail_resolution_writes = True
+
+    def complete_command(self, **kwargs: Any) -> Dict[str, Any]:
+        if (
+            self.fail_resolution_writes
+            and kwargs.get("resolve_compensation") is not None
+        ):
+            raise RuntimeError("source resolution write failed")
+        return super().complete_command(**kwargs)
+
+
+def _select_version(
+    client: TestClient,
+    store: MemoryWorkshopStore,
+    *,
+    create_key: str,
+    select_key: str,
+) -> Any:
+    created, version_id = _create_version(client, store, key=create_key)
+    selected = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/versions/{version_id}/select",
+        headers=_command_headers(select_key, created.headers["etag"]),
+    )
+    assert selected.status_code == 200, selected.text
+    return selected
+
+
+def _consultation_partial_failure() -> CanonicalOperationError:
+    return CanonicalOperationError(
+        "consultation_service",
+        "canonical service is unavailable",
+        retryable=True,
+        partial_effects={"consultation_request_id": "__pending__"},
+    )
+
+
+_CONSULT_BODY = {
+    "consultation_type": "advisory",
+    "subject": "Adopted lineage safety",
+}
+
+
+def test_adopted_consultation_commit_failure_never_cancels_shared_request() -> None:
+    client, store, canonical = _harness(store=FlakyConsultationCommitStore(failures=1))
+    selected = _select_version(
+        client, store, create_key="consult-own-create", select_key="consult-own-select"
+    )
+    canonical.consultation_error = _consultation_partial_failure()
+
+    failed = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/consultations",
+        headers=_command_headers("consult-own-a", selected.headers["etag"]),
+        json=_CONSULT_BODY,
+    )
+    assert failed.status_code == 503, failed.text
+
+    # The retry adopts the recorded request; its projection commit fails.
+    # An adopted request is shared lineage: it must never be cancelled.
+    retry = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/consultations",
+        headers=_command_headers("consult-own-b", _etag(store)),
+        json=_CONSULT_BODY,
+    )
+    assert retry.status_code == 503, retry.text
+    assert _reason(retry) == "WORKSHOP_COMMIT_FAILED"
+    assert canonical.call_count("cancel_consultation") == 0
+
+    # The lineage moved to exactly one live receipt in the failure write.
+    source = _receipt(store, "open_consultation", "consult-own-a")
+    assert source["compensation"]["resolution"] == "superseded"
+    assert source["compensation"]["resolved_by_idempotency_key"] == "consult-own-b"
+    successor = _receipt(store, "open_consultation", "consult-own-b")
+    assert successor["status"] == "failed"
+    assert successor["compensation"]["resumable"] is True
+    assert (
+        successor["compensation"]["partial_effects"]["consultation_request_id"]
+        == "__pending__"
+    )
+    resumable = store.find_resumable_command(
+        workshop_id=WORKSHOP_ID,
+        tenant_id=TENANT_ID,
+        user_id=USER_ID,
+        operation="open_consultation",
+        request_hash=successor["request_hash"],
+    )
+    assert resumable is not None
+    assert resumable["idempotency_key"] == "consult-own-b"
+
+    # The next retry adopts the surviving lineage and commits exactly once.
+    final = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/consultations",
+        headers=_command_headers("consult-own-c", _etag(store)),
+        json=_CONSULT_BODY,
+    )
+    assert final.status_code == 201, final.text
+    final_call = _last_call(canonical, "open_consultation")
+    assert final_call["resume"] is True
+    assert final_call["request_id"] == "__pending__"
+    assert canonical.call_count("cancel_consultation") == 0
+    resolved = _receipt(store, "open_consultation", "consult-own-b")
+    assert resolved["compensation"]["resolution"] == "resumed"
+    assert store.find_resumable_command(
+        workshop_id=WORKSHOP_ID,
+        tenant_id=TENANT_ID,
+        user_id=USER_ID,
+        operation="open_consultation",
+        request_hash=successor["request_hash"],
+    ) is None
+    events = [
+        event
+        for event in store.list_events(WORKSHOP_ID)
+        if event["event_type"] == "consultation_started"
+    ]
+    assert len(events) == 1
+    assert canonical.forbidden_execution_calls == []
+
+
+def test_concurrent_new_key_retries_never_share_adopted_lineage() -> None:
+    client, store, canonical = _harness()
+    selected = _select_version(
+        client, store, create_key="consult-race-create", select_key="consult-race-select"
+    )
+    canonical.consultation_error = _consultation_partial_failure()
+
+    failed = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/consultations",
+        headers=_command_headers("consult-race-a", selected.headers["etag"]),
+        json=_CONSULT_BODY,
+    )
+    assert failed.status_code == 503, failed.text
+    source = _receipt(store, "open_consultation", "consult-race-a")
+
+    # A concurrent in-flight retry holds the adoption claim.
+    claimed = store.claim_resumable_command(
+        workshop_id=WORKSHOP_ID,
+        tenant_id=TENANT_ID,
+        user_id=USER_ID,
+        operation="open_consultation",
+        request_hash=source["request_hash"],
+        claimed_by_idempotency_key="consult-race-b",
+    )
+    assert claimed is not None
+    assert claimed["idempotency_key"] == "consult-race-a"
+
+    # The losing retry cannot adopt: it opens fresh under its own digest.
+    other = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/consultations",
+        headers=_command_headers("consult-race-c", _etag(store)),
+        json=_CONSULT_BODY,
+    )
+    assert other.status_code == 201, other.text
+    other_call = _last_call(canonical, "open_consultation")
+    assert other_call["resume"] is False
+    assert other_call["request_id"] != "__pending__"
+    assert other_call["request_id"].startswith("cr-ws-")
+    source = _receipt(store, "open_consultation", "consult-race-a")
+    assert not source["compensation"].get("resolution")
+    assert source["compensation"]["claimed_by_idempotency_key"] == "consult-race-b"
+
+    # The claim holder re-enters with its own key and adopts exactly once.
+    winner = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/consultations",
+        headers=_command_headers("consult-race-b", _etag(store)),
+        json=_CONSULT_BODY,
+    )
+    assert winner.status_code == 201, winner.text
+    winner_call = _last_call(canonical, "open_consultation")
+    assert winner_call["resume"] is True
+    assert winner_call["request_id"] == "__pending__"
+    resolved = _receipt(store, "open_consultation", "consult-race-a")
+    assert resolved["compensation"]["resolution"] == "resumed"
+    assert (
+        resolved["compensation"]["resolved_by_idempotency_key"] == "consult-race-b"
+    )
+    assert canonical.call_count("cancel_consultation") == 0
+
+    # Distinct digests mean distinct committed events: no id collision.
+    events = [
+        event
+        for event in store.list_events(WORKSHOP_ID)
+        if event["event_type"] == "consultation_started"
+    ]
+    assert len(events) == 2
+    assert len({event["event_id"] for event in events}) == 2
+
+
+def test_resolution_write_failure_fails_closed_without_cancelling_adopted_request() -> None:
+    client, store, canonical = _harness(store=ResolutionWriteFailingStore())
+    selected = _select_version(
+        client, store, create_key="consult-resw-create", select_key="consult-resw-select"
+    )
+    canonical.consultation_error = _consultation_partial_failure()
+
+    failed = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/consultations",
+        headers=_command_headers("consult-resw-a", selected.headers["etag"]),
+        json=_CONSULT_BODY,
+    )
+    assert failed.status_code == 503, failed.text
+
+    # Completion and source resolution are one transaction: when the
+    # resolution write fails, the whole commit fails closed and the adopted
+    # consultation — possibly committed by another retry — is not cancelled.
+    retry = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/consultations",
+        headers=_command_headers("consult-resw-b", _etag(store)),
+        json=_CONSULT_BODY,
+    )
+    assert retry.status_code == 503, retry.text
+    assert _reason(retry) == "WORKSHOP_COMMIT_EXCEPTION"
+    assert canonical.call_count("cancel_consultation") == 0
+    source = _receipt(store, "open_consultation", "consult-resw-a")
+    assert source["compensation"]["resolution"] == "superseded"
+    successor = _receipt(store, "open_consultation", "consult-resw-b")
+    assert successor["status"] == "failed"
+    assert successor["compensation"]["resumable"] is True
+
+    # Once the store heals, the next retry adopts the surviving lineage.
+    store.fail_resolution_writes = False
+    final = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/consultations",
+        headers=_command_headers("consult-resw-c", _etag(store)),
+        json=_CONSULT_BODY,
+    )
+    assert final.status_code == 201, final.text
+    assert _last_call(canonical, "open_consultation")["request_id"] == "__pending__"
+    assert canonical.call_count("cancel_consultation") == 0
+    assert store.find_resumable_command(
+        workshop_id=WORKSHOP_ID,
+        tenant_id=TENANT_ID,
+        user_id=USER_ID,
+        operation="open_consultation",
+        request_hash=successor["request_hash"],
+    ) is None
+    events = [
+        event
+        for event in store.list_events(WORKSHOP_ID)
+        if event["event_type"] == "consultation_started"
+    ]
+    assert len(events) == 1
+
+
+def test_adopted_cancelled_consultation_is_rejected_and_lineage_sealed() -> None:
+    client, store, canonical = _harness()
+    selected = _select_version(
+        client, store, create_key="consult-dead-create", select_key="consult-dead-select"
+    )
+    canonical.consultation_error = CanonicalOperationError(
+        "consultation_service",
+        "canonical service is unavailable",
+        retryable=True,
+        partial_effects={"consultation_request_id": "cr-ws-dead"},
+    )
+
+    failed = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/consultations",
+        headers=_command_headers("consult-dead-a", selected.headers["etag"]),
+        json=_CONSULT_BODY,
+    )
+    assert failed.status_code == 503, failed.text
+
+    # The adopted request was cancelled downstream in the meantime: adoption
+    # must not report it as a successful open, and the dead lineage is sealed.
+    canonical.consultation_status = "cancelled"
+    rejected = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/consultations",
+        headers=_command_headers("consult-dead-b", _etag(store)),
+        json=_CONSULT_BODY,
+    )
+    assert rejected.status_code == 409, rejected.text
+    assert _reason(rejected) == "CONSULTATION_REQUEST_CANCELLED"
+    assert canonical.call_count("cancel_consultation") == 0
+    source = _receipt(store, "open_consultation", "consult-dead-a")
+    assert source["compensation"]["resolution"] == "cancelled"
+    assert source["compensation"]["resolved_at"]
+    assert store.find_resumable_command(
+        workshop_id=WORKSHOP_ID,
+        tenant_id=TENANT_ID,
+        user_id=USER_ID,
+        operation="open_consultation",
+        request_hash=source["request_hash"],
+    ) is None
+
+    # A later retry no longer re-adopts the dead request: it opens fresh.
+    canonical.consultation_status = "submitted"
+    final = client.post(
+        f"/bff/agora/workshops/{WORKSHOP_ID}/consultations",
+        headers=_command_headers("consult-dead-c", _etag(store)),
+        json=_CONSULT_BODY,
+    )
+    assert final.status_code == 201, final.text
+    final_call = _last_call(canonical, "open_consultation")
+    assert final_call["resume"] is False
+    assert final_call["request_id"] != "cr-ws-dead"
+
+
+# --------------------------------------------------------------------------- #
+# Store-level lineage semantics — Memory and Postgres backends
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture(params=["memory", "postgres"])
+def lineage_store(request: pytest.FixtureRequest):
+    if request.param == "memory":
+        yield MemoryWorkshopStore()
+        return
+    dsn = os.environ.get("AGORA_WORKSHOP_TEST_POSTGRES_DSN")
+    if not dsn:
+        pytest.skip("set AGORA_WORKSHOP_TEST_POSTGRES_DSN for real Postgres coverage")
+    from agora.strategy_workshop.store import PostgresWorkshopStore
+
+    schema = f"test_agora_ws_lineage_{uuid.uuid4().hex[:12]}"
+    store = PostgresWorkshopStore(dsn=dsn, schema=schema)
+    try:
+        yield store
+    finally:
+        with store._connect() as conn:
+            conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+
+
+_LINEAGE_SCOPE = {
+    "workshop_id": WORKSHOP_ID,
+    "tenant_id": TENANT_ID,
+    "user_id": USER_ID,
+    "operation": "open_consultation",
+}
+_LINEAGE_HASH = "sha256:lineage-request"
+
+
+def _seed_resumable_source(store: Any, *, idempotency_key: str = "lineage-source") -> Dict[str, Any]:
+    if store.get_session(WORKSHOP_ID) is None:
+        store.create_session(
+            {
+                "workshop_id": WORKSHOP_ID,
+                "tenant_id": TENANT_ID,
+                "user_id": USER_ID,
+                "strategy_id": STRATEGY_ID,
+                "status": "open",
+            }
+        )
+    session = store.get_session(WORKSHOP_ID)
+    admitted = store.admit_command(
+        **_LINEAGE_SCOPE,
+        idempotency_key=idempotency_key,
+        request_hash=_LINEAGE_HASH,
+        expected_lock_version=int(session["lock_version"]),
+        request_payload={},
+        request_id="req-lineage",
+        trace_id="trace-lineage",
+    )
+    assert admitted["outcome"] == "admitted"
+    failed = store.fail_command(
+        **_LINEAGE_SCOPE,
+        idempotency_key=idempotency_key,
+        request_hash=_LINEAGE_HASH,
+        failure={"reason": "CANONICAL_UNAVAILABLE"},
+        compensation={
+            "required": True,
+            "resumable": True,
+            "downstream_idempotency_digest": "digest-lineage",
+            "partial_effects": {"consultation_request_id": "cr-ws-lineage"},
+        },
+        canonical_refs={"consultation_request_id": "cr-ws-lineage"},
+    )
+    assert failed["outcome"] == "failed"
+    return failed["receipt"]
+
+
+def _admit_successor(store: Any, idempotency_key: str) -> None:
+    session = store.get_session(WORKSHOP_ID)
+    admitted = store.admit_command(
+        **_LINEAGE_SCOPE,
+        idempotency_key=idempotency_key,
+        request_hash=_LINEAGE_HASH,
+        expected_lock_version=int(session["lock_version"]),
+        request_payload={},
+        request_id=f"req-{idempotency_key}",
+        trace_id=f"trace-{idempotency_key}",
+    )
+    assert admitted["outcome"] == "admitted"
+
+
+def _claim(store: Any, claimed_by: str) -> Optional[Dict[str, Any]]:
+    return store.claim_resumable_command(
+        **_LINEAGE_SCOPE,
+        request_hash=_LINEAGE_HASH,
+        claimed_by_idempotency_key=claimed_by,
+    )
+
+
+def test_claim_resumable_command_is_exclusive_and_reclaimable(lineage_store: Any) -> None:
+    store = lineage_store
+    source = _seed_resumable_source(store)
+
+    claimed = _claim(store, "retry-1")
+    assert claimed is not None
+    assert claimed["idempotency_key"] == source["idempotency_key"]
+    assert claimed["compensation"]["claimed_by_idempotency_key"] == "retry-1"
+    # A concurrent successor cannot claim the same lineage.
+    assert _claim(store, "retry-2") is None
+    # Exact-replay recovery: the holder may re-claim with its own key.
+    reclaimed = _claim(store, "retry-1")
+    assert reclaimed is not None
+    assert reclaimed["idempotency_key"] == source["idempotency_key"]
+
+
+def test_complete_command_resolves_the_claimed_source_atomically(lineage_store: Any) -> None:
+    store = lineage_store
+    source = _seed_resumable_source(store)
+    assert _claim(store, "retry-1") is not None
+    _admit_successor(store, "retry-1")
+
+    completed = store.complete_command(
+        **_LINEAGE_SCOPE,
+        idempotency_key="retry-1",
+        request_hash=_LINEAGE_HASH,
+        result={"consultation": {"request_id": "cr-ws-lineage"}},
+        canonical_refs={"consultation_request_id": "cr-ws-lineage"},
+        resolve_compensation={
+            "operation": "open_consultation",
+            "idempotency_key": source["idempotency_key"],
+            "resolution": {
+                "resolved_at": NOW,
+                "resolution": "resumed",
+                "resolved_by_idempotency_key": "retry-1",
+            },
+        },
+    )
+    assert completed["outcome"] == "completed"
+    resolved = store.get_command_receipt(
+        **_LINEAGE_SCOPE, idempotency_key=source["idempotency_key"]
+    )
+    assert resolved["compensation"]["resolution"] == "resumed"
+    assert resolved["compensation"]["resolved_at"]
+    assert store.find_resumable_command(
+        **_LINEAGE_SCOPE, request_hash=_LINEAGE_HASH
+    ) is None
+    assert _claim(store, "retry-9") is None
+
+
+def test_fail_command_moves_lineage_to_exactly_one_live_receipt(lineage_store: Any) -> None:
+    store = lineage_store
+    source = _seed_resumable_source(store)
+    assert _claim(store, "retry-1") is not None
+    _admit_successor(store, "retry-1")
+
+    failed = store.fail_command(
+        **_LINEAGE_SCOPE,
+        idempotency_key="retry-1",
+        request_hash=_LINEAGE_HASH,
+        failure={"reason": "WORKSHOP_COMMIT_FAILED"},
+        compensation={
+            "required": True,
+            "resumable": True,
+            "downstream_idempotency_digest": "digest-lineage",
+            "partial_effects": {"consultation_request_id": "cr-ws-lineage"},
+        },
+        resolve_compensation={
+            "operation": "open_consultation",
+            "idempotency_key": source["idempotency_key"],
+            "resolution": {
+                "resolved_at": NOW,
+                "resolution": "superseded",
+                "resolved_by_idempotency_key": "retry-1",
+            },
+        },
+    )
+    assert failed["outcome"] == "failed"
+    resolved = store.get_command_receipt(
+        **_LINEAGE_SCOPE, idempotency_key=source["idempotency_key"]
+    )
+    assert resolved["compensation"]["resolution"] == "superseded"
+    live = store.find_resumable_command(
+        **_LINEAGE_SCOPE, request_hash=_LINEAGE_HASH
+    )
+    assert live is not None
+    assert live["idempotency_key"] == "retry-1"
+
+
+def test_resumed_projection_failure_rolls_back_source_resolution(lineage_store: Any) -> None:
+    store = lineage_store
+    source = _seed_resumable_source(store)
+    # A prior successful retry already committed this digest-derived event.
+    store.create_event(
+        {
+            "event_id": "wsevt-consult-digest-lineage",
+            "workshop_id": WORKSHOP_ID,
+            "actor_type": "operator",
+            "event_type": "consultation_started",
+            "redacted_summary": "prior committed consultation",
+        }
+    )
+    assert _claim(store, "retry-1") is not None
+    _admit_successor(store, "retry-1")
+
+    with pytest.raises(Exception):
+        store.complete_command(
+            **_LINEAGE_SCOPE,
+            idempotency_key="retry-1",
+            request_hash=_LINEAGE_HASH,
+            result={"consultation": {"request_id": "cr-ws-lineage"}},
+            canonical_refs={"consultation_request_id": "cr-ws-lineage"},
+            event={
+                "event_id": "wsevt-consult-digest-lineage",
+                "actor_type": "operator",
+                "event_type": "consultation_started",
+                "redacted_summary": "colliding commit",
+            },
+            resolve_compensation={
+                "operation": "open_consultation",
+                "idempotency_key": source["idempotency_key"],
+                "resolution": {
+                    "resolved_at": NOW,
+                    "resolution": "resumed",
+                    "resolved_by_idempotency_key": "retry-1",
+                },
+            },
+        )
+
+    # The whole commit rolled back: no duplicate event, the successor is not
+    # completed, and the source resolution never became visible.
+    successor = store.get_command_receipt(
+        **_LINEAGE_SCOPE, idempotency_key="retry-1"
+    )
+    assert successor["status"] == "admitted"
+    src = store.get_command_receipt(
+        **_LINEAGE_SCOPE, idempotency_key=source["idempotency_key"]
+    )
+    assert not src["compensation"].get("resolved_at")
+    assert src["compensation"]["claimed_by_idempotency_key"] == "retry-1"
+    events = [
+        event
+        for event in store.list_events(WORKSHOP_ID)
+        if event["event_type"] == "consultation_started"
+    ]
+    assert len(events) == 1
