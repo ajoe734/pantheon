@@ -6016,7 +6016,7 @@ def _pm12_resolve_quarterly_recommendation_submit_params(
         asserted_value = params.get(field)
         if field == "evidence_ref_ids":
             asserted_value = sorted(asserted_value or [])
-        if _stable_json_hash(asserted_value) != _stable_json_hash(authoritative_value):
+        if not _pm12_semantic_values_match(asserted_value, authoritative_value):
             raise _bff_error(
                 422,
                 ErrorCode.VALIDATION_FAILED,
@@ -6069,9 +6069,7 @@ def _pm12_resolve_quarterly_recommendation_submit_params(
             asserted_value = asserted_source.get(field)
             if field == "evidence_ref_ids":
                 asserted_value = sorted(asserted_value or [])
-            if _stable_json_hash(asserted_value) != _stable_json_hash(
-                authoritative_value
-            ):
+            if not _pm12_semantic_values_match(asserted_value, authoritative_value):
                 raise _bff_error(
                     422,
                     ErrorCode.VALIDATION_FAILED,
@@ -26045,6 +26043,21 @@ def _pm12_allocation_line_assertion_hash(line: Dict[str, Any]) -> str:
     })
 
 
+def _pm12_semantic_values_match(asserted: Any, authoritative: Any) -> bool:
+    """Compare an asserted value against its admitted authoritative value using the
+    numeric/bool/order-safe semantic canonical form so benign browser JSON
+    round-trips (for example 1.0 -> 1, or object key reordering) do not read as an
+    assertion mismatch. Values that cannot be canonicalized stay fail-closed by
+    returning False, preserving the strict-by-default posture for malformed input."""
+    try:
+        return (
+            _pm12_semantic_json_value(asserted)
+            == _pm12_semantic_json_value(authoritative)
+        )
+    except ValueError:
+        return False
+
+
 def _pm12_allocation_snapshot_record(snapshot_id: str) -> Dict[str, Any]:
     snapshot = read_store.get_ranking_snapshot(snapshot_id)
     if not isinstance(snapshot, dict):
@@ -26196,7 +26209,7 @@ def _pm12_assert_allocation_row(
         if field in {"exclusion_codes", "exclusion_reasons", "evidence_ref_ids"}:
             asserted_value = sorted(asserted_value or [])
             authoritative_value = sorted(authoritative_value or [])
-        if _stable_json_hash(asserted_value) != _stable_json_hash(authoritative_value):
+        if not _pm12_semantic_values_match(asserted_value, authoritative_value):
             raise _bff_error(
                 422,
                 ErrorCode.VALIDATION_FAILED,
