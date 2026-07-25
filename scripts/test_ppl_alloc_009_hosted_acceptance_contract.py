@@ -12,8 +12,7 @@ WORKFLOW = (
     / "workflows"
     / "ppl-alloc-009-hosted-acceptance.yml"
 )
-PUBLIC_SUPABASE_URL = "https://kwjtcynauaulrxngyetk.supabase.co"
-EXPECTED_FRONTEND_SHA = "ef5185148157c422b41cc2a0ee497d2860e002a3"
+EXPECTED_FRONTEND_SHA = "3bf97323f7c72bd47256c7a60618dd7f837cd592"
 STALE_HARNESS_SHA = "7492ad7fd0b430df40dd7fe7b6b0d187d8742350"
 
 
@@ -53,7 +52,7 @@ def test_workflow_resolves_full_sha_before_harness_checkout_or_credentials() -> 
     assert 'default: ""' in workflow
     assert "required: false" in workflow
     resolve_step = workflow.index("Resolve exact accepted frontend harness")
-    identity_step = workflow.index("Load and mask the browser identity key")
+    identity_step = workflow.index("Load and mask real browser identity inputs")
     checkout_step = workflow.index(
         "Checkout immutable execute-plans acceptance harness"
     )
@@ -70,46 +69,63 @@ def test_workflow_resolves_full_sha_before_harness_checkout_or_credentials() -> 
 def test_hosted_acceptance_preserves_browser_session_and_gcp_identity_contract() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
-    # The immutable execute-plans harness uses this public URL only to derive
-    # the hosted browser session-storage key. It is not a credential.
-    assert (
-        f'PPL_ALLOC_009_PUBLIC_SUPABASE_URL: "{PUBLIC_SUPABASE_URL}"'
-        in workflow
-    )
-    assert (
-        '"${PPL_ALLOC_009_PUBLIC_SUPABASE_URL}" '
-        f'== "{PUBLIC_SUPABASE_URL}"'
-        in workflow
-    )
-
     # GCP Identity Platform remains the protected browser identity gate added
-    # by GCP-AUTH-MIGRATION-001. The browser key is deliberately web-public,
-    # but the acceptance workflow must not print it in the runner's job-level
-    # environment. Load it from an auto-masked dev environment secret, add an
-    # explicit runner mask before the generic non-empty guard, then pass it to
-    # later steps through GITHUB_ENV.
+    # by GCP-AUTH-MIGRATION-001. The harness signs in through the hosted
+    # Firebase UI with a dedicated real dev account; it must never construct a
+    # synthetic Firebase session from a BFF dev-login token. Load all identity
+    # inputs from auto-masked dev environment secrets, add explicit runner
+    # masks before the generic non-empty guard, then pass them to later steps
+    # through GITHUB_ENV.
     assert (
         "GCP_IDENTITY_API_KEY: "
         "${{ secrets.PPL_ALLOC_009_GCP_IDENTITY_API_KEY }}"
         in workflow
     )
-    assert "${{ vars.VITE_GCP_IDENTITY_API_KEY }}" not in workflow
-    mask = 'echo "::add-mask::${GCP_IDENTITY_API_KEY}"'
-    guard = 'if [[ -z "${GCP_IDENTITY_API_KEY}" ]]; then'
-    export = (
-        'echo "PPL_ALLOC_009_GCP_IDENTITY_API_KEY='
-        '${GCP_IDENTITY_API_KEY}" >> "${GITHUB_ENV}"'
-    )
-    assert mask in workflow
-    assert guard in workflow
-    assert export in workflow
-    assert workflow.index(mask) < workflow.index(guard) < workflow.index(export)
     assert (
-        workflow.index(export)
-        < workflow.index("Reject unsafe target or incomplete proof inputs")
+        "GCP_IDENTITY_EMAIL: "
+        "${{ secrets.PPL_ALLOC_009_GCP_IDENTITY_EMAIL }}"
+        in workflow
     )
+    assert (
+        "GCP_IDENTITY_PASSWORD: "
+        "${{ secrets.PPL_ALLOC_009_GCP_IDENTITY_PASSWORD }}"
+        in workflow
+    )
+    assert "${{ vars.VITE_GCP_IDENTITY_API_KEY }}" not in workflow
+    masks = [
+        'echo "::add-mask::${GCP_IDENTITY_API_KEY}"',
+        'echo "::add-mask::${GCP_IDENTITY_EMAIL}"',
+        'echo "::add-mask::${GCP_IDENTITY_PASSWORD}"',
+    ]
+    guard = (
+        'if [[ -z "${GCP_IDENTITY_API_KEY}" || '
+        '-z "${GCP_IDENTITY_EMAIL}" || '
+        '-z "${GCP_IDENTITY_PASSWORD}" ]]; then'
+    )
+    exports = [
+        'echo "PPL_ALLOC_009_GCP_IDENTITY_API_KEY='
+        '${GCP_IDENTITY_API_KEY}" >> "${GITHUB_ENV}"',
+        'echo "PPL_ALLOC_009_GCP_IDENTITY_EMAIL='
+        '${GCP_IDENTITY_EMAIL}" >> "${GITHUB_ENV}"',
+        'echo "PPL_ALLOC_009_GCP_IDENTITY_PASSWORD='
+        '${GCP_IDENTITY_PASSWORD}" >> "${GITHUB_ENV}"',
+    ]
+    for mask in masks:
+        assert mask in workflow
+        assert workflow.index(mask) < workflow.index(guard)
+    assert guard in workflow
+    for export in exports:
+        assert export in workflow
+        assert workflow.index(guard) < workflow.index(export)
+        assert (
+            workflow.index(export)
+            < workflow.index("Reject unsafe target or incomplete proof inputs")
+        )
     assert '[[ -n "${PPL_ALLOC_009_GCP_IDENTITY_API_KEY}" ]]' in workflow
+    assert '[[ -n "${PPL_ALLOC_009_GCP_IDENTITY_EMAIL}" ]]' in workflow
+    assert '[[ -n "${PPL_ALLOC_009_GCP_IDENTITY_PASSWORD}" ]]' in workflow
 
-    # Keep the public session-key URL fixed by the trusted controller rather
-    # than reintroducing an operator-supplied dispatch input.
+    # Do not reintroduce legacy Supabase session-key inputs. GCP Identity owns
+    # browser authentication for the exact-pair acceptance.
     assert "      public_supabase_url:" not in workflow
+    assert "PPL_ALLOC_009_PUBLIC_SUPABASE_URL" not in workflow

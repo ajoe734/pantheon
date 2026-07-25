@@ -65,7 +65,6 @@ jobs:
       PPL_ALLOC_009_FE_BASE_URL: ${{ inputs.fe_base_url }}
       PPL_ALLOC_009_OPERATOR_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID || 'pantheon-dev-operator-a-v1' }}
       PPL_ALLOC_009_OPERATOR_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET }}
-      PPL_ALLOC_009_PUBLIC_SUPABASE_URL: "https://kwjtcynauaulrxngyetk.supabase.co"
       PPL_ALLOC_009_QUARTER: ${{ inputs.quarter }}
       PPL_ALLOC_009_RUN_KEY: ${{ inputs.resume_run_key }}
       PPL_ALLOC_009_TENANT_ID: ${{ inputs.tenant_id }}
@@ -91,18 +90,24 @@ jobs:
             --github-output "${GITHUB_OUTPUT}" \
             --github-env "${GITHUB_ENV}"
 
-      - name: Load and mask the browser identity key
+      - name: Load and mask real browser identity inputs
         shell: bash
         env:
           GCP_IDENTITY_API_KEY: ${{ secrets.PPL_ALLOC_009_GCP_IDENTITY_API_KEY }}
+          GCP_IDENTITY_EMAIL: ${{ secrets.PPL_ALLOC_009_GCP_IDENTITY_EMAIL }}
+          GCP_IDENTITY_PASSWORD: ${{ secrets.PPL_ALLOC_009_GCP_IDENTITY_PASSWORD }}
         run: |
           set -euo pipefail
           echo "::add-mask::${GCP_IDENTITY_API_KEY}"
-          if [[ -z "${GCP_IDENTITY_API_KEY}" ]]; then
-            echo "::error::The dev browser identity key is not configured."
+          echo "::add-mask::${GCP_IDENTITY_EMAIL}"
+          echo "::add-mask::${GCP_IDENTITY_PASSWORD}"
+          if [[ -z "${GCP_IDENTITY_API_KEY}" || -z "${GCP_IDENTITY_EMAIL}" || -z "${GCP_IDENTITY_PASSWORD}" ]]; then
+            echo "::error::The real dev browser identity inputs are not fully configured."
             exit 1
           fi
           echo "PPL_ALLOC_009_GCP_IDENTITY_API_KEY=${GCP_IDENTITY_API_KEY}" >> "${GITHUB_ENV}"
+          echo "PPL_ALLOC_009_GCP_IDENTITY_EMAIL=${GCP_IDENTITY_EMAIL}" >> "${GITHUB_ENV}"
+          echo "PPL_ALLOC_009_GCP_IDENTITY_PASSWORD=${GCP_IDENTITY_PASSWORD}" >> "${GITHUB_ENV}"
 
       - name: Checkout immutable execute-plans acceptance harness
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5a
@@ -129,7 +134,8 @@ jobs:
           [[ -n "${PPL_ALLOC_009_APPROVER_CLIENT_ID}" ]]
           [[ -n "${PPL_ALLOC_009_APPROVER_CLIENT_SECRET}" ]]
           [[ -n "${PPL_ALLOC_009_GCP_IDENTITY_API_KEY}" ]]
-          [[ "${PPL_ALLOC_009_PUBLIC_SUPABASE_URL}" == "https://kwjtcynauaulrxngyetk.supabase.co" ]]
+          [[ -n "${PPL_ALLOC_009_GCP_IDENTITY_EMAIL}" ]]
+          [[ -n "${PPL_ALLOC_009_GCP_IDENTITY_PASSWORD}" ]]
           [[ "${PPL_ALLOC_009_RUN_KEY}" == "30095677466" ]]
           [[ "${PPL_ALLOC_009_TENANT_ID}" == "tenant-dev" ]]
 
