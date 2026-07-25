@@ -18,6 +18,7 @@ from copy import deepcopy
 from concurrent.futures import Executor, ThreadPoolExecutor
 from contextvars import ContextVar, copy_context
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 from functools import partial, wraps
 from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Set, Tuple
@@ -25999,6 +26000,51 @@ def _pm12_allocation_line_digest(line: Dict[str, Any]) -> str:
     return _stable_json_hash(basis)
 
 
+def _pm12_semantic_json_value(value: Any) -> Any:
+    """Canonicalize JSON values without treating booleans as numbers."""
+    if value is None:
+        return ["null"]
+    if isinstance(value, bool):
+        return ["boolean", value]
+    if isinstance(value, str):
+        return ["string", value]
+    if isinstance(value, (int, float, Decimal)):
+        try:
+            numeric = (
+                value
+                if isinstance(value, Decimal)
+                else Decimal(str(value))
+            )
+        except (InvalidOperation, TypeError, ValueError) as exc:
+            raise ValueError("allocation line contains an invalid number") from exc
+        if not numeric.is_finite():
+            raise ValueError("allocation line contains a non-finite number")
+        if numeric == 0:
+            numeric = Decimal(0)
+        return ["number", format(numeric.normalize(), "f")]
+    if isinstance(value, list):
+        return ["array", [_pm12_semantic_json_value(item) for item in value]]
+    if isinstance(value, dict):
+        if any(not isinstance(key, str) for key in value):
+            raise ValueError("allocation line contains a non-string object key")
+        return [
+            "object",
+            [
+                [key, _pm12_semantic_json_value(value[key])]
+                for key in sorted(value)
+            ],
+        ]
+    raise ValueError(
+        f"allocation line contains unsupported JSON value {type(value).__name__}"
+    )
+
+
+def _pm12_allocation_line_assertion_hash(line: Dict[str, Any]) -> str:
+    return _stable_json_hash({
+        "semantic_json": _pm12_semantic_json_value(line),
+    })
+
+
 def _pm12_allocation_snapshot_record(snapshot_id: str) -> Dict[str, Any]:
     snapshot = read_store.get_ranking_snapshot(snapshot_id)
     if not isinstance(snapshot, dict):
@@ -27516,7 +27562,14 @@ def _validate_rebalance_proposal_payload(payload: Dict[str, Any]) -> List[Dict[s
                     f"lines[{index}] is not a unique line from the admitted evaluation.",
                     precondition_failed="allocation_line_digest",
                 )
-            if _stable_json_hash(line) != _stable_json_hash(expected):
+            try:
+                assertion_matches = (
+                    _pm12_allocation_line_assertion_hash(line)
+                    == _pm12_allocation_line_assertion_hash(expected)
+                )
+            except ValueError:
+                assertion_matches = False
+            if not assertion_matches:
                 raise _bff_error(
                     422,
                     ErrorCode.VALIDATION_FAILED,
