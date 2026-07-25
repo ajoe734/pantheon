@@ -1,0 +1,80 @@
+{
+  "schema_version": "pantheon.ppl-alloc-009.hosted-truth-correction.v1",
+  "task_id": "PPL-ALLOC-009",
+  "captured_at": "2026-07-25T16:41:00Z",
+  "completion_status": "incomplete",
+  "supersedes": {
+    "path": "docs/04/pantheon_persona_promotion_allocation_gap_2026-07-07/archive/PPL-ALLOC-009-PRODUCTION-CLOSEOUT-2026-07-25.md",
+    "original_pr": 4124,
+    "reason": "The original record claimed B3 and B5 passed without the required same-chain hosted browser result or an independent B5 review."
+  },
+  "unique_hosted_acceptance": {
+    "run_id": 30163260347,
+    "run_url": "https://github.com/ajoe734/pantheon/actions/runs/30163260347",
+    "conclusion": "failure",
+    "artifact_id": 8620845277,
+    "artifact_url": "https://github.com/ajoe734/pantheon/actions/runs/30163260347/artifacts/8620845277",
+    "frontend_commit": "ef5185148157c422b41cc2a0ee497d2860e002a3",
+    "bff_commit": "be956c07aca889043ef301389412b6744452f20b",
+    "B1": {
+      "status": "passed_at_runtime_final_checkpoint_incomplete",
+      "evidence": "The test reached the first desktop runBrowserProof call after the complete governed paper-only API chain, executed command receipt, and authoritative capital readback assertions."
+    },
+    "B3": {
+      "status": "failed_first_desktop_auth_mobile_not_run",
+      "failure": "The synthetic Firebase storage bootstrap used a BFF dev-login JWT that was not a GCP Identity Platform ID token."
+    }
+  },
+  "repairs": {
+    "frontend": {
+      "pull_request": 544,
+      "merge_commit": "3bf97323f7c72bd47256c7a60618dd7f837cd592",
+      "real_gcp_identity_ui_sign_in": true,
+      "synthetic_session": false,
+      "b1_checkpoint_before_b3": true
+    },
+    "pantheon": {
+      "pull_request": 4127,
+      "merge_commit": "72afd991b9133dc7e73c775978dc854e6d3877ce",
+      "masked_dev_identity_inputs": true
+    }
+  },
+  "current_hosted_delivery": {
+    "frontend_commit": "3bf97323f7c72bd47256c7a60618dd7f837cd592",
+    "bff_commit": "be956c07aca889043ef301389412b6744452f20b",
+    "pair_controller_commit": "72afd991b9133dc7e73c775978dc854e6d3877ce",
+    "integration_gate_run_id": 30165226542,
+    "integration_gate_conclusion": "success",
+    "deployment_run_id": 30165771519,
+    "deployment_conclusion": "success",
+    "deployment_state": "accepted",
+    "profile": "read-only",
+    "real_writes_enabled": false,
+    "dev_stub_writes_enabled": false,
+    "embedded_bearer_token": false
+  },
+  "terminal_proof_off": {
+    "run_id": 30163425775,
+    "conclusion": "success",
+    "artifact_id": 8621090468,
+    "backend_commit": "be956c07aca889043ef301389412b6744452f20b",
+    "effective_write_proof_enabled": false
+  },
+  "gates": {
+    "B1": "passed_at_runtime_final_checkpoint_incomplete",
+    "B2": "passed",
+    "B3": "failed_repair_deployed_not_reaccepted",
+    "B4": "passed",
+    "B5": "pending_no_independent_review"
+  },
+  "required_next_actions": [
+    "Obtain explicit authority for a new hosted acceptance after the consumed one-run allowance.",
+    "Pass one same-chain desktop and 393px browser proof using the repaired real GCP Identity session.",
+    "Record an explicit B5 reviewer decision on the canonical-center IA."
+  ],
+  "safety": {
+    "canary_enabled": false,
+    "live_enabled": false,
+    "real_writes_enabled": false
+  }
+}
