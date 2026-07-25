@@ -4,6 +4,7 @@ import os
 import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,19 @@ PAPER_PERSONA_ID = "persona-ppl-alloc-009-paper"
 PAPER_BINDING_ID = "binding-ppl-alloc-009-paper"
 PAPER_RUNTIME_ID = "runtime-ppl-alloc-009-paper"
 PAPER_POOL_ID = "pool-ppl-alloc-009-paper"
+
+
+def _browser_json_number_round_trip(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _browser_json_number_round_trip(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_browser_json_number_round_trip(item) for item in value]
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
 
 
 def _client(td: str, *, fallback: bool = True) -> TestClient:
@@ -521,6 +535,11 @@ def test_ppl_alloc_009_governed_paper_chain_applies_without_two_man(
         assert line["binding_id"] == PAPER_BINDING_ID
         assert line["target_weight"] == 1.0
         assert line["live_capital_side_effects"] is False
+        browser_lines = _browser_json_number_round_trip(evaluation["lines"])
+        assert browser_lines[0]["current_weight"] == 0
+        assert isinstance(browser_lines[0]["current_weight"], int)
+        assert browser_lines[0]["target_weight"] == 1
+        assert isinstance(browser_lines[0]["target_weight"], int)
 
         proposal_payload = {
             "capital_pool_id": PAPER_POOL_ID,
@@ -528,7 +547,7 @@ def test_ppl_alloc_009_governed_paper_chain_applies_without_two_man(
             "allocation_evaluation_id": evaluation["allocation_evaluation_id"],
             "allocation_policy_version": evaluation["allocation_policy_version"],
             "reason": "PPL-ALLOC-009 governed paper allocation",
-            "lines": evaluation["lines"],
+            "lines": browser_lines,
             "simulation": {
                 "status": "passed",
                 "authority_mode": "governed_paper_simulation",
@@ -649,6 +668,40 @@ def test_ppl_alloc_009_governed_paper_chain_applies_without_two_man(
             "governed_paper_simulation"
         )
         assert "two_man_signature_id" not in preconditions
+
+
+def test_allocation_line_assertion_hash_is_numeric_semantic_and_fail_closed() -> None:
+    admitted = {
+        "current_weight": 0.0,
+        "target_weight": 1.0,
+        "delta": 1.0,
+        "nested": {
+            "score": Decimal("86.500"),
+            "values": [0.0, 1.0, -0.0],
+        },
+        "requires_human_approval": True,
+    }
+    browser_round_trip = _browser_json_number_round_trip(admitted)
+    assert (
+        bff_main._pm12_allocation_line_assertion_hash(browser_round_trip)
+        == bff_main._pm12_allocation_line_assertion_hash(admitted)
+    )
+
+    rejected = (
+        {**browser_round_trip, "target_weight": 2},
+        {**browser_round_trip, "requires_human_approval": 1},
+        {**browser_round_trip, "target_weight": float("nan")},
+        {**browser_round_trip, "target_weight": float("inf")},
+        {**browser_round_trip, "target_weight": float("-inf")},
+    )
+    for forged in rejected:
+        try:
+            forged_hash = bff_main._pm12_allocation_line_assertion_hash(forged)
+        except ValueError:
+            continue
+        assert forged_hash != bff_main._pm12_allocation_line_assertion_hash(
+            admitted
+        )
 
 
 def test_ranking_tuple_and_snapshot_round_trip_into_rebalance_proposal() -> None:
@@ -901,18 +954,24 @@ def test_ranking_tuple_and_snapshot_round_trip_into_rebalance_proposal() -> None
             ):
                 assert detail_data["lines"][0][field] == line[field]
 
-            proposal_tamper_cases = {
-                "current_weight": 0.03,
-                "target_weight": 0.08,
-                "delta": 0.04,
-                "cap_reasons": ["forged-cap"],
-                "evidence_refs": [*line["evidence_refs"], "forged-evidence"],
-            }
-            for index, (field, forged_value) in enumerate(
-                proposal_tamper_cases.items()
+            proposal_tamper_cases = (
+                ("current_weight", 0.03, False),
+                ("target_weight", 0.08, True),
+                ("delta", 0.04, False),
+                ("cap_reasons", ["forged-cap"], True),
+                (
+                    "evidence_refs",
+                    [*line["evidence_refs"], "forged-evidence"],
+                    False,
+                ),
+                ("requires_human_approval", 1, False),
+                ("allocation_line_digest", "0" * 64, False),
+            )
+            for index, (field, forged_value, recompute_digest) in enumerate(
+                proposal_tamper_cases
             ):
                 forged_line = {**line, field: forged_value}
-                if index % 2:
+                if recompute_digest:
                     forged_line.pop("allocation_line_digest", None)
                     forged_line["allocation_line_digest"] = bff_main._pm12_allocation_line_digest(
                         forged_line
