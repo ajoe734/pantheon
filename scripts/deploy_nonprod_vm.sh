@@ -731,6 +731,9 @@ wait_for_exact_bff_lifecycle_readiness() {
   # liveness through exact trusted recovery to accepted live truth on the dev
   # VM. Keep the ordinary restart budget at 120 seconds and grant only trusted
   # monotonic recovery a bounded 180-second extension (300 seconds total).
+  # If an exact/live projector briefly becomes generally unavailable during
+  # dependency warm-up, retain that exact evidence for at most 30 seconds and
+  # require /livez or /bff/version to keep proving the same running target.
   # Compose separately gates /livez, so each invocation gets its own
   # lifecycle-readiness acceptance budget; image/process startup cannot
   # consume it.
@@ -741,7 +744,8 @@ wait_for_exact_bff_lifecycle_readiness() {
     --recovery-extension-seconds 180 \
     --stalled-timeout-seconds 45 \
     --poll-interval-seconds 2 \
-    --request-timeout-seconds 2
+    --request-timeout-seconds 2 \
+    --exact-evidence-max-age-seconds 30
 }
 
 wait_for_bounded_source_refresh_service() {
