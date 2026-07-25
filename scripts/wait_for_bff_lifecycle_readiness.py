@@ -72,22 +72,21 @@ def classify_readiness(
 
     dependencies = payload.get("dependencies")
     if not isinstance(dependencies, dict):
-        raise ReadinessError("readiness payload has no dependency object")
+        return "unavailable", None
     projector = dependencies.get("lifecycle_projector")
     if not isinstance(projector, dict):
-        raise ReadinessError("readiness payload has no lifecycle projector")
+        return "deployment_pending", None
 
     deployment_sha = str(projector.get("deployment_sha") or "").strip()
     if deployment_sha != expected_deployment_sha:
-        raise ReadinessError(
-            "lifecycle projector deployment mismatch: "
-            f"expected {expected_deployment_sha}, got {deployment_sha or '<empty>'}"
-        )
+        return "deployment_pending", None
     freshness = projector.get("freshness")
     if (
         not isinstance(freshness, dict)
         or freshness.get("stale") is not False
     ):
+        if status != 200:
+            return "unavailable", None
         raise ReadinessError("lifecycle projector freshness is stale or absent")
 
     if status == 200 and payload.get("ready") is True:
@@ -124,15 +123,20 @@ def classify_readiness(
             )
         return "ready", None
 
+    # A non-200 response is ordinary while the BFF and its projector are
+    # restarting.  It can be retried inside the base window, but it must never
+    # grant the recovery extension unless every condition below proves the
+    # exact deployment's trusted recovery state.
+    if status == 200:
+        return "unavailable", None
+
     for dependency in ("runtime_manager", "governance", "deployment"):
         dependency_payload = dependencies.get(dependency)
         if (
             not isinstance(dependency_payload, dict)
             or dependency_payload.get("status") != "ok"
         ):
-            raise ReadinessError(
-                f"unexpected degraded dependency during recovery: {dependency}"
-            )
+            return "unavailable", None
 
     reasons = {str(reason) for reason in list(projector.get("reasons") or [])}
     allowed_reasons = {
@@ -152,22 +156,23 @@ def classify_readiness(
         or "live_truth_not_accepted:recovery:false" not in reasons
         or not reasons.issubset(allowed_reasons)
     ):
-        raise ReadinessError(
-            "unexpected BFF readiness degradation: "
-            + ",".join(sorted(reasons or {"<no-reason>"}))
-        )
+        return "unavailable", None
 
-    checkpoint = _integer(projector, "checkpoint")
-    source_high_watermark = _integer(projector, "source_high_watermark")
-    backlog = _integer(projector, "backlog")
+    try:
+        checkpoint = _integer(projector, "checkpoint")
+        source_high_watermark = _integer(projector, "source_high_watermark")
+        backlog = _integer(projector, "backlog")
+        current_generation = _integer(projector, "current_generation")
+        controller_generation = _integer(
+            projector,
+            "controller_generation",
+        )
+    except ReadinessError:
+        return "unavailable", None
     if checkpoint > source_high_watermark:
-        raise ReadinessError(
-            "lifecycle projector checkpoint exceeds source high watermark"
-        )
+        return "unavailable", None
     if backlog != source_high_watermark - checkpoint:
-        raise ReadinessError(
-            "lifecycle projector backlog does not match source minus checkpoint"
-        )
+        return "unavailable", None
 
     return (
         "recovering",
@@ -175,11 +180,8 @@ def classify_readiness(
             checkpoint=checkpoint,
             source_high_watermark=source_high_watermark,
             backlog=backlog,
-            current_generation=_integer(projector, "current_generation"),
-            controller_generation=_integer(
-                projector,
-                "controller_generation",
-            ),
+            current_generation=current_generation,
+            controller_generation=controller_generation,
             last_poll_at=str(projector.get("last_poll_at") or ""),
             last_successful_publish_at=str(
                 projector.get("last_successful_publish_at") or ""
@@ -262,11 +264,18 @@ def wait_for_readiness(
             raise ReadinessError(
                 "lifecycle projector recovery stopped making progress"
             )
-        if now >= initial_deadline and not recovery_seen:
-            raise ReadinessError(
-                "BFF readiness exceeded the ordinary restart budget without "
-                "trusted lifecycle recovery evidence"
-            )
+        if now >= initial_deadline:
+            if state != "recovering":
+                raise ReadinessError(
+                    "BFF readiness exceeded the ordinary restart budget "
+                    "without current exact-deployment trusted lifecycle "
+                    "recovery evidence"
+                )
+            if not recovery_seen:
+                raise ReadinessError(
+                    "BFF readiness exceeded the ordinary restart budget "
+                    "without trusted lifecycle recovery evidence"
+                )
         if now >= recovery_deadline:
             raise ReadinessError(
                 "BFF lifecycle recovery exceeded the bounded extension"
