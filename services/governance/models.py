@@ -40,6 +40,7 @@ class ActorRole(str, Enum):
 class TargetType(str, Enum):
     REGISTRY_ENTRY = "registry_entry"
     STRATEGY_SPEC = "strategy_spec"
+    STRATEGY_WORKSHOP = "strategy_workshop"
     MODEL_ARTIFACT = "model_artifact"
     ALLOCATION_POLICY = "allocation_policy"
     PERSONA_CAPITAL_BINDING = "persona_capital_binding"

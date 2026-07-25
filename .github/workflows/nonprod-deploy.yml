@@ -45,6 +45,11 @@ on:
         options:
           - strict
           - permissive-stub
+      ppl_alloc_009_dev_proof_enabled:
+        description: "Dev strict/root only: temporarily enable the bounded PPL-ALLOC-009 paper proof producer"
+        required: false
+        default: false
+        type: boolean
       run_evolution_dispatch_probe:
         description: "Dev root only: run and upload the EVOLOOP-001 hosted dispatch probe"
         required: false
@@ -80,6 +85,7 @@ jobs:
       TARGET_REF: ${{ github.event_name == 'push' && github.sha || inputs.ref || github.sha }}
       ALLOW_DIRTY: ${{ github.event_name == 'push' && 'false' || inputs.allow_dirty }}
       DEV_AUTH_PROFILE: ${{ github.event_name == 'workflow_dispatch' && inputs.dev_auth_profile || 'strict' }}
+      PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ github.event_name == 'workflow_dispatch' && inputs.ppl_alloc_009_dev_proof_enabled || false }}
     steps:
       # This checkout is the immutable trust root for every lease operation.
       # It is intentionally separate from the requested deployment payload.
@@ -101,11 +107,30 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
+      - name: Checkout accepted Agora gate controller
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          repository: ajoe734/pantheon
+          ref: dev
+          path: .agora-gate-controller
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout accepted Agora frontend history
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          repository: ajoe734/execute-plans
+          ref: dev
+          path: .agora-frontend
+          fetch-depth: 0
+          persist-credentials: false
+
       - name: Resolve and validate dev payload
         id: target
         working-directory: .target
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         env:
+          RUN_EVOLUTION_DISPATCH_PROBE: ${{ github.event_name == 'workflow_dispatch' && inputs.run_evolution_dispatch_probe || false }}
           RUN_LOOP_PROD_TEL_002_PROBE: ${{ github.event_name == 'workflow_dispatch' && inputs.run_loop_prod_tel_002_probe || false }}
         run: |
           sha="$(git rev-parse HEAD)"
@@ -125,7 +150,32 @@ jobs:
             echo "LOOP-PROD-TEL-002 hosted proof requires dev/root with strict auth." >&2
             exit 1
           fi
+          case "${PPL_ALLOC_009_DEV_PROOF_ENABLED}" in
+            true|false) ;;
+            *) echo "PPL-ALLOC-009 dev proof flag must be true or false." >&2; exit 1 ;;
+          esac
+          if [[ "${PPL_ALLOC_009_DEV_PROOF_ENABLED}" == "true" && (
+            "${TARGET_COMPONENT}" != "root" ||
+            "${DEV_AUTH_PROFILE}" != "strict" ||
+            "${ALLOW_DIRTY}" != "false" ||
+            "${RUN_EVOLUTION_DISPATCH_PROBE}" != "false" ||
+            "${RUN_LOOP_PROD_TEL_002_PROBE}" != "false"
+          ) ]]; then
+            echo "PPL-ALLOC-009 dev proof requires an isolated clean dev/root deploy with strict auth." >&2
+            exit 1
+          fi
           echo "sha=${sha}" >> "${GITHUB_OUTPUT}"
+
+      - name: Enforce exact Agora pair before any dev switch
+        working-directory: .agora-gate-controller
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          python3 scripts/agora_compat_manifest.py deployment-gate \
+            --manifest docs/contracts/agora/dev-compatibility-manifest.json \
+            --frontend-root "${GITHUB_WORKSPACE}/.agora-frontend" \
+            --backend-dev-ref refs/remotes/origin/dev \
+            --frontend-dev-ref refs/remotes/origin/dev \
+            --backend-runtime-commit "${{ steps.target.outputs.sha }}"
 
       - name: Enforce dev auth deployment floor
         working-directory: .target
@@ -134,10 +184,10 @@ jobs:
           DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
           DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
           DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
-          DEV_BFF_JWKS_URI: ${{ vars.DEV_BFF_JWKS_URI }}
-          DEV_BFF_OIDC_DISCOVERY_URL: ${{ vars.DEV_BFF_OIDC_DISCOVERY_URL || 'https://kwjtcynauaulrxngyetk.supabase.co/auth/v1/.well-known/openid-configuration' }}
-          DEV_BFF_OIDC_ISSUER: ${{ vars.DEV_BFF_OIDC_ISSUER || 'https://kwjtcynauaulrxngyetk.supabase.co/auth/v1' }}
-          DEV_BFF_OIDC_AUDIENCE: ${{ vars.DEV_BFF_OIDC_AUDIENCE || 'authenticated' }}
+          DEV_BFF_JWKS_URI: ${{ vars.DEV_BFF_JWKS_URI || 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com' }}
+          DEV_BFF_OIDC_DISCOVERY_URL: ${{ vars.DEV_BFF_OIDC_DISCOVERY_URL }}
+          DEV_BFF_OIDC_ISSUER: ${{ vars.DEV_BFF_OIDC_ISSUER || 'https://securetoken.google.com/pantheon-lupin-dev-20260719' }}
+          DEV_BFF_OIDC_AUDIENCE: ${{ vars.DEV_BFF_OIDC_AUDIENCE || 'pantheon-lupin-dev-20260719' }}
           DEV_BFF_OIDC_CLIENT_ID: ${{ secrets.DEV_BFF_OIDC_CLIENT_ID }}
           DEV_BFF_OIDC_CLIENT_SECRET: ${{ secrets.DEV_BFF_OIDC_CLIENT_SECRET }}
           DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1' }}
@@ -151,6 +201,9 @@ jobs:
           DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID || 'pantheon-dev-operator-b-v1' }}
           DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET }}
           DEV_BFF_MFA_REQUIRED: ${{ vars.DEV_BFF_MFA_REQUIRED || 'true' }}
+          DEV_BFF_MFA_CLAIMS: ${{ vars.DEV_BFF_MFA_CLAIMS || 'amr,acr,mfa,mfa_verified,firebase.sign_in_second_factor' }}
+          DEV_BFF_MFA_VALUES: ${{ vars.DEV_BFF_MFA_VALUES || 'true,1,yes,mfa,otp,totp,webauthn' }}
+          DEV_BFF_REQUIRE_EMAIL_VERIFIED: ${{ vars.DEV_BFF_REQUIRE_EMAIL_VERIFIED || 'true' }}
           DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED || 'false' }}
           DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED || 'true' }}
           DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED: ${{ vars.DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED || 'true' }}
@@ -158,8 +211,8 @@ jobs:
           DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED || 'true' }}
           DEV_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED || 'true' }}
           DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH: ${{ secrets.DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH }}
-          DEV_BFF_ROLE_CLAIMS: ${{ vars.DEV_BFF_ROLE_CLAIMS || 'app_metadata.roles,roles' }}
-          DEV_BFF_ROLE_MAP: ${{ vars.DEV_BFF_ROLE_MAP || 'pantheon-operator=operator;pantheon-viewer=viewer;pantheon-reviewer=reviewer;pantheon-approver=approver;pantheon-admin=admin' }}
+          DEV_BFF_ROLE_CLAIMS: ${{ vars.DEV_BFF_ROLE_CLAIMS || 'roles,role' }}
+          DEV_BFF_ROLE_MAP: ${{ vars.DEV_BFF_ROLE_MAP || 'pantheon-operator=operator;pantheon-viewer=viewer;pantheon-reviewer=reviewer;pantheon-approver=approver;pantheon-risk-owner=risk_owner;pantheon-admin=admin' }}
           DEV_BFF_ROLE_MAP_MODE: ${{ vars.DEV_BFF_ROLE_MAP_MODE || 'strict' }}
           DEV_BFF_DEFAULT_ROLE: ${{ vars.DEV_BFF_DEFAULT_ROLE || 'viewer' }}
         run: |
@@ -184,6 +237,8 @@ jobs:
                 'DEV_BFF_AUTH_MODE="${DEV_BFF_AUTH_MODE:-strict}"'
                 'no governed verifier/dev-login credentials'
                 'assert_bff_auth_gate'
+                'DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED="${DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED:-false}"'
+                'assert_ppl_alloc_009_dev_proof_gate'
               )
               for marker in "${required_markers[@]}"; do
                 if ! grep -Fq -- "${marker}" "${deploy_script}"; then
@@ -429,6 +484,7 @@ jobs:
           DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
           DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR || '/home/lupin/pantheon' }}
+          DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS: ${{ vars.DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS || '300' }}
           DEV_BFF_CANONICAL_CORS_ORIGIN: ${{ vars.DEV_BFF_CANONICAL_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
           DEV_BFF_CORS_ORIGINS: ${{ vars.DEV_BFF_CORS_ORIGINS || vars.DEV_BFF_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
           # Governed verifier/dev-login credentials for the strict auth cutover.
@@ -439,10 +495,10 @@ jobs:
           DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
           # External browser IdP verification uses only public identity
           # metadata here. No IdP client secret is shipped to the frontend.
-          DEV_BFF_JWKS_URI: ${{ vars.DEV_BFF_JWKS_URI }}
-          DEV_BFF_OIDC_DISCOVERY_URL: ${{ vars.DEV_BFF_OIDC_DISCOVERY_URL || 'https://kwjtcynauaulrxngyetk.supabase.co/auth/v1/.well-known/openid-configuration' }}
-          DEV_BFF_OIDC_ISSUER: ${{ vars.DEV_BFF_OIDC_ISSUER || 'https://kwjtcynauaulrxngyetk.supabase.co/auth/v1' }}
-          DEV_BFF_OIDC_AUDIENCE: ${{ vars.DEV_BFF_OIDC_AUDIENCE || 'authenticated' }}
+          DEV_BFF_JWKS_URI: ${{ vars.DEV_BFF_JWKS_URI || 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com' }}
+          DEV_BFF_OIDC_DISCOVERY_URL: ${{ vars.DEV_BFF_OIDC_DISCOVERY_URL }}
+          DEV_BFF_OIDC_ISSUER: ${{ vars.DEV_BFF_OIDC_ISSUER || 'https://securetoken.google.com/pantheon-lupin-dev-20260719' }}
+          DEV_BFF_OIDC_AUDIENCE: ${{ vars.DEV_BFF_OIDC_AUDIENCE || 'pantheon-lupin-dev-20260719' }}
           DEV_BFF_OIDC_CLIENT_ID: ${{ secrets.DEV_BFF_OIDC_CLIENT_ID }}
           DEV_BFF_OIDC_CLIENT_SECRET: ${{ secrets.DEV_BFF_OIDC_CLIENT_SECRET }}
           DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1' }}
@@ -456,6 +512,9 @@ jobs:
           DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID || 'pantheon-dev-operator-b-v1' }}
           DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET }}
           DEV_BFF_MFA_REQUIRED: ${{ vars.DEV_BFF_MFA_REQUIRED || 'true' }}
+          DEV_BFF_MFA_CLAIMS: ${{ vars.DEV_BFF_MFA_CLAIMS || 'amr,acr,mfa,mfa_verified,firebase.sign_in_second_factor' }}
+          DEV_BFF_MFA_VALUES: ${{ vars.DEV_BFF_MFA_VALUES || 'true,1,yes,mfa,otp,totp,webauthn' }}
+          DEV_BFF_REQUIRE_EMAIL_VERIFIED: ${{ vars.DEV_BFF_REQUIRE_EMAIL_VERIFIED || 'true' }}
           DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED || 'false' }}
           DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED || 'true' }}
           DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED: ${{ vars.DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED || 'true' }}
@@ -463,8 +522,8 @@ jobs:
           DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED || 'true' }}
           DEV_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED || 'true' }}
           DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH: ${{ secrets.DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH }}
-          DEV_BFF_ROLE_CLAIMS: ${{ vars.DEV_BFF_ROLE_CLAIMS || 'app_metadata.roles,roles' }}
-          DEV_BFF_ROLE_MAP: ${{ vars.DEV_BFF_ROLE_MAP || 'pantheon-operator=operator;pantheon-viewer=viewer;pantheon-reviewer=reviewer;pantheon-approver=approver;pantheon-admin=admin' }}
+          DEV_BFF_ROLE_CLAIMS: ${{ vars.DEV_BFF_ROLE_CLAIMS || 'roles,role' }}
+          DEV_BFF_ROLE_MAP: ${{ vars.DEV_BFF_ROLE_MAP || 'pantheon-operator=operator;pantheon-viewer=viewer;pantheon-reviewer=reviewer;pantheon-approver=approver;pantheon-risk-owner=risk_owner;pantheon-admin=admin' }}
           DEV_BFF_ROLE_MAP_MODE: ${{ vars.DEV_BFF_ROLE_MAP_MODE || 'strict' }}
           DEV_BFF_DEFAULT_ROLE: ${{ vars.DEV_BFF_DEFAULT_ROLE || 'viewer' }}
           # Human-provisioned BFF-to-adapter credential. The deploy preflight
@@ -478,6 +537,7 @@ jobs:
           DEV_MANAGEMENT_AI_DATABASE_URL: ${{ secrets.DEV_MANAGEMENT_AI_DATABASE_URL }}
           DEV_MANAGEMENT_AI_ATTACH_BUCKET: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_BUCKET }}
           DEV_MANAGEMENT_AI_ATTACH_LOCATION: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_LOCATION || 'asia-east1' }}
+          DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ env.PPL_ALLOC_009_DEV_PROOF_ENABLED }}
           TARGET_SHA: ${{ steps.target.outputs.sha }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
@@ -504,6 +564,7 @@ jobs:
               ;;
           esac
           echo "Dev BFF auth profile: ${DEV_AUTH_PROFILE} (stub=${DEV_BFF_AUTH_STUB}, mode=${DEV_BFF_AUTH_MODE})"
+          echo "PPL-ALLOC-009 dev proof enabled: ${DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED}"
           args=(
             bash "${GITHUB_WORKSPACE}/.target/scripts/deploy_nonprod_vm.sh"
             --environment dev
@@ -629,8 +690,11 @@ jobs:
           DEV_DEPLOY_WORKTREE: ${{ vars.DEV_DEPLOY_WORKTREE || '/home/lupin/pantheon-ci-deploy/dev-root' }}
           GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-lupin-dev-20260719' }}
           DEV_BFF_PUBLIC_URL: ${{ vars.DEV_BFF_PUBLIC_URL || 'https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io' }}
-          DEV_BFF_OIDC_CLIENT_ID: ${{ secrets.DEV_BFF_OIDC_CLIENT_ID }}
-          DEV_BFF_OIDC_CLIENT_SECRET: ${{ secrets.DEV_BFF_OIDC_CLIENT_SECRET }}
+          # The generic operator identity is intentionally not MFA-verified.
+          # Hosted protected reads use the provisioned governed operator A,
+          # which the strict deploy floor requires and binds to MFA.
+          DEV_BFF_OIDC_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID || 'pantheon-dev-operator-a-v1' }}
+          DEV_BFF_OIDC_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET }}
           DEPLOY_SHA: ${{ steps.target.outputs.sha }}
         run: |
           set -euo pipefail
@@ -668,6 +732,7 @@ jobs:
             --source "${local_evidence}" \
             --output "${readback_evidence}" \
             --expected-sha "${DEPLOY_SHA}" \
+            --expected-login-identity operator_a \
             --base-url "${DEV_BFF_PUBLIC_URL}" || readback_status=$?
           echo "Canonical lifecycle hosted evidence: ${evidence_name}" >> "$GITHUB_STEP_SUMMARY"
           echo "Authenticated public BFF readback evidence: ${readback_name}" >> "$GITHUB_STEP_SUMMARY"
@@ -776,6 +841,11 @@ jobs:
           DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io' }}
           DEV_BFF_CANONICAL_CORS_ORIGIN: ${{ vars.DEV_BFF_CANONICAL_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
           DEV_BFF_CORS_ORIGIN: ${{ vars.DEV_BFF_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
+          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
+          DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
+          DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
+          GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-lupin-dev-20260719' }}
+          PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ env.PPL_ALLOC_009_DEV_PROOF_ENABLED }}
           TARGET_SHA: ${{ steps.target.outputs.sha }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
@@ -806,7 +876,37 @@ jobs:
                   -H "Origin: ${origin}" -H "Access-Control-Request-Method: GET" \
                   | grep -qi "access-control-allow-origin: ${origin}"
               done
+              effective_line="$(
+                gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" \
+                  --zone "${DEV_ZONE}" \
+                  --project "${GCP_DEPLOY_PROJECT_ID}" \
+                  --ssh-flag=-T \
+                  --command "docker inspect pantheon-operator-bff-1 --format '\''{{range .Config.Env}}{{println .}}{{end}}'\'' | grep -F -x '\''PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED=${PPL_ALLOC_009_DEV_PROOF_ENABLED}'\''"
+              )"
+              evidence_path="${RUNNER_TEMP}/ppl-alloc-009-deployment-posture-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+              python3 "${GITHUB_WORKSPACE}/.target/scripts/ppl_alloc_009_deployment_evidence.py" \
+                --output "${evidence_path}" \
+                --target-sha "${TARGET_SHA}" \
+                --component "${TARGET_COMPONENT}" \
+                --auth-profile "${DEV_AUTH_PROFILE}" \
+                --expected-enabled "${PPL_ALLOC_009_DEV_PROOF_ENABLED}" \
+                --effective-env-line "${effective_line}" \
+                --workflow-run-id "${GITHUB_RUN_ID}" \
+                --workflow-run-attempt "${GITHUB_RUN_ATTEMPT}" \
+                --workflow-run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+                --bff-url "${DEV_BFF_URL}"
+              echo "deployment_evidence_path=${evidence_path}" >> "${GITHUB_OUTPUT}"
             '
+
+      - name: Upload dev deployment posture evidence
+        id: deploy-posture-evidence
+        if: ${{ steps.public_smoke.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pantheon-dev-deployment-posture-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.public_smoke.outputs.deployment_evidence_path }}
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Dev Agora restart persistence smoke under lease
         id: agora
@@ -845,6 +945,7 @@ jobs:
           DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR || '/home/lupin/pantheon' }}
           DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io' }}
           GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-lupin-dev-20260719' }}
+          PANTHEON_DEPLOY_SHA: ${{ steps.target.outputs.sha }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           lease_token="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"
@@ -869,15 +970,14 @@ jobs:
               gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" --zone "${DEV_ZONE}" \
                 --project "${GCP_DEPLOY_PROJECT_ID}" --ssh-flag=-T \
                 --command "set -euo pipefail; docker inspect pantheon-operator-bff-1 --format '\''{{range .Config.Env}}{{println .}}{{end}}'\'' | grep -F -x '\''AGORA_WORKSHOP_STORE_BACKEND=postgres'\'' >/dev/null; docker inspect pantheon-operator-bff-1 --format '\''{{range .Config.Env}}{{println .}}{{end}}'\'' | grep -F -x '\''AGORA_GOVERNANCE_STORE_BACKEND=postgres'\'' >/dev/null; docker inspect pantheon-operator-bff-1 --format '\''{{range .Config.Env}}{{println .}}{{end}}'\'' | grep -F -x '\''AGORA_DATASET_STORE_BACKEND=postgres'\'' >/dev/null; docker logs pantheon-operator-bff-1 2>&1 | grep -F '\''Agora workshop store initialized backend=postgres'\'' >/dev/null; docker logs pantheon-operator-bff-1 2>&1 | grep -F '\''Agora governance store initialized backend=postgres'\'' >/dev/null; docker logs pantheon-operator-bff-1 2>&1 | grep -F '\''Agora dataset store initialized backend=postgres'\'' >/dev/null; cd ${remote_dir_q}; docker compose -p pantheon -f docker-compose.yml exec -T operator-bff python /workspace/scripts/agora_workshop_restart_persistence_smoke.py seed --workshop-id ${workshop_id_q} --tenant-id ${tenant_id_q} --user-id ${user_id_q}; docker compose -p pantheon -f docker-compose.yml restart operator-bff"
-              ready=false
-              for _ in $(seq 1 30); do
-                if curl -fsS "${DEV_BFF_URL}/readyz" >/dev/null; then
-                  ready=true
-                  break
-                fi
-                sleep 2
-              done
-              test "${ready}" = true
+              python3 "${GITHUB_WORKSPACE}/.target/scripts/wait_for_bff_lifecycle_readiness.py" \
+                --url "${DEV_BFF_URL}/readyz" \
+                --expected-deployment-sha "${PANTHEON_DEPLOY_SHA}" \
+                --initial-timeout-seconds 120 \
+                --recovery-extension-seconds 120 \
+                --stalled-timeout-seconds 45 \
+                --poll-interval-seconds 2 \
+                --request-timeout-seconds 2
               gcloud compute ssh "${REMOTE_USER}@${DEV_VM}" --zone "${DEV_ZONE}" \
                 --project "${GCP_DEPLOY_PROJECT_ID}" --ssh-flag=-T \
                 --command "set -euo pipefail; cd ${remote_dir_q}; docker compose -p pantheon -f docker-compose.yml exec -T operator-bff python /workspace/scripts/agora_workshop_restart_persistence_smoke.py verify --workshop-id ${workshop_id_q} --tenant-id ${tenant_id_q} --user-id ${user_id_q}"
@@ -921,6 +1021,7 @@ jobs:
           PAPER_BOOTSTRAP_OUTCOME: ${{ steps.paper_bootstrap.outcome }}
           OPENCLAW_OUTCOME: ${{ steps.openclaw.outcome }}
           PUBLIC_SMOKE_OUTCOME: ${{ steps.public_smoke.outcome }}
+          DEPLOY_POSTURE_EVIDENCE_OUTCOME: ${{ steps.deploy-posture-evidence.outcome }}
           AGORA_OUTCOME: ${{ steps.agora.outcome }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
@@ -975,10 +1076,10 @@ jobs:
           complete_success=false
           case "${TARGET_COMPONENT}" in
             auto|root)
-              [[ "${HEARTBEAT_OUTCOME}:${DEPLOY_OUTCOME}:${PAPER_BOOTSTRAP_OUTCOME}:${OPENCLAW_OUTCOME}:${PUBLIC_SMOKE_OUTCOME}:${AGORA_OUTCOME}" == "success:success:success:success:success:success" ]] && complete_success=true
+              [[ "${HEARTBEAT_OUTCOME}:${DEPLOY_OUTCOME}:${PAPER_BOOTSTRAP_OUTCOME}:${OPENCLAW_OUTCOME}:${PUBLIC_SMOKE_OUTCOME}:${DEPLOY_POSTURE_EVIDENCE_OUTCOME}:${AGORA_OUTCOME}" == "success:success:success:success:success:success:success" ]] && complete_success=true
               ;;
             bff)
-              [[ "${HEARTBEAT_OUTCOME}:${DEPLOY_OUTCOME}:${PAPER_BOOTSTRAP_OUTCOME}:${OPENCLAW_OUTCOME}:${PUBLIC_SMOKE_OUTCOME}:${AGORA_OUTCOME}" == "success:success:skipped:skipped:success:success" ]] && complete_success=true
+              [[ "${HEARTBEAT_OUTCOME}:${DEPLOY_OUTCOME}:${PAPER_BOOTSTRAP_OUTCOME}:${OPENCLAW_OUTCOME}:${PUBLIC_SMOKE_OUTCOME}:${DEPLOY_POSTURE_EVIDENCE_OUTCOME}:${AGORA_OUTCOME}" == "success:success:skipped:skipped:success:success:success" ]] && complete_success=true
               ;;
           esac
 
@@ -1040,6 +1141,7 @@ jobs:
             echo "- Lease: \`${{ steps.lease.outputs.lease_id }}\`"
             echo "- Controller: \`9e564718da8c39199a4c311f1a667b74226e3428\`"
             echo "- Target: \`dev/${TARGET_COMPONENT}\`"
+            echo "- PPL-ALLOC-009 dev proof enabled: \`${PPL_ALLOC_009_DEV_PROOF_ENABLED}\`"
           } >> "${GITHUB_STEP_SUMMARY}"
 
   deploy-staging-live:
@@ -1053,6 +1155,7 @@ jobs:
       TARGET_REF: ${{ github.event_name == 'push' && github.sha || inputs.ref || github.sha }}
       ALLOW_DIRTY: ${{ github.event_name == 'push' && 'false' || inputs.allow_dirty }}
       ALLOW_EXAMPLE_ENV: ${{ github.event_name == 'push' && 'false' || inputs.allow_example_env }}
+      PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ github.event_name == 'workflow_dispatch' && inputs.ppl_alloc_009_dev_proof_enabled || false }}
     steps:
       - name: Checkout requested staging payload
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -1078,6 +1181,10 @@ jobs:
             auto|control|exec|all) ;;
             *) echo "Invalid staging deployment component: ${TARGET_COMPONENT}" >&2; exit 1 ;;
           esac
+          if [[ "${PPL_ALLOC_009_DEV_PROOF_ENABLED}" != "false" ]]; then
+            echo "PPL-ALLOC-009 dev proof cannot be enabled for staging-live." >&2
+            exit 1
+          fi
           bash scripts/validate_split_topology.sh
           echo "sha=${sha}" >> "${GITHUB_OUTPUT}"
 

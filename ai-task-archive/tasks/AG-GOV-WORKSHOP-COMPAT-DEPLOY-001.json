@@ -1,0 +1,131 @@
+{
+  "version": 1,
+  "task_id": "AG-GOV-WORKSHOP-COMPAT-DEPLOY-001",
+  "archived_at": "2026-07-24T05:40:28Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Use the exact merged repair SHA from dev as backend runtime identity",
+      "Preserve the accepted contract and frontend handoff only if exact contract hashes are unchanged otherwise stop and create the required cross-repo handoff task",
+      "Regenerated compatibility manifest is accepted with no placeholders and exact FE BFF identities",
+      "Strict dev BFF deployment runs from the dev workflow definition and passes the gate before switch",
+      "Public version and deployment manifest read back the exact accepted pair after restart",
+      "Public repair-specific probe proves canonical Workshop approval and distinct Registry strategy identities without capital or execution side effects"
+    ],
+    "artifacts": [
+      "docs/contracts/agora/dev-compatibility-manifest.json",
+      "docs/deployment/evidence/agora"
+    ],
+    "auto_created_by": "operator-continuation-20260724",
+    "declared_scope": [
+      "docs/contracts/agora/dev-compatibility-manifest.json",
+      "docs/deployment/evidence/agora",
+      "services/control-plane/tests/agora/test_cross_user_isolation.py"
+    ],
+    "delivery_layer": "integration",
+    "depends_on": [
+      "AG-GOV-WORKSHOP-CONTRACT-001"
+    ],
+    "fleet_lane": "agora-contract-deploy",
+    "id": "AG-GOV-WORKSHOP-COMPAT-DEPLOY-001",
+    "last_update": "2026-07-24T05:40:28Z",
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "PR #4046 merged to dev as 8e4c0bd9f4e59adffb69f103d2c2f5d2674ecfdf with all CI checks green. Antigravity independently verified exact FE/BFF identities, strict read-only defaults, compatibility manifest and deployment gate, governed restart run 30068077516, canonical strategy_workshop approval, distinct Registry/strategy IDs, and accepted 12/12 post-restart readback; no live capital or execution authority was used.",
+    "owner": "Claude2",
+    "phase": "Agora completion / exact-pair repair deploy",
+    "priority": "P0",
+    "repository_id": "pantheon",
+    "reviewer": "Antigravity",
+    "source_ref": {
+      "current_contract_commit": "9e909de182f9f2379d23e8e6b81eefec29ffbce7",
+      "current_frontend_runtime": "e4399e3ec68f882ace35d0349e6597cdd101525f",
+      "hosted_task": "AG-HOSTED-CLOSE-001",
+      "merge_target": "dev",
+      "repair_task": "AG-GOV-WORKSHOP-CONTRACT-001",
+      "target_repo": "ajoe734/pantheon"
+    },
+    "status": "done",
+    "summary_zh": "在 Governance–Workshop 修復合併後，更新 accepted backend runtime pair、驗證既有 contract/handoff hashes 是否仍適用，透過 dev workflow strict gate 部署，並以公開 API 證明修復與 restart persistence。",
+    "target_repo": "ajoe734/pantheon",
+    "task_class": "execution",
+    "title": "Agora Governance-Workshop hosted exact-pair qualification",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-24T05:40:28Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-gov-workshop-compat-deploy-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-GOV-WORKSHOP-COMPAT-DEPLOY-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "f71c1f8ba889ba64956006ef0f9159840be6d065",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/ag-gov-workshop-compat-deploy-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "10691348d10969e269b606d96e1a4c68b631d564",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-GOV-WORKSHOP-COMPAT-DEPLOY-001",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "cb4cfc88d18a7eaebd67be7ebe2708c89ac8a0c4",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-24T03:02:58Z",
+      "from": "Antigravity",
+      "message": "Chair reassigned owner from Antigravity to Codex: Antigravity owns one todo but ready_dispatcher target_workload=0 and max_tasks=0; Codex has zero owned todos, target=30/cap=4, auth_ready=true, and completed OPS-REVIEW-BUS-BASE-001 at 02:36Z; no owner pin was found and the reviewer remains distinct. Task returned to todo for a fresh run.",
+      "resolved_at": "2026-07-24T03:29:42Z",
+      "status": "done",
+      "task_id": "AG-GOV-WORKSHOP-COMPAT-DEPLOY-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-24T05:33:38Z",
+      "from": "Claude2",
+      "message": "PR #4046 merged to dev as 8e4c0bd9f4e59adffb69f103d2c2f5d2674ecfdf with all Branch CI checks green. Evidence proves accepted exact pair FE e4399e3ec68f882ace35d0349e6597cdd101525f and BFF f71c1f8ba889ba64956006ef0f9159840be6d065, strict auth, safe read-only defaults, governed restart run 30068077516, distinct Registry and strategy identities, canonical strategy_workshop approval, and 12/12 post-restart readback. Please independently approve or reopen.",
+      "resolved_at": "2026-07-24T05:33:49Z",
+      "status": "done",
+      "task_id": "AG-GOV-WORKSHOP-COMPAT-DEPLOY-001",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-24T05:33:49Z",
+      "from": "Claude2",
+      "message": "PR #4046 merged to dev as 8e4c0bd9f4e59adffb69f103d2c2f5d2674ecfdf with all Branch CI checks green. Evidence proves accepted exact pair FE e4399e3ec68f882ace35d0349e6597cdd101525f and BFF f71c1f8ba889ba64956006ef0f9159840be6d065, strict auth, safe read-only defaults, governed restart run 30068077516, distinct Registry and strategy identities, canonical strategy_workshop approval, and 12/12 post-restart readback. Please independently approve or reopen.",
+      "resolved_at": "2026-07-24T05:36:53Z",
+      "status": "done",
+      "task_id": "AG-GOV-WORKSHOP-COMPAT-DEPLOY-001",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-24T05:36:53Z",
+      "from": "Antigravity",
+      "message": "Reviewed AG-GOV-WORKSHOP-COMPAT-DEPLOY-001: PR #4046 merged to dev as commit 8e4c0bd9f4e59adffb69f103d2c2f5d2674ecfdf with all checks green; verified exact pair FE e4399e3ec68f882ace35d0349e6597cdd101525f and BFF f71c1f8ba889ba64956006ef0f9159840be6d065 via agora_compat_manifest.py verify and deployment-gate; evidence doc and raw JSON qualification log confirm strict auth, read-only defaults, governed restart run 30068077516, distinct Registry/strategy identities, strategy_workshop approval, and 12/12 post-restart readback.",
+      "status": "done",
+      "task_id": "AG-GOV-WORKSHOP-COMPAT-DEPLOY-001",
+      "to": "Claude2",
+      "resolved_at": "2026-07-24T05:40:28Z"
+    }
+  ],
+  "blockers": []
+}
