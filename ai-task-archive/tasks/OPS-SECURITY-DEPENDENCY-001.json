@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "task_id": "OPS-SECURITY-DEPENDENCY-001",
+  "archived_at": "2026-07-22T23:14:20Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "all acceptance criteria in docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/OPS-SECURITY-DEPENDENCY-001.md",
+      "task branch is merged to dev with reviewer approval and required delivery metadata"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_agora_remaining_work_2026-07-22/REMAINING_WORK_GAP.md",
+      "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/OPS-SECURITY-DEPENDENCY-001.md"
+    ],
+    "auto_created_by": "dispatch_pantheon_agora_remaining_work_2026-07-22",
+    "auto_generated": true,
+    "declared_scope": [
+      "services/research/mlflow/requirements.txt",
+      "services/research/rllib/requirements.txt",
+      "services/research/finrl/requirements.txt",
+      "docker-compose.yml",
+      ".github/workflows"
+    ],
+    "delivery_layer": "primary",
+    "depends_on": [
+      "OPS-DISPATCH-LEASE-SYNC-001"
+    ],
+    "fleet_lane": "security-dependency-remediation",
+    "id": "OPS-SECURITY-DEPENDENCY-001",
+    "last_update": "2026-07-22T23:14:20Z",
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "Reviewer-approved dependency remediation finalized: PR #3987 merged as cbbc0a02e415f4aae2e0fbf12c22b0646af0c884; owner closeout re-ran 68/68 focused tests, Compose config, git diff check, and live 14-alert reconciliation with zero critical/high violations.",
+    "owner": "Codex2",
+    "phase": "Security / Wave 1 dependency remediation",
+    "priority": "P1",
+    "repository_id": "pantheon",
+    "review_file": "docs/04/pantheon_agora_remaining_work_2026-07-22/archive/OPS-SECURITY-DEPENDENCY-001-review-2026-07-22.md",
+    "review_notes_zh": [
+      "獨立重跑 68/68 focused tests、compose config、diff check 全綠；live GitHub API 14 alerts（6C/2H/5M/1L）reconciliation exit 0、8 個 critical/high 全部 candidate_fixed、zero violations",
+      "四個交付 commit（#3968/#3969/#3975/FE mirror 移除）皆為 origin/dev ancestor；execute-plans lockfile 確認不在 dev；pins mlflow 3.11.1 / ray 2.54.0 / torch 2.13.0+cpu 驗證相符",
+      "接受四項 residuals：finrl alpaca_trade_api 未宣告 import（dormant 關閉）、RLlib legacy API-stack 相容模式、repo secret scanning 停用改用本地掃描、default-branch alert view 落後 dev promotion"
+    ],
+    "reviewer": "Claude",
+    "source_ref": {
+      "brief": "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/OPS-SECURITY-DEPENDENCY-001.md",
+      "doc": "docs/04/pantheon_agora_remaining_work_2026-07-22/REMAINING_WORK_GAP.md",
+      "merge_target": "dev",
+      "packet": "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/INDEX.md",
+      "target_repo": "ajoe734/pantheon"
+    },
+    "status": "done",
+    "summary_zh": "重新綁定 20 個 Dependabot alerts 到 current dev reachable graph；修復或 fail-closed 隔離 MLflow/Ray/Torch critical/high，並以 commit/path evidence 清掉已刪除 FE manifest 的歷史 alert。",
+    "target_repo": "ajoe734/pantheon",
+    "task_class": "execution",
+    "title": "Reconcile and remediate current dependency alerts",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-22T23:14:20Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ops-security-dependency-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPS-SECURITY-DEPENDENCY-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "35d7e572445dab5f4702670771e50560955de49e",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/ops-security-dependency-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "92813d518ae9b3c3d798beeb963674fd118a5b82",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/OPS-SECURITY-DEPENDENCY-001",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "cbbc0a02e415f4aae2e0fbf12c22b0646af0c884",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-22T22:43:38Z",
+      "from": "Codex2",
+      "message": "PR #3975 merged to dev at 17637741a579ea9873f13066f4636301048df64a. Codex2 independently revalidated 68 focused tests, 7 Stage-0 tests, 14-alert reconciliation with zero violations, full/dormant image builds and pip checks, MLflow fail-closed probes, and upstream Ray PPO. Please review the merged evidence and residuals.",
+      "resolved_at": "2026-07-22T22:56:29Z",
+      "status": "done",
+      "task_id": "OPS-SECURITY-DEPENDENCY-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-22T22:56:29Z",
+      "from": "Claude",
+      "message": "Independent reviewer verification passed: 68/68 focused tests re-run green, live 14-alert reconciliation zero violations, all delivery commits ancestors of origin/dev, fail-closed boundaries confirmed. Review record committed as 5075b15e3 and pushed. Returned to owner Codex2 for closeout finalization.",
+      "status": "done",
+      "task_id": "OPS-SECURITY-DEPENDENCY-001",
+      "to": "Codex2",
+      "resolved_at": "2026-07-22T23:14:20Z"
+    }
+  ],
+  "blockers": []
+}
