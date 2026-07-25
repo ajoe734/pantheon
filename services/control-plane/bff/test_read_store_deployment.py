@@ -198,6 +198,7 @@ def test_canonical_overlay():
                         "capital_pool_id": "pool-live-001",
                         "artifact_id": "artifact-live-001",
                         "artifact_version": "v3.2.1",
+                        "deployment_stage": "paper",
                         "deployment_mode": "paper",
                         "effective_at": "2026-04-11T10:10:00Z",
                         "status": "active",
@@ -215,6 +216,7 @@ def test_canonical_overlay():
 
             plan = store.get_deployment_plan("plan-live-001")
             assert plan is not None
+            assert plan["strategy_id"] == "strat-live-001"
             assert plan["runtime_binding_id"] == "rb-live-001"
             assert plan["current_stage"] == "none"
             assert plan["target_stage"] == "paper"
@@ -339,4 +341,3 @@ if __name__ == "__main__":
     test_missing_reference_query_count_regression()
     print("\n" + "=" * 50)
     print("Deployment review read_store tests: ALL PASSED")
-

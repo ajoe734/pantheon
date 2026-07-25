@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class CapitalPoolBody(BaseModel):
@@ -207,6 +207,8 @@ class WriteAuthorityResponse(BaseModel):
 
 
 class RebalanceAllocationLine(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     ranking_snapshot_id: str = Field(min_length=1)
     allocation_evaluation_id: str = Field(min_length=1)
     allocation_line_digest: str = Field(min_length=1)
