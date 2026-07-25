@@ -59,6 +59,27 @@ def test_external_feed_config_requires_allowed_url_prefix(tmp_path: Path) -> Non
             },
         )
 
+    with pytest.raises(SourceEvidenceError, match="must use https"):
+        store.upsert_config(
+            _connector("conn-http-feed"),
+            {
+                "mode": "external_feed",
+                "url": "http://feeds.example.test/feed.json",
+                "allowed_url_prefixes": ["http://feeds.example.test/"],
+            },
+        )
+
+    with pytest.raises(SourceEvidenceError, match="must target an internal host"):
+        store.upsert_config(
+            _connector("conn-fake-internal-feed"),
+            {
+                "mode": "external_feed",
+                "network_scope": "internal_service",
+                "url": "https://feeds.example.test/feed.json",
+                "allowed_url_prefixes": ["https://feeds.example.test/"],
+            },
+        )
+
     with pytest.raises(SourceEvidenceError, match="outside allowed_url_prefixes"):
         store.upsert_config(
             _connector("conn-feed"),

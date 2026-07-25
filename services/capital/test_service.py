@@ -932,6 +932,79 @@ def test_risk_increasing_rebalance_requires_capital_sleeve(client):
     assert "requires capital_sleeve_id" in response.json()["detail"]
 
 
+def test_paper_ledger_increase_uses_unique_sleeveless_paper_binding(client):
+    test_client, _ = client
+    assert test_client.post(
+        "/api/capital-pools",
+        json=_pool_payload(
+            pool_id="pool-paper",
+            owner_type="org",
+            metadata={
+                "internal": True,
+                "execution_context": "paper",
+                "persona_id": "persona-paper",
+            },
+        ),
+    ).status_code == 201
+    binding = test_client.post(
+        "/api/bindings",
+        json=_binding_payload(
+            binding_id="binding-paper",
+            persona_id="persona-paper",
+            capital_pool_id="pool-paper",
+            capital_sleeve_id=None,
+            role="paper_owner",
+            allowed_deployment_scope="paper",
+        ),
+    )
+    assert binding.status_code == 201, binding.text
+    line = {
+        "persona_id": "persona-paper",
+        "stage": "paper_running",
+        "capital_scope": "paper_ledger",
+        "paper_ledger_id": "paper-ledger-persona-paper",
+        "capital_pool_id": "pool-paper",
+        "capital_sleeve_id": None,
+        "current_weight": 0.0,
+        "target_weight": 1.0,
+        "delta": 1.0,
+        "authority_mode": "governed_paper_simulation",
+        "promotion_review_id": "review-persona-paper",
+        "paper_allocation_eligible": True,
+        "live_capital_side_effects": False,
+    }
+    proposal = test_client.post(
+        "/api/rebalances",
+        json=_rebalance_payload(
+            rebalance_id="rb-paper",
+            capital_pool_id="pool-paper",
+            allocation_policy_version="persona-paper-allocation-simulation-v1",
+            lines=[line],
+        ),
+    )
+    assert proposal.status_code == 201, proposal.text
+    persisted_line = proposal.json()["lines"][0]
+    assert persisted_line["binding_id"] == "binding-paper"
+    assert persisted_line["capital_sleeve_id"] is None
+    assert persisted_line["allocation_id"] == "pool-paper|persona:persona-paper"
+
+    applied = test_client.post(
+        "/api/rebalances/rb-paper/apply",
+        json=_apply_payload(
+            rebalance_id="rb-paper",
+            command_id="cmd-paper",
+            approval_ref="approval-paper",
+        ),
+    )
+    assert applied.status_code == 200, applied.text
+    readback = applied.json()["allocation_readback"][0]
+    assert readback["capital_scope"] == "paper_ledger"
+    assert readback["binding_id"] == "binding-paper"
+    assert readback["capital_sleeve_id"] is None
+    assert readback["current_weight"] == 1.0
+    assert readback["authoritative_capital_readback"] is True
+
+
 @pytest.mark.parametrize(
     ("role", "allowed_scope"),
     [

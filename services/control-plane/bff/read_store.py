@@ -10526,6 +10526,7 @@ class ReadSurfaceStore:
             "stage": raw.get("target_stage") or raw.get("stage") or raw.get("current_stage"),
             "current_stage": raw.get("current_stage"),
             "target_stage": raw.get("target_stage") or raw.get("stage"),
+            "strategy_id": raw.get("strategy_id"),
             "artifact_id": raw.get("artifact_id"),
             "artifact_version": raw.get("artifact_version"),
             "submitted_at": raw.get("submitted_at") or raw.get("created_at"),

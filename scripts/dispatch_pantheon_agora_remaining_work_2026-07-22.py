@@ -17,9 +17,24 @@ from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+ORCHESTRATOR_DIR = REPO_ROOT / ".orchestrator"
+if str(ORCHESTRATOR_DIR) not in sys.path:
+    sys.path.insert(0, str(ORCHESTRATOR_DIR))
+
+from common import validate_status_command_runtime
+
+
 PACKET_DIR = "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work"
 SOURCE_DOC = "docs/04/pantheon_agora_remaining_work_2026-07-22/REMAINING_WORK_GAP.md"
 DISPATCHER = "dispatch_pantheon_agora_remaining_work_2026-07-22"
+STATUS_ROOT_ENV = "PANTHEON_STATUS_ROOT"
+COMMAND_ROOT_ENV = "PANTHEON_COMMAND_ROOT"
+COMMAND_SHA_ENV = "PANTHEON_COMMAND_RUNTIME_SHA"
+COMMAND_REMOTE_ENV = "PANTHEON_COMMAND_REMOTE"
+COMMAND_BASE_REF_ENV = "PANTHEON_COMMAND_BASE_REF"
+TASK_STATE_STORE_MODE_ENV = "PANTHEON_TASK_STATE_STORE_MODE"
+TASK_STATE_EVENT_LOG_ENV = "PANTHEON_TASK_STATE_EVENT_LOG"
+TERMINAL_TASK_STATUSES = {"done", "superseded"}
 
 
 def _brief(name: str) -> str:
@@ -256,7 +271,7 @@ TASKS.extend(
 
 
 def _status_root() -> Path:
-    return Path(os.environ.get("PANTHEON_STATUS_ROOT", str(REPO_ROOT))).expanduser().resolve()
+    return Path(os.environ.get(STATUS_ROOT_ENV, str(REPO_ROOT))).expanduser().resolve()
 
 
 def _load_state(root: Path) -> dict[str, Any]:
@@ -268,7 +283,11 @@ def _archived_ids(root: Path) -> set[str]:
     return {path.stem for path in task_dir.glob("*.json")} if task_dir.exists() else set()
 
 
-def validate_specs(root: Path | None = None) -> list[str]:
+def validate_specs(
+    root: Path | None = None,
+    *,
+    refuse_archived_reuse: bool = False,
+) -> list[str]:
     errors: list[str] = []
     root = root or REPO_ROOT
     ids = [str(task["id"]) for task in TASKS]
@@ -277,6 +296,9 @@ def validate_specs(root: Path | None = None) -> list[str]:
     id_set = set(ids)
     active = {str(task.get("id")) for task in _load_state(root).get("tasks", [])}
     archived = _archived_ids(root)
+    if refuse_archived_reuse:
+        for task_id in sorted(set(ids) & archived):
+            errors.append(f"{task_id}: archived task ID cannot be reused by bulk dispatch")
     known = id_set | active | archived
     for task in TASKS:
         task_id = str(task["id"])
@@ -301,21 +323,125 @@ def _metadata(task: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in task.items() if key not in excluded}
 
 
-def _run_status(task: dict[str, Any], command: str, *args: str, reviewer: str | None = None) -> None:
-    env = os.environ.copy()
-    env["AI_NAME"] = "Human/Ops"
-    env["TASK_SUMMARY_ZH"] = str(task["summary_zh"])
-    env["TASK_PHASE"] = str(task["phase"])
-    env["TASK_METADATA_JSON"] = json.dumps(_metadata(task), ensure_ascii=False, separators=(",", ":"))
-    cmd = [sys.executable, "scripts/ai_status.py", command]
-    if command == "assign":
-        cmd.extend([str(task["id"]), str(task["owner"]), reviewer or str(task["reviewer"]), str(task["title"])])
-    else:
-        cmd.extend(args)
-    result = subprocess.run(cmd, cwd=REPO_ROOT, env=env, text=True, capture_output=True)
+def _required_absolute_path(name: str) -> Path:
+    raw = str(os.environ.get(name) or "").strip()
+    if not raw:
+        raise RuntimeError(f"{name} is required for mutation dispatch")
+    path = Path(os.path.expanduser(raw))
+    if not path.is_absolute():
+        raise RuntimeError(f"{name} must be an absolute path")
+    current = Path(path.anchor)
+    for part in path.parts[1:]:
+        current = current / part
+        if current.is_symlink():
+            raise RuntimeError(f"{name} cannot include a symlink component: {current}")
+    return path.resolve()
+
+
+def _dirty_command_runtime_files(root: Path) -> list[str]:
+    result = subprocess.run(
+        ["git", "status", "--porcelain", "-uall"],
+        cwd=root,
+        text=True,
+        capture_output=True,
+    )
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()
-        raise RuntimeError(f"{command} {task['id']} failed: {detail}")
+        raise RuntimeError(f"failed to inspect governed command runtime: {detail}")
+    dirty: list[str] = []
+    for line in result.stdout.splitlines():
+        path = line[3:].strip().strip("\"'")
+        if " -> " in path:
+            path = path.rsplit(" -> ", 1)[1].strip().strip("\"'")
+        if path.endswith((".py", ".sh", ".pyc", ".so", ".pl", ".rb")):
+            dirty.append(path)
+    return dirty
+
+
+def _governed_status_context() -> tuple[Path, Path, dict[str, str]]:
+    if str(os.environ.get(TASK_STATE_STORE_MODE_ENV) or "").strip().lower() != "authoritative":
+        raise RuntimeError(
+            f"{TASK_STATE_STORE_MODE_ENV}=authoritative is required for mutation dispatch"
+        )
+    _required_absolute_path(TASK_STATE_EVENT_LOG_ENV)
+    status_root = _required_absolute_path(STATUS_ROOT_ENV)
+    command_root = _required_absolute_path(COMMAND_ROOT_ENV)
+    expected_sha = str(os.environ.get(COMMAND_SHA_ENV) or "").strip()
+    if not expected_sha:
+        raise RuntimeError(f"{COMMAND_SHA_ENV} is required for mutation dispatch")
+    expected_remote = str(os.environ.get(COMMAND_REMOTE_ENV) or "ajoe734/pantheon").strip()
+    base_ref = str(os.environ.get(COMMAND_BASE_REF_ENV) or "origin/dev").strip() or "origin/dev"
+    runtime = validate_status_command_runtime(
+        command_root,
+        expected_sha=expected_sha,
+        expected_remote=expected_remote,
+        base_ref=base_ref,
+        require_merged=True,
+    )
+    dirty_runtime_files = _dirty_command_runtime_files(Path(runtime["root"]))
+    if dirty_runtime_files:
+        raise RuntimeError(
+            "governed command runtime contains dirty executable/import files: "
+            + ", ".join(dirty_runtime_files)
+        )
+    script = Path(runtime["root"]) / "scripts" / "ai_status.py"
+    if script.is_symlink() or not script.is_file():
+        raise RuntimeError(f"governed status command is not a regular file: {script}")
+    env = os.environ.copy()
+    env["AI_NAME"] = "Human/Ops"
+    env[STATUS_ROOT_ENV] = str(status_root)
+    return script, status_root, env
+
+
+def _run_governed_status_command(command: str, *args: str, env: dict[str, str] | None = None) -> None:
+    script, status_root, base_env = _governed_status_context()
+    command_env = dict(base_env)
+    if env:
+        command_env.update(env)
+    result = subprocess.run(
+        [sys.executable, str(script), command, *args],
+        cwd=status_root,
+        env=command_env,
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        raise RuntimeError(f"{command} failed: {detail}")
+
+
+def _recover_authoritative_projection() -> None:
+    _run_governed_status_command("recover")
+
+
+def _assert_task_not_archived(root: Path, task_id: str) -> None:
+    archive_path = root / "ai-task-archive" / "tasks" / f"{task_id}.json"
+    if archive_path.is_symlink():
+        raise RuntimeError(f"{task_id}: archived task leaf cannot be a symlink")
+    if archive_path.exists():
+        raise RuntimeError(f"{task_id}: archived task ID cannot be reused by bulk dispatch")
+
+
+def _run_status(task: dict[str, Any], command: str, *args: str, reviewer: str | None = None) -> None:
+    command_env = {
+        "TASK_SUMMARY_ZH": str(task["summary_zh"]),
+        "TASK_PHASE": str(task["phase"]),
+        "TASK_METADATA_JSON": json.dumps(_metadata(task), ensure_ascii=False, separators=(",", ":")),
+    }
+    command_args: list[str]
+    if command == "assign":
+        command_args = [
+            str(task["id"]),
+            str(task["owner"]),
+            reviewer or str(task["reviewer"]),
+            str(task["title"]),
+        ]
+    else:
+        command_args = list(args)
+    try:
+        _run_governed_status_command(command, *command_args, env=command_env)
+    except RuntimeError as exc:
+        raise RuntimeError(f"{command} {task['id']} failed: {exc}") from exc
 
 
 def _task_matches(current: dict[str, Any], spec: dict[str, Any]) -> bool:
@@ -328,8 +454,14 @@ def _task_matches(current: dict[str, Any], spec: dict[str, Any]) -> bool:
 
 
 def _register(task: dict[str, Any]) -> str:
-    state = _load_state(_status_root())
+    root = _status_root()
+    _assert_task_not_archived(root, str(task["id"]))
+    state = _load_state(root)
     current = next((item for item in state.get("tasks", []) if item.get("id") == task["id"]), None)
+    if current is not None and str(current.get("status") or "") in TERMINAL_TASK_STATUSES:
+        raise RuntimeError(
+            f"{task['id']}: terminal task status {current.get('status')} cannot be reused by bulk dispatch"
+        )
     if current is not None and _task_matches(current, task):
         return "SKIP"
     _run_status(task, "assign")
@@ -365,7 +497,17 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    errors = validate_specs(_status_root() if not args.dry_run else REPO_ROOT)
+    if args.dry_run:
+        validation_root = REPO_ROOT
+    else:
+        if os.environ.get("AI_NAME") != "Human/Ops":
+            raise RuntimeError("mutation dispatch requires explicit AI_NAME=Human/Ops")
+        _recover_authoritative_projection()
+        validation_root = _status_root()
+    errors = validate_specs(
+        validation_root,
+        refuse_archived_reuse=not args.dry_run,
+    )
     if errors:
         for error in errors:
             print(f"ERROR {error}", file=sys.stderr)
@@ -375,8 +517,6 @@ def main() -> int:
         if args.dry_run:
             print(f"PLAN   {task['id']:32} owner={task['owner']:8} repo={task.get('repository_id', 'existing'):13} deps={deps}")
             continue
-        if os.environ.get("AI_NAME") != "Human/Ops":
-            raise RuntimeError("mutation dispatch requires explicit AI_NAME=Human/Ops")
         action = _register(task)
         print(f"{action:6} {task['id']:32} owner={task['owner']:8} reviewer={task['reviewer']:8}")
     if not args.dry_run:

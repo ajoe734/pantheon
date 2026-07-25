@@ -1,0 +1,159 @@
+{
+  "version": 1,
+  "task_id": "PAN-SOURCE-FRESH-001",
+  "archived_at": "2026-07-23T00:01:00Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "all acceptance criteria in docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/PAN-SOURCE-FRESH-001.md",
+      "task branch is merged to dev with reviewer approval and required delivery metadata"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_agora_remaining_work_2026-07-22/REMAINING_WORK_GAP.md",
+      "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/PAN-SOURCE-FRESH-001.md"
+    ],
+    "auto_created_by": "dispatch_pantheon_agora_remaining_work_2026-07-22",
+    "auto_generated": true,
+    "declared_scope": [
+      "services/external_egress.py",
+      "services/source_ingestion",
+      "services/research/adapters",
+      "docker-compose.yml",
+      "scripts/deploy_nonprod_vm.sh"
+    ],
+    "delivery_layer": "primary",
+    "depends_on": [
+      "OPS-DISPATCH-LEASE-SYNC-001"
+    ],
+    "fleet_lane": "source-refresh-governance",
+    "id": "PAN-SOURCE-FRESH-001",
+    "last_update": "2026-07-23T00:01:00Z",
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "Owner finalized approved guarded source refresh: PR #3990 merged to dev at 5ab570ecc5e82fe843180ecc8d1c046cfe447791; task head ac280b82d5e301c9aed601aed68930e634e51bcd is an ancestor. Verified 127 focused tests, compileall, bash syntax, default and bounded Compose config, and git diff check. Replacement-VM source/projection proof remains downstream AG-HOSTED-CLOSE-001 scope.",
+    "owner": "Codex",
+    "phase": "Pantheon Data / Wave 0 source freshness",
+    "priority": "P1",
+    "repository_id": "pantheon",
+    "review_file": "docs/reviews/2026-07-22-pan-source-fresh-001-codex2-review.md",
+    "review_notes_zh": [
+      "Receipt-finalization terminal write and restart replay now converge to an explicit typed-failure receipt; focused fault-injection regressions pass.",
+      "Bounded one-shot now exclusively selects the declared connector across schedule enqueue and existing frontier claims; unrelated due work remains queued and unavailable target cases fail closed.",
+      "Approved for Codex owner finalization after integrating current origin/dev; task PR/merge and hosted source/projection evidence remain closeout work."
+    ],
+    "reviewer": "Codex2",
+    "source_ref": {
+      "brief": "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/PAN-SOURCE-FRESH-001.md",
+      "doc": "docs/04/pantheon_agora_remaining_work_2026-07-22/REMAINING_WORK_GAP.md",
+      "merge_target": "dev",
+      "packet": "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/INDEX.md",
+      "target_repo": "ajoe734/pantheon"
+    },
+    "status": "done",
+    "summary_zh": "把 deny-all egress 緊急修補正式交付，建立 HTTPS allowlist/SSRF guard、bounded scheduler、ingest receipt 與 Agora freshness/stale truth。",
+    "target_repo": "ajoe734/pantheon",
+    "task_class": "execution",
+    "title": "Formalize guarded source refresh and Agora freshness",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-23T00:01:00Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/pan-source-fresh-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/PAN-SOURCE-FRESH-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "9f3e9ac8d5d1ebc114b0f0dcde6c57442836af8f",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/pan-source-fresh-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "ac280b82d5e301c9aed601aed68930e634e51bcd",
+      "commit_subject": "PAN-SOURCE-FRESH-001: finalize approved source refresh",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "PAN-SOURCE-FRESH-001",
+        "Reviewer": "Codex2",
+        "Verified": "127 focused tests; compileall; bash -n; default/bounded compose config; git diff --check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "5ab570ecc5e82fe843180ecc8d1c046cfe447791",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-22T18:54:36Z",
+      "from": "Codex",
+      "message": "Please independently review exact-host HTTPS egress and pinned TLS transport, DNS/IP/redirect SSRF guards, connector adoption, durable typed receipts, source-time freshness/stale projection, bounded scheduler/deploy gates, and the task runbook. Branch HEAD 91c4565c2; focused suite 760 passed, 2 skipped.",
+      "resolved_at": "2026-07-22T22:19:40Z",
+      "status": "done",
+      "task_id": "PAN-SOURCE-FRESH-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-22T22:19:40Z",
+      "from": "Codex2",
+      "message": "Changes required; current HEAD 49fb2453f changes only review evidence after reviewed implementation 91c4565c2, so five findings remain: cross-host credential forwarding, terminal runs without receipts, ingest-time freshness fallback, detached deploy without one-shot/readback gate, and incomplete TWSE/TPEx allowlist. Review evidence: docs/reviews/2026-07-22-pan-source-fresh-001-codex2-review.md.",
+      "resolved_at": "2026-07-22T22:19:40Z",
+      "status": "done",
+      "task_id": "PAN-SOURCE-FRESH-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-22T22:41:16Z",
+      "from": "Codex",
+      "message": "Five review findings remediated at task commits f193b33ba and 53c5f9963; merged current origin/dev at branch tip 0f90bfffe and pushed. Verification: 772 passed, 2 skipped full task suite; 158 passed after dev merge; compileall, bash -n, default/bounded Compose config, and diff check passed. Please independently re-review credential redirects, durable failure receipts, source-time truth, one-shot deploy/readback gate, and TWSE/TPEx allowlist.",
+      "resolved_at": "2026-07-22T22:53:21Z",
+      "status": "done",
+      "task_id": "PAN-SOURCE-FRESH-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-22T22:53:21Z",
+      "from": "Codex2",
+      "message": "Changes required after remediation re-review at d2633fae0: make failed final receipt append/restart converge from completed+processing to terminal typed truth, and make bounded forced connector scope exclusive so unrelated enabled/due schedules are not enqueued or run. 120 focused tests and shell/Compose checks passed; both gaps have independent reproductions in the review artifact.",
+      "resolved_at": "2026-07-22T22:53:21Z",
+      "status": "done",
+      "task_id": "PAN-SOURCE-FRESH-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-22T23:21:20Z",
+      "from": "Codex",
+      "message": "Receipt-finalization restart convergence and exclusive bounded connector selection are remediated and pushed at 7e159061f after merging latest origin/dev. Post-merge verification: 779 passed, 2 skipped; compileall; bash -n; default and bounded Compose config; git diff --check. Please independently re-review the two findings recorded at d2633fae0.",
+      "resolved_at": "2026-07-22T23:52:47Z",
+      "status": "done",
+      "task_id": "PAN-SOURCE-FRESH-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-22T23:52:47Z",
+      "from": "Codex2",
+      "message": "Independent re-review approved at task branch HEAD 5cd810e64 (implementation through 7e159061f): both d2633fae0 findings are resolved; 127 focused tests plus compileall, bash syntax, default/bounded Compose config, and diff check passed. Return to Codex for latest-dev integration, PR/merge, and owner closeout.",
+      "status": "done",
+      "task_id": "PAN-SOURCE-FRESH-001",
+      "to": "Codex",
+      "resolved_at": "2026-07-23T00:01:01Z"
+    }
+  ],
+  "blockers": []
+}

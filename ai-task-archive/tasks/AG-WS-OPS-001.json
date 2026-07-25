@@ -1,0 +1,126 @@
+{
+  "version": 1,
+  "task_id": "AG-WS-OPS-001",
+  "archived_at": "2026-07-22T18:04:26Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "all acceptance criteria in docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/AG-WS-OPS-001.md",
+      "task branch is merged to dev with reviewer approval and required delivery metadata"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_agora_remaining_work_2026-07-22/REMAINING_WORK_GAP.md",
+      "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/INDEX.md",
+      "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/AG-WS-OPS-001.md"
+    ],
+    "auto_created_by": "dispatch_pantheon_agora_remaining_work_2026-07-22",
+    "auto_generated": true,
+    "declared_scope": [
+      "services/control-plane/bff/agora/strategy_workshop",
+      "services/control-plane/specs/agora"
+    ],
+    "delivery_layer": "primary",
+    "depends_on": [
+      "OPS-DISPATCH-LEASE-SYNC-001"
+    ],
+    "fleet_lane": "agora-workshop-versions",
+    "id": "AG-WS-OPS-001",
+    "last_update": "2026-07-22T18:04:26Z",
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "Owner closeout complete: PR #3963 merged to dev as a4424b7090785c2efc13b6c881ca9e41b523bd1d after review approval; owner and post-dev-merge validation passed 120 tests with 2 opt-in Postgres skips plus 4 Postgres restart tests, zero residual schemas, compileall, and git diff checks.",
+    "owner": "Codex2",
+    "phase": "Agora Completion / Wave 0 workshop versions",
+    "priority": "P1",
+    "repository_id": "pantheon",
+    "review_notes_zh": [
+      "獨立重跑 focused suite：120 passed, 2 skipped（no-DSN opt-in Postgres skips）；TEST_DATABASE_URL 下 test_versions.py 4 passed，殘留 agora_ws_ops_* schema 為 0",
+      "驗證 digest write-once（改動 Registry bytes 回 WORKSHOP_VERSION_PROJECTION_CONFLICT 409，persisted digest 不變）、deterministic legacy backfill 保留 lock_version/ETag/timestamps、stale If-Match 回 CONCURRENT_MODIFICATION 且 selected pointer 與 lock version 不變、cross-tenant 在 Registry access 前即 403 CROSS_USER_ACCESS_FORBIDDEN（canonical.calls==[]）、Postgres store 重建後 version rows/digests/selected pointer 皆存活",
+      "v1.10 contract 為 additive：bundle_index.v1_10 以 sha256 鏈住 v1.9 bundle，per-file 與 per-definition checksums 由測試逐一驗證，diff 範圍未觸及任何 v1.2/v1.8/v1.9 凍結檔；OpenAPI 三條 route 與 capability manifest 一致，create/select 均要求 If-Match 與 Idempotency-Key",
+      "git diff --check 乾淨；三個 commit trailers 完整。請 owner Codex2 依 closeout spec 走 task PR 合併 dev 後再 done"
+    ],
+    "reviewer": "Claude",
+    "source_ref": {
+      "brief": "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/AG-WS-OPS-001.md",
+      "doc": "docs/04/pantheon_agora_remaining_work_2026-07-22/REMAINING_WORK_GAP.md",
+      "merge_target": "dev",
+      "packet": "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/INDEX.md",
+      "target_repo": "ajoe734/pantheon"
+    },
+    "status": "done",
+    "summary_zh": "實作 workshop versions list/create/select 三條 deferred API，含 durable StrategySpec version、lineage、idempotency、ETag CAS、tenant isolation 與 restart persistence。",
+    "target_repo": "ajoe734/pantheon",
+    "task_class": "execution",
+    "title": "Durable Workshop versions and selection",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-22T18:04:26Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ag-ws-ops-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/AG-WS-OPS-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "52d9ed234af280fc239459bfeddf76886ae35f08",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/ag-ws-ops-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "68671233e80766de372157863298b245fcf1fbab",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/AG-WS-OPS-001",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "a4424b7090785c2efc13b6c881ca9e41b523bd1d",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-22T17:17:06Z",
+      "from": "Claude",
+      "message": "Helper-claimed by idle Codex2; previous owner Claude becomes reviewer.",
+      "resolved_at": "2026-07-22T17:19:21Z",
+      "status": "done",
+      "task_id": "AG-WS-OPS-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-22T17:42:29Z",
+      "from": "Codex2",
+      "message": "Please independently review commits 7655572be..87f7f7f08 and the task-brief acceptance evidence. Verify digest/backfill/CAS/isolation semantics and additive v1.10 hash/OpenAPI chain; approve or reopen with concrete changes.",
+      "resolved_at": "2026-07-22T17:50:00Z",
+      "status": "done",
+      "task_id": "AG-WS-OPS-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-22T17:50:00Z",
+      "from": "Claude",
+      "message": "Independent review passed: reran 120+2-skip suite and Postgres restart tests locally (4 passed, 0 residual schemas); verified digest write-once, deterministic ETag-stable backfill, CAS conflict leaves pointers unchanged, tenant isolation before Registry access, and hash-locked additive v1.10 chain over frozen v1.9. Approved and returned to owner Codex2 for PR + closeout.",
+      "status": "done",
+      "task_id": "AG-WS-OPS-001",
+      "to": "Codex2",
+      "resolved_at": "2026-07-22T18:04:26Z"
+    }
+  ],
+  "blockers": []
+}
