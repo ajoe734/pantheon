@@ -289,6 +289,22 @@
       }
     },
     {
+      "id": "research-rllib",
+      "family": "research",
+      "profile": "research",
+      "repo_paths": [
+        "services/research/rllib"
+      ],
+      "changed_paths": [
+        "services/research/rllib/**"
+      ],
+      "build": {
+        "context": ".",
+        "dockerfile": "services/research/rllib/Dockerfile",
+        "tag": "pantheon-stage0/research-rllib"
+      }
+    },
+    {
       "id": "lean",
       "family": "execution",
       "profile": "execution-lab",

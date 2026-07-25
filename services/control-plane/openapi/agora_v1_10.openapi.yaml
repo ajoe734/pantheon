@@ -1,0 +1,288 @@
+openapi: "3.1.0"
+info:
+  title: Pantheon Agora API v1.10 Contract Extension
+  version: "1.10.0"
+  description: |
+    Additive extension over the immutable v1.9 bundle for authoritative
+    Strategy Performance truth and durable Workshop version operations.
+    Missing performance data is typed unavailable, while Workshop version
+    links preserve Registry ownership and immutable lineage. Governed writes
+    are scoped, idempotent, durable, and execution-authority-free; these routes
+    never deploy, submit orders, bind runtime or capital, or promote lifecycle.
+  x-extends-contract: "services/control-plane/specs/agora/bundle_index.v1_9.json"
+  x-capability-manifest: "services/control-plane/specs/agora/v11/capability_manifest_v1_10.json"
+  x-implementation-status: implemented
+servers:
+  - url: "{bff_base}"
+    variables:
+      bff_base:
+        default: "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io"
+security:
+  - BearerAuth: []
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+  parameters:
+    StrategyId:
+      name: strategy_id
+      in: path
+      required: true
+      schema: {type: string, minLength: 1}
+    SuggestionId:
+      name: suggestion_id
+      in: path
+      required: true
+      schema: {type: string, minLength: 1}
+    ReceiptId:
+      name: receipt_id
+      in: path
+      required: true
+      schema: {type: string, minLength: 1}
+    WorkshopId:
+      name: workshop_id
+      in: path
+      required: true
+      schema: {type: string, minLength: 1}
+    VersionId:
+      name: version_id
+      in: path
+      required: true
+      schema: {type: string, minLength: 1}
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      schema:
+        type: string
+        pattern: '^W/"workshop:.+:v[0-9]+"$'
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: {type: string, minLength: 1}
+    PerformanceIdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: {type: string, minLength: 8}
+    XRequestId:
+      name: X-Request-Id
+      in: header
+      required: true
+      schema: {type: string, minLength: 1}
+    XMfaToken:
+      name: X-MFA-Token
+      in: header
+      required: true
+      schema: {type: string, minLength: 1}
+    XTenantId:
+      name: X-Tenant-Id
+      in: header
+      required: false
+      schema: {type: string, minLength: 1}
+  schemas:
+    PerformanceProjectionEnvelope:
+      $ref: "../specs/agora/v11/performance_truth.schema.json#/definitions/PerformanceProjectionEnvelope"
+    SuggestionActionRequest:
+      $ref: "../specs/agora/v11/performance_truth.schema.json#/definitions/SuggestionActionRequest"
+    SuggestionActionEnvelope:
+      $ref: "../specs/agora/v11/performance_truth.schema.json#/definitions/SuggestionActionEnvelope"
+    WorkshopVersionCreateRequest:
+      $ref: "../specs/agora/v9/workshop_live_operations.schema.json#/definitions/WorkshopVersionCreateRequest"
+    WorkshopVersionListEnvelope:
+      $ref: "../specs/agora/v11/workshop_version_operations.schema.json#/definitions/WorkshopVersionListEnvelope"
+    WorkshopVersionCreateEnvelope:
+      $ref: "../specs/agora/v11/workshop_version_operations.schema.json#/definitions/WorkshopVersionCreateEnvelope"
+    WorkshopVersionSelectEnvelope:
+      $ref: "../specs/agora/v11/workshop_version_operations.schema.json#/definitions/WorkshopVersionSelectEnvelope"
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: {type: string}
+            message: {type: string}
+            details: {type: object, additionalProperties: true}
+      additionalProperties: false
+  responses:
+    BadRequest:
+      description: Required command headers or request payload are invalid
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+    Unauthorized:
+      description: Authentication or MFA proof is missing
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+    Forbidden:
+      description: Role, tenant, user, or Strategy Registry scope is denied
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+    NotFound:
+      description: Resource is not visible in the actor scope
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+    Conflict:
+      description: Stale ETag, idempotency mismatch, immutable digest mismatch, or projection conflict
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+paths:
+  /bff/agora/trading-room/strategies/{strategy_id}/performance:
+    get:
+      operationId: getAgoraStrategyPerformance
+      summary: Read authoritative Strategy Performance detail
+      parameters:
+        - {$ref: "#/components/parameters/StrategyId"}
+        - {$ref: "#/components/parameters/XTenantId"}
+        - name: period
+          in: query
+          schema: {enum: [latest, 7d, 30d, all], default: latest}
+        - name: environment
+          in: query
+          schema: {enum: [paper, broker_sandbox, canary, live], default: paper}
+      responses:
+        "200":
+          description: Scoped projection, including typed unavailable sections.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PerformanceProjectionEnvelope"}
+        "401": {description: Authentication required}
+        "403": {description: Role or tenant scope denied}
+  /bff/agora/trading-room/strategies/{strategy_id}/performance/suggestions/{suggestion_id}/actions:
+    post:
+      operationId: actOnAgoraPerformanceSuggestion
+      summary: Apply, reject, or return a governed suggestion to Workshop
+      parameters:
+        - {$ref: "#/components/parameters/StrategyId"}
+        - {$ref: "#/components/parameters/SuggestionId"}
+        - {$ref: "#/components/parameters/PerformanceIdempotencyKey"}
+        - {$ref: "#/components/parameters/XTenantId"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/SuggestionActionRequest"}
+      responses:
+        "200":
+          description: Durable audited receipt and authoritative readback.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SuggestionActionEnvelope"}
+        "400": {description: Missing or invalid idempotency key}
+        "401": {description: Authentication required}
+        "403": {description: Write role or tenant scope denied}
+        "404": {description: Suggestion absent from the exact caller scope}
+        "409": {description: Idempotency, terminal-state, or version conflict}
+  /bff/agora/performance/action-receipts/{receipt_id}:
+    get:
+      operationId: getAgoraPerformanceActionReceipt
+      summary: Read a durable suggestion action receipt
+      parameters:
+        - {$ref: "#/components/parameters/ReceiptId"}
+        - {$ref: "#/components/parameters/XTenantId"}
+      responses:
+        "200":
+          description: Exact tenant/user-scoped receipt.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SuggestionActionEnvelope"}
+        "401": {description: Authentication required}
+        "403": {description: Role or tenant scope denied}
+        "404": {description: Receipt absent from the exact caller scope}
+  /bff/agora/workshops/{workshop_id}/versions:
+    get:
+      operationId: listDurableAgoraWorkshopVersions
+      summary: List durable version links with authoritative StrategySpec readback
+      x-implementation-status: implemented
+      parameters:
+        - {$ref: "#/components/parameters/WorkshopId"}
+        - {$ref: "#/components/parameters/XTenantId"}
+      responses:
+        "200":
+          description: Tenant/user-scoped version projection and current ETag
+          headers:
+            ETag:
+              schema: {type: string}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/WorkshopVersionListEnvelope"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "502":
+          description: Authoritative Strategy Registry readback is invalid
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+        "503":
+          description: Strategy Registry or durable workshop store is unavailable
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+    post:
+      operationId: createDurableAgoraWorkshopVersion
+      summary: Create one immutable Registry version and durable Workshop link
+      x-implementation-status: implemented
+      parameters:
+        - {$ref: "#/components/parameters/WorkshopId"}
+        - {$ref: "#/components/parameters/XTenantId"}
+        - {$ref: "#/components/parameters/IfMatch"}
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+        - {$ref: "#/components/parameters/XRequestId"}
+        - {$ref: "#/components/parameters/XMfaToken"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/WorkshopVersionCreateRequest"}
+      responses:
+        "201":
+          description: Idempotent durable receipt, immutable link, and Registry readback
+          headers:
+            ETag:
+              schema: {type: string}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/WorkshopVersionCreateEnvelope"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+  /bff/agora/workshops/{workshop_id}/versions/{version_id}/select:
+    post:
+      operationId: selectDurableAgoraWorkshopVersion
+      summary: Atomically select one workshop-owned immutable version
+      x-implementation-status: implemented
+      parameters:
+        - {$ref: "#/components/parameters/WorkshopId"}
+        - {$ref: "#/components/parameters/VersionId"}
+        - {$ref: "#/components/parameters/XTenantId"}
+        - {$ref: "#/components/parameters/IfMatch"}
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+        - {$ref: "#/components/parameters/XRequestId"}
+        - {$ref: "#/components/parameters/XMfaToken"}
+      responses:
+        "200":
+          description: Selected pointers, command receipt, and authoritative readback
+          headers:
+            ETag:
+              schema: {type: string}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/WorkshopVersionSelectEnvelope"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}

@@ -1,0 +1,287 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://pantheon.example/specs/agora/v12/workshop_operation_lifecycle.schema.json",
+  "title": "Durable Strategy Workshop operation lifecycle",
+  "description": "Additive v1.11 contract for the durable research-run, consultation, and conclusion operations that AG-GAP-005 deferred. Downstream authorities own research/consultation state; the workshop persists command receipts, canonical downstream IDs, and the atomic terminal transition only. No route in this leaf deploys, submits orders, or changes live capital.",
+  "definitions": {
+    "WorkshopOperationCommandReceipt": {
+      "type": "object",
+      "required": [
+        "receipt_id",
+        "operation",
+        "status",
+        "command_terminal",
+        "idempotency_key",
+        "request_hash",
+        "expected_lock_version",
+        "resulting_lock_version",
+        "canonical_refs"
+      ],
+      "properties": {
+        "receipt_id": {"type": "string", "minLength": 1},
+        "operation": {
+          "enum": ["dispatch_research", "open_consultation", "conclude"]
+        },
+        "status": {"enum": ["admitted", "completed", "failed"]},
+        "command_terminal": {"type": "boolean"},
+        "request_id": {"type": "string"},
+        "trace_id": {"type": "string"},
+        "idempotency_key": {"type": "string", "minLength": 1},
+        "request_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "expected_lock_version": {"type": "integer", "minimum": 1},
+        "resulting_lock_version": {"type": "integer", "minimum": 1},
+        "admitted_at": {"type": "string"},
+        "completed_at": {"type": "string"},
+        "canonical_refs": {
+          "type": "object",
+          "description": "Authoritative downstream identifiers recorded in the durable receipt: research_task_id/research_run_id, consultation_request_id, workshop_version_id, strategy_spec_registry_id, approval_decision_id as applicable. Replay after restart returns these recorded IDs instead of dispatching again."
+        }
+      },
+      "additionalProperties": true
+    },
+    "WorkshopResearchRunResource": {
+      "type": "object",
+      "required": ["task", "run", "downstream_status", "downstream_terminal"],
+      "properties": {
+        "task": {
+          "type": "object",
+          "required": ["task_id", "status"],
+          "properties": {
+            "task_id": {"type": "string", "minLength": 1},
+            "status": {"type": "string", "minLength": 1}
+          },
+          "additionalProperties": true
+        },
+        "run": {
+          "type": "object",
+          "required": ["run_id", "task_id", "status"],
+          "properties": {
+            "run_id": {"type": "string", "minLength": 1},
+            "task_id": {"type": "string", "minLength": 1},
+            "status": {"type": "string", "minLength": 1}
+          },
+          "additionalProperties": true
+        },
+        "downstream_status": {"type": "string", "minLength": 1},
+        "downstream_terminal": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "WorkshopResearchRunEnvelope": {
+      "type": "object",
+      "required": ["data", "meta"],
+      "properties": {
+        "data": {
+          "type": "object",
+          "required": ["command_receipt", "resource"],
+          "properties": {
+            "command_receipt": {
+              "$ref": "#/definitions/WorkshopOperationCommandReceipt"
+            },
+            "resource": {"$ref": "#/definitions/WorkshopResearchRunResource"}
+          },
+          "additionalProperties": false
+        },
+        "meta": {"type": "object", "additionalProperties": true}
+      },
+      "additionalProperties": false
+    },
+    "WorkshopConsultationResource": {
+      "type": "object",
+      "required": ["consultation", "downstream_status", "downstream_terminal"],
+      "properties": {
+        "consultation": {
+          "type": "object",
+          "required": ["request_id", "status"],
+          "properties": {
+            "request_id": {"type": "string", "minLength": 1},
+            "status": {"type": "string", "minLength": 1}
+          },
+          "additionalProperties": true
+        },
+        "downstream_status": {"type": "string", "minLength": 1},
+        "downstream_terminal": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "WorkshopConsultationEnvelope": {
+      "type": "object",
+      "required": ["data", "meta"],
+      "properties": {
+        "data": {
+          "type": "object",
+          "required": ["command_receipt", "resource"],
+          "properties": {
+            "command_receipt": {
+              "$ref": "#/definitions/WorkshopOperationCommandReceipt"
+            },
+            "resource": {"$ref": "#/definitions/WorkshopConsultationResource"}
+          },
+          "additionalProperties": false
+        },
+        "meta": {"type": "object", "additionalProperties": true}
+      },
+      "additionalProperties": false
+    },
+    "WorkshopConcludeResource": {
+      "type": "object",
+      "required": [
+        "workshop",
+        "version",
+        "approval_decision_id",
+        "two_person_proof",
+        "no_direct_action_proof"
+      ],
+      "properties": {
+        "workshop": {
+          "type": "object",
+          "required": [
+            "workshop_id",
+            "status",
+            "final_workshop_version_id",
+            "final_strategy_spec_registry_id",
+            "concluded_at"
+          ],
+          "properties": {
+            "workshop_id": {"type": "string", "minLength": 1},
+            "status": {"const": "concluded"},
+            "final_workshop_version_id": {"type": "string", "minLength": 1},
+            "final_strategy_spec_registry_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "concluded_at": {"type": "string", "minLength": 1}
+          },
+          "additionalProperties": true
+        },
+        "version": {
+          "type": "object",
+          "required": [
+            "workshop_version_id",
+            "strategy_id",
+            "strategy_spec_registry_id",
+            "document_sha256",
+            "strategy_spec"
+          ],
+          "properties": {
+            "workshop_version_id": {"type": "string", "minLength": 1},
+            "strategy_id": {"type": "string", "minLength": 1},
+            "strategy_spec_registry_id": {"type": "string", "minLength": 1},
+            "document_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "strategy_spec": {
+              "$ref": "../v11/workshop_version_operations.schema.json#/definitions/AuthoritativeStrategySpecReadback"
+            }
+          },
+          "additionalProperties": true
+        },
+        "approval_decision_id": {"type": "string", "minLength": 1},
+        "two_person_proof": {
+          "type": "object",
+          "required": [
+            "approval_decision_id",
+            "requested_by",
+            "approved_by",
+            "distinct_actors",
+            "decision"
+          ],
+          "properties": {
+            "approval_decision_id": {"type": "string", "minLength": 1},
+            "requested_by": {"type": "string", "minLength": 1},
+            "approved_by": {"type": "string", "minLength": 1},
+            "distinct_actors": {"const": true},
+            "decision": {"type": "string", "minLength": 1}
+          },
+          "additionalProperties": false
+        },
+        "no_direct_action_proof": {
+          "$ref": "../v9/workshop_live_operations.schema.json#/definitions/NoDirectActionProof"
+        }
+      },
+      "additionalProperties": false
+    },
+    "WorkshopConcludeEnvelope": {
+      "type": "object",
+      "required": ["data", "meta"],
+      "properties": {
+        "data": {
+          "type": "object",
+          "required": ["command_receipt", "resource"],
+          "properties": {
+            "command_receipt": {
+              "$ref": "#/definitions/WorkshopOperationCommandReceipt"
+            },
+            "resource": {"$ref": "#/definitions/WorkshopConcludeResource"}
+          },
+          "additionalProperties": false
+        },
+        "meta": {"type": "object", "additionalProperties": true}
+      },
+      "additionalProperties": false
+    },
+    "WorkshopConcludeFinalVersionRule": {
+      "type": "object",
+      "required": [
+        "status_rule",
+        "selection_rule",
+        "completeness_rule",
+        "digest_rule",
+        "atomicity_rule"
+      ],
+      "properties": {
+        "status_rule": {
+          "const": "conclude is admitted only while the workshop is in_review and every later mutation is rejected as terminal"
+        },
+        "selection_rule": {
+          "const": "final_version_id must resolve to an existing durable version link that equals the currently selected workshop version"
+        },
+        "completeness_rule": {
+          "const": "authoritative Registry readback must expose a complete StrategySpec document in the caller tenant/user scope before conclusion"
+        },
+        "digest_rule": {
+          "const": "the readback document sha256 must match the immutable durable version-link digest; a mismatch fails the command with a durable failed receipt"
+        },
+        "atomicity_rule": {
+          "const": "terminal session fields, the concluded audit event, and the completed receipt commit in one store transaction"
+        }
+      },
+      "additionalProperties": false
+    },
+    "WorkshopOperationDurabilityRule": {
+      "type": "object",
+      "required": [
+        "receipt_rule",
+        "replay_rule",
+        "failure_rule",
+        "compensation_rule"
+      ],
+      "properties": {
+        "receipt_rule": {
+          "const": "every admitted operation persists a postgres command receipt keyed by tenant/user/workshop/operation/idempotency-key that survives BFF restart"
+        },
+        "replay_rule": {
+          "const": "an exact duplicate request replays the recorded receipt and downstream IDs without re-dispatching research, consultation, or conclusion"
+        },
+        "failure_rule": {
+          "const": "downstream rejection, timeout, or projection failure records a durable failed receipt; the same key then returns COMMAND_PREVIOUSLY_FAILED and a new key may retry"
+        },
+        "compensation_rule": {
+          "const": "a consultation opened downstream whose workshop commit fails is cancelled and the compensation is recorded on the failed receipt"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "x-operation-lifecycle-semantics": {
+    "research_authority": "research_orchestrator",
+    "consultation_authority": "consultation_service",
+    "approval_authority": "approval_decision_store",
+    "strategy_spec_authority": "strategy_registry",
+    "receipt_store": "strategy_workshop_postgres",
+    "restart_persistent": true,
+    "fabricated_completed_results_forbidden": true,
+    "execution_authority": "none"
+  }
+}

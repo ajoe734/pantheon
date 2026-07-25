@@ -1,0 +1,168 @@
+name: PPL-ALLOC-009 Hosted Acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      bff_base_url:
+        description: "Pantheon dev BFF base URL"
+        required: true
+        default: "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io"
+        type: string
+      execute_plans_test_sha:
+        description: "Optional exact harness SHA; empty uses expected_fe_sha and any other SHA is rejected"
+        required: false
+        default: ""
+        type: string
+      expected_bff_sha:
+        description: "Exact deployed Pantheon BFF commit SHA"
+        required: true
+        type: string
+      expected_fe_sha:
+        description: "Exact deployed execute-plans commit SHA"
+        required: true
+        type: string
+      fe_base_url:
+        description: "Pantheon dev frontend base URL"
+        required: true
+        default: "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io"
+        type: string
+      resume_run_key:
+        description: "Original partial-run identity; preserves one Persona and one idempotency chain"
+        required: true
+        default: "30095677466"
+        type: string
+      quarter:
+        description: "Canonical quarterly ranking window"
+        required: true
+        default: "2026-Q3"
+        type: string
+      tenant_id:
+        description: "Strict dev acceptance tenant"
+        required: true
+        default: "tenant-dev"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ppl-alloc-009-hosted-acceptance-dev
+  cancel-in-progress: false
+
+jobs:
+  hosted-acceptance:
+    name: Governed B1 plus desktop and 393px B3
+    runs-on: ubuntu-latest
+    environment: dev
+    timeout-minutes: 30
+    env:
+      PPL_ALLOC_009_APPROVER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID || 'pantheon-dev-approver-v1' }}
+      PPL_ALLOC_009_APPROVER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET }}
+      PPL_ALLOC_009_BFF_BASE_URL: ${{ inputs.bff_base_url }}
+      PPL_ALLOC_009_EVIDENCE_DIR: .artifacts/PPL-ALLOC-009/${{ github.run_id }}-${{ github.run_attempt }}
+      PPL_ALLOC_009_EXPECTED_BFF_SHA: ${{ inputs.expected_bff_sha }}
+      PPL_ALLOC_009_EXPECTED_FE_SHA: ${{ inputs.expected_fe_sha }}
+      PPL_ALLOC_009_FE_BASE_URL: ${{ inputs.fe_base_url }}
+      PPL_ALLOC_009_OPERATOR_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID || 'pantheon-dev-operator-a-v1' }}
+      PPL_ALLOC_009_OPERATOR_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET }}
+      PPL_ALLOC_009_PUBLIC_SUPABASE_URL: "https://kwjtcynauaulrxngyetk.supabase.co"
+      PPL_ALLOC_009_QUARTER: ${{ inputs.quarter }}
+      PPL_ALLOC_009_RUN_KEY: ${{ inputs.resume_run_key }}
+      PPL_ALLOC_009_TENANT_ID: ${{ inputs.tenant_id }}
+      PANTHEON_CREDENTIALED_PLAYWRIGHT_NO_ARTIFACTS: "1"
+    steps:
+      - name: Checkout dispatched Pantheon revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5a
+        with:
+          path: pantheon
+          persist-credentials: false
+
+      - name: Resolve exact accepted frontend harness
+        id: harness
+        shell: bash
+        env:
+          EXPECTED_FRONTEND_SHA: ${{ inputs.expected_fe_sha }}
+          REQUESTED_TEST_SHA: ${{ inputs.execute_plans_test_sha }}
+        run: |
+          set -euo pipefail
+          python3 pantheon/scripts/resolve_ppl_alloc_009_acceptance_harness.py \
+            --expected-frontend-sha "${EXPECTED_FRONTEND_SHA}" \
+            --requested-test-sha "${REQUESTED_TEST_SHA}" \
+            --github-output "${GITHUB_OUTPUT}" \
+            --github-env "${GITHUB_ENV}"
+
+      - name: Load and mask the browser identity key
+        shell: bash
+        env:
+          GCP_IDENTITY_API_KEY: ${{ secrets.PPL_ALLOC_009_GCP_IDENTITY_API_KEY }}
+        run: |
+          set -euo pipefail
+          echo "::add-mask::${GCP_IDENTITY_API_KEY}"
+          if [[ -z "${GCP_IDENTITY_API_KEY}" ]]; then
+            echo "::error::The dev browser identity key is not configured."
+            exit 1
+          fi
+          echo "PPL_ALLOC_009_GCP_IDENTITY_API_KEY=${GCP_IDENTITY_API_KEY}" >> "${GITHUB_ENV}"
+
+      - name: Checkout immutable execute-plans acceptance harness
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5a
+        with:
+          repository: ajoe734/execute-plans
+          ref: ${{ steps.harness.outputs.test_sha }}
+          path: execute-plans
+          persist-credentials: false
+
+      - name: Reject unsafe target or incomplete proof inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${PPL_ALLOC_009_FE_BASE_URL}" == "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io" ]]
+          [[ "${PPL_ALLOC_009_BFF_BASE_URL}" == "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io" ]]
+          [[ "${PPL_ALLOC_009_EXPECTED_FE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${PPL_ALLOC_009_EXPECTED_BFF_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${PPL_ALLOC_009_TEST_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${PPL_ALLOC_009_TEST_SHA}" == "${PPL_ALLOC_009_EXPECTED_FE_SHA}" ]]
+          [[ "$(git -C execute-plans rev-parse HEAD)" == "${PPL_ALLOC_009_TEST_SHA}" ]]
+          [[ -f execute-plans/e2e/ppl-alloc-009-cross-repo-hosted.spec.ts ]]
+          [[ -n "${PPL_ALLOC_009_OPERATOR_CLIENT_ID}" ]]
+          [[ -n "${PPL_ALLOC_009_OPERATOR_CLIENT_SECRET}" ]]
+          [[ -n "${PPL_ALLOC_009_APPROVER_CLIENT_ID}" ]]
+          [[ -n "${PPL_ALLOC_009_APPROVER_CLIENT_SECRET}" ]]
+          [[ -n "${PPL_ALLOC_009_GCP_IDENTITY_API_KEY}" ]]
+          [[ "${PPL_ALLOC_009_PUBLIC_SUPABASE_URL}" == "https://kwjtcynauaulrxngyetk.supabase.co" ]]
+          [[ "${PPL_ALLOC_009_RUN_KEY}" == "30095677466" ]]
+          [[ "${PPL_ALLOC_009_TENANT_ID}" == "tenant-dev" ]]
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: execute-plans/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: execute-plans
+        run: npm ci
+
+      - name: Install Chromium
+        working-directory: execute-plans
+        run: npx playwright install chromium --with-deps
+
+      - name: Run exact-pair governed paper allocation acceptance
+        working-directory: execute-plans
+        run: |
+          set -euo pipefail
+          npx playwright test e2e/ppl-alloc-009-cross-repo-hosted.spec.ts \
+            --project=chromium \
+            --retries=0 \
+            --reporter=list \
+            --trace=off
+
+      - name: Upload sanitized acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ppl-alloc-009-hosted-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: execute-plans/.artifacts/PPL-ALLOC-009/${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 90

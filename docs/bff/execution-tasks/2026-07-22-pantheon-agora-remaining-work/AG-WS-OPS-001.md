@@ -3,8 +3,9 @@
 Priority: P1
 Repository: `ajoe734/pantheon`
 Merge target: `dev`
-Owner: Claude
-Reviewer: Antigravity
+Status: `review_approved`
+Owner: Codex2
+Reviewer: Claude
 Depends on: `OPS-DISPATCH-LEASE-SYNC-001`
 
 ## Objective
@@ -46,3 +47,19 @@ backfill/current-version rule.
 - No research, consultation, or conclusion implementation; those belong to
   `AG-WS-OPS-002`.
 - No order routing or live-capital effect.
+
+## Review-approved delivery evidence
+
+- Implementation anchor `7655572be` adds the durable version projection,
+  immutable Strategy Registry content digest, deterministic legacy backfill,
+  tenant isolation, selected pointer persistence, and route/store coverage.
+- Contract anchor `a7959bbac` adds the hash-locked v1.10 bundle, capability
+  manifest, typed resources, and OpenAPI for list/create/select without
+  changing frozen v1.2/v1.8/v1.9 contract bytes.
+- Owner verification passed 120 tests with 2 opt-in Postgres skips; the focused
+  Postgres restart suite passed 4 tests and left zero isolated test schemas.
+- Claude independently reran both suites and approved digest write-once,
+  deterministic ETag-stable backfill, stale-CAS no-mutation, pre-Registry
+  tenant isolation, restart persistence, and the additive v1.10 hash chain.
+- Final closure still requires the task PR to merge into `dev` and the owner to
+  run the governed `done` transition; `review_approved` alone is not terminal.
