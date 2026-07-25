@@ -727,11 +727,18 @@ curl_with_retry() {
 wait_for_exact_bff_lifecycle_readiness() {
   local url="$1"
 
+  # Full root replacements have taken up to 213 seconds to move from process
+  # liveness through exact trusted recovery to accepted live truth on the dev
+  # VM. Keep the ordinary restart budget at 120 seconds and grant only trusted
+  # monotonic recovery a bounded 180-second extension (300 seconds total).
+  # Compose separately gates /livez, so each invocation gets its own
+  # lifecycle-readiness acceptance budget; image/process startup cannot
+  # consume it.
   python3 scripts/wait_for_bff_lifecycle_readiness.py \
     --url "$url" \
     --expected-deployment-sha "${PANTHEON_DEPLOY_SHA}" \
     --initial-timeout-seconds 120 \
-    --recovery-extension-seconds 120 \
+    --recovery-extension-seconds 180 \
     --stalled-timeout-seconds 45 \
     --poll-interval-seconds 2 \
     --request-timeout-seconds 2
