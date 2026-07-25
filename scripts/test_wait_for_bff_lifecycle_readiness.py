@@ -436,15 +436,25 @@ def _component_block(script: str, component: str, next_component: str) -> str:
 def test_root_initial_readiness_uses_exact_waiter_before_residual_smoke() -> None:
     script = Path("scripts/deploy_nonprod_vm.sh").read_text()
     root = _component_block(script, "root", "bff")
+    compose_up = (
+        "docker compose -p pantheon -f docker-compose.yml up -d --build"
+    )
     helper_call = (
         "wait_for_exact_bff_lifecycle_readiness \\\n"
         "      http://127.0.0.1:18001/readyz"
     )
     assert helper_call in root
     assert "curl_with_retry http://127.0.0.1:18001/readyz" not in root
+    assert root.index(compose_up) < root.index(helper_call)
     assert root.index(helper_call) < root.index(
         "bash scripts/verify_trade_journey_residual_dev.sh"
     )
+    assert root.index(helper_call) < root.index("assert_bff_source_sha")
+    assert root.index(helper_call) < root.index("assert_bff_auth_gate")
+    assert root.index(helper_call) < root.index(
+        "assert_ppl_alloc_009_dev_proof_gate"
+    )
+    assert root.index(helper_call) < root.index("ensure_dev_caddy_ingress")
 
 
 def test_root_exact_waiter_is_revision_bound_and_bounded() -> None:
@@ -456,18 +466,43 @@ def test_root_exact_waiter_is_revision_bound_and_bounded() -> None:
     assert "scripts/wait_for_bff_lifecycle_readiness.py" in helper
     assert '--expected-deployment-sha "${PANTHEON_DEPLOY_SHA}"' in helper
     assert "--initial-timeout-seconds 120" in helper
-    assert "--recovery-extension-seconds 120" in helper
+    assert "--recovery-extension-seconds 180" in helper
     assert "--stalled-timeout-seconds 45" in helper
+
+
+def test_operator_bff_compose_health_is_liveness_not_projector_readiness() -> None:
+    compose = Path("docker-compose.yml").read_text()
+    operator_bff = compose.split("\n  operator-bff:", 1)[1].split(
+        "\n  loop-run-projector-scheduler:",
+        1,
+    )[0]
+    healthcheck = operator_bff.split("\n    healthcheck:", 1)[1]
+    assert "http://127.0.0.1:8001/livez" in healthcheck
+    assert "http://127.0.0.1:8001/readyz" not in healthcheck
+    assert "interval: 10s" in healthcheck
+    assert "retries: 10" in healthcheck
 
 
 def test_bff_only_readiness_also_uses_exact_waiter() -> None:
     script = Path("scripts/deploy_nonprod_vm.sh").read_text()
     bff = _component_block(script, "bff", "exec")
-    assert (
+    compose_up = (
+        "docker compose -p pantheon -f docker-compose.yml "
+        "up -d --build --no-deps operator-bff"
+    )
+    helper_call = (
         "wait_for_exact_bff_lifecycle_readiness \\\n"
         "      http://127.0.0.1:18001/readyz"
-    ) in bff
+    )
+    assert helper_call in bff
     assert "curl_with_retry http://127.0.0.1:18001/readyz" not in bff
+    assert bff.index(compose_up) < bff.index(helper_call)
+    assert bff.index(helper_call) < bff.index("assert_bff_source_sha")
+    assert bff.index(helper_call) < bff.index("assert_bff_auth_gate")
+    assert bff.index(helper_call) < bff.index(
+        "assert_ppl_alloc_009_dev_proof_gate"
+    )
+    assert bff.index(helper_call) < bff.index("ensure_dev_caddy_ingress")
 
 
 def test_non_bff_components_do_not_use_lifecycle_waiter() -> None:

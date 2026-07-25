@@ -1232,7 +1232,11 @@ services:
     ports:
       - "18001:8001"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/readyz', timeout=5).read()"]
+      # Compose only owns process liveness. Exact deployment/projector
+      # readiness is revision-bound and bounded by deploy_nonprod_vm.sh after
+      # the stack is running, so a recovering projector must not make Compose
+      # abort the deployment before that gate can observe convergence.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/livez', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 10
