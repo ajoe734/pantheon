@@ -99,6 +99,74 @@ def test_accepts_exact_ready_payload() -> None:
     assert observation is None
 
 
+def test_requires_two_consecutive_exact_caught_up_ready_samples() -> None:
+    fake = FakeTime()
+    inconsistent = payload(ready=True, checkpoint=11, source=10)
+    inconsistent["dependencies"]["lifecycle_projector"]["backlog"] = 0
+    _, fetch = sequence_fetch(
+        [
+            (200, payload(ready=True)),
+            (200, inconsistent),
+            (200, payload(ready=True, checkpoint=12, source=12)),
+            (200, payload(ready=True, checkpoint=13, source=13)),
+        ]
+    )
+    wait_for_readiness(
+        fetch,
+        expected_deployment_sha=SHA,
+        initial_timeout_seconds=5,
+        recovery_extension_seconds=4,
+        stalled_timeout_seconds=2,
+        poll_interval_seconds=1,
+        monotonic=fake.monotonic,
+        sleep=fake.sleep,
+    )
+    assert fake.value == 3
+
+
+def test_http_200_ahead_snapshot_converges_inside_base_window() -> None:
+    fake = FakeTime()
+    ahead = payload(ready=True, checkpoint=11, source=10)
+    ahead["dependencies"]["lifecycle_projector"]["backlog"] = 0
+    _, fetch = sequence_fetch(
+        [
+            (200, ahead),
+            (200, payload(ready=True)),
+            (200, payload(ready=True, checkpoint=11, source=11)),
+        ]
+    )
+    wait_for_readiness(
+        fetch,
+        expected_deployment_sha=SHA,
+        initial_timeout_seconds=3,
+        recovery_extension_seconds=10,
+        stalled_timeout_seconds=2,
+        poll_interval_seconds=1,
+        monotonic=fake.monotonic,
+        sleep=fake.sleep,
+    )
+    assert fake.value == 2
+
+
+def test_persistent_http_200_ahead_snapshot_fails_at_base_cap() -> None:
+    fake = FakeTime()
+    ahead = payload(ready=True, checkpoint=11, source=10)
+    ahead["dependencies"]["lifecycle_projector"]["backlog"] = 0
+    _, fetch = sequence_fetch([(200, ahead)])
+    with pytest.raises(ReadinessError, match="ordinary restart budget"):
+        wait_for_readiness(
+            fetch,
+            expected_deployment_sha=SHA,
+            initial_timeout_seconds=2,
+            recovery_extension_seconds=10,
+            stalled_timeout_seconds=2,
+            poll_interval_seconds=1,
+            monotonic=fake.monotonic,
+            sleep=fake.sleep,
+        )
+    assert fake.value == 2
+
+
 def test_uses_bounded_extension_for_trusted_recovery() -> None:
     fake = FakeTime()
     _, fetch = sequence_fetch(
@@ -120,7 +188,7 @@ def test_uses_bounded_extension_for_trusted_recovery() -> None:
         monotonic=fake.monotonic,
         sleep=fake.sleep,
     )
-    assert fake.value == 4
+    assert fake.value == 5
 
 
 def test_unexpected_degraded_reason_does_not_grant_extension() -> None:
@@ -191,7 +259,7 @@ def test_fails_when_nonzero_backlog_stalls() -> None:
         wait_for_readiness(
             fetch,
             expected_deployment_sha=SHA,
-            initial_timeout_seconds=1,
+            initial_timeout_seconds=3,
             recovery_extension_seconds=10,
             stalled_timeout_seconds=2,
             poll_interval_seconds=1,
@@ -255,6 +323,28 @@ def test_caught_up_recovery_is_still_bounded() -> None:
         )
 
 
+def test_nonprogressing_recovery_cannot_enter_extension() -> None:
+    fake = FakeTime()
+    _, fetch = sequence_fetch(
+        [(503, payload(ready=False, checkpoint=8, source=10))]
+    )
+    with pytest.raises(
+        ReadinessError,
+        match="without monotonic lifecycle recovery convergence",
+    ):
+        wait_for_readiness(
+            fetch,
+            expected_deployment_sha=SHA,
+            initial_timeout_seconds=2,
+            recovery_extension_seconds=10,
+            stalled_timeout_seconds=5,
+            poll_interval_seconds=1,
+            monotonic=fake.monotonic,
+            sleep=fake.sleep,
+        )
+    assert fake.value == 2
+
+
 def test_rejects_inconsistent_backlog() -> None:
     inconsistent = payload(ready=False, checkpoint=8, source=10)
     inconsistent["dependencies"]["lifecycle_projector"]["backlog"] = 1
@@ -274,19 +364,20 @@ def test_wrong_deployment_can_converge_to_exact_ready_inside_base_window() -> No
             (503, payload(ready=False, deployment_sha="b" * 40)),
             (200, payload(ready=True, deployment_sha="b" * 40)),
             (200, payload(ready=True)),
+            (200, payload(ready=True, checkpoint=11, source=11)),
         ]
     )
     wait_for_readiness(
         fetch,
         expected_deployment_sha=SHA,
-        initial_timeout_seconds=3,
+        initial_timeout_seconds=4,
         recovery_extension_seconds=4,
         stalled_timeout_seconds=2,
         poll_interval_seconds=1,
         monotonic=fake.monotonic,
         sleep=fake.sleep,
     )
-    assert fake.value == 2
+    assert fake.value == 3
 
 
 def test_persistent_wrong_deployment_fails_at_base_cap_without_extension() -> None:
