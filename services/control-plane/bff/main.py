@@ -5957,6 +5957,24 @@ def _pm12_resolve_quarterly_recommendation_submit_params(
             "The recommendation id/action/persona tuple was not materialized by the snapshot.",
             precondition_failed="recommendation_id",
         )
+    review_revision_id = _promotion_review_revision_id(
+        recommendation_id,
+        snapshot_id,
+    )
+    for field in ("review_id", "promotion_review_id"):
+        asserted_review_id = str(params.get(field) or "").strip()
+        if (
+            asserted_review_id
+            and _promotion_review_clean_id(asserted_review_id)
+            != review_revision_id
+        ):
+            raise _bff_error(
+                422,
+                ErrorCode.VALIDATION_FAILED,
+                "promotion review revision assertion mismatch",
+                f"{field} does not match the admitted recommendation snapshot.",
+                precondition_failed=field,
+            )
 
     asserted_action_id = str(
         params.get("recommendation_action_id")
@@ -6045,6 +6063,8 @@ def _pm12_resolve_quarterly_recommendation_submit_params(
         nested_assertions = {
             "id": recommendation_id,
             "recommendation_id": recommendation_id,
+            "review_id": review_revision_id,
+            "promotion_review_id": review_revision_id,
             "ranking_snapshot_id": snapshot_id,
             "quarter": quarter,
             "persona_id": item.get("persona_id"),
@@ -6092,6 +6112,8 @@ def _pm12_resolve_quarterly_recommendation_submit_params(
         "quarter": quarter,
         "recommendation_id": recommendation_id,
         "recommendationId": recommendation_id,
+        "review_id": review_revision_id,
+        "promotion_review_id": review_revision_id,
         "recommendation_action_id": matched_action_id,
         "recommendationActionId": matched_action_id,
         "ranking_snapshot_id": snapshot_id,
@@ -27015,11 +27037,30 @@ def _ppl_alloc_009_paper_governance_context(
     ranking_item: Dict[str, Any],
     promotion_review_id: str,
 ) -> Dict[str, Any]:
+    requested_review_id = _promotion_review_clean_id(promotion_review_id)
+    recommendation_id = _promotion_review_revision_recommendation_id(
+        requested_review_id
+    )
+    review_revision_id = _promotion_review_revision_id(
+        recommendation_id,
+        snapshot_id,
+    )
+    if (
+        requested_review_id != recommendation_id
+        and requested_review_id != review_revision_id
+    ):
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Promotion review revision does not match the ranking snapshot",
+            "Paper allocation requires the exact snapshot-bound promotion review.",
+            precondition_failed="promotion_review_id",
+        )
     submission = _promotion_review_submission_projection(
-        promotion_review_id,
+        review_revision_id,
         include_source_recommendation=True,
     )
-    decision = _promotion_review_decision_projection(promotion_review_id)
+    decision = _promotion_review_decision_projection(review_revision_id)
     source = (
         submission.get("source_recommendation")
         if isinstance(submission, dict)
@@ -36807,10 +36848,13 @@ def _human_inbox_trusted_promotion_submission(command: Dict[str, Any]) -> bool:
     params = command.get("params") if isinstance(command.get("params"), dict) else {}
     target = command.get("target") if isinstance(command.get("target"), dict) else {}
     recommendation_id = _human_inbox_promotion_recommendation_id(command)
+    review_revision_id = _promotion_review_record_revision_id(command)
+    target_id = str(target.get("id") or "").strip()
     if (
         not recommendation_id
         or target.get("type") != ObjectType.RANKING.value
-        or str(target.get("id") or "").strip() != recommendation_id
+        or not review_revision_id
+        or target_id not in {recommendation_id, review_revision_id}
     ):
         return False
     expected_quarter = _promotion_review_quarter_from_id(recommendation_id)
@@ -36824,6 +36868,12 @@ def _human_inbox_trusted_promotion_submission(command: Dict[str, Any]) -> bool:
     if not expected_quarter or quarter != expected_quarter or not persona_id:
         return False
     if action_id not in _PROMOTION_REVIEW_ACTION_IDS:
+        return False
+    ranking_snapshot_id = str(params.get("ranking_snapshot_id") or "").strip()
+    if ranking_snapshot_id and review_revision_id != _promotion_review_revision_id(
+        recommendation_id,
+        ranking_snapshot_id,
+    ):
         return False
     for flag in (
         "direct_live_capital_mutation",
@@ -36939,6 +36989,11 @@ def _human_inbox_sanitize_promotion_snapshot(
     )
     if params_snapshot_id:
         sanitized["ranking_snapshot_id"] = params_snapshot_id
+    review_revision_id = _promotion_review_record_revision_id(command)
+    if not review_revision_id:
+        return None
+    sanitized["review_id"] = review_revision_id
+    sanitized["promotion_review_id"] = review_revision_id
     stage_from = str(params.get("stage_from") or sanitized.get("stage") or sanitized.get("state") or "").strip()
     if stage_from:
         sanitized.setdefault("stage", stage_from)
@@ -36961,6 +37016,7 @@ def _human_inbox_submission_projection_from_record(
 ) -> Dict[str, Any]:
     params = command.get("params") if isinstance(command.get("params"), dict) else {}
     audit = command.get("audit") if isinstance(command.get("audit"), dict) else {}
+    review_revision_id = _promotion_review_record_revision_id(command)
     return {
         "submitted": True,
         "submit_status": command.get("status"),
@@ -36970,6 +37026,8 @@ def _human_inbox_submission_projection_from_record(
         "submitted_at": command.get("submitted_at"),
         "submitted_by": audit.get("operator_id") or audit.get("actor") or audit.get("actor_id"),
         "recommendation_id": recommendation_id,
+        "review_id": review_revision_id,
+        "promotion_review_id": review_revision_id,
         "recommendation_action_id": params.get("recommendation_action_id")
         or params.get("recommendationActionId"),
         "ranking_snapshot_id": params.get("ranking_snapshot_id"),
@@ -36978,7 +37036,7 @@ def _human_inbox_submission_projection_from_record(
         "stage_from": params.get("stage_from"),
         "stage_to": params.get("stage_to"),
         "review_kind": params.get("review_kind"),
-        "human_inbox_id": _promotion_review_target_id(recommendation_id),
+        "human_inbox_id": _promotion_review_target_id(review_revision_id),
         "live_capital_mutation": False,
         "requires_human_gate_decision": True,
     }
@@ -36996,10 +37054,21 @@ def _human_inbox_decision_recommendation_id(command: Dict[str, Any]) -> str:
         return ""
     params = command.get("params") if isinstance(command.get("params"), dict) else {}
     raw_target_id = str(target.get("id") or "").strip()
-    recommendation_id = _promotion_review_clean_id(raw_target_id)
+    review_revision_id = _promotion_review_clean_id(raw_target_id)
+    if (
+        not review_revision_id
+        or raw_target_id != _promotion_review_target_id(review_revision_id)
+    ):
+        return ""
+    recommendation_id = str(
+        params.get("recommendation_id")
+        or params.get("recommendationId")
+        or _promotion_review_revision_recommendation_id(review_revision_id)
+    ).strip()
     if (
         not recommendation_id
-        or raw_target_id != _promotion_review_target_id(recommendation_id)
+        or _promotion_review_revision_recommendation_id(review_revision_id)
+        != recommendation_id
     ):
         return ""
     for key in (
@@ -37009,19 +37078,35 @@ def _human_inbox_decision_recommendation_id(command: Dict[str, Any]) -> str:
         "reviewId",
         "promotion_review_id",
         "promotionReviewId",
-        "recommendation_id",
-        "recommendationId",
     ):
         alias = params.get(key)
-        if alias not in (None, "") and _promotion_review_clean_id(alias) != recommendation_id:
+        if (
+            alias not in (None, "")
+            and _promotion_review_clean_id(alias) != review_revision_id
+        ):
             return ""
-    return recommendation_id
+    for key in ("recommendation_id", "recommendationId"):
+        alias = params.get(key)
+        if alias not in (None, "") and str(alias).strip() != recommendation_id:
+            return ""
+    ranking_snapshot_id = str(params.get("ranking_snapshot_id") or "").strip()
+    if ranking_snapshot_id:
+        if review_revision_id != _promotion_review_revision_id(
+            recommendation_id,
+            ranking_snapshot_id,
+        ):
+            return ""
+    elif review_revision_id != recommendation_id:
+        # A revision-aware decision without its snapshot lineage is unsafe.
+        return ""
+    return review_revision_id
 
 
 def _human_inbox_decision_projection_from_record(command: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if str(command.get("status") or "").strip().lower() in _HUMAN_INBOX_INACTIVE_COMMAND_STATUSES:
         return None
-    if not _human_inbox_decision_recommendation_id(command):
+    review_revision_id = _human_inbox_decision_recommendation_id(command)
+    if not review_revision_id:
         return None
     params = command.get("params") if isinstance(command.get("params"), dict) else {}
     decision = str(params.get("decision") or "").strip().lower()
@@ -37046,6 +37131,14 @@ def _human_inbox_decision_projection_from_record(command: Dict[str, Any]) -> Opt
         "decided_at": command.get("submitted_at"),
         "decided_by": audit.get("operator_id") or audit.get("actor") or audit.get("actor_id"),
         "command_status": command.get("status"),
+        "review_id": review_revision_id,
+        "promotion_review_id": review_revision_id,
+        "recommendation_id": params.get("recommendation_id")
+        or params.get("recommendationId")
+        or _promotion_review_revision_recommendation_id(
+            review_revision_id
+        ),
+        "ranking_snapshot_id": params.get("ranking_snapshot_id"),
         "live_capital_mutation": False,
         "requires_human_gate_decision": True,
     }
@@ -37063,7 +37156,19 @@ def _human_inbox_promotion_review_from_projection(
     submission: Dict[str, Any],
     decision: Optional[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    review_id = str(recommendation.get("recommendation_id") or recommendation.get("id") or "")
+    recommendation_id = str(
+        recommendation.get("recommendation_id")
+        or recommendation.get("id")
+        or ""
+    )
+    review_id = str(
+        recommendation.get("promotion_review_id")
+        or recommendation.get("review_id")
+        or _promotion_review_revision_id(
+            recommendation_id,
+            recommendation.get("ranking_snapshot_id"),
+        )
+    )
     stage_path = _promotion_review_stage_path(recommendation)
     decision_status = "accepted" if decision else "pending"
     item: Dict[str, Any] = {
@@ -37075,7 +37180,7 @@ def _human_inbox_promotion_review_from_projection(
         "id": review_id,
         "review_id": review_id,
         "promotion_review_id": review_id,
-        "recommendation_id": review_id,
+        "recommendation_id": recommendation_id,
         "status": "decision_accepted" if decision else "pending_human_gate",
         "decision_status": decision_status,
         "submitted": True,
@@ -37126,6 +37231,9 @@ def _submitted_promotion_review_record_from_command(
     if recommendation is None:
         return None
     recommendation_id = str(recommendation["recommendation_id"])
+    review_id = _promotion_review_record_revision_id(command)
+    if not review_id:
+        return None
     return _human_inbox_promotion_review_from_projection(
         recommendation,
         submission=_human_inbox_submission_projection_from_record(command, recommendation_id),
@@ -37146,18 +37254,20 @@ def _submitted_promotion_review_records(
         if command.get("type") == CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT.value:
             recommendation = _human_inbox_sanitize_promotion_snapshot(command)
             if recommendation is not None:
-                submissions[str(recommendation["recommendation_id"])] = command
+                review_id = _promotion_review_record_revision_id(command)
+                if review_id:
+                    submissions[review_id] = command
             continue
-        recommendation_id = _human_inbox_decision_recommendation_id(command)
+        review_id = _human_inbox_decision_recommendation_id(command)
         decision = _human_inbox_decision_projection_from_record(command)
-        if recommendation_id and decision is not None:
-            decisions[recommendation_id] = decision
+        if review_id and decision is not None:
+            decisions[review_id] = decision
 
     records: List[Dict[str, Any]] = []
-    for recommendation_id, command in submissions.items():
+    for review_id, command in submissions.items():
         review = _submitted_promotion_review_record_from_command(
             command,
-            decision=decisions.get(recommendation_id),
+            decision=decisions.get(review_id),
         )
         if review is not None:
             records.append(review)
@@ -37213,6 +37323,7 @@ def _human_inbox_promotion_review_item(review: Dict[str, Any]) -> Optional[Dict[
             "target_stage": stage_path.get("target_stage"),
             "review_kind": review.get("review_kind") or stage_path.get("review_kind"),
             "action_id": review.get("action_id"),
+            "ranking_snapshot_id": review.get("ranking_snapshot_id"),
             "live_capital_mutation": False,
         },
         "allowedActions": _management_json_clone(review.get("allowedActions") or {
@@ -50871,8 +50982,12 @@ def _pm12_quarterly_recommendation_item(
         if ref.get("refId") or ref.get("ref_id") or ref.get("id")
     ]
     recommendation_id = f"pm12-{quarter_window['quarter'].lower()}-{persona_id}-{action_id}"
-    submission = _promotion_review_submission_projection(recommendation_id)
-    decision = _promotion_review_decision_projection(recommendation_id)
+    review_id = _promotion_review_revision_id(
+        recommendation_id,
+        item.get("ranking_snapshot_id"),
+    )
+    submission = _promotion_review_submission_projection(review_id)
+    decision = _promotion_review_decision_projection(review_id)
 
     if decision:
         review_status = "decision_accepted"
@@ -50905,6 +51020,8 @@ def _pm12_quarterly_recommendation_item(
     return {
         "id": recommendation_id,
         "recommendation_id": recommendation_id,
+        "review_id": review_id,
+        "promotion_review_id": review_id,
         "quarter": quarter_window["quarter"],
         "quarter_window": quarter_window,
         "persona_id": persona_id,
@@ -51022,6 +51139,10 @@ _PROMOTION_REVIEW_PROMOTION_ACTION_IDS: Set[str] = {"promote_to_canary_candidate
 _PROMOTION_REVIEW_DECISIONS: Set[str] = {"approve", "approve_with_conditions", "reject"}
 _PROMOTION_REVIEW_ID_PREFIX = "promotion-review:"
 _PROMOTION_REVIEW_TARGET_PREFIX = "promotion_review:"
+_PROMOTION_REVIEW_REVISION_MARKER = "--snapshot-"
+_PROMOTION_REVIEW_REVISION_RE = re.compile(
+    r"^(?P<recommendation_id>.+)--snapshot-(?P<digest>[0-9a-f]{32})$"
+)
 _PROMOTION_REVIEW_ID_QUARTER_RE = re.compile(r"pm12-(?P<quarter>\d{4}-q[1-4])-", re.IGNORECASE)
 
 
@@ -51036,6 +51157,77 @@ def _promotion_review_clean_id(review_id: Any) -> str:
 
 def _promotion_review_target_id(review_id: Any) -> str:
     return f"{_PROMOTION_REVIEW_TARGET_PREFIX}{_promotion_review_clean_id(review_id)}"
+
+
+def _promotion_review_revision_id(
+    recommendation_id: Any,
+    ranking_snapshot_id: Any,
+) -> str:
+    clean_recommendation_id = _promotion_review_clean_id(recommendation_id)
+    clean_snapshot_id = str(ranking_snapshot_id or "").strip()
+    if not clean_recommendation_id or not clean_snapshot_id:
+        return clean_recommendation_id
+    digest = hashlib.sha256(
+        f"{clean_recommendation_id}\x00{clean_snapshot_id}".encode("utf-8")
+    ).hexdigest()[:32]
+    return (
+        f"{clean_recommendation_id}"
+        f"{_PROMOTION_REVIEW_REVISION_MARKER}{digest}"
+    )
+
+
+def _promotion_review_revision_recommendation_id(review_id: Any) -> str:
+    clean_id = _promotion_review_clean_id(review_id)
+    match = _PROMOTION_REVIEW_REVISION_RE.fullmatch(clean_id)
+    if match is None:
+        return clean_id
+    return match.group("recommendation_id")
+
+
+def _promotion_review_record_revision_id(command: Dict[str, Any]) -> str:
+    params = command.get("params") if isinstance(command.get("params"), dict) else {}
+    recommendation_id = _human_inbox_promotion_recommendation_id(command)
+    ranking_snapshot_id = str(params.get("ranking_snapshot_id") or "").strip()
+    expected_revision_id = _promotion_review_revision_id(
+        recommendation_id,
+        ranking_snapshot_id,
+    )
+    asserted_ids = [
+        str(params.get(key) or "").strip()
+        for key in ("review_id", "promotion_review_id")
+        if str(params.get(key) or "").strip()
+    ]
+    if ranking_snapshot_id:
+        if asserted_ids and any(
+            _promotion_review_clean_id(asserted_id) != expected_revision_id
+            for asserted_id in asserted_ids
+        ):
+            return ""
+        return expected_revision_id
+    # Snapshotless legacy records predate revision identities. They remain
+    # readable under the stable recommendation id but cannot authorize a
+    # snapshot-bound decision or allocation.
+    if asserted_ids and any(
+        _promotion_review_clean_id(asserted_id) != recommendation_id
+        for asserted_id in asserted_ids
+    ):
+        return ""
+    return recommendation_id
+
+
+def _promotion_review_scoped_idempotency_key(
+    idempotency_key: Optional[str],
+    x_idempotency_key: Optional[str],
+    review_revision_id: str,
+) -> str:
+    client_key = _resolve_final_idempotency_key(
+        idempotency_key,
+        x_idempotency_key,
+    )
+    revision_digest = hashlib.sha256(
+        _promotion_review_clean_id(review_revision_id).encode("utf-8")
+    ).hexdigest()[:32]
+    return f"{client_key}:promotion-review:{revision_digest}"
 
 
 def _promotion_review_quarter_from_id(review_id: Any) -> Optional[str]:
@@ -51091,13 +51283,7 @@ def _latest_promotion_review_submission(review_id: Any) -> Optional[Dict[str, An
     for record in reversed(command_store._get_all_commands()):
         if not _human_inbox_trusted_promotion_submission(record):
             continue
-        target = record.get("target") if isinstance(record.get("target"), dict) else {}
-        params = record.get("params") if isinstance(record.get("params"), dict) else {}
-        if target.get("id") == clean_id:
-            return record
-        if str(params.get("recommendation_id") or params.get("recommendationId") or "").strip() == clean_id:
-            return record
-        if str(params.get("review_id") or params.get("promotion_review_id") or "").strip() == clean_id:
+        if _promotion_review_record_revision_id(record) == clean_id:
             return record
     return None
 
@@ -51112,6 +51298,7 @@ def _promotion_review_submission_projection(
         return None
     params = record.get("params") if isinstance(record.get("params"), dict) else {}
     audit = record.get("audit") if isinstance(record.get("audit"), dict) else {}
+    review_revision_id = _promotion_review_record_revision_id(record)
     projection = {
         "submitted": True,
         "submit_status": record.get("status"),
@@ -51121,6 +51308,8 @@ def _promotion_review_submission_projection(
         "submitted_at": record.get("submitted_at"),
         "submitted_by": audit.get("operator_id") or audit.get("actor") or audit.get("actor_id"),
         "recommendation_id": params.get("recommendation_id") or params.get("recommendationId"),
+        "review_id": review_revision_id,
+        "promotion_review_id": review_revision_id,
         "recommendation_action_id": params.get("recommendation_action_id") or params.get("recommendationActionId"),
         "ranking_snapshot_id": params.get("ranking_snapshot_id"),
         "quarter": params.get("quarter"),
@@ -51128,7 +51317,7 @@ def _promotion_review_submission_projection(
         "stage_from": params.get("stage_from"),
         "stage_to": params.get("stage_to"),
         "review_kind": params.get("review_kind"),
-        "human_inbox_id": f"{_PROMOTION_REVIEW_TARGET_PREFIX}{_promotion_review_clean_id(review_id)}",
+        "human_inbox_id": _promotion_review_target_id(review_revision_id),
         "live_capital_mutation": False,
         "requires_human_gate_decision": True,
     }
@@ -51160,7 +51349,15 @@ def _promotion_review_decision_projection(review_id: Any) -> Optional[Dict[str, 
 def _promotion_review_item_from_recommendation(
     recommendation: Dict[str, Any],
 ) -> Dict[str, Any]:
-    review_id = str(recommendation.get("recommendation_id") or recommendation.get("id") or "")
+    recommendation_id = str(
+        recommendation.get("recommendation_id")
+        or recommendation.get("id")
+        or ""
+    )
+    review_id = _promotion_review_revision_id(
+        recommendation_id,
+        recommendation.get("ranking_snapshot_id"),
+    )
     private_submission = _promotion_review_submission_projection(
         review_id,
         include_source_recommendation=True,
@@ -51204,7 +51401,7 @@ def _promotion_review_item_from_recommendation(
         "id": review_id,
         "review_id": review_id,
         "promotion_review_id": review_id,
-        "recommendation_id": recommendation.get("recommendation_id") or recommendation.get("id"),
+        "recommendation_id": recommendation_id,
         "ranking_snapshot_id": recommendation.get("ranking_snapshot_id"),
         "quarter": recommendation.get("quarter"),
         "quarter_window": recommendation.get("quarter_window"),
@@ -51259,7 +51456,7 @@ def _promotion_review_item_from_recommendation(
         "links": {
             "persona": f"/bff/personas/{recommendation.get('persona_id')}",
             "recommendation": "/bff/management/quarterly-ranking/recommendations",
-            "submit": f"/bff/management/quarterly-ranking/recommendations/{quote(review_id, safe='')}/submit",
+            "submit": f"/bff/management/quarterly-ranking/recommendations/{quote(recommendation_id, safe='')}/submit",
             "detail": f"/bff/management/promotion-reviews/{quote(review_id, safe='')}",
             "decisions": f"/bff/management/promotion-reviews/{quote(review_id, safe='')}/decisions",
             "human_inbox": f"/bff/management/human-inbox/{quote(_promotion_review_target_id(review_id), safe='')}",
@@ -51370,6 +51567,7 @@ def _promotion_review_find(
     *,
     snapshot_at: str,
     quarter: Optional[str] = None,
+    include_historical: bool = True,
 ) -> tuple[Optional[Dict[str, Any]], Dict[str, Any], int, bool]:
     clean_id = _promotion_review_clean_id(review_id)
     resolved_quarter = quarter or _promotion_review_quarter_from_id(clean_id)
@@ -51387,6 +51585,23 @@ def _promotion_review_find(
         }
         if clean_id in identifiers:
             return item, quarter_window, redacted_count, evidence_dataset_available
+    if include_historical:
+        for item in _submitted_promotion_review_records(
+            identity,
+            snapshot_at=snapshot_at,
+        ):
+            identifiers = {
+                str(item.get("id") or ""),
+                str(item.get("review_id") or ""),
+                str(item.get("promotion_review_id") or ""),
+            }
+            if clean_id in identifiers:
+                return (
+                    item,
+                    quarter_window,
+                    redacted_count,
+                    evidence_dataset_available,
+                )
     return None, quarter_window, redacted_count, evidence_dataset_available
 
 
@@ -51434,6 +51649,7 @@ def _promotion_review_decision_payload(
         "review_id": review["review_id"],
         "promotion_review_id": review["promotion_review_id"],
         "recommendation_id": review["recommendation_id"],
+        "ranking_snapshot_id": review.get("ranking_snapshot_id"),
         "persona_id": review.get("persona_id"),
         "action_id": review.get("action_id"),
         "promotion_stage_from": "paper",
@@ -51465,6 +51681,7 @@ def _promotion_review_decision_response(
     review: Dict[str, Any],
     decision: str,
     command_payload: Dict[str, Any],
+    client_idempotency_key: Optional[str] = None,
 ) -> JSONResponse:
     content = json.loads(command_response.body.decode("utf-8") if command_response.body else "{}")
     data = content.setdefault("data", {})
@@ -51475,6 +51692,7 @@ def _promotion_review_decision_response(
             "recommendation_id": review["recommendation_id"],
             "persona_id": review.get("persona_id"),
             "action_id": review.get("action_id"),
+            "ranking_snapshot_id": review.get("ranking_snapshot_id"),
             "decision": decision,
             "decision_status": "accepted",
             "requires_human_gate_decision": True,
@@ -51493,6 +51711,16 @@ def _promotion_review_decision_response(
     if "conditions" in command_payload:
         data["conditions"] = json.loads(json.dumps(command_payload.get("conditions")))
     meta = content.setdefault("meta", {})
+    if client_idempotency_key:
+        meta["idempotency"] = {
+            **(
+                meta.get("idempotency")
+                if isinstance(meta.get("idempotency"), dict)
+                else {}
+            ),
+            "key": client_idempotency_key,
+            "idempotencyKey": client_idempotency_key,
+        }
     meta.update(
         {
             "live_capital_mutation": False,
@@ -51513,6 +51741,7 @@ def _promotion_review_submit_response(
     command_response: JSONResponse,
     *,
     review: Dict[str, Any],
+    client_idempotency_key: Optional[str] = None,
 ) -> JSONResponse:
     content = json.loads(command_response.body.decode("utf-8") if command_response.body else "{}")
     refreshed = _promotion_review_item_from_recommendation(review["source_recommendation"])
@@ -51538,6 +51767,16 @@ def _promotion_review_submit_response(
         }
     )
     meta = content.setdefault("meta", {})
+    if client_idempotency_key:
+        meta["idempotency"] = {
+            **(
+                meta.get("idempotency")
+                if isinstance(meta.get("idempotency"), dict)
+                else {}
+            ),
+            "key": client_idempotency_key,
+            "idempotencyKey": client_idempotency_key,
+        }
     meta.update(
         {
             "ranking_snapshot_id": refreshed.get("ranking_snapshot_id"),
@@ -51572,6 +51811,10 @@ async def bff_management_quarterly_ranking_recommendation_submit(
     x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
 ):
     """BFF: submit a PM-12 recommendation into Human Gate review without live mutation."""
+    route_review_id = _promotion_review_clean_id(recommendation_id)
+    recommendation_id = _promotion_review_revision_recommendation_id(
+        route_review_id
+    )
     identity = _extract_identity(authorization)
     if not {"operator", "approver", "admin"}.intersection(identity.roles):
         raise _bff_error(
@@ -51599,79 +51842,132 @@ async def bff_management_quarterly_ranking_recommendation_submit(
     requested_ranking_snapshot_id = str(
         payload.get("ranking_snapshot_id") or ""
     ).strip()
-    existing_submission = _promotion_review_submission_projection(
-        recommendation_id,
-        include_source_recommendation=True,
-    )
-    if existing_submission:
-        stored_ranking_snapshot_id = str(
-            existing_submission.get("ranking_snapshot_id") or ""
-        ).strip()
-        if not stored_ranking_snapshot_id:
-            raise _bff_error(
-                409,
-                ErrorCode.PRECONDITION_FAILED,
-                "submitted recommendation has no immutable ranking snapshot",
-                "A legacy submission cannot adopt a caller-provided snapshot during replay.",
-                precondition_failed="ranking_snapshot_id",
-                suggestion="Create a new governed recommendation submission from a current ranking snapshot.",
-            )
-        if (
-            requested_ranking_snapshot_id
-            and requested_ranking_snapshot_id != stored_ranking_snapshot_id
-        ):
-            raise _bff_error(
-                422,
-                ErrorCode.VALIDATION_FAILED,
-                "ranking_snapshot_id does not match the submitted recommendation",
-                "Replay the immutable ranking snapshot stored with the original submission.",
-                precondition_failed="ranking_snapshot_id",
-            )
-        replay_assertions = {
+    command_payload: Optional[Dict[str, Any]] = None
+    if requested_ranking_snapshot_id:
+        command_payload = {
             **payload,
             "quarter": (
                 payload.get("quarter")
-                or existing_submission.get("quarter")
                 or _promotion_review_quarter_from_id(recommendation_id)
             ),
             "recommendation_id": recommendation_id,
-            "ranking_snapshot_id": stored_ranking_snapshot_id,
+            "ranking_snapshot_id": requested_ranking_snapshot_id,
         }
+        # Validate caller assertions against the durable snapshot before
+        # resolving the dynamic current alias. Forged IDs and snapshots remain
+        # validation failures rather than being masked as a missing current row.
         _validate_quarterly_ranking_recommendation_submit(
-            replay_assertions,
+            command_payload,
             identity,
         )
+    current_review, _, _, _ = _promotion_review_find(
+        identity,
+        recommendation_id,
+        snapshot_at=snapshot_at,
+        quarter=str(payload.get("quarter") or "").strip() or None,
+        include_historical=False,
+    )
+    if current_review is None and route_review_id == recommendation_id:
+        raise _bff_error(
+            404,
+            ErrorCode.RESOURCE_NOT_FOUND,
+            "Quarterly ranking recommendation not found",
+            f"Recommendation {recommendation_id} does not exist",
+            precondition_failed="recommendation_id",
+        )
+    current_ranking_snapshot_id = str(
+        (current_review or {}).get("ranking_snapshot_id") or ""
+    ).strip()
+    if not requested_ranking_snapshot_id:
+        if current_review is None:
+            raise _bff_error(
+                409,
+                ErrorCode.RESOURCE_CONFLICT,
+                "historical promotion review requires its immutable snapshot",
+                "Refresh the historical review and replay it with ranking_snapshot_id.",
+                precondition_failed="ranking_snapshot_id",
+            )
+        requested_ranking_snapshot_id = str(
+            current_ranking_snapshot_id
+        ).strip()
+        command_payload = {
+            **payload,
+            "quarter": (
+                payload.get("quarter")
+                or _promotion_review_quarter_from_id(recommendation_id)
+            ),
+            "recommendation_id": recommendation_id,
+            "ranking_snapshot_id": requested_ranking_snapshot_id,
+        }
+        _validate_quarterly_ranking_recommendation_submit(
+            command_payload,
+            identity,
+        )
+    assert command_payload is not None
+    if (
+        route_review_id == recommendation_id
+        and requested_ranking_snapshot_id != current_ranking_snapshot_id
+    ):
+        raise _bff_error(
+            409,
+            ErrorCode.RESOURCE_CONFLICT,
+            "ranking recommendation snapshot is stale",
+            "The stable recommendation route only accepts its current admitted snapshot.",
+            precondition_failed="ranking_snapshot_id",
+            suggestion="Refresh the current recommendation before submitting.",
+        )
+    review_revision_id = str(
+        command_payload.get("promotion_review_id")
+        or command_payload.get("review_id")
+        or ""
+    ).strip()
+    if not review_revision_id:
+        raise _bff_error(
+            409,
+            ErrorCode.PRECONDITION_FAILED,
+            "admitted ranking snapshot has no promotion review revision",
+            "The server could not bind the recommendation to its immutable snapshot.",
+            precondition_failed="promotion_review_id",
+        )
+    if (
+        route_review_id != recommendation_id
+        and route_review_id != review_revision_id
+    ):
+        raise _bff_error(
+            409,
+            ErrorCode.RESOURCE_CONFLICT,
+            "promotion review revision is stale",
+            "The route revision does not identify the admitted ranking snapshot.",
+            precondition_failed="promotion_review_id",
+            suggestion="Refresh the current recommendation before submitting.",
+        )
+
+    existing_submission = _promotion_review_submission_projection(
+        review_revision_id,
+        include_source_recommendation=True,
+    )
+    if existing_submission:
         stored_source = existing_submission.get("source_recommendation")
         if not isinstance(stored_source, dict):
-            stored_source = {
-                "id": existing_submission.get("recommendation_id") or recommendation_id,
-                "recommendation_id": existing_submission.get("recommendation_id") or recommendation_id,
-                "ranking_snapshot_id": stored_ranking_snapshot_id,
-                "quarter": existing_submission.get("quarter"),
-                "persona_id": existing_submission.get("persona_id"),
-                "action_id": existing_submission.get("recommendation_action_id"),
-                "stage": existing_submission.get("stage_from"),
-                "evidence_refs": [],
-                "evidence_ref_ids": [],
-            }
-        else:
-            stored_source = json.loads(json.dumps(stored_source))
-            stored_source["ranking_snapshot_id"] = (
-                stored_ranking_snapshot_id
-                or str(stored_source.get("ranking_snapshot_id") or "").strip()
+            raise _bff_error(
+                409,
+                ErrorCode.PRECONDITION_FAILED,
+                "submitted recommendation has no immutable source snapshot",
+                "The legacy submission is audit-readable but cannot be replayed as a snapshot-bound revision.",
+                precondition_failed="source_recommendation",
+                suggestion="Submit the current governed recommendation revision.",
             )
-        # The stored recommendation may have been submitted by a more privileged
-        # actor. Snapshot replay is identity-stable, but evidence visibility is
-        # request-scoped, so never replay stored evidence bodies across roles.
+        stored_source = json.loads(json.dumps(stored_source))
+        # Evidence visibility is request-scoped. Never replay stored evidence
+        # bodies across identities or roles.
         stored_source["evidence_refs"] = []
         stored_source["evidence_ref_ids"] = []
         already = _promotion_review_item_from_recommendation(stored_source)
         replay_snapshot_id = str(
-            stored_ranking_snapshot_id
+            existing_submission.get("ranking_snapshot_id")
             or already.get("ranking_snapshot_id")
             or ""
         ).strip()
-        already["ranking_snapshot_id"] = replay_snapshot_id
         return JSONResponse(
             status_code=200,
             content=jsonable_encoder(
@@ -51695,7 +51991,10 @@ async def bff_management_quarterly_ranking_recommendation_submit(
                     "meta": {
                         **_snapshot_meta(snapshot_at),
                         "ranking_snapshot_id": replay_snapshot_id,
-                        "idempotency": {"replayed": True, "source": "existing_submission"},
+                        "idempotency": {
+                            "replayed": True,
+                            "source": "existing_submission",
+                        },
                         "live_capital_mutation": False,
                         "direct_live_capital_mutation": False,
                         "requires_human_gate_decision": True,
@@ -51704,36 +52003,16 @@ async def bff_management_quarterly_ranking_recommendation_submit(
                 }
             ),
         )
-
-    if not requested_ranking_snapshot_id:
-        current_review, _, _, _ = _promotion_review_find(
-            identity,
-            recommendation_id,
-            snapshot_at=snapshot_at,
-            quarter=str(payload.get("quarter") or "").strip() or None,
+    if current_review is None:
+        raise _bff_error(
+            409,
+            ErrorCode.RESOURCE_CONFLICT,
+            "historical promotion review cannot create a new submission",
+            "Only the current admitted recommendation revision may create a Human Gate submission.",
+            precondition_failed="promotion_review_id",
+            suggestion="Refresh the current recommendation before submitting.",
         )
-        if current_review is None:
-            raise _bff_error(
-                404,
-                ErrorCode.RESOURCE_NOT_FOUND,
-                "Quarterly ranking recommendation not found",
-                f"Recommendation {recommendation_id} does not exist",
-                precondition_failed="recommendation_id",
-            )
-        requested_ranking_snapshot_id = str(
-            current_review.get("ranking_snapshot_id") or ""
-        ).strip()
 
-    command_payload = {
-        **payload,
-        "quarter": (
-            payload.get("quarter")
-            or _promotion_review_quarter_from_id(recommendation_id)
-        ),
-        "recommendation_id": recommendation_id,
-        "ranking_snapshot_id": requested_ranking_snapshot_id,
-    }
-    _validate_quarterly_ranking_recommendation_submit(command_payload, identity)
     source_recommendation = command_payload.get("source_recommendation")
     if not isinstance(source_recommendation, dict):
         raise _bff_error(
@@ -51744,17 +52023,29 @@ async def bff_management_quarterly_ranking_recommendation_submit(
             precondition_failed="recommendation_id",
         )
     review = _promotion_review_item_from_recommendation(source_recommendation)
+    client_idempotency_key = _resolve_final_idempotency_key(
+        idempotency_key,
+        x_idempotency_key,
+    )
+    scoped_idempotency_key = _promotion_review_scoped_idempotency_key(
+        client_idempotency_key,
+        None,
+        review["review_id"],
+    )
     command_response = _sem_command_response(
         command_type=CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT,
         target_type=ObjectType.RANKING,
-        target_id=review["recommendation_id"],
+        target_id=review["review_id"],
         payload=command_payload,
         identity=identity,
-        idempotency_key=idempotency_key,
-        x_idempotency_key=x_idempotency_key,
+        idempotency_key=scoped_idempotency_key,
         trusted_evidence_producer=_HUMAN_INBOX_PROMOTION_PRODUCER,
     )
-    return _promotion_review_submit_response(command_response, review=review)
+    return _promotion_review_submit_response(
+        command_response,
+        review=review,
+        client_idempotency_key=client_idempotency_key,
+    )
 
 
 @app.get("/bff/management/promotion-reviews")
@@ -51935,6 +52226,7 @@ async def bff_management_promotion_review_decision(
         review_id,
         snapshot_at=snapshot_at,
         quarter=str(payload.get("quarter") or "").strip() or None,
+        include_historical=False,
     )
     if review is None:
         raise _bff_error(
@@ -51970,20 +52262,29 @@ async def bff_management_promotion_review_decision(
         rationale=rationale,
         identity=identity,
     )
+    client_idempotency_key = _resolve_final_idempotency_key(
+        idempotency_key,
+        x_idempotency_key,
+    )
+    scoped_idempotency_key = _promotion_review_scoped_idempotency_key(
+        client_idempotency_key,
+        None,
+        review["review_id"],
+    )
     command_response = _sem_command_response(
         command_type=command_type,
         target_type=ObjectType.HUMAN_GATE_ITEM,
         target_id=_promotion_review_target_id(review["review_id"]),
         payload=command_payload,
         identity=identity,
-        idempotency_key=idempotency_key,
-        x_idempotency_key=x_idempotency_key,
+        idempotency_key=scoped_idempotency_key,
     )
     return _promotion_review_decision_response(
         command_response,
         review=review,
         decision=raw_decision,
         command_payload=command_payload,
+        client_idempotency_key=client_idempotency_key,
     )
 
 
