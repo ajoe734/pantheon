@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import sys
 import types
@@ -16,9 +18,12 @@ from services.trade_journey.correlation_envelope import (
 from services.trade_journey.lifecycle_projector import (
     AtomicProjectionBundle,
     ConflictingLifecycleEvent,
+    DEFAULT_HEALTH_MAX_AGE_SECONDS,
     LIFECYCLE_EVENT_TYPE_QUERY,
     LifecycleProjector,
     PostgresLifecycleSource,
+    _record_worker_failure,
+    projector_readiness,
 )
 
 
@@ -366,6 +371,7 @@ def test_bundle_failure_never_switches_partial_generation_or_checkpoint(tmp_path
         )
     assert not (tmp_path / "current").exists()
     assert not (tmp_path / "controller_state.json").exists()
+    assert not (tmp_path / "health_state.json").exists()
     assert projector.checkpoint == 0
 
     recovered = _projector(tmp_path)
@@ -374,6 +380,57 @@ def test_bundle_failure_never_switches_partial_generation_or_checkpoint(tmp_path
     )
     assert (tmp_path / "current" / "manifest.json").is_file()
     assert recovered.checkpoint == 1
+
+
+def test_health_snapshot_stays_with_current_during_atomic_generation_switch(tmp_path):
+    projector = _projector(tmp_path)
+    projector.project_records(
+        lifecycle_rows()[:1], mode="live", source_high_watermark=1
+    )
+    health_path = tmp_path / "health_state.json"
+    health = json.loads(health_path.read_text(encoding="utf-8"))
+    assert health["generation"] == 1
+    assert "canonical_events" not in health
+
+    observations: list[dict] = []
+
+    def observe_before_switch(_path: Path) -> None:
+        observations.append(
+            projector_readiness(
+                state_path=health_path,
+                bundle_root=tmp_path,
+                max_age_seconds=30,
+                max_backlog=0,
+                min_free_bytes=0,
+                min_free_percent=0,
+                now=datetime(2026, 7, 15, 0, 1, 2, tzinfo=timezone.utc),
+            )
+        )
+
+    projector.bundle = AtomicProjectionBundle(
+        tmp_path,
+        before_switch=observe_before_switch,
+    )
+    projector.project_records(
+        lifecycle_rows()[1:2], mode="live", source_high_watermark=2
+    )
+
+    assert len(observations) == 1
+    assert observations[0]["ready"] is True
+    assert observations[0]["current_generation"] == 1
+    assert observations[0]["controller_generation"] == 1
+    after = projector_readiness(
+        state_path=health_path,
+        bundle_root=tmp_path,
+        max_age_seconds=30,
+        max_backlog=0,
+        min_free_bytes=0,
+        min_free_percent=0,
+        now=datetime(2026, 7, 15, 0, 1, 2, tzinfo=timezone.utc),
+    )
+    assert after["ready"] is True
+    assert after["current_generation"] == 2
+    assert after["controller_generation"] == 2
 
 
 def test_source_failure_preserves_last_good_bundle(tmp_path):
@@ -394,3 +451,274 @@ def test_source_failure_preserves_last_good_bundle(tmp_path):
     assert recovered["events"] == before
     assert recovered["controller"]["status"] == "ready"
     assert recovered["controller"]["last_error"] is None
+
+
+def test_generation_retention_is_bounded_and_never_removes_active_generation(tmp_path):
+    bundle = AtomicProjectionBundle(tmp_path, generation_retention=3)
+    for generation in range(1, 7):
+        bundle.publish(
+            generation,
+            {"schema_version": "journey-test", "events": []},
+            {"schema_version": "loop-test", "records": {}},
+        )
+
+    generation_names = {
+        path.name
+        for path in (tmp_path / "generations").iterdir()
+        if path.is_dir()
+    }
+    active_name = (tmp_path / "current").resolve().name
+    assert len(generation_names) == 3
+    assert active_name in generation_names
+    assert json.loads((tmp_path / "current" / "manifest.json").read_text())["generation"] == 6
+
+
+def test_publish_finishes_retention_cleanup_before_switching_current(tmp_path, monkeypatch):
+    bundle = AtomicProjectionBundle(tmp_path, generation_retention=2)
+    bundle.publish(
+        1,
+        {"schema_version": "journey-test", "events": []},
+        {"schema_version": "loop-test", "records": {}},
+    )
+    previous_active = (tmp_path / "current").resolve().name
+    observed: list[tuple[bool, str]] = []
+    original_maintain = bundle.maintain
+
+    def observe_maintain(*, reserve_for_publish: bool = False):
+        observed.append((reserve_for_publish, (tmp_path / "current").resolve().name))
+        return original_maintain(reserve_for_publish=reserve_for_publish)
+
+    monkeypatch.setattr(bundle, "maintain", observe_maintain)
+    bundle.publish(
+        2,
+        {"schema_version": "journey-test", "events": []},
+        {"schema_version": "loop-test", "records": {}},
+    )
+
+    assert observed == [(True, previous_active)]
+    assert (tmp_path / "current").resolve().name != previous_active
+
+
+def test_retention_preserves_old_active_generation_and_cleans_only_abandoned_staging(tmp_path):
+    generations = tmp_path / "generations"
+    generations.mkdir()
+    for generation in range(1, 5):
+        (generations / f"g{generation:012d}-{generation:012x}").mkdir()
+    os.symlink("generations/g000000000001-000000000001", tmp_path / "current")
+
+    abandoned = generations / ".g000000000005-000000000005.tmp"
+    recent = generations / ".g000000000006-000000000006.tmp"
+    unowned_generation = generations / "g000000000007-operator-note"
+    unowned_staging = generations / ".g000000000008-operator-note.tmp"
+    abandoned.mkdir()
+    recent.mkdir()
+    unowned_generation.mkdir()
+    unowned_staging.mkdir()
+    os.utime(abandoned, (1, 1))
+    os.utime(recent, (95, 95))
+    os.utime(unowned_staging, (1, 1))
+
+    bundle = AtomicProjectionBundle(
+        tmp_path,
+        generation_retention=2,
+        staging_max_age_seconds=10,
+        epoch_clock=lambda: 100,
+    )
+    report = bundle.maintain()
+
+    generation_names = {
+        path.name
+        for path in generations.iterdir()
+        if path.is_dir() and not path.name.startswith(".")
+    }
+    assert generation_names == {
+        "g000000000001-000000000001",
+        "g000000000004-000000000004",
+        "g000000000007-operator-note",
+    }
+    assert (tmp_path / "current").resolve().name == "g000000000001-000000000001"
+    assert not abandoned.exists()
+    assert recent.exists()
+    assert unowned_staging.exists()
+    assert report["active_generation"] == "g000000000001-000000000001"
+    assert report["abandoned_staging"] == [abandoned.name]
+
+
+def test_enospc_during_projection_and_error_publication_does_not_escape_worker_loop(tmp_path):
+    def fail_with_enospc(_path: Path) -> None:
+        raise OSError(28, "No space left on device")
+
+    projector = _projector(
+        tmp_path,
+        publisher=AtomicProjectionBundle(
+            tmp_path,
+            before_switch=fail_with_enospc,
+            generation_retention=2,
+            staging_max_age_seconds=0,
+        ),
+    )
+    with pytest.raises(OSError, match="No space left on device") as failure:
+        projector.project_records(
+            lifecycle_rows()[:1], mode="live", source_high_watermark=1
+        )
+
+    assert _record_worker_failure(projector, failure.value) is False
+    assert projector.checkpoint == 0
+    assert projector.controller["status"] == "degraded"
+    assert "No space left on device" in projector.controller["last_error"]
+    assert "No space left on device" in projector.controller["error_publication_failure"]
+    assert not (tmp_path / "controller_state.json").exists()
+    assert len(
+        [
+            path
+            for path in (tmp_path / "generations").iterdir()
+            if path.is_dir() and not path.name.startswith(".")
+        ]
+    ) <= 2
+
+
+def test_transient_enospc_converges_without_losing_checkpoint_or_active_generation(
+    tmp_path,
+):
+    attempts = 0
+
+    def fail_twice(_path: Path) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts <= 2:
+            raise OSError(28, "No space left on device")
+
+    projector = _projector(
+        tmp_path,
+        publisher=AtomicProjectionBundle(
+            tmp_path,
+            before_switch=fail_twice,
+            generation_retention=2,
+            staging_max_age_seconds=0,
+        ),
+    )
+    with pytest.raises(OSError) as failure:
+        projector.project_records(
+            lifecycle_rows()[:1], mode="live", source_high_watermark=1
+        )
+    assert _record_worker_failure(projector, failure.value) is False
+
+    recovered = projector.project_records(
+        lifecycle_rows()[:1], mode="live", source_high_watermark=1
+    )
+
+    assert recovered.checkpoint == 1
+    assert projector.checkpoint == 1
+    assert projector.controller["status"] == "ready"
+    assert projector.controller["last_error"] is None
+    assert (tmp_path / "current" / "manifest.json").is_file()
+    assert json.loads((tmp_path / "current" / "manifest.json").read_text())[
+        "generation"
+    ] == recovered.generation
+
+
+def test_repeated_identical_source_failure_does_not_publish_unbounded_generations(tmp_path):
+    timestamps = iter(
+        [
+            "2026-07-22T00:00:00Z",
+            "2026-07-22T00:00:01Z",
+            "2026-07-22T00:00:02Z",
+        ]
+    )
+    projector = LifecycleProjector(
+        state_path=tmp_path / "controller_state.json",
+        bundle_root=tmp_path,
+        deployment_sha="deadbeef",
+        clock=lambda: next(timestamps),
+    )
+    projector.project_records(
+        lifecycle_rows()[:1], mode="live", source_high_watermark=1
+    )
+    projector.record_source_failure("postgres unavailable", backlog=7)
+    failure_generation = projector.controller["generation"]
+    generation_count = len(list((tmp_path / "generations").iterdir()))
+
+    projector.record_source_failure("postgres unavailable", backlog=7)
+
+    assert projector.controller["generation"] == failure_generation
+    assert len(list((tmp_path / "generations").iterdir())) == generation_count
+    assert projector.controller["last_failure_at"] == "2026-07-22T00:00:02Z"
+
+
+def test_projector_readiness_exposes_freshness_generation_watermark_and_disk(tmp_path):
+    observed_at = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
+    projector = LifecycleProjector(
+        state_path=tmp_path / "controller_state.json",
+        bundle_root=tmp_path,
+        deployment_sha="deadbeef",
+        clock=lambda: "2026-07-22T12:00:00Z",
+    )
+    projector.project_records(
+        lifecycle_rows()[:1], mode="live", source_high_watermark=1
+    )
+
+    healthy = projector_readiness(
+        state_path=tmp_path / "controller_state.json",
+        bundle_root=tmp_path,
+        max_age_seconds=30,
+        max_backlog=0,
+        min_free_bytes=0,
+        min_free_percent=0,
+        now=observed_at,
+    )
+    assert healthy["ready"] is True
+    assert healthy["worker_status"] == "ready"
+    assert healthy["current_generation"] == healthy["controller_generation"] == 1
+    assert healthy["source_high_watermark"] == 1
+    assert healthy["last_successful_publish_at"] == "2026-07-22T12:00:00Z"
+
+    stale = projector_readiness(
+        state_path=tmp_path / "controller_state.json",
+        bundle_root=tmp_path,
+        max_age_seconds=30,
+        min_free_bytes=0,
+        min_free_percent=0,
+        now=datetime(2026, 7, 22, 12, 1, tzinfo=timezone.utc),
+    )
+    assert stale["ready"] is False
+    assert stale["worker_status"] == "stale"
+    assert stale["stale_reason"].startswith("last_poll_stale:")
+
+    low_disk = projector_readiness(
+        state_path=tmp_path / "controller_state.json",
+        bundle_root=tmp_path,
+        max_age_seconds=30,
+        min_free_bytes=10**30,
+        min_free_percent=0,
+        now=observed_at,
+    )
+    assert low_disk["ready"] is False
+    assert low_disk["disk"]["low"] is True
+    assert any(reason.startswith("disk_below_policy:") for reason in low_disk["reasons"])
+
+
+def test_default_freshness_window_covers_observed_large_volume_poll(tmp_path, monkeypatch):
+    monkeypatch.delenv("LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS", raising=False)
+    projector = LifecycleProjector(
+        state_path=tmp_path / "controller_state.json",
+        bundle_root=tmp_path,
+        deployment_sha="deadbeef",
+        clock=lambda: "2026-07-22T12:00:00Z",
+    )
+    projector.project_records(
+        lifecycle_rows()[:1], mode="live", source_high_watermark=1
+    )
+
+    observed = projector_readiness(
+        state_path=tmp_path / "controller_state.json",
+        bundle_root=tmp_path,
+        max_backlog=0,
+        min_free_bytes=0,
+        min_free_percent=0,
+        now=datetime(2026, 7, 22, 12, 1, 1, tzinfo=timezone.utc),
+    )
+
+    assert DEFAULT_HEALTH_MAX_AGE_SECONDS == 120.0
+    assert observed["freshness"]["max_age_seconds"] == 120.0
+    assert observed["freshness"]["age_seconds"] == 61.0
+    assert observed["ready"] is True
