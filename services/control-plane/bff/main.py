@@ -51873,26 +51873,28 @@ async def bff_management_quarterly_ranking_recommendation_submit(
             command_payload,
             identity,
         )
-    current_review, _, _, _ = _promotion_review_find(
-        identity,
-        recommendation_id,
-        snapshot_at=snapshot_at,
-        quarter=str(payload.get("quarter") or "").strip() or None,
-        include_historical=False,
-    )
-    if current_review is None and route_review_id == recommendation_id:
-        raise _bff_error(
-            404,
-            ErrorCode.RESOURCE_NOT_FOUND,
-            "Quarterly ranking recommendation not found",
-            f"Recommendation {recommendation_id} does not exist",
-            precondition_failed="recommendation_id",
-        )
-    current_ranking_snapshot_id = str(
-        (current_review or {}).get("ranking_snapshot_id") or ""
-    ).strip()
+    current_review: Optional[Dict[str, Any]] = None
     if not requested_ranking_snapshot_id:
+        # A snapshotless request deliberately follows the mutable stable alias.
+        # A caller that supplied an admitted snapshot has already been resolved
+        # from the durable snapshot store above and must not be rebound to this
+        # current-only projection after a lifecycle/session rotation.
+        current_review, _, _, _ = _promotion_review_find(
+            identity,
+            recommendation_id,
+            snapshot_at=snapshot_at,
+            quarter=str(payload.get("quarter") or "").strip() or None,
+            include_historical=False,
+        )
         if current_review is None:
+            if route_review_id == recommendation_id:
+                raise _bff_error(
+                    404,
+                    ErrorCode.RESOURCE_NOT_FOUND,
+                    "Quarterly ranking recommendation not found",
+                    f"Recommendation {recommendation_id} does not exist",
+                    precondition_failed="recommendation_id",
+                )
             raise _bff_error(
                 409,
                 ErrorCode.RESOURCE_CONFLICT,
@@ -51901,7 +51903,7 @@ async def bff_management_quarterly_ranking_recommendation_submit(
                 precondition_failed="ranking_snapshot_id",
             )
         requested_ranking_snapshot_id = str(
-            current_ranking_snapshot_id
+            current_review.get("ranking_snapshot_id") or ""
         ).strip()
         command_payload = {
             **payload,
@@ -51917,18 +51919,6 @@ async def bff_management_quarterly_ranking_recommendation_submit(
             identity,
         )
     assert command_payload is not None
-    if (
-        route_review_id == recommendation_id
-        and requested_ranking_snapshot_id != current_ranking_snapshot_id
-    ):
-        raise _bff_error(
-            409,
-            ErrorCode.RESOURCE_CONFLICT,
-            "ranking recommendation snapshot is stale",
-            "The stable recommendation route only accepts its current admitted snapshot.",
-            precondition_failed="ranking_snapshot_id",
-            suggestion="Refresh the current recommendation before submitting.",
-        )
     review_revision_id = str(
         command_payload.get("promotion_review_id")
         or command_payload.get("review_id")
@@ -52016,15 +52006,29 @@ async def bff_management_quarterly_ranking_recommendation_submit(
                 }
             ),
         )
-    if current_review is None:
-        raise _bff_error(
-            409,
-            ErrorCode.RESOURCE_CONFLICT,
-            "historical promotion review cannot create a new submission",
-            "Only the current admitted recommendation revision may create a Human Gate submission.",
-            precondition_failed="promotion_review_id",
-            suggestion="Refresh the current recommendation before submitting.",
-        )
+    if route_review_id != recommendation_id:
+        if current_review is None:
+            current_review, _, _, _ = _promotion_review_find(
+                identity,
+                recommendation_id,
+                snapshot_at=snapshot_at,
+                quarter=str(payload.get("quarter") or "").strip() or None,
+                include_historical=False,
+            )
+        current_revision_id = str(
+            (current_review or {}).get("promotion_review_id")
+            or (current_review or {}).get("review_id")
+            or ""
+        ).strip()
+        if route_review_id != current_revision_id:
+            raise _bff_error(
+                409,
+                ErrorCode.RESOURCE_CONFLICT,
+                "historical promotion review cannot create a new submission",
+                "Only the current admitted recommendation revision may create a Human Gate submission.",
+                precondition_failed="promotion_review_id",
+                suggestion="Refresh the current recommendation before submitting.",
+            )
 
     source_recommendation = command_payload.get("source_recommendation")
     if not isinstance(source_recommendation, dict):
@@ -52234,12 +52238,20 @@ async def bff_management_promotion_review_decision(
         )
 
     snapshot_at = utc_now()
+    clean_review_id = _promotion_review_clean_id(review_id)
+    exact_revision_requested = (
+        clean_review_id
+        != _promotion_review_revision_recommendation_id(clean_review_id)
+    )
     review, _quarter_window, _redacted_count, _evidence_dataset_available = _promotion_review_find(
         identity,
         review_id,
         snapshot_at=snapshot_at,
         quarter=str(payload.get("quarter") or "").strip() or None,
-        include_historical=False,
+        # Stable aliases remain current-only. An exact immutable revision may
+        # still receive its one pending decision after a newer ranking snapshot
+        # becomes current; the revision id keeps that authority isolated.
+        include_historical=exact_revision_requested,
     )
     if review is None:
         raise _bff_error(
@@ -52249,6 +52261,33 @@ async def bff_management_promotion_review_decision(
             f"Promotion review {review_id} does not exist",
             precondition_failed="review_id",
         )
+    if exact_revision_requested and str(
+        review.get("decision_status") or "pending"
+    ).strip().lower() != "pending":
+        current_review, _, _, _ = _promotion_review_find(
+            identity,
+            _promotion_review_revision_recommendation_id(clean_review_id),
+            snapshot_at=snapshot_at,
+            quarter=str(payload.get("quarter") or "").strip() or None,
+            include_historical=False,
+        )
+        current_revision_id = str(
+            (current_review or {}).get("promotion_review_id")
+            or (current_review or {}).get("review_id")
+            or ""
+        ).strip()
+        if clean_review_id != current_revision_id:
+            # Resolved historical revisions remain read-only; in particular an
+            # old approval must never be reused as authority for a newer
+            # revision. The current exact revision still reaches the durable
+            # idempotency layer so its original decision receipt can replay.
+            raise _bff_error(
+                404,
+                ErrorCode.RESOURCE_NOT_FOUND,
+                "Promotion review not found",
+                f"Promotion review {review_id} does not exist",
+                precondition_failed="review_id",
+            )
     if not bool(review.get("submitted")):
         raise _bff_error(
             409,
