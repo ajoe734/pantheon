@@ -32,11 +32,22 @@ print({"reservation_outcomes": outcomes})
 PY
 
 "${compose[@]}" restart "$service" >/dev/null
-for _ in $(seq 1 60); do
-  if curl -fsS --max-time 2 http://127.0.0.1:18001/readyz >/dev/null 2>&1; then break; fi
-  sleep 2
-done
-curl -fsS --max-time 5 http://127.0.0.1:18001/readyz >/dev/null
+# The lifecycle projector can need slightly more than the ordinary 120-second
+# restart budget to republish and accept live truth.  Permit one additional
+# bounded 120-second window only while the exact deployment reports its known
+# recovery state and continues converging, or while a recent exact/fresh
+# observation remains bounded to the still-live exact BFF during dependency
+# warm-up. Unexpected degradation, old/stale identity, a stalled non-zero
+# backlog, or failure to accept live truth by the hard deadline still fails.
+python3 scripts/wait_for_bff_lifecycle_readiness.py \
+  --url http://127.0.0.1:18001/readyz \
+  --expected-deployment-sha "$(git rev-parse HEAD)" \
+  --initial-timeout-seconds 120 \
+  --recovery-extension-seconds 120 \
+  --stalled-timeout-seconds 45 \
+  --poll-interval-seconds 2 \
+  --request-timeout-seconds 2 \
+  --exact-evidence-max-age-seconds 30
 
 "${compose[@]}" exec -T -e SMOKE_KEY="$key" "$service" python - <<'PY'
 import os
