@@ -388,3 +388,33 @@ def test_non_bff_components_do_not_use_lifecycle_waiter() -> None:
     )[0]
     assert "wait_for_exact_bff_lifecycle_readiness" not in exec_block
     assert "wait_for_exact_bff_lifecycle_readiness" not in control_block
+
+
+def test_agora_restart_persistence_uses_exact_waiter_before_verify() -> None:
+    workflow = Path(".github/workflows/nonprod-deploy.yml").read_text()
+    agora = workflow.split(
+        "\n      - name: Dev Agora restart persistence smoke under lease",
+        1,
+    )[1].split(
+        "\n      - name: Stop heartbeat and release only after complete success",
+        1,
+    )[0]
+    waiter = (
+        'python3 "${GITHUB_WORKSPACE}/.target/scripts/'
+        'wait_for_bff_lifecycle_readiness.py"'
+    )
+    restart = "docker compose -p pantheon -f docker-compose.yml restart operator-bff"
+    verify = (
+        "agora_workshop_restart_persistence_smoke.py verify "
+        "--workshop-id ${workshop_id_q}"
+    )
+
+    assert "PANTHEON_DEPLOY_SHA: ${{ steps.target.outputs.sha }}" in agora
+    assert waiter in agora
+    assert '--expected-deployment-sha "${PANTHEON_DEPLOY_SHA}"' in agora
+    assert "--initial-timeout-seconds 120" in agora
+    assert "--recovery-extension-seconds 120" in agora
+    assert "--stalled-timeout-seconds 45" in agora
+    assert "for _ in $(seq 1 30)" not in agora
+    assert 'curl -fsS "${DEV_BFF_URL}/readyz"' not in agora
+    assert agora.index(restart) < agora.index(waiter) < agora.index(verify)
