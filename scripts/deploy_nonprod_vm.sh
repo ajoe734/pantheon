@@ -724,6 +724,19 @@ curl_with_retry() {
   curl -fsS "$url" >/dev/null
 }
 
+wait_for_exact_bff_lifecycle_readiness() {
+  local url="$1"
+
+  python3 scripts/wait_for_bff_lifecycle_readiness.py \
+    --url "$url" \
+    --expected-deployment-sha "${PANTHEON_DEPLOY_SHA}" \
+    --initial-timeout-seconds 120 \
+    --recovery-extension-seconds 120 \
+    --stalled-timeout-seconds 45 \
+    --poll-interval-seconds 2 \
+    --request-timeout-seconds 2
+}
+
 wait_for_bounded_source_refresh_service() {
   local service="$1"
   local timeout_seconds="${SOURCE_INGEST_BOUNDED_RUN_TIMEOUT_SECONDS}"
@@ -1969,7 +1982,13 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
       || { dump_dev_root_failure_diagnostics; exit 1; }
     curl_with_retry http://127.0.0.1:18001/health \
       || { dump_dev_root_failure_diagnostics; exit 1; }
-    curl_with_retry http://127.0.0.1:18001/readyz \
+    # Root deployment replaces the lifecycle projector and BFF together. The
+    # BFF can become HTTP-ready while /readyz still reports the prior projector
+    # identity, so use the same exact-deployment, bounded recovery gate as the
+    # later residual restart smoke. A wrong or missing projector SHA can retry
+    # only inside the ordinary base window and can never grant the extension.
+    wait_for_exact_bff_lifecycle_readiness \
+      http://127.0.0.1:18001/readyz \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     assert_bff_source_sha http://127.0.0.1:18001/bff/version \
       || { dump_dev_root_failure_diagnostics; exit 1; }
@@ -2079,7 +2098,8 @@ case "${PANTHEON_DEPLOY_COMPONENT}" in
       || { dump_dev_root_failure_diagnostics; exit 1; }
     curl_with_retry http://127.0.0.1:18001/health \
       || { dump_dev_root_failure_diagnostics; exit 1; }
-    curl_with_retry http://127.0.0.1:18001/readyz \
+    wait_for_exact_bff_lifecycle_readiness \
+      http://127.0.0.1:18001/readyz \
       || { dump_dev_root_failure_diagnostics; exit 1; }
     assert_bff_source_sha http://127.0.0.1:18001/bff/version \
       || { dump_dev_root_failure_diagnostics; exit 1; }

@@ -1978,10 +1978,25 @@ def test_promotion_submit_replay_preserves_original_snapshot_after_ranking_mutat
                 },
             )
             assert submit.status_code == 202, submit.text
+            original_review_id = submit.json()["data"]["review_id"]
+            assert original_review_id != recommendation_id
             assert submit.json()["data"]["ranking_snapshot_id"] == original_snapshot_id
             assert bff_main.command_store._get_all_commands()[0]["params"][
                 "ranking_snapshot_id"
             ] == original_snapshot_id
+            original_decision = client.post(
+                f"/bff/management/promotion-reviews/{original_review_id}/decisions",
+                headers={
+                    "Authorization": "Bearer ppl-alloc-012-approver:approver",
+                    "Idempotency-Key": "ppl-alloc-012-promotion-decision",
+                },
+                json={
+                    "decision": "approve",
+                    "quarter": "2026-Q3",
+                    "rationale": "Approve only this immutable ranking revision.",
+                },
+            )
+            assert original_decision.status_code == 202, original_decision.text
 
             _write_live_binding(store, current_weight=0.09)
             mutated_response = client.get(
@@ -2019,18 +2034,55 @@ def test_promotion_submit_replay_preserves_original_snapshot_after_ranking_mutat
                 for item in review_list.json()["data"]["items"]
                 if item["recommendation_id"] == recommendation_id
             )
-            for stored_review in (stored_list_review, review_detail.json()["data"]):
-                assert stored_review["ranking_snapshot_id"] == original_snapshot_id
-                assert stored_review["current_weight"] == original_current_weight
-                assert stored_review["source_recommendation"]["ranking_snapshot_id"] == (
-                    original_snapshot_id
+            for current_review in (stored_list_review, review_detail.json()["data"]):
+                assert current_review["ranking_snapshot_id"] == (
+                    mutated_recommendation["ranking_snapshot_id"]
                 )
-                assert stored_review["source_recommendation"]["current_weight"] == (
-                    original_current_weight
+                assert current_review["current_weight"] == (
+                    mutated_recommendation["current_weight"]
                 )
+                assert current_review["submitted"] is False
+                assert current_review["status"] == "recommended_not_submitted"
+                assert current_review["decision_status"] == "pending"
+
+            historical_detail = client.get(
+                f"/bff/management/promotion-reviews/{original_review_id}",
+                headers=HEADERS,
+                params={"quarter": "2026-Q3"},
+            )
+            assert historical_detail.status_code == 200, historical_detail.text
+            historical = historical_detail.json()["data"]
+            assert historical["review_id"] == original_review_id
+            assert historical["ranking_snapshot_id"] == original_snapshot_id
+            assert historical["current_weight"] == original_current_weight
+            assert historical["submitted"] is True
+            assert historical["decision_status"] == "accepted"
+            historical_mutation = client.post(
+                f"/bff/management/promotion-reviews/{original_review_id}/decisions",
+                headers={
+                    "Authorization": "Bearer ppl-alloc-012-approver:approver",
+                    "Idempotency-Key": "ppl-alloc-012-old-revision-mutation",
+                },
+                json={
+                    "decision": "approve",
+                    "quarter": "2026-Q3",
+                    "rationale": "Historical revisions are read-only.",
+                },
+            )
+            assert historical_mutation.status_code == 404, historical_mutation.text
+
+            stale_alias = client.post(
+                f"/bff/management/quarterly-ranking/recommendations/{recommendation_id}/submit",
+                headers={**HEADERS, "Idempotency-Key": "ppl-alloc-012-submit-replay"},
+                json={
+                    "quarter": "2026-Q3",
+                    "ranking_snapshot_id": original_snapshot_id,
+                },
+            )
+            assert stale_alias.status_code == 409, stale_alias.text
 
             replay = client.post(
-                f"/bff/management/quarterly-ranking/recommendations/{recommendation_id}/submit",
+                f"/bff/management/quarterly-ranking/recommendations/{original_review_id}/submit",
                 headers={**HEADERS, "Idempotency-Key": "ppl-alloc-012-submit-replay"},
                 json={
                     "quarter": "2026-Q3",
@@ -2043,10 +2095,70 @@ def test_promotion_submit_replay_preserves_original_snapshot_after_ranking_mutat
             assert replay_body["data"]["ranking_snapshot_id"] == original_snapshot_id
             assert replay_body["meta"]["ranking_snapshot_id"] == original_snapshot_id
             assert replay_body["data"]["review"]["ranking_snapshot_id"] == original_snapshot_id
-            assert len(bff_main.command_store._get_all_commands()) == 1
+            assert len(bff_main.command_store._get_all_commands()) == 2
             assert bff_main.command_store._get_all_commands()[0]["params"][
                 "ranking_snapshot_id"
             ] == original_snapshot_id
+
+            superseding = client.post(
+                f"/bff/management/quarterly-ranking/recommendations/{recommendation_id}/submit",
+                headers={
+                    **HEADERS,
+                    # Same client namespace is safe because the server scopes it
+                    # to the immutable review revision.
+                    "Idempotency-Key": "ppl-alloc-012-submit-original",
+                },
+                json={
+                    "quarter": "2026-Q3",
+                    "ranking_snapshot_id": mutated_recommendation[
+                        "ranking_snapshot_id"
+                    ],
+                },
+            )
+            assert superseding.status_code == 202, superseding.text
+            superseding_body = superseding.json()
+            assert superseding_body["data"]["review_id"] != original_review_id
+            assert superseding_body["data"]["recommendation_id"] == recommendation_id
+            assert superseding_body["data"]["status"] == "pending_human_gate"
+            assert superseding_body["data"]["review"]["decision_status"] == "pending"
+            superseding_review_id = superseding_body["data"]["review_id"]
+            assert len(bff_main.command_store._get_all_commands()) == 3
+            inbox = client.get(
+                "/bff/management/human-inbox",
+                headers=HEADERS,
+                params={"source_type": "promotion_review", "page_size": 200},
+            )
+            assert inbox.status_code == 200, inbox.text
+            review_ids = [
+                item["promotion_review_id"]
+                for item in inbox.json()["data"]["items"]
+                if item["recommendation_id"] == recommendation_id
+            ]
+            assert set(review_ids) == {
+                original_review_id,
+                superseding_review_id,
+            }
+            assert len(review_ids) == len(set(review_ids))
+
+            superseding_decision = client.post(
+                f"/bff/management/promotion-reviews/{superseding_review_id}/decisions",
+                headers={
+                    "Authorization": "Bearer ppl-alloc-012-approver:approver",
+                    # The same client retry key is independently scoped to the
+                    # new immutable revision.
+                    "Idempotency-Key": "ppl-alloc-012-promotion-decision",
+                },
+                json={
+                    "decision": "approve",
+                    "quarter": "2026-Q3",
+                    "rationale": "Approve the superseding ranking revision.",
+                },
+            )
+            assert superseding_decision.status_code == 202, superseding_decision.text
+            assert superseding_decision.json()["data"]["review_id"] == (
+                superseding_review_id
+            )
+            assert len(bff_main.command_store._get_all_commands()) == 4
         finally:
             bff_main.read_store = original_store
             bff_main.command_store = original_command_store
@@ -2121,7 +2233,24 @@ def test_promotion_first_submit_uses_admitted_snapshot_after_mutation_and_restar
             bff_main.command_store = CommandStore(command_path)
             client = TestClient(bff_main.app, raise_server_exceptions=False)
 
-            submit = client.post(
+            restarted_response = client.get(
+                "/bff/management/quarterly-ranking/recommendations",
+                headers=HEADERS,
+                params={
+                    "quarter": "2026-Q3",
+                    "personaId": LIVE_PERSONA_ID,
+                    "page_size": 200,
+                },
+            )
+            assert restarted_response.status_code == 200, restarted_response.text
+            restarted = next(
+                item
+                for item in restarted_response.json()["data"]["items"]
+                if item["recommendation_id"] == recommendation_id
+            )
+            assert restarted["current_weight"] == mutated["current_weight"]
+
+            stale = client.post(
                 f"/bff/management/quarterly-ranking/recommendations/{recommendation_id}/submit",
                 headers={
                     **HEADERS,
@@ -2132,16 +2261,35 @@ def test_promotion_first_submit_uses_admitted_snapshot_after_mutation_and_restar
                     "ranking_snapshot_id": original_snapshot_id,
                 },
             )
+            assert stale.status_code == 409, stale.text
+
+            submit = client.post(
+                f"/bff/management/quarterly-ranking/recommendations/{recommendation_id}/submit",
+                headers={
+                    **HEADERS,
+                    "Idempotency-Key": "ppl-alloc-012-submit-current-after-restart",
+                },
+                json={
+                    "quarter": "2026-Q3",
+                    "ranking_snapshot_id": restarted["ranking_snapshot_id"],
+                },
+            )
             assert submit.status_code == 202, submit.text
             body = submit.json()
-            assert body["data"]["ranking_snapshot_id"] == original_snapshot_id
-            assert body["data"]["review"]["current_weight"] == original_weight
+            assert body["data"]["ranking_snapshot_id"] == restarted[
+                "ranking_snapshot_id"
+            ]
+            assert body["data"]["review"]["current_weight"] == restarted[
+                "current_weight"
+            ]
             assert body["meta"]["live_capital_mutation"] is False
             commands = bff_main.command_store._get_all_commands()
             assert len(commands) == 1
             params = commands[0]["params"]
-            assert params["ranking_snapshot_id"] == original_snapshot_id
-            assert params["source_recommendation"]["current_weight"] == original_weight
+            assert params["ranking_snapshot_id"] == restarted["ranking_snapshot_id"]
+            assert params["source_recommendation"]["current_weight"] == restarted[
+                "current_weight"
+            ]
             assert params["live_capital_mutation"] is False
             assert params["direct_live_capital_mutation"] is False
             assert params["runtime_mutation"] is False
@@ -2300,7 +2448,7 @@ def test_promotion_first_submit_rejects_unknown_forged_or_mutated_snapshot_tuple
             bff_main._FINAL_CONTRACT_IDEMPOTENCY.update(original_final_idempotency)
 
 
-def test_legacy_promotion_submit_cannot_adopt_caller_snapshot_on_replay() -> None:
+def test_legacy_promotion_submit_remains_read_only_when_current_revision_is_submitted() -> None:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
         original_command_store = bff_main.command_store
@@ -2356,7 +2504,32 @@ def test_legacy_promotion_submit_cannot_adopt_caller_snapshot_on_replay() -> Non
             assert "source_record_id" not in commands_before[0]["params"]
             assert "source_recommendation" not in commands_before[0]["params"]
 
-            replay = client.post(
+            current_detail = client.get(
+                f"/bff/management/promotion-reviews/{recommendation_id}",
+                headers=HEADERS,
+                params={"quarter": "2026-Q3"},
+            )
+            assert current_detail.status_code == 200, current_detail.text
+            assert current_detail.json()["data"]["ranking_snapshot_id"] == (
+                caller_snapshot_id
+            )
+            assert current_detail.json()["data"]["submitted"] is False
+
+            legacy_decision = client.post(
+                f"/bff/management/promotion-reviews/{recommendation_id}/decisions",
+                headers={
+                    "Authorization": "Bearer legacy-approver:approver",
+                    "Idempotency-Key": "ppl-alloc-012-legacy-decision",
+                },
+                json={
+                    "decision": "approve",
+                    "quarter": "2026-Q3",
+                    "rationale": "Legacy snapshotless rows cannot authorize current.",
+                },
+            )
+            assert legacy_decision.status_code == 409, legacy_decision.text
+
+            submit = client.post(
                 f"/bff/management/quarterly-ranking/recommendations/{recommendation_id}/submit",
                 headers={
                     **HEADERS,
@@ -2367,18 +2540,23 @@ def test_legacy_promotion_submit_cannot_adopt_caller_snapshot_on_replay() -> Non
                     "ranking_snapshot_id": caller_snapshot_id,
                 },
             )
-            assert replay.status_code == 409, replay.text
-            assert replay.json()["error"]["code"] == "PRECONDITION_FAILED"
-            assert replay.json()["error"]["details"]["precondition_failed"] == (
-                "ranking_snapshot_id"
-            )
+            assert submit.status_code == 202, submit.text
+            new_review_id = submit.json()["data"]["review_id"]
+            assert new_review_id != recommendation_id
 
             commands_after = bff_main.command_store._get_all_commands()
-            assert commands_after == commands_before
+            assert len(commands_after) == 2
             assert "ranking_snapshot_id" not in commands_after[0]["params"]
             assert "source_type" not in commands_after[0]["params"]
             assert "source_record_id" not in commands_after[0]["params"]
             assert "source_recommendation" not in commands_after[0]["params"]
+            assert commands_after[1]["target"]["id"] == new_review_id
+            assert commands_after[1]["params"]["ranking_snapshot_id"] == (
+                caller_snapshot_id
+            )
+            assert commands_after[1]["params"]["promotion_review_id"] == (
+                new_review_id
+            )
         finally:
             bff_main.read_store = original_store
             bff_main.command_store = original_command_store
