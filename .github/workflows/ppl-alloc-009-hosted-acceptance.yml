@@ -9,9 +9,9 @@ on:
         default: "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io"
         type: string
       execute_plans_test_sha:
-        description: "Immutable execute-plans revision containing the acceptance harness"
-        required: true
-        default: "7492ad7fd0b430df40dd7fe7b6b0d187d8742350"
+        description: "Optional exact harness SHA; empty uses expected_fe_sha and any other SHA is rejected"
+        required: false
+        default: ""
         type: string
       expected_bff_sha:
         description: "Exact deployed Pantheon BFF commit SHA"
@@ -69,9 +69,28 @@ jobs:
       PPL_ALLOC_009_QUARTER: ${{ inputs.quarter }}
       PPL_ALLOC_009_RUN_KEY: ${{ inputs.resume_run_key }}
       PPL_ALLOC_009_TENANT_ID: ${{ inputs.tenant_id }}
-      PPL_ALLOC_009_TEST_SHA: ${{ inputs.execute_plans_test_sha }}
       PANTHEON_CREDENTIALED_PLAYWRIGHT_NO_ARTIFACTS: "1"
     steps:
+      - name: Checkout dispatched Pantheon revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5a
+        with:
+          path: pantheon
+          persist-credentials: false
+
+      - name: Resolve exact accepted frontend harness
+        id: harness
+        shell: bash
+        env:
+          EXPECTED_FRONTEND_SHA: ${{ inputs.expected_fe_sha }}
+          REQUESTED_TEST_SHA: ${{ inputs.execute_plans_test_sha }}
+        run: |
+          set -euo pipefail
+          python3 pantheon/scripts/resolve_ppl_alloc_009_acceptance_harness.py \
+            --expected-frontend-sha "${EXPECTED_FRONTEND_SHA}" \
+            --requested-test-sha "${REQUESTED_TEST_SHA}" \
+            --github-output "${GITHUB_OUTPUT}" \
+            --github-env "${GITHUB_ENV}"
+
       - name: Load and mask the browser identity key
         shell: bash
         env:
@@ -85,17 +104,11 @@ jobs:
           fi
           echo "PPL_ALLOC_009_GCP_IDENTITY_API_KEY=${GCP_IDENTITY_API_KEY}" >> "${GITHUB_ENV}"
 
-      - name: Checkout dispatched Pantheon revision
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5a
-        with:
-          path: pantheon
-          persist-credentials: false
-
       - name: Checkout immutable execute-plans acceptance harness
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5a
         with:
           repository: ajoe734/execute-plans
-          ref: ${{ inputs.execute_plans_test_sha }}
+          ref: ${{ steps.harness.outputs.test_sha }}
           path: execute-plans
           persist-credentials: false
 
@@ -108,6 +121,7 @@ jobs:
           [[ "${PPL_ALLOC_009_EXPECTED_FE_SHA}" =~ ^[0-9a-f]{40}$ ]]
           [[ "${PPL_ALLOC_009_EXPECTED_BFF_SHA}" =~ ^[0-9a-f]{40}$ ]]
           [[ "${PPL_ALLOC_009_TEST_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${PPL_ALLOC_009_TEST_SHA}" == "${PPL_ALLOC_009_EXPECTED_FE_SHA}" ]]
           [[ "$(git -C execute-plans rev-parse HEAD)" == "${PPL_ALLOC_009_TEST_SHA}" ]]
           [[ -f execute-plans/e2e/ppl-alloc-009-cross-repo-hosted.spec.ts ]]
           [[ -n "${PPL_ALLOC_009_OPERATOR_CLIENT_ID}" ]]
