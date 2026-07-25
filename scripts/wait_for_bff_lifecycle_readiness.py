@@ -13,6 +13,7 @@ import argparse
 import json
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -40,6 +41,7 @@ class RecoveryObservation:
         )
 
 Fetch = Callable[[], tuple[int, dict[str, Any] | None]]
+ExactTargetProbe = Callable[[], str]
 Clock = Callable[[], float]
 Sleeper = Callable[[float], None]
 
@@ -195,6 +197,40 @@ def classify_readiness(
     )
 
 
+def exact_deployment_evidence(
+    payload: dict[str, Any] | None,
+    *,
+    expected_deployment_sha: str,
+) -> str:
+    """Classify whether a readiness sample proves or contradicts the target.
+
+    A temporarily unavailable response can retain a recent exact observation,
+    but an explicit old deployment or stale projector state invalidates it
+    immediately.
+    """
+    if payload is None:
+        return "absent"
+    dependencies = payload.get("dependencies")
+    if not isinstance(dependencies, dict):
+        return "absent"
+    projector = dependencies.get("lifecycle_projector")
+    if not isinstance(projector, dict):
+        return "absent"
+    deployment_sha = str(projector.get("deployment_sha") or "").strip()
+    freshness = projector.get("freshness")
+    if deployment_sha and deployment_sha != expected_deployment_sha:
+        return "contradicted"
+    if isinstance(freshness, dict) and freshness.get("stale") is True:
+        return "contradicted"
+    if (
+        deployment_sha == expected_deployment_sha
+        and isinstance(freshness, dict)
+        and freshness.get("stale") is False
+    ):
+        return "exact"
+    return "absent"
+
+
 def wait_for_readiness(
     fetch: Fetch,
     *,
@@ -203,6 +239,8 @@ def wait_for_readiness(
     recovery_extension_seconds: float,
     stalled_timeout_seconds: float,
     poll_interval_seconds: float,
+    exact_evidence_max_age_seconds: float = 30,
+    confirm_exact_target: ExactTargetProbe | None = None,
     monotonic: Clock = time.monotonic,
     sleep: Sleeper = time.sleep,
 ) -> None:
@@ -214,10 +252,19 @@ def wait_for_readiness(
     last_observation: RecoveryObservation | None = None
     last_progress_at = started_at
     consecutive_ready_samples = 0
+    last_exact_evidence_at: float | None = None
 
     while True:
         now = monotonic()
         status, payload = fetch()
+        evidence = exact_deployment_evidence(
+            payload,
+            expected_deployment_sha=expected_deployment_sha,
+        )
+        if evidence == "exact":
+            last_exact_evidence_at = now
+        elif evidence == "contradicted":
+            last_exact_evidence_at = None
         state, observation = classify_readiness(
             status,
             payload,
@@ -266,7 +313,7 @@ def wait_for_readiness(
             ):
                 raise ReadinessError(
                     "lifecycle projector recovery stopped making progress"
-            )
+                )
             last_observation = observation
 
         if (
@@ -287,29 +334,54 @@ def wait_for_readiness(
                     or recovery_progress_seen
                 )
             )
-            if state == "ready" and recovery_extension_eligible:
-                pass
-            elif state != "recovering":
+            target_probe = (
+                confirm_exact_target()
+                if (
+                    state in {"ready", "unavailable"}
+                    and confirm_exact_target is not None
+                )
+                else "unavailable"
+            )
+            if target_probe == "contradicted":
+                last_exact_evidence_at = None
+            identity_bound_extension_eligible = (
+                state in {"ready", "unavailable"}
+                and evidence != "contradicted"
+                and (
+                    target_probe == "version_exact"
+                    or (
+                        target_probe == "live"
+                        and last_exact_evidence_at is not None
+                        and now - last_exact_evidence_at
+                        <= exact_evidence_max_age_seconds
+                    )
+                )
+            )
+            if not (
+                (state in {"ready", "recovering"} and recovery_extension_eligible)
+                or identity_bound_extension_eligible
+            ):
+                if state == "recovering":
+                    if not recovery_seen:
+                        raise ReadinessError(
+                            "BFF readiness exceeded the ordinary restart budget "
+                            "without trusted lifecycle recovery evidence"
+                        )
+                    if (
+                        last_observation is None
+                        or (
+                            not last_observation.caught_up
+                            and not recovery_progress_seen
+                        )
+                    ):
+                        raise ReadinessError(
+                            "BFF readiness exceeded the ordinary restart budget "
+                            "without monotonic lifecycle recovery convergence"
+                        )
                 raise ReadinessError(
                     "BFF readiness exceeded the ordinary restart budget "
                     "without current exact-deployment trusted lifecycle "
                     "recovery evidence"
-                )
-            if not recovery_seen:
-                raise ReadinessError(
-                    "BFF readiness exceeded the ordinary restart budget "
-                    "without trusted lifecycle recovery evidence"
-                )
-            elif (
-                last_observation is None
-                or (
-                    not last_observation.caught_up
-                    and not recovery_progress_seen
-                )
-            ):
-                raise ReadinessError(
-                    "BFF readiness exceeded the ordinary restart budget "
-                    "without monotonic lifecycle recovery convergence"
                 )
         if now >= recovery_deadline:
             raise ReadinessError(
@@ -344,6 +416,46 @@ def fetch_json(
     return status, payload
 
 
+def endpoint_url(url: str, path: str) -> str:
+    parsed = urllib.parse.urlsplit(url)
+    return urllib.parse.urlunsplit(
+        (parsed.scheme, parsed.netloc, path, "", "")
+    )
+
+
+def confirm_exact_target(
+    *,
+    liveness_url: str,
+    version_url: str,
+    expected_deployment_sha: str,
+    request_timeout_seconds: float,
+) -> str:
+    version_status, version_payload = fetch_json(
+        version_url,
+        request_timeout_seconds=request_timeout_seconds,
+    )
+    if version_status == 200 and isinstance(version_payload, dict):
+        # An explicit version response is authoritative. Never mask a wrong or
+        # missing source identity with a healthy liveness response.
+        return (
+            "version_exact"
+            if str(version_payload.get("source_commit_sha") or "").strip()
+            == expected_deployment_sha
+            else "contradicted"
+        )
+    liveness_status, liveness_payload = fetch_json(
+        liveness_url,
+        request_timeout_seconds=request_timeout_seconds,
+    )
+    return (
+        "live"
+        if liveness_status == 200
+        and isinstance(liveness_payload, dict)
+        and liveness_payload.get("live") is True
+        else "unavailable"
+    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", required=True)
@@ -353,6 +465,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stalled-timeout-seconds", type=float, default=45)
     parser.add_argument("--poll-interval-seconds", type=float, default=2)
     parser.add_argument("--request-timeout-seconds", type=float, default=2)
+    parser.add_argument("--exact-evidence-max-age-seconds", type=float, default=30)
+    parser.add_argument("--liveness-url", default="")
+    parser.add_argument("--version-url", default="")
     return parser.parse_args()
 
 
@@ -364,8 +479,11 @@ def main() -> int:
         or args.stalled_timeout_seconds <= 0
         or args.poll_interval_seconds <= 0
         or args.request_timeout_seconds <= 0
+        or args.exact_evidence_max_age_seconds <= 0
     ):
         raise SystemExit("all timeout and interval values must be positive")
+    liveness_url = args.liveness_url or endpoint_url(args.url, "/livez")
+    version_url = args.version_url or endpoint_url(args.url, "/bff/version")
     try:
         wait_for_readiness(
             lambda: fetch_json(
@@ -377,6 +495,13 @@ def main() -> int:
             recovery_extension_seconds=args.recovery_extension_seconds,
             stalled_timeout_seconds=args.stalled_timeout_seconds,
             poll_interval_seconds=args.poll_interval_seconds,
+            exact_evidence_max_age_seconds=args.exact_evidence_max_age_seconds,
+            confirm_exact_target=lambda: confirm_exact_target(
+                liveness_url=liveness_url,
+                version_url=version_url,
+                expected_deployment_sha=args.expected_deployment_sha,
+                request_timeout_seconds=args.request_timeout_seconds,
+            ),
         )
     except ReadinessError as exc:
         print(f"BFF lifecycle readiness failed: {exc}")

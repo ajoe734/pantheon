@@ -9,6 +9,8 @@ import pytest
 from scripts.wait_for_bff_lifecycle_readiness import (
     ReadinessError,
     classify_readiness,
+    confirm_exact_target,
+    endpoint_url,
     wait_for_readiness,
 )
 
@@ -189,6 +191,203 @@ def test_uses_bounded_extension_for_trusted_recovery() -> None:
         sleep=fake.sleep,
     )
     assert fake.value == 5
+
+
+def test_recent_exact_unavailable_state_can_use_identity_bound_extension() -> None:
+    fake = FakeTime()
+    exact_but_unavailable = payload(ready=True)
+    _, fetch = sequence_fetch(
+        [
+            (503, exact_but_unavailable),
+            (0, None),
+            (503, exact_but_unavailable),
+            (200, payload(ready=True)),
+            (200, payload(ready=True, checkpoint=11, source=11)),
+        ]
+    )
+    wait_for_readiness(
+        fetch,
+        expected_deployment_sha=SHA,
+        initial_timeout_seconds=2,
+        recovery_extension_seconds=4,
+        stalled_timeout_seconds=1,
+        poll_interval_seconds=1,
+        exact_evidence_max_age_seconds=2,
+        confirm_exact_target=lambda: "live",
+        monotonic=fake.monotonic,
+        sleep=fake.sleep,
+    )
+    assert fake.value == 4
+
+
+def test_recent_exact_unavailable_state_still_requires_live_identity() -> None:
+    fake = FakeTime()
+    exact_but_unavailable = payload(ready=True)
+    _, fetch = sequence_fetch([(503, exact_but_unavailable)])
+    with pytest.raises(ReadinessError, match="ordinary restart budget"):
+        wait_for_readiness(
+            fetch,
+            expected_deployment_sha=SHA,
+            initial_timeout_seconds=2,
+            recovery_extension_seconds=4,
+            stalled_timeout_seconds=1,
+            poll_interval_seconds=1,
+            exact_evidence_max_age_seconds=2,
+            confirm_exact_target=lambda: "unavailable",
+            monotonic=fake.monotonic,
+            sleep=fake.sleep,
+        )
+    assert fake.value == 2
+
+
+def test_liveness_alone_without_recent_exact_target_cannot_extend() -> None:
+    fake = FakeTime()
+    _, fetch = sequence_fetch([(0, None)])
+    with pytest.raises(ReadinessError, match="ordinary restart budget"):
+        wait_for_readiness(
+            fetch,
+            expected_deployment_sha=SHA,
+            initial_timeout_seconds=2,
+            recovery_extension_seconds=4,
+            stalled_timeout_seconds=1,
+            poll_interval_seconds=1,
+            exact_evidence_max_age_seconds=2,
+            confirm_exact_target=lambda: "live",
+            monotonic=fake.monotonic,
+            sleep=fake.sleep,
+        )
+    assert fake.value == 2
+
+
+def test_exact_version_can_supply_identity_bound_extension() -> None:
+    fake = FakeTime()
+    _, fetch = sequence_fetch(
+        [
+            (0, None),
+            (0, None),
+            (0, None),
+            (200, payload(ready=True)),
+            (200, payload(ready=True, checkpoint=11, source=11)),
+        ]
+    )
+    wait_for_readiness(
+        fetch,
+        expected_deployment_sha=SHA,
+        initial_timeout_seconds=2,
+        recovery_extension_seconds=4,
+        stalled_timeout_seconds=1,
+        poll_interval_seconds=1,
+        exact_evidence_max_age_seconds=2,
+        confirm_exact_target=lambda: "version_exact",
+        monotonic=fake.monotonic,
+        sleep=fake.sleep,
+    )
+    assert fake.value == 4
+
+
+def test_expired_exact_evidence_cannot_use_identity_bound_extension() -> None:
+    fake = FakeTime()
+    exact_but_unavailable = payload(ready=True)
+    _, fetch = sequence_fetch(
+        [
+            (503, exact_but_unavailable),
+            (0, None),
+            (0, None),
+        ]
+    )
+    with pytest.raises(ReadinessError, match="ordinary restart budget"):
+        wait_for_readiness(
+            fetch,
+            expected_deployment_sha=SHA,
+            initial_timeout_seconds=2,
+            recovery_extension_seconds=4,
+            stalled_timeout_seconds=1,
+            poll_interval_seconds=1,
+            exact_evidence_max_age_seconds=1,
+            confirm_exact_target=lambda: "live",
+            monotonic=fake.monotonic,
+            sleep=fake.sleep,
+        )
+    assert fake.value == 2
+
+
+def test_exact_target_probe_rejects_explicit_wrong_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    responses = {
+        "http://bff/bff/version": (200, {"source_commit_sha": "b" * 40}),
+        "http://bff/livez": (200, {"live": True}),
+    }
+    monkeypatch.setattr(
+        "scripts.wait_for_bff_lifecycle_readiness.fetch_json",
+        lambda url, request_timeout_seconds: responses[url],
+    )
+    assert confirm_exact_target(
+        liveness_url="http://bff/livez",
+        version_url="http://bff/bff/version",
+        expected_deployment_sha=SHA,
+        request_timeout_seconds=1,
+    ) == "contradicted"
+
+
+def test_exact_target_probe_can_fall_back_to_liveness(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    responses = {
+        "http://bff/bff/version": (0, None),
+        "http://bff/livez": (200, {"live": True}),
+    }
+    monkeypatch.setattr(
+        "scripts.wait_for_bff_lifecycle_readiness.fetch_json",
+        lambda url, request_timeout_seconds: responses[url],
+    )
+    assert confirm_exact_target(
+        liveness_url="http://bff/livez",
+        version_url="http://bff/bff/version",
+        expected_deployment_sha=SHA,
+        request_timeout_seconds=1,
+    ) == "live"
+    assert endpoint_url("http://bff/readyz?ignored=1", "/livez") == (
+        "http://bff/livez"
+    )
+
+
+@pytest.mark.parametrize("contradiction", ["old", "stale"])
+def test_old_or_stale_sample_invalidates_recent_exact_evidence(
+    contradiction: str,
+) -> None:
+    fake = FakeTime()
+    exact_but_unavailable = payload(ready=True)
+    contradicted = payload(ready=True)
+    if contradiction == "old":
+        contradicted["dependencies"]["lifecycle_projector"][
+            "deployment_sha"
+        ] = "b" * 40
+    else:
+        contradicted["dependencies"]["lifecycle_projector"]["freshness"][
+            "stale"
+        ] = True
+    _, fetch = sequence_fetch(
+        [
+            (503, exact_but_unavailable),
+            (503, contradicted),
+            (503, contradicted),
+        ]
+    )
+    with pytest.raises(ReadinessError, match="ordinary restart budget"):
+        wait_for_readiness(
+            fetch,
+            expected_deployment_sha=SHA,
+            initial_timeout_seconds=2,
+            recovery_extension_seconds=4,
+            stalled_timeout_seconds=1,
+            poll_interval_seconds=1,
+            exact_evidence_max_age_seconds=2,
+            confirm_exact_target=lambda: "version_exact",
+            monotonic=fake.monotonic,
+            sleep=fake.sleep,
+        )
+    assert fake.value == 2
 
 
 def test_unexpected_degraded_reason_does_not_grant_extension() -> None:
@@ -424,6 +623,7 @@ def test_residual_smoke_uses_bounded_recovery_waiter() -> None:
     assert "--initial-timeout-seconds 120" in script
     assert "--recovery-extension-seconds 120" in script
     assert "--stalled-timeout-seconds 45" in script
+    assert "--exact-evidence-max-age-seconds 30" in script
 
 
 def _component_block(script: str, component: str, next_component: str) -> str:
@@ -468,6 +668,7 @@ def test_root_exact_waiter_is_revision_bound_and_bounded() -> None:
     assert "--initial-timeout-seconds 120" in helper
     assert "--recovery-extension-seconds 180" in helper
     assert "--stalled-timeout-seconds 45" in helper
+    assert "--exact-evidence-max-age-seconds 30" in helper
 
 
 def test_operator_bff_compose_health_is_liveness_not_projector_readiness() -> None:
@@ -541,6 +742,7 @@ def test_agora_restart_persistence_uses_exact_waiter_before_verify() -> None:
     assert "--initial-timeout-seconds 120" in agora
     assert "--recovery-extension-seconds 120" in agora
     assert "--stalled-timeout-seconds 45" in agora
+    assert "--exact-evidence-max-age-seconds 30" in agora
     assert "for _ in $(seq 1 30)" not in agora
     assert 'curl -fsS "${DEV_BFF_URL}/readyz"' not in agora
     assert agora.index(restart) < agora.index(waiter) < agora.index(verify)
