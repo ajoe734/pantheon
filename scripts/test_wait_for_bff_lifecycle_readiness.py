@@ -123,50 +123,63 @@ def test_uses_bounded_extension_for_trusted_recovery() -> None:
     assert fake.value == 4
 
 
-def test_fails_fast_for_unexpected_degraded_reason() -> None:
-    with pytest.raises(ReadinessError, match="unexpected BFF readiness"):
-        classify_readiness(
-            503,
-            payload(
-                ready=False,
-                reasons=["dependency_unavailable:postgres"],
-            ),
-            expected_deployment_sha=SHA,
-        )
+def test_unexpected_degraded_reason_does_not_grant_extension() -> None:
+    state, observation = classify_readiness(
+        503,
+        payload(
+            ready=False,
+            reasons=["dependency_unavailable:postgres"],
+        ),
+        expected_deployment_sha=SHA,
+    )
+    assert state == "unavailable"
+    assert observation is None
 
 
-def test_fails_fast_for_wrong_deployment() -> None:
-    with pytest.raises(ReadinessError, match="deployment mismatch"):
-        classify_readiness(
-            503,
-            payload(ready=False, deployment_sha="b" * 40),
-            expected_deployment_sha=SHA,
-        )
+def test_wrong_deployment_is_pending_during_base_window() -> None:
+    state, observation = classify_readiness(
+        503,
+        payload(ready=False, deployment_sha="b" * 40),
+        expected_deployment_sha=SHA,
+    )
+    assert state == "deployment_pending"
+    assert observation is None
 
 
-def test_fails_fast_for_unhealthy_dependency() -> None:
+def test_missing_deployment_is_pending_during_base_window() -> None:
+    pending = payload(ready=False)
+    pending["dependencies"]["lifecycle_projector"]["deployment_sha"] = ""
+    state, observation = classify_readiness(
+        503,
+        pending,
+        expected_deployment_sha=SHA,
+    )
+    assert state == "deployment_pending"
+    assert observation is None
+
+
+def test_unhealthy_dependency_does_not_grant_extension() -> None:
     degraded = payload(ready=False)
     degraded["dependencies"]["governance"]["status"] = "unavailable"
-    with pytest.raises(
-        ReadinessError,
-        match="unexpected degraded dependency",
-    ):
-        classify_readiness(
-            503,
-            degraded,
-            expected_deployment_sha=SHA,
-        )
+    state, observation = classify_readiness(
+        503,
+        degraded,
+        expected_deployment_sha=SHA,
+    )
+    assert state == "unavailable"
+    assert observation is None
 
 
-def test_fails_fast_for_stale_projector_state() -> None:
+def test_stale_projector_state_does_not_grant_extension() -> None:
     stale = payload(ready=False)
     stale["dependencies"]["lifecycle_projector"]["freshness"]["stale"] = True
-    with pytest.raises(ReadinessError, match="freshness is stale"):
-        classify_readiness(
-            503,
-            stale,
-            expected_deployment_sha=SHA,
-        )
+    state, observation = classify_readiness(
+        503,
+        stale,
+        expected_deployment_sha=SHA,
+    )
+    assert state == "unavailable"
+    assert observation is None
 
 
 def test_fails_when_nonzero_backlog_stalls() -> None:
@@ -245,12 +258,73 @@ def test_caught_up_recovery_is_still_bounded() -> None:
 def test_rejects_inconsistent_backlog() -> None:
     inconsistent = payload(ready=False, checkpoint=8, source=10)
     inconsistent["dependencies"]["lifecycle_projector"]["backlog"] = 1
-    with pytest.raises(ReadinessError, match="backlog does not match"):
-        classify_readiness(
-            503,
-            inconsistent,
+    state, observation = classify_readiness(
+        503,
+        inconsistent,
+        expected_deployment_sha=SHA,
+    )
+    assert state == "unavailable"
+    assert observation is None
+
+
+def test_wrong_deployment_can_converge_to_exact_ready_inside_base_window() -> None:
+    fake = FakeTime()
+    _, fetch = sequence_fetch(
+        [
+            (503, payload(ready=False, deployment_sha="b" * 40)),
+            (200, payload(ready=True, deployment_sha="b" * 40)),
+            (200, payload(ready=True)),
+        ]
+    )
+    wait_for_readiness(
+        fetch,
+        expected_deployment_sha=SHA,
+        initial_timeout_seconds=3,
+        recovery_extension_seconds=4,
+        stalled_timeout_seconds=2,
+        poll_interval_seconds=1,
+        monotonic=fake.monotonic,
+        sleep=fake.sleep,
+    )
+    assert fake.value == 2
+
+
+def test_persistent_wrong_deployment_fails_at_base_cap_without_extension() -> None:
+    fake = FakeTime()
+    _, fetch = sequence_fetch(
+        [(503, payload(ready=False, deployment_sha="b" * 40))]
+    )
+    with pytest.raises(ReadinessError, match="ordinary restart budget"):
+        wait_for_readiness(
+            fetch,
             expected_deployment_sha=SHA,
+            initial_timeout_seconds=2,
+            recovery_extension_seconds=10,
+            stalled_timeout_seconds=2,
+            poll_interval_seconds=1,
+            monotonic=fake.monotonic,
+            sleep=fake.sleep,
         )
+    assert fake.value == 2
+
+
+def test_http_200_wrong_deployment_is_never_success() -> None:
+    fake = FakeTime()
+    _, fetch = sequence_fetch(
+        [(200, payload(ready=True, deployment_sha="b" * 40))]
+    )
+    with pytest.raises(ReadinessError, match="ordinary restart budget"):
+        wait_for_readiness(
+            fetch,
+            expected_deployment_sha=SHA,
+            initial_timeout_seconds=2,
+            recovery_extension_seconds=10,
+            stalled_timeout_seconds=2,
+            poll_interval_seconds=1,
+            monotonic=fake.monotonic,
+            sleep=fake.sleep,
+        )
+    assert fake.value == 2
 
 
 def test_residual_smoke_uses_bounded_recovery_waiter() -> None:
