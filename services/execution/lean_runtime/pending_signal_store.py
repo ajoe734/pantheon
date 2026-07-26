@@ -147,12 +147,70 @@ class InMemoryPendingSignalStore:
 class RedisPendingSignalStore:
     """Redis-backed pending queue for VM-2 execution containers with claim/ack visibility.
 
-    Claims signals via LMOVE / RPOPLPUSH into a worker-scoped in-flight list.
-    Signals remain in the in-flight queue until explicitly acknowledged (ack) or
-    reclaimed after a visibility timeout.
+    Every state transition is one Redis Lua transaction.  A claim atomically
+    removes one pending payload, assigns a unique claim token, stores the
+    payload in a worker-scoped in-flight hash, and records its server-clock
+    claim time in a sorted set.  Ack, nack/requeue, DLQ transfer, and expired
+    reclaim are likewise atomic, so a client crash or response loss can cause
+    a safe redelivery but cannot create a signal-loss window.
     """
 
     kind = "redis_pending_signal_store"
+
+    _CLAIM_LUA = """
+local raw = redis.call('LPOP', KEYS[1])
+if not raw then
+  return nil
+end
+local sequence = redis.call('INCR', KEYS[4])
+local token = ARGV[1] .. ':' .. tostring(sequence)
+local server_time = redis.call('TIME')
+local claimed_at = tonumber(server_time[1]) + (tonumber(server_time[2]) / 1000000)
+redis.call('HSET', KEYS[2], token, raw)
+redis.call('ZADD', KEYS[3], claimed_at, token)
+return {raw, token, tostring(claimed_at)}
+"""
+
+    _ACK_LUA = """
+local removed = redis.call('HDEL', KEYS[1], ARGV[1])
+redis.call('ZREM', KEYS[2], ARGV[1])
+return removed
+"""
+
+    _TRANSFER_LUA = """
+local raw = redis.call('HGET', KEYS[1], ARGV[1])
+if not raw then
+  redis.call('ZREM', KEYS[2], ARGV[1])
+  return 0
+end
+redis.call('HDEL', KEYS[1], ARGV[1])
+redis.call('ZREM', KEYS[2], ARGV[1])
+if ARGV[2] ~= '' then
+  raw = ARGV[2]
+end
+redis.call('RPUSH', KEYS[3], raw)
+return 1
+"""
+
+    _RECLAIM_LUA = """
+local server_time = redis.call('TIME')
+local now = tonumber(server_time[1]) + (tonumber(server_time[2]) / 1000000)
+local cutoff = now - tonumber(ARGV[1])
+local tokens = redis.call(
+  'ZRANGEBYSCORE', KEYS[2], '-inf', cutoff, 'LIMIT', 0, tonumber(ARGV[2])
+)
+local moved = 0
+for _, token in ipairs(tokens) do
+  local raw = redis.call('HGET', KEYS[1], token)
+  if raw then
+    redis.call('HDEL', KEYS[1], token)
+    redis.call('RPUSH', KEYS[3], raw)
+    moved = moved + 1
+  end
+  redis.call('ZREM', KEYS[2], token)
+end
+return moved
+"""
 
     def __init__(
         self,
@@ -174,11 +232,15 @@ class RedisPendingSignalStore:
         self._queue_key = queue_key
         self._default_batch_size = max(int(default_batch_size), 1)
         self._worker_id = worker_id or f"worker-{os.getpid()}"
-        self._inflight_key = f"{queue_key}:inflight:{self._worker_id}"
-        self._visibility_timeout = max(int(visibility_timeout_seconds), 1)
+        self._inflight_key = f"{queue_key}:inflight:{self._worker_id}:claims"
+        self._visibility_key = f"{queue_key}:inflight:{self._worker_id}:visibility"
+        self._claim_sequence_key = f"{queue_key}:claim-sequence"
+        self._visibility_timeout = max(float(visibility_timeout_seconds), 0.05)
         self._processed_ttl_seconds = 24 * 60 * 60
         self._processed_prefix = f"{queue_key}:processed:"
         self._dlq_key = queue_key.replace(BINDING_QUEUE_KEY_PREFIX, BINDING_DLQ_KEY_PREFIX, 1)
+        self._claim_tokens_by_signal_id: dict[str, list[str]] = {}
+        self._claim_tokens_by_raw: dict[str, list[str]] = {}
 
     def mark_processed(self, signal_id: str) -> None:
         try:
@@ -200,130 +262,176 @@ class RedisPendingSignalStore:
         self.reclaim_expired_inflight()
         batch_limit = max(int(limit or self._default_batch_size), 1)
         drained: list[dict[str, Any]] = []
-        ts_key = f"{self._inflight_key}:timestamps"
-        now = time.time()
         for _ in range(batch_limit):
-            # Atomic claim: move signal from pending list to worker's in-flight list
-            try:
-                raw = self._client.lmove(self._queue_key, self._inflight_key, "LEFT", "RIGHT")
-            except Exception:
-                # Fallback for Redis < 6.2 compatibility
-                raw = self._client.rpoplpush(self._queue_key, self._inflight_key)
-            if raw is None:
+            result = self._client.eval(
+                self._CLAIM_LUA,
+                4,
+                self._queue_key,
+                self._inflight_key,
+                self._visibility_key,
+                self._claim_sequence_key,
+                self._worker_id,
+            )
+            if not result:
                 break
+            raw = self._as_text(result[0])
+            token = self._as_text(result[1])
             try:
                 sig = json.loads(raw)
-                sid = str(sig.get("signal_id") or raw)
-                self._client.hset(ts_key, sid, str(now))
-                drained.append(sig)
             except Exception:
-                # Malformed JSON in queue -> remove from inflight and send to DLQ
-                self._client.lrem(self._inflight_key, 1, raw)
-                self._client.rpush(self._dlq_key, raw)
+                self._transfer_claim(token, self._dlq_key, raw)
+                continue
+            if not isinstance(sig, dict) or not str(sig.get("signal_id") or "").strip():
+                invalid = json.dumps(
+                    {
+                        "raw_payload": sig,
+                        "_dlq_reason": "invalid_claim_payload",
+                    },
+                    sort_keys=True,
+                )
+                self._transfer_claim(token, self._dlq_key, invalid)
+                continue
+            self._remember_claim(token, raw, sig)
+            drained.append(sig)
         return drained
 
     def ack(self, signal_or_id: str | dict[str, Any]) -> None:
         """Remove claimed item from in-flight queue after successful execution."""
-        ts_key = f"{self._inflight_key}:timestamps"
-        if isinstance(signal_or_id, dict):
-            raw = json.dumps(signal_or_id)
-            self._client.lrem(self._inflight_key, 0, raw)
-            sid = str(signal_or_id.get("signal_id", ""))
-            if sid:
-                self._client.hdel(ts_key, sid)
-                items = self._client.lrange(self._inflight_key, 0, -1)
-                for item in items:
-                    try:
-                        if json.loads(item).get("signal_id") == sid:
-                            self._client.lrem(self._inflight_key, 1, item)
-                    except Exception:
-                        pass
-        elif isinstance(signal_or_id, str):
-            self._client.hdel(ts_key, signal_or_id)
-            items = self._client.lrange(self._inflight_key, 0, -1)
-            for item in items:
-                try:
-                    parsed = json.loads(item)
-                    sid = parsed.get("signal_id")
-                    if item == signal_or_id or sid == signal_or_id:
-                        if sid:
-                            self._client.hdel(ts_key, sid)
-                        self._client.lrem(self._inflight_key, 1, item)
-                except Exception:
-                    if item == signal_or_id:
-                        self._client.lrem(self._inflight_key, 1, item)
+        token = self._claim_token_for(signal_or_id)
+        if token is None:
+            return
+        self._client.eval(
+            self._ACK_LUA,
+            2,
+            self._inflight_key,
+            self._visibility_key,
+            token,
+        )
+        self._forget_claim(token)
 
     def nack_requeue(self, signal_or_id: str | dict[str, Any]) -> None:
-        """Remove claimed item from in-flight and push back to pending."""
-        self.ack(signal_or_id)
-        if isinstance(signal_or_id, dict):
-            self.enqueue(signal_or_id)
-        elif isinstance(signal_or_id, str):
-            try:
-                payload = json.loads(signal_or_id)
-                self.enqueue(payload)
-            except Exception:
-                pass
+        """Atomically return a claimed item to the pending queue."""
+        token = self._claim_token_for(signal_or_id)
+        if token is None:
+            return
+        self._transfer_claim(token, self._queue_key)
 
-    def reclaim_expired_inflight(self) -> None:
+    def reclaim_expired_inflight(self) -> int:
         """Reclaim expired in-flight entries across workers back to pending queue."""
-        prefix = f"{self._queue_key}:inflight:"
-        now = getattr(self, "_time_fn", time.time)()
+        pattern = f"{self._queue_key}:inflight:*:claims"
         cursor = 0
-        keys: list[str] = []
+        moved = 0
         while True:
-            cursor, match_keys = self._client.scan(cursor=cursor, match=f"{prefix}*", count=100)
-            keys.extend(match_keys)
-            if cursor == 0:
+            cursor, claim_keys = self._client.scan(
+                cursor=cursor,
+                match=pattern,
+                count=100,
+            )
+            for claim_key_value in claim_keys:
+                claim_key = self._as_text(claim_key_value)
+                visibility_key = claim_key[: -len(":claims")] + ":visibility"
+                moved += int(
+                    self._client.eval(
+                        self._RECLAIM_LUA,
+                        3,
+                        claim_key,
+                        visibility_key,
+                        self._queue_key,
+                        self._visibility_timeout,
+                        1000,
+                    )
+                    or 0
+                )
+            if int(cursor) == 0:
                 break
-
-        for k in keys:
-            if k.endswith(":timestamps"):
-                continue
-            ts_key = f"{k}:timestamps"
-            items = self._client.lrange(k, 0, -1)
-            for item in items:
-                try:
-                    parsed = json.loads(item)
-                    sid = parsed.get("signal_id") or item
-                except Exception:
-                    sid = item
-                
-                claim_time_str = self._client.hget(ts_key, sid)
-                claim_time = float(claim_time_str) if claim_time_str else 0.0
-                
-                # If claim_time is 0 (legacy/missing) and key is self._inflight_key, don't reclaim immediately unless expired
-                # Reclaim if claimed longer ago than visibility_timeout
-                if claim_time > 0 and (now - claim_time) < self._visibility_timeout:
-                    continue
-                if claim_time == 0 and k == self._inflight_key:
-                    continue
-
-                # Expired item: lrem from worker inflight, cleanup ts, and move back to pending
-                rem_cnt = self._client.lrem(k, 1, item)
-                if rem_cnt > 0:
-                    self._client.hdel(ts_key, sid)
-                    self._client.rpush(self._queue_key, item)
+        return moved
 
     def queue_depth(self) -> int:
         return int(self._client.llen(self._queue_key))
 
     def inflight_depth(self) -> int:
-        return int(self._client.llen(self._inflight_key))
+        return int(self._client.hlen(self._inflight_key))
 
     def enqueue_dlq(self, payload: dict[str, Any]) -> None:
-        """Route an isolation-rejected or unrecoverable signal to the Redis DLQ."""
-        try:
-            self.ack(payload)
-            self._client.rpush(self._dlq_key, json.dumps(payload))
-        except Exception:  # noqa: BLE001
-            pass
+        """Atomically move a claimed signal into the binding-scoped Redis DLQ."""
+        token = self._claim_token_for(payload)
+        if token is None:
+            raise RuntimeError("cannot DLQ a Redis signal without an active claim")
+        self._transfer_claim(
+            token,
+            self._dlq_key,
+            json.dumps(payload, sort_keys=True),
+        )
 
     def dlq_depth(self) -> int:
         try:
             return int(self._client.llen(self._dlq_key))
         except Exception:  # noqa: BLE001
             return -1
+
+    @staticmethod
+    def _as_text(value: Any) -> str:
+        return value.decode("utf-8") if isinstance(value, bytes) else str(value)
+
+    def _remember_claim(self, token: str, raw: str, signal: dict[str, Any]) -> None:
+        signal_id = str(signal.get("signal_id") or "").strip()
+        self._claim_tokens_by_signal_id.setdefault(signal_id, []).append(token)
+        self._claim_tokens_by_raw.setdefault(raw, []).append(token)
+
+    def _claim_token_for(self, signal_or_id: str | dict[str, Any]) -> str | None:
+        if isinstance(signal_or_id, dict):
+            signal_id = str(signal_or_id.get("signal_id") or "").strip()
+            raw = json.dumps(signal_or_id)
+        else:
+            signal_id = str(signal_or_id).strip()
+            raw = str(signal_or_id)
+        candidates = self._claim_tokens_by_signal_id.get(signal_id) or []
+        if candidates:
+            return candidates[0]
+        raw_candidates = self._claim_tokens_by_raw.get(raw) or []
+        if raw_candidates:
+            return raw_candidates[0]
+
+        # A caller may acknowledge after rebuilding its local consumer object.
+        # Resolve that claim from the worker-scoped durable hash, then perform
+        # the state transition atomically by token.
+        for token_value, raw_value in self._client.hscan_iter(self._inflight_key):
+            token = self._as_text(token_value)
+            stored_raw = self._as_text(raw_value)
+            if stored_raw == raw:
+                return token
+            try:
+                stored_signal_id = str(json.loads(stored_raw).get("signal_id") or "")
+            except Exception:
+                stored_signal_id = ""
+            if signal_id and stored_signal_id == signal_id:
+                return token
+        return None
+
+    def _transfer_claim(
+        self,
+        token: str,
+        destination_key: str,
+        replacement_payload: str = "",
+    ) -> None:
+        self._client.eval(
+            self._TRANSFER_LUA,
+            3,
+            self._inflight_key,
+            self._visibility_key,
+            destination_key,
+            token,
+            replacement_payload,
+        )
+        self._forget_claim(token)
+
+    def _forget_claim(self, token: str) -> None:
+        for index in (self._claim_tokens_by_signal_id, self._claim_tokens_by_raw):
+            for key, tokens in list(index.items()):
+                if token in tokens:
+                    tokens.remove(token)
+                if not tokens:
+                    index.pop(key, None)
 
 
 def build_pending_signal_store(

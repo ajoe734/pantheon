@@ -132,9 +132,10 @@ class SignalConsumer:
                         "expected_binding_id": self._binding_id,
                         "signal_binding_id": str(signal.get("binding_id") or "").strip(),
                     },
+                    remember_processed=False,
                 )
-                self._enqueue_dlq(signal, "binding_mismatch")
-                self._ack_signal(signal)
+                if self._enqueue_dlq(signal, "binding_mismatch"):
+                    self._remember_processed(signal["signal_id"])
                 continue
             if self._is_wrong_runtime(signal):
                 self._record_filtered_signal_noop(
@@ -145,9 +146,10 @@ class SignalConsumer:
                         "expected_runtime_id": self._runtime_id,
                         "signal_runtime_id": str(signal.get("runtime_id") or "").strip(),
                     },
+                    remember_processed=False,
                 )
-                self._enqueue_dlq(signal, "runtime_mismatch")
-                self._ack_signal(signal)
+                if self._enqueue_dlq(signal, "runtime_mismatch"):
+                    self._remember_processed(signal["signal_id"])
                 continue
             if self._is_wrong_capital_pool(signal):
                 signal_pool = str(
@@ -161,9 +163,10 @@ class SignalConsumer:
                         "expected_capital_pool_id": self._capital_pool_id,
                         "signal_capital_pool_id": signal_pool,
                     },
+                    remember_processed=False,
                 )
-                self._enqueue_dlq(signal, "capital_pool_mismatch")
-                self._ack_signal(signal)
+                if self._enqueue_dlq(signal, "capital_pool_mismatch"):
+                    self._remember_processed(signal["signal_id"])
                 continue
             if signal.get("run_id"):
                 self._buffer_rebalance(signal)
@@ -325,14 +328,17 @@ class SignalConsumer:
         algo: Any | None,
         noop_reason: str,
         extra_metadata: dict[str, Any] | None = None,
+        remember_processed: bool = True,
     ) -> None:
         sid = signal["signal_id"]
         if algo is None:
-            self._remember_processed(sid)
+            if remember_processed:
+                self._remember_processed(sid)
             return
         recorder = getattr(algo, "RecordSignalNoop", None)
         if not callable(recorder):
-            self._remember_processed(sid)
+            if remember_processed:
+                self._remember_processed(sid)
             return
         metadata = _signal_context_metadata(signal)
         metadata["filter_reason"] = noop_reason
@@ -355,7 +361,8 @@ class SignalConsumer:
         if price is not None:
             kwargs["price"] = price
         recorder(signal["symbol"], **kwargs)
-        self._remember_processed(sid)
+        if remember_processed:
+            self._remember_processed(sid)
 
     def _is_wrong_binding(self, signal: dict) -> bool:
         """Fail closed in governed paper mode when binding_id is missing or mismatched."""
@@ -416,20 +423,22 @@ class SignalConsumer:
         )
         return True
 
-    def _enqueue_dlq(self, signal: dict, reason: str) -> None:
+    def _enqueue_dlq(self, signal: dict, reason: str) -> bool:
         """Send a rejected or failed signal to the store's DLQ."""
         enqueue = getattr(self._store, "enqueue_dlq", None)
         if not callable(enqueue):
-            return
+            return False
         try:
             if isinstance(signal, dict):
                 dlq_payload = {**signal, "_dlq_reason": reason}
             else:
                 dlq_payload = {"raw_payload": str(signal), "_dlq_reason": reason}
             enqueue(dlq_payload)
+            return True
         except Exception as exc:  # noqa: BLE001 - DLQ write must never break the signal path
             log.warning("[%s] DLQ enqueue failed (%s): %s",
                         signal.get("signal_id", "<unknown>") if isinstance(signal, dict) else "<unknown>", reason, exc)
+            return False
 
     # ------------------------------------------------------------------
     # Conflict resolution (same symbol, different signals)
@@ -474,6 +483,7 @@ class SignalConsumer:
                 "conflict_resolution_rule": "last_write_wins_timestamp_then_confidence",
             },
         )
+        self._ack_signal(loser)
 
     # ------------------------------------------------------------------
     # FinRL rebalance batching
@@ -535,11 +545,13 @@ class SignalConsumer:
         except (ExecutionError, SymbolParseError) as exc:
             log.error("[%s] Execution failed: %s", signal["signal_id"], exc)
             self._record_execution_error_noop(signal, algo, exc)
-            self._enqueue_dlq(signal, f"execution_error: {exc}")
+            if self._enqueue_dlq(signal, f"execution_error: {exc}"):
+                self._remember_processed(signal["signal_id"])
         except Exception as exc:
             log.exception("Unexpected execution error for signal %s: %s",
                           signal.get("signal_id"), exc)
-            self._enqueue_dlq(signal, f"unexpected_error: {exc}")
+            if self._enqueue_dlq(signal, f"unexpected_error: {exc}"):
+                self._remember_processed(signal["signal_id"])
 
     def _record_execution_error_noop(self, signal: dict, algo: Any | None, exc: Exception) -> None:
         reason = _execution_error_reason(exc)
@@ -555,6 +567,7 @@ class SignalConsumer:
                 "signal_action": signal.get("action"),
                 "signal_direction": signal.get("direction"),
             },
+            remember_processed=False,
         )
 
     # ------------------------------------------------------------------
