@@ -1,9 +1,27 @@
 #!/usr/bin/env python3
 """Resolve the commit range used by the Branch CI trailer gate.
 
-Push events can carry a ``before`` SHA that is no longer present after a
-force-push or rebase. In that case, use the branch's merge-base with the
-target branch so CI still checks the commits that belong to this PR.
+The ``push`` and ``pull_request`` shapes are deliberately different.
+
+``pull_request``
+    ``github.sha`` is GitHub's *synthetic merge commit*: the PR head merged
+    into the **current** base tip. Anchoring the range on it drags every base
+    commit that landed after ``pull_request.base.sha`` into the scan, so a
+    task PR is failed by somebody else's already-merged ``dev`` commit. Run
+    30219467575 scanned ``03389c0..0942107`` for PR #4211 and rejected dev
+    commit ``0410a89f``, which is not reachable from that PR's head at all;
+    PR #4215 failed the same way. The PR range is therefore always
+    ``<base branch>..<pull_request.head.sha>``. Two-dot exclusion against the
+    base branch keeps integration-base history and the synthetic merge commit
+    out of the scan no matter how far the base moves afterwards.
+
+``push``
+    ``github.event.before`` is the previous branch tip. It disappears after a
+    force-push or rebase and is the all-zero SHA for a new branch, so fall
+    back to the merge base with the branch's integration target.
+
+Both shapes fail closed. An unusable head or an unresolvable base is an
+error; it never degrades into a silently narrower or wider range.
 """
 
 from __future__ import annotations
@@ -30,7 +48,7 @@ def _git(args: list[str]) -> subprocess.CompletedProcess[str]:
 def git_commit_exists(rev: str) -> bool:
     if not rev:
         return False
-    return _git(["cat-file", "-e", f"{rev}^{{commit}}"] ).returncode == 0
+    return _git(["cat-file", "-e", f"{rev}^{{commit}}"]).returncode == 0
 
 
 def git_is_ancestor(base: str, head: str) -> bool:
@@ -47,9 +65,9 @@ def git_merge_base(ref: str, head: str) -> str | None:
     return sha or None
 
 
-def fallback_base_refs(event: str, ref_name: str, pr_base_ref: str) -> list[str]:
-    if event == "pull_request" and pr_base_ref:
-        return [f"origin/{pr_base_ref}", pr_base_ref]
+def push_fallback_base_refs(ref_name: str) -> list[str]:
+    """Integration targets a pushed branch may be measured against."""
+
     if ref_name in {"dev", "master"}:
         return []
     if ref_name.startswith(("publish/", "promote/")):
@@ -57,13 +75,57 @@ def fallback_base_refs(event: str, ref_name: str, pr_base_ref: str) -> list[str]
     return ["origin/dev", "dev", "origin/master", "master"]
 
 
-def resolve_commit_range(
+def pull_request_base_refs(pr_base_ref: str, pr_base_sha: str) -> list[str]:
+    """PR base candidates, tightest first.
+
+    The live base tip wins over the event's ``base.sha`` because ``base.sha``
+    is frozen when the PR is opened: if the task branch later merged the base
+    branch in, only the live tip excludes the base commits that arrived with
+    that merge.
+    """
+
+    refs: list[str] = []
+    if pr_base_ref:
+        refs.append(f"origin/{pr_base_ref}")
+        refs.append(pr_base_ref)
+    sha = (pr_base_sha or "").strip()
+    if sha and sha != ZERO_SHA:
+        refs.append(sha)
+    return refs
+
+
+def resolve_pull_request_range(
     *,
-    event: str,
+    pr_head_sha: str,
+    pr_base_ref: str,
+    pr_base_sha: str,
+    commit_exists=git_commit_exists,
+) -> str:
+    """Commits unique to the PR head, measured against the base branch."""
+
+    head = (pr_head_sha or "").strip()
+    if not head:
+        raise ValueError(
+            "pull_request needs --pr-head-sha (github.event.pull_request.head.sha); "
+            "refusing to scan from the synthetic merge commit"
+        )
+    if not commit_exists(head):
+        raise ValueError(f"pull_request head commit is not available: {head}")
+
+    candidates = pull_request_base_refs(pr_base_ref, pr_base_sha)
+    for ref in candidates:
+        if commit_exists(ref):
+            return f"{ref}..{head}"
+
+    tried = ", ".join(candidates) if candidates else "<none>"
+    raise ValueError(f"pull_request base is not available; tried: {tried}")
+
+
+def resolve_push_range(
+    *,
     base_sha: str,
     head_sha: str,
     ref_name: str,
-    pr_base_ref: str,
     commit_exists=git_commit_exists,
     is_ancestor=git_is_ancestor,
     merge_base=git_merge_base,
@@ -72,11 +134,11 @@ def resolve_commit_range(
     if not commit_exists(head):
         raise ValueError(f"head commit is not available: {head}")
 
-    base = base_sha.strip()
+    base = (base_sha or "").strip()
     if base and base != ZERO_SHA and commit_exists(base) and is_ancestor(base, head):
         return f"{base}..{head}"
 
-    for ref in fallback_base_refs(event, ref_name, pr_base_ref):
+    for ref in push_fallback_base_refs(ref_name):
         candidate = merge_base(ref, head)
         if candidate and candidate != head:
             return f"{candidate}..{head}"
@@ -87,6 +149,35 @@ def resolve_commit_range(
     return head
 
 
+def resolve_commit_range(
+    *,
+    event: str,
+    base_sha: str,
+    head_sha: str,
+    ref_name: str,
+    pr_base_ref: str,
+    pr_head_sha: str = "",
+    commit_exists=git_commit_exists,
+    is_ancestor=git_is_ancestor,
+    merge_base=git_merge_base,
+) -> str:
+    if event == "pull_request":
+        return resolve_pull_request_range(
+            pr_head_sha=pr_head_sha,
+            pr_base_ref=pr_base_ref,
+            pr_base_sha=base_sha,
+            commit_exists=commit_exists,
+        )
+    return resolve_push_range(
+        base_sha=base_sha,
+        head_sha=head_sha,
+        ref_name=ref_name,
+        commit_exists=commit_exists,
+        is_ancestor=is_ancestor,
+        merge_base=merge_base,
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--event", required=True)
@@ -94,6 +185,11 @@ def main() -> int:
     parser.add_argument("--head-sha", default="HEAD")
     parser.add_argument("--ref-name", default="")
     parser.add_argument("--pr-base-ref", default="")
+    parser.add_argument(
+        "--pr-head-sha",
+        default="",
+        help="github.event.pull_request.head.sha; required for pull_request events",
+    )
     args = parser.parse_args()
 
     try:
@@ -103,11 +199,13 @@ def main() -> int:
             head_sha=args.head_sha,
             ref_name=args.ref_name,
             pr_base_ref=args.pr_base_ref,
+            pr_head_sha=args.pr_head_sha,
         )
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
 
+    print(f"[range] event={args.event} resolved={rev_range}", file=sys.stderr)
     print(f"range={rev_range}")
     return 0
 
