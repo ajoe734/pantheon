@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Archive post-dispatch twelve-loop runtime gap delta
-- Status: todo
-- Owner: Antigravity
-- Reviewer: Claude
-- Next: 建立 post-dispatch runtime gap delta：記錄 task-state sequence 1593 的 22→0 非終態消失、1594–1595 append-only recovery、task-brief lock-order 修復、CAP 假 closeout、DIST trailer 阻塞；逐項連結 canonical task、owner/reviewer、PR/test/evidence，禁止宣稱 hosted 或十二循環已完成。
+- Status: in_progress
+- Owner: Claude
+- Reviewer: Codex2
+- Next: Produce the missing v4 post-dispatch runtime gap delta without rewriting rounds 1 2 or 3. Use authoritative journal facts and current hosted identities. Record served FE 6a8d2d9b4f725056735eefd7165ef47b52cda53d and BFF be956c07aca889043ef301389412b6744452f20b accepted 2026-07-26T07:23:44Z and state hosted proof remains 0 of 12 for later repairs. Map scheduler projector imitation alpha persona consultation capital reconciliation evolution storage healthcheck revision and recurrence gaps to MANIFEST TRUTH VERIFY and HOSTED tasks with owner reviewer acceptance PR tests and still-missing evidence. Validate evidence schema and checksum. Do not edit config or claim completion.
 
 ## Summary
 將三輪 gap baseline 完成派工後才出現的 runtime 缺口，以不可竄改的第四層 delta 文件補記並歸檔；不得修改既有三輪 baseline 或 25-task catalog。

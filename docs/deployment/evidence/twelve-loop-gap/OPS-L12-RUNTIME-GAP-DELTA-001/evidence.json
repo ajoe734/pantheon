@@ -1,35 +1,408 @@
 {
-  "task_id": "OPS-L12-RUNTIME-GAP-DELTA-001",
-  "program_id": "pantheon-twelve-loop-gap-2026-07-26",
-  "owner": "Antigravity",
-  "reviewer": "Claude",
-  "created_at": "2026-07-26T16:11:40Z",
-  "delta_document": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/POST_DISPATCH_RUNTIME_GAP_DELTA.md",
-  "gaps_inventoried": [
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "OPS-L12-RUNTIME-GAP-DELTA-001 v4 post-dispatch runtime gap delta recut after owner reassignment to Claude and reviewer reassignment to Codex2.",
+    "note": "Machine-readable evidence manifest for the Layer 4 post-dispatch runtime gap delta. Records journal facts, hosted identity, and twelve post-dispatch gaps mapped to MANIFEST, TRUTH, VERIFY, and HOSTED tasks. Claims no hosted activation and no task completion.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-RUNTIME-GAP-DELTA-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Task-scoped evidence changes require a Pantheon task commit and independent reviewer verification by Codex2.",
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-26T21:40:00Z",
+    "evidence_cut_semantics": "Owner evidence cut v4.0.0. Supersedes the v1.0.0 content merged by PR #4200 and the unreviewed v2.0.0/v3.0.0 recuts, which were squashed off the task branch because commit cd989a6645d4fb8aba479a879abd35b439ef1749 carried an 86-character subject and failed the required Commit trailers gate on PR #4221. A superseded commit subject cannot be repaired by a follow-up commit, so the branch was squashed onto dev tip 6445eacd603f0bcfb8893508fbffe341a67dd309 per the anchor-commit squash clause in .orchestrator/skills/task-closeout-finalization.md and pushed with --force-with-lease; backup ref backup/OPS-L12-RUNTIME-GAP-DELTA-001-pre-squash preserves the pre-squash tip c6fccc5cc92b9065f7fb8420e913b3b52b57731f. Every journal count, PR reference, and hosted identity in this cut was re-derived from the authoritative sources listed under authorities.",
+    "id": "OPS-L12-RUNTIME-GAP-DELTA-001",
+    "overall_admission": "in_progress",
+    "owner": "Claude",
+    "phase": "operations / twelve-loop post-dispatch audit",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-RUNTIME-GAP-DELTA-001/evidence.json",
+    "reviewer": "Codex2",
+    "target_environment": "dev integration",
+    "target_maturity": "reconciled",
+    "task_branch": "task/OPS-L12-RUNTIME-GAP-DELTA-001",
+    "title": "Archive post-dispatch twelve-loop runtime gap delta"
+  },
+  "authorities": {
+    "actual_state": [
+      "/home/lupin/pantheon-ci-deploy/runtime/task-state-events.jsonl (append-only task-state journal, sequences 1 through 1952)",
+      "docs/deployment/loop-catalog.registry.json (global-loop-catalog-2026-07-13, loop_catalog.v2, twelve canonical loops)",
+      "services/control-plane/bff/loop_inventory.py (accepted live evidence levels and 900 second controller record freshness)",
+      "docker-compose.yml (66 services; 48 default started, 18 profile gated)",
+      "scripts/deploy_nonprod_vm.sh (COMPOSE_PROFILES default and widest profile set)",
+      "ajoe734/execute-plans deploy run 30192435033 sealed artifact controller/accepted-deployment.json and controller/evidence.jsonl",
+      "gh pr view and gh pr checks against ajoe734/pantheon",
+      "PANTHEON_COMMAND_ROOT at PANTHEON_COMMAND_RUNTIME_SHA bdbd0a99bf68e6a635d9bd936782c659298b7bb7"
+    ],
+    "desired_state": [
+      "documented post-dispatch runtime gap delta with every gap bound to a canonical task, owner, reviewer, acceptance clause, verified PR, tests, and still-missing evidence"
+    ],
+    "task_packet": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/POST_DISPATCH_RUNTIME_GAP_DELTA.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Claude for the Layer 4 post-dispatch delta document and this evidence manifest",
+    "composes_with": [
+      "dev integration",
+      "Codex2 independent review",
+      "L12-MANIFEST-001, L12-TRUTH-001, L12-VERIFY-KNOW-001, L12-VERIFY-LEARN-001, L12-VERIFY-RUNTIME-001, L12-VERIFY-OBS-001, L12-HOSTED-001",
+      "L12-CLOSE-001 program closeout reconciliation"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-RUNTIME-GAP-DELTA-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-RUNTIME-GAP-DELTA-001/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      ".orchestrator/task-briefs/ops_l12_runtime_gap_delta_001.md",
+      "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/POST_DISPATCH_RUNTIME_GAP_DELTA.md"
+    ],
+    "not_changing": "ROUND1_SPEC_RUNTIME_AUDIT.md, ROUND2_IMPLEMENTATION_FAILURE_AUDIT.md, ROUND3_ACCEPTANCE_EVIDENCE_AUDIT.md, docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/tasks.json, proof-ownership.json, assignment-revision-1.json, any per-task L12 markdown mirror, and every runtime, config, or service source file",
+    "owned_layer": "Layer 4 post-dispatch delta documentation and its verification manifest"
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "delivery_state": "merged_to_dev_via_pr_4200",
+        "sha": "1585874d14ec5b8ba5457e78a57e631d4a49bf20",
+        "subject": "OPS-L12-RUNTIME-GAP-DELTA-001: archive post-dispatch runtime gap delta"
+      },
+      {
+        "delivery_state": "squashed_out_superseded_unreviewed_recut",
+        "sha": "3f2dc0f9b6b6477f83f98f334f7a6a4fec702920",
+        "subject": "OPS-L12-RUNTIME-GAP-DELTA-001: recut post-dispatch runtime gap delta"
+      },
+      {
+        "delivery_state": "squashed_out_subject_86_chars_failed_commit_trailers_gate",
+        "sha": "cd989a6645d4fb8aba479a879abd35b439ef1749",
+        "subject": "OPS-L12-RUNTIME-GAP-DELTA-001: recut post-dispatch gap delta audit and schema manifest"
+      },
+      {
+        "delivery_state": "squashed_into_single_delivery_commit",
+        "sha": "4b7e3e0c8596041f14bb000fb20d3d5e9141b10e",
+        "subject": "OPS-L12-RUNTIME-GAP-DELTA-001: anchor reassigned task brief"
+      },
+      {
+        "delivery_state": "current_task_branch_delivery_recorded_in_follow_up_evidence_recut",
+        "sha": "6445eacd603f0bcfb8893508fbffe341a67dd309",
+        "subject": "task/OPS-L12-RUNTIME-GAP-DELTA-001 squashed onto this dev tip; the delivered commit sha is recorded by the follow-up evidence recut on PR #4221"
+      }
+    ],
+    "required_checks": []
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "python3 -c \"import json,jsonschema; jsonschema.validate(json.load(open('docs/deployment/evidence/twelve-loop-gap/OPS-L12-RUNTIME-GAP-DELTA-001/evidence.json')), json.load(open('schemas/product-evidence.schema.json')))\"",
+        "conclusion": "Manifest validates against schemas/product-evidence.schema.json (jsonschema 4.10.3); all 16 required top-level keys present and no disallowed additional properties.",
+        "result": "pass"
+      },
+      {
+        "command": "sha256sum -c docs/deployment/evidence/twelve-loop-gap/OPS-L12-RUNTIME-GAP-DELTA-001/evidence.sha256",
+        "conclusion": "Companion checksum recut together with the manifest and verified from the repository root.",
+        "result": "pass"
+      },
+      {
+        "command": "git diff --name-only origin/dev...HEAD",
+        "conclusion": "Changed set against dev tip 6445eacd603f0bcfb8893508fbffe341a67dd309 is limited to the task brief, the Layer 4 delta document, and this evidence pair. No baseline audit, no tasks.json, no proof-ownership.json, no assignment-revision-1.json, no config, and no service source file is touched.",
+        "result": "pass"
+      },
+      {
+        "command": "python3 journal scan of /home/lupin/pantheon-ci-deploy/runtime/task-state-events.jsonl for every commit whose state.tasks is empty",
+        "conclusion": "Nine empty-snapshot commits exist across sequences 1 to 1952: 715, 1593, 1606, 1610, 1646, 1647, 1648, 1649, 1650. Eight of the nine landed post-dispatch between 15:26Z and 16:09Z on 2026-07-26.",
+        "result": "pass"
+      },
+      {
+        "command": "grep -c 'nonterminal drop rejected' \"$PANTHEON_COMMAND_ROOT/.orchestrator/rewrite/task_state_store.py\"",
+        "conclusion": "Returns 0. The guard merged by PR #4199 at 2026-07-26T16:47:57Z is not installed in the live command runtime bdbd0a99bf68e6a635d9bd936782c659298b7bb7, which is 119 commits behind dev.",
+        "result": "fail_open_gap_recorded"
+      },
+      {
+        "command": "gh pr view 4193 / 4195 / 4203 --repo ajoe734/pantheon and gh pr checks 4193 / 4203",
+        "conclusion": "PR #4195 does not resolve. PR #4193 (task/L12-DIST-001, head 192c1fbabc9574e6bb59ba23be6b0c145354764b) and PR #4203 (task/L12-CAP-001, head 5dbc95673c4390f7ae140a89b8fe88b95cf81059) are both OPEN with a failing Commit trailers check and mergeStateStatus BEHIND.",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-07-26T21:40:00Z",
+    "validated_base_sha": "6445eacd603f0bcfb8893508fbffe341a67dd309",
+    "validated_head_sha": "6445eacd603f0bcfb8893508fbffe341a67dd309"
+  },
+  "deployment": {
+    "applicable": false,
+    "canonical_root_deploy": {
+      "reason": "Documentation and evidence task only. No service deployment, no config change, and no runtime mutation is produced by this task.",
+      "status": "not_applicable"
+    },
+    "environment": "dev integration",
+    "identity_admission": {
+      "proof": "Owner Claude and reviewer Codex2 match the canonical task row observed at journal sequence 1952 (2026-07-26T21:19:49Z) and the task brief header.",
+      "status": "pass"
+    },
+    "public_bff_base_url": "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
+    "publish_cut": {
+      "reason": "No publish cut is claimed or required by this documentation task.",
+      "status": "not_applicable"
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "environment": "dev integration",
+      "hosted_activation_claimed": false,
+      "observed_at": "2026-07-26T21:40:00Z",
+      "status": "pass",
+      "terminal_readback": "Served frontend commit 6a8d2d9b4f725056735eefd7165ef47b52cda53d and BFF runtime commit be956c07aca889043ef301389412b6744452f20b, pair c05fc6b0abea92ceb1805cde8c2f3f4d7bcfab12fb77ac45be0a4241ea5874cf, deploymentState accepted with acceptedAt 2026-07-26T07:23:44Z from execute-plans deploy run 30192435033. This is the PPL-ALLOC-009 hosted acceptance identity. Twelve-loop hosted proof remains 0 of 12: the loop catalog registry reports controller_contract.status not_implemented for 12 of 12 loops and evidence_profile.proven_live_evidence present for 0 of 12."
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "proof": [
+        "The delta document is versioned 4.0.0 and section 7 enumerates every superseded v1 to v3 claim, so a reader cannot treat two versions as concurrently true.",
+        "The companion checksum covers this manifest, so a silent second copy of the evidence fails verification."
+      ],
+      "status": "pass"
+    },
+    "failure_and_degraded_behavior": {
+      "proof": [
+        "Fails closed on product-evidence schema validation or companion checksum mismatch.",
+        "Gaps whose target task has no PR record PR none rather than borrowing an unrelated PR number; unverified references are removed instead of being downgraded."
+      ],
+      "status": "pass"
+    },
+    "request_receipt_downstream_correlation": {
+      "proof": [
+        "Journal sequences 1592, 1593, 1594, 1595, 1606, 1610, 1645, 1646, 1647, 1648, 1649, 1650, 1651, 1685, 1687 and 1952 are each correlated to a source, a committed_at, and a total / nonterminal / L12 count.",
+        "Hosted identity is correlated to gate run 30192097967, deploy run 30192435033, release 20260726T072219Z-6a8d2d9b4f72-gate-30192097967-30192435033-1-887536, and the release.accepted / release.completed hash-chained evidence events."
+      ],
+      "status": "pass"
+    },
+    "restart_and_recovery": {
+      "proof": [
+        "Sequence 1594 restored the sequence 1592 state append-only, preserving state.updated_at 2026-07-26T15:25:33Z; sequence 1595 confirmed it under Human/Ops.",
+        "Sequence 1651 restored the sequence 1645 state append-only, preserving state.updated_at 2026-07-26T16:07:01Z. No journal event was rewritten or deleted in either recovery."
+      ],
+      "status": "pass"
+    },
+    "rollback_or_compensation": {
+      "proof": [
+        "The Human/Ops rejection at sequence 1685 is preserved; the worker handoff 26 seconds later at sequence 1687 did not override it and the task remained in_progress through reassignment.",
+        "The nonterminal-drop guard merged by PR #4199 is the compensating control for the empty-snapshot class, and section 5 gap 10 records that it is merged but not yet installed in the live command runtime."
+      ],
+      "status": "pass"
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "proof": "Documentation and evidence only. No config file, no supervisor code, no compose file, and no deploy script was modified by this task.",
+      "status": "pass"
+    },
+    "hosted_frontend": {
+      "proof": "The served frontend identity is recorded read-only from a sealed deploy artifact. Its safe build flags VITE_BFF_MODE live, VITE_BFF_FALLBACK strict, VITE_BFF_REAL_WRITES false, VITE_BFF_ALLOW_DEV_STUB_WRITES false, and VITE_BFF_EMBEDDED_BEARER_TOKEN false are transcribed without modification.",
+      "status": "pass"
+    },
+    "mfa": {
+      "status": "not_applicable"
+    },
+    "no_live_capital": {
+      "proof": "No capital, order routing, or execution path is touched. Gap 6 explicitly records that capital_pool_execution remains at manual maturity with L12-CAP-001 blocked and live capital disabled.",
+      "status": "pass"
+    },
+    "rbac": {
+      "proof": "Owner Claude produced the delta; reviewer Codex2 holds the independent review gate. Status transitions are routed through PANTHEON_COMMAND_ROOT scripts/ai-status.sh only.",
+      "status": "pass"
+    },
+    "tenant_isolation": {
+      "status": "not_applicable"
+    },
+    "two_person_approval": {
+      "proof": "Owner Claude and reviewer Codex2 are distinct, matching the canonical task row at journal sequence 1952.",
+      "status": "pass"
+    }
+  },
+  "acceptance": [
     {
-      "gap_id": "GAP-001",
-      "summary": "Task-state sequence 1593 22->0 non-terminal task disappearance and sequence 1594-1595 recovery",
-      "status": "documented_recovered"
+      "evidence_refs": [
+        "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/POST_DISPATCH_RUNTIME_GAP_DELTA.md#L1-Purpose-And-Boundary",
+        "git diff --name-only origin/dev...HEAD"
+      ],
+      "id": "AC1",
+      "statement": "The three baseline audits and the 25-task catalog remain byte-for-byte unmodified.",
+      "status": "pass"
     },
     {
-      "gap_id": "GAP-002",
-      "summary": "Task-brief lock-order normalization and race condition fix",
-      "status": "documented_resolved"
+      "evidence_refs": [
+        "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/POST_DISPATCH_RUNTIME_GAP_DELTA.md#3.1",
+        "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/POST_DISPATCH_RUNTIME_GAP_DELTA.md#3.4"
+      ],
+      "id": "AC2",
+      "statement": "Sequence 1593 nonterminal disappearance and the 1594 to 1595 append-only recovery are recorded from the authoritative journal, together with the recurrence census and the second 1645 to 1651 incident.",
+      "status": "pass"
     },
     {
-      "gap_id": "GAP-003",
-      "summary": "L12-CAP-001 unverified capital fake closeout containment",
-      "status": "documented_guarded"
+      "evidence_refs": [
+        "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/POST_DISPATCH_RUNTIME_GAP_DELTA.md#5-Gap-10",
+        "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/POST_DISPATCH_RUNTIME_GAP_DELTA.md#7"
+      ],
+      "id": "AC3",
+      "statement": "The task-brief lock-order fix (PR #4197) and the nonterminal-drop guard (PR #4199) are recorded as two distinct remediations and are never merged into one narrative.",
+      "status": "pass"
     },
     {
-      "gap_id": "GAP-004",
-      "summary": "L12-DIST-001 commit trailer validation blockage and fleet reassignment",
-      "status": "documented_reassigned"
+      "evidence_refs": [
+        "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/POST_DISPATCH_RUNTIME_GAP_DELTA.md#5-Gap-6",
+        "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/POST_DISPATCH_RUNTIME_GAP_DELTA.md#5-Gap-12"
+      ],
+      "id": "AC4",
+      "statement": "The CAP evidence-only false closeout and the DIST malformed-trailer blockage are recorded with their reproduced defects and mapped to the canonical reopen/fix tasks L12-CAP-001 (blocked, PR #4203 open) and L12-DIST-001 (in_progress, PR #4193 open with failing Commit trailers).",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/POST_DISPATCH_RUNTIME_GAP_DELTA.md#5",
+        "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/POST_DISPATCH_RUNTIME_GAP_DELTA.md#6"
+      ],
+      "id": "AC5",
+      "statement": "All twelve gaps list owner, reviewer, acceptance clause, PR, tests, and still-missing evidence, and are mapped to MANIFEST, TRUTH, VERIFY, and HOSTED tasks.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/POST_DISPATCH_RUNTIME_GAP_DELTA.md#4.1",
+        "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/POST_DISPATCH_RUNTIME_GAP_DELTA.md#8"
+      ],
+      "id": "AC6",
+      "statement": "No merged PR or local test result is presented as hosted activation or twelve-loop completion; hosted proof is stated as 0 of 12 and merged is explicitly distinguished from installed.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "docs/deployment/evidence/twelve-loop-gap/OPS-L12-RUNTIME-GAP-DELTA-001/evidence.json",
+        "docs/deployment/evidence/twelve-loop-gap/OPS-L12-RUNTIME-GAP-DELTA-001/evidence.sha256"
+      ],
+      "id": "AC7",
+      "statement": "product-evidence schema validation and evidence sha256 verification both pass. The independent review is pending; the canonical acceptance text still names Claude as the reviewer, but the canonical task row reassigned Claude to owner and Codex2 to reviewer, so the independent review gate belongs to Codex2.",
+      "status": "partial_pending_independent_review"
+    },
+    {
+      "evidence_refs": [
+        "task/OPS-L12-RUNTIME-GAP-DELTA-001"
+      ],
+      "id": "AC8",
+      "statement": "branch, commit, push, PR, checks, merge, and archive complete for this recut.",
+      "status": "pending"
     }
   ],
-  "compliance_declarations": {
-    "hosted_deployed": false,
-    "twelve_loop_completed": false,
-    "baseline_catalog_modified": false
-  }
+  "residual_risks": {
+    "command_runtime_lag": {
+      "blocking_for_this_task": false,
+      "containment": "Recorded as section 5 gap 10 and routed to SUP-COMMAND-RUNTIME-REFRESH-001. This task changes no config and does not attempt the refresh.",
+      "description": "The live command runtime bdbd0a99bf68e6a635d9bd936782c659298b7bb7 is 119 commits behind dev and carries neither the task-brief lock-order fix (PR #4197) nor the nonterminal-drop guard (PR #4199), so a further empty-snapshot commit would still be accepted.",
+      "expiry": "When the command runtime is refreshed past PR #4199 and the guard is re-verified in place",
+      "owner": "Claude",
+      "recheck_trigger": "Next command runtime refresh or the next empty-snapshot journal commit",
+      "severity": "high"
+    },
+    "independent_review": {
+      "blocking_for_this_task": true,
+      "containment": "Task remains in_progress. No done transition is attempted and no completion is claimed.",
+      "description": "The v4 recut has not yet been independently reviewed by Codex2.",
+      "expiry": "Upon Codex2 review decision",
+      "owner": "Codex2",
+      "recheck_trigger": "Task PR review",
+      "severity": "medium"
+    },
+    "registry_snapshot_age": {
+      "blocking_for_this_task": false,
+      "containment": "The registry file is cited by path, catalog id, and schema version so a reviewer can re-derive every count from the same file on dev.",
+      "description": "docs/deployment/loop-catalog.registry.json carries catalog id global-loop-catalog-2026-07-13 and created_at 2026-07-13T00:00:00Z. The 0-of-12 hosted proof statement reflects that file as it stands on current dev, not a live BFF readback.",
+      "expiry": "When L12-TRUTH-001 lands current controller records",
+      "owner": "Claude",
+      "recheck_trigger": "Any update to the loop catalog registry",
+      "severity": "low"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-RUNTIME-GAP-DELTA-001/evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-RUNTIME-GAP-DELTA-001/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-RUNTIME-GAP-DELTA-001/evidence.json",
+    "normalized_hosted_readback": {
+      "accepted_at": "2026-07-26T07:23:44Z",
+      "bff_runtime_commit": "be956c07aca889043ef301389412b6744452f20b",
+      "deployment_state": "accepted",
+      "frontend_runtime_commit": "6a8d2d9b4f725056735eefd7165ef47b52cda53d",
+      "hosted_activation_claimed": false,
+      "pair_id": "c05fc6b0abea92ceb1805cde8c2f3f4d7bcfab12fb77ac45be0a4241ea5874cf",
+      "twelve_loop_hosted_proof": "0_of_12"
+    },
+    "self_hash_omitted": true,
+    "self_hash_reason": "Companion checksum file records the manifest digest; the manifest cannot contain its own hash.",
+    "source_artifact_sha256_by_epoch": {
+      "POST_DISPATCH_RUNTIME_GAP_DELTA.md@v4.0.0": "recorded_in_companion_checksum_file"
+    }
+  },
+  "record_log": [
+    {
+      "actor": "Antigravity",
+      "kind": "owner_evidence_cut_superseded",
+      "recorded_at": "2026-07-26T16:11:00Z",
+      "reference": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/POST_DISPATCH_RUNTIME_GAP_DELTA.md",
+      "sequence": 1,
+      "sha": "1585874d14ec5b8ba5457e78a57e631d4a49bf20",
+      "status": "superseded"
+    },
+    {
+      "actor": "Human/Ops",
+      "kind": "independent_rejection",
+      "recorded_at": "2026-07-26T16:21:08Z",
+      "reference": "task-state journal sequence 1685",
+      "sequence": 2,
+      "sha": "1585874d14ec5b8ba5457e78a57e631d4a49bf20",
+      "status": "rejected"
+    },
+    {
+      "actor": "Claude",
+      "kind": "reviewer_rejection_v2_v3",
+      "recorded_at": "2026-07-26T17:05:00Z",
+      "reference": ".orchestrator/task-briefs/ops_l12_runtime_gap_delta_001.md",
+      "sequence": 3,
+      "sha": "cd989a6645d4fb8aba479a879abd35b439ef1749",
+      "status": "rejected"
+    },
+    {
+      "actor": "Human/Ops",
+      "kind": "owner_reviewer_reassignment",
+      "recorded_at": "2026-07-26T21:12:02Z",
+      "reference": "task-state journal sequence 1943; owner Claude, reviewer Codex2",
+      "sequence": 4,
+      "sha": "4b7e3e0c8596041f14bb000fb20d3d5e9141b10e",
+      "status": "in_progress"
+    },
+    {
+      "actor": "Claude",
+      "kind": "owner_evidence_recut_v4",
+      "recorded_at": "2026-07-26T21:40:00Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-RUNTIME-GAP-DELTA-001/evidence.json",
+      "sequence": 5,
+      "sha": "4b7e3e0c8596041f14bb000fb20d3d5e9141b10e",
+      "status": "in_progress"
+    },
+    {
+      "actor": "Claude",
+      "kind": "task_branch_squash_for_commit_trailers_gate",
+      "recorded_at": "2026-07-26T21:55:00Z",
+      "reference": "PR #4221 required check 'Commit trailers' failed on cd989a6645d4fb8aba479a879abd35b439ef1749 (subject 86 chars)",
+      "sequence": 6,
+      "sha": "6445eacd603f0bcfb8893508fbffe341a67dd309",
+      "status": "in_progress"
+    }
+  ]
 }
