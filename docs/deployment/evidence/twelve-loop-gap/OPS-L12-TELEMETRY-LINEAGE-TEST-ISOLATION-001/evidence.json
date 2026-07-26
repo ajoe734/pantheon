@@ -16,8 +16,8 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-26T20:02:00Z",
-    "evidence_cut_semantics": "Owner cut over the task branch implementation commit a608a81c7785e191e7e0f8e940e2a4464ecca404. Verification commands below were executed against that tree. Independent reviewer approval is not asserted by this cut.",
+    "evidence_cut_at": "2026-07-26T20:25:00Z",
+    "evidence_cut_semantics": "Owner re-cut after PR #4213 squash-merged into dev as 0410a89f0e4ac3c53e7bc5192aebe6925423b4da. Verification commands below were re-run against the merged dev tree. Independent reviewer approval is not asserted by this cut.",
     "id": "OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001",
     "overall_admission": "pass",
     "owner": "Claude",
@@ -65,18 +65,66 @@
   "implementation_delivery": {
     "anchor_commits": [
       {
-        "delivery_state": "pending_pr",
+        "delivery_state": "squash_merged_via_pr_4213",
         "note": "Test-owned isolation fixture plus fail-closed guard and no-leakage regression tests.",
         "sha": "a608a81c7785e191e7e0f8e940e2a4464ecca404",
         "subject": "OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001: anchor test isolation"
+      },
+      {
+        "delivery_state": "squash_merged_via_pr_4213",
+        "note": "Task brief and evidence manifest.",
+        "sha": "b3c7681cc",
+        "subject": "OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001: record isolation evidence"
+      },
+      {
+        "delivery_state": "merged_to_dev",
+        "note": "Squash commit carrying both anchors onto dev.",
+        "sha": "0410a89f0e4ac3c53e7bc5192aebe6925423b4da",
+        "subject": "OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001: record isolation evidence (#4213)"
       }
     ],
     "required_checks": [
       {
-        "conclusion": "pending",
+        "conclusion": "success",
         "event": "pull_request",
-        "head_sha": "a608a81c7785e191e7e0f8e940e2a4464ecca404",
+        "head_sha": "9e484e2522cd8778b85a4c880e4cd33d07ef401f",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30218645940,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30218645940",
         "workflow": "Branch CI Gate"
+      },
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "9e484e2522cd8778b85a4c880e4cd33d07ef401f",
+        "jobs": {
+          "Forward to orchestrator": "success"
+        },
+        "run_id": 30218685132,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30218685132",
+        "workflow": "Orchestrator Sync"
+      }
+    ],
+    "pull_request": {
+      "base": "dev",
+      "head_sha": "9e484e2522cd8778b85a4c880e4cd33d07ef401f",
+      "merge_sha": "0410a89f0e4ac3c53e7bc5192aebe6925423b4da",
+      "merged_at": "2026-07-26T20:18:15Z",
+      "number": 4213,
+      "url": "https://github.com/ajoe734/pantheon/pull/4213"
+    },
+    "pull_requests": [
+      {
+        "base": "dev",
+        "head_sha": "9e484e2522cd8778b85a4c880e4cd33d07ef401f",
+        "merge_sha": "0410a89f0e4ac3c53e7bc5192aebe6925423b4da",
+        "merged_at": "2026-07-26T20:18:15Z",
+        "number": 4213,
+        "url": "https://github.com/ajoe734/pantheon/pull/4213"
       }
     ]
   },
@@ -116,11 +164,16 @@
         "command": "git diff --check",
         "conclusion": "exit 0",
         "result": "pass"
+      },
+      {
+        "command": "env -u PANTHEON_RUNTIME_MANAGER_URL /home/lupin/pantheon/.venv/bin/python3 -m unittest services.telemetry.test_lineage_write_path (post-merge, dev tip 0410a89f0)",
+        "conclusion": "Ran 7 tests in 0.472s; OK. Confirms the isolation holds on the merged dev tree, not only on the task branch.",
+        "result": "pass"
       }
     ],
-    "validated_at": "2026-07-26T20:02:00Z",
+    "validated_at": "2026-07-26T20:25:00Z",
     "validated_base_sha": "03389c0c7fca98b543ee8329e11042f99ed5a0f6",
-    "validated_head_sha": "a608a81c7785e191e7e0f8e940e2a4464ecca404"
+    "validated_head_sha": "0410a89f0e4ac3c53e7bc5192aebe6925423b4da"
   },
   "deployment": {
     "applicable": false,
@@ -250,13 +303,14 @@
     },
     {
       "evidence_refs": [
-        "implementation_delivery.anchor_commits",
-        "implementation_delivery.required_checks"
+        "implementation_delivery.pull_request",
+        "implementation_delivery.required_checks",
+        "record_log"
       ],
       "id": "AC5",
       "statement": "Branch, commit, push, PR, checks, independent review, merge, archive, and evidence are complete.",
-      "status": "in_progress",
-      "blocking_until": "PR merged into dev and Antigravity approval appended to record_log"
+      "status": "pass_pending_review",
+      "blocking_until": "Antigravity approval appended to record_log, then owner done"
     }
   ],
   "residual_risks": {
@@ -299,6 +353,9 @@
     "source_artifact_sha256_by_epoch": {
       "a608a81c7785e191e7e0f8e940e2a4464ecca404": {
         "services/telemetry/test_lineage_write_path.py": "12e1159b8ad9b7ebc05b50ce466ba98cdf7ac84d2b2d1a53b6e6e14edb294b4c"
+      },
+      "0410a89f0e4ac3c53e7bc5192aebe6925423b4da": {
+        "services/telemetry/test_lineage_write_path.py": "12e1159b8ad9b7ebc05b50ce466ba98cdf7ac84d2b2d1a53b6e6e14edb294b4c"
       }
     }
   },
@@ -318,6 +375,23 @@
       "recorded_at": "2026-07-26T20:02:00Z",
       "reference": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001/evidence.json",
       "sequence": 2,
+      "status": "recorded"
+    },
+    {
+      "actor": "Claude",
+      "kind": "delivery_merged",
+      "recorded_at": "2026-07-26T20:18:15Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4213",
+      "sequence": 3,
+      "sha": "0410a89f0e4ac3c53e7bc5192aebe6925423b4da",
+      "status": "recorded"
+    },
+    {
+      "actor": "Claude",
+      "kind": "owner_evidence_recut",
+      "recorded_at": "2026-07-26T20:25:00Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001/evidence.json",
+      "sequence": 4,
       "status": "recorded"
     }
   ]

@@ -8,6 +8,9 @@ configuration.
 - Phase: Twelve-loop verification hardening
 - Manifest: [`evidence.json`](evidence.json)
 - Changed implementation file: `services/telemetry/test_lineage_write_path.py`
+- Delivery: [PR #4213](https://github.com/ajoe734/pantheon/pull/4213), squash-merged
+  into `dev` as `0410a89f0e4ac3c53e7bc5192aebe6925423b4da` on 2026-07-26T20:18:15Z
+  with all Branch CI Gate and Orchestrator Sync checks green
 
 ## Root cause
 
