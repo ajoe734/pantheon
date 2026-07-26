@@ -36,12 +36,18 @@ jobs:
         with:
           fetch-depth: 0
 
+      # On pull_request, github.sha is the synthetic merge commit (PR head
+      # merged into the current base tip), so it must never anchor the range:
+      # doing so pulls in every base commit that landed after base.sha and
+      # fails the PR on somebody else's already-merged dev commit. The PR
+      # range is always <base branch>..<pull_request.head.sha>.
       - name: Determine commit range
         id: range
         env:
           EVENT: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           HEAD_SHA: ${{ github.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
           REF_NAME: ${{ github.ref_name }}
           PR_BASE_REF: ${{ github.event.pull_request.base.ref || '' }}
         run: |
@@ -49,6 +55,7 @@ jobs:
             --event "$EVENT" \
             --base-sha "$BASE_SHA" \
             --head-sha "$HEAD_SHA" \
+            --pr-head-sha "$PR_HEAD_SHA" \
             --ref-name "$REF_NAME" \
             --pr-base-ref "$PR_BASE_REF" >> "$GITHUB_OUTPUT"
 
@@ -63,6 +70,7 @@ jobs:
           HEAD_REF: ${{ github.event.pull_request.head.ref || github.ref_name }}
           REF_NAME: ${{ github.ref_name }}
           HEAD_SHA: ${{ github.sha }}
+          RANGE: ${{ steps.range.outputs.range }}
         run: |
           if [[ "$EVENT" == "pull_request" && "$HEAD_REF" == promote/* ]]; then
             echo "Skipping commit trailer re-scan for promote PR ${HEAD_REF}; publish history was already validated before snapshot cut."
@@ -75,8 +83,13 @@ jobs:
               exit 0
             fi
           fi
+          if [[ -z "$RANGE" ]]; then
+            echo "commit range was not resolved; refusing to skip the trailer gate" >&2
+            exit 1
+          fi
+          echo "Checking commit trailers over ${RANGE}"
           python3 scripts/git/check_commit_trailers.py \
-            --range "${{ steps.range.outputs.range }}" \
+            --range "$RANGE" \
             --skip-merge
 
   generated-files:

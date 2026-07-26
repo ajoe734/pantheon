@@ -1,0 +1,240 @@
+SUP-COMMAND-RUNTIME-REFRESH-001 — installed command root verification
+Captured 2026-07-26 UTC from the task worktree
+/tmp/pantheon-worker-worktrees/pantheon/sup-command-runtime-refresh-001.
+
+======================================================================
+1. Candidate = exact accepted dev
+======================================================================
+
+$ git fetch origin dev:refs/remotes/origin/dev
+$ git rev-parse origin/dev
+6578ef968f7e0374b046de0afb5b07ce2f81558e
+
+$ git log --oneline -3 origin/dev
+6578ef968 Merge pull request #4223 from ajoe734/task/SUP-WORKER-TRUTH-RECONCILE-001
+16d4e504a Merge remote-tracking branch 'origin/dev' into task/SUP-WORKER-TRUTH-RECONCILE-001
+2d97f80e8 SUP-WORKER-TRUTH-RECONCILE-001: record owner closeout
+
+$ gh pr view 4223 --json state,mergedAt,mergeCommit,baseRefName,headRefOid,statusCheckRollup
+state            MERGED
+baseRefName      dev
+headRefOid       16d4e504ab90e04a46abc7f30923f0dfdf59659f
+mergeCommit.oid  6578ef968f7e0374b046de0afb5b07ce2f81558e
+mergedAt         2026-07-26T22:09:29Z
+  Commit trailers        SUCCESS COMPLETED
+  Runtime mirror guard   SUCCESS COMPLETED
+  Smoke acceptance       SUCCESS COMPLETED
+  Forward to orchestrator SUCCESS COMPLETED
+
+$ gh api repos/ajoe734/pantheon/branches/dev/protection --jq .required_status_checks.contexts
+["Commit trailers", "Runtime mirror guard", "Smoke acceptance"]
+
+$ gh api repos/ajoe734/pantheon/commits/6578ef968f7e0374b046de0afb5b07ce2f81558e/check-runs
+Evaluate publish snapshots      completed success  2026-07-26T22:35:55Z
+Cut nightly publish snapshot    completed failure  2026-07-26T22:18:27Z
+Smoke acceptance                completed success  2026-07-26T22:10:35Z
+Commit trailers                 completed success  2026-07-26T22:09:50Z
+Runtime mirror guard            completed success  2026-07-26T22:09:45Z
+Forward to orchestrator         completed success  2026-07-26T22:09:49Z
+
+The only failure on the candidate is the scheduled `Hourly Publish Cut`
+workflow (run 30222860390), which failed in its own `Check if dev advanced`
+step. It is not one of the three required contexts and does not gate the
+runtime; the push-event `Branch CI Gate` and `Orchestrator Sync` runs on the
+same SHA both succeeded.
+
+$ git show 6578ef968:.orchestrator/supervisor.py | grep -c \
+    "squash_merged_delivery_metadata\|merged_owner_delivery_evidence"
+7
+(the merged supervisor truth repair from SUP-WORKER-TRUTH-RECONCILE-001 is
+present in the candidate tree)
+
+======================================================================
+2. Candidate runtime smoke, run against the candidate tree
+======================================================================
+
+$ env -C .orchestrator python3 -m unittest \
+    test_supervisor.OwnerlessInProgressReconciliationTests \
+    test_supervisor.MergedDeliveryEvidenceTests \
+    test_supervisor.SquashMergedDeliveryEvidenceTests \
+    test_supervisor.MergedPullRequestLookupTests \
+    test_supervisor.WorkerDeliveryIdentityTests
+Ran 55 tests in 0.091s
+OK
+
+$ git status --porcelain
+?? .orchestrator/task-briefs/sup_command_runtime_refresh_001.md
+(the suite left no generated-state residue in the worktree)
+
+$ cd /home/lupin/pantheon-ci-deploy/dev-root-d054bd49cb48
+$ python3 -m py_compile .orchestrator/supervisor.py .orchestrator/common.py \
+    .orchestrator/worker_runner.py .orchestrator/supervisor_watchdog.py \
+    scripts/ai_status.py
+py_compile OK
+
+======================================================================
+3. Installed command root — before
+======================================================================
+
+$ git -C /home/lupin/pantheon-ci-deploy/dev-root-d054bd49cb48 rev-parse HEAD HEAD^{tree}
+d054bd49cb485f091e3fb31b1d91e57d4fe372ab
+72618947f7f326a6d7664deab9eedbf86d7af861
+
+$ git -C .../dev-root-d054bd49cb48 log -1 --pretty="%H %s"
+d054bd49cb485f091e3fb31b1d91e57d4fe372ab Merge pull request #4189 from ajoe734/task/OPS-L12-CATALOG-REVISION-REPLAY-001
+
+$ git -C .../dev-root-d054bd49cb48 status --porcelain | wc -l
+0
+
+No process had this root as its working directory (full /proc cwd scan), so the
+checkout was not swapped underneath a running supervisor or worker.
+
+======================================================================
+4. Install (checkout, not reset: it fails closed on a dirty tree)
+======================================================================
+
+$ git -C .../dev-root-d054bd49cb48 checkout --detach 6578ef968f7e0374b046de0afb5b07ce2f81558e
+Previous HEAD position was d054bd49c Merge pull request #4189 from ajoe734/task/OPS-L12-CATALOG-REVISION-REPLAY-001
+HEAD is now at 6578ef968 Merge pull request #4223 from ajoe734/task/SUP-WORKER-TRUTH-RECONCILE-001
+
+======================================================================
+5. Installed command root — after
+======================================================================
+
+$ git -C .../dev-root-d054bd49cb48 rev-parse HEAD HEAD^{tree}
+6578ef968f7e0374b046de0afb5b07ce2f81558e
+55680b29ccb50ab5c1771ddd9f10590f1ba774c9
+
+$ git rev-parse 6578ef968f7e0374b046de0afb5b07ce2f81558e^{tree}
+55680b29ccb50ab5c1771ddd9f10590f1ba774c9
+(installed tree == candidate tree)
+
+$ git -C .../dev-root-d054bd49cb48 status --porcelain
+(no output — clean)
+
+$ git -C .../dev-root-d054bd49cb48 remote get-url origin
+https://github.com/ajoe734/pantheon.git
+
+$ git -C .../dev-root-d054bd49cb48 merge-base --is-ancestor HEAD origin/dev
+exit 0
+
+$ ls .../dev-root-d054bd49cb48/.orchestrator/bin
+agy claude codex copilot gemini gemini2 gh
+(provider adapter wrappers are present in the installed root)
+
+======================================================================
+6. Live config is untouched
+======================================================================
+
+$ sha256sum /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json
+before install: cd98e7c5c259b7eb3fe5bda23afddb40fd04381f86a1525fa8a7f46b1eddaa54
+after  install: cd98e7c5c259b7eb3fe5bda23afddb40fd04381f86a1525fa8a7f46b1eddaa54
+
+$ jq -r '.watchdog.supervisor_command[2]' <live config>
+/home/lupin/pantheon-ci-deploy/dev-root-d054bd49cb48/.orchestrator/supervisor.py
+(unchanged; this is why the candidate was installed into this root)
+
+======================================================================
+7. Runtime the installed root will issue to workers
+======================================================================
+
+$ cd /home/lupin/pantheon-ci-deploy/dev-root-d054bd49cb48
+$ env -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA \
+      -u PANTHEON_STATUS_COMMAND_ROOT -u PANTHEON_STATUS_COMMAND_SHA \
+      -u PANTHEON_STATUS_ROOT python3 -c '
+import sys, json
+sys.path.insert(0, ".orchestrator")
+from common import load_config, status_command_runtime_env
+cfg = load_config("/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json")
+print(json.dumps(status_command_runtime_env(cfg), indent=2, sort_keys=True))'
+{
+  "PANTHEON_COMMAND_BASE_REF": "origin/dev",
+  "PANTHEON_COMMAND_REMOTE": "ajoe734/pantheon",
+  "PANTHEON_COMMAND_ROOT": "/home/lupin/pantheon-ci-deploy/dev-root-d054bd49cb48",
+  "PANTHEON_COMMAND_RUNTIME_SHA": "6578ef968f7e0374b046de0afb5b07ce2f81558e",
+  "PANTHEON_STATUS_COMMAND_BASE_REF": "origin/dev",
+  "PANTHEON_STATUS_COMMAND_REMOTE": "ajoe734/pantheon",
+  "PANTHEON_STATUS_COMMAND_ROOT": "/home/lupin/pantheon-ci-deploy/dev-root-d054bd49cb48",
+  "PANTHEON_STATUS_COMMAND_SHA": "6578ef968f7e0374b046de0afb5b07ce2f81558e",
+  "PANTHEON_TASK_STATE_EVENT_LOG": "/home/lupin/pantheon-ci-deploy/runtime/task-state-events.jsonl",
+  "PANTHEON_TASK_STATE_STORE_MODE": "authoritative"
+}
+
+The authoritative journal binding is inherited from the unchanged live config,
+not re-derived, so the cutover cannot silently move the event log.
+
+======================================================================
+8. Incumbent runtime at the time of the install
+======================================================================
+
+$ ps -o pid,lstart,etime,time,args -p 901543
+901543  Sun Jul 26 15:05:13 2026  07:42:31  03:15:00
+        /usr/bin/python3.12 -u .orchestrator/supervisor.py
+        --config /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json --verbose
+
+$ readlink /proc/901543/cwd
+/home/lupin/pantheon-ci-deploy/dev-root-bdbd0a99bf68
+
+$ git -C /home/lupin/pantheon-ci-deploy/dev-root-bdbd0a99bf68 rev-parse HEAD
+bdbd0a99bf68e6a635d9bd936782c659298b7bb7
+
+All six live worker records carry
+status_command_runtime.command_root=/home/lupin/pantheon-ci-deploy/dev-root-bdbd0a99bf68
+and source_sha=bdbd0a99bf68e6a635d9bd936782c659298b7bb7, which is why that root
+was deliberately left byte-for-byte alone: refreshing it in place would make
+every in-flight worker's `$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh` fail the
+issued-vs-running SHA gate in `validate_status_command_runtime_binding`.
+
+======================================================================
+9. Incumbent supervisor contention observed while preparing the cutover
+======================================================================
+
+$ ls -i /home/lupin/pantheon/.orchestrator/runtime-admission.lock
+807896 /home/lupin/pantheon/.orchestrator/runtime-admission.lock
+
+$ grep 807896 /proc/locks
+21: FLOCK  ADVISORY  WRITE 901543 08:01:807896 0 EOF
+21: -> FLOCK  ADVISORY  READ 372942 08:01:807896 0 EOF
+21: -> FLOCK  ADVISORY  READ 440770 08:01:807896 0 EOF
+
+pid 372942 = another lane's `ai_status.py reopen OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001`
+pid 440770 = this task's `ai_status.py start SUP-COMMAND-RUNTIME-REFRESH-001`
+
+Both governed status commands sat in `locks_lock_inode_wait` for minutes behind
+the incumbent supervisor's cycle. The incumbent's own log shows the same
+degradation from the other side:
+
+  [2026-07-27 05:57:51] supervisor tick: ... lag=807.0s
+  [2026-07-27 06:12:46] supervisor tick: ... lag=894.0s
+  [2026-07-27 06:25:03] supervisor tick: ... lag=738.0s
+  [2026-07-27 06:35:07] supervisor tick: ... lag=603.0s
+  (log timestamps are local; poll_interval_seconds is 30)
+
+The queued `start` did land at 2026-07-26T22:48:46Z once the lock freed.
+
+======================================================================
+10. Handoff script discovery — dry run
+======================================================================
+
+The first version of `handoff/swap-supervisor.sh` matched supervisor processes by
+substring alone, which also caught the `/bin/bash -c "... supervisor.py ..."`
+launcher wrapper (pid 901542) that started the incumbent:
+
+$ for d in /proc/[0-9]*; do ... case "$cmd" in *supervisor.py*--config*) ...
+901542 /home/lupin/pantheon-ci-deploy/dev-root-bdbd0a99bf68
+901543 /home/lupin/pantheon-ci-deploy/dev-root-bdbd0a99bf68
+
+Two matches would have tripped the script's own "expected exactly one live
+supervisor" guard and aborted the operator's run. Discovery now mirrors
+`supervisor.cmdline_is_supervisor_process`: argv[0] must be a python
+interpreter. Verified with the new no-mutation mode, which stops before the
+intentional-restart declaration:
+
+$ bash handoff/swap-supervisor.sh \
+    /home/lupin/pantheon-ci-deploy/dev-root-d054bd49cb48 refresh-d054 --discover-only
+[swap 2026-07-26T23:16:59Z] new_root=/home/lupin/pantheon-ci-deploy/dev-root-d054bd49cb48 target_sha=6578ef968f7e0374b046de0afb5b07ce2f81558e log=/home/lupin/pantheon/.orchestrator/logs/supervisor-refresh-d054-20260726T231659Z.log
+[swap 2026-07-26T23:17:02Z] old_pid=901543 old_cwd=/home/lupin/pantheon-ci-deploy/dev-root-bdbd0a99bf68
+[swap 2026-07-26T23:17:02Z] discover-only: stopping before the intentional restart declaration
+
+The post-launch wait now also resolves the replacement by cwd equality with the
+installed root instead of taking the lowest matching pid.
