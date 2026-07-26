@@ -382,7 +382,7 @@ def test_persona_source_provisioning_api_smoke(persona_api) -> None:
     assert readback.json()["connectors"][0]["desired_state"]["dataset"] == "tw_price_daily"
 
 
-def test_two_reconcile_workers_converge_without_duplicate_connector_or_schedule(persona_api) -> None:
+def test_two_reconcile_threads_converge_without_duplicate_connector_or_schedule(persona_api) -> None:
     client, module = persona_api
     endpoint = "/api/source-ingest/persona-source-provisioning/reconcile"
     headers = {"Authorization": f"Bearer {module.controller_token}"}

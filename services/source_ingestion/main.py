@@ -90,6 +90,7 @@ from .policy_registry import crawler_policy_for_connector, policy_registry_paylo
 from .controller_state import ControllerStateError, read_controller_state
 from .controller_auth import load_controller_token
 from .persona_source_reconciler import RECONCILIATION_METADATA_KEY, SourceProvisioningReconciler
+from .process_lock import exclusive_file_lock
 from .requirement_state import RequirementSnapshotStore, RequirementStateError
 from .scheduler import IngestBatch, IngestReceipt, IngestionScheduler, JsonlIngestScheduleStore
 from .source_health import (
@@ -127,6 +128,12 @@ CONTROLLER_STATE_PATH = Path(
 )
 REQUIREMENT_STATE_PATH = Path(
     os.getenv("SOURCE_INGEST_REQUIREMENT_STATE_PATH", str(DATA_DIR / "requirement_snapshots.jsonl"))
+)
+RECONCILE_TRANSACTION_LOCK_PATH = Path(
+    os.getenv(
+        "SOURCE_INGEST_RECONCILE_TRANSACTION_LOCK_PATH",
+        str(DATA_DIR / "persona_source_reconcile.lock"),
+    )
 )
 CONTROLLER_TOKEN_PATH = Path(
     os.getenv("SOURCE_INGEST_CONTROLLER_TOKEN_FILE", str(DATA_DIR / "controller_token"))
@@ -2430,7 +2437,13 @@ def reconcile_persona_source_provisioning(
                 authorization,
                 operation="source reconciliation mutation",
             )
-            with authoritative_reconcile_lock:
+            with exclusive_file_lock(
+                RECONCILE_TRANSACTION_LOCK_PATH,
+                authoritative_reconcile_lock,
+            ):
+                requirement_snapshot_store.reload()
+                connector_store.reload()
+                schedule_config_store.reload()
                 return _persona_source_provisioning_payload(request)
         return _persona_source_provisioning_payload(request)
     except (SourceEvidenceError, RequirementStateError) as exc:

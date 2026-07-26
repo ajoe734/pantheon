@@ -1,7 +1,6 @@
 # PPL-ALLOC-009 hosted closeout truth record — 2026-07-26
 
-Status: owner evidence complete for B1/B3 and safe restore; independent B5
-reviewer decision pending
+Status: reviewer approved; owner finalization publication pending
 
 Task ID: `PPL-ALLOC-009`
 
@@ -30,8 +29,9 @@ was the same-chain test named `correlates governed B1 and proves the same
 identity on desktop and 393px mobile`; the read-only diagnostic test was
 skipped. This run supersedes the earlier negative B1/B3 result.
 
-This record does **not** self-approve B5 and must not be used as `done`
-evidence until Claude2 records an explicit IA disposition.
+Claude2 independently reviewed the final evidence and recorded B5 `ACCEPT` at
+`2026-07-26T10:48:28Z`. The owner may use this record as `done` evidence only
+after this finalization update merges into `dev`.
 
 ## Accepted exact pair
 
@@ -125,6 +125,29 @@ The browser routes were bound to the exact Persona, quarter, pool, and
 rebalance IDs from B1. The artifact records 23 API request/response checkpoints
 plus route-level network correlation evidence for both viewports.
 
+## B5 — independent IA reviewer decision
+
+Gate result: **passed**.
+
+Claude2 accepts that the canonical Rankings, Governance-Decisions, and
+Performance centers supersede the original PPL-ALLOC-006/007 primary-workbench
+IA contract. No bounded UI task is reopened.
+
+The reviewer verified the accepted frontend commit
+`6a8d2d9b4f725056735eefd7165ef47b52cda53d`:
+
+- `/management/promotion-allocation` mounts
+  `ManagementCanonicalRedirect`, not a competing workbench;
+- the route manifest maps `paper-candidates` to quarterly Rankings,
+  `real-ranking` to rolling Rankings, capital and emergency/containment tabs
+  to Governance-Decisions Capital, and formula policy to
+  Governance-Decisions Policy;
+- the retired promotion-allocation route is absent from sidebar navigation, so
+  only the canonical workflow is primary.
+
+The accepted supersession contract is
+`docs/04/pantheon_management_performance_ranking_ia_gap_2026-07-11/archive/ROUTE_MIGRATION_MATRIX.md`.
+
 ## Safe restore and current posture
 
 Immediately after acceptance, proof-off deployment
@@ -191,32 +214,27 @@ The final acceptance evidence asserts:
 | B2 | Passed | credentials remain masked; no reprovisioning required |
 | B3 | Passed | none |
 | B4 | Passed | merged delivery inventory recorded above |
-| B5 | Pending independent reviewer | Claude2 must explicitly accept the canonical IA supersession or reopen a bounded UI task |
-
-## Required B5 reviewer decision
-
-Claude2 must record exactly one of these outcomes:
-
-1. **Accept** — canonical Rankings, Governance, and Performance centers
-   supersede the original primary-workbench IA contract; or
-2. **Reopen** — identify the bounded UI gap, affected route/component,
-   acceptance test, owner, and blocking/non-blocking status.
-
-The owner intentionally makes no B5 decision in this record.
+| B5 | Passed | Claude2 accepted canonical IA supersession at `2026-07-26T10:48:28Z`; no UI task reopened |
 
 ## Residual risks
 
+- The accepted frontend route manifest maps `emergency-actions` to
+  `governance-decisions?tab=capital`, but the governing route matrix Primary
+  Pages table does not list that mapping. Owner: MGMT-PERF-IA lane. Expiry:
+  none assigned. Blocking: no; this is a documentation follow-up in the owning
+  IA lane.
 - GitHub retains the full sanitized artifact for 90 days. This repository
   preserves its content digest, exact linked IDs, request/response index,
   accepted-pair identity, safety posture, and browser verdicts so later
-  artifact expiry cannot turn B1/B3 into an unsupported assertion.
+  artifact expiry cannot turn B1/B3 into an unsupported assertion. Owner:
+  Codex. Expiry: artifact retention at 90 days. Blocking: no.
 - The proof producer remains disabled by default and in the current hosted
   container. Any future use requires another explicit strict dev/root
-  deployment with the bounded flag enabled.
+  deployment with the bounded flag enabled. Owner: Human/Ops for any future
+  authorization. Expiry: none. Blocking: no.
 - The applied allocation is paper-ledger state only. It is not evidence of,
   and grants no authority for, canary/live/real-capital execution.
-- B5 is blocking for terminal task closeout. It is a reviewer governance
-  action, not an implementation or Human/Ops credential dependency.
+  Owner: Human/Ops. Expiry: none. Blocking: no.
 
 ## Completion checklist
 
@@ -226,6 +244,7 @@ The owner intentionally makes no B5 decision in this record.
 - [x] B3 desktop and 393px evidence index
 - [x] proof-off restore and current safe posture
 - [x] residual risks with ownership and blocking status
-- [ ] independent Claude2 B5 IA decision
-- [ ] reviewer approval transition
-- [ ] owner finalization and canonical `done`
+- [x] independent Claude2 B5 IA decision
+- [x] reviewer approval transition
+- [x] owner finalization artifact prepared and verified
+- [ ] canonical `done` after this finalization PR merges

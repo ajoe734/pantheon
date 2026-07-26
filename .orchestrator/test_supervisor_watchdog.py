@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import fcntl
+import io
 import json
 import os
 import sys
@@ -190,6 +191,45 @@ class SupervisorWatchdogTests(unittest.TestCase):
                 now=now + supervisor_watchdog.timedelta(seconds=301),
                 candidate_pids={123},
             )
+        )
+
+    def test_main_prints_recorded_intent_as_json(self) -> None:
+        target_sha = "a" * 40
+        recorded = {
+            "version": 1,
+            "kind": "intentional_deploy_restart",
+            "created_at": "2026-07-26T11:17:13Z",
+            "expires_at": "2026-07-26T11:22:13Z",
+            "old_pid": 123,
+            "target_sha": target_sha,
+        }
+        args = mock.Mock(
+            config="/tmp/watchdog-config.json",
+            restart=False,
+            dry_run=False,
+            record_intent_pid=123,
+            record_intent_target=target_sha,
+            json=True,
+        )
+
+        with (
+            mock.patch.object(supervisor_watchdog, "parse_args", return_value=args),
+            mock.patch.object(supervisor_watchdog, "load_config", return_value=self.config),
+            mock.patch.object(
+                supervisor_watchdog,
+                "record_intentional_restart",
+                return_value=recorded,
+            ) as record_intentional_restart,
+            mock.patch("sys.stdout", new_callable=io.StringIO) as stdout,
+        ):
+            exit_code = supervisor_watchdog.main()
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(json.loads(stdout.getvalue()), recorded)
+        record_intentional_restart.assert_called_once_with(
+            self.config,
+            old_pid=123,
+            target_sha=target_sha,
         )
 
     def test_intentional_restart_bypasses_crash_budget_and_closes_circuit(self) -> None:

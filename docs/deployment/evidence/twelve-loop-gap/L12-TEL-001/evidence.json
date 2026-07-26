@@ -4,17 +4,18 @@
   "owner": "Codex2",
   "reviewer": "Codex",
   "status": "ready_for_review",
-  "generated_at": "2026-07-26T10:01:35Z",
+  "generated_at": "2026-07-26T10:44:49Z",
   "scope": {
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/L12-TEL-001",
     "base_sha": "77ce7f909",
-    "candidate_sha": "196d801a940044e42c93d9958dc9275e19d0db8e",
+    "candidate_sha": "644321d8ad144a07ec3b99b19c7da7b50794ef72",
     "implementation_anchor_commits": [
       "dbcc2452f",
       "f52f82492",
-      "af252bdea"
+      "af252bdea",
+      "644321d8a"
     ],
     "owned_layer": "Telemetry durable ingest receipts, canonical-write acknowledgement, HTTP authority/tenant isolation, and runtime lifecycle identity projection.",
     "not_changing": "Compose producer credentials, hosted deployment admission, or live-capital authority.",
@@ -31,6 +32,8 @@
     "consumer": "durable_pull_explicit_ack",
     "http_success_boundary": "JetStream persistence PubAck",
     "canonical_ack_boundary": "Postgres write success or fsynced DLQ handoff",
+    "broker_idempotency_key": "sha256 of canonical immutable event JSON, including tenant_id and event_id",
+    "conflicting_retry_rule": "A reused event_id with another tenant or payload produces a distinct durable broker receipt for canonical conflict handling.",
     "process_death_probe": {
       "nats_image": "nats:2.11-alpine",
       "nats_client": "nats-py 2.15.0",
@@ -40,7 +43,14 @@
       "child_exit_code": 23,
       "recovered_event_exact": true,
       "acked_after_recovery": 1,
-      "result": "pass"
+      "result": "pass",
+      "checked_in_regression": {
+        "test": "services.telemetry.test_l12_tel_001_durable_ingest.RealNatsCrashRecoveryTest",
+        "child_exit_code": 23,
+        "recovered_event_exact": true,
+        "acked_after_recovery": 1,
+        "result": "pass"
+      }
     }
   },
   "authority": {
@@ -74,7 +84,9 @@
       "payload/header tenant mismatch returns 403",
       "cross-tenant exact-event read returns 404",
       "cross-tenant DLQ entry is not listed or replayed",
-      "service-only credential cannot invoke replay"
+      "service-only credential cannot invoke replay",
+      "roleless strict JWT remains forbidden despite unrelated runtime-manager default role",
+      "service credential without PANTHEON_TELEMETRY_SERVICE_TENANTS cannot inherit the interactive caller allowlist"
     ]
   },
   "lifecycle_identity": {
@@ -93,8 +105,8 @@
   },
   "validation": [
     {
-      "command": "/home/lupin/pantheon/.venv/bin/python -m unittest services.telemetry.test_ingest_shock_absorption services.telemetry.test_l12_tel_001_durable_ingest services.telemetry.test_main_routes services.telemetry.test_runtime_summary_projection",
-      "result": "123 passed in 6.748s"
+      "command": "PANTHEON_TEST_NATS_URL=nats://127.0.0.1:14222 /home/lupin/pantheon/.venv/bin/python -m unittest services.telemetry.test_ingest_shock_absorption services.telemetry.test_l12_tel_001_durable_ingest services.telemetry.test_main_routes services.telemetry.test_runtime_summary_projection",
+      "result": "127 passed in 8.356s"
     },
     {
       "command": "/home/lupin/pantheon/.venv/bin/python services/telemetry/smoke_test_ingest.py",
@@ -109,8 +121,8 @@
       "result": "exit 0"
     },
     {
-      "command": "real NATS crash-before-flush subprocess probe",
-      "result": "recovered exact unacked event after process exit; PASS"
+      "command": "PANTHEON_TEST_NATS_URL=nats://127.0.0.1:14222 /home/lupin/pantheon/.venv/bin/python -m unittest services.telemetry.test_l12_tel_001_durable_ingest.RealNatsCrashRecoveryTest",
+      "result": "child exited 23 without ACK; replacement consumer recovered and acknowledged exact event; 1 passed in 1.807s"
     },
     {
       "command": "candidate projection over active dev runtime summaries plus exact current events",
@@ -132,7 +144,7 @@
   },
   "residuals": [
     "The active runtime count increased from the packet's six to nine; candidate proof covers all nine.",
-    "The broader telemetry discovery run has one unrelated baseline RuntimeManagerClient allow_local test setup error; 252 other tests completed successfully.",
+    "The broader telemetry discovery run has one unrelated baseline RuntimeManagerClient allow_local test setup error; 260 other tests completed successfully.",
     "Hosted deployment and producer credential wiring intentionally remain downstream task responsibilities."
   ]
 }
