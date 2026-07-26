@@ -92,10 +92,14 @@ TELEMETRY_RUNTIME_HEARTBEAT_STALE_SECONDS
     degraded. Defaults to 90.
 
 TELEMETRY_BUFFER_BACKEND
-    "memory" (default) or "redis".
+    "jetstream" (default), "redis", or explicit test-only "memory".
 
 TELEMETRY_BUFFER_REDIS_URL
     Redis URL when TELEMETRY_BUFFER_BACKEND=redis.
+
+PANTHEON_NATS_URL
+    NATS URL when TELEMETRY_BUFFER_BACKEND=jetstream. The HTTP response waits
+    for a JetStream persistence acknowledgement before returning success.
 
 TELEMETRY_BATCH_SIZE
     Max events per write batch (default 500).
@@ -460,8 +464,9 @@ def _build_service(lineage_write_store: LineageReadService | None = None) -> Tel
 
     schema_path = os.getenv("TELEMETRY_SCHEMA_PATH", _DEFAULT_SCHEMA_PATH)
     storage_dir = os.getenv("TELEMETRY_STORAGE_DIR", _DEFAULT_STORAGE_DIR)
-    buffer_backend = os.getenv("TELEMETRY_BUFFER_BACKEND", "memory")
+    buffer_backend = os.getenv("TELEMETRY_BUFFER_BACKEND", "jetstream")
     redis_url = os.getenv("TELEMETRY_BUFFER_REDIS_URL", "redis://localhost:6379/0")
+    nats_url = os.getenv("PANTHEON_NATS_URL", "nats://localhost:4222")
 
     try:
         batch_size = int(os.getenv("TELEMETRY_BATCH_SIZE", "500"))
@@ -510,6 +515,19 @@ def _build_service(lineage_write_store: LineageReadService | None = None) -> Tel
         storage_dir=storage_dir,
         buffer_backend=buffer_backend,
         buffer_redis_url=redis_url,
+        buffer_nats_url=nats_url,
+        buffer_stream_name=os.getenv(
+            "TELEMETRY_BUFFER_STREAM_NAME",
+            "PANTHEON_TELEMETRY_INGEST",
+        ),
+        buffer_subject=os.getenv(
+            "TELEMETRY_BUFFER_SUBJECT",
+            "pantheon.telemetry.ingest",
+        ),
+        buffer_durable_name=os.getenv(
+            "TELEMETRY_BUFFER_DURABLE_NAME",
+            "telemetry-postgres-writer",
+        ),
         batch_size=batch_size,
         batch_interval=batch_interval,
         max_retries=max_retries,

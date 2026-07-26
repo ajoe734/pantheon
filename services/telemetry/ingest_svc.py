@@ -333,6 +333,10 @@ class TelemetryIngestService:
         buffer_backend: str = "memory",
         buffer_maxsize: int = 100_000,
         buffer_redis_url: str = "redis://localhost:6379/0",
+        buffer_nats_url: str = "nats://localhost:4222",
+        buffer_stream_name: str = "PANTHEON_TELEMETRY_INGEST",
+        buffer_subject: str = "pantheon.telemetry.ingest",
+        buffer_durable_name: str = "telemetry-postgres-writer",
         batch_size: int = 500,
         batch_interval: float = 1.0,
         max_retries: int = 5,
@@ -361,6 +365,8 @@ class TelemetryIngestService:
             Max events in buffer before backpressure.
         buffer_redis_url : str
             Redis URL (only used if buffer_backend="redis").
+        buffer_nats_url : str
+            NATS URL (only used if buffer_backend="jetstream").
         batch_size : int
             Max events per write batch.
         batch_interval : float
@@ -414,6 +420,15 @@ class TelemetryIngestService:
         buffer_kwargs: dict[str, Any] = {"maxsize": buffer_maxsize}
         if buffer_backend == "redis":
             buffer_kwargs["redis_url"] = buffer_redis_url
+        elif buffer_backend in {"jetstream", "nats", "nats_jetstream"}:
+            buffer_kwargs.update(
+                {
+                    "nats_url": buffer_nats_url,
+                    "stream_name": buffer_stream_name,
+                    "subject": buffer_subject,
+                    "durable_name": buffer_durable_name,
+                }
+            )
         self._buffer: DurableBuffer = create_buffer(backend=buffer_backend, **buffer_kwargs)
 
         # Dead-letter queue
@@ -850,6 +865,10 @@ class TelemetryIngestService:
         if self._started:
             return
         self._load_dlq_from_spill_once()
+        # Fail startup closed when a configured durable backend cannot prove
+        # its stream/consumer safety. HTTP must never acknowledge into a
+        # process-local fallback.
+        await self._buffer.start()
         self._started = True
         self._start_time = time.monotonic()
         await self._writer.start()
