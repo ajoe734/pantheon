@@ -1,8 +1,8 @@
 # L12-CONS-001 — Durable Consultation executor evidence
 
-Date: 2026-07-26  
-Owner: Codex  
-Reviewer: Codex2  
+Date: 2026-07-26
+Owner: Codex
+Reviewer: Codex2
 Target: `task/L12-CONS-001` → `dev`
 
 ## Delivered behavior
@@ -69,12 +69,16 @@ Command:
 
 ```text
 /home/lupin/pantheon/.venv/bin/python -m pytest services/consultation -q
+PATH=/home/lupin/pantheon/.venv/bin:$PATH \
+  PYTHON=/home/lupin/pantheon/.venv/bin/python \
+  scripts/run-acceptance.sh smoke
 ```
 
 Result:
 
 ```text
 56 passed, 11 warnings in 29.36s
+repository smoke acceptance passed (stage0 validate + baseline)
 ```
 
 The 11 warnings are pre-existing dependency/deprecation warnings from

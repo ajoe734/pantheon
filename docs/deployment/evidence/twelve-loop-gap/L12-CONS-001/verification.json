@@ -3,12 +3,16 @@
   "task_id": "L12-CONS-001",
   "verified_at": "2026-07-26T09:52:00Z",
   "verification_status": "local_acceptance_passed",
-  "command": "/home/lupin/pantheon/.venv/bin/python -m pytest services/consultation -q",
+  "commands": [
+    "/home/lupin/pantheon/.venv/bin/python -m pytest services/consultation -q",
+    "PATH=/home/lupin/pantheon/.venv/bin:$PATH PYTHON=/home/lupin/pantheon/.venv/bin/python scripts/run-acceptance.sh smoke"
+  ],
   "result": {
     "passed": 56,
     "failed": 0,
     "warnings": 11,
-    "duration_seconds": 29.36
+    "duration_seconds": 29.36,
+    "repository_smoke_acceptance": "passed"
   },
   "proofs": {
     "real_provider_service_boundary": true,
