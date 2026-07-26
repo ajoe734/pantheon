@@ -77,13 +77,26 @@ class WorkflowStateStore:
         )
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA busy_timeout = 30000")
-        connection.execute("PRAGMA journal_mode = WAL")
         connection.execute("PRAGMA synchronous = FULL")
         return connection
 
     def _bootstrap(self) -> None:
-        with self._connect() as connection:
-            connection.execute(
+        last_error: sqlite3.OperationalError | None = None
+        for attempt in range(20):
+            try:
+                with self._connect() as connection:
+                    connection.execute("PRAGMA journal_mode = WAL")
+                    self._create_schema(connection)
+                return
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc).lower():
+                    raise
+                last_error = exc
+                time.sleep(min(0.01 * (attempt + 1), 0.2))
+        raise WorkflowStateError("workflow state bootstrap remained locked") from last_error
+
+    def _create_schema(self, connection: sqlite3.Connection) -> None:
+        connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS consultation_work_items (
                     tenant_id          TEXT NOT NULL,
@@ -111,15 +124,15 @@ class WorkflowStateStore:
                     ))
                 )
                 """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS consultation_work_claimable_idx
+            ON consultation_work_items (
+                tenant_id, status, available_at, created_at
             )
-            connection.execute(
-                """
-                CREATE INDEX IF NOT EXISTS consultation_work_claimable_idx
-                ON consultation_work_items (
-                    tenant_id, status, available_at, created_at
-                )
-                """
-            )
+            """
+        )
 
     def ensure_request(self, *, tenant_id: str, request_id: str) -> None:
         now = self._now()
