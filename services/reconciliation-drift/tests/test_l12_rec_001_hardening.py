@@ -7,10 +7,11 @@ import tempfile
 import threading
 import urllib.error
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -290,6 +291,181 @@ def test_corrupt_consumer_state_fails_closed_and_active_lease_defers_peer(
     assert deferred["lease_owner"] == "consumer-owner"
     peer_fetch.assert_not_called()
     owner.release_lease(worker_id="consumer-owner")
+
+
+def test_consumer_checkpoint_and_release_reject_stale_lease_token(
+    tmp_path: Path,
+) -> None:
+    consumer = _load_worker("l12_rec_consumer_lease_cas", "consumer.py")
+    state_path = tmp_path / "consumer-lease-cas.json"
+    acquired_at = datetime.now(timezone.utc)
+
+    stale = consumer.ConsumerWorkerState(state_path)
+    assert stale.acquire_lease(
+        worker_id="shared-worker-id",
+        lease_seconds=1,
+        now=acquired_at,
+    )
+    stale.pending["stale-checkpoint"] = {
+        "event": {"event_id": "stale-checkpoint", "tenant_id": "tenant-a"},
+        "attempt_count": 1,
+        "first_seen_at": acquired_at.isoformat(),
+        "last_attempt_at": acquired_at.isoformat(),
+        "last_error": None,
+    }
+
+    successor = consumer.ConsumerWorkerState(state_path)
+    assert successor.acquire_lease(
+        worker_id="shared-worker-id",
+        lease_seconds=60,
+        now=acquired_at + timedelta(seconds=2),
+    )
+    successor_token = successor.lease_token
+    successor.pending["successor-checkpoint"] = {
+        "event": {"event_id": "successor-checkpoint", "tenant_id": "tenant-a"},
+        "attempt_count": 0,
+        "first_seen_at": acquired_at.isoformat(),
+        "last_attempt_at": None,
+        "last_error": None,
+    }
+    successor.save()
+
+    with pytest.raises(consumer.ConsumerStateError, match="lease token"):
+        stale.save()
+    with pytest.raises(consumer.ConsumerStateError, match="lease token"):
+        stale.release_lease(worker_id="shared-worker-id")
+
+    persisted = consumer.ConsumerWorkerState(state_path)
+    assert persisted.lease_token == successor_token
+    assert set(persisted.pending) == {"successor-checkpoint"}
+
+
+def test_consumer_delivery_identity_is_tenant_plus_event(
+    tmp_path: Path,
+) -> None:
+    consumer = _load_worker("l12_rec_consumer_tenant_event", "consumer.py")
+    state = consumer.ConsumerWorkerState(tmp_path / "tenant-event-state.json")
+    summaries = [
+        {"tenant_id": "tenant-a", "event_id": "shared-event-id"},
+        {"tenant_id": "tenant-b", "event_id": "shared-event-id"},
+    ]
+    delivered_tenants: list[str] = []
+
+    def to_event(summary):
+        return {
+            "tenant_id": summary["tenant_id"],
+            "event_id": summary["event_id"],
+            "created_at": "2026-07-26T10:00:00Z",
+        }
+
+    def deliver(_service_url, events):
+        delivered_tenants.append(events[0]["tenant_id"])
+        return {"drift_report_count": 1, "incident_case_count": 1}
+
+    with (
+        mock.patch.object(
+            consumer,
+            "fetch_runtime_summaries",
+            return_value=summaries,
+        ),
+        mock.patch.object(
+            consumer,
+            "runtime_summary_to_event",
+            side_effect=to_event,
+        ),
+        mock.patch.object(consumer, "post_events", side_effect=deliver),
+    ):
+        result = consumer.run_runtime_summary_consumer_once(
+            service_url="http://reconciliation",
+            telemetry_url="http://telemetry",
+            state=state,
+            worker_id="tenant-event-worker",
+            now_fn=lambda: datetime(
+                2026, 7, 26, 10, 0, tzinfo=timezone.utc
+            ),
+        )
+
+    assert result["enqueued_event_count"] == 2
+    assert result["delivered_event_count"] == 2
+    assert delivered_tenants == ["tenant-a", "tenant-b"]
+    assert len(state.completed) == 2
+
+
+def test_json_legacy_raw_key_fallback_requires_exact_tenant(
+    tmp_path: Path,
+) -> None:
+    store_module = _load_worker("l12_rec_json_tenant_fallback", "store.py")
+    store = store_module.ReconciliationDriftStore(tmp_path)
+    record = {
+        "drift_report_id": "legacy-report-id",
+        "id": "legacy-report-id",
+        "tenant_id": "tenant-a",
+        "severity": "critical",
+    }
+    store.drift_reports_path.write_text(
+        json.dumps({"legacy-report-id": record}),
+        encoding="utf-8",
+    )
+
+    assert (
+        store.get_drift_report("legacy-report-id", tenant_id="tenant-a")
+        == record
+    )
+    assert store.get_drift_report("legacy-report-id", tenant_id="tenant-b") is None
+
+
+def test_postgres_legacy_raw_key_fallback_requires_exact_tenant(
+    tmp_path: Path,
+) -> None:
+    store_module = _load_worker("l12_rec_postgres_tenant_fallback", "store.py")
+
+    class FakeOwnerStore:
+        tables: dict[str, dict[str, dict]] = {}
+
+        def __init__(self, *, table, **_kwargs):
+            self.records = self.tables.setdefault(table, {})
+
+        def list_all(self):
+            return list(self.records.values())
+
+        def get(self, record_id):
+            record = self.records.get(record_id)
+            return dict(record) if record is not None else None
+
+        def put(self, record_id, payload):
+            self.records[record_id] = dict(payload)
+
+        def compare_and_set(self, record_id, expected, payload):
+            current = self.records.get(record_id)
+            if current != expected:
+                return False, dict(current) if current is not None else None
+            self.records[record_id] = dict(payload)
+            return True, dict(payload)
+
+    FakeOwnerStore.tables = {}
+    with mock.patch.object(
+        store_module,
+        "PostgresJsonOwnerStore",
+        FakeOwnerStore,
+    ):
+        store = store_module.PostgresReconciliationDriftStore(
+            tmp_path,
+            dsn="postgresql://unused",
+        )
+
+    record = {
+        "drift_report_id": "legacy-report-id",
+        "id": "legacy-report-id",
+        "tenant_id": "tenant-a",
+        "severity": "critical",
+    }
+    store._drift_reports.put("legacy-report-id", record)
+
+    assert (
+        store.get_drift_report("legacy-report-id", tenant_id="tenant-a")
+        == record
+    )
+    assert store.get_drift_report("legacy-report-id", tenant_id="tenant-b") is None
 
 
 def test_scheduled_response_measures_configured_sla_and_persists_worker_state() -> None:
