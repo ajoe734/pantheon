@@ -1583,6 +1583,34 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(pending[0]["from"], "Claude")
         self.assertEqual(pending[0]["to"], "Codex")
 
+    def test_human_ops_reopen_clears_blocker_without_impersonating_worker(self) -> None:
+        self.state["tasks"][0]["status"] = "blocked"
+        self.state["tasks"][0]["waiting_for"] = "Human/Ops"
+        self.state["blockers"] = [
+            {
+                "task_id": "REG-002",
+                "owner": "Codex",
+                "waiting_for": "Human/Ops",
+                "message": "Awaiting operator retry",
+                "status": "open",
+                "created_at": "2026-04-06T15:00:00Z",
+            }
+        ]
+
+        with mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False):
+            ai_status.command_reopen(
+                self.state,
+                ["REG-002", "Allowlisted GitHub operator requested retry"],
+            )
+
+        task = ai_status.get_task(self.state, "REG-002")
+        self.assertEqual(task["status"], "in_progress")
+        self.assertNotIn("waiting_for", task)
+        self.assertEqual(self.state["blockers"][0]["status"], "resolved")
+        self.assertFalse(
+            [handoff for handoff in self.state["handoffs"] if handoff["status"] != "done"]
+        )
+
     def test_normalize_handoffs_adds_finalize_handoff_for_approved_task(self) -> None:
         self.state["tasks"][0]["status"] = "review_approved"
         self.state["handoffs"] = []
