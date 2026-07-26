@@ -100,6 +100,8 @@ class SignalConsumer:
         for raw in raw_signals:
             signal = self._validate(raw)
             if signal is None:
+                # Validation failure: route raw payload to DLQ
+                self._enqueue_dlq(raw if isinstance(raw, dict) else {"raw_payload": str(raw)}, "validation_failure")
                 continue
             recorder = getattr(algo, "RecordSignalProcessed", None)
             if callable(recorder):
@@ -114,10 +116,12 @@ class SignalConsumer:
                         "idempotent_replay": True,
                     },
                 )
+                self._ack_signal(signal)
                 continue
             staleness_reason = self._staleness_reason(signal, algo)
             if staleness_reason:
                 self._record_filtered_signal_noop(signal, algo, staleness_reason)
+                self._ack_signal(signal)
                 continue
             if self._is_wrong_binding(signal):
                 self._record_filtered_signal_noop(
@@ -130,6 +134,7 @@ class SignalConsumer:
                     },
                 )
                 self._enqueue_dlq(signal, "binding_mismatch")
+                self._ack_signal(signal)
                 continue
             if self._is_wrong_runtime(signal):
                 self._record_filtered_signal_noop(
@@ -142,6 +147,7 @@ class SignalConsumer:
                     },
                 )
                 self._enqueue_dlq(signal, "runtime_mismatch")
+                self._ack_signal(signal)
                 continue
             if self._is_wrong_capital_pool(signal):
                 signal_pool = str(
@@ -157,6 +163,7 @@ class SignalConsumer:
                     },
                 )
                 self._enqueue_dlq(signal, "capital_pool_mismatch")
+                self._ack_signal(signal)
                 continue
             if signal.get("run_id"):
                 self._buffer_rebalance(signal)
@@ -170,6 +177,13 @@ class SignalConsumer:
 
         # Tick rebalance buffer; execute complete or timed-out batches
         self._tick_rebalance_buffer(algo)
+
+    def _ack_signal(self, signal: dict) -> None:
+        if hasattr(self._store, "ack"):
+            try:
+                self._store.ack(signal)
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # Validation
@@ -258,16 +272,16 @@ class SignalConsumer:
             log.warning("[%s] Duplicate signal_id — discarding (idempotent)", sid)
             return True
         # Persistent idempotency: a signal processed before a worker restart is
-        # still a duplicate (the in-memory set was lost on restart).
-        is_processed = getattr(self._store, "is_processed", None)
-        if callable(is_processed) and is_processed(sid) is True:
-            self._remember_processed(sid)
+        # detected via store.is_processed() and skipped gracefully.
+        is_p = getattr(self._store, "is_processed", None)
+        if callable(is_p) and is_p(sid) is True:
             log.warning("[%s] Duplicate signal_id (persistent) — discarding (idempotent)", sid)
+            self._processed_signal_ids.add(sid)
             return True
         return False
 
-    def _remember_processed(self, sid: str) -> None:
-        """Record a signal_id as processed in-memory and (best-effort) persistently."""
+    def _remember_processed(self, signal_id: str) -> None:
+        sid = str(signal_id)
         self._processed_signal_ids.add(sid)
         mark = getattr(self._store, "mark_processed", None)
         if callable(mark):
@@ -277,49 +291,32 @@ class SignalConsumer:
         return self._staleness_reason(signal, algo) is not None
 
     def _staleness_reason(self, signal: dict, algo: Any | None = None) -> str | None:
-        """
-        Staleness check. Uses algo.Time if available (real-time or backtest time),
-        falling back to current UTC time.
-
-        Note: algo.Time is naive and represents the exchange's local time.
-        For accurate staleness checks, we compare against signal's timestamp
-        which should also be in a consistent timezone (typically UTC per schema).
-        To avoid mixing aware and naive datetimes, we normalize both to naive
-        datetimes for comparison.
-        """
-        sid = signal["signal_id"]
-
-        # Determine "now" based on algo context
-        if algo and hasattr(algo, "Time"):
-            now = algo.Time
-        else:
-            now = datetime.now(timezone.utc)
-
-        ts = _parse_dt(signal["timestamp"])
-        if not ts:
+        raw_ts = signal.get("timestamp")
+        if not raw_ts:
             return None
-
-        # Normalize both to naive datetimes for comparison (strip timezone info)
-        # This handles the case where algo.Time is naive but represents exchange time
-        if ts.tzinfo is not None:
-            ts = ts.replace(tzinfo=None)
-        if now.tzinfo is not None:
-            now = now.replace(tzinfo=None)
-
-        diff_seconds = (now - ts).total_seconds()
-
-        # Discard signals >24h old
+        signal_dt = _parse_dt(str(raw_ts))
+        if signal_dt is None:
+            return None
+        current_dt = getattr(algo, "Time", None)
+        if not isinstance(current_dt, datetime):
+            current_dt = datetime.now(timezone.utc)
+        if current_dt.tzinfo is None and signal_dt.tzinfo is not None:
+            signal_dt = signal_dt.replace(tzinfo=None)
+        elif current_dt.tzinfo is not None and signal_dt.tzinfo is None:
+            signal_dt = signal_dt.replace(tzinfo=timezone.utc)
+        diff_seconds = (current_dt - signal_dt).total_seconds()
         if diff_seconds > 86400:
-            log.warning("[%s] Signal timestamp >24h old (now=%s, ts=%s) — discarding as stale",
-                        sid, now.isoformat(), ts.isoformat())
+            log.warning(
+                "[%s] Signal is stale (age=%.0fs > 86400s) — discarding",
+                signal.get("signal_id", "<unknown>"), diff_seconds,
+            )
             return "stale_signal"
-
-        # Reject signals >1h in future (anomaly check for clock drift)
         if diff_seconds < -3600:
-             log.warning("[%s] Signal timestamp >1h in future (now=%s, ts=%s) — discarding as anomalous",
-                         sid, now.isoformat(), ts.isoformat())
-             return "future_signal_anomaly"
-
+            log.warning(
+                "[%s] Signal timestamp >1h in future — discarding",
+                signal.get("signal_id", "<unknown>"),
+            )
+            return "future_signal_anomaly"
         return None
 
     def _record_filtered_signal_noop(
@@ -361,17 +358,16 @@ class SignalConsumer:
         self._remember_processed(sid)
 
     def _is_wrong_binding(self, signal: dict) -> bool:
-        """Defense-in-depth: discard signals routed to a different binding.
-
-        Only active when this consumer was constructed with a *binding_id*.
-        Signals that carry no ``binding_id`` field pass through regardless —
-        they predate the routing field and must not be silently dropped.
-        """
+        """Fail closed in governed paper mode when binding_id is missing or mismatched."""
         if not self._binding_id:
             return False
         signal_binding = str(signal.get("binding_id") or "").strip()
         if not signal_binding:
-            return False
+            log.warning(
+                "[%s] Fail closed: signal has missing/empty binding_id — discarding",
+                signal.get("signal_id", "<unknown>"),
+            )
+            return True
         if signal_binding == self._binding_id:
             return False
         log.warning(
@@ -381,17 +377,16 @@ class SignalConsumer:
         return True
 
     def _is_wrong_runtime(self, signal: dict) -> bool:
-        """Reject signals addressed to a different runtime instance.
-
-        Only active when this consumer was constructed with a *runtime_id*.
-        Signals without a ``runtime_id`` field are unrouted legacy signals and
-        pass through to preserve backward compatibility.
-        """
+        """Fail closed in governed paper mode when runtime_id is missing or mismatched."""
         if not self._runtime_id:
             return False
         signal_runtime = str(signal.get("runtime_id") or "").strip()
         if not signal_runtime:
-            return False
+            log.warning(
+                "[%s] Fail closed: signal has missing/empty runtime_id — discarding",
+                signal.get("signal_id", "<unknown>"),
+            )
+            return True
         if signal_runtime == self._runtime_id:
             return False
         log.warning(
@@ -401,19 +396,18 @@ class SignalConsumer:
         return True
 
     def _is_wrong_capital_pool(self, signal: dict) -> bool:
-        """Reject signals scoped to a different capital pool.
-
-        Only active when this consumer was constructed with a *capital_pool_id*.
-        Signals whose metadata carries no ``capital_pool_id`` pass through —
-        they predate the field and must not be silently dropped.
-        """
+        """Fail closed in governed paper mode when capital_pool_id is missing or mismatched."""
         if not self._capital_pool_id:
             return False
         signal_pool = str(
             (signal.get("metadata") or {}).get("capital_pool_id") or ""
         ).strip()
         if not signal_pool:
-            return False
+            log.warning(
+                "[%s] Fail closed: signal has missing/empty capital_pool_id — discarding",
+                signal.get("signal_id", "<unknown>"),
+            )
+            return True
         if signal_pool == self._capital_pool_id:
             return False
         log.warning(
@@ -423,20 +417,19 @@ class SignalConsumer:
         return True
 
     def _enqueue_dlq(self, signal: dict, reason: str) -> None:
-        """Best-effort: send an isolation-rejected signal to the store's DLQ.
-
-        Adds a ``dlq_reason`` marker to the payload copy so operators can
-        identify why the signal was dead-lettered without re-parsing logs.
-        """
-        enqueue_dlq = getattr(self._store, "enqueue_dlq", None)
-        if not callable(enqueue_dlq):
+        """Send a rejected or failed signal to the store's DLQ."""
+        enqueue = getattr(self._store, "enqueue_dlq", None)
+        if not callable(enqueue):
             return
         try:
-            dlq_payload = {**signal, "_dlq_reason": reason}
-            enqueue_dlq(dlq_payload)
+            if isinstance(signal, dict):
+                dlq_payload = {**signal, "_dlq_reason": reason}
+            else:
+                dlq_payload = {"raw_payload": str(signal), "_dlq_reason": reason}
+            enqueue(dlq_payload)
         except Exception as exc:  # noqa: BLE001 - DLQ write must never break the signal path
             log.warning("[%s] DLQ enqueue failed (%s): %s",
-                        signal.get("signal_id", "<unknown>"), reason, exc)
+                        signal.get("signal_id", "<unknown>") if isinstance(signal, dict) else "<unknown>", reason, exc)
 
     # ------------------------------------------------------------------
     # Conflict resolution (same symbol, different signals)
@@ -528,17 +521,21 @@ class SignalConsumer:
                 "[%s] No algo instance — dry-run only", signal["signal_id"]
             )
             self._remember_processed(signal["signal_id"])
+            self._ack_signal(signal)
             return
         try:
             execute(signal, algo)
-            # Mark as processed only after successful execution
+            # Mark as processed and ack only after successful execution
             self._remember_processed(signal["signal_id"])
+            self._ack_signal(signal)
         except (ExecutionError, SymbolParseError) as exc:
             log.error("[%s] Execution failed: %s", signal["signal_id"], exc)
             self._record_execution_error_noop(signal, algo, exc)
+            self._enqueue_dlq(signal, f"execution_error: {exc}")
         except Exception as exc:
             log.exception("Unexpected execution error for signal %s: %s",
                           signal.get("signal_id"), exc)
+            self._enqueue_dlq(signal, f"unexpected_error: {exc}")
 
     def _record_execution_error_noop(self, signal: dict, algo: Any | None, exc: Exception) -> None:
         reason = _execution_error_reason(exc)

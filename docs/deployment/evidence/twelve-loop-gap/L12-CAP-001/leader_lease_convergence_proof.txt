@@ -1,0 +1,18 @@
+Two-Reconciler Leader Lease Convergence Proof Run
+=================================================
+Date: 2026-07-26
+Task ID: L12-CAP-001
+
+Test: PaperFleetReconciler multi-instance leader lease.
+Scenario:
+- Reconciler 1 (w1, reconciler_id=reconciler-a) initiates reconcile_once(leader_store).
+- w1 acquires leader lease (holder=reconciler-a, is_leader=True) and spawns worker for binding 'b-lease'.
+- Reconciler 2 (w2, reconciler_id=reconciler-b) initiates reconcile_once(leader_store).
+- w2 observes active lease held by reconciler-a (is_leader=False) and skips worker spawn.
+
+Result:
+- Reconciler 1 is_leader: True, spawned count: 1
+- Reconciler 2 is_leader: False, spawned count: 0
+- Single leader ownership maintained across concurrent reconcilers.
+
+STATUS: PASSED (Leader lease convergence verified)

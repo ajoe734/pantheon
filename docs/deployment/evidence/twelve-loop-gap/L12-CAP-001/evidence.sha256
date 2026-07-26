@@ -1,1 +1,5 @@
-1d7795960e2eae0b21a47549c8077f66f379ef2324e9e029cc5c1d6826eaaf21  README.md
+40e843c14c939f082f574110c55fa6e931e13914d1ba6e37f63c4dc90c272da4  docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/README.md
+45223a2627faed2b5492f2f3af2eafcbabc1227bd9c6cbd87a2ceb7ca3c7809b  docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/execution_error_dlq_proof.txt
+ac407cdee739790d3c73b5f62e600a5b451e10b0f4eea3b7143759ba5b2e3274  docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/leader_lease_convergence_proof.txt
+d27d65eadfaa7a7ac411b8435b4620633c2cfbbd0914fe0ec02fa94f7ce3f942  docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/redis_crash_before_ack_proof.txt
+d1cf0ce28e15edfb2f6889ddce563e2aa0e34b9fc16426fabc7b42041acff9b2  docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/six_binding_restart_isolation_drill.txt

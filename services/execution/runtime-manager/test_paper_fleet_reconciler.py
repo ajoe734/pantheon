@@ -1027,6 +1027,29 @@ class TestPaperFleetReconcilerAcceptanceCriteria(unittest.TestCase):
         self.assertTrue(proc.terminated or proc.killed, "retired binding must stop its worker")
 
 
+class TestLeaderLease(unittest.TestCase):
+
+    def test_two_reconcilers_leader_lease_convergence(self) -> None:
+        """Requirement (d): Two concurrent reconcilers converge to a single leader owner."""
+        w1 = _InstrumentedReconciler(worker_base_port=9100)
+        w2 = _InstrumentedReconciler(worker_base_port=9200)
+
+        leader_store: Dict[str, Any] = {}
+        binding = _make_binding("b-lease")
+        w1.set_bindings([binding])
+        w2.set_bindings([binding])
+
+        # w1 runs first and acquires lease
+        s1 = w1.recon.reconcile_once(leader_store=leader_store)
+        self.assertTrue(w1.recon.is_leader)
+        self.assertEqual(len(w1.spawned), 1)
+
+        # w2 runs and yields to w1
+        s2 = w2.recon.reconcile_once(leader_store=leader_store)
+        self.assertFalse(w2.recon.is_leader)
+        self.assertEqual(len(w2.spawned), 0)
+
+
 if __name__ == "__main__":
     import sys
     sys.path.insert(0, str(Path(__file__).parent))

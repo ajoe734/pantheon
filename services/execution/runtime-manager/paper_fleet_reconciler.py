@@ -234,6 +234,11 @@ class PaperFleetReconciler:
         self._monitoring_heartbeat_stale_after = max(int(stale_after), 1)
         self._extra_env: Dict[str, str] = dict(extra_env or {})
 
+        # Leader lease state: only one reconciler instance owns the active binding worker set
+        self._reconciler_id = f"reconciler-{uuid.uuid4().hex[:8]}"
+        self._is_leader = True  # Default standalone True; updated during reconcile cycle when lease manager present
+        self._lease_lock = threading.Lock()
+
         self._lock = threading.RLock()
         self._workers: Dict[str, WorkerEntry] = {}
         self._monitoring_sessions: Dict[str, Dict[str, Any]] = {}
@@ -246,6 +251,32 @@ class PaperFleetReconciler:
         self._last_error: Optional[str] = None
         self._monitoring_last_error: Optional[str] = None
         self._load_monitoring_sessions()
+
+    @property
+    def reconciler_id(self) -> str:
+        return self._reconciler_id
+
+    @property
+    def is_leader(self) -> bool:
+        with self._lock:
+            return self._is_leader
+
+    def try_acquire_lease(self, leader_store: Dict[str, Any] | None = None) -> bool:
+        """Acquire or renew leader lease. If another instance holds lease, yield leadership."""
+        with self._lock:
+            if leader_store is None:
+                self._is_leader = True
+                return True
+            now = time.monotonic()
+            holder = leader_store.get("holder")
+            expires_at = leader_store.get("expires_at", 0)
+            if holder is None or holder == self._reconciler_id or now > expires_at:
+                leader_store["holder"] = self._reconciler_id
+                leader_store["expires_at"] = now + 30.0
+                self._is_leader = True
+                return True
+            self._is_leader = False
+            return False
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -273,8 +304,12 @@ class PaperFleetReconciler:
     # Reconcile
     # ------------------------------------------------------------------
 
-    def reconcile_once(self) -> Dict[str, Any]:
+    def reconcile_once(self, leader_store: Dict[str, Any] | None = None) -> Dict[str, Any]:
         """Run one reconcile cycle. Returns a snapshot of the fleet state."""
+        if not self.try_acquire_lease(leader_store):
+            log.info("reconciler %s is follower; skipping worker spawn cycle", self._reconciler_id)
+            return self.snapshot()
+
         fleet = self._fetch_fleet_state()
         # fleet is None when the fetch failed — must not evict existing workers
         # in that case, since we have no reliable picture of desired state.

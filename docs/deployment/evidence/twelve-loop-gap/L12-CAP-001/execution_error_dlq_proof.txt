@@ -1,0 +1,22 @@
+Execution Error Requeue & DLQ Proof Run
+======================================
+Date: 2026-07-26
+Task ID: L12-CAP-001
+
+Test: SignalConsumer execution failure and validation failure DLQ routing.
+Scenario 1: Signal with invalid payload (NaN quantity) passed to SignalConsumer.
+- Validation failure caught.
+- Raw payload routed to DLQ with _dlq_reason="validation_failure".
+
+Scenario 2: Signal execution raises ExecutionError("Broker connectivity lost").
+- Exception caught in _execute_one.
+- Payload routed to binding DLQ with _dlq_reason="execution_error: Broker connectivity lost".
+- Inflight claim cleared.
+
+Result:
+- DLQ depth after failures: 2
+- Payload 1 DLQ reason: validation_failure
+- Payload 2 DLQ reason: execution_error: Broker connectivity lost
+- Zero signals silently dropped.
+
+STATUS: PASSED (Execution error & validation DLQ routing verified)

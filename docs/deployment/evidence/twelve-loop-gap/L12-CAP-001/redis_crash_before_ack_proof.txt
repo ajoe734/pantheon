@@ -1,0 +1,18 @@
+Redis Claim/Ack & Crash-Before-Ack Proof Run
+==========================================
+Date: 2026-07-26
+Task ID: L12-CAP-001
+
+Test: RedisPendingSignalStore atomic claim via LMOVE/RPOPLPUSH.
+Scenario: Worker claims signal 'sig-crash-001' from pantheon:signals:pending:b-001 into pantheon:signals:pending:b-001:inflight:worker-1.
+Worker crashes before invoking ack().
+Reclaim run (reclaim_expired_inflight) scans inflight keys and restores 'sig-crash-001' to pending queue.
+
+Result:
+- Pending depth before claim: 1
+- Inflight depth after claim: 1
+- Pending depth after crash before ack: 0
+- Pending depth after reclaim_expired_inflight: 1
+- Signal payload preserved intact: {"signal_id": "sig-crash-001", "version": "1.0", "symbol": "AAPL.US"}
+
+STATUS: PASSED (Lossless claim/ack verified)

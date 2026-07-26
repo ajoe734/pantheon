@@ -80,16 +80,16 @@ class TestRuntimeIdIsolation(unittest.TestCase):
         c, _ = self._consumer(runtime_id="rt-001")
         self.assertTrue(c._is_wrong_runtime(_signal("s1", runtime_id="rt-002")))
 
-    def test_signal_without_runtime_field_passes(self):
-        """Unrouted signals (no runtime_id) must not be dropped."""
+    def test_signal_without_runtime_field_fails_closed(self):
+        """Unrouted signals (no runtime_id) are rejected in governed paper mode."""
         c, _ = self._consumer(runtime_id="rt-001")
-        self.assertFalse(c._is_wrong_runtime(_signal("s1")))  # no runtime_id key
+        self.assertTrue(c._is_wrong_runtime(_signal("s1")))  # no runtime_id key
 
-    def test_empty_runtime_field_treated_as_absent(self):
+    def test_empty_runtime_field_fails_closed(self):
         c, _ = self._consumer(runtime_id="rt-001")
         sig = _signal("s1")
         sig["runtime_id"] = ""
-        self.assertFalse(c._is_wrong_runtime(sig))
+        self.assertTrue(c._is_wrong_runtime(sig))
 
     def test_drain_discards_wrong_runtime_signal(self):
         """drain() must not execute a signal destined for another runtime."""
@@ -100,7 +100,6 @@ class TestRuntimeIdIsolation(unittest.TestCase):
         with patch("services.execution.lean_runtime.signal_consumer.execute") as mock_exec:
             c.drain(algo=algo)
         mock_exec.assert_not_called()
-        self.assertIn("wrong-rt", c._processed_signal_ids)
         self.assertEqual(len(algo.noops), 1)
         self.assertEqual(algo.noops[0]["noop_reason"], "runtime_mismatch")
         self.assertEqual(algo.noops[0]["metadata"]["expected_runtime_id"], "rt-mine")
@@ -116,15 +115,14 @@ class TestRuntimeIdIsolation(unittest.TestCase):
         mock_exec.assert_called_once()
         self.assertIn("right-rt", c._processed_signal_ids)
 
-    def test_drain_executes_unrouted_signal_regardless_of_consumer_runtime(self):
-        """Signals without runtime_id field always pass through."""
+    def test_drain_discards_unrouted_signal_in_governed_mode(self):
+        """Signals without runtime_id field are rejected in governed paper mode."""
         store = InMemoryPendingSignalStore()
         store.enqueue(_signal("legacy"))  # no runtime_id
         c = SignalConsumer(store_client=store, runtime_id="rt-mine")
         with patch("services.execution.lean_runtime.signal_consumer.execute") as mock_exec:
             c.drain(algo=_RecordingAlgo())
-        mock_exec.assert_called_once()
-        self.assertIn("legacy", c._processed_signal_ids)
+        mock_exec.assert_not_called()
 
     def test_multiple_consumers_cannot_steal_each_others_signals(self):
         """Two consumers with different runtime_ids each reject the other's signals."""
@@ -140,10 +138,10 @@ class TestRuntimeIdIsolation(unittest.TestCase):
         c_b = SignalConsumer(store_client=store_b, runtime_id="rt-B")
         with patch("services.execution.lean_runtime.signal_consumer.execute") as mock_exec:
             c_a.drain(algo=_RecordingAlgo())
-            c_b.drain(algo=_RecordingAlgo())
+        c_b.drain(algo=_RecordingAlgo())
         mock_exec.assert_not_called()
-        self.assertIn("sig-b", c_a._processed_signal_ids)
-        self.assertIn("sig-a", c_b._processed_signal_ids)
+        self.assertEqual(store_a.dlq_depth(), 1)
+        self.assertEqual(store_b.dlq_depth(), 1)
 
 
 # ---------------------------------------------------------------------------
@@ -168,16 +166,16 @@ class TestCapitalPoolIsolation(unittest.TestCase):
         c, _ = self._consumer(capital_pool_id="pool-001")
         self.assertTrue(c._is_wrong_capital_pool(_signal("s1", capital_pool_id="pool-other")))
 
-    def test_signal_without_pool_field_passes(self):
-        """Signals without metadata.capital_pool_id are always allowed."""
+    def test_signal_without_pool_field_fails_closed(self):
+        """Signals without metadata.capital_pool_id are rejected in governed paper mode."""
         c, _ = self._consumer(capital_pool_id="pool-001")
-        self.assertFalse(c._is_wrong_capital_pool(_signal("s1")))
+        self.assertTrue(c._is_wrong_capital_pool(_signal("s1")))
 
-    def test_signal_with_empty_pool_field_passes(self):
+    def test_signal_with_empty_pool_field_fails_closed(self):
         c, _ = self._consumer(capital_pool_id="pool-001")
         sig = _signal("s1")
         sig.setdefault("metadata", {})["capital_pool_id"] = ""
-        self.assertFalse(c._is_wrong_capital_pool(sig))
+        self.assertTrue(c._is_wrong_capital_pool(sig))
 
     def test_drain_discards_wrong_pool_signal(self):
         store = InMemoryPendingSignalStore()
@@ -279,12 +277,12 @@ class TestDLQRouting(unittest.TestCase):
         """Consumer must work with stores that have no DLQ support."""
         store = MagicMock()
         store.get_pending.return_value = [_signal("s-no-dlq", runtime_id="rt-other")]
+        store.is_processed.return_value = False
         # Ensure enqueue_dlq is absent
         del store.enqueue_dlq
         c = SignalConsumer(store_client=store, runtime_id="rt-mine")
         algo = _RecordingAlgo()
         c.drain(algo=algo)
-        self.assertIn("s-no-dlq", c._processed_signal_ids)
         self.assertEqual(algo.noops[0]["noop_reason"], "runtime_mismatch")
 
     def test_dlq_drain_and_replay(self):
