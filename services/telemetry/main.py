@@ -30,10 +30,16 @@ POST  /api/v1/telemetry/infrastructure-health
     allowlisted producer scope; the deployment-wide permissive auth mode and the
     shared static service token are both refused on this route.
     Returns 202 on admission and on an idempotent replay of an event_id that
-    already holds a durable receipt, 409 when an event_id is reused for
-    different content, 400 on contract violation, and 503 (retryable) when the
-    schema or ledger is unavailable, the buffer is full, or another attempt
-    holds a live reservation with no durable receipt yet.
+    already holds a durable receipt, 409 INFRA_EVENT_ID_CONFLICT when an
+    event_id is reused for different content, 400 on contract violation, and
+    503 when the schema or ledger is unavailable (INFRA_SCHEMA_UNAVAILABLE,
+    INFRA_LEDGER_UNCONFIGURED), the buffer is full (INFRA_BUFFER_OVERFLOW), or
+    no durable receipt exists yet because another attempt holds the reservation
+    (INFRA_ADMISSION_IN_FLIGHT, INFRA_ADMISSION_FENCED).
+
+    Producers must treat every 503 as "retry with the same event_id": it means
+    the observation is not durable yet, so retrying is what makes delivery
+    at-least-once while the admission ledger keeps it exactly-once.
 
 POST  /api/v1/telemetry/heartbeats
     Ingest one RuntimeHeartbeat payload and adapt it into a canonical

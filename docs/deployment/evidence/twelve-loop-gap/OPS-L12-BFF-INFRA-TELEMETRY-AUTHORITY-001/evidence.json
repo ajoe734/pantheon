@@ -259,6 +259,15 @@
       "recheck_trigger": "Before enabling infrastructure health in a deployed root.",
       "severity": "medium"
     },
+    "readback_buffer_backend": {
+      "blocking_for_this_task": false,
+      "containment": "The commit phase is driven by whatever the configured buffer reports as a durable receipt, so the deployed JetStream PubAck path proven by L12-TEL-001 applies unchanged; the readback exercises the admission protocol, not the buffer's own durability.",
+      "description": "The bounded local readback ran with TELEMETRY_BUFFER_BACKEND=memory, so its durable receipt is the in-process buffer acknowledgement rather than a JetStream PubAck or a canonical Postgres commit.",
+      "expiry": "When infrastructure health is exercised on a deployed JetStream root.",
+      "owner": "deployment manifest owner",
+      "recheck_trigger": "Before enabling infrastructure health in a deployed root.",
+      "severity": "low"
+    },
     "reservation_lease_tuning": {
       "blocking_for_this_task": false,
       "containment": "The lease defaults to 30 seconds, far above the durable enqueue latency of the supported buffers, and a lease that is too short only causes retryable in-flight or fenced answers, never a false success or a lost event.",

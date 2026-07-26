@@ -147,6 +147,14 @@ Exact commands and their conclusions, including the two pre-existing baseline
 residuals that reproduce identically on the unmodified tree, are recorded in
 `evidence.json` under `validation.commands`.
 
+Scope of the readback: it ran with `TELEMETRY_BUFFER_BACKEND=memory`, so the
+durable receipt driving the commit phase is the in-process buffer
+acknowledgement rather than a JetStream PubAck or a canonical Postgres commit.
+The commit phase consumes whatever the configured buffer reports as durable, so
+the deployed JetStream path proven by `L12-TEL-001` applies unchanged — what this
+readback exercises is the admission protocol, not the buffer's own durability.
+This is recorded as a residual risk rather than claimed as deployed proof.
+
 ## Composition
 
 `L12-BFF-001` must drop its out-of-scope edits to `services/telemetry` and its
