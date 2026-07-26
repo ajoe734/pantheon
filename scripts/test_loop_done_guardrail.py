@@ -2,6 +2,7 @@
 """Unit tests for loop_done_guardrail and the validate_loop_completion_claim gate in ai_status."""
 from __future__ import annotations
 
+import contextlib
 import copy
 import importlib
 import json
@@ -1022,13 +1023,14 @@ class TestProtectedHumanOpsCloseoutGuard(unittest.TestCase):
             "review_file": "evidence/closeout.json",
             "requires_human_ops_signoff": True,
         }
-        # Explicitly neutralise the worker workspace bindings so the default
-        # cases resolve from the status root even when this suite runs inside a
-        # dispatched task worktree.
+        # Explicitly neutralise the worker workspace bindings and the run lease
+        # so the default cases resolve from the status root even when this
+        # suite runs inside a dispatched task worktree.
         self.env = {
             "PANTHEON_STATUS_ROOT": str(self.status_root),
             "PANTHEON_WORKTREE_ROOT": "",
             "ORCH_WORKSPACE_PATH": "",
+            "ORCH_RUN_ID": "",
         }
 
     def tearDown(self) -> None:
@@ -1692,6 +1694,195 @@ class TestProtectedHumanOpsCloseoutGuard(unittest.TestCase):
         with (
             mock.patch.dict(os.environ, bound_env, clear=False),
             self.assertRaisesRegex(Exception, "outside candidate-controlled root"),
+        ):
+            guardrail.validate_protected_closeout_transition(
+                self.task,
+                transition="review_approved",
+            )
+
+    @contextlib.contextmanager
+    def _supervisor_lease(
+        self,
+        worktree_root: Path,
+        *,
+        register_worker: bool = True,
+        env: dict[str, str] | None = None,
+    ):
+        """Hold a valid run lease whose worktree is only known centrally.
+
+        The reviewer's replay used exactly this shape: a live ``ORCH_RUN_ID``
+        with both workspace variables erased.  The lease still names the task
+        worktree in supervisor runtime state, which the candidate cannot write.
+        """
+
+        import ai_status
+
+        run_id = "l12-signoff-guard-run"
+        task_id = self.task["id"]
+        workers: dict[str, object] = {}
+        leases: dict[str, object] = {}
+        if register_worker:
+            workers[run_id] = {
+                "run_id": run_id,
+                "task_id": task_id,
+                "status": "running",
+                "workspace_path": str(worktree_root),
+                "status_root": str(self.status_root),
+            }
+            leases[task_id] = {
+                "task_id": task_id,
+                "path": str(worktree_root),
+                "status_root": str(self.status_root),
+            }
+        runtime_state = {
+            "workers": workers,
+            "worker_worktrees": {"leases": leases},
+        }
+        lease_env = {**self.env, "ORCH_RUN_ID": run_id, **(env or {})}
+        with (
+            mock.patch.dict(os.environ, lease_env, clear=False),
+            mock.patch.object(ai_status, "STATUS_ROOT", self.status_root),
+            mock.patch.object(ai_status, "load_config", return_value={}),
+            mock.patch.object(
+                ai_status, "load_runtime_state_snapshot", return_value=runtime_state
+            ),
+        ):
+            yield
+
+    def test_forbidden_roots_include_leased_root_without_env_binding(self) -> None:
+        """The boundary must not shrink when the candidate erases its env."""
+
+        worktree_root = self.temp_root / "task-worktree"
+        worktree_root.mkdir()
+
+        with self._supervisor_lease(worktree_root):
+            forbidden = guardrail._protected_forbidden_roots()
+
+        self.assertIn(worktree_root.resolve(), forbidden)
+        self.assertIn(guardrail.ROOT.resolve(), forbidden)
+        self.assertIn(self.status_root.resolve(), forbidden)
+
+    def test_ledger_inside_leased_root_is_rejected_without_env_binding(self) -> None:
+        worktree_root = self.temp_root / "task-worktree"
+        self._rehome_ledger_under(worktree_root / "state")
+        verdict = self._issue()
+
+        # Control: with no run lease and no environment binding the same
+        # ledger location verifies, which is the bypass being closed.
+        with mock.patch.dict(os.environ, self.env, clear=False):
+            accepted = guardrail.validate_protected_closeout_transition(
+                self.task,
+                transition="review_approved",
+            )
+        self.assertEqual(accepted["verdict_id"], verdict["verdict_id"])
+
+        with (
+            self._supervisor_lease(worktree_root),
+            self.assertRaisesRegex(Exception, "outside candidate-controlled root"),
+        ):
+            guardrail.validate_protected_closeout_transition(
+                self.task,
+                transition="review_approved",
+            )
+
+    def test_policy_inside_leased_root_is_rejected_without_env_binding(self) -> None:
+        worktree_root = self.temp_root / "task-worktree"
+        planted_policy = worktree_root / "verdict-policy.json"
+        planted_policy.parent.mkdir(parents=True, exist_ok=True)
+        planted_policy.write_text(
+            self.policy_path.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        self._issue()
+
+        with (
+            self._supervisor_lease(worktree_root),
+            self.assertRaisesRegex(Exception, "outside candidate-controlled root"),
+        ):
+            guardrail.validate_protected_closeout_transition(
+                self.task,
+                transition="review_approved",
+                policy_path=planted_policy,
+            )
+
+    def test_tail_truncation_cannot_restore_revoked_verdict_without_env_binding(
+        self,
+    ) -> None:
+        """The reviewer's sequence-7 replay, run against the leased boundary."""
+
+        worktree_root = self.temp_root / "task-worktree"
+        self._rehome_ledger_under(worktree_root / "state")
+        verdict = self._issue()
+
+        with mock.patch.dict(os.environ, self.env, clear=False):
+            guardrail.validate_protected_closeout_transition(
+                self.task,
+                transition="review_approved",
+            )
+
+        self._revoke(verdict["verdict_id"])
+        self._truncate_ledger_to_issue_record()
+
+        # Without the lease the truncated ledger still verifies, so the
+        # rejection below is produced by the canonical authority source.
+        with mock.patch.dict(os.environ, self.env, clear=False):
+            restored = guardrail.validate_protected_closeout_transition(
+                self.task,
+                transition="review_approved",
+            )
+        self.assertEqual(restored["verdict_id"], verdict["verdict_id"])
+
+        with (
+            self._supervisor_lease(worktree_root),
+            self.assertRaisesRegex(Exception, "outside candidate-controlled root"),
+        ):
+            guardrail.validate_protected_closeout_transition(
+                self.task,
+                transition="review_approved",
+            )
+
+    def test_tail_truncation_cannot_restore_consumed_verdict_without_env_binding(
+        self,
+    ) -> None:
+        worktree_root = self.temp_root / "task-worktree"
+        self._rehome_ledger_under(worktree_root / "state")
+        self._issue()
+
+        with mock.patch.dict(os.environ, self.env, clear=False):
+            consumed = guardrail.validate_protected_closeout_transition(
+                self.task,
+                transition="done",
+                consume=True,
+                transition_actor="Codex",
+            )
+        self.assertIn("consumption_record_id", consumed)
+
+        self._truncate_ledger_to_issue_record()
+        with (
+            self._supervisor_lease(worktree_root),
+            self.assertRaisesRegex(Exception, "outside candidate-controlled root"),
+        ):
+            guardrail.validate_protected_closeout_transition(
+                self.task,
+                transition="review_approved",
+            )
+
+    def test_unresolvable_run_lease_fails_before_policy_or_ledger_access(self) -> None:
+        """An active run whose lease is missing must not degrade to no boundary."""
+
+        worktree_root = self.temp_root / "task-worktree"
+        self._rehome_ledger_under(worktree_root / "state")
+        self._issue()
+        missing_policy = self.protected_root / "missing-default-policy.json"
+
+        with (
+            mock.patch.object(
+                self.module, "DEFAULT_PROTECTED_POLICY_PATH", missing_policy
+            ),
+            self._supervisor_lease(worktree_root, register_worker=False),
+            self.assertRaisesRegex(
+                RuntimeError, "cannot resolve the supervisor-leased workspace root"
+            ),
         ):
             guardrail.validate_protected_closeout_transition(
                 self.task,

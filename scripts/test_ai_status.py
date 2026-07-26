@@ -447,6 +447,7 @@ class StatusCommandLeaseValidationTests(unittest.TestCase):
         actor: str,
         runtime_state: dict[str, object] | None = None,
         env_task_id: str | None = None,
+        workspace_env: dict[str, str] | None = None,
     ) -> None:
         env = {
             "AI_NAME": actor,
@@ -454,6 +455,8 @@ class StatusCommandLeaseValidationTests(unittest.TestCase):
             "PANTHEON_WORKTREE_ROOT": str(self.workspace),
             "ORCH_WORKSPACE_PATH": str(self.workspace),
         }
+        if workspace_env is not None:
+            env.update(workspace_env)
         if env_task_id is not None:
             env["ORCH_TASK_ID"] = env_task_id
         with (
@@ -537,6 +540,75 @@ class StatusCommandLeaseValidationTests(unittest.TestCase):
                 env_task_id=self.task_id,
                 runtime_state=self._runtime_state(status_root=other_root),
             )
+
+    def test_rejects_erased_workspace_binding_under_valid_run_lease(self) -> None:
+        """Unsetting both workspace variables must not widen a valid lease."""
+
+        for label, overrides in (
+            ("missing", {"PANTHEON_WORKTREE_ROOT": "", "ORCH_WORKSPACE_PATH": ""}),
+            ("blank", {"PANTHEON_WORKTREE_ROOT": "   ", "ORCH_WORKSPACE_PATH": "  "}),
+        ):
+            with self.subTest(binding=label):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "status command workspace binding is required",
+                ):
+                    self._validate(
+                        "progress",
+                        [self.task_id, "erased workspace binding"],
+                        actor="Codex",
+                        env_task_id=self.task_id,
+                        workspace_env=overrides,
+                    )
+
+    def test_rejects_erased_workspace_binding_from_worktree_lease_alone(self) -> None:
+        """The worktree lease path is authoritative even without worker metadata."""
+
+        runtime_state = self._runtime_state()
+        del runtime_state["workers"][self.run_id]["workspace_path"]  # type: ignore[index]
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "status command workspace binding is required",
+        ):
+            self._validate(
+                "progress",
+                [self.task_id, "lease-only workspace authority"],
+                actor="Codex",
+                env_task_id=self.task_id,
+                runtime_state=runtime_state,
+                workspace_env={
+                    "PANTHEON_WORKTREE_ROOT": "",
+                    "ORCH_WORKSPACE_PATH": "",
+                },
+            )
+
+    def test_active_lease_workspace_roots_survive_erased_environment(self) -> None:
+        """The canonical boundary comes from runtime state, not the candidate."""
+
+        env = {
+            "AI_NAME": "Codex",
+            "ORCH_RUN_ID": self.run_id,
+            "ORCH_TASK_ID": self.task_id,
+        }
+        with (
+            mock.patch.dict(os.environ, env, clear=True),
+            mock.patch.object(ai_status, "STATUS_ROOT", self.root),
+            mock.patch.object(ai_status, "STATUS_FILE", self.status_file),
+            mock.patch.object(ai_status, "load_config", return_value={}),
+            mock.patch.object(
+                ai_status,
+                "load_runtime_state_snapshot",
+                return_value=self._runtime_state(),
+            ),
+        ):
+            roots = ai_status.active_lease_workspace_roots()
+
+        self.assertEqual(roots, (self.workspace.resolve(),))
+
+    def test_active_lease_workspace_roots_are_empty_without_run_lease(self) -> None:
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=True):
+            self.assertEqual(ai_status.active_lease_workspace_roots(), ())
 
 
 class StatusRootRoutingTests(unittest.TestCase):
@@ -1477,6 +1549,9 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                     "PANTHEON_STATUS_ROOT": str(status_root),
                     "PANTHEON_WORKTREE_ROOT": str(worktree_root),
                     "ORCH_WORKSPACE_PATH": str(worktree_root),
+                    # The bound worktree under test is the fixture one, so the
+                    # ambient dispatch lease must not also be consulted.
+                    "ORCH_RUN_ID": "",
                     "PANTHEON_PRODUCT_CLOSEOUT_VERDICT_ID": verdict["verdict_id"],
                 },
                 clear=False,
@@ -1527,6 +1602,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                     "PANTHEON_STATUS_ROOT": str(status_root),
                     "PANTHEON_WORKTREE_ROOT": str(worktree_root),
                     "ORCH_WORKSPACE_PATH": str(worktree_root),
+                    "ORCH_RUN_ID": "",
                     "PANTHEON_PRODUCT_CLOSEOUT_VERDICT_ID": "pclose-absent",
                 },
                 clear=False,
