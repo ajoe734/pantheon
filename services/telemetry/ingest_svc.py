@@ -1089,8 +1089,11 @@ class TelemetryIngestService:
         if self._binding_store is not None:
             # Non-trading infrastructure health probes (BFF health monitoring) are admitted without trading binding lookup
             if (
-                event_type == "runtime_health"
-                and isinstance(event.get("bff_health_probe"), dict)
+                (event_type in ("infrastructure_health", "runtime_health"))
+                and (
+                    isinstance(event.get("infrastructure_probe"), dict)
+                    or isinstance(event.get("bff_health_probe"), dict)
+                )
             ):
                 return True, None, None
 

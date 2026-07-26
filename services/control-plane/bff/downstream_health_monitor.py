@@ -371,7 +371,7 @@ class DownstreamHealthMonitor:
         event_id = str(uuid.uuid4())
         event = {
             "event_id": event_id,
-            "event_type": "runtime_health",
+            "event_type": "infrastructure_health",
             "created_at": result.checked_at,
             "execution_mode": _SENTINEL_STAGE,
             "deployment_stage": _SENTINEL_STAGE,
@@ -394,8 +394,7 @@ class DownstreamHealthMonitor:
                 "consecutive_failures": result.consecutive_failures,
             },
             "trace_id": str(uuid.uuid4()),
-            # Non-standard extension fields for BFF health context
-            "bff_health_probe": {
+            "infrastructure_probe": {
                 "target_name": result.target_name,
                 "failure_reason": result.failure_reason,
                 "probe_source": "bff-downstream-health-monitor",
@@ -491,25 +490,12 @@ class DownstreamHealthMonitor:
 
         telemetry_event_ids = [telemetry_event_id] if telemetry_event_id else []
         body = {
-            "incident_id": incident_id,
             "status": "resolved",
             "resolved_at": result.checked_at,
-            "resolution_summary": (
-                f"BFF downstream target {result.target_name} recovered at {result.checked_at}. "
-                f"Status code: {result.status_code}, latency: {result.latency_ms:.1f}ms."
-            ),
-            "telemetry_event_ids": telemetry_event_ids,
         }
         ok, status = _post_json(
-            f"{self._incidents_url}/api/incidents/{incident_id}/resolve",
+            f"{self._incidents_url}/api/incidents/{incident_id}/status",
             body,
             self._http_timeout,
         )
-        if not ok:
-            # Fallback attempt via PUT / POST on base endpoint if /resolve subpath is not implemented
-            ok, status = _post_json(
-                f"{self._incidents_url}/api/incidents/{incident_id}",
-                body,
-                self._http_timeout,
-            )
         return ok
