@@ -4,6 +4,8 @@ Program ID: `pantheon-twelve-loop-gap-2026-07-26`
 
 Canonical catalog: `tasks.json`
 
+Proof-production ownership overlay: `proof-ownership.json`
+
 Source plan:
 `docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/TWELVE_LOOP_GAP_INVENTORY_2026-07-26.md`
 
@@ -23,6 +25,15 @@ product-evidence manifest.
 
 The exact catalog is authoritative. Per-task Markdown is a human-readable
 mirror and cannot silently narrow catalog acceptance.
+
+`proof-ownership.json` does not remove a catalog proof obligation or change
+the immutable catalog digest. It may assign production of a proof to a
+dependency-ordered descendant when the proof requires activation or hosted
+verification that cannot exist before the source domain task completes.
+Every delegation is bound to the exact base catalog, validated against the
+DAG, attached to the active source task by a Human/Ops-only governed command,
+and must be witnessed by its declared downstream task before program
+closeout.
 
 Materialization attaches an immutable catalog SHA and artifact-conflict guard
 to every task. The canonical `assign` transition checks both incoming and

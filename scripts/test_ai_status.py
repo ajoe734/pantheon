@@ -5596,5 +5596,109 @@ class ActivityLogRotationTests(unittest.TestCase):
         durable_write.assert_called_once_with(target, tail)
 
 
+class ProgramProofOwnershipTests(unittest.TestCase):
+    def setUp(self) -> None:
+        _setup_test_isolation(self)
+        catalog_sha = (
+            "a7fbbaa560bd7f2d97750b25cd20af69b64d4f522b293689849b0e1b1763717f"
+        )
+        self.state = {
+            "agents": [],
+            "tasks": [
+                {
+                    "id": "L12-TEACH-001",
+                    "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+                    "owner": "Codex2",
+                    "reviewer": "Codex",
+                    "status": "in_progress",
+                    "depends_on": ["L12-FLEET-001"],
+                    "artifacts": [],
+                    "proof_required": ["hosted persona terminal readback"],
+                    "artifact_conflict_guard": {
+                        "schema_version": 1,
+                        "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+                        "catalog_sha256": catalog_sha,
+                        "task_id": "L12-TEACH-001",
+                        "artifact_scope": [],
+                        "allowed_overlap_task_ids": [],
+                    },
+                },
+                {
+                    "id": "L12-VERIFY-LEARN-001",
+                    "status": "todo",
+                    "depends_on": ["L12-TEACH-001"],
+                    "artifacts": [],
+                },
+                {
+                    "id": "L12-HOSTED-001",
+                    "status": "todo",
+                    "depends_on": ["L12-VERIFY-LEARN-001"],
+                    "artifacts": [],
+                },
+            ],
+            "handoffs": [],
+            "blockers": [],
+        }
+        self.overlay = (
+            "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/"
+            "proof-ownership.json"
+        )
+
+    def tearDown(self) -> None:
+        _teardown_test_isolation(self)
+
+    def test_attach_proof_ownership_is_human_ops_only(self) -> None:
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
+            with self.assertRaisesRegex(SystemExit, "Only Human/Ops"):
+                ai_status.command_attach_proof_ownership(
+                    self.state,
+                    ["L12-TEACH-001", self.overlay, "Delegate hosted proof."],
+                )
+
+    def test_attach_proof_ownership_records_exact_forward_delegation(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {"AI_NAME": "Human/Ops"},
+            clear=False,
+        ):
+            ai_status.command_attach_proof_ownership(
+                self.state,
+                [
+                    "L12-TEACH-001",
+                    self.overlay,
+                    "Break the activation-proof dependency cycle.",
+                ],
+            )
+
+        task = ai_status.get_task(self.state, "L12-TEACH-001")
+        self.assertIsNotNone(task)
+        context = task["proof_ownership"]
+        self.assertEqual(context["attached_by"], "Human/Ops")
+        self.assertEqual(context["proof_ownership_file"], self.overlay)
+        self.assertEqual(len(context["proof_ownership_sha256"]), 64)
+        self.assertEqual(
+            context["delegations"][0]["owner_task_id"],
+            "L12-VERIFY-LEARN-001",
+        )
+        self.assertEqual(
+            context["delegations"][0]["final_witness_task_id"],
+            "L12-HOSTED-001",
+        )
+        self.assertIn("Delegated proof remains required", task["next"])
+
+    def test_attach_proof_ownership_rejects_non_descendant_owner(self) -> None:
+        self.state["tasks"][1]["depends_on"] = []
+        with mock.patch.dict(
+            os.environ,
+            {"AI_NAME": "Human/Ops"},
+            clear=False,
+        ):
+            with self.assertRaisesRegex(SystemExit, "not a descendant"):
+                ai_status.command_attach_proof_ownership(
+                    self.state,
+                    ["L12-TEACH-001", self.overlay, "Invalid delegation."],
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
