@@ -16,8 +16,8 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-26T15:12:00Z",
-    "evidence_cut_semantics": "Owner evidence over four protected-verdict anchors after merging origin/dev at d054bd49cb485f091e3fb31b1d91e57d4fe372ab. This cut supersedes the 2026-07-26T13:08:12Z cut: it carries the remediation of both rejecting review findings on PR #4183 head 4731eb2c and reconciles ownership with the assignment-revision-1 catalog. Implementation and owner acceptance proof are complete; independent reviewer approval is not asserted by this cut.",
+    "evidence_cut_at": "2026-07-26T15:05:00Z",
+    "evidence_cut_semantics": "Owner evidence over four protected-verdict anchors after merging origin/dev at 6ec0b1365d698ab1c31eae6fd61d062967e57ad7. This cut supersedes the 2026-07-26T13:08:12Z cut: it carries the remediation of both rejecting review findings on PR #4183 head 4731eb2c and reconciles ownership with the assignment-revision-1 catalog. Implementation and owner acceptance proof are complete; independent reviewer approval is not asserted by this cut.",
     "id": "L12-SIGNOFF-001",
     "overall_admission": "pass_owner_evidence_ready",
     "owner": "Claude",
@@ -129,9 +129,9 @@
         "result": "pass"
       }
     ],
-    "validated_at": "2026-07-26T15:10:00Z",
-    "validated_base_sha": "d054bd49cb485f091e3fb31b1d91e57d4fe372ab",
-    "validated_head_sha": "dc9097573cff27295160177e3b4ab9db5b71ba0e"
+    "validated_at": "2026-07-26T15:04:00Z",
+    "validated_base_sha": "6ec0b1365d698ab1c31eae6fd61d062967e57ad7",
+    "validated_head_sha": "896cd99410c5f21afa7626c90cd978505b3871cb"
   },
   "deployment": {
     "applicable": false,
@@ -154,7 +154,7 @@
     "pre_deploy": {
       "environment": "task worktree and dev-integration test process",
       "hosted_activation_claimed": false,
-      "observed_at": "2026-07-26T15:10:00Z",
+      "observed_at": "2026-07-26T15:04:00Z",
       "status": "pass",
       "terminal_readback": "The protected verdict implementation and transition guards passed focused and full smoke acceptance before external route and policy activation."
     }
@@ -368,10 +368,10 @@
       "actor": "Claude",
       "kind": "owner_evidence_ready",
       "note": "Sequence-2 findings remediated and re-cut under the reconciled owner. Both defects were first reproduced against head 4731eb2c and then shown closed at this head.",
-      "recorded_at": "2026-07-26T15:12:00Z",
+      "recorded_at": "2026-07-26T15:05:00Z",
       "reference": "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.json",
       "sequence": 3,
-      "sha": "dc9097573cff27295160177e3b4ab9db5b71ba0e",
+      "sha": "896cd99410c5f21afa7626c90cd978505b3871cb",
       "status": "pass"
     }
   ]
