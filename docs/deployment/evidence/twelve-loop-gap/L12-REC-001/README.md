@@ -1,7 +1,7 @@
 # L12-REC-001 reconciliation durability evidence
 
-Status: ready for independent `Codex2` re-review after the PR #4150
-acceptance repairs.
+Status: independent review approved by `Codex2` for PR #4150 at
+`ba5090aa558455aabd2afe39a30cf22be077b32e`; owner closeout is in progress.
 
 This packet proves the repository implementation and focused product tests for
 durable, tenant-scoped reconciliation windows. It does not claim that the
@@ -27,6 +27,14 @@ digest in [`evidence.sha256`](evidence.sha256).
   `23959c7ae2816067fa2a605397cd936f7e2e8eeb`
 - Consumer recovery repair anchor:
   `f4d9a84d5c79b1669f260f25fd428054e65d45d2`
+- Approved review head:
+  `ba5090aa558455aabd2afe39a30cf22be077b32e`
+
+The independent reviewer approved all repaired acceptance gaps at
+`2026-07-26T11:05:17Z`. Reviewer validation reran the four rejected
+regressions, the 98-test reconciliation suite, the 26-test affected
+persistence/lifecycle suite, Python compilation, evidence checksum and JSON
+assertions, `git diff --check`, and all six required PR checks.
 
 Postgres mode now owns evaluations, alert handoffs, ReconciliationRecords,
 DriftReports, work claims, and worker checkpoints. JSON mode implements the
