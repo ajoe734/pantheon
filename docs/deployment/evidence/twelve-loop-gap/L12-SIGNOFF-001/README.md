@@ -1,8 +1,8 @@
 # L12-SIGNOFF-001 protected closeout evidence
 
 Status: owner evidence re-cut after the independent re-review rejected the
-merged PR #4183 delivery, ready for independent `Codex2` review of the
-follow-up PR.
+merged PR #4183 plus follow-up PR #4205 delivery, ready for independent
+`Codex2` review of the next follow-up PR.
 
 Owner is `Claude` and reviewer is `Codex2`, matching both the
 `assignment-revision-1` catalog and the canonical `ai-status.json` assignment.
@@ -61,7 +61,7 @@ before being shown closed:
 A third point — the evidence owner not matching the canonical assignment — was
 reconciled above.
 
-### Sequence-4 rejection (closed in this cut)
+### Sequence-4 rejection (closed in the sequence-5 cut, merged as PR #4205)
 
 The independent re-review rejected the merged PR #4183 delivery on a single
 blocking split-root defect. `_load_product_closeout_binding` resolved
@@ -86,8 +86,40 @@ into `closeout_manifest_sha256`, which the Human/Ops signature covers, so a
 worker-authored worktree copy that was not signed over fails the binding check
 instead of being admitted.
 
-Because PR #4183 is already merged and cannot be amended, this remediation is
-delivered as a follow-up PR against the same task branch.
+Because PR #4183 was already merged and could not be amended, that remediation
+was delivered as follow-up PR #4205 against the same task branch.
+
+### Sequence-6 rejection (closed in this cut)
+
+The independent re-review rejected the merged PR #4205 delivery on a single
+blocking authority-boundary defect. Manifest resolution had been taught about
+the split-root dispatch, but the verifier's own trust boundary had not:
+`validate_protected_closeout_transition` passed only the immutable command root
+and `PANTHEON_STATUS_ROOT` to `load_verifier_service` as `forbidden_roots`, and
+omitted the supervisor-bound `PANTHEON_WORKTREE_ROOT` /
+`ORCH_WORKSPACE_PATH` — the one root the candidate demonstrably writes.
+
+The consequence is not theoretical. The reviewer's temp probe accepted an
+external protected policy whose `ledger_path` pointed inside the task worktree.
+Revocation of an issued verdict correctly failed verification; truncating the
+candidate-owned JSONL ledger back to the signed issue record then restored
+approval verification. The ledger is a hash chain, so any prefix of it is still
+internally consistent: signature and chain checks cannot see a suffix that was
+deleted. Location, not cryptography, is what keeps a revocation or a consumption
+record durable.
+
+`_protected_forbidden_roots` now derives that boundary from the same validated
+split-root bindings that resolve the manifest — the bound task worktree, the
+command root, and the status root — and keeps both the literal and the
+symlink-resolved spelling of each, since containment is checked without
+resolving the protected path. `_bound_workspace_roots` was factored out so the
+boundary and the search path cannot drift apart, and the boundary is computed
+before any manifest, policy, or ledger access, so a relative or conflicting
+binding fails closed instead of quietly narrowing what counts as
+candidate-controlled.
+
+Because PR #4205 is already merged and cannot be amended, this remediation is
+delivered as a further follow-up PR against the same task branch.
 
 ## Authority and binding
 
@@ -137,30 +169,36 @@ The focused run at this head completed:
   scripts/test_loop_done_guardrail.py \
   scripts/test_ai_status.py
 
-269 passed, 1 warning, 23 subtests
+275 passed, 1 warning, 31 subtests
 ```
 
-The count rose from 260 in the sequence-3 cut by the nine split-root
-regressions added here: seven guardrail resolution cases and two end-to-end
-`ai_status` `command_approve` cases.
+The count rose from 269 in the sequence-5 cut by the six authority-boundary
+regressions added here, which contribute eight of the subtests: forbidden-root
+coverage, ledger-under-worktree rejection, policy-under-worktree rejection,
+revoked-verdict tail truncation, consumed-verdict tail truncation, and binding
+validation ordering.
 
 Those regressions were replayed against the pre-fix `origin/dev`
-(`403e30bd985ea9b0c166180103a0ab64e4e35d4f`) in a detached worktree with only
-the two new test files copied in:
+(`d54e1510ae64f4e8b0c3a5e20058a9ec93270939`, the merge of PR #4205) in a
+detached worktree with only the new test file copied in:
 
 ```text
-9 failed, 198 passed, 23 subtests passed
+8 failed, 82 passed, 2 subtests passed
 ```
 
-Eight are the new split-root behaviours; the ninth is the pre-existing
-parent-traversal test, which fails there only because it now calls the renamed
-resolver. The end-to-end case fails with exactly the reported reviewer defect:
+Every failure is an authority-boundary case, under both worker bindings where
+the case is parameterised. Inside
+`test_candidate_tail_truncation_cannot_restore_revoked_verdict` the pre-fix run
+still asserts successfully that truncation restores the revoked approval — the
+reviewer's `candidate_tail_truncation_restores_approval=true` finding
+reproduced verbatim — and fails only on the bound-root rejection that closes
+it. The binding-ordering case passes pre-fix, because manifest lookup already
+raised there; it is kept to pin the ordering against refactors that move the
+boundary derivation.
 
-```text
-SystemExit: Protected Human/Ops verdict rejected for L12-CLOSE-001
-review_approved transition: RuntimeError: closeout review_file is missing or
-not regular: docs/evidence/closeout.json
-```
+The sequence-4 pre-fix replay against
+`403e30bd985ea9b0c166180103a0ab64e4e35d4f` (`9 failed, 198 passed`) is retained
+in `evidence.json` as the proof for that earlier rejection.
 
 `scripts/loop_done_guardrail.py --evidence-root` replay of this manifest
 reports exactly one gap — the absent formal `Codex2` verdict — confirming the
