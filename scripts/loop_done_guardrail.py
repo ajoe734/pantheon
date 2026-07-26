@@ -263,7 +263,9 @@ def _protected_forbidden_roots() -> tuple[Path, ...]:
     These roots come from the same validated bindings used to resolve the
     manifest, so the authority boundary cannot drift away from the search path.
     A relative or conflicting binding raises instead of degrading to a narrower
-    boundary.
+    boundary, and the bound worktree is taken from the supervisor's lease
+    rather than the candidate's environment so it cannot be erased by unsetting
+    both workspace variables.
     """
 
     bound_roots, error = _bound_workspace_roots()
@@ -542,13 +544,46 @@ def validate_protected_closeout_transition(
     return result
 
 
+def _canonical_workspace_roots() -> tuple[list[Path], str | None]:
+    """Return the worktree roots the supervisor leased to this run.
+
+    The environment bindings below are candidate-controlled.  A worker holding
+    a valid ``ORCH_RUN_ID`` could unset both of them and thereby erase its own
+    worktree from the authority boundary, which is enough to make a ledger it
+    can write count as trusted.  Central runtime state is written by the
+    supervisor outside every task worktree, so the leased path recorded there
+    survives that erasure and is the authoritative source.
+
+    An active run whose lease cannot be resolved is an error, not an absent
+    binding: degrading to a narrower boundary is exactly the bypass.
+    """
+
+    if not str(os.environ.get("ORCH_RUN_ID") or "").strip():
+        return [], None
+    try:
+        import ai_status
+
+        roots = [Path(root).resolve() for root in ai_status.active_lease_workspace_roots()]
+    except Exception as exc:  # noqa: BLE001 - any failure must fail closed
+        return [], (
+            "cannot resolve the supervisor-leased workspace root: "
+            f"{type(exc).__name__}: {exc}"
+        )
+    return roots, None
+
+
 def _bound_workspace_roots() -> tuple[list[Path], str | None]:
-    """Return the supervisor-bound worker workspace root, if one is bound.
+    """Return every worker workspace root bound to this run.
 
     Both environment bindings name the same task worktree.  A relative or
     conflicting binding is not an ambiguity to resolve by preference order: it
     means the caller's view of its own workspace is untrustworthy, so every
     consumer must fail closed rather than guess which root is authoritative.
+
+    The supervisor-leased root is merged in on top of the environment so that
+    stripping the environment cannot shrink the set.  The union is the safe
+    direction for both consumers: a wider forbidden set only rejects more, and
+    a wider manifest search path is still sha256-bound to the signed verdict.
     """
 
     bound_roots: list[Path] = []
@@ -565,6 +600,13 @@ def _bound_workspace_roots() -> tuple[list[Path], str | None]:
 
     if len(bound_roots) > 1:
         return [], "conflicting PANTHEON_WORKTREE_ROOT and ORCH_WORKSPACE_PATH"
+
+    canonical_roots, canonical_error = _canonical_workspace_roots()
+    if canonical_error:
+        return [], canonical_error
+    for root in canonical_roots:
+        if root not in bound_roots:
+            bound_roots.append(root)
     return bound_roots, None
 
 
