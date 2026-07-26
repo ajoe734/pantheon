@@ -1,6 +1,7 @@
 # L12-ALPHA-001 authoritative Alpha replication evidence
 
-Status: independently reviewed and approved for the review-fix PR to `dev`.
+Status: independently reviewed, merged to `dev`, and packaged for owner
+closeout.
 
 This packet proves the implementation boundary required by `L12-ALPHA-001`:
 an approved immutable StrategySpec is rechecked by its canonical registry ID,
@@ -15,7 +16,7 @@ The current implementation keeps production activation disabled and fails
 closed for stub, manual-execution, paper, canary, live, and production worker
 modes.
 
-The machine-readable review receipt is [`evidence.json`](evidence.json), with
+The formal product-evidence manifest is [`evidence.json`](evidence.json), with
 its digest in [`evidence.sha256`](evidence.sha256).
 
 ## Delivery identity
@@ -38,6 +39,9 @@ its digest in [`evidence.sha256`](evidence.sha256).
 - Initial delivery: PR
   [#4147](https://github.com/ajoe734/pantheon/pull/4147), merged as
   `dd9d83722b24598a623692c2b6ca8b80f159fe04`
+- Review fixes and owner closeout: PR
+  [#4161](https://github.com/ajoe734/pantheon/pull/4161), merged as
+  `cba34f5bd37ebb8056a9317f4a7e6b062c6111e4`
 
 ## Independent review approval
 
@@ -66,11 +70,11 @@ PYTHONPATH=/tmp/l12-alpha-pydeps:. python3 -m pytest -q -p no:cacheprovider \
   services/research/experiment_orchestrator \
   services/research/experiments \
   services/research/tests/test_research_orchestrator_http_service.py
-60 passed, 11 warnings in 12.56s
+60 passed, 11 warnings in 13.19s
 
 PYTHONPATH=/tmp/l12-alpha-pydeps:. python3 -m pytest -q -p no:cacheprovider \
   <15 approved/tenant/lease/DLQ/ABA/crash/authority-ref cases>
-15 passed, 1 warning in 4.96s
+15 passed, 1 warning in 4.42s
 
 python3 -m py_compile \
   services/research/alpha_replication/queue.py \
