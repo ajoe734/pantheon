@@ -1,11 +1,14 @@
 # Training And Research Postgres Event Store Pilot
 
-Status: task-scoped pilot for `SVC-POSTGRES-TRAINING-RESEARCH-STORE-PILOT`
-Last updated: 2026-04-29
+Status: superseded by the authoritative HA store delivered in
+`L12-TEACH-001`
+Last updated: 2026-07-26
 
 ## Scope
 
-This pilot keeps JSON/JSONL as the default single-VM baseline and adds the first optional Postgres event-store path for `training-session`.
+This document records the original event-only pilot. `L12-TEACH-001` expanded
+the same Postgres activation flag into the authoritative owner store for all
+mutable training-session state.
 
 The pilot does not enable production research adapters. Research framework adapters remain governed by their own activation gates.
 
@@ -42,7 +45,17 @@ TRAINING_SESSION_EVENT_STORE_TABLE=training_session.teaching_events
 TRAINING_SESSION_EVENT_STORE_BOOTSTRAP=1
 ```
 
-When enabled, only the append-only event log moves to Postgres. Session, controls, preview, and replay JSON files remain on the existing local store in this pilot.
+When enabled, the append-only event log uses
+`training_session.teaching_events`, while session, controls, preview, preview
+job, replay, and functional-health records use
+`training_session.authority_records`. The earlier event-only behavior is no
+longer active. JSON/JSONL remains a development-only single-node fallback.
+
+Optional authority-record table configuration:
+
+```bash
+TRAINING_SESSION_AUTHORITY_STORE_TABLE=training_session.authority_records
+```
 
 ## Bootstrap DDL
 
@@ -60,6 +73,15 @@ CREATE TABLE IF NOT EXISTS training_session.teaching_events (
   emitted_at TEXT,
   payload JSONB NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS training_session.authority_records (
+  record_kind TEXT NOT NULL,
+  record_id TEXT NOT NULL,
+  tenant_id TEXT NOT NULL,
+  payload JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (record_kind, record_id)
 );
 ```
 

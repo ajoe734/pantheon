@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "task_id": "L12-TEACH-001",
+  "owner": "Codex2",
+  "reviewer": "Codex",
+  "status": "ready_for_review",
+  "generated_at": "2026-07-26T10:00:44Z",
+  "scope": {
+    "target_repo": "pantheon",
+    "merge_target": "dev",
+    "service_root": "services/training-session",
+    "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-TEACH-001",
+    "store_anchor_commit": "5a942db461633dbd755fdf0578c42ad519c516b2",
+    "authority_anchor_commit": "184b5a54d7816e40841a1c52fd2c970d6c0ade36"
+  },
+  "inbound_authority": {
+    "bearer_verified": true,
+    "service_claim_bound": true,
+    "allowed_role": "training-service",
+    "tenant_claim_bound": true,
+    "cross_tenant_identifier_status": 404,
+    "commit_discard_mfa_required": true,
+    "trusted_actor_overrides_body": true,
+    "negative_cases": [
+      "missing_bearer",
+      "missing_tenant",
+      "service_claim_mismatch",
+      "actor_spoof",
+      "cross_tenant_read",
+      "missing_mfa",
+      "malformed_mfa",
+      "strict_verifier_missing"
+    ]
+  },
+  "authoritative_store": {
+    "backend": "postgres",
+    "records_table": "training_session.authority_records",
+    "events_table": "training_session.teaching_events",
+    "record_kinds": [
+      "session",
+      "controls",
+      "preview",
+      "preview_job",
+      "replay",
+      "functional_health"
+    ],
+    "preview_job_lock": "pg_advisory_xact_lock",
+    "replay_lock": "pg_advisory_xact_lock",
+    "persona_target_owner_api_idempotent": true,
+    "json_fallback": "development_single_node_only"
+  },
+  "real_postgres_proof": {
+    "database": "existing local dev Postgres",
+    "isolated_random_tables": true,
+    "worker_instances": 2,
+    "restart_readback_instances": 1,
+    "terminal_commit_callbacks": 1,
+    "both_workers_observed_terminal": true,
+    "restart_observed_same_controller_record": true,
+    "test_tables_removed": true,
+    "result": "passed"
+  },
+  "evaluation_failure": {
+    "governance_gate_state": "failed",
+    "persona_mutation_calls": 0,
+    "completion_status": 409,
+    "readyz_status": 503,
+    "functional_dependency": "degraded",
+    "later_passing_result_recovers": true
+  },
+  "persona_target_authority": {
+    "tenant_in_pre_readback": true,
+    "tenant_in_approval": true,
+    "tenant_in_write": true,
+    "tenant_in_terminal_readback": true,
+    "tenant_in_digest_binding": true,
+    "tenant_header_forwarded": true,
+    "exact_terminal_readback_required": true,
+    "duplicate_commit_idempotent": true
+  },
+  "hosted_terminal_readback": {
+    "status": "not_claimed",
+    "reason": "Task branch is not merged or activated; local/fake records are not hosted proof.",
+    "activation_task": "L12-MANIFEST-001",
+    "service_boundary_verification_task": "L12-VERIFY-LEARN-001",
+    "hosted_acceptance_task": "L12-HOSTED-001"
+  },
+  "validation": [
+    {
+      "command": "PYTHONPATH=services/training-session/tests:services/training-session:. /home/lupin/pantheon/.venv/bin/python -m pytest -q -p no:cacheprovider services/training-session",
+      "result": "123 passed, 1 skipped, 1 warning in 45.04s"
+    },
+    {
+      "command": "TRAINING_SESSION_TEST_POSTGRES_DSN=<local-dev-dsn> PYTHONPATH=. /home/lupin/pantheon/.venv/bin/python -m pytest -q -p no:cacheprovider services/training-session/tests/test_postgres_event_store.py::test_real_postgres_two_workers_and_restart_observe_one_terminal_commit",
+      "result": "1 passed in 0.94s"
+    },
+    {
+      "command": "PYTHONPATH=. /home/lupin/pantheon/.venv/bin/python -m py_compile services/training-session/inbound_authority.py services/training-session/main.py services/training-session/models.py services/training-session/persona_target.py services/training-session/preview_eval_worker.py services/training-session/store.py",
+      "result": "exit 0"
+    }
+  ],
+  "acceptance": {
+    "teaching_mutations_authenticate_actor_service_and_tenant": true,
+    "session_job_replay_are_authoritative_ha_state": true,
+    "persona_target_uses_authoritative_tenant_bound_owner_api": true,
+    "health_degrades_on_evaluation_or_commit_failure": true,
+    "evaluation_failure_performs_no_persona_mutation": true,
+    "two_workers_and_restart_produce_one_terminal_commit": true,
+    "implementation_overall": "passed",
+    "hosted_proof": "deferred_to_downstream_activation_and_verification"
+  },
+  "residuals": [
+    "Docker Compose/BFF credential forwarding and worker activation are outside this task artifact scope and belong to L12-MANIFEST-001.",
+    "A real hosted persona terminal readback must be captured by L12-VERIFY-LEARN-001/L12-HOSTED-001 after the exact merged commit is deployed.",
+    "The full suite warning is the existing Starlette httpx deprecation warning."
+  ]
+}
