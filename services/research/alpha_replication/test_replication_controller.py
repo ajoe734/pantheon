@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest import mock
 
 import pytest
+from fastapi.testclient import TestClient
 
 from services.research.alpha_replication.controller_state import (
     ControllerState,
@@ -17,6 +18,13 @@ from services.research.alpha_replication.replication_controller import (
     ReplicationControllerConfig,
     _queue_payload_from_registry_entry,
     run_controller_tick,
+)
+from services.research.experiment_orchestrator.authority import (
+    ResearchAuthorityHttpClient,
+)
+from services.research.experiment_orchestrator.test_authority import (
+    FastApiTransport,
+    _load_research_service_module,
 )
 from services.research.alpha_replication.test_revalidation_worker import (
     FakeAuthority,
@@ -144,13 +152,22 @@ def test_controller_discovers_canonical_id_and_reads_authority_before_success(
     assert result["actual_readback"]["queue_revalidated"] == 1
     assert len(authority.tasks) == 1
     assert len(authority.runs) == 1
+    task = next(iter(authority.tasks.values()))
+    run = next(iter(authority.runs.values()))
+    authority_task_id = f"rtask:{task.task_id}"
+    authority_run_id = f"rrun:{run.run_id}"
+    assert result["reconcile"]["created_authority_task_ids"] == [
+        authority_task_id
+    ]
+    assert result["reconcile"]["created_authority_run_ids"] == [
+        authority_run_id
+    ]
+    assert result["reconcile"]["created_run_ids"] == [authority_run_id]
     assert writer.failures == []
     assert len(writer.successes) == 1
     assert writer.successes[0]["evidence_refs"] == [
-        (
-            "research-authority://experiment-runs/"
-            f"{result['reconcile']['created_run_ids'][0]}"
-        )
+        f"research-authority://experiment-tasks/{authority_task_id}",
+        f"research-authority://experiment-runs/{authority_run_id}",
     ]
     assert str(stale_local_run_path) not in writer.successes[0]["evidence_refs"]
 
@@ -158,6 +175,89 @@ def test_controller_discovers_canonical_id_and_reads_authority_before_success(
     assert queued["tenant_id"] == "tenant-a"
     assert queued["strategy_spec_id"] == payload["strategy_spec_id"]
     assert queued["status"] == "completed"
+    assert queued["authority_task_id"] == authority_task_id
+    assert queued["authority_run_ids"] == [authority_run_id]
+    assert queued["experiment_task_id"] == task.task_id
+    assert queued["experiment_run_ids"] == [run.run_id]
+
+
+def test_controller_evidence_refs_dereference_real_fastapi_authority(
+    tmp_path,
+) -> None:
+    service_module = _load_research_service_module()
+    service_client = TestClient(service_module.app)
+    authority = ResearchAuthorityHttpClient(
+        "http://research-orchestrator.test",
+        transport=FastApiTransport(service_client),
+    )
+    seed_path = tmp_path / "distill_seeds.jsonl"
+    seed_path.write_text(
+        json.dumps({"source_id": "strat-alpha"}) + "\n",
+        encoding="utf-8",
+    )
+    state, state_store = _state(tmp_path / "state.json")
+    config = _config(tmp_path, seed_store_path=seed_path, authority=authority)
+    payload = _queue_payload()
+    entry = _registry_entry(payload)
+    writer = CaptureLoopWriter()
+
+    with mock.patch(
+        "services.research.alpha_replication.replication_controller._get_approved_specs_for_strategy",
+        return_value=[entry],
+    ), mock.patch(
+        "services.research.alpha_replication.revalidation_worker.AlphaRevalidationWorker._fetch_strategy_spec_entry",
+        return_value=entry,
+    ), mock.patch(
+        "services.research.replication.gate.ReplicationGate.evaluate_candidate",
+        return_value=FakeGateResponse(True, "replication passed"),
+    ):
+        result = run_controller_tick(
+            config=config,
+            state=state,
+            store=state_store,
+            writer=writer,
+        )
+
+    [receipt] = result["reconcile"]["authority_receipts"]
+    evidence_refs = writer.successes[0]["evidence_refs"]
+    assert evidence_refs == [
+        (
+            "research-authority://experiment-tasks/"
+            f"{receipt['authority_task_id']}"
+        ),
+        (
+            "research-authority://experiment-runs/"
+            f"{receipt['authority_run_id']}"
+        ),
+    ]
+    assert receipt["authority_task_id"] != receipt["experiment_task_id"]
+    assert receipt["authority_run_id"] != receipt["experiment_run_id"]
+
+    ref_routes = {
+        "research-authority://experiment-tasks/": (
+            "/api/research-orchestrator/tasks/",
+            "task_id",
+        ),
+        "research-authority://experiment-runs/": (
+            "/api/research-orchestrator/runs/",
+            "run_id",
+        ),
+    }
+    for evidence_ref in evidence_refs:
+        prefix = next(
+            candidate
+            for candidate in ref_routes
+            if evidence_ref.startswith(candidate)
+        )
+        route_prefix, identity_field = ref_routes[prefix]
+        authority_id = evidence_ref.removeprefix(prefix)
+        response = service_client.get(f"{route_prefix}{authority_id}")
+        assert response.status_code == 200
+        assert response.json()[identity_field] == authority_id
+
+    queued = AlphaReplicationQueue(tmp_path).list_all()[0]
+    assert queued["authority_task_id"] == receipt["authority_task_id"]
+    assert queued["authority_run_ids"] == [receipt["authority_run_id"]]
 
 
 def test_controller_duplicate_discovery_and_restart_converge_once(tmp_path) -> None:
