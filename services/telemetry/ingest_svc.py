@@ -955,17 +955,58 @@ class TelemetryIngestService:
             },
         }
 
-    def get_runtime_summary(self, runtime_id: str) -> Optional[dict[str, Any]]:
+    @staticmethod
+    def _event_tenant_id(event: dict[str, Any]) -> str:
+        top_level = str(event.get("tenant_id") or "").strip()
+        envelope = event.get("correlation_envelope")
+        envelope_tenant = (
+            str(envelope.get("tenant_id") or "").strip()
+            if isinstance(envelope, dict)
+            else ""
+        )
+        if top_level and envelope_tenant and top_level != envelope_tenant:
+            return ""
+        return top_level or envelope_tenant
+
+    def get_runtime_summary(
+        self,
+        runtime_id: str,
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> Optional[dict[str, Any]]:
         if self._runtime_summary_store is None:
             return None
-        return self._runtime_summary_store.get(runtime_id)
+        summary = self._runtime_summary_store.get(runtime_id)
+        if (
+            summary is not None
+            and tenant_id is not None
+            and str(summary.get("tenant_id") or "").strip() != tenant_id
+        ):
+            return None
+        return summary
 
-    def list_runtime_summaries(self) -> list[dict[str, Any]]:
+    def list_runtime_summaries(
+        self,
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
         if self._runtime_summary_store is None:
             return []
-        return self._runtime_summary_store.list()
+        summaries = self._runtime_summary_store.list()
+        if tenant_id is None:
+            return summaries
+        return [
+            summary
+            for summary in summaries
+            if str(summary.get("tenant_id") or "").strip() == tenant_id
+        ]
 
-    def get_accepted_event(self, event_id: str) -> Optional[dict[str, Any]]:
+    def get_accepted_event(
+        self,
+        event_id: str,
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> Optional[dict[str, Any]]:
         """Return the immutable event accepted by this owner process.
 
         The exact event lookup is deliberately separate from runtime summaries:
@@ -977,6 +1018,12 @@ class TelemetryIngestService:
         if not clean_event_id:
             return None
         event = self._seen_event_ids.get(clean_event_id)
+        if (
+            event is not None
+            and tenant_id is not None
+            and self._event_tenant_id(event) != tenant_id
+        ):
+            return None
         return copy.deepcopy(event) if event is not None else None
 
     def get_trade_episode_projection(
@@ -985,10 +1032,16 @@ class TelemetryIngestService:
         *,
         as_of: Optional[str] = None,
         as_of_sequence: Optional[int] = None,
+        tenant_id: Optional[str] = None,
     ) -> Optional[dict[str, Any]]:
         if self._trade_episode_projection_store is None:
             return None
-        return self._trade_episode_projection_store.get(trade_episode_id, as_of=as_of, as_of_sequence=as_of_sequence)
+        return self._trade_episode_projection_store.get(
+            trade_episode_id,
+            as_of=as_of,
+            as_of_sequence=as_of_sequence,
+            tenant_id=tenant_id,
+        )
 
     def list_trade_episode_projections(
         self,
@@ -1006,6 +1059,7 @@ class TelemetryIngestService:
         coverage_state: Optional[str] = None,
         start_time: Optional[str] = None,
         end_time: Optional[str] = None,
+        tenant_id: Optional[str] = None,
     ) -> dict[str, Any]:
         if self._trade_episode_projection_store is None:
             return {"projections": [], "next_cursor": None, "count": 0}
@@ -1023,6 +1077,7 @@ class TelemetryIngestService:
             coverage_state=coverage_state,
             start_time=start_time,
             end_time=end_time,
+            tenant_id=tenant_id,
         )
 
     def has_runtime_binding_store(self) -> bool:
@@ -1035,9 +1090,26 @@ class TelemetryIngestService:
 
     # -- Diagnostics / Replay --
 
-    def get_dlq_entries(self, tag_filter: Optional[str] = None, limit: int = 100) -> list[dict[str, Any]]:
+    def get_dlq_entries(
+        self,
+        tag_filter: Optional[str] = None,
+        limit: int = 100,
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
         """Get dead-letter queue entries."""
-        return self._dlq.get_entries_as_dicts(tag_filter=tag_filter, limit=limit)
+        entries = self._dlq.get_entries_as_dicts(
+            tag_filter=tag_filter,
+            limit=max(limit, 10_000) if tenant_id is not None else limit,
+        )
+        if tenant_id is not None:
+            entries = [
+                entry
+                for entry in entries
+                if isinstance(entry.get("event"), dict)
+                and self._event_tenant_id(entry["event"]) == tenant_id
+            ]
+        return entries[-limit:]
 
     @staticmethod
     def _deduplicate_replay_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1053,7 +1125,12 @@ class TelemetryIngestService:
             deduplicated.append(event)
         return deduplicated
 
-    async def replay_dlq(self, tag_filter: Optional[str] = None) -> int:
+    async def replay_dlq(
+        self,
+        tag_filter: Optional[str] = None,
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> int:
         """
         Replay dead-letter events through the full ingest validation path.
 
@@ -1098,6 +1175,12 @@ class TelemetryIngestService:
             for tag in _WRITE_FAILURE_TAGS:
                 replay_candidates.extend(self._dlq.replay_entries(tag_filter=tag))
             events = self._deduplicate_replay_events(replay_candidates)
+        if tenant_id is not None:
+            events = [
+                event
+                for event in events
+                if self._event_tenant_id(event) == tenant_id
+            ]
 
         count = 0
         for event in events:

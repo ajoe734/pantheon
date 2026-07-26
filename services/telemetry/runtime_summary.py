@@ -35,6 +35,53 @@ _LIFECYCLE_IDENTITY_EVENT_TYPES = frozenset(
     }
 )
 _DEFAULT_RECENT_LIFECYCLE_EVENT_LIMIT = 512
+_LIFECYCLE_IDENTITY_FIELDS = (
+    "event_id",
+    "event_type",
+    "created_at",
+    "tenant_id",
+    "environment",
+    "execution_mode",
+    "deployment_stage",
+    "binding_id",
+    "runtime_id",
+    "capital_pool_id",
+    "artifact_id",
+    "artifact_version",
+    "plan_id",
+    "persona_capital_binding_id",
+    "trace_id",
+    "journey_id",
+    "signal_id",
+    "run_id",
+    "loop_run_id",
+    "aggregate_type",
+    "aggregate_id",
+    "sequence_no",
+    "causal_parent_id",
+    "source_mode",
+    "target",
+    "authority_refs",
+    "metadata",
+    "correlation_envelope",
+)
+_SUMMARY_LIFECYCLE_IDENTITY_FIELDS = (
+    "tenant_id",
+    "environment",
+    "execution_mode",
+    "trace_id",
+    "journey_id",
+    "signal_id",
+    "run_id",
+    "loop_run_id",
+    "aggregate_type",
+    "aggregate_id",
+    "sequence_no",
+    "causal_parent_id",
+    "source_mode",
+    "authority_refs",
+    "correlation_envelope",
+)
 
 
 def utc_now_rfc3339() -> str:
@@ -364,59 +411,50 @@ class RuntimeSummaryProjectionStore:
                     "projection_updated_at": utc_now_rfc3339(),
                 }
             )
-            if trace_id:
-                current["trace_id"] = trace_id
-            else:
-                current.pop("trace_id", None)
-            if correlation_envelope is not None:
-                current["correlation_envelope"] = correlation_envelope
-                if event_type in _LIFECYCLE_IDENTITY_EVENT_TYPES:
-                    # Preserve the last complete lifecycle chain separately
-                    # from general runtime freshness. A later heartbeat may
-                    # update the summary without erasing the identity needed
-                    # by the real reconciliation producer.
-                    current["last_lifecycle_identity"] = {
-                        field: json.loads(json.dumps(event[field]))
-                        for field in (
-                            "event_id",
-                            "event_type",
-                            "created_at",
-                            "tenant_id",
-                            "environment",
-                            "execution_mode",
-                            "deployment_stage",
-                            "binding_id",
-                            "runtime_id",
-                            "capital_pool_id",
-                            "artifact_id",
-                            "artifact_version",
-                            "plan_id",
-                            "persona_capital_binding_id",
-                            "trace_id",
-                            "signal_id",
-                            "run_id",
-                            "loop_run_id",
-                            "aggregate_type",
-                            "aggregate_id",
-                            "sequence_no",
-                            "causal_parent_id",
-                            "source_mode",
-                            "target",
-                            "authority_refs",
-                            "metadata",
-                            "correlation_envelope",
-                        )
-                        if event.get(field) not in (None, "", [], {})
-                    }
-                    current["recent_lifecycle_event_ids"] = (
-                        _append_recent_lifecycle_event_id(
-                            current.get("recent_lifecycle_event_ids"),
-                            event.get("event_id"),
-                            limit=self._recent_lifecycle_event_limit,
-                        )
+            incoming_tenant_id = str(event.get("tenant_id") or "").strip()
+            if incoming_tenant_id:
+                current["tenant_id"] = incoming_tenant_id
+            incoming_environment = str(event.get("environment") or "").strip()
+            if incoming_environment:
+                current["environment"] = incoming_environment
+
+            # A lifecycle event owns the reconciliation trace identity. Runtime
+            # freshness events (especially heartbeats) may advance last_event
+            # and heartbeat fields, but they cannot replace or remove that
+            # identity at the consumer-compatible top level.
+            is_lifecycle_identity = (
+                event_type in _LIFECYCLE_IDENTITY_EVENT_TYPES
+                and bool(trace_id)
+            )
+            if is_lifecycle_identity:
+                lifecycle_identity = {
+                    field: json.loads(json.dumps(event[field]))
+                    for field in _LIFECYCLE_IDENTITY_FIELDS
+                    if event.get(field) not in (None, "", [], {})
+                }
+                lifecycle_identity["trace_id"] = trace_id
+                if correlation_envelope is not None:
+                    lifecycle_identity["correlation_envelope"] = correlation_envelope
+                current["last_lifecycle_identity"] = lifecycle_identity
+                current["recent_lifecycle_event_ids"] = (
+                    _append_recent_lifecycle_event_id(
+                        current.get("recent_lifecycle_event_ids"),
+                        event.get("event_id"),
+                        limit=self._recent_lifecycle_event_limit,
                     )
+                )
+
+            preserved_identity = current.get("last_lifecycle_identity")
+            if isinstance(preserved_identity, dict):
+                for field in _SUMMARY_LIFECYCLE_IDENTITY_FIELDS:
+                    value = preserved_identity.get(field)
+                    if value not in (None, "", [], {}):
+                        current[field] = json.loads(json.dumps(value))
             else:
-                current.pop("correlation_envelope", None)
+                if trace_id:
+                    current["trace_id"] = trace_id
+                if correlation_envelope is not None:
+                    current["correlation_envelope"] = correlation_envelope
 
             if event_type == "heartbeat":
                 current["last_heartbeat_at"] = event_time
