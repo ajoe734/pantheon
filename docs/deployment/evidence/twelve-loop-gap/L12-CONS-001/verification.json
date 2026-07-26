@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "task_id": "L12-CONS-001",
+  "verified_at": "2026-07-26T09:52:00Z",
+  "verification_status": "local_acceptance_passed",
+  "commands": [
+    "/home/lupin/pantheon/.venv/bin/python -m pytest services/consultation -q",
+    "PATH=/home/lupin/pantheon/.venv/bin:$PATH PYTHON=/home/lupin/pantheon/.venv/bin/python scripts/run-acceptance.sh smoke"
+  ],
+  "result": {
+    "passed": 56,
+    "failed": 0,
+    "warnings": 11,
+    "duration_seconds": 29.36,
+    "repository_smoke_acceptance": "passed"
+  },
+  "proofs": {
+    "real_provider_service_boundary": true,
+    "strict_service_operator_auth": true,
+    "tenant_idor_negative": true,
+    "durable_claim_lease_fencing": true,
+    "multi_executor_race": true,
+    "phase_crash_recovery_count": 8,
+    "unique_participant_memo_handoff": true,
+    "downstream_acknowledgement_recovery": true,
+    "bounded_blocked_to_dlq": true,
+    "operator_only_dlq_replay": true,
+    "supervised_container_entrypoint": true
+  },
+  "non_goals_preserved": [
+    "no approval gate bypass",
+    "no direct deployment from consultation",
+    "no broker or capital authority",
+    "no synthetic successful participant"
+  ],
+  "follow_up_owners": {
+    "compose_activation_and_secret_provisioning": "L12-MANIFEST-001",
+    "hosted_product_drill": "L12-VERIFY-LEARN-001"
+  }
+}
