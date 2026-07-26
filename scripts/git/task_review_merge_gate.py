@@ -34,6 +34,24 @@ regression this module exists to prevent: three task PRs were opened with
 `gh pr merge --auto --merge` and landed in `dev` one to two minutes later,
 before any reviewer had looked at them.  #4212 was independently rejected
 eight minutes *after* it was already merged.
+
+Five further live regressions from the same evening extend the contract:
+
+* #4217 landed by a plain `gh pr merge` with `autoMergeRequest=null`; the
+  gate therefore cannot be an auto-merge-only guard.
+* #4222 enabled auto-merge and completed 67 seconds later; the reviewer's
+  rejection arrived twenty minutes after the merge.
+* #4225 first attempted a premature auto-merge enable, then landed as a
+  direct merge by the owner's own GitHub credential while Human/Ops had
+  posted exact-head do-not-merge notes.
+* #4227 shows why an auto-merge *request* is the hazard rather than the
+  merge call: auto-merge was enabled at 23:10:54Z, the head then moved at
+  23:13:21Z, and GitHub merged the newer, never-reviewed head at 23:14:41Z.
+  Its payload was docs-only, which does not waive review-before-merge.
+
+Nothing on the PR side unlocks the gate: a GitHub approving review, the
+identity that pressed merge, and any risk or payload claim recorded on the
+task row are all ignored.
 """
 
 from __future__ import annotations
@@ -46,6 +64,7 @@ import re
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from functools import partial
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Mapping, Sequence
 
@@ -65,6 +84,38 @@ APPROVED_STATUSES = {"review_approved", "done"}
 #: `assign` rebinds owner/reviewer identity after the fact.
 REVOCATION_EVENT_TYPES = {"reopen", "blocker", "assign"}
 APPROVAL_EVENT_TYPE = "review_approved"
+#: A `note` is normally commentary, but PRs #4225 and #4222 were merged while
+#: exact-head "do not merge" / "changes required" notes stood in the audit.
+#: A note carrying one of these markers revokes an approval.  This signal can
+#: only ever block a merge, never unlock one, so a false positive costs a
+#: re-approval rather than an unreviewed delivery.
+REVOCATION_NOTE_TYPES = {"note"}
+REVOCATION_NOTE_MARKERS = (
+    "do not merge",
+    "do-not-merge",
+    "changes required",
+    "changes-required",
+    "changes requested",
+    "rejects",
+    "rejected",
+    "revert",
+)
+
+#: Claims an owner may record on a task row that describe how risky or how
+#: small a delivery is.  They are read only so the gate can say out loud that
+#: it ignored them; none of them waives independent review.
+WAIVER_CLAIM_KEYS = (
+    "risk",
+    "risk_level",
+    "payload",
+    "payload_class",
+    "low_risk",
+    "docs_only",
+    "evidence_only",
+    "review_waived",
+    "skip_review",
+    "no_review_required",
+)
 
 ACTIVITY_LOG_NAME = "ai-activity-log.jsonl"
 ACTIVITY_ARCHIVE_SUBDIR = Path("archive") / "logs"
@@ -140,6 +191,7 @@ class TaskContract:
     declaration_detail: str = ""
     declared_head_sha: str = ""
     declared_head_branch: str = ""
+    ignored_waiver_claims: tuple[str, ...] = ()
 
     @property
     def requires_independent_review(self) -> bool:
@@ -164,6 +216,7 @@ class TaskContract:
             "declared_head_sha": self.declared_head_sha,
             "declared_head_branch": self.declared_head_branch,
             "requires_independent_review": self.requires_independent_review,
+            "ignored_waiver_claims": list(self.ignored_waiver_claims),
         }
 
 
@@ -178,6 +231,26 @@ def _declared_policy(task: Mapping[str, Any]) -> str:
         if text:
             return text
     return ""
+
+
+def _ignored_waiver_claims(task: Mapping[str, Any]) -> tuple[str, ...]:
+    """List risk/payload claims on the row so the gate can say it ignored them.
+
+    PR #4227 was defended after the fact as "docs/evidence only, live swap
+    still blocked".  That may all be true and it still does not waive
+    review-before-merge, so these keys are surfaced as diagnostics and are
+    never consulted when resolving the policy.
+    """
+
+    found: list[str] = []
+    for key in WAIVER_CLAIM_KEYS:
+        if key not in task:
+            continue
+        value = task.get(key)
+        if value is None or value is False or str(value).strip() == "":
+            continue
+        found.append(f"{key}={value}")
+    return tuple(found)
 
 
 def _declared_github_binding(task: Mapping[str, Any]) -> tuple[str, str]:
@@ -202,6 +275,7 @@ def contract_from_task_row(
     status = normalize_status(task.get("status"))
     declared = _declared_policy(task)
     head_sha, head_branch = _declared_github_binding(task)
+    waiver_claims = _ignored_waiver_claims(task)
 
     policy = POLICY_REVIEW_BEFORE_MERGE
     honored = False
@@ -225,6 +299,11 @@ def contract_from_task_row(
     elif declared and declared != POLICY_REVIEW_BEFORE_MERGE:
         detail = f"unknown declared merge policy {declared!r}; defaulting to review_before_merge"
 
+    if waiver_claims and policy == POLICY_REVIEW_BEFORE_MERGE:
+        claims = ", ".join(waiver_claims)
+        note = f"ignored risk/payload claims on {task_id or '?'}: {claims}"
+        detail = f"{detail}; {note}" if detail else note
+
     return TaskContract(
         task_id=task_id,
         source=source,
@@ -237,6 +316,7 @@ def contract_from_task_row(
         declaration_detail=detail,
         declared_head_sha=head_sha,
         declared_head_branch=head_branch,
+        ignored_waiver_claims=waiver_claims,
     )
 
 
@@ -328,6 +408,13 @@ class ApprovalRecord:
         }
 
 
+def _is_rejection_note(message: Any) -> bool:
+    """True when a `note` event carries an explicit do-not-merge instruction."""
+
+    text = str(message or "").lower()
+    return any(marker in text for marker in REVOCATION_NOTE_MARKERS)
+
+
 def _activity_sources(status_root: Path) -> list[Path]:
     active = status_root / ACTIVITY_LOG_NAME
     sources: list[Path] = []
@@ -416,11 +503,20 @@ def load_approval_record(
             )
             revocation = None
             continue
-        if approval is not None and event_type in REVOCATION_EVENT_TYPES:
+        if approval is None:
+            continue
+        if event_type in REVOCATION_EVENT_TYPES:
             revocation = (
                 str(event.get("agent") or "").strip(),
                 timestamp_text,
                 event_type,
+            )
+            continue
+        if event_type in REVOCATION_NOTE_TYPES and _is_rejection_note(event.get("message")):
+            revocation = (
+                str(event.get("agent") or "").strip(),
+                timestamp_text,
+                f"{event_type}:do_not_merge",
             )
 
     if approval is None:
@@ -457,6 +553,7 @@ class GateDecision:
     revoke_auto_merge: bool = False
     contract: dict[str, Any] = field(default_factory=dict)
     approval: dict[str, Any] = field(default_factory=dict)
+    auto_merge_request: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -471,6 +568,7 @@ class GateDecision:
             "revoke_auto_merge": self.revoke_auto_merge,
             "contract": self.contract,
             "approval": self.approval,
+            "auto_merge_request": self.auto_merge_request,
         }
 
 
@@ -482,6 +580,7 @@ def _blocked(
     *,
     head_oid: str = "",
     revoke_auto_merge: bool = True,
+    auto_merge_request: Mapping[str, Any] | None = None,
 ) -> GateDecision:
     return GateDecision(
         task_id=contract.task_id,
@@ -495,11 +594,51 @@ def _blocked(
         revoke_auto_merge=revoke_auto_merge,
         contract=contract.as_dict(),
         approval=approval.as_dict() if approval else {},
+        auto_merge_request=dict(auto_merge_request or {}),
     )
 
 
 def pr_head_oid(pr: Mapping[str, Any]) -> str:
     return str(pr.get("headRefOid") or "").strip().lower()
+
+
+def pr_auto_merge_summary(
+    pr: Mapping[str, Any] | None,
+    head_committed_at: datetime | None = None,
+) -> dict[str, Any]:
+    """Describe any pending auto-merge request, including a carried-over one.
+
+    GitHub keeps an auto-merge request alive across a head change: PR #4227
+    enabled auto-merge at 23:10:54Z, the head moved at 23:13:21Z, and the
+    newer head merged at 23:14:41Z.  ``outlived_head`` records exactly that
+    shape so a gated PR can refuse it instead of inheriting merge authority
+    granted for a commit that no longer exists.
+    """
+
+    request = (pr or {}).get("autoMergeRequest")
+    if not request:
+        return {"present": False, "enabled_at": "", "enabled_by": "", "outlived_head": False}
+    enabled_at_text = ""
+    enabled_by = ""
+    if isinstance(request, Mapping):
+        enabled_at_text = str(request.get("enabledAt") or "").strip()
+        enabler = request.get("enabledBy")
+        if isinstance(enabler, Mapping):
+            enabled_by = str(enabler.get("login") or "").strip()
+        elif enabler:
+            enabled_by = str(enabler).strip()
+    enabled_at = parse_timestamp(enabled_at_text)
+    outlived = bool(
+        head_committed_at is not None
+        and enabled_at is not None
+        and enabled_at < head_committed_at
+    )
+    return {
+        "present": True,
+        "enabled_at": enabled_at_text,
+        "enabled_by": enabled_by,
+        "outlived_head": outlived,
+    }
 
 
 def pr_head_committed_at(pr: Mapping[str, Any]) -> tuple[datetime | None, str]:
@@ -543,10 +682,17 @@ def evaluate_gate(
             head_oid=pr_head_oid(pr) if pr else "",
             contract=contract.as_dict(),
             approval=approval.as_dict() if approval else {},
+            auto_merge_request=pr_auto_merge_summary(pr),
         )
 
+    # Every gated failure below must also revoke a pending auto-merge request,
+    # so resolve it once up front and carry it on every decision.
+    head_committed_at, commit_problem = pr_head_committed_at(pr) if pr else (None, "no PR payload")
+    auto_merge = pr_auto_merge_summary(pr, head_committed_at)
+    block = partial(_blocked, auto_merge_request=auto_merge)
+
     if contract.source in {"missing", "unreadable"}:
-        return _blocked(
+        return block(
             contract,
             approval,
             "task_state_unavailable",
@@ -554,7 +700,7 @@ def evaluate_gate(
         )
 
     if not contract.requires_independent_review:
-        return _blocked(
+        return block(
             contract,
             approval,
             "no_independent_reviewer",
@@ -563,7 +709,7 @@ def evaluate_gate(
         )
 
     if pr is None:
-        return _blocked(
+        return block(
             contract,
             approval,
             "pr_missing",
@@ -572,14 +718,14 @@ def evaluate_gate(
 
     expected_branch = f"{task_branch_prefix}{contract.task_id}"
     if str(pr.get("headRefName") or "").strip() != expected_branch:
-        return _blocked(
+        return block(
             contract,
             approval,
             "head_branch_mismatch",
             f"PR head {str(pr.get('headRefName') or '')!r} is not the exact task branch {expected_branch!r}",
         )
     if contract.declared_head_branch and contract.declared_head_branch != expected_branch:
-        return _blocked(
+        return block(
             contract,
             approval,
             "declared_head_branch_mismatch",
@@ -587,25 +733,25 @@ def evaluate_gate(
             f"but the canonical task branch is {expected_branch!r}",
         )
     if str(pr.get("baseRefName") or "").strip() != dev_branch:
-        return _blocked(
+        return block(
             contract,
             approval,
             "base_branch_mismatch",
             f"PR base {str(pr.get('baseRefName') or '')!r} is not the expected base {dev_branch!r}",
         )
     if bool(pr.get("isDraft")):
-        return _blocked(contract, approval, "pr_is_draft", "PR is a draft")
+        return block(contract, approval, "pr_is_draft", "PR is a draft")
 
     head_oid = pr_head_oid(pr)
     if not OID_RE.match(head_oid):
-        return _blocked(
+        return block(
             contract,
             approval,
             "pr_head_unknown",
             "PR payload does not carry a resolvable 40-hex head oid; refusing an unbound merge",
         )
     if contract.declared_head_sha and contract.declared_head_sha != head_oid:
-        return _blocked(
+        return block(
             contract,
             approval,
             "declared_head_sha_mismatch",
@@ -615,7 +761,7 @@ def evaluate_gate(
         )
 
     if contract.status not in APPROVED_STATUSES:
-        return _blocked(
+        return block(
             contract,
             approval,
             "review_not_approved",
@@ -628,9 +774,9 @@ def evaluate_gate(
         detail = f"no review_approved audit record exists for {contract.task_id}"
         if approval is not None and approval.scan_error:
             detail = f"{detail} ({approval.scan_error})"
-        return _blocked(contract, approval, "approval_record_missing", detail, head_oid=head_oid)
+        return block(contract, approval, "approval_record_missing", detail, head_oid=head_oid)
     if approval.scan_error:
-        return _blocked(
+        return block(
             contract,
             approval,
             "approval_audit_unreadable",
@@ -638,7 +784,7 @@ def evaluate_gate(
             head_oid=head_oid,
         )
     if normalize_agent(approval.reviewer) != normalize_agent(contract.reviewer):
-        return _blocked(
+        return block(
             contract,
             approval,
             "approval_reviewer_mismatch",
@@ -647,7 +793,7 @@ def evaluate_gate(
             head_oid=head_oid,
         )
     if approval.revoked:
-        return _blocked(
+        return block(
             contract,
             approval,
             "approval_revoked",
@@ -659,7 +805,7 @@ def evaluate_gate(
     if str(pr.get("state") or "").strip().upper() == "MERGED":
         merged_at = parse_timestamp(pr.get("mergedAt"))
         if merged_at is None:
-            return _blocked(
+            return block(
                 contract,
                 approval,
                 "merge_timestamp_unknown",
@@ -668,7 +814,7 @@ def evaluate_gate(
                 head_oid=head_oid,
             )
         if merged_at < approval.approved_at:  # type: ignore[operator]
-            return _blocked(
+            return block(
                 contract,
                 approval,
                 "merged_before_approval",
@@ -677,9 +823,8 @@ def evaluate_gate(
                 head_oid=head_oid,
             )
 
-    head_committed_at, commit_problem = pr_head_committed_at(pr)
     if head_committed_at is None:
-        return _blocked(
+        return block(
             contract,
             approval,
             "pr_head_timestamp_unknown",
@@ -690,7 +835,7 @@ def evaluate_gate(
     approved_at = approval.approved_at
     assert approved_at is not None  # guarded by approval.present
     if head_committed_at > approved_at:
-        return _blocked(
+        return block(
             contract,
             approval,
             "head_changed_after_approval",
@@ -701,11 +846,25 @@ def evaluate_gate(
 
     reference = now or datetime.now(timezone.utc)
     if (approved_at - reference).total_seconds() > CLOCK_SKEW_SECONDS:
-        return _blocked(
+        return block(
             contract,
             approval,
             "approval_timestamp_not_credible",
             f"approval timestamp {approval.approved_at_text} is in the future relative to {reference.isoformat()}",
+            head_oid=head_oid,
+        )
+
+    if auto_merge["outlived_head"]:
+        # PR #4227's shape: merge authority granted for an older commit is
+        # still armed against the head standing now.  Approval of this head
+        # does not retroactively legitimise that request.
+        return block(
+            contract,
+            approval,
+            "auto_merge_request_outlived_head",
+            f"an auto-merge request enabled at {auto_merge['enabled_at']} predates head "
+            f"{head_oid} committed at {head_committed_at.isoformat()}; GitHub would land a "
+            "head that the request never covered. Revoke it and merge the exact head",
             head_oid=head_oid,
         )
 
@@ -721,9 +880,13 @@ def evaluate_gate(
         ),
         head_oid=head_oid,
         approved_at=approval.approved_at_text,
-        revoke_auto_merge=False,
+        # A gated task never merges through `--auto`, so even on the approved
+        # path any standing auto-merge request is revoked before the exact-head
+        # merge rather than left armed for the next push.
+        revoke_auto_merge=bool(auto_merge["present"]),
         contract=contract.as_dict(),
         approval=approval.as_dict(),
+        auto_merge_request=auto_merge,
     )
 
 
