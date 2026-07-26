@@ -9,9 +9,29 @@ on:
         default: "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io"
         type: string
       execute_plans_test_sha:
-        description: "Optional exact harness SHA; empty uses expected_fe_sha and any other SHA is rejected"
+        description: "Exact harness SHA; must equal expected_fe_sha unless read-only diagnostic mode is active"
         required: false
         default: ""
+        type: string
+      browser_diagnostic_only:
+        description: "Read-only: audit all three hosted routes without executing the governed B1 mutation chain"
+        required: false
+        default: false
+        type: boolean
+      diagnostic_persona_id:
+        description: "Existing paper Persona used only by read-only browser diagnostic mode"
+        required: false
+        default: "persona-34ac77f34d030185079d"
+        type: string
+      diagnostic_pool_id:
+        description: "Existing paper capital pool used only by read-only browser diagnostic mode"
+        required: false
+        default: "pool-persona-paper-75b390797fd9861f92c6"
+        type: string
+      diagnostic_rebalance_id:
+        description: "Existing applied rebalance used only by read-only browser diagnostic mode"
+        required: false
+        default: "rb-20260725-3be1a73f7b06"
         type: string
       expected_bff_sha:
         description: "Exact deployed Pantheon BFF commit SHA"
@@ -59,6 +79,10 @@ jobs:
       PPL_ALLOC_009_APPROVER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID || 'pantheon-dev-approver-v1' }}
       PPL_ALLOC_009_APPROVER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET }}
       PPL_ALLOC_009_BFF_BASE_URL: ${{ inputs.bff_base_url }}
+      PPL_ALLOC_009_BROWSER_DIAGNOSTIC_ONLY: ${{ inputs.browser_diagnostic_only }}
+      PPL_ALLOC_009_DIAGNOSTIC_PERSONA_ID: ${{ inputs.diagnostic_persona_id }}
+      PPL_ALLOC_009_DIAGNOSTIC_POOL_ID: ${{ inputs.diagnostic_pool_id }}
+      PPL_ALLOC_009_DIAGNOSTIC_REBALANCE_ID: ${{ inputs.diagnostic_rebalance_id }}
       PPL_ALLOC_009_EVIDENCE_DIR: .artifacts/PPL-ALLOC-009/${{ github.run_id }}-${{ github.run_attempt }}
       PPL_ALLOC_009_EXPECTED_BFF_SHA: ${{ inputs.expected_bff_sha }}
       PPL_ALLOC_009_EXPECTED_FE_SHA: ${{ inputs.expected_fe_sha }}
@@ -80,15 +104,22 @@ jobs:
         id: harness
         shell: bash
         env:
+          BROWSER_DIAGNOSTIC_ONLY: ${{ inputs.browser_diagnostic_only }}
           EXPECTED_FRONTEND_SHA: ${{ inputs.expected_fe_sha }}
           REQUESTED_TEST_SHA: ${{ inputs.execute_plans_test_sha }}
         run: |
           set -euo pipefail
-          python3 pantheon/scripts/resolve_ppl_alloc_009_acceptance_harness.py \
-            --expected-frontend-sha "${EXPECTED_FRONTEND_SHA}" \
-            --requested-test-sha "${REQUESTED_TEST_SHA}" \
-            --github-output "${GITHUB_OUTPUT}" \
-            --github-env "${GITHUB_ENV}"
+          if [[ "${BROWSER_DIAGNOSTIC_ONLY}" == "true" ]]; then
+            [[ "${REQUESTED_TEST_SHA}" =~ ^[0-9a-f]{40}$ ]]
+            echo "test_sha=${REQUESTED_TEST_SHA}" >> "${GITHUB_OUTPUT}"
+            echo "PPL_ALLOC_009_TEST_SHA=${REQUESTED_TEST_SHA}" >> "${GITHUB_ENV}"
+          else
+            python3 pantheon/scripts/resolve_ppl_alloc_009_acceptance_harness.py \
+              --expected-frontend-sha "${EXPECTED_FRONTEND_SHA}" \
+              --requested-test-sha "${REQUESTED_TEST_SHA}" \
+              --github-output "${GITHUB_OUTPUT}" \
+              --github-env "${GITHUB_ENV}"
+          fi
 
       - name: Load and mask real browser identity inputs
         shell: bash
@@ -126,7 +157,7 @@ jobs:
           [[ "${PPL_ALLOC_009_EXPECTED_FE_SHA}" =~ ^[0-9a-f]{40}$ ]]
           [[ "${PPL_ALLOC_009_EXPECTED_BFF_SHA}" =~ ^[0-9a-f]{40}$ ]]
           [[ "${PPL_ALLOC_009_TEST_SHA}" =~ ^[0-9a-f]{40}$ ]]
-          [[ "${PPL_ALLOC_009_TEST_SHA}" == "${PPL_ALLOC_009_EXPECTED_FE_SHA}" ]]
+          [[ "${PPL_ALLOC_009_BROWSER_DIAGNOSTIC_ONLY}" == "true" || "${PPL_ALLOC_009_TEST_SHA}" == "${PPL_ALLOC_009_EXPECTED_FE_SHA}" ]]
           [[ "$(git -C execute-plans rev-parse HEAD)" == "${PPL_ALLOC_009_TEST_SHA}" ]]
           [[ -f execute-plans/e2e/ppl-alloc-009-cross-repo-hosted.spec.ts ]]
           [[ -n "${PPL_ALLOC_009_OPERATOR_CLIENT_ID}" ]]
@@ -138,6 +169,11 @@ jobs:
           [[ -n "${PPL_ALLOC_009_GCP_IDENTITY_PASSWORD}" ]]
           [[ "${PPL_ALLOC_009_RUN_KEY}" == "30095677466" ]]
           [[ "${PPL_ALLOC_009_TENANT_ID}" == "tenant-dev" ]]
+          if [[ "${PPL_ALLOC_009_BROWSER_DIAGNOSTIC_ONLY}" == "true" ]]; then
+            [[ -n "${PPL_ALLOC_009_DIAGNOSTIC_PERSONA_ID}" ]]
+            [[ -n "${PPL_ALLOC_009_DIAGNOSTIC_POOL_ID}" ]]
+            [[ -n "${PPL_ALLOC_009_DIAGNOSTIC_REBALANCE_ID}" ]]
+          fi
 
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
