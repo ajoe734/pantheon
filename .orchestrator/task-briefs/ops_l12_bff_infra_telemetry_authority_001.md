@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: in_progress
 - Owner: Claude
 - Reviewer: Codex2
-- Next: Independent `Codex2` review of PR #4211 at the fourth owner evidence cut. The three repairs asked for by the previous review round are done and are described under Owner response below. `AC6` stays `pending_reviewer` and no approval is asserted by either reviewer.
+- Next: Independent Codex2 review of PR #4211 head c1686aaec requests changes. Blocker 1: a fresh focused run failed 1 test and passed 43; TestInfrastructureHealthReplicaAdmission.test_concurrent_replica_processes_admit_exactly_once produced four committed outcomes. Ten isolated repeats failed twice. The helper conflates the one reservation owner that commits with callers that begin after the durable receipt and legitimately observe committed. Make the test distinguish the unique accepted/commit owner from post-receipt duplicates, still prove exactly one committed ledger receipt and one durable admission, repeat the race enough to demonstrate stability, rerun the full focused suite, and refresh validation evidence. Blocker 2: the schema, code comments, and README claim RuntimeBinding evidence fields are rejected at any depth, but _forbidden_binding_fields silently stops past depth 8. A metadata binding_id nested at depth 10 passed the standalone schema and returned no forbidden fields. Traverse all JSON values safely or reject over-depth payloads, add an adversarial test beyond depth 8, and refresh evidence/checksum/head binding. Independent checks that did pass: evidence schema validation, evidence.sha256, all five implementation hashes, PR CLEAN and required checks green. PR remains open and is not merged into dev.
 
 ## Summary
 - Telemetry owns an authoritative, strict-auth, non-trading `InfrastructureHealthEvent` contract, so control-plane health monitoring never invents a `RuntimeBinding` and never gets a shape-based shortcut around trading validation.
@@ -15,66 +15,69 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Trading ingest keeps evidence contract E-1 through E-6 and its authoritative `RuntimeBinding` cross-validation unchanged, and now also refuses `infrastructure_health` outright.
 - Scope is limited to `services/telemetry`. `services/incidents` stays owned by `L12-EVO-001` and `services/control-plane/bff` stays owned by `L12-BFF-001`.
 
-## Owner response to the previous review round
+## Owner response to the Codex2 review of the fourth cut
 
-1. **PR `BEHIND` dev and `Commit trailers` failing.** Run 30219467575 failed on
-   `0410a89f0`, an already-merged `dev` commit from
-   `OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001` whose squash subject is 79
-   chars. The pre-fix workflow anchored the scan range at the synthetic merge
-   commit, so the PR was red on somebody else's history. Merging current `dev`
-   (`6578ef968`) into the task branch cleared the range and picked up the
-   `OPS-CI-PR-TRAILER-RANGE-001` repair. Merge commit `cca84df53`, no conflict,
-   no task file touched. All three required checks are now green on that head:
-   `Commit trailers`, `Runtime mirror guard`, `Smoke acceptance`, on both the
-   `pull_request` (run 30222836610) and `push` (run 30222834932) events.
+Both blockers were real and both are repaired in implementation, not in
+wording. The implementation change is anchor commit `7537f2b4c`; the validated
+head is `a4f9083df`, the merge of `dev` `643181a06` into the task branch.
 
-2. **Stale `Antigravity` reviewer identity.** The evidence `task.reviewer`, `AC6`
-   statement and `blocking_until`, `security_and_safety.two_person_approval`
-   proof, `schema_status.note`, and the evidence README now name `Codex2`. Both
-   `Antigravity` `changes_requested` decisions stay in `record_log` at sequences
-   2 and 4 as the historical review trail, the reassignment is recorded at
-   sequence 6, and no `Antigravity` verdict is restated as a `Codex2` verdict.
-   The canonical acceptance row in `ai-status.json` still reads `Antigravity`
-   because it predates the reassignment; that is stated in `AC6`
-   `blocking_until` rather than silently rewritten.
+**Blocker 1 — the replica race test conflated the admission owner with
+post-receipt duplicates.** The ledger answers the literal word `committed` both
+to the one reservation owner that writes the receipt and to a replica whose
+`begin()` arrives after that receipt is already durable. A barrier releases the
+replicas together; it cannot stop the OS from scheduling one late. So the old
+assertion `outcomes.count("committed") == 1` failed on correct behaviour — the
+reviewer's four `committed` outcomes were one owner and three legitimate
+idempotent duplicates. The child process now reports a structured role, the
+owner follows the real ingest ordering (durable enqueue receipt, then commit),
+and the parent asserts exactly one `commit_owner`, binds the single committed
+ledger record's owner token to that replica's token, requires exactly one
+durable broker copy, and allows losers only `in_flight` or
+`post_receipt_duplicate`. The race repeats over eight independent event IDs.
+Because the post-receipt interleaving is load-dependent and did not occur on the
+validation host at all, a separate staged test forks one replica to completion
+and then three more, making that interleaving certain rather than hoped for.
 
-3. **Validation predating the durability repair.** `validated_head_sha` was
-   `2f723037e`; it is now the merge head `cca84df53` with
-   `validated_base_sha` `6578ef968`. Focused and full telemetry validation were
-   rerun there:
-   - `services/telemetry/test_infrastructure_health_ingest.py` — 44 passed.
-   - `services/telemetry` — 335 passed, 1 skipped, 29 subtests passed, **no
-     failures**. The missing-`PANTHEON_RUNTIME_MANAGER_URL` residual the third
-     cut carried is gone, because the `dev` sync brought in the test-owned
-     isolation fixture from `OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001`.
-   - Cross-service regression set — 11 passed and one pre-existing failure in
-     `test_p0_paper_operating_loop_smoke.py` on `PermissionError: [Errno 13]
-     Permission denied: '/data'` while creating
-     `/data/runtime/lifecycle-outbox`. Unwritable host directory, never touched
-     by telemetry admission.
+Stability at the validated head: ten isolated repeats of
+`TestInfrastructureHealthReplicaAdmission` and
+`TestInfrastructureHealthCrashMatrix` — 16 passed each — and eight concurrent
+repeats of the replica class under deliberate CPU contention — 11 passed each.
+Together that is 88 four-process races with no failure.
 
-   The runtime readback and the three mutation controls were taken at head
-   `28b13a16d` and are carried forward verbatim, because the implementation
-   bytes at `28b13a16d` and at the validated head are identical.
+**Blocker 2 — the RuntimeBinding evidence scan stopped at depth 8.**
+`_forbidden_binding_fields` recursed with a `depth > 8` cap and returned **no
+findings** past it, so a `metadata` `binding_id` nested at depth 10 was
+admitted while the schema description, the ingest docstring, and the evidence
+README all claimed rejection at any depth. `metadata` is
+`additionalProperties: true` by contract, so the standalone schema accepts
+producer context at arbitrary depth and the ingest scan is the only gate — a
+scan that cannot see the whole payload must never answer "clean". The scan is
+now iterative over an explicit stack with no depth ceiling, so it cannot
+exhaust the interpreter stack either, and containers are tracked by identity so
+a reused or self-referential payload terminates without hiding a field.
 
-4. **Binding the proof to the head under review.** The commit carrying the
-   manifest lands after the validated head, so its own `Branch CI Gate` run
-   cannot be named inside the manifest that commit creates; that run is the
-   branch-protection merge gate on PR #4211.
-   `integrity.source_artifact_sha256_by_epoch.implementation_files_at_validated_head`
-   records the `sha256` of each of the five implementation files at
-   `cca84df53`, so `git show <final-head>:<path> | sha256sum` must reproduce
-   them exactly at whatever head the reviewer reads.
+Proof: five new tests on the scan itself (just past depth 8, at 5000 levels,
+across mixed containers, on a self-referential payload, and a clean payload
+that must stay clean), two new HTTP-level adversarial tests — 64 levels of object
+nesting inside `metadata`, and 24 levels of alternating lists and objects — one
+of which first asserts
+that the standalone schema *accepts* the payload so it cannot pass for the
+wrong reason — a mutation control that reinstates the depth-8 cap and fails 5
+tests, and two new runtime probes at depth 12 and depth 40 over real HTTP.
 
-## Evidence
+**Evidence, checksum, and head binding refreshed.** PR #4211 was `BEHIND` `dev`
+by 14 commits, so the branch was brought forward before anything was validated.
+Focused suite 52 passed; full telemetry suite 348 passed, 1 skipped, 35
+subtests, no failures; cross-service set 11 passed with the same pre-existing
+`/data` `PermissionError` residual outside telemetry. All three required checks
+are green on `a4f9083df` on both the `pull_request` and `push` events.
 
-- `docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/evidence.json`
-  — schema-valid against `schemas/product-evidence.schema.json`;
-  `overall_admission=pass_owner_evidence_ready`, which asserts owner proof only.
-- `.../README.md` — narrative packet, including § Head binding.
-- `.../current-runtime-readback.json` — bounded local nonprod readback over real
-  HTTP against a real NATS JetStream file-storage work queue.
-- `.../evidence.sha256` — companion digests for the manifest and the readback.
+Nothing is carried forward from an earlier head this time. Because
+`ingest_svc.py` changed, the runtime readback and the three durability mutation
+controls were **re-executed** rather than reused, and each reproduced its
+recorded conclusion. The readback harness is now committed as
+`readback_probe.py` in the evidence directory so the readback is reproducible
+by the reviewer instead of being an unverifiable transcript.
 
 ## Coordination Root
 - Auto workers inherit `PANTHEON_STATUS_ROOT`, `PANTHEON_COMMAND_ROOT`, and `PANTHEON_COMMAND_RUNTIME_SHA` from the supervisor.
