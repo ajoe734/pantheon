@@ -102,6 +102,13 @@
     },
     "issued_runtime_source": "common.status_command_runtime_env(load_config(live_config)) executed from the installed root; the journal binding comes from the unchanged live config"
   },
+  "candidate_freshness_while_handoff_pending": {
+    "origin_dev_at_install": "6578ef968f7e0374b046de0afb5b07ce2f81558e",
+    "origin_dev_observed_later": "1cf27337e9197c8bc0840e466f55019065e3576e",
+    "installed_commit_still_valid": true,
+    "why": "6578ef968f7e remains an exact accepted dev commit, an ancestor of origin/dev, with all three required contexts green, and it is the commit carrying the dependency this task activates.",
+    "policy": "Running the handoff as recorded activates 6578ef968f7e and satisfies acceptance. If a fresher runtime is wanted later, repeat the install step against the then-current accepted dev tip first and re-verify HEAD/tree/clean/remote/ancestry plus the unchanged config sha256; never activate a root whose HEAD is not exactly one accepted dev commit."
+  },
   "prior_installed_root_left_untouched": {
     "path": "/home/lupin/pantheon-ci-deploy/dev-root-bdbd0a99bf68",
     "head": "bdbd0a99bf68e6a635d9bd936782c659298b7bb7",

@@ -273,7 +273,27 @@ Then run the rollback drill (§5), snapshot again, and roll forward.
 | Rollback to the prior installed root is tested and available | **available, not tested** — §5 |
 | Deployment evidence branch commit push PR checks Codex2 review merge and archive complete | in progress — this artifact |
 
-## 8. Residual risks
+## 8. Candidate freshness while the handoff is pending
+
+`dev` kept advancing after the install: by 2026-07-26T23:2xZ the tip was
+`1cf27337e` (PRs #4225 and #4226, both `OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001`).
+That does not invalidate the installed runtime — `6578ef968f7e` is still an
+exact accepted `dev` commit, an ancestor of `origin/dev`, with all three
+required contexts green, and it is the commit that carries the dependency this
+task exists to activate.
+
+Policy for whoever runs the blocked handoff:
+
+- running §6.2 as recorded installs and activates `6578ef968f7e`, which is
+  correct and sufficient for this task's acceptance;
+- if the handoff happens much later and a fresher runtime is wanted, re-run the
+  §3 install step against the then-current accepted `dev` tip **first**
+  (`git -C …/dev-root-d054bd49cb48 checkout --detach <new-tip>`, verifying the
+  same HEAD/tree/clean/remote/ancestry and unchanged config sha256), then run
+  the same swap. Do not mix: never activate a root whose HEAD is not exactly one
+  accepted `dev` commit.
+
+## 9. Residual risks
 
 | Risk | Severity | Containment |
 |---|---|---|
