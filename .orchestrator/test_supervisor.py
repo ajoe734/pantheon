@@ -12337,6 +12337,549 @@ class RunSupervisorShellGuardTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 11, proc.stderr)
 
 
+# SUP-WORKER-TRUTH-RECONCILE-001 -----------------------------------------------
+# Regression coverage for the four worker-truth defects observed on the live
+# fleet: nonthrottling rate-limit notices read as worker failures, auth pauses
+# that expired on a timer instead of on a fresh probe, ownerless in_progress
+# rows redispatched to their owner forever, and the queue/lease state left
+# dangling by that reconciliation.
+
+
+ALLOWED_WARNING_RATE_LIMIT_LINE = json.dumps(
+    {
+        "type": "rate_limit_event",
+        "rate_limit_info": {
+            "status": "allowed_warning",
+            "resetsAt": 1785153600,
+            "rateLimitType": "seven_day",
+            "utilization": 0.83,
+            "isUsingOverage": False,
+            "surpassedThreshold": 0.75,
+        },
+        "uuid": "466e8308-da86-4dbd-a188-985b8558a428",
+        "session_id": "30c27323-d5f9-41ec-8d84-6ea882f1ba15",
+    },
+    separators=(",", ":"),
+)
+
+
+class AllowedRateLimitNoticeTests(unittest.TestCase):
+    """An `allowed_warning` quota notice is not a worker failure."""
+
+    def _worker_with_log(self, *lines: str) -> dict[str, object]:
+        handle = tempfile.NamedTemporaryFile("w", suffix=".log", delete=False)
+        self.addCleanup(os.unlink, handle.name)
+        with handle:
+            handle.write("\n".join(lines) + "\n")
+        return {"run_id": "claude1-2-run", "provider": "claude1-2", "log_path": handle.name}
+
+    def test_allowed_warning_event_is_not_detected_as_worker_failure(self) -> None:
+        worker = self._worker_with_log(
+            '{"type":"assistant","message":{"role":"assistant"}}',
+            ALLOWED_WARNING_RATE_LIMIT_LINE,
+        )
+        self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+    def test_allowed_status_event_is_still_not_a_worker_failure(self) -> None:
+        payload = json.loads(ALLOWED_WARNING_RATE_LIMIT_LINE)
+        payload["rate_limit_info"]["status"] = "allowed"
+        worker = self._worker_with_log(json.dumps(payload, separators=(",", ":")))
+        self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+    def test_rejected_rate_limit_event_is_still_a_worker_failure(self) -> None:
+        payload = json.loads(ALLOWED_WARNING_RATE_LIMIT_LINE)
+        payload["rate_limit_info"]["status"] = "rejected"
+        line = json.dumps(payload, separators=(",", ":"))
+        worker = self._worker_with_log(line)
+        self.assertEqual(supervisor.detect_worker_failure(worker), line)
+
+    def test_truncated_allowed_warning_line_is_not_a_worker_failure(self) -> None:
+        truncated = ALLOWED_WARNING_RATE_LIMIT_LINE[: ALLOWED_WARNING_RATE_LIMIT_LINE.index("resetsAt") - 2]
+        with self.assertRaises(json.JSONDecodeError):
+            json.loads(truncated)
+        worker = self._worker_with_log(truncated)
+        self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+    def test_allowed_warning_reason_classifies_nonterminal_and_never_pauses(self) -> None:
+        failure = supervisor.classify_worker_failure(
+            {}, {"provider": "claude1-2"}, ALLOWED_WARNING_RATE_LIMIT_LINE
+        )
+        self.assertEqual(failure["kind"], "transient")
+        self.assertTrue(failure["transient"])
+        self.assertFalse(supervisor.should_pause_dispatch_for_failure_kind(failure["kind"]))
+
+    def test_reaped_worker_is_not_paused_for_an_allowed_warning(self) -> None:
+        worker = self._worker_with_log(ALLOWED_WARNING_RATE_LIMIT_LINE)
+        state: dict[str, object] = {}
+        with mock.patch.object(supervisor, "write_activity_log"):
+            reason = supervisor.pause_dispatch_for_reaped_worker(
+                {"paths": {"activity_log": "/tmp/test-activity-log.jsonl"}}, state, worker
+            )
+        self.assertIsNone(reason)
+        self.assertEqual(state.get("provider_guardrails", {}), {})
+
+
+class FreshAuthProbeLaneHoldTests(unittest.TestCase):
+    """A fresh not-ready probe holds the lane until a fresh success, no config edit."""
+
+    def setUp(self) -> None:
+        self.config = {
+            "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+            "agents": {"codex2": {"id": "codex2", "display_name": "Codex2", "provider": "codex2"}},
+            "providers": {"codex2": {"delivery_mode": "codex", "quota_group": "codex2"}},
+            "provider_guardrails": {"auth_pause_seconds": 900},
+        }
+        self.config_snapshot = json.dumps(self.config, sort_keys=True)
+
+    def _refresh(self, probe: dict[str, object], state: dict[str, object]) -> dict[str, object]:
+        report = {"providers": {"codex2": {"auth_ready": True}}}
+        with (
+            mock.patch.object(supervisor, "probe_provider_auth", return_value=probe),
+            mock.patch.object(supervisor, "write_provider_capabilities") as write_caps,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            supervisor.refresh_provider_auth_before_dispatch(self.config, report, "codex2", state)
+        self.write_caps = write_caps
+        return report
+
+    def test_live_not_ready_probe_holds_lane_until_a_live_success(self) -> None:
+        state: dict[str, object] = {}
+        probe = {
+            "provider": "codex2",
+            "ready": False,
+            "status": "not_ready",
+            "method": "codex_exec_oauth",
+            "error": "login required",
+            "checked_at": "2026-07-26T19:00:00Z",
+            "last_auth_probe_at": "2026-07-26T19:00:00Z",
+            "source": "live",
+        }
+        report = self._refresh(probe, state)
+
+        self.assertIs(report["providers"]["codex2"]["auth_ready"], False)
+        pause = state["provider_guardrails"]["dispatch_pauses"]["codex2"]
+        self.assertEqual(pause["pause_kind"], "auth")
+        self.assertIs(pause["requires_live_auth_probe"], True)
+        self.assertEqual(pause["blocked_until"], supervisor.STICKY_AUTH_BLOCKED_UNTIL)
+        self.assertTrue(supervisor.provider_dispatch_paused(self.config, state, "codex2"))
+        # The refreshed report is persisted so the next capability scan re-probes
+        # on the failed-probe interval rather than reusing the ready cache.
+        self.write_caps.assert_called_once_with(self.config, report=report)
+
+        # A wall-clock sweep must not reopen the lane.
+        with mock.patch.object(supervisor, "write_activity_log") as write_activity_log:
+            expired = supervisor.expire_provider_dispatch_pauses(self.config, state)
+        self.assertFalse(expired)
+        write_activity_log.assert_not_called()
+        self.assertTrue(supervisor.provider_dispatch_paused(self.config, state, "codex2"))
+
+        # Neither may a cached "ready" report.
+        cached = {
+            "providers": {
+                "codex2": {
+                    "auth_ready": True,
+                    "auth_probe": {"ready": True, "source": "cached", "method": "codex_exec_oauth"},
+                }
+            }
+        }
+        with mock.patch.object(supervisor, "write_activity_log"):
+            recovered = supervisor.reconcile_provider_auth_recovery(self.config, state, report, cached)
+        self.assertFalse(recovered)
+        self.assertTrue(supervisor.provider_dispatch_paused(self.config, state, "codex2"))
+
+        # Only a fresh live success clears it.
+        live = {
+            "providers": {
+                "codex2": {
+                    "auth_ready": True,
+                    "auth_method": "codex_exec_oauth",
+                    "last_auth_probe_at": "2026-07-26T20:00:00Z",
+                    "auth_probe": {"ready": True, "source": "live", "method": "codex_exec_oauth"},
+                }
+            }
+        }
+        with mock.patch.object(supervisor, "write_activity_log"):
+            recovered = supervisor.reconcile_provider_auth_recovery(self.config, state, report, live)
+        self.assertTrue(recovered)
+        self.assertFalse(supervisor.provider_dispatch_paused(self.config, state, "codex2"))
+        self.assertEqual(json.dumps(self.config, sort_keys=True), self.config_snapshot)
+
+    def test_cached_not_ready_probe_does_not_raise_a_lane_hold(self) -> None:
+        state: dict[str, object] = {}
+        probe = {
+            "provider": "codex2",
+            "ready": False,
+            "status": "not_ready",
+            "method": "codex_exec_oauth",
+            "checked_at": "2026-07-26T19:00:00Z",
+            "source": "cached",
+        }
+        self._refresh(probe, state)
+        self.assertEqual(state.get("provider_guardrails", {}).get("dispatch_pauses", {}), {})
+
+    def test_probe_gated_auth_pause_survives_its_wall_clock_window(self) -> None:
+        """The observed regression: an auth pause reopened the lane on a timer."""
+        state = {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "codex2": {
+                        "provider": "codex2",
+                        "pause_kind": "auth",
+                        "requires_live_auth_probe": True,
+                        "blocked_until": "2020-01-01T00:00:00Z",
+                    }
+                }
+            }
+        }
+        with mock.patch.object(supervisor, "write_activity_log"):
+            expired = supervisor.expire_provider_dispatch_pauses(self.config, state)
+        self.assertFalse(expired)
+        self.assertIn("codex2", state["provider_guardrails"]["dispatch_pauses"])
+        self.assertTrue(supervisor.provider_dispatch_paused(self.config, state, "codex2"))
+
+    def test_capacity_pause_still_expires_on_its_window(self) -> None:
+        state = {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "codex2": {
+                        "provider": "codex2",
+                        "pause_kind": "capacity_retryable",
+                        "blocked_until": "2020-01-01T00:00:00Z",
+                    }
+                }
+            }
+        }
+        with mock.patch.object(supervisor, "write_activity_log"):
+            expired = supervisor.expire_provider_dispatch_pauses(self.config, state)
+        self.assertTrue(expired)
+        self.assertEqual(state["provider_guardrails"]["dispatch_pauses"], {})
+
+
+class OwnerlessInProgressReconciliationTests(unittest.TestCase):
+    """Seven ownerless in_progress fixtures, one authoritative decision each."""
+
+    def setUp(self) -> None:
+        self.config = {
+            "paths": {"status_file": "ai-status.json", "activity_log": "/tmp/test-activity-log.jsonl"},
+            "schema": {"tasks_path": "tasks", "handoffs_path": "handoffs"},
+            "agents": {
+                "claude": {"id": "claude", "display_name": "Claude"},
+                "codex2": {"id": "codex2", "display_name": "Codex2"},
+            },
+            "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+            "worker_worktree_cleanup": {"base_branches": ["dev"]},
+        }
+
+    # -- fixture helpers ---------------------------------------------------
+
+    def _task(self, task_id: str, **overrides: object) -> dict[str, object]:
+        task = {
+            "id": task_id,
+            "status": "in_progress",
+            "owner": "Claude",
+            "reviewer": "Codex2",
+        }
+        task.update(overrides)
+        return task
+
+    def _worker(self, task_id: str, **overrides: object) -> dict[str, object]:
+        worker = {
+            "run_id": f"claude1-1-{task_id}",
+            "task_id": task_id,
+            "provider": "claude1-1",
+            "agent_id": "claude1_1",
+            "status": "completed",
+            "runner_status": "completed",
+            "exit_code": 0,
+            "last_event_at": "2026-07-26T18:00:00Z",
+            "runner_finished_at": "2026-07-26T18:00:00Z",
+            "queue_event_id": f"evt-{task_id}",
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_IN_PROGRESS},
+        }
+        worker.update(overrides)
+        return worker
+
+    def _run(
+        self,
+        *,
+        tasks: list[dict[str, object]],
+        state: dict[str, object],
+        merged_task_ids: set[str],
+        unmerged_task_ids: set[str] | None = None,
+    ) -> tuple[bool, dict[str, object], mock.Mock]:
+        status = {"tasks": tasks, "handoffs": []}
+
+        def fake_load_status(_config: dict[str, object]) -> dict[str, object]:
+            return status
+
+        def fake_write_status(_config: dict[str, object], payload: dict[str, object], *, source: str) -> None:
+            self.write_sources.append(source)
+
+        def fake_merged(_config: dict[str, object], task_id: str) -> dict[str, object] | None:
+            if task_id not in merged_task_ids:
+                return None
+            return {"base_ref": "origin/dev", "commits": [f"{task_id}-sha"]}
+
+        def fake_unmerged(_config: dict[str, object], task_id: str, _base_ref: str) -> bool:
+            return task_id in (unmerged_task_ids or set())
+
+        self.write_sources: list[str] = []
+        with (
+            mock.patch.object(supervisor, "load_status", side_effect=fake_load_status),
+            mock.patch.object(supervisor, "write_status", side_effect=fake_write_status),
+            mock.patch.object(supervisor, "merged_delivery_commits", side_effect=fake_merged),
+            mock.patch.object(supervisor, "task_branch_has_unmerged_commits", side_effect=fake_unmerged),
+            mock.patch.object(supervisor, "sync_status_pipeline", return_value=True) as sync_pipeline,
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor, "utc_now", return_value="2026-07-26T20:00:00Z"),
+        ):
+            changed = supervisor.reconcile_ownerless_in_progress_tasks(self.config, state)
+        return changed, status, sync_pipeline
+
+    # -- fixture 1 ---------------------------------------------------------
+
+    def test_merged_owner_delivery_moves_to_governed_review_handoff(self) -> None:
+        worker = self._worker("SUP-A")
+        state = {
+            "workers": {worker["run_id"]: worker},
+            "queue": {"events": {"evt-SUP-A": {"task_id": "SUP-A", "status": "started"}}},
+        }
+        # The queue record is finalized by the worker terminal outcome first.
+        state["queue"]["events"]["evt-SUP-A"]["status"] = "completed"
+        changed, status, sync_pipeline = self._run(
+            tasks=[self._task("SUP-A")], state=state, merged_task_ids={"SUP-A"}
+        )
+
+        self.assertTrue(changed)
+        task = status["tasks"][0]
+        self.assertEqual(task["status"], "review")
+        self.assertEqual(task["last_update"], "2026-07-26T20:00:00Z")
+        self.assertIn("moves to review for Codex2", task["next"])
+        self.assertEqual(self.write_sources, ["supervisor-ownerless-review-handoff"])
+        self.assertEqual(
+            status["status_activity_outbox"]["events"][0]["type"],
+            "task_ownerless_review_handoff",
+        )
+        handoff = status["handoffs"][0]
+        self.assertEqual(handoff["from"], "Claude")
+        self.assertEqual(handoff["to"], "Codex2")
+        self.assertEqual(handoff["status"], "pending")
+        sync_pipeline.assert_called_once_with(self.config)
+        # Queue and lease truth stay consistent with the reconciled outcome.
+        record = state["queue"]["events"]["evt-SUP-A"]
+        self.assertEqual(record["status"], "completed")
+        self.assertEqual(record["lease_owner"], worker["run_id"])
+        self.assertEqual(record["lease_released_at"], "2026-07-26T20:00:00Z")
+        self.assertEqual(worker["ownerless_reconciled_task_status"], "review")
+
+    # -- fixture 2 ---------------------------------------------------------
+
+    def test_live_worker_task_is_never_reset(self) -> None:
+        worker = self._worker("SUP-B", status="running")
+        state = {"workers": {worker["run_id"]: worker}, "queue": {"events": {}}}
+        changed, status, sync_pipeline = self._run(
+            tasks=[self._task("SUP-B")], state=state, merged_task_ids={"SUP-B"}
+        )
+
+        self.assertFalse(changed)
+        self.assertEqual(status["tasks"][0]["status"], "in_progress")
+        self.assertEqual(status["handoffs"], [])
+        self.assertEqual(self.write_sources, [])
+        sync_pipeline.assert_not_called()
+
+    # -- fixture 3 ---------------------------------------------------------
+
+    def test_in_flight_queue_event_is_left_for_dispatch(self) -> None:
+        worker = self._worker("SUP-C")
+        state = {
+            "workers": {worker["run_id"]: worker},
+            "queue": {"events": {"evt-SUP-C": {"task_id": "SUP-C", "status": "queued"}}},
+        }
+        changed, status, _ = self._run(
+            tasks=[self._task("SUP-C")], state=state, merged_task_ids={"SUP-C"}
+        )
+
+        self.assertFalse(changed)
+        self.assertEqual(status["tasks"][0]["status"], "in_progress")
+        self.assertEqual(state["queue"]["events"]["evt-SUP-C"]["status"], "queued")
+
+    # -- fixture 4 ---------------------------------------------------------
+
+    def test_task_without_any_terminal_worker_evidence_is_untouched(self) -> None:
+        state = {"workers": {}, "queue": {"events": {}}}
+        changed, status, _ = self._run(
+            tasks=[self._task("SUP-D")], state=state, merged_task_ids={"SUP-D"}
+        )
+
+        self.assertFalse(changed)
+        self.assertEqual(status["tasks"][0]["status"], "in_progress")
+
+    # -- fixture 5 ---------------------------------------------------------
+
+    def test_failed_terminal_outcome_stays_with_the_failure_ladder(self) -> None:
+        worker = self._worker(
+            "SUP-E",
+            status="failed",
+            runner_status="failed",
+            exit_code=1,
+            last_error="Worker exited before the task reached a terminal status.",
+        )
+        state = {"workers": {worker["run_id"]: worker}, "queue": {"events": {}}}
+        changed, status, _ = self._run(
+            tasks=[self._task("SUP-E")], state=state, merged_task_ids={"SUP-E"}
+        )
+
+        self.assertFalse(changed)
+        self.assertEqual(status["tasks"][0]["status"], "in_progress")
+        self.assertNotIn("ownerless_reconciled_task_status", worker)
+
+    # -- fixture 6 ---------------------------------------------------------
+
+    def test_unmerged_delivery_is_left_for_owner_redispatch(self) -> None:
+        worker = self._worker("SUP-F")
+        state = {"workers": {worker["run_id"]: worker}, "queue": {"events": {}}}
+        changed, status, _ = self._run(
+            tasks=[self._task("SUP-F")],
+            state=state,
+            merged_task_ids={"SUP-F"},
+            unmerged_task_ids={"SUP-F"},
+        )
+
+        self.assertFalse(changed)
+        self.assertEqual(status["tasks"][0]["status"], "in_progress")
+
+    # -- fixture 7 ---------------------------------------------------------
+
+    def test_task_without_a_distinct_reviewer_is_untouched(self) -> None:
+        worker = self._worker("SUP-G")
+        state = {"workers": {worker["run_id"]: worker}, "queue": {"events": {}}}
+        changed, status, _ = self._run(
+            tasks=[self._task("SUP-G", reviewer="Claude")],
+            state=state,
+            merged_task_ids={"SUP-G"},
+        )
+
+        self.assertFalse(changed)
+        self.assertEqual(status["tasks"][0]["status"], "in_progress")
+
+    # -- all seven together ------------------------------------------------
+
+    def test_seven_ownerless_fixtures_reconcile_in_one_pass(self) -> None:
+        fixtures = [
+            self._task("SUP-A"),
+            self._task("SUP-B"),
+            self._task("SUP-C"),
+            self._task("SUP-D"),
+            self._task("SUP-E"),
+            self._task("SUP-F"),
+            self._task("SUP-G", reviewer="Claude"),
+        ]
+        workers = {
+            "SUP-A": self._worker("SUP-A"),
+            "SUP-B": self._worker("SUP-B", status="running"),
+            "SUP-C": self._worker("SUP-C"),
+            "SUP-E": self._worker("SUP-E", status="failed", runner_status="failed", exit_code=1),
+            "SUP-F": self._worker("SUP-F"),
+            "SUP-G": self._worker("SUP-G"),
+        }
+        state = {
+            "workers": {worker["run_id"]: worker for worker in workers.values()},
+            "queue": {"events": {"evt-SUP-C": {"task_id": "SUP-C", "status": "queued"}}},
+        }
+        changed, status, sync_pipeline = self._run(
+            tasks=fixtures,
+            state=state,
+            merged_task_ids={"SUP-A", "SUP-B", "SUP-C", "SUP-D", "SUP-E", "SUP-F", "SUP-G"},
+            unmerged_task_ids={"SUP-F"},
+        )
+
+        self.assertTrue(changed)
+        resolved = {task["id"]: task["status"] for task in status["tasks"]}
+        self.assertEqual(
+            resolved,
+            {
+                "SUP-A": "review",
+                "SUP-B": "in_progress",
+                "SUP-C": "in_progress",
+                "SUP-D": "in_progress",
+                "SUP-E": "in_progress",
+                "SUP-F": "in_progress",
+                "SUP-G": "in_progress",
+            },
+        )
+        self.assertEqual([handoff["task_id"] for handoff in status["handoffs"]], ["SUP-A"])
+        sync_pipeline.assert_called_once_with(self.config)
+        self.assertEqual(
+            state["worker_runtime_metrics"]["totals"]["ownerless_in_progress_review_handoffs"],
+            1,
+        )
+
+    def test_reconciled_task_is_not_handed_off_twice(self) -> None:
+        worker = self._worker("SUP-H")
+        state = {"workers": {worker["run_id"]: worker}, "queue": {"events": {}}}
+        changed, status, _ = self._run(
+            tasks=[self._task("SUP-H")], state=state, merged_task_ids={"SUP-H"}
+        )
+        self.assertTrue(changed)
+        self.assertEqual(status["tasks"][0]["status"], "review")
+
+        status["tasks"][0]["status"] = "in_progress"
+        changed, status, sync_pipeline = self._run(
+            tasks=status["tasks"], state=state, merged_task_ids={"SUP-H"}
+        )
+        self.assertFalse(changed)
+        sync_pipeline.assert_not_called()
+
+
+class MergedDeliveryEvidenceTests(unittest.TestCase):
+    """Durable git evidence, not a surviving branch ref, proves the delivery."""
+
+    def setUp(self) -> None:
+        self.config = {
+            "paths": {"status_file": "ai-status.json"},
+            "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+            "worker_worktree_cleanup": {"base_branches": ["dev"]},
+        }
+
+    def test_trailer_commit_on_the_integration_base_is_merged_evidence(self) -> None:
+        with (
+            mock.patch.object(supervisor, "_git_ref_exists", side_effect=lambda _root, ref: ref == "origin/dev"),
+            mock.patch.object(supervisor, "_git_capture", return_value="abc123\ndef456\n") as capture,
+        ):
+            evidence = supervisor.merged_delivery_commits(self.config, "SUP-MERGED-001")
+
+        self.assertEqual(evidence, {"base_ref": "origin/dev", "commits": ["abc123", "def456"]})
+        args = capture.call_args.args[1]
+        self.assertIn("--fixed-strings", args)
+        self.assertIn("--grep=Task-ID: SUP-MERGED-001", args)
+
+    def test_no_trailer_commit_means_no_merged_evidence(self) -> None:
+        with (
+            mock.patch.object(supervisor, "_git_ref_exists", side_effect=lambda _root, ref: ref == "origin/dev"),
+            mock.patch.object(supervisor, "_git_capture", return_value=""),
+        ):
+            self.assertIsNone(supervisor.merged_delivery_commits(self.config, "SUP-OPEN-001"))
+
+    def test_deleted_task_branch_reports_no_unmerged_commits(self) -> None:
+        with mock.patch.object(supervisor, "_git_ref_exists", return_value=False):
+            self.assertFalse(
+                supervisor.task_branch_has_unmerged_commits(self.config, "SUP-MERGED-001", "origin/dev")
+            )
+
+    def test_task_branch_ahead_of_base_reports_unmerged_commits(self) -> None:
+        with (
+            mock.patch.object(
+                supervisor,
+                "_git_ref_exists",
+                side_effect=lambda _root, ref: ref == "task/SUP-OPEN-001",
+            ),
+            mock.patch.object(supervisor, "_git_capture", return_value="3\n"),
+        ):
+            self.assertTrue(
+                supervisor.task_branch_has_unmerged_commits(self.config, "SUP-OPEN-001", "origin/dev")
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

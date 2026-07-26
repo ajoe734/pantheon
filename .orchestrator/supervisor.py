@@ -7048,6 +7048,340 @@ def sync_preempted_task_status(config: dict[str, Any], worker: dict[str, Any]) -
     return sync_status_pipeline(config)
 
 
+def ownerless_in_progress_settings(config: dict[str, Any]) -> dict[str, Any]:
+    settings = dict(ready_dispatch_settings(config).get("ownerless_in_progress", {}) or {})
+    settings.setdefault("enabled", True)
+    settings.setdefault(
+        "owner_dispatch_reasons",
+        [REASON_OWNED_READY, REASON_OWNED_IN_PROGRESS],
+    )
+    settings.setdefault("max_transitions_per_tick", 4)
+    settings.setdefault("merge_search_limit", 200)
+    return settings
+
+
+def task_ids_with_active_workers(config: dict[str, Any], state: dict[str, Any]) -> set[str]:
+    """Task ids a live worker still owns; reconciliation must never touch them."""
+    active_statuses = {
+        str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])
+    }
+    busy: set[str] = set()
+    for worker in (state.get("workers", {}) or {}).values():
+        if not isinstance(worker, dict):
+            continue
+        task_id = str(worker.get("task_id") or "").strip()
+        if not task_id:
+            continue
+        if worker.get("status") in active_statuses or pid_is_alive(worker.get("pid")):
+            busy.add(task_id)
+    return busy
+
+
+def task_ids_with_open_queue_records(state: dict[str, Any]) -> set[str]:
+    """Task ids with an undelivered wake-up; a dispatch is still in flight."""
+    open_statuses = {"queued", "pending", "started", "stalled", "retry_backoff"}
+    pending: set[str] = set()
+    for record in ((state.get("queue", {}) or {}).get("events", {}) or {}).values():
+        if not isinstance(record, dict):
+            continue
+        if str(record.get("status") or "").strip().lower() not in open_statuses:
+            continue
+        task_id = str(record.get("task_id") or "").strip()
+        if task_id:
+            pending.add(task_id)
+    return pending
+
+
+def latest_owner_worker_for_task(
+    state: dict[str, Any],
+    task_id: str,
+    *,
+    owner_reasons: set[str],
+) -> dict[str, Any] | None:
+    """Most recent worker record dispatched to implement ``task_id``."""
+    candidates: list[dict[str, Any]] = []
+    for worker in (state.get("workers", {}) or {}).values():
+        if not isinstance(worker, dict):
+            continue
+        if str(worker.get("task_id") or "").strip() != task_id:
+            continue
+        snapshot = worker.get("request_snapshot")
+        reason = str((snapshot or {}).get("reason") or "") if isinstance(snapshot, dict) else ""
+        if reason not in owner_reasons:
+            continue
+        candidates.append(worker)
+    if not candidates:
+        return None
+    return max(
+        candidates,
+        key=lambda worker: str(
+            worker.get("last_event_at") or worker.get("runner_finished_at") or ""
+        ),
+    )
+
+
+def _git_capture(repo_root: Path, args: list[str]) -> str | None:
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(repo_root), *args],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout
+
+
+def merged_delivery_commits(config: dict[str, Any], task_id: str) -> dict[str, Any] | None:
+    """Durable git evidence that this task's delivery already merged.
+
+    ``task/<TASK-ID>`` branches are deleted by GitHub when their PR merges, so
+    the branch ref is exactly what is missing in the merged case. The commit
+    trailer enforced by ``.githooks/commit-msg`` survives the merge, so the
+    integration base itself is the durable record.
+    """
+    normalized_task_id = str(task_id or "").strip()
+    if not normalized_task_id:
+        return None
+    try:
+        repo_root = config_path(config, "status_file").parent
+    except (KeyError, TypeError):
+        return None
+    limit = str(int(ownerless_in_progress_settings(config).get("merge_search_limit", 200) or 200))
+    for base in worktree_cleanup_settings(config).get("base_branches", []):
+        for candidate in (f"origin/{base}", base):
+            if not _git_ref_exists(repo_root, candidate):
+                continue
+            output = _git_capture(
+                repo_root,
+                [
+                    "log",
+                    "--format=%H",
+                    "-n",
+                    limit,
+                    "--fixed-strings",
+                    f"--grep=Task-ID: {normalized_task_id}",
+                    candidate,
+                ],
+            )
+            commits = [line.strip() for line in str(output or "").splitlines() if line.strip()]
+            if commits:
+                return {"base_ref": candidate, "commits": commits[:10]}
+    return None
+
+
+def task_branch_has_unmerged_commits(config: dict[str, Any], task_id: str, base_ref: str) -> bool:
+    """True when the task branch still carries work the base has not absorbed."""
+    branch = worker_task_branch(config, task_id)
+    try:
+        repo_root = config_path(config, "status_file").parent
+    except (KeyError, TypeError):
+        return False
+    for ref in (branch, f"origin/{branch}"):
+        if not _git_ref_exists(repo_root, ref):
+            continue
+        output = _git_capture(repo_root, ["rev-list", "--count", f"{base_ref}..{ref}"])
+        try:
+            if int(str(output or "0").strip() or "0") > 0:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def merged_owner_delivery_evidence(
+    config: dict[str, Any],
+    task_id: str,
+    worker: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Evidence that the owner's delivery merged and nothing is left to implement."""
+    if str(worker.get("status") or "").strip().lower() != "completed":
+        return None
+    if not worker_runner_succeeded(worker):
+        return None
+    merged = merged_delivery_commits(config, task_id)
+    if not merged:
+        return None
+    if task_branch_has_unmerged_commits(config, task_id, str(merged.get("base_ref") or "")):
+        return None
+    return {
+        "worker_run_id": worker.get("run_id"),
+        "worker_status": worker.get("status"),
+        "runner_finished_at": worker.get("runner_finished_at"),
+        "merged_base_ref": merged.get("base_ref"),
+        "merged_commits": merged.get("commits"),
+        "pr_url": worker.get("pr_url"),
+    }
+
+
+def _prepare_ownerless_review_handoff_locked(
+    config: dict[str, Any],
+    *,
+    task_id: str,
+    owner: str,
+    reviewer: str,
+    message: str,
+    evidence: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Move a merged, ownerless ``in_progress`` task through the review handoff.
+
+    Written with the same locked canonical transaction the preemption path uses,
+    so the authoritative task-state journal receives the commit before the
+    derived board projection is refreshed.
+    """
+    status = load_status(config)
+    if status.get("status_activity_outbox") not in (None, {}, []):
+        return None
+    task = task_index_from_status(config, status).get(task_id)
+    if not task:
+        return None
+    if str(task.get("status") or "").strip().lower() != "in_progress":
+        return None
+    if str(task.get("owner") or "").strip() != owner:
+        return None
+    if str(task.get("reviewer") or "").strip() != reviewer:
+        return None
+
+    timestamp = utc_now()
+    task["status"] = "review"
+    task["last_update"] = timestamp
+    task["next"] = message
+    task.pop("waiting_for", None)
+
+    handoffs_path = (config.get("schema", {}) or {}).get("handoffs_path", "handoffs")
+    handoffs = status.setdefault(handoffs_path, [])
+    if isinstance(handoffs, list):
+        handoffs.append(
+            {
+                "task_id": task_id,
+                "from": owner,
+                "to": reviewer,
+                "message": message,
+                "status": "pending",
+                "created_at": timestamp,
+            }
+        )
+
+    event = {
+        "event_id": "supervisor-ownerless-review-"
+        + hashlib.sha256(f"{task_id}\0{timestamp}\0{message}".encode("utf-8")).hexdigest(),
+        "ts": timestamp,
+        "agent": "Orchestrator",
+        "type": "task_ownerless_review_handoff",
+        "task_id": task_id,
+        "target_agent": reviewer,
+        "owner": owner,
+        "message": message,
+        "evidence": evidence,
+    }
+    status["status_activity_outbox"] = _status_activity_outbox([event])
+    write_status(config, status, source="supervisor-ownerless-review-handoff")
+    return event
+
+
+def reconcile_ownerless_in_progress_tasks(config: dict[str, Any], state: dict[str, Any]) -> bool:
+    """Resolve ``in_progress`` tasks whose owner worker already terminated.
+
+    An owner worker that merges its delivery and exits leaves the task row at
+    ``in_progress`` with no live worker. The ready dispatcher then reads that row
+    as owned work and wakes the same owner again every cycle, forever, because
+    there is nothing left for it to implement. This phase reads the terminal
+    worker outcome plus durable git evidence and routes the task through the
+    governed review handoff instead. Everything else -- live workers, in-flight
+    dispatches, failed outcomes, and tasks without durable evidence -- is left
+    exactly as it was for the existing ladders to own.
+    """
+    settings = ownerless_in_progress_settings(config)
+    if not settings.get("enabled", True):
+        return False
+    if not config.get("paths", {}).get("status_file"):
+        return False
+
+    try:
+        status = load_status(config)
+    except (KeyError, RuntimeError, OSError):
+        return False
+    tasks = task_index_from_status(config, status)
+    if not tasks:
+        return False
+
+    owner_reasons = {str(value) for value in settings.get("owner_dispatch_reasons", [])}
+    live_task_ids = task_ids_with_active_workers(config, state)
+    queued_task_ids = task_ids_with_open_queue_records(state)
+    max_transitions = max(1, int(settings.get("max_transitions_per_tick", 4) or 1))
+
+    counts = {"ownerless_in_progress_review_handoffs": 0}
+    changed = False
+    for task_id, task in tasks.items():
+        if counts["ownerless_in_progress_review_handoffs"] >= max_transitions:
+            break
+        if str(task.get("status") or "").strip().lower() != "in_progress":
+            continue
+        if task_id in live_task_ids or task_id in queued_task_ids:
+            continue
+        owner = str(task.get("owner") or "").strip()
+        reviewer = str(task.get("reviewer") or "").strip()
+        if not owner or not reviewer or owner == reviewer:
+            continue
+        worker = latest_owner_worker_for_task(state, task_id, owner_reasons=owner_reasons)
+        if worker is None:
+            continue
+        if str(worker.get("ownerless_reconciled_task_status") or "") == "review":
+            continue
+        evidence = merged_owner_delivery_evidence(config, task_id, worker)
+        if not evidence:
+            continue
+
+        message = (
+            f"Supervisor reconciled {task_id} from the terminal worker outcome: the owner delivery "
+            f"merged into {evidence.get('merged_base_ref')} and no implementation remains, so the task "
+            f"moves to review for {reviewer} instead of another owner redispatch."
+        )
+        status_path = config_path(config, "status_file")
+        with canonical_task_state_lock_file(status_path, shared=False, nonblocking=False):
+            event = _prepare_ownerless_review_handoff_locked(
+                config,
+                task_id=task_id,
+                owner=owner,
+                reviewer=reviewer,
+                message=message,
+                evidence=evidence,
+            )
+        if event is None:
+            continue
+        sync_status_pipeline(config)
+        worker["ownerless_reconciled_task_status"] = "review"
+        worker["ownerless_reconciled_at"] = event.get("ts")
+        finalize_queue_event_record(config, state, worker, "completed")
+        write_activity_log(
+            config,
+            {
+                "type": "task_ownerless_review_handoff",
+                "task_id": task_id,
+                "target_agent": reviewer,
+                "provider": worker.get("provider"),
+                "worker_run_id": worker.get("run_id"),
+                "message": message,
+                "evidence": evidence,
+            },
+        )
+        counts["ownerless_in_progress_review_handoffs"] += 1
+        changed = True
+
+    record_worker_runtime_measurement(
+        config,
+        state,
+        "ownerless_in_progress_reconciliation",
+        counts,
+        emit_activity=bool(positive_runtime_counts(counts)),
+    )
+    return changed
+
+
 def task_assignment_is_catalog_locked(task: dict[str, Any]) -> bool:
     """Return whether a materialized catalog contract fixes owner/reviewer.
 
@@ -11735,6 +12069,10 @@ def _run_once_locked(
         changed = _safe_phase("maybe_reassign_tasks_from_failure_streaks", maybe_reassign_tasks_from_failure_streaks, config, state, quiet=quiet) or changed
         changed = _safe_phase("reconcile_queue_records", reconcile_queue_records, config, state, quiet=quiet) or changed
         changed = _safe_phase("prune_event_queue", prune_event_queue, config, state, quiet=quiet) or changed
+        # Runs after the worker/queue phases have settled terminal outcomes and
+        # before dispatch, so a merged ownerless task is routed to review in this
+        # same cycle instead of being woken as owned work one more time.
+        changed = _safe_phase("reconcile_ownerless_in_progress_tasks", reconcile_ownerless_in_progress_tasks, config, state, quiet=quiet) or changed
         changed = _safe_phase("refresh_chair_review_state", refresh_chair_review_state, config, state, quiet=quiet) or changed
         planning_state = load_discussion_planning_state()
         changed = _safe_phase("auto_materialize_discussion_planning", auto_materialize_discussion_planning, config, planning_state, quiet=quiet) or changed
