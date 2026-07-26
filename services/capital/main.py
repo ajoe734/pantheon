@@ -450,6 +450,14 @@ class CapitalBoundaryService:
         stage = str(cls._line_value(line, "stage") or "").strip().lower()
         return cls._STAGE_DEPLOYMENT_SCOPE.get(stage)
 
+    @classmethod
+    def _line_is_paper_scope(cls, line: Any) -> bool:
+        return (
+            cls._line_deployment_scope(line) == "paper"
+            and str(cls._line_value(line, "capital_scope") or "").strip().lower()
+            == "paper_ledger"
+        )
+
     def _binding_is_rebalance_eligible(
         self,
         binding: PersonaCapitalBinding,
@@ -513,7 +521,7 @@ class CapitalBoundaryService:
                     f"CapitalPool {pool_id!r} must be active for a risk-increasing rebalance"
                 )
             sleeve_id = self._normalized_sleeve_id(line.get("capital_sleeve_id"))
-            if sleeve_id is None:
+            if sleeve_id is None and not self._line_is_paper_scope(line):
                 raise AllocationAuthorityConflict(
                     "A risk-increasing rebalance line requires capital_sleeve_id"
                 )
@@ -559,11 +567,15 @@ class CapitalBoundaryService:
             for index, line in enumerate(body.lines):
                 increases_risk = self._line_increases_risk(line)
                 sleeve_id = self._normalized_sleeve_id(line.capital_sleeve_id)
-                if increases_risk and sleeve_id is None:
+                if (
+                    increases_risk
+                    and sleeve_id is None
+                    and not self._line_is_paper_scope(line)
+                ):
                     raise CapitalServiceError(
                         "A risk-increasing rebalance line requires capital_sleeve_id"
                     )
-                if sleeve_id is None:
+                if sleeve_id is None and not increases_risk:
                     continue
                 candidates = self.binding_store.list(
                     persona_id=line.persona_id,

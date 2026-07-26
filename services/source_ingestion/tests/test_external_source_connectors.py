@@ -337,9 +337,10 @@ def test_live_connector_smoke_path_enforces_governance_and_preserves_pit(
                         "canonical_sink": "SourceRecord/EvidenceBundle",
                     },
                 },
-                "fetch": {
-                    "mode": "external_feed",
-                    "url": feed_url,
+                    "fetch": {
+                        "mode": "external_feed",
+                        "network_scope": "internal_service",
+                        "url": feed_url,
                     "allowed_url_prefixes": [feed_prefix],
                     "timeout_seconds": 5,
                     "max_bytes": 32768,
@@ -463,9 +464,10 @@ def test_source_search_end_to_end_durable_readback(
                         "canonical_sink": "SourceRecord/EvidenceBundle",
                     },
                 },
-                "fetch": {
-                    "mode": "external_feed",
-                    "url": feed_url,
+                    "fetch": {
+                        "mode": "external_feed",
+                        "network_scope": "internal_service",
+                        "url": feed_url,
                     "allowed_url_prefixes": [feed_prefix],
                     "timeout_seconds": 5,
                     "max_bytes": 32768,

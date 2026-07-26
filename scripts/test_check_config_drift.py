@@ -83,6 +83,44 @@ def test_progress_lease_policy_drift_is_actionable_by_default() -> None:
     }
 
 
+def test_ready_dispatcher_capacity_drift_is_actionable_by_default() -> None:
+    repo = {
+        "ready_dispatcher": {
+            "disabled_agents": ["Copilot"],
+            "sidecar_only_agents": [],
+            "target_workload": {"Codex": 30, "Codex2": 30},
+            "max_tasks_per_agent_by_agent": {"Codex": 4, "Codex2": 4},
+            "max_dispatches_per_tick": 10,
+            "max_active_workers_per_task": 1,
+            "max_concurrent_workers": 13,
+        }
+    }
+    live = {
+        "ready_dispatcher": {
+            "disabled_agents": ["Copilot", "Codex", "Codex2"],
+            "sidecar_only_agents": ["Codex"],
+            "target_workload": {"Codex": 0, "Codex2": 0},
+            "max_tasks_per_agent_by_agent": {"Codex": 0, "Codex2": 0},
+            "max_dispatches_per_tick": 1,
+            "max_active_workers_per_task": 2,
+            "max_concurrent_workers": 1,
+        }
+    }
+
+    report = find_drift(repo, live)
+
+    assert report["intentional"] == []
+    assert {item["path"] for item in report["drift"]} == {
+        "ready_dispatcher.disabled_agents",
+        "ready_dispatcher.sidecar_only_agents",
+        "ready_dispatcher.target_workload",
+        "ready_dispatcher.max_tasks_per_agent_by_agent",
+        "ready_dispatcher.max_dispatches_per_tick",
+        "ready_dispatcher.max_active_workers_per_task",
+        "ready_dispatcher.max_concurrent_workers",
+    }
+
+
 def test_task_state_shadow_mode_drift_is_actionable_by_default() -> None:
     report = find_drift(
         {"task_state_store": {"mode": "shadow"}},

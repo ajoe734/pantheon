@@ -6,7 +6,7 @@
 #   services/research/qlib/requirements.txt       ← pyqlib==0.9.1
 #   services/research/finrl/requirements.txt      ← finrl==0.3.6
 #   services/learning/imitation/requirements.txt  ← imitation==1.0.1
-#   services/research/mlflow/requirements.txt     ← mlflow==3.10.1
+#   services/research/mlflow/requirements.txt     ← mlflow==3.11.1
 #
 # Reason: these frameworks have conflicting transitive dependencies
 # (torch versions, gym/stable-baselines3, etc.) and must run in

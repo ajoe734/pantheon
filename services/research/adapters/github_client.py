@@ -15,9 +15,9 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 from urllib.error import HTTPError
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
-from services.external_egress import guard_external_url
+from services.external_egress import open_external_url
 
 
 @dataclass
@@ -121,11 +121,11 @@ class GitHubClient:
         if self.token:
             headers["Authorization"] = f"token {self.token}"
         
-        request = Request(guard_external_url(url, caller="research.github_client"), headers=headers, method=method)
+        request = Request(url, headers=headers, method=method)
         
         try:
             self.last_request_time = time.time()
-            with urlopen(request, timeout=10) as response:
+            with open_external_url(request, caller="research.github_client", timeout=10) as response:
                 data = json.loads(response.read().decode('utf-8'))
             return data
         except HTTPError as e:
