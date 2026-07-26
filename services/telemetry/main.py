@@ -20,7 +20,7 @@ POST  /api/telemetry/ingest
 POST  /api/telemetry/ingest/batch
     Ingest a batch of telemetry events.
     Body: { "events": [ ... ] }
-    Returns 202 with { ingested, rejected } counts.
+    Returns 202 only when at least one event has a durable receipt.
 
 POST  /api/v1/telemetry/heartbeats
     Ingest one RuntimeHeartbeat payload and adapt it into a canonical
@@ -726,10 +726,14 @@ register_flask_health_routes(
 )
 
 
-def _lineage_query_response(query_family: str, **params):
+def _lineage_query_response(query_family: str, *, tenant_id: str, **params):
     """Execute a lineage query family and map service-level errors to HTTP."""
     try:
-        result = _get_lineage_service().query(query_family, **params)
+        result = _get_lineage_service().query(
+            query_family,
+            tenant_id=tenant_id,
+            **params,
+        )
     except RuntimeError as exc:
         return jsonify({"error": {"code": "LINEAGE_UNAVAILABLE", "message": str(exc)}}), 503
     except ValueError as exc:
@@ -838,12 +842,26 @@ def ingest_batch():
     """Ingest a batch of telemetry events.
 
     Body: { "events": [ <event>, ... ] }
-    Returns 202 with { ingested, rejected } counts.
+    Returns 202 when at least one event has a durable receipt. A mixed batch is
+    ``partially_accepted`` and reports both counts. Empty or wholly rejected
+    batches return 400 so HTTP success never represents zero durable receipts.
     """
-    body = request.get_json(force=True) or {}
+    body = request.get_json(force=True)
+    if not isinstance(body, dict):
+        return jsonify({"error": {"code": "INVALID_BODY", "message": "Request body must be a JSON object"}}), 400
     events = body.get("events")
     if not isinstance(events, list):
         return jsonify({"error": {"code": "INVALID_BODY", "message": "Body must have an 'events' list"}}), 400
+    if not events:
+        return jsonify({
+            "status": "rejected",
+            "ingested": 0,
+            "rejected": 0,
+            "error": {
+                "code": "EMPTY_BATCH",
+                "message": "Batch must contain at least one telemetry event",
+            },
+        }), 400
 
     if any(not isinstance(event, Mapping) for event in events):
         return jsonify({
@@ -868,7 +886,21 @@ def ingest_batch():
         log.exception("Unexpected error during batch ingest")
         return jsonify({"error": {"code": "INTERNAL_ERROR", "message": str(exc)}}), 500
 
-    return jsonify(result), 202
+    ingested = int(result.get("ingested") or 0)
+    rejected = int(result.get("rejected") or 0)
+    if ingested == 0:
+        return jsonify({
+            **result,
+            "status": "rejected",
+            "error": {
+                "code": "BATCH_NOT_ACCEPTED",
+                "message": "No telemetry event received a durable acknowledgement",
+            },
+        }), 400
+    return jsonify({
+        **result,
+        "status": "partially_accepted" if rejected else "accepted",
+    }), 202
 
 
 @app.route("/api/v1/telemetry/heartbeats", methods=["POST"])
@@ -1131,6 +1163,7 @@ def runtime_binding_projection(binding_id: str):
     """Return the derived-only runtime binding lineage projection."""
     return _lineage_query_response(
         "runtime_binding_projection",
+        tenant_id=request_tenant_id(),
         binding_id=binding_id,
     )
 
@@ -1141,6 +1174,7 @@ def capital_pool_projection(pool_id: str):
     """Return the derived-only capital pool lineage projection."""
     return _lineage_query_response(
         "capital_pool_projection",
+        tenant_id=request_tenant_id(),
         pool_id=pool_id,
     )
 
@@ -1151,6 +1185,7 @@ def telemetry_event_trace(event_id: str):
     """Return the derived-only telemetry event lineage trace."""
     return _lineage_query_response(
         "telemetry_event_trace",
+        tenant_id=request_tenant_id(),
         event_id=event_id,
     )
 
@@ -1161,6 +1196,7 @@ def source_runtime_telemetry_trace(trace_id: str):
     """Return the operator-facing source-to-runtime-to-telemetry trace."""
     return _lineage_query_response(
         "source_runtime_telemetry_trace",
+        tenant_id=request_tenant_id(),
         trace_id=trace_id,
     )
 
@@ -1171,6 +1207,7 @@ def forensic_plan_trace(plan_id: str):
     """Return the rollback-aware forensic lineage trace for one plan."""
     return _lineage_query_response(
         "forensic_plan_trace",
+        tenant_id=request_tenant_id(),
         plan_id=plan_id,
     )
 

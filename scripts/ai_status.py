@@ -1326,9 +1326,29 @@ def default_state() -> dict[str, Any]:
     }
 
 
+def _validate_task_state_projection_binding(store_mode: str) -> None:
+    """Reject a journal transaction whose projection was rebound in-process.
+
+    Background workers inherit the live task-state journal environment so that
+    governed status commands can reach the canonical coordination root. Unit
+    tests and helper processes sometimes override ``STATUS_FILE`` directly.
+    Without this binding check, such a helper can append fixture state to the
+    inherited live journal even though its intended projection is temporary.
+    """
+
+    expected = (STATUS_ROOT / "ai-status.json").expanduser().absolute()
+    actual = STATUS_FILE.expanduser().absolute()
+    if actual != expected:
+        raise RuntimeError(
+            f"{store_mode} task-state projection binding mismatch: "
+            f"STATUS_FILE {actual} != STATUS_ROOT projection {expected}"
+        )
+
+
 def load_state() -> dict[str, Any]:
     store_mode = str(os.environ.get(TASK_STATE_STORE_MODE_ENV) or "").strip().lower()
     if store_mode == "authoritative":
+        _validate_task_state_projection_binding(store_mode)
         event_path = _task_state_event_path(store_mode)
         events = load_events(event_path)
         if not events:
@@ -1650,6 +1670,7 @@ def recent_helper_claims(limit: int = 8, max_scan_lines: int = 5000) -> list[dic
 def save_state(state: dict[str, Any]) -> None:
     store_mode = str(os.environ.get(TASK_STATE_STORE_MODE_ENV) or "").strip().lower()
     if store_mode == "authoritative":
+        _validate_task_state_projection_binding(store_mode)
         event_path = _task_state_event_path(store_mode)
         source = (
             str(os.environ.get("ORCH_RUN_ID") or "").strip()
@@ -1685,6 +1706,7 @@ def _append_task_state_shadow(state: dict[str, Any]) -> None:
     if str(os.environ.get(TASK_STATE_STORE_MODE_ENV) or "").strip().lower() != "shadow":
         return
     try:
+        _validate_task_state_projection_binding("shadow")
         event_path = _task_state_event_path("shadow")
         source = (
             str(os.environ.get("ORCH_RUN_ID") or "").strip()
