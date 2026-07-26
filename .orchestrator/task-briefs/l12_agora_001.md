@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Make Agora extraction governed, tenant-safe, and leased
-- Status: todo
+- Status: in_progress
 - Owner: Codex2
 - Reviewer: Codex
-- Next: Repair identity and tenant boundaries, then implement leased extraction
+- Next: Anchor fe6180d00 and evidence commit 381e4373e implement typed identity, scoped RBAC/idempotency, bounded leased claims, dataset-version handoff ack, migration, and the checksummed evidence packet. Fresh PostgreSQL rerun passed 70 tests; parent router/identity passed 27 tests; compileall, checksum, and diff checks pass. Preparing the task PR and Codex review handoff.
 
 ## Summary
 修正真實 OperatorIdentity 路徑、RBAC/tenant IDOR、Idempotency-Key conflict，建立可多 worker 安全 claim 的 dataset extraction owner 與 downstream ack。

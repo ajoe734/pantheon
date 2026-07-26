@@ -16,7 +16,7 @@
     "status": "ready_for_review",
     "base_sha": "6a0281e8f8996883faae3ddaab7505b2ddc68ac1",
     "anchor_commit": "fe6180d0080a60c540f4d24a953cec31de91348f",
-    "evidence_cut_at": "2026-07-26T11:50:40Z"
+    "evidence_cut_at": "2026-07-26T12:11:02Z"
   },
   "scope": {
     "owned_layer": "Agora interaction evidence inbox, dataset extraction leases, scoped projections, handoff generation, and downstream acknowledgement",
@@ -146,17 +146,17 @@
     }
   ],
   "validation": {
-    "validated_at": "2026-07-26T11:50:40Z",
+    "validated_at": "2026-07-26T12:11:02Z",
     "commands": [
       {
         "command": "TEST_DATABASE_URL=postgresql://postgres:<redacted>@127.0.0.1:55432/pantheon_test /tmp/l12-agora-venv/bin/python -m pytest services/control-plane/bff/agora/dataset_extraction -q",
-        "result": "70 passed, 1 warning in 26.96s",
+        "result": "70 passed, 1 warning in 14.03s",
         "status": "pass",
         "notes": "Ephemeral localhost-only postgres:16-alpine; container removed after the run."
       },
       {
         "command": "/tmp/l12-agora-venv/bin/python -m pytest services/control-plane/bff/tests/test_agora_router.py services/control-plane/bff/tests/test_agora_identity_scope.py -q",
-        "result": "27 passed, 7 warnings in 18.01s",
+        "result": "27 passed, 7 warnings in 10.68s",
         "status": "pass"
       },
       {
