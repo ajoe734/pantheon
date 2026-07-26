@@ -75,7 +75,7 @@ from dispatch_policy import (
     normalized_status_set,
     ready_dispatch_settings,
 )
-from github_bus import sync_github_bus
+from github_bus import GitHubBusError, resolve_gh_binary, run_gh_process, sync_github_bus
 from provider_permissions import (
     probe_provider_auth,
     provider_capabilities as build_provider_capabilities,
@@ -7057,6 +7057,9 @@ def ownerless_in_progress_settings(config: dict[str, Any]) -> dict[str, Any]:
     )
     settings.setdefault("max_transitions_per_tick", 4)
     settings.setdefault("merge_search_limit", 200)
+    settings.setdefault("github_pr_lookup_enabled", True)
+    settings.setdefault("github_pr_lookup_timeout_seconds", 20)
+    settings.setdefault("github_pr_lookup_limit", 20)
     return settings
 
 
@@ -7136,60 +7139,407 @@ def _git_capture(repo_root: Path, args: list[str]) -> str | None:
     return proc.stdout
 
 
-def merged_delivery_commits(config: dict[str, Any], task_id: str) -> dict[str, Any] | None:
-    """Durable git evidence that this task's delivery already merged.
+def _git_commit_is_ancestor(repo_root: Path, commit: str, ref: str) -> bool:
+    """True only when git positively answers that ``commit`` is merged into ``ref``.
+
+    ``merge-base --is-ancestor`` exits 1 for "not an ancestor" and 128 for an
+    unknown object, so any non-zero exit and any transport failure is read as
+    "not proven merged".
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(repo_root), "merge-base", "--is-ancestor", commit, ref],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return proc.returncode == 0
+
+
+def worker_delivery_head_commit(worker: dict[str, Any]) -> str | None:
+    """The exact commit this worker's isolated worktree was last observed at.
+
+    ``update_worker_commit_progress`` records the worker's own ``HEAD`` while it
+    runs, so the final snapshot is the delivery head that worker produced. This
+    is the only worker-side field that names a specific commit; ``pr_url`` is
+    scraped from provider output and is not trustworthy (the live 2026-07-26
+    state carried a malformed URL pointing at an unrelated PR).
+    """
+    snapshot = worker.get("work_progress_snapshot")
+    if not isinstance(snapshot, dict):
+        return None
+    sha = str(snapshot.get("commit_sha") or "").strip().lower()
+    return sha if re.fullmatch(r"[0-9a-f]{40,64}", sha) else None
+
+
+def worker_dispatch_started_at(worker: dict[str, Any]) -> datetime | None:
+    """When this worker run began; the lower bound for work it can claim."""
+    for field in ("lease_acquired_at", "runner_started_at", "started_at"):
+        parsed = _parse_iso_utc(str(worker.get(field) or ""))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def worker_target_agent_display_name(config: dict[str, Any], worker: dict[str, Any]) -> str:
+    """Canonical display name this worker was dispatched as, or ``""`` if unknown.
+
+    ``display_name_for`` echoes an unregistered id back, so an id that the agent
+    registry does not know is treated as unresolved rather than accepted as its
+    own display name.
+    """
+    snapshot = worker.get("request_snapshot")
+    snapshot = snapshot if isinstance(snapshot, dict) else {}
+    agents = config.get("agents", {}) or {}
+    for raw in (
+        worker.get("logical_agent_id"),
+        snapshot.get("agent_id"),
+        worker.get("agent_id"),
+        worker.get("provider"),
+    ):
+        agent_id = normalize_agent_id(str(raw or ""))
+        if not agent_id or agent_id not in agents:
+            continue
+        name = str(display_name_for(config, agent_id) or "").strip()
+        if name:
+            return name
+    return ""
+
+
+def _repository_slug_from_remote(repo_root: Path) -> str | None:
+    """``owner/repo`` for the checkout whose history the evidence is read from.
+
+    Deriving it from ``origin`` rather than from configuration guarantees the PR
+    lookup asks about the same repository the ancestry checks ran against.
+    """
+    output = _git_capture(repo_root, ["config", "--get", "remote.origin.url"])
+    url = str(output or "").strip()
+    if not url:
+        return None
+    match = re.search(r"github\.com[:/]+([^/\s]+)/([^/\s]+?)(?:\.git)?/?$", url)
+    if not match:
+        return None
+    return f"{match.group(1)}/{match.group(2)}"
+
+
+def _merged_pull_requests_for_branch(
+    config: dict[str, Any],
+    repo_root: Path,
+    branch: str,
+) -> list[dict[str, Any]] | None:
+    """Authoritative merged-PR records for ``branch``, or ``None`` on any doubt.
+
+    Every failure mode -- gh missing, non-zero exit, timeout, unparseable JSON,
+    unknown repository -- returns ``None`` so an unanswered lookup can never be
+    read as a merged delivery.
+    """
+    settings = ownerless_in_progress_settings(config)
+    if not settings.get("github_pr_lookup_enabled", True):
+        return None
+    if not resolve_gh_binary():
+        return None
+    slug = _repository_slug_from_remote(repo_root)
+    if not slug:
+        return None
+    try:
+        timeout = float(settings.get("github_pr_lookup_timeout_seconds", 20) or 20)
+        limit = str(int(settings.get("github_pr_lookup_limit", 20) or 20))
+    except (TypeError, ValueError):
+        return None
+    try:
+        proc = run_gh_process(
+            [
+                "pr",
+                "list",
+                "--repo",
+                slug,
+                "--head",
+                branch,
+                "--state",
+                "merged",
+                "--limit",
+                limit,
+                "--json",
+                "number,state,headRefName,headRefOid,baseRefName,mergedAt,mergeCommit,url",
+            ],
+            timeout_seconds=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired, GitHubBusError):
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        records = json.loads(proc.stdout or "[]")
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(records, list):
+        return None
+    return [record for record in records if isinstance(record, dict)]
+
+
+def squash_merged_delivery_metadata(
+    config: dict[str, Any],
+    task_id: str,
+    *,
+    delivery_head: str,
+    base_name: str,
+    base_ref: str,
+    since: str,
+    repo_root: Path,
+) -> dict[str, Any] | None:
+    """Bind a squash-merged delivery through authoritative GitHub PR metadata.
+
+    A squash merge deliberately rewrites the delivery: the worker's head is not
+    and never will be an ancestor of the integration base, so git ancestry alone
+    can never recognise this shape. The live 2026-07-26 example is PR #4213,
+    whose head ``9e484e252`` squash-merged to ``0410a89f0`` on ``dev``.
+
+    The task branch name is only the *lookup key*; it is never the evidence. The
+    binding is:
+
+    * exactly one merged PR whose ``headRefOid`` equals this worker's delivery
+      head -- no match, or more than one, fails closed;
+    * ``baseRefName`` equal to the expected integration branch;
+    * ``mergedAt`` at or after the worker's dispatch;
+    * a ``mergeCommit`` that is present locally and an ancestor of the base ref;
+    * that merge commit itself carrying this task's ``Task-ID:`` trailer and
+      dated at or after the dispatch.
+
+    Provider prose and ``pr_url`` are never consulted, and a task id alone never
+    implies a squash.
+    """
+    normalized_task_id = str(task_id or "").strip()
+    head = str(delivery_head or "").strip().lower()
+    since_value = str(since or "").strip()
+    dispatched_at = _parse_iso_utc(since_value)
+    if not normalized_task_id or dispatched_at is None:
+        return None
+    if not re.fullmatch(r"[0-9a-f]{40,64}", head):
+        return None
+
+    branch = worker_task_branch(config, normalized_task_id)
+    records = _merged_pull_requests_for_branch(config, repo_root, branch)
+    if not records:
+        return None
+
+    matches = [
+        record
+        for record in records
+        if str(record.get("headRefOid") or "").strip().lower() == head
+    ]
+    if len(matches) != 1:
+        # No PR delivered this exact head, or the metadata is ambiguous about
+        # which one did. Either way there is nothing to bind to.
+        return None
+    pull_request = matches[0]
+
+    if str(pull_request.get("state") or "").strip().upper() != "MERGED":
+        return None
+    if str(pull_request.get("baseRefName") or "").strip() != str(base_name or "").strip():
+        return None
+    merged_at = _parse_iso_utc(str(pull_request.get("mergedAt") or ""))
+    if merged_at is None or merged_at < dispatched_at:
+        return None
+
+    merge_commit = pull_request.get("mergeCommit")
+    merge_oid = ""
+    if isinstance(merge_commit, dict):
+        merge_oid = str(merge_commit.get("oid") or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{40,64}", merge_oid):
+        return None
+    if not _git_commit_is_ancestor(repo_root, merge_oid, base_ref):
+        return None
+
+    # The squashed commit on the base carries the trailer; --no-walk keeps the
+    # search on that commit itself instead of its whole ancestry.
+    output = _git_capture(
+        repo_root,
+        [
+            "log",
+            "--no-walk",
+            "--format=%H",
+            "--fixed-strings",
+            f"--grep=Task-ID: {normalized_task_id}",
+            f"--since={since_value}",
+            merge_oid,
+        ],
+    )
+    if output is None:
+        return None
+    commits = [line.strip() for line in str(output).splitlines() if line.strip()]
+    if not commits:
+        return None
+
+    return {
+        "base_ref": base_ref,
+        "commits": commits[:10],
+        "delivery_head": head,
+        "merge_commit": merge_oid,
+        "trailer_commits_since": since_value,
+        "delivery_shape": "squash_pr_metadata",
+        "pull_request_number": pull_request.get("number"),
+        "pull_request_url": pull_request.get("url"),
+        "pull_request_head_ref_oid": str(pull_request.get("headRefOid") or "").strip().lower(),
+        "pull_request_base_ref_name": pull_request.get("baseRefName"),
+        "pull_request_merged_at": _isoformat_utc(merged_at),
+    }
+
+
+def merged_delivery_commits(
+    config: dict[str, Any],
+    task_id: str,
+    *,
+    delivery_head: str,
+    since: str,
+) -> dict[str, Any] | None:
+    """Durable evidence that *this worker's* delivery already merged.
 
     ``task/<TASK-ID>`` branches are deleted by GitHub when their PR merges, so
     the branch ref is exactly what is missing in the merged case. The commit
-    trailer enforced by ``.githooks/commit-msg`` survives the merge, so the
-    integration base itself is the durable record.
+    trailer enforced by ``.githooks/commit-msg`` survives the merge, but a
+    trailer alone only proves the id was delivered at *some* point: a reopened
+    or reassigned task still carries every commit from its earlier rounds.
+
+    Two delivery shapes are recognised, and each is bound to this exact worker:
+
+    ``merge_ancestry``
+        A merge-commit or fast-forward PR keeps the delivery head in history.
+        The head must be an ancestor of the integration base, and a ``Task-ID:``
+        trailer commit reachable from that head must be dated at or after
+        ``since`` (the worker's dispatch time). The merge commit that carried
+        the head into the base is recorded when there is one.
+
+    ``squash_pr_metadata``
+        A squash merge rewrites the head, so git ancestry can never see it. That
+        shape is bound through authoritative GitHub PR metadata instead -- see
+        ``squash_merged_delivery_metadata``. It is tried only after ancestry has
+        failed, and it is never inferred from a task id or from ``pr_url``.
+
+    Every git or metadata failure returns ``None``; absent linkage never reads
+    as merged.
     """
     normalized_task_id = str(task_id or "").strip()
-    if not normalized_task_id:
+    head = str(delivery_head or "").strip().lower()
+    since_value = str(since or "").strip()
+    if not normalized_task_id or not since_value:
+        return None
+    if not re.fullmatch(r"[0-9a-f]{40,64}", head):
         return None
     try:
         repo_root = config_path(config, "status_file").parent
     except (KeyError, TypeError):
         return None
     limit = str(int(ownerless_in_progress_settings(config).get("merge_search_limit", 200) or 200))
+
+    bases: list[tuple[str, str]] = []
     for base in worktree_cleanup_settings(config).get("base_branches", []):
         for candidate in (f"origin/{base}", base):
-            if not _git_ref_exists(repo_root, candidate):
-                continue
-            output = _git_capture(
-                repo_root,
-                [
-                    "log",
-                    "--format=%H",
-                    "-n",
-                    limit,
-                    "--fixed-strings",
-                    f"--grep=Task-ID: {normalized_task_id}",
-                    candidate,
-                ],
-            )
-            commits = [line.strip() for line in str(output or "").splitlines() if line.strip()]
-            if commits:
-                return {"base_ref": candidate, "commits": commits[:10]}
+            if _git_ref_exists(repo_root, candidate):
+                bases.append((str(base), candidate))
+                break
+
+    for _base_name, candidate in bases:
+        if not _git_commit_is_ancestor(repo_root, head, candidate):
+            continue
+        output = _git_capture(
+            repo_root,
+            [
+                "log",
+                "--format=%H",
+                "-n",
+                limit,
+                "--fixed-strings",
+                f"--grep=Task-ID: {normalized_task_id}",
+                f"--since={since_value}",
+                head,
+            ],
+        )
+        if output is None:
+            return None
+        commits = [line.strip() for line in str(output).splitlines() if line.strip()]
+        if not commits:
+            continue
+        return {
+            "base_ref": candidate,
+            "commits": commits[:10],
+            "delivery_head": head,
+            "merge_commit": _merge_commit_carrying_head(repo_root, head, candidate),
+            "trailer_commits_since": since_value,
+            "delivery_shape": "merge_ancestry",
+        }
+
+    for base_name, candidate in bases:
+        squashed = squash_merged_delivery_metadata(
+            config,
+            normalized_task_id,
+            delivery_head=head,
+            base_name=base_name,
+            base_ref=candidate,
+            since=since_value,
+            repo_root=repo_root,
+        )
+        if squashed:
+            return squashed
     return None
 
 
-def task_branch_has_unmerged_commits(config: dict[str, Any], task_id: str, base_ref: str) -> bool:
-    """True when the task branch still carries work the base has not absorbed."""
+def _merge_commit_carrying_head(repo_root: Path, head: str, base_ref: str) -> str | None:
+    """The oldest merge on the ancestry path from ``head`` into ``base_ref``.
+
+    A PR merged with a merge commit yields the commit GitHub created; a
+    fast-forward merge legitimately has none, so this is recorded for audit and
+    is not itself a gate.
+    """
+    output = _git_capture(
+        repo_root, ["rev-list", "--ancestry-path", "--merges", f"{head}..{base_ref}"]
+    )
+    commits = [line.strip() for line in str(output or "").splitlines() if line.strip()]
+    return commits[-1] if commits else None
+
+
+def task_branch_has_unmerged_commits(
+    config: dict[str, Any],
+    task_id: str,
+    base_ref: str = "",
+    *,
+    delivery_head: str | None = None,
+) -> bool:
+    """True when a surviving task branch carries work the delivery does not cover.
+
+    Two shapes both mean "not finished": the branch is ahead of the integration
+    base (unpushed or unmerged work), or the branch moved past the delivery head
+    the terminal worker was observed at (new work landed after that delivery).
+    A git failure is read as unmerged so a transport error cannot be mistaken
+    for a clean, fully merged branch.
+
+    ``base_ref`` is empty for a squash-merged delivery. A squash rewrites the
+    commits, so the original branch is legitimately never an ancestor of the
+    base and only movement past the delivery head is meaningful there; the merge
+    itself is proven by ``squash_merged_delivery_metadata`` instead.
+    """
     branch = worker_task_branch(config, task_id)
     try:
         repo_root = config_path(config, "status_file").parent
     except (KeyError, TypeError):
-        return False
+        return True
+    head = str(delivery_head or "").strip().lower()
     for ref in (branch, f"origin/{branch}"):
         if not _git_ref_exists(repo_root, ref):
             continue
-        output = _git_capture(repo_root, ["rev-list", "--count", f"{base_ref}..{ref}"])
-        try:
-            if int(str(output or "0").strip() or "0") > 0:
+        for start in [base_ref] + ([head] if head else []):
+            if not str(start or "").strip():
+                continue
+            output = _git_capture(repo_root, ["rev-list", "--count", f"{start}..{ref}"])
+            if output is None:
                 return True
-        except ValueError:
-            continue
+            try:
+                if int(str(output).strip() or "0") > 0:
+                    return True
+            except ValueError:
+                return True
     return False
 
 
@@ -7197,24 +7547,91 @@ def merged_owner_delivery_evidence(
     config: dict[str, Any],
     task_id: str,
     worker: dict[str, Any],
+    *,
+    owner: str,
 ) -> dict[str, Any] | None:
-    """Evidence that the owner's delivery merged and nothing is left to implement."""
+    """Evidence that *this* owner's *this* delivery merged and nothing remains.
+
+    Fail-closed by construction: every gate below must be positively proven from
+    worker state plus git history, and any missing linkage returns ``None`` so
+    the task stays exactly where the existing ladders left it.
+    """
     if str(worker.get("status") or "").strip().lower() != "completed":
         return None
     if not worker_runner_succeeded(worker):
         return None
-    merged = merged_delivery_commits(config, task_id)
+
+    # Identity binding: the terminal worker must be the task's *current* owner.
+    # A reassignment after dispatch leaves the latest owner-dispatch worker
+    # pointing at the previous owner, which is not evidence about this owner.
+    normalized_owner = str(owner or "").strip()
+    target_agent = worker_target_agent_display_name(config, worker)
+    if not normalized_owner or not target_agent or target_agent != normalized_owner:
+        return None
+
+    # Timestamp binding: without a dispatch time there is no window to attribute
+    # merged commits to, so nothing can be claimed for this run.
+    dispatched_at = worker_dispatch_started_at(worker)
+    if dispatched_at is None:
+        return None
+
+    # Work binding: a rerun over an already-merged branch commits nothing. Only a
+    # run that actually advanced its worktree can have produced this delivery.
+    try:
+        commit_progress_count = int(worker.get("commit_progress_count") or 0)
+    except (TypeError, ValueError):
+        return None
+    last_commit_progress_at = _parse_iso_utc(str(worker.get("last_commit_progress_at") or ""))
+    if commit_progress_count < 1 or last_commit_progress_at is None:
+        return None
+
+    delivery_head = worker_delivery_head_commit(worker)
+    if not delivery_head:
+        return None
+
+    merged = merged_delivery_commits(
+        config,
+        task_id,
+        delivery_head=delivery_head,
+        since=_isoformat_utc(dispatched_at),
+    )
     if not merged:
         return None
-    if task_branch_has_unmerged_commits(config, task_id, str(merged.get("base_ref") or "")):
+    delivery_shape = str(merged.get("delivery_shape") or "")
+    if task_branch_has_unmerged_commits(
+        config,
+        task_id,
+        # A squash-merged branch is never an ancestor of the base by design, so
+        # only movement past the delivery head is meaningful for that shape.
+        "" if delivery_shape == "squash_pr_metadata" else str(merged.get("base_ref") or ""),
+        delivery_head=delivery_head,
+    ):
         return None
     return {
         "worker_run_id": worker.get("run_id"),
         "worker_status": worker.get("status"),
+        "worker_target_agent": target_agent,
+        "task_owner": normalized_owner,
+        "dispatched_at": _isoformat_utc(dispatched_at),
+        "commit_progress_count": commit_progress_count,
+        "last_commit_progress_at": _isoformat_utc(last_commit_progress_at),
         "runner_finished_at": worker.get("runner_finished_at"),
+        "delivery_head_commit": delivery_head,
+        "delivery_shape": delivery_shape,
         "merged_base_ref": merged.get("base_ref"),
+        "merge_commit": merged.get("merge_commit"),
         "merged_commits": merged.get("commits"),
+        "trailer_commits_since": merged.get("trailer_commits_since"),
+        "pull_request_number": merged.get("pull_request_number"),
+        "pull_request_url": merged.get("pull_request_url"),
+        "pull_request_head_ref_oid": merged.get("pull_request_head_ref_oid"),
+        "pull_request_base_ref_name": merged.get("pull_request_base_ref_name"),
+        "pull_request_merged_at": merged.get("pull_request_merged_at"),
+        # Recorded for the audit trail only. pr_url is scraped from provider
+        # output and has been observed malformed and pointing at an unrelated
+        # PR, so it is never a gate.
         "pr_url": worker.get("pr_url"),
+        "pr_url_is_authoritative": False,
     }
 
 
@@ -7294,6 +7711,12 @@ def reconcile_ownerless_in_progress_tasks(config: dict[str, Any], state: dict[st
     governed review handoff instead. Everything else -- live workers, in-flight
     dispatches, failed outcomes, and tasks without durable evidence -- is left
     exactly as it was for the existing ladders to own.
+
+    The evidence is bound to one specific delivery by one specific owner: see
+    ``merged_owner_delivery_evidence``. The latest owner-dispatch worker is the
+    only candidate considered, and it must itself match the task's current owner,
+    so a reopened or reassigned task cannot be moved to review on the strength of
+    an earlier round's merged commits.
     """
     settings = ownerless_in_progress_settings(config)
     if not settings.get("enabled", True):
@@ -7332,13 +7755,14 @@ def reconcile_ownerless_in_progress_tasks(config: dict[str, Any], state: dict[st
             continue
         if str(worker.get("ownerless_reconciled_task_status") or "") == "review":
             continue
-        evidence = merged_owner_delivery_evidence(config, task_id, worker)
+        evidence = merged_owner_delivery_evidence(config, task_id, worker, owner=owner)
         if not evidence:
             continue
 
         message = (
-            f"Supervisor reconciled {task_id} from the terminal worker outcome: the owner delivery "
-            f"merged into {evidence.get('merged_base_ref')} and no implementation remains, so the task "
+            f"Supervisor reconciled {task_id} from the terminal worker outcome: {owner}'s delivery head "
+            f"{str(evidence.get('delivery_head_commit') or '')[:12]} merged into "
+            f"{evidence.get('merged_base_ref')} and no implementation remains, so the task "
             f"moves to review for {reviewer} instead of another owner redispatch."
         )
         status_path = config_path(config, "status_file")
