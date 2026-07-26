@@ -4,20 +4,21 @@
   "owner": "Codex2",
   "reviewer": "Codex",
   "status": "ready_for_review",
-  "generated_at": "2026-07-26T10:44:49Z",
+  "generated_at": "2026-07-26T11:50:26Z",
   "scope": {
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/L12-TEL-001",
-    "base_sha": "77ce7f909",
-    "candidate_sha": "644321d8ad144a07ec3b99b19c7da7b50794ef72",
+    "base_sha": "cba34f5bd37ebb8056a9317f4a7e6b062c6111e4",
+    "candidate_sha": "064366e8f0bab71cbc623abd2771381a874f7a6a",
     "implementation_anchor_commits": [
       "dbcc2452f",
       "f52f82492",
       "af252bdea",
-      "644321d8a"
+      "644321d8a",
+      "064366e8f"
     ],
-    "owned_layer": "Telemetry durable ingest receipts, canonical-write acknowledgement, HTTP authority/tenant isolation, and runtime lifecycle identity projection.",
+    "owned_layer": "Telemetry durable ingest receipts, batch acknowledgement semantics, canonical-write acknowledgement, HTTP authority/tenant isolation, tenant-scoped lineage reads, and runtime lifecycle identity projection.",
     "not_changing": "Compose producer credentials, hosted deployment admission, or live-capital authority.",
     "composes_with": [
       "L12-MANIFEST-001",
@@ -34,6 +35,12 @@
     "canonical_ack_boundary": "Postgres write success or fsynced DLQ handoff",
     "broker_idempotency_key": "sha256 of canonical immutable event JSON, including tenant_id and event_id",
     "conflicting_retry_rule": "A reused event_id with another tenant or payload produces a distinct durable broker receipt for canonical conflict handling.",
+    "http_batch_semantics": {
+      "all_accepted": "202 accepted",
+      "mixed": "202 partially_accepted with ingested/rejected counts",
+      "zero_accepted": "400 BATCH_NOT_ACCEPTED",
+      "empty": "400 EMPTY_BATCH"
+    },
     "process_death_probe": {
       "nats_image": "nats:2.11-alpine",
       "nats_client": "nats-py 2.15.0",
@@ -75,6 +82,7 @@
       "accepted event",
       "runtime summary",
       "trade episode",
+      "all five lineage GET query families",
       "DLQ listing",
       "DLQ replay"
     ],
@@ -83,6 +91,8 @@
       "unauthorized tenant returns 403",
       "payload/header tenant mismatch returns 403",
       "cross-tenant exact-event read returns 404",
+      "cross-tenant runtime-binding, capital-pool, event, trace, and plan lineage reads return 404",
+      "legacy lineage records without tenant_id return 404",
       "cross-tenant DLQ entry is not listed or replayed",
       "service-only credential cannot invoke replay",
       "roleless strict JWT remains forbidden despite unrelated runtime-manager default role",
@@ -91,6 +101,10 @@
   },
   "lifecycle_identity": {
     "authoritative_snapshot": "last_lifecycle_identity",
+    "projection_identity": [
+      "tenant_id",
+      "runtime_id"
+    ],
     "consumer_fields": [
       "tenant_id",
       "trace_id",
@@ -100,13 +114,14 @@
       "correlation_envelope"
     ],
     "freshness_rule": "Heartbeat updates freshness and last-event fields without erasing lifecycle identity.",
-    "restart_regression": "pass",
+    "cross_tenant_rule": "The same runtime_id is stored independently per tenant; an unscoped get fails closed when more than one tenant owns that runtime_id.",
+    "restart_get_list_regression": "pass",
     "current_runtime_readback": "current-runtime-readback.json"
   },
   "validation": [
     {
-      "command": "PANTHEON_TEST_NATS_URL=nats://127.0.0.1:14222 /home/lupin/pantheon/.venv/bin/python -m unittest services.telemetry.test_ingest_shock_absorption services.telemetry.test_l12_tel_001_durable_ingest services.telemetry.test_main_routes services.telemetry.test_runtime_summary_projection",
-      "result": "127 passed in 8.356s"
+      "command": "PANTHEON_TEST_NATS_URL=nats://127.0.0.1:14222 /home/lupin/pantheon/.venv/bin/python -m unittest services.telemetry.test_ingest_shock_absorption services.telemetry.test_l12_tel_001_durable_ingest services.telemetry.test_main_routes services.telemetry.test_runtime_summary_projection services.telemetry.lineage_read.test_service",
+      "result": "167 passed in 8.983s"
     },
     {
       "command": "/home/lupin/pantheon/.venv/bin/python services/telemetry/smoke_test_ingest.py",
@@ -127,11 +142,19 @@
     {
       "command": "candidate projection over active dev runtime summaries plus exact current events",
       "result": "9/9 consumer identities complete after persisted-store reload; PASS"
+    },
+    {
+      "command": "/home/lupin/pantheon/.venv/bin/python -m unittest discover -s services/telemetry -p 'test_*.py'",
+      "result": "266 tests ran in 14.994s; 1 skipped; 1 unrelated baseline RuntimeManagerClient allow_local setup error"
     }
   ],
   "acceptance": {
     "success_only_after_durable_tenant_scoped_ingest": "pass",
+    "batch_zero_acceptance_is_non_2xx": "pass",
+    "mixed_batch_semantics_are_explicit": "pass",
     "heartbeat_cannot_erase_lifecycle_identity": "pass",
+    "runtime_summary_tenant_identity_isolation": "pass",
+    "lineage_reads_are_tenant_scoped_and_legacy_unscoped_records_fail_closed": "pass",
     "ingest_read_and_replay_authority_and_tenant_scope": "pass",
     "process_death_before_flush_loses_no_accepted_event": "pass",
     "current_runtime_consumer_identity": "pass_9_of_9_superset_of_packet_6",
@@ -144,7 +167,7 @@
   },
   "residuals": [
     "The active runtime count increased from the packet's six to nine; candidate proof covers all nine.",
-    "The broader telemetry discovery run has one unrelated baseline RuntimeManagerClient allow_local test setup error; 260 other tests completed successfully.",
+    "The broader telemetry discovery run has one unrelated baseline RuntimeManagerClient allow_local test setup error; 266 tests ran with one skip.",
     "Hosted deployment and producer credential wiring intentionally remain downstream task responsibilities."
   ]
 }

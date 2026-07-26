@@ -18,6 +18,13 @@ roleless strict JWTs remain unprivileged, service credentials require their own
 tenant allowlist, and broker receipt identity is bound to the tenant and
 immutable event content rather than only `event_id`.
 
+The reviewer follow-up anchor (`064366e8f`) closes the three rejected
+acceptance paths: a batch with zero durable receipts now returns HTTP 400,
+mixed batches return HTTP 202 with an explicit `partially_accepted` status,
+runtime summaries use a `(tenant_id, runtime_id)` identity, and every lineage
+GET query executes against an explicitly tenant-scoped graph. Cross-tenant and
+legacy-unscoped lineage targets return 404.
+
 The machine-readable receipt is [`evidence.json`](evidence.json). The bounded
 current-runtime result is
 [`current-runtime-readback.json`](current-runtime-readback.json), and
@@ -31,6 +38,11 @@ consumer, and explicit acknowledgement. HTTP ingest returns success only after
 JetStream returns a persistence PubAck. The canonical batch writer acknowledges
 the broker receipt only after Postgres succeeds, or after a failed event is
 fsynced to the replayable DLQ.
+
+The batch HTTP contract applies the same boundary to aggregate responses. An
+empty batch or a batch whose events are all rejected returns HTTP 400. A mixed
+batch returns HTTP 202 only because at least one event has a durable receipt,
+and reports both counts with `status=partially_accepted`.
 
 `Nats-Msg-Id` is the SHA-256 of the canonical event JSON. Exact retries dedupe,
 while a reused event ID with another tenant or payload produces a distinct
@@ -50,10 +62,13 @@ ACK, and the replacement consumer recovered and acknowledged the exact event.
 Protected routes require a verified JWT or exact internal service credential,
 a permitted service/operator/reviewer/admin role as appropriate, and an
 authorized `X-Tenant-Id`. Ingest binds the payload to that tenant; exact-event,
-runtime-summary, trade-episode, and DLQ reads filter by it; DLQ replay is
-operator/admin-only and tenant-filtered. Negative tests cover missing
-authority, forbidden tenant scope, payload/header mismatch, cross-tenant
-readback, cross-tenant DLQ visibility, and service-token replay denial.
+runtime-summary, trade-episode, lineage, and DLQ reads filter by it; DLQ replay
+is operator/admin-only and tenant-filtered. Every lineage query first removes
+nodes without an exact tenant match, including unscoped legacy corpus records,
+and retains an edge only when both endpoints remain in scope. Negative tests
+cover missing authority, forbidden tenant scope, payload/header mismatch,
+cross-tenant readback, all five cross-tenant lineage routes, unscoped legacy
+lineage records, cross-tenant DLQ visibility, and service-token replay denial.
 Roleless strict JWTs are forbidden even if the process also carries an
 unrelated privileged runtime-manager default. An exact service credential with
 no `PANTHEON_TELEMETRY_SERVICE_TENANTS` is also forbidden; the general
@@ -64,6 +79,13 @@ interactive-caller tenant allowlist cannot silently widen service authority.
 Lifecycle correlation is retained in `last_lifecycle_identity` and projected
 at the consumer-compatible summary top level. Heartbeats advance freshness but
 cannot erase or replace that identity.
+
+Runtime summaries are persisted by the composite `(tenant_id, runtime_id)`
+identity. The same runtime ID can therefore carry an independent heartbeat for
+another tenant without changing the first tenant's lifecycle identity,
+`last_event_id`, or `last_heartbeat_event_id`. Scoped `get` and `list`
+readbacks, persisted-store restart, and ambiguous unscoped `get` are covered by
+negative regressions.
 
 The task packet referred to six current runtimes. At the bounded nonprod
 readback on 2026-07-26, the active local dev stack had expanded to nine.
@@ -82,9 +104,10 @@ PANTHEON_TEST_NATS_URL=nats://127.0.0.1:14222 \
   services.telemetry.test_ingest_shock_absorption \
   services.telemetry.test_l12_tel_001_durable_ingest \
   services.telemetry.test_main_routes \
-  services.telemetry.test_runtime_summary_projection
+  services.telemetry.test_runtime_summary_projection \
+  services.telemetry.lineage_read.test_service
 
-Ran 127 tests in 8.356s
+Ran 167 tests in 8.983s
 OK
 
 /home/lupin/pantheon/.venv/bin/python services/telemetry/smoke_test_ingest.py
@@ -97,7 +120,7 @@ python3 -m json.tool services/telemetry/trade_journal_event.schema.json
 exit 0
 ```
 
-The broader telemetry discovery run completed 260 tests successfully and hit
+The broader telemetry discovery run completed 266 tests with one skip and hit
 one unrelated baseline error in `test_lineage_write_path`: that legacy test
 constructs `RuntimeManagerClient()` without the now-required explicit
-`allow_local=True`. No task code is present in its failing stack.
+`allow_local=True`. No L12-TEL-001 task code is present in its failing stack.

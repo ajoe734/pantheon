@@ -977,14 +977,7 @@ class TelemetryIngestService:
     ) -> Optional[dict[str, Any]]:
         if self._runtime_summary_store is None:
             return None
-        summary = self._runtime_summary_store.get(runtime_id)
-        if (
-            summary is not None
-            and tenant_id is not None
-            and str(summary.get("tenant_id") or "").strip() != tenant_id
-        ):
-            return None
-        return summary
+        return self._runtime_summary_store.get(runtime_id, tenant_id=tenant_id)
 
     def list_runtime_summaries(
         self,
@@ -993,14 +986,7 @@ class TelemetryIngestService:
     ) -> list[dict[str, Any]]:
         if self._runtime_summary_store is None:
             return []
-        summaries = self._runtime_summary_store.list()
-        if tenant_id is None:
-            return summaries
-        return [
-            summary
-            for summary in summaries
-            if str(summary.get("tenant_id") or "").strip() == tenant_id
-        ]
+        return self._runtime_summary_store.list(tenant_id=tenant_id)
 
     def get_accepted_event(
         self,
