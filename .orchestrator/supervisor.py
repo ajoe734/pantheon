@@ -183,6 +183,12 @@ SEARCH_RESULT_LOG_JSON_PATTERN = re.compile(
     re.IGNORECASE,
 )
 COMMAND_OUTPUT_EXIT_LINE_PATTERN = re.compile(r"^exited\s+\d+\s+in\s+\S+:", re.IGNORECASE)
+RATE_LIMIT_EVENT_LINE_PATTERN = re.compile(r'"type"\s*:\s*"rate_limit_event"', re.IGNORECASE)
+NONTHROTTLING_RATE_LIMIT_STATUSES = frozenset({"allowed", "allowed_warning"})
+NONTHROTTLING_RATE_LIMIT_LINE_PATTERN = re.compile(
+    r'"status"\s*:\s*"(?:allowed|allowed_warning)"',
+    re.IGNORECASE,
+)
 
 LOCAL_TZ = ZoneInfo("Asia/Taipei")
 SUPERVISOR_LOG_QUIET = False
@@ -2828,7 +2834,7 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
             changed = True
             continue
         request_agent_id = str(getattr(request, "agent_id", event.get("target_agent")) or "")
-        refresh_provider_auth_before_dispatch(config, provider_report, request_agent_id)
+        refresh_provider_auth_before_dispatch(config, provider_report, request_agent_id, state)
         auto_block_reason = agent_auto_dispatch_block_reason(config, state, request_agent_id, provider_report)
         if auto_block_reason:
             if auto_dispatch_block_is_temporary_capacity(auto_block_reason):
@@ -2877,7 +2883,7 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
             changed = True
             continue
         if dispatch_agent_id != request_agent_id:
-            refresh_provider_auth_before_dispatch(config, provider_report, dispatch_agent_id)
+            refresh_provider_auth_before_dispatch(config, provider_report, dispatch_agent_id, state)
             alternate_block_reason = agent_auto_dispatch_block_reason(
                 config,
                 state,
@@ -4971,6 +4977,8 @@ def detect_worker_failure(worker: dict[str, Any]) -> str | None:
             role = message.get("role") if isinstance(message, dict) else None
             if stream_payload.get("type") == "user" or role == "user":
                 continue
+        if is_allowed_rate_limit_line(stripped):
+            continue
         if SEARCH_RESULT_JSON_FIELD_PATTERN.search(stripped):
             continue
         if JSON_FIELD_LINE_PATTERN.search(stripped):
@@ -5007,13 +5015,50 @@ def is_captured_orchestrator_record(payload: dict[str, Any]) -> bool:
     return False
 
 
+def rate_limit_info_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the rate-limit envelope carried by one worker stream record."""
+    if not isinstance(payload, dict):
+        return None
+    candidates: list[dict[str, Any]] = [payload]
+    message = payload.get("message")
+    if isinstance(message, dict):
+        candidates.append(message)
+    for candidate in candidates:
+        if str(candidate.get("type") or "") != "rate_limit_event":
+            continue
+        info = candidate.get("rate_limit_info")
+        if isinstance(info, dict):
+            return info
+    return None
+
+
 def is_allowed_rate_limit_event(payload: dict[str, Any]) -> bool:
-    if payload.get("type") != "rate_limit_event":
+    """True for a quota *notice* the CLI emits while still serving the request.
+
+    The Claude CLI reports quota headroom as ``rate_limit_event`` records whose
+    status is ``allowed`` (below threshold) or ``allowed_warning`` (past the
+    warning threshold but still served); only ``rejected`` means the request was
+    actually throttled. Accepting just ``allowed`` made a live
+    ``allowed_warning`` notice match ``WORKER_FAILURE_PATTERNS``, so a healthy
+    worker was recorded as failed, classified ``terminal``, and its task
+    reassigned away from an owner that never failed.
+    """
+    info = rate_limit_info_payload(payload)
+    if info is None:
         return False
-    info = payload.get("rate_limit_info")
-    if not isinstance(info, dict):
+    return str(info.get("status") or "").strip().lower() in NONTHROTTLING_RATE_LIMIT_STATUSES
+
+
+def is_allowed_rate_limit_line(line: str) -> bool:
+    """Raw-line fallback for a nonthrottling rate-limit notice.
+
+    Worker logs can carry a truncated or wrapped stream record that no longer
+    parses as JSON. The failure regexes still match its ``rate_limit_event``
+    substring, so the same nonterminal notice must be recognised textually.
+    """
+    if not RATE_LIMIT_EVENT_LINE_PATTERN.search(line):
         return False
-    return str(info.get("status") or "").strip().lower() == "allowed"
+    return bool(NONTHROTTLING_RATE_LIMIT_LINE_PATTERN.search(line))
 
 
 def is_tool_command_output_failure_line(lines: list[str], idx: int) -> bool:
@@ -5073,6 +5118,12 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
         "[object object]",
     }
 
+    # A nonthrottling rate-limit notice can still reach a stored last_error via an
+    # older worker record or an operator-supplied reason. It never denotes a
+    # failed request, so it must stay nonterminal and redispatchable rather than
+    # pausing the provider or reassigning the task.
+    if is_allowed_rate_limit_line(str(reason or "")):
+        return {"kind": "transient", "transient": True, "label": "allowed rate-limit notice"}
     if is_github_cli_auth_failure(reason):
         return {"kind": "tool_auth", "transient": False, "label": "tool auth"}
     if any(marker in normalized for marker in auth_markers):
@@ -5562,7 +5613,7 @@ def current_provider_dispatch_pause(
         blocked_until = _parse_iso_utc(str(entry.get("blocked_until") or ""))
         now = datetime.now(timezone.utc)
         if blocked_until is not None and blocked_until <= now:
-            if is_sticky_auth_dispatch_pause(entry):
+            if auth_pause_requires_live_probe(entry):
                 return entry
             bucket.pop(pause_id, None)
             continue
@@ -5614,6 +5665,23 @@ def is_sticky_auth_dispatch_pause(entry: dict[str, Any] | None) -> bool:
         for key in ("reason", "summary", "detail", "raw_ref", "auth_status", "failure_status")
     )
     return is_sticky_auth_failure_reason(text)
+
+
+def auth_pause_requires_live_probe(entry: dict[str, Any] | None) -> bool:
+    """True when only a fresh successful auth probe may reopen this lane.
+
+    A wall-clock pause window is the right guardrail for capacity, but it is the
+    wrong one for authentication: letting an auth pause expire on a timer
+    reopened the lane while the account was still not ready, so the very next
+    dispatch burned another worker. Both a revoked refresh token and a fresh
+    not-ready probe therefore hold the lane until a later live probe succeeds.
+    """
+    if not isinstance(entry, dict):
+        return False
+    if is_sticky_auth_dispatch_pause(entry):
+        return True
+    pause_kind = str(entry.get("pause_kind") or entry.get("failure_kind") or "").strip().lower()
+    return pause_kind == "auth" and entry.get("requires_live_auth_probe") is True
 
 
 def _legacy_failure_response_enabled() -> bool:
@@ -5903,7 +5971,7 @@ def expire_provider_dispatch_pauses(config: dict[str, Any], state: dict[str, Any
     for provider_id, entry in list(bucket.items()):
         if not isinstance(entry, dict):
             continue
-        if is_sticky_auth_dispatch_pause(entry):
+        if auth_pause_requires_live_probe(entry):
             continue
         blocked_until = _parse_iso_utc(str(entry.get("blocked_until") or ""))
         if blocked_until is None or blocked_until > now:
@@ -6056,6 +6124,22 @@ def provider_has_sticky_auth_dispatch_pause(
     return False
 
 
+def provider_auth_pause_requires_live_probe(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    provider: str | None,
+) -> bool:
+    ids = _provider_auth_identity_ids(config, provider)
+    if not ids:
+        return False
+    for pause_id, entry in _dispatch_pause_bucket(state).items():
+        if normalize_agent_id(str(pause_id)) not in ids:
+            continue
+        if auth_pause_requires_live_probe(entry if isinstance(entry, dict) else None):
+            return True
+    return False
+
+
 def provider_auth_report_is_live_success(report: dict[str, Any]) -> bool:
     if not isinstance(report, dict) or report.get("auth_ready") is not True:
         return False
@@ -6132,10 +6216,10 @@ def reconcile_provider_auth_recovery(
         if not isinstance(current, dict) or current.get("auth_ready") is not True:
             continue
         previous = _provider_report_entry(previous_report, str(provider_id))
-        sticky_auth_pause = provider_has_sticky_auth_dispatch_pause(config, state, str(provider_id))
-        if previous.get("auth_ready") is not False and not sticky_auth_pause:
+        live_probe_gated = provider_auth_pause_requires_live_probe(config, state, str(provider_id))
+        if previous.get("auth_ready") is not False and not live_probe_gated:
             continue
-        if sticky_auth_pause and not provider_auth_report_is_live_success(current):
+        if live_probe_gated and not provider_auth_report_is_live_success(current):
             continue
         cleared_streaks = clear_auth_failure_streaks_for_provider(config, state, str(provider_id))
         cleared_pauses = clear_auth_dispatch_pauses_for_provider(config, state, str(provider_id))
@@ -6405,10 +6489,52 @@ def agent_provider_auth_blocked(
     return capability.get("auth_ready") is False
 
 
+def mark_provider_auth_probe_not_ready(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    provider_key: str,
+    probe: dict[str, Any],
+) -> bool:
+    """Hold a lane whose own live auth probe just came back not ready.
+
+    The pre-dispatch probe used to update only the in-cycle capability report.
+    The next tick rebuilt that report from the persisted one, which still said
+    ``auth_ready: true``, so the cached probe was reused and the lane was
+    dispatchable again without any account actually recovering. Recording the
+    outcome as a live-probe-gated auth pause keeps the lane unavailable until a
+    later fresh successful probe clears it through
+    ``reconcile_provider_auth_recovery`` -- with no config edit anywhere.
+    """
+    reason = str(
+        probe.get("error")
+        or probe.get("status")
+        or "provider auth probe reported not ready"
+    )
+    changed = mark_provider_dispatch_paused(
+        config,
+        state,
+        provider_key,
+        reason,
+        failure_kind="auth",
+        pause_kind="auth",
+    )
+    entry = current_provider_dispatch_pause(state, provider_key, config)
+    if not isinstance(entry, dict):
+        return changed
+    already_gated = entry.get("requires_live_auth_probe") is True
+    entry["requires_live_auth_probe"] = True
+    entry["auth_probe_status"] = probe.get("status")
+    entry["auth_probe_checked_at"] = probe.get("last_auth_probe_at") or probe.get("checked_at")
+    if not is_sticky_auth_dispatch_pause(entry):
+        entry["blocked_until"] = STICKY_AUTH_BLOCKED_UNTIL
+    return changed or not already_gated
+
+
 def refresh_provider_auth_before_dispatch(
     config: dict[str, Any],
     provider_report: dict[str, Any],
     agent_id: str | None,
+    state: dict[str, Any] | None = None,
 ) -> rewrite_provider_health.AccountHealth | None:
     """Force the selected owner's auth probe and refresh the in-cycle report.
 
@@ -6449,6 +6575,7 @@ def refresh_provider_auth_before_dispatch(
     if health is None:
         return None
     capability = existing_providers[provider_key]
+    previously_ready = capability.get("auth_ready")
     capability["auth_ready"] = probe.get("ready") is True
     capability["auth_error"] = probe.get("error")
     capability["auth_method"] = probe.get("method")
@@ -6461,6 +6588,15 @@ def refresh_provider_auth_before_dispatch(
     else:
         capability["local_cli_worker_supported"] = False
         capability["supports_auto_approve"] = False
+    if capability["auth_ready"] is False and previously_ready is not False:
+        # Persist the flip so the next capability scan re-probes on the
+        # failed-probe interval instead of reusing the stale ready cache.
+        try:
+            write_provider_capabilities(config, report=provider_report)
+        except Exception:  # a report write must never block or bypass dispatch gating
+            pass
+    if state is not None and capability["auth_ready"] is False and str(probe.get("source") or "").strip().lower() == "live":
+        mark_provider_auth_probe_not_ready(config, state, provider_key, probe)
     return health
 
 
