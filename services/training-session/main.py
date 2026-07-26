@@ -650,7 +650,11 @@ def append_event(session_id: str, body: AppendEventBody) -> Dict[str, Any]:
             correlation_id=body.correlation_id,
         )
 
-    session, event = store.append_session_event(session_id, build_event)
+    session, event = store.append_session_event(
+        session_id,
+        build_event,
+        session_transform=_teaching_session_contract,
+    )
     return {"accepted_at": timestamp, "event": event, "session": session}
 
 
@@ -1029,7 +1033,11 @@ def _append_training_event(
             payload=payload,
         )
 
-    stored_session, event = store.append_session_event(session_id, build_event)
+    stored_session, event = store.append_session_event(
+        session_id,
+        build_event,
+        session_transform=_teaching_session_contract,
+    )
     session.clear()
     session.update(stored_session)
     return event

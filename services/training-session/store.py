@@ -401,6 +401,8 @@ class PostgresTrainingSessionStore:
         self,
         session_id: str,
         event_factory: Callable[[Optional[Dict[str, Any]]], Dict[str, Any]],
+        *,
+        session_transform: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
     ) -> tuple[Dict[str, Any], Dict[str, Any]]:
         clean_id = str(session_id or "").strip()
         if not clean_id:
@@ -428,6 +430,10 @@ class PostgresTrainingSessionStore:
                 candidate_event,
             )
             record = _append_event_to_session(existing, durable_event)
+            if session_transform is not None:
+                record = session_transform(_copy_record(record))
+                if not isinstance(record, dict):
+                    raise TypeError("session_transform must return a dict")
             _, tenant_id = self._record("session", clean_id, record)
             conn.execute(
                 f"""
@@ -664,6 +670,8 @@ class TrainingSessionStore:
         self,
         session_id: str,
         event_factory: Callable[[Optional[Dict[str, Any]]], Dict[str, Any]],
+        *,
+        session_transform: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
     ) -> tuple[Dict[str, Any], Dict[str, Any]]:
         clean_id = str(session_id or "").strip()
         if not clean_id:
@@ -684,6 +692,10 @@ class TrainingSessionStore:
                         _copy_record(candidate_event)
                     )
             record = _append_event_to_session(existing, durable_event)
+            if session_transform is not None:
+                record = session_transform(_copy_record(record))
+                if not isinstance(record, dict):
+                    raise TypeError("session_transform must return a dict")
             records[clean_id] = record
             self._write_map_unlocked(self.sessions_path, records)
         return record, durable_event

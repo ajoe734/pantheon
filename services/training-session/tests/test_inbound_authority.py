@@ -227,6 +227,24 @@ def test_commit_and_discard_reject_well_formed_but_unverified_mfa(monkeypatch) -
         assert response.json()["error"]["code"] == "MFA_NOT_VERIFIED"
 
 
+def test_caller_supplied_otp_is_not_recorded_as_verified_mfa(monkeypatch) -> None:
+    module = _load_service_module()
+    _configure_strict(monkeypatch)
+    client = TestClient(module.app)
+
+    response = client.post(
+        "/api/training/sessions",
+        json={"persona_id": "persona-a", "objective": "do not trust raw otp"},
+        headers={
+            **_headers(token=_token(mfa=False)),
+            "X-MFA-Token": "123456",
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["actor_context"]["mfa_verified"] is False
+
+
 def test_readiness_degrades_when_strict_inbound_verifier_is_missing(monkeypatch) -> None:
     module = _load_service_module()
     monkeypatch.delenv("TRAINING_SESSION_AUTH_DISABLED", raising=False)

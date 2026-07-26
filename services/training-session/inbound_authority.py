@@ -330,10 +330,11 @@ def authenticate_training_request(
         )
     except AuthError as exc:
         raise TrainingInboundAuthorityError(exc.code, exc.message, exc.status_code) from exc
+    authoritative_mfa = has_claim_bound_mfa(context, env=auth_env)
     if (
         mfa_required
         and auth_env["PANTHEON_RUNTIME_MFA_REQUIRED"].lower() == "true"
-        and not has_claim_bound_mfa(context, env=auth_env)
+        and not authoritative_mfa
     ):
         raise TrainingInboundAuthorityError(
             "MFA_NOT_VERIFIED",
@@ -379,7 +380,7 @@ def authenticate_training_request(
         actor_service=clean_service,
         tenant_id=clean_tenant,
         roles=context.roles,
-        mfa_verified=context.mfa_verified,
+        mfa_verified=authoritative_mfa,
         token_kind=context.token_kind,
         delegated_actor_id=delegated_actor_id,
     )
