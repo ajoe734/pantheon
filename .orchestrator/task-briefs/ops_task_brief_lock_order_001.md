@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Fix nested task-state lock during worker brief generation
-- Status: todo
+- Status: in_progress
 - Owner: Codex
 - Reviewer: Codex2
-- Next: Reproduce six task_brief_generation_failed events from 2026-07-26T14:44:53Z through 14:45:21Z; implement a minimal lock-safe fix in an isolated worktree, open PR to dev, obtain independent review, and merge before the next dispatch wave.
+- Next: Supervisor auto-started OPS-TASK-BRIEF-LOCK-ORDER-001 after successful dispatch.
 
 ## Summary
 修復 supervisor 在已持有 runtime_admission/task_state 鎖時再次取得 task_state，造成完整 task brief 生成失敗並退回 minimal context。

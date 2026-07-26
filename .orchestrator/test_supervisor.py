@@ -5714,6 +5714,7 @@ class SupervisorRuntimeAdmissionLockTests(unittest.TestCase):
         }
         state = {"queue": {"events": {}}, "workers": {}}
         brief_path = self.root / "task-brief.md"
+        lock_trace_path = self.root / "lock-trace.jsonl"
         captured_requests: list[supervisor.DeliveryRequest] = []
         real_build_request = supervisor.build_request
 
@@ -5761,6 +5762,10 @@ class SupervisorRuntimeAdmissionLockTests(unittest.TestCase):
             mock.patch.object(supervisor, "select_dispatch_agent_id", return_value=None),
             mock.patch.object(common, "task_brief_path", return_value=brief_path),
             mock.patch.object(common, "write_activity_log") as common_activity_log,
+            mock.patch.dict(
+                os.environ,
+                {"PANTHEON_RUNTIME_LOCK_TRACE": str(lock_trace_path)},
+            ),
         ):
             changed = supervisor.run_once(config, watch=False)
 
@@ -5784,6 +5789,18 @@ class SupervisorRuntimeAdmissionLockTests(unittest.TestCase):
         )
         self.assertIn("## Artifacts\n- .orchestrator/common.py", rendered)
         common_activity_log.assert_not_called()
+        lock_trace = [
+            line.split(":", 3)[:2]
+            for line in lock_trace_path.read_text(encoding="utf-8").splitlines()
+        ]
+        self.assertEqual(
+            [entry for entry in lock_trace if entry == ["acquire", "task_state"]],
+            [["acquire", "task_state"]],
+        )
+        self.assertLess(
+            lock_trace.index(["acquire", "runtime_admission"]),
+            lock_trace.index(["acquire", "task_state"]),
+        )
 
     def test_waiting_prune_recovers_after_queue_writer_is_killed_before_replace(self) -> None:
         original_events = [
