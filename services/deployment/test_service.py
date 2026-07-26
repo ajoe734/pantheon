@@ -15,6 +15,11 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+_AUTH_HEADERS = {
+    "Authorization": "Bearer deployment-test:operator,service",
+    "X-Tenant-Id": "tenant-deployment-test",
+}
+
 
 def _seed_approval_store(path: Path) -> None:
     payload = {
@@ -26,6 +31,7 @@ def _seed_approval_store(path: Path) -> None:
             "decision": "approved",
             "capital_pool_id": "pool-001",
             "persona_id": "persona-ops",
+            "tenant_id": "tenant-deployment-test",
         }
     }
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -150,19 +156,23 @@ def client():
         "PANTHEON_DEPLOYMENT_REGISTRY_SNAPSHOT_PATH": os.environ.get(
             "PANTHEON_DEPLOYMENT_REGISTRY_SNAPSHOT_PATH"
         ),
+        "PANTHEON_DEPLOYMENT_OUTBOX_LEASE_REQUIRED": os.environ.get(
+            "PANTHEON_DEPLOYMENT_OUTBOX_LEASE_REQUIRED"
+        ),
     }
     os.environ["CAPITAL_DATA_DIR"] = str(governance_dir)
     os.environ["DEPLOYMENT_DATA_DIR"] = str(governance_dir)
     os.environ["PANTHEON_GOVERNANCE_DATA_DIR"] = str(governance_dir)
     os.environ["PANTHEON_RUNTIME_BINDING_STORE_PATH"] = str(runtime_binding_store)
     os.environ["PANTHEON_DEPLOYMENT_REGISTRY_SNAPSHOT_PATH"] = str(registry_snapshot)
+    os.environ["PANTHEON_DEPLOYMENT_OUTBOX_LEASE_REQUIRED"] = "false"
 
     sys.modules.pop("services.deployment.service", None)
     module = importlib.import_module("services.deployment.service")
     module = importlib.reload(module)
 
     try:
-        yield TestClient(module.app), governance_dir
+        yield TestClient(module.app, headers=_AUTH_HEADERS), governance_dir
     finally:
         for key, value in env_backup.items():
             if value is None:
@@ -176,6 +186,52 @@ def test_health(client):
     response = test_client.get("/health")
     assert response.status_code == 200
     assert response.json()["service"] == "pantheon-deployment"
+
+
+def test_deployment_boundary_requires_authenticated_actor_and_tenant(client):
+    test_client, _ = client
+
+    missing_actor = test_client.get(
+        "/api/deployment/plans",
+        headers={"Authorization": ""},
+    )
+    assert missing_actor.status_code == 401
+
+    wrong_role = test_client.get(
+        "/api/deployment/plans",
+        headers={"Authorization": "Bearer observer:viewer"},
+    )
+    assert wrong_role.status_code == 403
+
+    missing_tenant = test_client.get(
+        "/api/deployment/plans",
+        headers={"X-Tenant-Id": ""},
+    )
+    assert missing_tenant.status_code == 400
+
+
+def test_deployment_plan_actor_and_tenant_are_server_authoritative(client):
+    test_client, _ = client
+    payload = _plan_payload(plan_id="plan-tenant-isolation-001")
+    payload["created_by"] = "forged-client-actor"
+
+    created = test_client.post("/api/deployment/plans", json=payload)
+
+    assert created.status_code == 201, created.text
+    assert created.json()["created_by"] == "deployment-test"
+    assert created.json()["tenant_id"] == "tenant-deployment-test"
+
+    hidden = test_client.get(
+        "/api/deployment/plans/plan-tenant-isolation-001",
+        headers={"X-Tenant-Id": "tenant-other"},
+    )
+    assert hidden.status_code == 404
+    listing = test_client.get(
+        "/api/deployment/plans",
+        headers={"X-Tenant-Id": "tenant-other"},
+    )
+    assert listing.status_code == 200
+    assert listing.json() == []
 
 
 def test_pool_runtime_compatibility_allows_active_pool_and_binding(client):
@@ -792,6 +848,81 @@ def test_dispatch_is_idempotent_for_existing_saga(client):
     assert outbox.status_code == 200
     assert len(outbox.json()) == 1
     assert outbox.json()[0]["event"]["sequence_no"] == 1
+
+
+def test_outbox_claim_ack_requires_active_authenticated_lease(
+    client, monkeypatch
+):
+    test_client, _ = client
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_OUTBOX_LEASE_REQUIRED", "true")
+    created = test_client.post(
+        "/api/deployment/plans",
+        json=_plan_payload(plan_id="plan-paper-lease-001"),
+    )
+    assert created.status_code == 201
+    dispatch = test_client.post(
+        "/api/deployment/plans/plan-paper-lease-001/dispatch",
+        json={"trace_id": "trace-lease-001"},
+    )
+    assert dispatch.status_code == 200, dispatch.text
+    event_id = dispatch.json()["deployment_saga"]["outbox_event"]["event"]["event_id"]
+
+    claimed = test_client.post(
+        "/api/deployment/outbox/claim",
+        json={
+            "consumer_name": "deployment-consumer-a",
+            "lease_seconds": 60,
+            "limit": 1,
+        },
+    )
+    assert claimed.status_code == 200, claimed.text
+    assert len(claimed.json()) == 1
+    claim = claimed.json()[0]
+    assert claim["event"]["event_id"] == event_id
+    assert claim["tenant_id"] == "tenant-deployment-test"
+    assert claim["status"] == "pending"
+    assert claim["lease_status"] == "active"
+    assert claim["claim_token"]
+
+    competing = test_client.post(
+        "/api/deployment/outbox/claim",
+        json={
+            "consumer_name": "deployment-consumer-b",
+            "lease_seconds": 60,
+            "limit": 1,
+        },
+    )
+    assert competing.status_code == 200
+    assert competing.json() == []
+
+    stale = test_client.post(
+        f"/api/deployment/outbox/{event_id}/consume",
+        json={
+            "consumer_name": "deployment-consumer-a",
+            "claim_token": "not-the-active-token",
+        },
+    )
+    assert stale.status_code == 409
+
+    acknowledged = test_client.post(
+        f"/api/deployment/outbox/{event_id}/consume",
+        json={
+            "consumer_name": "deployment-consumer-a",
+            "claim_token": claim["claim_token"],
+        },
+    )
+    assert acknowledged.status_code == 200, acknowledged.text
+    assert acknowledged.json()["status"] == "applied"
+
+    health = test_client.get("/api/deployment/outbox/lease-health")
+    assert health.status_code == 200
+    assert health.json()["active_claim_count"] == 0
+    assert health.json()["acknowledged_claim_count"] == 1
+    outbox = test_client.get(
+        "/api/deployment/outbox",
+        params={"status": "published"},
+    )
+    assert [record["event"]["event_id"] for record in outbox.json()] == [event_id]
 
 
 def test_saga_progress_and_inbox_replay_receipts(client):

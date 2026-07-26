@@ -32,8 +32,14 @@ def _load_worker():
 
 
 @pytest.fixture()
-def worker():
+def worker(monkeypatch):
     module = _load_worker()
+    monkeypatch.setenv(
+        "PANTHEON_DEPLOYMENT_SERVICE_TOKEN",
+        "deployment-consumer-test:service,deployment_consumer",
+    )
+    monkeypatch.setenv("PANTHEON_DEPLOYMENT_TENANT_ID", "tenant-deployment-test")
+    module._CLAIM_TOKENS.clear()
     with patch.object(
         module,
         "verify_deploy_authorities",
@@ -103,6 +109,15 @@ def _binding_saga(**overrides: Any) -> dict[str, Any]:
         "capital_pool_id": "pool-001",
         "target_stage": "paper",
         "status": "awaiting_binding",
+        "metadata": {
+            "tenant_id": "tenant-deployment-test",
+            "foundation": {
+                "trace_context": {
+                    "trace_id": "trace-deployment-test",
+                    "correlation_id": "correlation-deployment-test",
+                }
+            },
+        },
     }
     saga.update(overrides)
     return saga
@@ -121,7 +136,10 @@ def _binding_plan(**overrides: Any) -> dict[str, Any]:
         "status": "approved",
         # A forged legacy assertion is intentionally ignored by production
         # code; keeping it here guards against accidental trust regression.
-        "metadata": {"loader_checks_passed": True},
+        "metadata": {
+            "loader_checks_passed": True,
+            "tenant_id": "tenant-deployment-test",
+        },
     }
     plan.update(overrides)
     return plan
@@ -336,7 +354,7 @@ class TestFetchPendingOutbox:
         assert len(result) == 2
         assert result[0]["event"]["event_id"] == "evt-001"
 
-    def test_url_includes_pending_filter(self, worker):
+    def test_posts_transactional_claim(self, worker):
         with patch("urllib.request.urlopen") as mock_urlopen:
             mock_cm = MagicMock()
             mock_cm.__enter__ = MagicMock(return_value=mock_cm)
@@ -346,8 +364,12 @@ class TestFetchPendingOutbox:
 
             worker.fetch_pending_outbox(api_url="http://localhost:8095")
 
-        called_url = mock_urlopen.call_args[0][0].full_url
-        assert "status=pending" in called_url
+        request = mock_urlopen.call_args[0][0]
+        assert request.full_url.endswith("/api/deployment/outbox/claim")
+        assert request.method == "POST"
+        assert request.headers["Authorization"].startswith("Bearer ")
+        assert request.headers["X-tenant-id"] == "tenant-deployment-test"
+        assert json.loads(request.data)["consumer_name"] == "deployment-outbox-consumer"
 
     def test_url_can_isolate_one_aggregate(self, worker):
         with patch("urllib.request.urlopen") as mock_urlopen:
@@ -362,9 +384,8 @@ class TestFetchPendingOutbox:
                 aggregate_id="deployment-saga-task-001",
             )
 
-        called_url = mock_urlopen.call_args[0][0].full_url
-        assert "status=pending" in called_url
-        assert "aggregate_id=deployment-saga-task-001" in called_url
+        request = mock_urlopen.call_args[0][0]
+        assert json.loads(request.data)["aggregate_id"] == "deployment-saga-task-001"
 
 
 # ---------------------------------------------------------------------------
@@ -442,6 +463,7 @@ class TestRunPoll:
 
         fetch.assert_called_once_with(
             api_url="http://localhost:8095",
+            consumer_name="test-consumer",
             timeout_seconds=10.0,
             aggregate_id="deployment-saga-task-001",
         )
@@ -696,6 +718,11 @@ class TestRunPoll:
             deploy_context = mock_dispatch.call_args.kwargs["deploy_context"]
             assert deploy_context["sponsor_persona_id"] == "persona-001"
             assert deploy_context["metadata"]["authoritative_loader_attestation"] == _authority_report()
+            assert deploy_context["metadata"]["tenant_id"] == "tenant-deployment-test"
+            assert (
+                deploy_context["metadata"]["deployment_correlation_id"]
+                == "correlation-deployment-test"
+            )
             assert "loader_checks_passed" not in deploy_context["metadata"]
             mock_fetch_saga.assert_called_once_with(api_url="http://localhost:8095", saga_id="saga-001", timeout_seconds=10.0)
             mock_fetch_plan.assert_called_once_with(api_url="http://localhost:8095", plan_id="plan-001", timeout_seconds=10.0)
@@ -1475,7 +1502,12 @@ class TestRunPoll:
             {"event_type": "runtime.binding.requested", "aggregate_id": "saga-001"}
         )
         saga = _binding_saga()
-        plan = _binding_plan(metadata={"loader_checks_passed": True})
+        plan = _binding_plan(
+            metadata={
+                "loader_checks_passed": True,
+                "tenant_id": "tenant-deployment-test",
+            }
+        )
         compat = {
             "ok": True,
             "persona_binding_id": "pcb-001",
@@ -2405,6 +2437,49 @@ class TestMain:
         assert line["health"]["status"] == "degraded"
         assert line["health"]["last_failure"] is not None
         assert line["health"]["last_failure_reason"] is not None
+
+    def test_successful_idle_poll_recovers_degraded_health(
+        self, worker, monkeypatch, capsys
+    ):
+        monkeypatch.setenv("DEPLOYMENT_API_URL", "http://localhost:8095")
+        monkeypatch.setenv("DEPLOYMENT_OUTBOX_CONSUMER_INTERVAL_SECONDS", "1")
+        monkeypatch.setenv("DEPLOYMENT_OUTBOX_CONSUMER_MAX_TICKS", "2")
+        monkeypatch.setenv("DEPLOYMENT_OUTBOX_CONSUMER_HEALTH_FILE", "")
+
+        with (
+            patch.object(
+                worker,
+                "run_poll",
+                side_effect=[
+                    {
+                        "events_found": 1,
+                        "consumed": 0,
+                        "duplicates": 0,
+                        "retry_scheduled": 1,
+                        "dead_lettered": 0,
+                        "skipped_not_due": 0,
+                        "errors": ["temporary deployment API failure"],
+                    },
+                    {
+                        "events_found": 0,
+                        "consumed": 0,
+                        "duplicates": 0,
+                        "retry_scheduled": 0,
+                        "dead_lettered": 0,
+                        "skipped_not_due": 0,
+                        "errors": [],
+                    },
+                ],
+            ),
+            patch("time.sleep"),
+        ):
+            worker.main()
+
+        last = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+        assert last["health"]["status"] == "ok"
+        assert last["health"]["last_idle_success"] is not None
+        assert last["health"]["last_recovered_at"] is not None
+        assert last["health"]["recovery_count"] == 1
 
     def test_health_file_written_each_tick(self, worker, monkeypatch, tmp_path, capsys):
         health_file = str(tmp_path / "health.json")
