@@ -146,6 +146,35 @@ class ExecutionStatus(str, Enum):
     NOOP = "noop"
 
 
+# ``submitted`` records an accepted dispatch intent, not an outcome.  Only a
+# real downstream terminal readback may move an EvolutionDecision to
+# ``executed`` (L12-EVO-001 acceptance: "Decision becomes executed only after
+# real downstream terminal receipt"); a synthetic/stub ``submitted`` result is
+# rejected by ``EvolutionDecision.execute()``.
+TERMINAL_EXECUTION_STATUSES = {
+    ExecutionStatus.SUCCEEDED,
+    ExecutionStatus.FAILED,
+    ExecutionStatus.NOOP,
+}
+
+# Tenant that owns every EvolutionDecision written before tenant identity was
+# authoritative.  Legacy rows resolve here so single-active uniqueness, actor
+# authority, and cooldown scoping have one non-null tenant to key on rather
+# than a null that silently matches everything.
+DEFAULT_TENANT_ID = "pantheon-default"
+
+
+def normalize_tenant_id(value: Any) -> str:
+    """Resolve any tenant input to the authoritative tenant identifier.
+
+    ``None``/blank resolves to :data:`DEFAULT_TENANT_ID` so a legacy record and
+    a caller that never learned about tenants land in the same tenant instead
+    of forming a null tenant that compares unequal to itself.
+    """
+    text = "" if value is None else str(value).strip()
+    return text or DEFAULT_TENANT_ID
+
+
 REVIEW_OWNER_MATRIX: dict[RiskLevel, set[EvolutionActorRole]] = {
     RiskLevel.LOW: {
         EvolutionActorRole.REVIEWER_ON_DUTY,
@@ -387,6 +416,30 @@ class EvolutionDecision:
     superseded_by: Optional[str] = None
     supersedes_decision_id: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+    # Authoritative owning tenant.  Declared last so existing positional
+    # construction keeps working; normalized in __post_init__ so no in-memory
+    # decision can carry a null/blank tenant.
+    tenant_id: str = DEFAULT_TENANT_ID
+
+    def __post_init__(self) -> None:
+        self.tenant_id = normalize_tenant_id(self.tenant_id)
+
+    def assert_actor_tenant(self, actor_tenant_id: Any) -> str:
+        """Fail closed when an actor from another tenant acts on this decision.
+
+        The actor's tenant is normalized the same way the decision's is, so a
+        caller that supplies no tenant is treated as the default tenant.  That
+        keeps single-tenant callers working while making a cross-tenant actor
+        on a non-default decision an explicit authority error rather than a
+        silent write.
+        """
+        resolved = normalize_tenant_id(actor_tenant_id)
+        if resolved != self.tenant_id:
+            raise EvolutionDecisionError(
+                f"actor tenant '{resolved}' is not authorized to act on EvolutionDecision "
+                f"{self.decision_id} owned by tenant '{self.tenant_id}'"
+            )
+        return resolved
 
     @classmethod
     def create_proposed(
@@ -409,6 +462,7 @@ class EvolutionDecision:
         persona_id: str | None = None,
         target_stage: str | None = None,
         metadata: Dict[str, Any] | None = None,
+        tenant_id: str | None = None,
     ) -> "EvolutionDecision":
         proposer = _ensure_role_allowed(
             created_by_role,
@@ -436,6 +490,7 @@ class EvolutionDecision:
             persona_id=persona_id,
             target_stage=target_stage,
             metadata=metadata,
+            tenant_id=normalize_tenant_id(tenant_id),
         )
 
     def mark_reviewed(
@@ -446,7 +501,9 @@ class EvolutionDecision:
         *,
         note: str | None = None,
         reviewed_at: str | None = None,
+        actor_tenant_id: str | None = None,
     ) -> None:
+        self.assert_actor_tenant(actor_tenant_id)
         if self.decision_state != EvolutionDecisionState.PROPOSED:
             raise EvolutionDecisionError(
                 f"Can only mark reviewed from proposed, got {self.decision_state!r}"
@@ -476,7 +533,9 @@ class EvolutionDecision:
         approval_decision_id: str | None = None,
         note: str | None = None,
         approved_at: str | None = None,
+        actor_tenant_id: str | None = None,
     ) -> None:
+        self.assert_actor_tenant(actor_tenant_id)
         if self.decision_state != EvolutionDecisionState.REVIEWED:
             raise EvolutionDecisionError(
                 f"Can only approve from reviewed, got {self.decision_state!r}"
@@ -507,7 +566,9 @@ class EvolutionDecision:
         approval_decision_id: str | None = None,
         note: str,
         rejected_at: str | None = None,
+        actor_tenant_id: str | None = None,
     ) -> None:
+        self.assert_actor_tenant(actor_tenant_id)
         if self.decision_state != EvolutionDecisionState.REVIEWED:
             raise EvolutionDecisionError(
                 f"Can only reject from reviewed, got {self.decision_state!r}"
@@ -542,7 +603,9 @@ class EvolutionDecision:
         observation_window_started_at: str | None = None,
         observation_window_ends_at: str,
         note: str | None = None,
+        actor_tenant_id: str | None = None,
     ) -> None:
+        self.assert_actor_tenant(actor_tenant_id)
         if self.decision_state != EvolutionDecisionState.APPROVED:
             raise EvolutionDecisionError(
                 f"Can only execute from approved, got {self.decision_state!r}"
@@ -552,6 +615,24 @@ class EvolutionDecision:
             EXECUTION_ROLES,
             "actor_role is not allowed to execute EvolutionDecision",
         )
+        try:
+            status = ExecutionStatus(execution_result.status)
+        except ValueError as exc:
+            raise EvolutionDecisionError(
+                f"Invalid execution_result.status: {execution_result.status!r}"
+            ) from exc
+        if status not in TERMINAL_EXECUTION_STATUSES:
+            raise EvolutionDecisionError(
+                "EvolutionDecision cannot be executed on a non-terminal execution result: "
+                f"status={status.value!r} records a dispatch intent, not a downstream outcome. "
+                "Supply a real downstream terminal receipt "
+                f"(one of {sorted(item.value for item in TERMINAL_EXECUTION_STATUSES)})."
+            )
+        if not str(execution_result.execution_ref_id or "").strip():
+            raise EvolutionDecisionError(
+                "execution_result.execution_ref_id is required to execute: a terminal receipt "
+                "must cite the downstream record it was read back from"
+            )
         executed_at = execution_result.executed_at
         self.decision_state = EvolutionDecisionState.EXECUTED
         self.execution_result = execution_result
@@ -576,7 +657,9 @@ class EvolutionDecision:
         *,
         note: str,
         canceled_at: str | None = None,
+        actor_tenant_id: str | None = None,
     ) -> None:
+        self.assert_actor_tenant(actor_tenant_id)
         if self.decision_state not in {
             EvolutionDecisionState.PROPOSED,
             EvolutionDecisionState.REVIEWED,
@@ -648,6 +731,11 @@ class EvolutionDecision:
         for field_name, value in required.items():
             if value in (None, ""):
                 errors.append(f"{field_name} is required")
+
+        if not isinstance(self.tenant_id, str) or not self.tenant_id.strip():
+            errors.append("tenant_id is required and must be a non-empty string")
+        elif self.tenant_id != self.tenant_id.strip():
+            errors.append("tenant_id must not carry leading or trailing whitespace")
 
         try:
             EvolutionTargetType(self.target_type)
@@ -812,9 +900,26 @@ class EvolutionDecision:
 
         if self.execution_result is not None:
             try:
-                ExecutionStatus(self.execution_result.status)
+                execution_status = ExecutionStatus(self.execution_result.status)
             except ValueError:
                 errors.append(f"Invalid execution_result.status: {self.execution_result.status}")
+            else:
+                if (
+                    state == EvolutionDecisionState.EXECUTED
+                    and execution_status not in TERMINAL_EXECUTION_STATUSES
+                ):
+                    errors.append(
+                        "executed state requires a terminal downstream execution_result.status "
+                        f"(one of {sorted(item.value for item in TERMINAL_EXECUTION_STATUSES)}), "
+                        f"got '{execution_status.value}'"
+                    )
+                if state == EvolutionDecisionState.EXECUTED and not str(
+                    self.execution_result.execution_ref_id or ""
+                ).strip():
+                    errors.append(
+                        "executed state requires execution_result.execution_ref_id citing the "
+                        "downstream record the terminal receipt was read back from"
+                    )
             try:
                 ExecutionPlane(self.execution_result.plane)
             except ValueError:
@@ -931,6 +1036,7 @@ class EvolutionDecision:
             superseded_by=data.get("superseded_by"),
             supersedes_decision_id=data.get("supersedes_decision_id"),
             metadata=data.get("metadata"),
+            tenant_id=normalize_tenant_id(data.get("tenant_id")),
         )
 
     @classmethod
@@ -1111,10 +1217,20 @@ class EvolutionDecisionStore:
         self,
         target_type: EvolutionTargetType | str,
         target_id: str,
+        *,
+        tenant_id: str | None = None,
     ) -> List[EvolutionDecision]:
+        """Return decisions for one target.
+
+        ``tenant_id`` scopes the read to a single tenant.  ``None`` keeps the
+        historical cross-tenant read for callers that genuinely need the whole
+        target history (audit/report surfaces); authority checks must always
+        pass an explicit tenant.
+        """
         target_type_value = (
             target_type.value if isinstance(target_type, EvolutionTargetType) else target_type
         )
+        scope = normalize_tenant_id(tenant_id) if tenant_id is not None else None
         with self._locked(exclusive=False):
             if self._storage_path is not None:
                 self._load_unlocked()
@@ -1123,6 +1239,7 @@ class EvolutionDecisionStore:
                 for decision in self._decisions.values()
                 if decision.target_id == target_id
                 and decision.to_dict()["target_type"] == target_type_value
+                and (scope is None or decision.tenant_id == scope)
             ]
 
     def find_active_by_target(
@@ -1131,10 +1248,11 @@ class EvolutionDecisionStore:
         target_id: str,
         *,
         as_of: str | None = None,
+        tenant_id: str | None = None,
     ) -> List[EvolutionDecision]:
         return [
             decision
-            for decision in self.find_by_target(target_type, target_id)
+            for decision in self.find_by_target(target_type, target_id, tenant_id=tenant_id)
             if decision.is_active(as_of=as_of)
         ]
 
@@ -1149,19 +1267,31 @@ class EvolutionDecisionStore:
             ]
 
     def _enforce_single_active_rule(self, candidate: EvolutionDecision) -> None:
+        """One active decision per (tenant, target_type, target_id).
+
+        The uniqueness key is tenant-scoped: two tenants that legitimately
+        govern the same ``target_id`` must not block each other, while a second
+        active decision inside one tenant is still refused.  Callers reach this
+        under the store's exclusive lock after a fresh durable reload, so two
+        racing approvers serialize here and exactly one wins.
+        """
         if not candidate.is_active():
             return
+        candidate_target_type = candidate.to_dict()["target_type"]
         for other in self._decisions.values():
             if other.decision_id == candidate.decision_id:
                 continue
+            if other.tenant_id != candidate.tenant_id:
+                continue
             if other.target_id != candidate.target_id:
                 continue
-            if other.to_dict()["target_type"] != candidate.to_dict()["target_type"]:
+            if other.to_dict()["target_type"] != candidate_target_type:
                 continue
             if other.is_active():
                 raise EvolutionDecisionError(
-                    "single-active-rule violated: target already has an active EvolutionDecision "
-                    f"({other.decision_id})"
+                    "single-active-rule violated: tenant "
+                    f"'{candidate.tenant_id}' already has an active EvolutionDecision for this "
+                    f"target ({other.decision_id})"
                 )
 
     def _sync_postmortem_link(self, decision: EvolutionDecision) -> None:
@@ -1257,6 +1387,7 @@ def to_audit_event(decision: EvolutionDecision, event_type: str) -> Dict[str, An
     return {
         "event_type": event_type,
         "decision_id": decision.decision_id,
+        "tenant_id": decision.tenant_id,
         "target_type": (
             decision.target_type.value
             if isinstance(decision.target_type, EvolutionTargetType)
