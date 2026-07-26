@@ -12949,6 +12949,50 @@ class OwnerlessInProgressReconciliationTests(unittest.TestCase):
         self.assertFalse(changed)
         self.assertEqual(status["tasks"][0]["status"], "in_progress")
 
+    def test_squash_merged_delivery_reconciles_and_skips_base_comparison(self) -> None:
+        """The live #4213 shape, driven end to end through the phase."""
+        worker = self._worker("SUP-SQUASH", work_progress_snapshot={"commit_sha": "9e" + "0" * 38})
+        state = {"workers": {worker["run_id"]: worker}, "queue": {"events": {}}}
+        status = {"tasks": [self._task("SUP-SQUASH")], "handoffs": []}
+        squashed = {
+            "base_ref": "origin/dev",
+            "commits": ["0410a89f0e4ac3c53e7bc5192aebe6925423b4da"],
+            "delivery_head": "9e" + "0" * 38,
+            "merge_commit": "0410a89f0e4ac3c53e7bc5192aebe6925423b4da",
+            "trailer_commits_since": "2026-07-26T17:00:00Z",
+            "delivery_shape": "squash_pr_metadata",
+            "pull_request_number": 4213,
+            "pull_request_url": "https://github.com/ajoe734/pantheon/pull/4213",
+            "pull_request_head_ref_oid": "9e" + "0" * 38,
+            "pull_request_base_ref_name": "dev",
+            "pull_request_merged_at": "2026-07-26T20:18:15Z",
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "write_status"),
+            mock.patch.object(supervisor, "merged_delivery_commits", return_value=squashed),
+            mock.patch.object(
+                supervisor, "task_branch_has_unmerged_commits", return_value=False
+            ) as branch_check,
+            mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor, "utc_now", return_value="2026-07-26T20:00:00Z"),
+        ):
+            changed = supervisor.reconcile_ownerless_in_progress_tasks(self.config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(status["tasks"][0]["status"], "review")
+        # A squashed branch is never an ancestor of the base, so the base
+        # comparison must be skipped; only the delivery head still applies.
+        self.assertEqual(branch_check.call_args.args[2], "")
+        self.assertEqual(branch_check.call_args.kwargs["delivery_head"], "9e" + "0" * 38)
+        evidence = status["status_activity_outbox"]["events"][0]["evidence"]
+        self.assertEqual(evidence["delivery_shape"], "squash_pr_metadata")
+        self.assertEqual(evidence["pull_request_number"], 4213)
+        self.assertEqual(evidence["pull_request_merged_at"], "2026-07-26T20:18:15Z")
+
     def test_reconciled_evidence_records_the_bound_delivery(self) -> None:
         worker = self._worker("SUP-BOUND")
         state = {"workers": {worker["run_id"]: worker}, "queue": {"events": {}}}
@@ -13005,6 +13049,7 @@ class MergedDeliveryEvidenceTests(unittest.TestCase):
                 "delivery_head": self.HEAD,
                 "merge_commit": "merge999",
                 "trailer_commits_since": "2026-07-26T17:00:00Z",
+                "delivery_shape": "merge_ancestry",
             },
         )
         ancestor.assert_called_once()
@@ -13026,14 +13071,16 @@ class MergedDeliveryEvidenceTests(unittest.TestCase):
             self.assertIsNone(self._merged("SUP-REOPENED-001"))
 
     def test_delivery_head_not_merged_into_the_base_is_not_evidence(self) -> None:
-        """Unpushed work, or a squash merge that rewrote the delivery head."""
+        """Unpushed work, with no merged PR metadata to fall back on."""
         with (
             mock.patch.object(supervisor, "_git_ref_exists", side_effect=lambda _root, ref: ref == "origin/dev"),
             mock.patch.object(supervisor, "_git_commit_is_ancestor", return_value=False),
-            mock.patch.object(supervisor, "_git_capture") as capture,
+            mock.patch.object(supervisor, "_merged_pull_requests_for_branch", return_value=[]),
+            mock.patch.object(supervisor, "_git_capture", return_value="") as capture,
         ):
             self.assertIsNone(self._merged("SUP-UNPUSHED-001"))
-        capture.assert_not_called()
+        # The trailer search never runs: nothing established a merged delivery.
+        self.assertEqual([call.args[1][0] for call in capture.call_args_list], [])
 
     def test_git_log_failure_fails_closed(self) -> None:
         with (
@@ -13124,6 +13171,305 @@ class MergedDeliveryEvidenceTests(unittest.TestCase):
                     self.config, "SUP-GITFAIL-001", "origin/dev", delivery_head=self.HEAD
                 )
             )
+
+
+class SquashMergedDeliveryEvidenceTests(unittest.TestCase):
+    """A squash merge rewrites the head, so PR metadata is the only binding.
+
+    The fixture is the live 2026-07-26 shape: PR #4213, head ``9e484e252``,
+    squash-merged to ``0410a89f0`` on ``dev``. Git ancestry can never recognise
+    it -- ``_git_commit_is_ancestor(head, dev)`` is false forever by design.
+    """
+
+    HEAD = "9e484e2522cd8778b85a4c880e4cd33d07ef401f"
+    MERGE = "0410a89f0e4ac3c53e7bc5192aebe6925423b4da"
+    TASK = "OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001"
+    SINCE = "2026-07-26T19:53:14Z"
+
+    def setUp(self) -> None:
+        self.config = {
+            "paths": {"status_file": "ai-status.json"},
+            "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+            "worker_worktree_cleanup": {"base_branches": ["dev"]},
+        }
+
+    def _pr(self, **overrides: object) -> dict[str, object]:
+        record = {
+            "number": 4213,
+            "state": "MERGED",
+            "headRefName": f"task/{self.TASK}",
+            "headRefOid": self.HEAD,
+            "baseRefName": "dev",
+            "mergedAt": "2026-07-26T20:18:15Z",
+            "mergeCommit": {"oid": self.MERGE},
+            "url": "https://github.com/ajoe734/pantheon/pull/4213",
+        }
+        record.update(overrides)
+        return record
+
+    def _merged(self, records: list[dict[str, object]], *, trailer: str | None = None):
+        """Run the full lookup with the squash shape wired up.
+
+        ``_git_commit_is_ancestor`` answers false for the delivery head (the
+        squash rewrote it) and true for the merge commit.
+        """
+        if trailer is None:
+            trailer = f"{self.MERGE}\n"
+
+        def fake_ancestor(_root: object, commit: str, _ref: str) -> bool:
+            return commit == self.MERGE
+
+        with (
+            mock.patch.object(supervisor, "_git_ref_exists", side_effect=lambda _root, ref: ref == "origin/dev"),
+            mock.patch.object(supervisor, "_git_commit_is_ancestor", side_effect=fake_ancestor),
+            mock.patch.object(supervisor, "_merged_pull_requests_for_branch", return_value=records) as lookup,
+            mock.patch.object(supervisor, "_git_capture", return_value=trailer) as capture,
+        ):
+            evidence = supervisor.merged_delivery_commits(
+                self.config, self.TASK, delivery_head=self.HEAD, since=self.SINCE
+            )
+        return evidence, lookup, capture
+
+    def test_live_4213_squash_shape_binds_through_pr_metadata(self) -> None:
+        evidence, lookup, capture = self._merged([self._pr()])
+
+        self.assertIsNotNone(evidence)
+        self.assertEqual(evidence["delivery_shape"], "squash_pr_metadata")
+        self.assertEqual(evidence["base_ref"], "origin/dev")
+        self.assertEqual(evidence["delivery_head"], self.HEAD)
+        self.assertEqual(evidence["merge_commit"], self.MERGE)
+        self.assertEqual(evidence["commits"], [self.MERGE])
+        self.assertEqual(evidence["pull_request_number"], 4213)
+        self.assertEqual(evidence["pull_request_head_ref_oid"], self.HEAD)
+        self.assertEqual(evidence["pull_request_base_ref_name"], "dev")
+        self.assertEqual(evidence["pull_request_merged_at"], "2026-07-26T20:18:15Z")
+        # The branch name is only the lookup key.
+        self.assertEqual(lookup.call_args.args[2], f"task/{self.TASK}")
+        # The trailer is read off the squashed commit itself, not its ancestry.
+        log_args = capture.call_args.args[1]
+        self.assertIn("--no-walk", log_args)
+        self.assertIn(f"--grep=Task-ID: {self.TASK}", log_args)
+        self.assertIn(f"--since={self.SINCE}", log_args)
+        self.assertEqual(log_args[-1], self.MERGE)
+
+    def test_wrong_pr_head_is_not_this_delivery(self) -> None:
+        evidence, _, _ = self._merged([self._pr(headRefOid="f" * 40)])
+        self.assertIsNone(evidence)
+
+    def test_wrong_base_branch_fails_closed(self) -> None:
+        evidence, _, _ = self._merged([self._pr(baseRefName="master")])
+        self.assertIsNone(evidence)
+
+    def test_merge_before_the_worker_was_dispatched_fails_closed(self) -> None:
+        evidence, _, _ = self._merged([self._pr(mergedAt="2026-07-26T10:00:00Z")])
+        self.assertIsNone(evidence)
+
+    def test_unmergeable_or_unparseable_merged_at_fails_closed(self) -> None:
+        self.assertIsNone(self._merged([self._pr(mergedAt=None)])[0])
+        self.assertIsNone(self._merged([self._pr(mergedAt="whenever")])[0])
+
+    def test_pr_not_actually_merged_fails_closed(self) -> None:
+        evidence, _, _ = self._merged([self._pr(state="OPEN", mergeCommit=None)])
+        self.assertIsNone(evidence)
+
+    def test_unrelated_merge_commit_fails_closed(self) -> None:
+        """The recorded mergeCommit is not on the integration base."""
+
+        def fake_ancestor(_root: object, _commit: str, _ref: str) -> bool:
+            return False
+
+        with (
+            mock.patch.object(supervisor, "_git_ref_exists", side_effect=lambda _root, ref: ref == "origin/dev"),
+            mock.patch.object(supervisor, "_git_commit_is_ancestor", side_effect=fake_ancestor),
+            mock.patch.object(supervisor, "_merged_pull_requests_for_branch", return_value=[self._pr()]),
+            mock.patch.object(supervisor, "_git_capture", return_value=f"{self.MERGE}\n"),
+        ):
+            self.assertIsNone(
+                supervisor.merged_delivery_commits(
+                    self.config, self.TASK, delivery_head=self.HEAD, since=self.SINCE
+                )
+            )
+
+    def test_merge_commit_without_this_tasks_trailer_fails_closed(self) -> None:
+        evidence, _, _ = self._merged([self._pr()], trailer="")
+        self.assertIsNone(evidence)
+
+    def test_missing_merge_commit_oid_fails_closed(self) -> None:
+        self.assertIsNone(self._merged([self._pr(mergeCommit=None)])[0])
+        self.assertIsNone(self._merged([self._pr(mergeCommit={"oid": "0410a89"})])[0])
+
+    def test_deleted_branch_with_no_merged_pr_fails_closed(self) -> None:
+        evidence, _, _ = self._merged([])
+        self.assertIsNone(evidence)
+
+    def test_github_lookup_failure_fails_closed(self) -> None:
+        evidence, _, _ = self._merged(None)
+        self.assertIsNone(evidence)
+
+    def test_multiple_prs_for_the_task_resolve_by_exact_head(self) -> None:
+        """Two merged PRs on the same task branch; only one delivered this head."""
+        earlier = self._pr(number=4100, headRefOid="c" * 40, mergeCommit={"oid": "d" * 40})
+        evidence, _, _ = self._merged([earlier, self._pr()])
+
+        self.assertIsNotNone(evidence)
+        self.assertEqual(evidence["pull_request_number"], 4213)
+
+    def test_ambiguous_duplicate_head_metadata_fails_closed(self) -> None:
+        evidence, _, _ = self._merged([self._pr(), self._pr(number=4214)])
+        self.assertIsNone(evidence)
+
+    def test_squash_delivery_does_not_require_branch_ancestry(self) -> None:
+        """The surviving branch is never an ancestor of the base after a squash.
+
+        Only movement past the delivery head may block that shape, so the base
+        comparison must be skipped for it.
+        """
+        with mock.patch.object(supervisor, "_git_ref_exists", return_value=False):
+            self.assertFalse(
+                supervisor.task_branch_has_unmerged_commits(
+                    self.config, self.TASK, "", delivery_head=self.HEAD
+                )
+            )
+
+        def fake_capture(_root: object, args: list[str]) -> str:
+            return "4\n" if args[-1].startswith(f"{self.HEAD}..") else "0\n"
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "_git_ref_exists",
+                side_effect=lambda _root, ref: ref == f"task/{self.TASK}",
+            ),
+            mock.patch.object(supervisor, "_git_capture", side_effect=fake_capture),
+        ):
+            self.assertTrue(
+                supervisor.task_branch_has_unmerged_commits(
+                    self.config, self.TASK, "", delivery_head=self.HEAD
+                )
+            )
+
+    def test_ancestry_shape_is_preferred_and_skips_the_pr_lookup(self) -> None:
+        with (
+            mock.patch.object(supervisor, "_git_ref_exists", side_effect=lambda _root, ref: ref == "origin/dev"),
+            mock.patch.object(supervisor, "_git_commit_is_ancestor", return_value=True),
+            mock.patch.object(supervisor, "_merged_pull_requests_for_branch") as lookup,
+            mock.patch.object(supervisor, "_git_capture", return_value="abc123\n"),
+        ):
+            evidence = supervisor.merged_delivery_commits(
+                self.config, self.TASK, delivery_head=self.HEAD, since=self.SINCE
+            )
+
+        self.assertEqual(evidence["delivery_shape"], "merge_ancestry")
+        lookup.assert_not_called()
+
+
+class MergedPullRequestLookupTests(unittest.TestCase):
+    """The PR lookup itself: authoritative or nothing."""
+
+    def setUp(self) -> None:
+        self.config = {"paths": {"status_file": "ai-status.json"}}
+        self.repo_root = Path("/repo")
+
+    def _lookup(self, **patches: object):
+        defaults = {
+            "resolve_gh_binary": mock.patch.object(supervisor, "resolve_gh_binary", return_value="gh"),
+            "_repository_slug_from_remote": mock.patch.object(
+                supervisor, "_repository_slug_from_remote", return_value="ajoe734/pantheon"
+            ),
+        }
+        defaults.update(patches)
+        with contextlib.ExitStack() as stack:
+            for patcher in defaults.values():
+                stack.enter_context(patcher)
+            return supervisor._merged_pull_requests_for_branch(
+                self.config, self.repo_root, "task/SUP-001"
+            )
+
+    def _proc(self, returncode: int = 0, stdout: str = "[]") -> mock.Mock:
+        return mock.Mock(returncode=returncode, stdout=stdout)
+
+    def test_successful_lookup_returns_the_records(self) -> None:
+        runner = mock.Mock(return_value=self._proc(stdout='[{"number": 1}]'))
+        records = self._lookup(
+            run_gh_process=mock.patch.object(supervisor, "run_gh_process", runner)
+        )
+        self.assertEqual(records, [{"number": 1}])
+        args = runner.call_args.args[0]
+        self.assertEqual(args[:2], ["pr", "list"])
+        self.assertIn("--head", args)
+        self.assertIn("task/SUP-001", args)
+        self.assertIn("merged", args)
+        self.assertIn("ajoe734/pantheon", args)
+
+    def test_missing_gh_binary_fails_closed(self) -> None:
+        self.assertIsNone(
+            self._lookup(resolve_gh_binary=mock.patch.object(supervisor, "resolve_gh_binary", return_value=None))
+        )
+
+    def test_unknown_repository_fails_closed(self) -> None:
+        self.assertIsNone(
+            self._lookup(
+                _repository_slug_from_remote=mock.patch.object(
+                    supervisor, "_repository_slug_from_remote", return_value=None
+                )
+            )
+        )
+
+    def test_nonzero_exit_fails_closed(self) -> None:
+        self.assertIsNone(
+            self._lookup(
+                run_gh_process=mock.patch.object(
+                    supervisor, "run_gh_process", return_value=self._proc(returncode=1, stdout="")
+                )
+            )
+        )
+
+    def test_timeout_fails_closed(self) -> None:
+        self.assertIsNone(
+            self._lookup(
+                run_gh_process=mock.patch.object(
+                    supervisor,
+                    "run_gh_process",
+                    side_effect=subprocess.TimeoutExpired(cmd=["gh"], timeout=1),
+                )
+            )
+        )
+
+    def test_unparseable_or_unexpected_json_fails_closed(self) -> None:
+        for payload in ("not json", '{"number": 1}'):
+            self.assertIsNone(
+                self._lookup(
+                    run_gh_process=mock.patch.object(
+                        supervisor, "run_gh_process", return_value=self._proc(stdout=payload)
+                    )
+                )
+            )
+
+    def test_disabled_lookup_fails_closed(self) -> None:
+        config = {
+            "paths": {"status_file": "ai-status.json"},
+            "ready_dispatcher": {"ownerless_in_progress": {"github_pr_lookup_enabled": False}},
+        }
+        with mock.patch.object(supervisor, "run_gh_process") as runner:
+            self.assertIsNone(
+                supervisor._merged_pull_requests_for_branch(config, self.repo_root, "task/SUP-001")
+            )
+        runner.assert_not_called()
+
+    def test_repository_slug_is_read_from_the_origin_remote(self) -> None:
+        for url in (
+            "git@github.com:ajoe734/pantheon.git",
+            "https://github.com/ajoe734/pantheon.git",
+            "https://github.com/ajoe734/pantheon",
+            "ssh://git@github.com/ajoe734/pantheon.git",
+        ):
+            with mock.patch.object(supervisor, "_git_capture", return_value=f"{url}\n"):
+                self.assertEqual(
+                    supervisor._repository_slug_from_remote(self.repo_root), "ajoe734/pantheon"
+                )
+        for url in ("", "git@gitlab.com:ajoe734/pantheon.git"):
+            with mock.patch.object(supervisor, "_git_capture", return_value=url):
+                self.assertIsNone(supervisor._repository_slug_from_remote(self.repo_root))
 
 
 class WorkerDeliveryIdentityTests(unittest.TestCase):
