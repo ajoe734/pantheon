@@ -59,11 +59,31 @@ def test_workflow_resolves_full_sha_before_harness_checkout_or_credentials() -> 
     assert resolve_step < identity_step < checkout_step
     assert "ref: ${{ steps.harness.outputs.test_sha }}" in workflow
     assert (
-        '[[ "${PPL_ALLOC_009_TEST_SHA}" '
-        '== "${PPL_ALLOC_009_EXPECTED_FE_SHA}" ]]'
+        '[[ "${PPL_ALLOC_009_BROWSER_DIAGNOSTIC_ONLY}" == "true" || '
+        '"${PPL_ALLOC_009_TEST_SHA}" == "${PPL_ALLOC_009_EXPECTED_FE_SHA}" ]]'
         in workflow
     )
+    assert 'if [[ "${BROWSER_DIAGNOSTIC_ONLY}" == "true" ]]; then' in workflow
+    assert '[[ "${REQUESTED_TEST_SHA}" =~ ^[0-9a-f]{40}$ ]]' in workflow
     assert "PPL_ALLOC_009_TEST_SHA: ${{ inputs.execute_plans_test_sha }}" not in workflow
+
+
+def test_read_only_browser_diagnostic_is_explicitly_bounded() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+
+    assert "browser_diagnostic_only:" in workflow
+    assert "diagnostic_persona_id:" in workflow
+    assert "diagnostic_pool_id:" in workflow
+    assert "diagnostic_rebalance_id:" in workflow
+    assert (
+        "PPL_ALLOC_009_BROWSER_DIAGNOSTIC_ONLY: "
+        "${{ inputs.browser_diagnostic_only }}"
+        in workflow
+    )
+    assert '[[ -n "${PPL_ALLOC_009_DIAGNOSTIC_PERSONA_ID}" ]]' in workflow
+    assert '[[ -n "${PPL_ALLOC_009_DIAGNOSTIC_POOL_ID}" ]]' in workflow
+    assert '[[ -n "${PPL_ALLOC_009_DIAGNOSTIC_REBALANCE_ID}" ]]' in workflow
+    assert "permissions:\n  contents: read" in workflow
 
 
 def test_hosted_acceptance_preserves_browser_session_and_gcp_identity_contract() -> None:
