@@ -23,6 +23,32 @@ telemetry test module that reintroduces a bare sibling import fails here:
   ambient environment, and under repeated in-process discovery, with no bare
   sibling alias left behind in `sys.modules`.
 
+Repository-root resolution contract
+-----------------------------------
+
+`services.telemetry.<module>` resolves only when the repository root is on
+`sys.path`. That is a property of Python's import system, not of these modules,
+so the contract this file fences is deliberately precise:
+
+* with **no** ``PYTHONPATH`` at all, ``pytest <abs path>`` from a foreign working
+  directory passes — pytest walks the ``__init__.py`` chain up to the first
+  non-package directory (the repository root) and puts it on ``sys.path`` itself.
+  Proven with no ``conftest.py`` and no ``pytest.ini``, so it does not depend on
+  this repository's pytest configuration;
+* with **no** ``PYTHONPATH`` at all, ``python -m unittest`` — both dotted module
+  execution and ``discover`` — passes when the working directory is the
+  repository root, because the interpreter puts the working directory on
+  ``sys.path``;
+* from a foreign working directory with neither ``PYTHONPATH`` nor the repository
+  root otherwise importable, ``python -m unittest services.telemetry.<module>``
+  and ``python <abs path>/test_<module>.py`` fail with
+  ``ModuleNotFoundError: No module named 'services'``. That residual is the
+  repository root not being importable; it is unrelated to the repaired defect
+  and is not fixable without exactly the process-global ``sys.path`` mutation
+  this task refuses to add. The tests below therefore assert the invariant that
+  matters — no failure in any environment is ever attributable to a bare sibling
+  import — instead of claiming an unconditional pass.
+
 Scope: test-loading only. This task does not change `capture.py`,
 `feedback_adapter.py`, or any configuration.
 """
@@ -64,6 +90,10 @@ HOSTILE_ENV = {
 
 _RAN_TESTS = re.compile(r"^Ran (\d+) tests?", re.MULTILINE)
 
+# The bare sibling aliases the repair removed. No failure, in any environment,
+# may be attributable to one of these names again.
+BARE_SIBLING_ALIASES = ("capture", "feedback_adapter")
+
 
 def _sibling_module_names() -> set[str]:
     """Top-level importable names that live inside the telemetry package."""
@@ -76,18 +106,29 @@ def _sibling_module_names() -> set[str]:
     return names
 
 
-def _child_env(*, hostile: bool = False, pythonpath_prefix: str | None = None) -> dict[str, str]:
-    """A minimal environment: nothing the parent run happens to export leaks in."""
+def _child_env(
+    *,
+    hostile: bool = False,
+    pythonpath_prefix: str | None = None,
+    repo_root_on_pythonpath: bool = True,
+) -> dict[str, str]:
+    """A minimal environment: nothing the parent run happens to export leaks in.
+
+    With ``repo_root_on_pythonpath=False`` the child gets no ``PYTHONPATH`` key at
+    all, which is what the repository-root resolution tests need: an environment
+    that hands the child no import help whatsoever.
+    """
     env = {
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
         "HOME": os.environ.get("HOME", "/tmp"),
         "LANG": os.environ.get("LANG", "C.UTF-8"),
         CHILD_SENTINEL: "1",
     }
-    path_entries = [str(REPO_ROOT)]
+    path_entries = [str(REPO_ROOT)] if repo_root_on_pythonpath else []
     if pythonpath_prefix:
         path_entries.insert(0, pythonpath_prefix)
-    env["PYTHONPATH"] = os.pathsep.join(path_entries)
+    if path_entries:
+        env["PYTHONPATH"] = os.pathsep.join(path_entries)
     if hostile:
         env.update(HOSTILE_ENV)
     return env
@@ -317,6 +358,136 @@ class TestTelemetryDiscoveryUnderForeignCwdAndHostileEnv(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, combined)
             self.assertNotIn("ModuleNotFoundError", combined, combined)
             self.assertIn(f"{EXPECTED_REPAIRED_TEST_COUNT} tests collected", combined, combined)
+
+
+@unittest.skipIf(
+    os.environ.get(CHILD_SENTINEL) == "1",
+    "already running inside a spawned discovery child",
+)
+class TestRepositoryRootResolutionWithoutPythonPath(unittest.TestCase):
+    """No-``PYTHONPATH`` proof, and the exact boundary of what that can mean.
+
+    Every child here runs with no ``PYTHONPATH`` key in its environment, so
+    nothing injects the repository root on the modules' behalf. The tests split
+    into what genuinely passes that way and the residual that cannot pass without
+    a process-global ``sys.path`` mutation this task refuses to add.
+    """
+
+    def assertNoBareSiblingImportFailure(self, proc: subprocess.CompletedProcess) -> None:
+        """The invariant that holds in *every* environment, pass or fail.
+
+        The repaired defect was ``ModuleNotFoundError: No module named 'capture'``
+        (and ``'feedback_adapter'``). If a child fails, it must fail on the
+        repository root not being importable — never on a bare sibling name.
+        """
+        combined = proc.stdout + proc.stderr
+        for alias in BARE_SIBLING_ALIASES:
+            self.assertNotIn(f"No module named '{alias}'", combined, combined)
+        if proc.returncode != 0:
+            self.assertIn("No module named 'services'", combined, combined)
+
+    def test_pytest_passes_from_foreign_cwd_with_no_pythonpath_or_repo_config(self):
+        try:
+            import pytest  # noqa: F401
+        except ImportError:  # pragma: no cover - environment without pytest
+            self.skipTest("pytest is not installed in this interpreter")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = _run(
+                [
+                    sys.executable,
+                    "-m",
+                    "pytest",
+                    "-q",
+                    # -c /dev/null and --noconftest strip this repository's
+                    # pytest.ini and root conftest.py, so the pass is attributable
+                    # to the package path alone, not to repository test config.
+                    "-c",
+                    os.devnull,
+                    "--noconftest",
+                    "-p",
+                    "no:cacheprovider",
+                ]
+                + [str(TELEMETRY_DIR / f"{module}.py") for module in REPAIRED_MODULES],
+                cwd=Path(tmp),
+                env=_child_env(repo_root_on_pythonpath=False),
+            )
+            combined = proc.stdout + proc.stderr
+            self.assertNoBareSiblingImportFailure(proc)
+            self.assertEqual(proc.returncode, 0, combined)
+            self.assertIn(f"{EXPECTED_REPAIRED_TEST_COUNT} passed", combined, combined)
+
+    def test_dotted_unittest_from_repo_root_cwd_needs_no_pythonpath(self):
+        proc = _run(
+            [sys.executable, "-m", "unittest"]
+            + [f"services.telemetry.{module}" for module in REPAIRED_MODULES],
+            cwd=REPO_ROOT,
+            env=_child_env(repo_root_on_pythonpath=False),
+        )
+        self.assertNoBareSiblingImportFailure(proc)
+        combined = proc.stdout + proc.stderr
+        self.assertEqual(proc.returncode, 0, combined)
+        match = _RAN_TESTS.search(combined)
+        self.assertIsNotNone(match, combined)
+        self.assertEqual(int(match.group(1)), EXPECTED_REPAIRED_TEST_COUNT, combined)
+
+    def test_repo_root_discovery_needs_no_pythonpath(self):
+        total = 0
+        for module in REPAIRED_MODULES:
+            with self.subTest(module=module):
+                proc = _run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "unittest",
+                        "discover",
+                        "-s",
+                        "services/telemetry",
+                        "-t",
+                        ".",
+                        "-p",
+                        f"{module}.py",
+                    ],
+                    cwd=REPO_ROOT,
+                    env=_child_env(repo_root_on_pythonpath=False),
+                )
+                self.assertNoBareSiblingImportFailure(proc)
+                combined = proc.stdout + proc.stderr
+                self.assertEqual(proc.returncode, 0, combined)
+                match = _RAN_TESTS.search(combined)
+                self.assertIsNotNone(match, combined)
+                total += int(match.group(1))
+        self.assertEqual(total, EXPECTED_REPAIRED_TEST_COUNT)
+
+    def test_dotted_unittest_from_foreign_cwd_without_pythonpath_fails_only_on_services(self):
+        # Recorded boundary, not a claimed pass: with the repository root
+        # unreachable, the dotted form must fail on `services` itself. If a future
+        # environment makes the root importable (an installed distribution, a .pth
+        # entry), this passes instead — either way, never a bare sibling.
+        with tempfile.TemporaryDirectory() as tmp:
+            for module in REPAIRED_MODULES:
+                with self.subTest(module=module):
+                    proc = _run(
+                        [sys.executable, "-m", "unittest", f"services.telemetry.{module}"],
+                        cwd=Path(tmp),
+                        env=_child_env(repo_root_on_pythonpath=False),
+                    )
+                    self.assertNoBareSiblingImportFailure(proc)
+
+    def test_direct_file_execution_from_foreign_cwd_fails_only_on_services(self):
+        # Same boundary for `python <abs path>/test_capture.py`: sys.path[0] is
+        # services/telemetry, so the package root is missing. Making this pass
+        # would require the module to edit sys.path at import time, which
+        # test_repaired_modules_do_not_mutate_process_global_sys_path forbids.
+        with tempfile.TemporaryDirectory() as tmp:
+            for module in REPAIRED_MODULES:
+                with self.subTest(module=module):
+                    proc = _run(
+                        [sys.executable, str(TELEMETRY_DIR / f"{module}.py")],
+                        cwd=Path(tmp),
+                        env=_child_env(repo_root_on_pythonpath=False),
+                    )
+                    self.assertNoBareSiblingImportFailure(proc)
 
 
 if __name__ == "__main__":
