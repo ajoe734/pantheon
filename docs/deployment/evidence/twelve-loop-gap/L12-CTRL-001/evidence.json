@@ -16,8 +16,8 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-26T15:06:30Z",
-    "evidence_cut_semantics": "Owner-of-record closeout cut. Codex2 approved candidate 147495e6bb323f15e004909ee9e48f454a325e7b on PR #4178 while the task branch was still behind dev; canonical ownership then returned to Claude, who merged current dev twice, re-ran the identical reviewed regression on the integrated head, and normalized the reviewed packet into the product-evidence schema without altering controller behavior or the reviewed decision.",
+    "evidence_cut_at": "2026-07-26T15:39:00Z",
+    "evidence_cut_semantics": "Owner-of-record closeout cut. Codex2 approved candidate 147495e6bb323f15e004909ee9e48f454a325e7b on PR #4178 while the task branch was still behind dev; canonical ownership then returned to Claude, who merged current dev, re-ran the identical reviewed regression on each integrated head, and normalized the reviewed packet into the product-evidence schema without altering controller behavior or the reviewed decision. PR #4178 then went BEHIND again while dev advanced to 9f9749153d252c42d52b464bb93d6ca805a888ad, so this final cut re-integrates that dev head at fb034b201a9d8ac0acacab5c5804e7df832a078c and re-runs the identical six-file regression and auxiliary checks there.",
     "id": "L12-CTRL-001",
     "overall_admission": "pass",
     "owner": "Claude",
@@ -122,14 +122,26 @@
       {
         "delivery_state": "on_task_branch_pending_pr_4178_merge",
         "sha": "e75a7aedc584e48520d0bcf61d7ec33bb8cfdc0a",
-        "note": "Integration head validated by this evidence cut; carries origin/dev 6ec0b1365d698ab1c31eae6fd61d062967e57ad7.",
+        "note": "Carries origin/dev 6ec0b1365d698ab1c31eae6fd61d062967e57ad7; superseded as the validated head by fb034b201a9d8ac0acacab5c5804e7df832a078c.",
+        "subject": "Merge remote-tracking branch 'origin/dev' into task/L12-CTRL-001"
+      },
+      {
+        "delivery_state": "on_task_branch_pending_pr_4178_merge",
+        "sha": "ff615e815dc8c21d657b99e5ca7d4893d5ba91e5",
+        "note": "Required checks passed 6/6 on this head before dev advanced again.",
+        "subject": "L12-CTRL-001: normalize product closeout evidence"
+      },
+      {
+        "delivery_state": "on_task_branch_pending_pr_4178_merge",
+        "sha": "fb034b201a9d8ac0acacab5c5804e7df832a078c",
+        "note": "Final integration head validated by this evidence cut; carries origin/dev 9f9749153d252c42d52b464bb93d6ca805a888ad, which added the L12-SIGNOFF-001 protected closeout verdict service and the extended done guardrail.",
         "subject": "Merge remote-tracking branch 'origin/dev' into task/L12-CTRL-001"
       }
     ],
     "pull_request": {
       "base": "dev",
-      "head_sha": "e75a7aedc584e48520d0bcf61d7ec33bb8cfdc0a",
-      "note": "Required checks passed 6/6 on head 02c1aa6e63f65a3da1b46fb6917ad00618dda1fd; auto-merge is enabled and this evidence cut plus the dev refresh above are the final commits pushed before merge. merge_sha is intentionally absent because the owner records this cut before GitHub completes the merge; scripts/ai-status.sh done independently verifies that the task head is an ancestor of origin/dev.",
+      "head_sha": "fb034b201a9d8ac0acacab5c5804e7df832a078c",
+      "note": "Required checks passed 6/6 on head ff615e815dc8c21d657b99e5ca7d4893d5ba91e5; GitHub then reported the PR BEHIND because dev advanced to 9f9749153d252c42d52b464bb93d6ca805a888ad, so this evidence cut plus the dev re-integration above are the final commits pushed before merge and re-run the same required checks. Auto-merge remains enabled. merge_sha is intentionally absent because the owner records this cut before GitHub completes the merge; scripts/ai-status.sh done independently verifies that the task head is an ancestor of origin/dev.",
       "number": 4178,
       "url": "https://github.com/ajoe734/pantheon/pull/4178"
     },
@@ -157,6 +169,30 @@
         "run_id": 30206970341,
         "url": "https://github.com/ajoe734/pantheon/actions/runs/30206970341",
         "workflow": "Branch CI Gate / Smoke acceptance"
+      },
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "ff615e815dc8c21d657b99e5ca7d4893d5ba91e5",
+        "run_id": 30207695216,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30207695216",
+        "workflow": "Branch CI Gate / Commit trailers"
+      },
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "ff615e815dc8c21d657b99e5ca7d4893d5ba91e5",
+        "run_id": 30207695216,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30207695216",
+        "workflow": "Branch CI Gate / Runtime mirror guard"
+      },
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "ff615e815dc8c21d657b99e5ca7d4893d5ba91e5",
+        "run_id": 30207695216,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30207695216",
+        "workflow": "Branch CI Gate / Smoke acceptance"
       }
     ]
   },
@@ -164,7 +200,7 @@
     "commands": [
       {
         "command": "DATABASE_URL=postgresql://pantheon_app:***@localhost:15432/pantheon /home/lupin/pantheon/.venv/bin/python -m pytest services/loop-control/test_loop_control.py services/control-plane/bff/test_loop_health_read_model_contract.py services/control-plane/bff/test_loop_inventory_read_model_contract.py services/research/alpha_replication/test_replication_controller.py services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_distillation_controller.py -q",
-        "conclusion": "110 passed, 13 warnings in 30.92s on integration head e75a7aedc584e48520d0bcf61d7ec33bb8cfdc0a; the same six-file suite returned 110 passed at 47.12s on the previous integration head and 110 passed at 35.96s during Codex2's independent review.",
+        "conclusion": "110 passed, 13 warnings in 50.67s on final integration head fb034b201a9d8ac0acacab5c5804e7df832a078c; the same six-file suite returned 110 passed at 30.92s on integration head e75a7aedc584e48520d0bcf61d7ec33bb8cfdc0a, 110 passed at 47.12s on the head before it, and 110 passed at 35.96s during Codex2's independent review.",
         "result": "pass"
       },
       {
@@ -189,13 +225,13 @@
       },
       {
         "command": "python3 jsonschema validation of this manifest against schemas/product-evidence.schema.json plus scripts/loop_done_guardrail.py --task-id L12-CTRL-001",
-        "conclusion": "Schema validation passed and the guardrail reported no closure gaps for the canonical task row.",
+        "conclusion": "Schema validation passed and the guardrail reported no closure gaps for the canonical task row. Re-run on the final integration head against the extended guardrail that origin/dev 9f9749153d252c42d52b464bb93d6ca805a888ad introduced: `[OK] L12-CTRL-001 (status=review_approved)`, 1/1 loop task passed. requires_human_ops_signoff is false for this task, so no protected closeout verdict applies.",
         "result": "pass"
       }
     ],
-    "validated_at": "2026-07-26T15:06:30Z",
-    "validated_base_sha": "6ec0b1365d698ab1c31eae6fd61d062967e57ad7",
-    "validated_head_sha": "e75a7aedc584e48520d0bcf61d7ec33bb8cfdc0a"
+    "validated_at": "2026-07-26T15:39:00Z",
+    "validated_base_sha": "9f9749153d252c42d52b464bb93d6ca805a888ad",
+    "validated_head_sha": "fb034b201a9d8ac0acacab5c5804e7df832a078c"
   },
   "deployment": {
     "applicable": false,
@@ -221,7 +257,7 @@
       "conformant_loop_count": 12,
       "environment": "active local Pantheon Postgres controller store on localhost:15432",
       "hosted_activation_claimed": false,
-      "observed_at": "2026-07-26T15:06:30Z",
+      "observed_at": "2026-07-26T15:39:00Z",
       "status": "pass",
       "terminal_readback": "Controller records were written and read back through the real Postgres store rather than a fake: concurrent success/failure/heartbeat/backlog writers were replayed against the live database, fenced-lease renewal and stale-generation rejection were observed after takeover, desired/actual JSONB observations round-tripped with source and checked_at intact, and same-loop rows stayed isolated across tenant and environment keys. No hosted deployment readback is claimed by this lane."
     }
@@ -450,6 +486,15 @@
       "reference": "docs/deployment/evidence/twelve-loop-gap/L12-CTRL-001/evidence.json",
       "sequence": 5,
       "sha": "e75a7aedc584e48520d0bcf61d7ec33bb8cfdc0a",
+      "status": "pass"
+    },
+    {
+      "actor": "Claude",
+      "kind": "owner_closeout_gate",
+      "recorded_at": "2026-07-26T15:39:00Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/L12-CTRL-001/evidence.json",
+      "sequence": 6,
+      "sha": "fb034b201a9d8ac0acacab5c5804e7df832a078c",
       "status": "pass"
     }
   ]

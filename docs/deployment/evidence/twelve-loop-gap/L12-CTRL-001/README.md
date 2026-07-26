@@ -123,6 +123,46 @@ new proof claim was introduced by the normalization. After it, the
 integrated head re-ran the same regression at `110 passed in 30.92s`, schema
 validation passed, and the guardrail reported no closure gaps.
 
+### Final dev re-integration before merge
+
+Required checks passed 6/6 on head `ff615e815`, but GitHub then reported PR
+#4178 `BEHIND` because `dev` advanced by 16 commits to
+`9f9749153d252c42d52b464bb93d6ca805a888ad` — most notably the L12-SIGNOFF-001
+protected closeout verdict service and a substantially extended
+`scripts/loop_done_guardrail.py`. Owner-of-record `Claude` merged that `dev`
+head into the task branch at `fb034b201a9d8ac0acacab5c5804e7df832a078c` and
+re-ran the identical checks there:
+
+```text
+DATABASE_URL=postgresql://pantheon_app:***@localhost:15432/pantheon \
+/home/lupin/pantheon/.venv/bin/python -m pytest \
+  services/loop-control/test_loop_control.py \
+  services/control-plane/bff/test_loop_health_read_model_contract.py \
+  services/control-plane/bff/test_loop_inventory_read_model_contract.py \
+  services/research/alpha_replication/test_replication_controller.py \
+  services/source_ingestion/tests/test_controller_worker.py \
+  services/source_ingestion/tests/test_distillation_controller.py -q
+
+110 passed, 13 warnings in 50.67s
+
+python -m py_compile services/loop-control/{conformance,projector,store,writer}.py \
+  services/control-plane/bff/{loop_inventory,main}.py            # exit 0
+python -m json.tool schemas/loop-controller-record.schema.json   # exit 0
+sha256sum -c evidence.sha256                                     # both files: OK
+git diff --check origin/dev...HEAD                               # exit 0
+
+python scripts/loop_done_guardrail.py --task-id L12-CTRL-001 \
+  --status-file /home/lupin/pantheon/ai-status.json
+[OK]   L12-CTRL-001 (status=review_approved)
+1/1 loop task(s) passed guardrail checks.
+```
+
+The merge resolved cleanly with no conflicts in this task's owned files, and
+`requires_human_ops_signoff` is `false` on the canonical row, so the new
+protected closeout verdict path does not apply to this task. No controller
+behavior, acceptance verdict, or reviewer decision changed in this
+re-integration.
+
 Hosted deployment and all-loop live drill admission remain owned by
 `L12-MANIFEST-001` and `L12-HOSTED-001`; this task does not enable live-capital
 authority or promote catalog maturity ahead of domain proof.
