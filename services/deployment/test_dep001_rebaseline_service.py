@@ -17,6 +17,11 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+_AUTH_HEADERS = {
+    "Authorization": "Bearer dep001-test:operator,service",
+    "X-Tenant-Id": "tenant-dep001-test",
+}
+
 
 def _approved_decision() -> dict:
     return {
@@ -27,6 +32,7 @@ def _approved_decision() -> dict:
         "decision": "approved",
         "capital_pool_id": "pool-dep001-rb",
         "persona_id": "persona-dep001-rb",
+        "tenant_id": "tenant-dep001-test",
     }
 
 
@@ -109,7 +115,7 @@ def dep001_client():
         module = importlib.reload(module)
 
         try:
-            yield TestClient(module.app)
+            yield TestClient(module.app, headers=_AUTH_HEADERS)
         finally:
             for key, value in env_backup.items():
                 if value is None:
@@ -203,4 +209,3 @@ def test_deployment_plan_service_requires_decided_approval_authority(dep001_clie
 
     assert response.status_code == 422
     assert "approval_decision must be in decided state" in response.json()["detail"]
-

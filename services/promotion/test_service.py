@@ -14,6 +14,11 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+_AUTH_HEADERS = {
+    "Authorization": "Bearer promotion-test:risk_owner,automated_gate,operator,service",
+    "X-Tenant-Id": "pantheon-dev",
+}
+
 
 @pytest.fixture()
 def client():
@@ -30,7 +35,7 @@ def client():
     module = importlib.reload(module)
 
     try:
-        yield TestClient(module.app), Path(tempdir)
+        yield TestClient(module.app, headers=_AUTH_HEADERS), Path(tempdir)
     finally:
         for key, value in env_backup.items():
             if value is None:
@@ -136,6 +141,50 @@ def test_health(client):
         "port": 18089,
         "data_dir": str(tempdir),
     }
+
+
+def test_promotion_boundary_requires_authenticated_actor_and_tenant(client):
+    test_client, _ = client
+
+    missing_actor = test_client.get(
+        "/api/v1/approvals",
+        headers={"Authorization": ""},
+    )
+    assert missing_actor.status_code == 401
+
+    wrong_role = test_client.get(
+        "/api/v1/approvals",
+        headers={"Authorization": "Bearer observer:viewer"},
+    )
+    assert wrong_role.status_code == 403
+
+    missing_tenant = test_client.get(
+        "/api/v1/approvals",
+        headers={"X-Tenant-Id": ""},
+    )
+    assert missing_tenant.status_code == 400
+
+
+def test_promotion_records_are_tenant_partitioned(client):
+    test_client, _ = client
+    other = test_client.post(
+        "/api/v1/approvals",
+        json=_approval_payload(decision_id="apv-other", tenant_id="tenant-other"),
+        headers={"X-Tenant-Id": "tenant-other"},
+    )
+    assert other.status_code == 201, other.text
+
+    default_tenant = test_client.get("/api/v1/approvals")
+    assert default_tenant.status_code == 200
+    assert default_tenant.json()["count"] == 0
+
+    other_tenant = test_client.get(
+        "/api/v1/approvals",
+        headers={"X-Tenant-Id": "tenant-other"},
+    )
+    assert other_tenant.status_code == 200
+    assert other_tenant.json()["count"] == 1
+    assert other_tenant.json()["items"][0]["decision_id"] == "apv-other"
 
 
 def test_approval_lifecycle_and_list_filters(client):

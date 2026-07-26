@@ -47,6 +47,17 @@ from services.foundation import (  # noqa: E402
     foundation_id,
 )
 from services.foundation.health import register_fastapi_health_routes  # noqa: E402
+from services.deployment.auth import (  # noqa: E402
+    AUTHENTICATED_SERVICE_ROLES,
+    AuthError,
+    AuthenticatedTenant,
+    TenantBoundaryError,
+    authenticate_tenant,
+)
+from services.deployment.outbox_lease import (  # noqa: E402
+    DeploymentOutboxLeaseStore,
+    OutboxLeaseError,
+)
 
 from deployment_plan import (  # type: ignore
     DeploymentPlan,
@@ -79,6 +90,8 @@ from persona_capital_binding import (  # type: ignore
 try:
     from .models import (
         CompensationDecisionBody,
+        ClaimedOutboxRecordBody,
+        ClaimOutboxEventsRequest,
         ConsumeOutboxEventRequest,
         CreateDeploymentPlanRequest,
         DeploymentDispatchResponse,
@@ -96,6 +109,7 @@ try:
         FinalizeCompensationRequest,
         InboxReceiptBody,
         OutboxRecordBody,
+        OutboxLeaseHealthBody,
         PoolCompatibilityRequest,
         PoolCompatibilityResponse,
         PlanStatusBody,
@@ -115,6 +129,8 @@ try:
 except ImportError:
     from models import (  # type: ignore
         CompensationDecisionBody,
+        ClaimedOutboxRecordBody,
+        ClaimOutboxEventsRequest,
         ConsumeOutboxEventRequest,
         CreateDeploymentPlanRequest,
         DeploymentDispatchResponse,
@@ -132,6 +148,7 @@ except ImportError:
         FinalizeCompensationRequest,
         InboxReceiptBody,
         OutboxRecordBody,
+        OutboxLeaseHealthBody,
         PoolCompatibilityRequest,
         PoolCompatibilityResponse,
         PlanStatusBody,
@@ -185,6 +202,7 @@ def _resolve_runtime_binding_store_path() -> Path:
 DATA_DIR = _resolve_governance_dir()
 PLAN_STORE_PATH = DATA_DIR / "deployment_plans.json"
 SAGA_STORE_PATH = DATA_DIR / "deployment_sagas.json"
+OUTBOX_LEASE_STORE_PATH = DATA_DIR / "deployment_outbox_leases.json"
 APPROVAL_STORE_PATH = DATA_DIR / "approval_decisions.json"
 RUNTIME_BINDING_STORE_PATH = _resolve_runtime_binding_store_path()
 _REGISTRY_SNAPSHOT_ENV = os.getenv("PANTHEON_DEPLOYMENT_REGISTRY_SNAPSHOT_PATH", "").strip()
@@ -222,6 +240,125 @@ PERSONA_BINDING_STORE_PATH = _resolve_persona_binding_store_path()
 
 store = DeploymentPlanStore(str(PLAN_STORE_PATH))
 saga_store = DeploymentSagaStore(str(SAGA_STORE_PATH))
+outbox_lease_store = DeploymentOutboxLeaseStore(OUTBOX_LEASE_STORE_PATH)
+
+
+def _metadata_tenant_id(value: Any) -> str | None:
+    if isinstance(value, Mapping):
+        tenant_id = str(value.get("tenant_id") or "").strip()
+        return tenant_id or None
+    return None
+
+
+def _plan_tenant_id(plan: DeploymentPlan | Mapping[str, Any]) -> str | None:
+    metadata = (
+        plan.get("metadata")
+        if isinstance(plan, Mapping)
+        else getattr(plan, "metadata", None)
+    )
+    return _metadata_tenant_id(metadata)
+
+
+def _saga_tenant_id(saga: DeploymentSaga | Mapping[str, Any]) -> str | None:
+    metadata = (
+        saga.get("metadata")
+        if isinstance(saga, Mapping)
+        else getattr(saga, "metadata", None)
+    )
+    return _metadata_tenant_id(metadata)
+
+
+def _require_tenant_match(
+    *,
+    expected_tenant_id: str,
+    actual_tenant_id: str | None,
+    object_label: str,
+) -> None:
+    if not actual_tenant_id:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{object_label} has no authoritative tenant_id.",
+        )
+    if actual_tenant_id != expected_tenant_id:
+        raise HTTPException(status_code=404, detail=f"{object_label} not found.")
+
+
+def _request_identity(request: Request) -> AuthenticatedTenant:
+    identity = getattr(request.state, "deployment_identity", None)
+    if not isinstance(identity, AuthenticatedTenant):
+        raise HTTPException(status_code=401, detail="Authenticated tenant is required.")
+    return identity
+
+
+def _outbox_lease_required() -> bool:
+    return (
+        os.getenv("PANTHEON_DEPLOYMENT_OUTBOX_LEASE_REQUIRED", "true")
+        .strip()
+        .lower()
+        not in {"0", "false", "no"}
+    )
+
+
+def _require_plan_access(plan_id: str, identity: AuthenticatedTenant) -> DeploymentPlan:
+    plan = planner_service.get_plan(plan_id)
+    _require_tenant_match(
+        expected_tenant_id=identity.tenant_id,
+        actual_tenant_id=_plan_tenant_id(plan),
+        object_label=f"DeploymentPlan '{plan_id}'",
+    )
+    return plan
+
+
+def _require_saga_access(
+    saga_id: str, identity: AuthenticatedTenant
+) -> DeploymentSaga:
+    saga = orchestration_service.get_saga(saga_id)
+    _require_tenant_match(
+        expected_tenant_id=identity.tenant_id,
+        actual_tenant_id=_saga_tenant_id(saga),
+        object_label=f"DeploymentSaga '{saga_id}'",
+    )
+    return saga
+
+
+def _outbox_event_tenant_id(record: OutboxRecord) -> str | None:
+    saga = saga_store.get(record.event.aggregate_id)
+    return _saga_tenant_id(saga) if saga is not None else None
+
+
+def _require_outbox_access(
+    event_id: str, identity: AuthenticatedTenant
+) -> OutboxRecord:
+    record = next(
+        (
+            item
+            for item in saga_store.outbox_records()
+            if item.event.event_id == event_id
+        ),
+        None,
+    )
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"Outbox event '{event_id}' not found.")
+    _require_tenant_match(
+        expected_tenant_id=identity.tenant_id,
+        actual_tenant_id=_outbox_event_tenant_id(record),
+        object_label=f"Outbox event '{event_id}'",
+    )
+    return record
+
+
+def _outbox_retry_due(record: OutboxRecord) -> bool:
+    if not record.next_retry_at:
+        return True
+    try:
+        next_retry = datetime.fromisoformat(
+            str(record.next_retry_at).replace("Z", "+00:00")
+        )
+    except ValueError:
+        return True
+    if next_retry.tzinfo is None:
+        next_retry = next_retry.replace(tzinfo=timezone.utc)
+    return next_retry <= datetime.now(timezone.utc)
 
 
 class DeploymentPlannerService:
@@ -239,9 +376,33 @@ class DeploymentPlannerService:
         self.registry_snapshot_path = registry_snapshot_path
         self.planner = StagePlanner()
 
-    def create_plan(self, request: CreateDeploymentPlanRequest, *, persist: bool) -> DeploymentPlan:
+    def create_plan(
+        self,
+        request: CreateDeploymentPlanRequest,
+        *,
+        persist: bool,
+        actor_id: str,
+        tenant_id: str,
+    ) -> DeploymentPlan:
         registry_entry = self._resolve_registry_entry(request)
         approval_decision = self._resolve_approval_decision(request)
+        approval_tenant_id = str(approval_decision.get("tenant_id") or "").strip()
+        if not approval_tenant_id:
+            raise DeploymentPlanError(
+                f"ApprovalDecision '{request.approval_decision_id}' has no authoritative tenant_id"
+            )
+        if approval_tenant_id != tenant_id:
+            raise DeploymentPlanError(
+                f"ApprovalDecision '{request.approval_decision_id}' belongs to a different tenant"
+            )
+        metadata = dict(request.metadata or {})
+        declared_tenant_id = str(metadata.get("tenant_id") or "").strip()
+        if declared_tenant_id and declared_tenant_id != tenant_id:
+            raise DeploymentPlanError(
+                "DeploymentPlan metadata.tenant_id does not match the authenticated tenant"
+            )
+        metadata["tenant_id"] = tenant_id
+        metadata["authenticated_actor_id"] = actor_id
         capital_pool_id = request.capital_pool_id or str(approval_decision.get("capital_pool_id") or "").strip()
         if not capital_pool_id:
             raise DeploymentPlanError(
@@ -274,7 +435,7 @@ class DeploymentPlannerService:
             capital_pool_id=capital_pool_id,
             target_stage=request.target_stage.value,
             current_stage=request.current_stage.value if request.current_stage else None,
-            created_by=request.created_by,
+            created_by=actor_id,
             sponsor_persona_id=request.sponsor_persona_id,
             runtime_config_ref=request.runtime_config_ref,
             binding_id=request.binding_id,
@@ -283,7 +444,7 @@ class DeploymentPlannerService:
             rollback=rollback,
             pre_checks=list(request.pre_checks),
             post_checks=list(request.post_checks),
-            metadata=request.metadata,
+            metadata=metadata,
             supersedes_plan_id=request.supersedes_plan_id,
             status=request.status.value,
             risk_policy=request.risk_policy,
@@ -296,12 +457,15 @@ class DeploymentPlannerService:
     def list_plans(
         self,
         *,
+        tenant_id: str | None = None,
         strategy_id: str | None = None,
         capital_pool_id: str | None = None,
         target_stage: str | None = None,
         status: str | None = None,
     ) -> list[DeploymentPlan]:
         plans = self.plan_store.list_all()
+        if tenant_id:
+            plans = [plan for plan in plans if _plan_tenant_id(plan) == tenant_id]
         if strategy_id:
             plans = [plan for plan in plans if plan.strategy_id == strategy_id]
         if capital_pool_id:
@@ -431,10 +595,15 @@ class DeploymentPlannerService:
     def strategy_read_model(
         self,
         *,
+        tenant_id: str,
         strategy_id: str,
         capital_pool_id: str | None = None,
     ) -> StrategyReadModelResponse:
-        plans = self.list_plans(strategy_id=strategy_id, capital_pool_id=capital_pool_id)
+        plans = self.list_plans(
+            tenant_id=tenant_id,
+            strategy_id=strategy_id,
+            capital_pool_id=capital_pool_id,
+        )
         latest = plans[0] if plans else None
         executed = next(
             (plan for plan in plans if PlanStatus(plan.status) == PlanStatus.EXECUTED),
@@ -523,6 +692,7 @@ class DeploymentProjectionReadModelService:
     def list_projections(
         self,
         *,
+        tenant_id: str | None = None,
         strategy_id: str | None = None,
         capital_pool_id: str | None = None,
         target_stage: str | None = None,
@@ -531,6 +701,7 @@ class DeploymentProjectionReadModelService:
         return [
             self._build_projection(plan)
             for plan in self.planner_service.list_plans(
+                tenant_id=tenant_id,
                 strategy_id=strategy_id,
                 capital_pool_id=capital_pool_id,
                 target_stage=target_stage,
@@ -891,6 +1062,19 @@ class DeploymentOrchestrationService:
             return plan, projection.__dict__, bootstrap, True
 
         metadata = dict(request.metadata or {})
+        plan_tenant_id = _plan_tenant_id(plan)
+        if not plan_tenant_id:
+            raise DeploymentSagaError(
+                f"DeploymentPlan '{plan.plan_id}' has no authoritative tenant_id"
+            )
+        declared_tenant_id = str(metadata.get("tenant_id") or "").strip()
+        if declared_tenant_id and declared_tenant_id != plan_tenant_id:
+            raise DeploymentSagaError(
+                "Dispatch metadata.tenant_id does not match DeploymentPlan tenant"
+            )
+        metadata["tenant_id"] = plan_tenant_id
+        metadata["approval_decision_id"] = plan.approval_decision_id
+        metadata["correlation_id"] = foundation_context["trace_context"].correlation_id
         if request.workflow_id:
             metadata.setdefault("workflow_id", request.workflow_id)
         if request.source_task_id:
@@ -1596,7 +1780,9 @@ def _ensure_dispatch_replay_matches_foundation(
 
 
 def _plan_body(plan: DeploymentPlan) -> DeploymentPlanBody:
-    return DeploymentPlanBody(**plan.to_dict())
+    payload = plan.to_dict()
+    payload["tenant_id"] = _plan_tenant_id(plan)
+    return DeploymentPlanBody(**payload)
 
 
 def _plan_summary(plan: DeploymentPlan) -> DeploymentPlanSummary:
@@ -1618,7 +1804,9 @@ def _plan_summary(plan: DeploymentPlan) -> DeploymentPlanSummary:
 
 
 def _saga_body(saga: DeploymentSaga) -> DeploymentSagaBody:
-    return DeploymentSagaBody(**saga.to_dict())
+    payload = saga.to_dict()
+    payload["tenant_id"] = _saga_tenant_id(saga)
+    return DeploymentSagaBody(**payload)
 
 
 def _outbox_body(record: OutboxRecord) -> OutboxRecordBody:
@@ -1769,15 +1957,50 @@ app = FastAPI(
     description="DeploymentPlan and DEP-002 deployment saga API per BP5-SVC-004/BP5-SVC-005",
     version="0.2.0",
 )
+
+
+@app.middleware("http")
+async def deployment_authenticated_tenant_boundary(request: Request, call_next):
+    if request.url.path.startswith("/api/deployment"):
+        try:
+            request.state.deployment_identity = authenticate_tenant(
+                authorization=request.headers.get("Authorization"),
+                tenant_id=request.headers.get("X-Tenant-Id"),
+                service_prefix="DEPLOYMENT",
+                required_roles=AUTHENTICATED_SERVICE_ROLES,
+                mfa_header=request.headers.get("X-MFA-Token"),
+            )
+        except AuthError as exc:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"detail": exc.message, "error_code": exc.code},
+            )
+        except TenantBoundaryError as exc:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"detail": str(exc), "error_code": "TENANT_BOUNDARY_DENIED"},
+            )
+    return await call_next(request)
+
+
 register_fastapi_health_routes(
     app,
     "pantheon-deployment",
-    dependencies=lambda: {"governance_store": {"status": "ok", "path": str(DATA_DIR)}},
+    dependencies=lambda: {
+        "governance_store": {"status": "ok", "path": str(DATA_DIR)},
+        "outbox_leases": outbox_lease_store.health(),
+    },
     metrics=lambda: {
         "plan_count": len(store.list_all()),
         "saga_count": len(saga_store.list_all()),
+        "outbox_lease_recovered_count": outbox_lease_store.health()[
+            "recovered_claim_count"
+        ],
     },
-    details=lambda: {"data_dir": str(DATA_DIR)},
+    details=lambda: {
+        "data_dir": str(DATA_DIR),
+        "outbox_lease_store": str(OUTBOX_LEASE_STORE_PATH),
+    },
 )
 
 
@@ -1792,18 +2015,30 @@ async def deployment_saga_error_handler(request: Request, exc: DeploymentSagaErr
 
 
 @app.post("/api/deployment/plans", response_model=DeploymentPlanBody, status_code=201)
-async def create_deployment_plan(body: CreateDeploymentPlanRequest):
+async def create_deployment_plan(request: Request, body: CreateDeploymentPlanRequest):
+    identity = _request_identity(request)
     try:
-        plan = planner_service.create_plan(body, persist=True)
+        plan = planner_service.create_plan(
+            body,
+            persist=True,
+            actor_id=identity.actor_id,
+            tenant_id=identity.tenant_id,
+        )
     except DeploymentPlanError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     return _plan_body(plan)
 
 
 @app.post("/api/deployment/plans/validate", response_model=ValidateDeploymentPlanResponse)
-async def validate_deployment_plan(body: CreateDeploymentPlanRequest):
+async def validate_deployment_plan(request: Request, body: CreateDeploymentPlanRequest):
+    identity = _request_identity(request)
     try:
-        plan = planner_service.create_plan(body, persist=False)
+        plan = planner_service.create_plan(
+            body,
+            persist=False,
+            actor_id=identity.actor_id,
+            tenant_id=identity.tenant_id,
+        )
     except DeploymentPlanError as exc:
         return ValidateDeploymentPlanResponse(ok=False, errors=[str(exc)])
     return ValidateDeploymentPlanResponse(ok=True, plan=_plan_body(plan), errors=[])
@@ -1827,12 +2062,14 @@ async def check_pool_runtime_compatibility(body: PoolCompatibilityRequest):
 
 @app.get("/api/deployment/plans", response_model=List[DeploymentPlanBody])
 async def list_deployment_plans(
+    request: Request,
     strategy_id: str | None = Query(default=None),
     capital_pool_id: str | None = Query(default=None),
     target_stage: str | None = Query(default=None),
     status: str | None = Query(default=None),
 ):
     plans = planner_service.list_plans(
+        tenant_id=_request_identity(request).tenant_id,
         strategy_id=strategy_id,
         capital_pool_id=capital_pool_id,
         target_stage=target_stage,
@@ -1842,9 +2079,9 @@ async def list_deployment_plans(
 
 
 @app.get("/api/deployment/plans/{plan_id}", response_model=DeploymentPlanBody)
-async def get_deployment_plan(plan_id: str):
+async def get_deployment_plan(request: Request, plan_id: str):
     try:
-        return _plan_body(planner_service.get_plan(plan_id))
+        return _plan_body(_require_plan_access(plan_id, _request_identity(request)))
     except DeploymentPlanError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
@@ -1854,12 +2091,14 @@ async def get_deployment_plan(plan_id: str):
     response_model=List[DeploymentProjectionReadModelResponse],
 )
 async def list_deployment_projections(
+    request: Request,
     strategy_id: str | None = Query(default=None),
     capital_pool_id: str | None = Query(default=None),
     target_stage: str | None = Query(default=None),
     status: str | None = Query(default=None),
 ):
     return projection_service.list_projections(
+        tenant_id=_request_identity(request).tenant_id,
         strategy_id=strategy_id,
         capital_pool_id=capital_pool_id,
         target_stage=target_stage,
@@ -1871,8 +2110,9 @@ async def list_deployment_projections(
     "/api/deployment/projections/{plan_id}",
     response_model=DeploymentProjectionReadModelResponse,
 )
-async def get_deployment_projection(plan_id: str):
+async def get_deployment_projection(request: Request, plan_id: str):
     try:
+        _require_plan_access(plan_id, _request_identity(request))
         return projection_service.get_projection(plan_id)
     except DeploymentPlanError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
@@ -1882,13 +2122,16 @@ async def get_deployment_projection(plan_id: str):
     "/api/deployment/plans/{plan_id}/projection",
     response_model=DeploymentProjectionReadModelResponse,
 )
-async def get_deployment_plan_projection(plan_id: str):
-    return await get_deployment_projection(plan_id)
+async def get_deployment_plan_projection(request: Request, plan_id: str):
+    return await get_deployment_projection(request, plan_id)
 
 
 @app.post("/api/deployment/plans/{plan_id}/status", response_model=DeploymentPlanBody)
-async def update_deployment_plan_status(plan_id: str, body: UpdatePlanStatusRequest):
+async def update_deployment_plan_status(
+    request: Request, plan_id: str, body: UpdatePlanStatusRequest
+):
     try:
+        _require_plan_access(plan_id, _request_identity(request))
         return _plan_body(planner_service.update_status(plan_id, body.status))
     except DeploymentPlanError as exc:
         message = str(exc)
@@ -1900,8 +2143,13 @@ async def update_deployment_plan_status(plan_id: str, body: UpdatePlanStatusRequ
     "/api/deployment/plans/{plan_id}/dispatch",
     response_model=DeploymentDispatchResponse,
 )
-async def dispatch_deployment_plan(plan_id: str, body: DispatchDeploymentPlanRequest):
+async def dispatch_deployment_plan(
+    request: Request, plan_id: str, body: DispatchDeploymentPlanRequest
+):
+    identity = _request_identity(request)
     try:
+        _require_plan_access(plan_id, identity)
+        body = body.model_copy(update={"actor_id": identity.actor_id})
         plan, execution_projection, bootstrap, replayed = orchestration_service.dispatch_plan(plan_id, body)
     except FoundationDeploymentError as exc:
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
@@ -1930,8 +2178,13 @@ async def dispatch_deployment_plan(plan_id: str, body: DispatchDeploymentPlanReq
     "/api/deployment/strategies/{strategy_id}/read-model",
     response_model=StrategyReadModelResponse,
 )
-async def get_strategy_read_model(strategy_id: str, capital_pool_id: str | None = Query(default=None)):
+async def get_strategy_read_model(
+    request: Request,
+    strategy_id: str,
+    capital_pool_id: str | None = Query(default=None),
+):
     return planner_service.strategy_read_model(
+        tenant_id=_request_identity(request).tenant_id,
         strategy_id=strategy_id,
         capital_pool_id=capital_pool_id,
     )
@@ -1939,16 +2192,24 @@ async def get_strategy_read_model(strategy_id: str, capital_pool_id: str | None 
 
 @app.get("/api/deployment/sagas", response_model=List[DeploymentSagaBody])
 async def list_deployment_sagas(
+    request: Request,
     plan_id: str | None = Query(default=None),
     status: str | None = Query(default=None),
 ):
-    return [_saga_body(saga) for saga in orchestration_service.list_sagas(plan_id=plan_id, status=status)]
+    identity = _request_identity(request)
+    if plan_id:
+        _require_plan_access(plan_id, identity)
+    return [
+        _saga_body(saga)
+        for saga in orchestration_service.list_sagas(plan_id=plan_id, status=status)
+        if _saga_tenant_id(saga) == identity.tenant_id
+    ]
 
 
 @app.get("/api/deployment/sagas/{saga_id}", response_model=DeploymentSagaBody)
-async def get_deployment_saga(saga_id: str):
+async def get_deployment_saga(request: Request, saga_id: str):
     try:
-        return _saga_body(orchestration_service.get_saga(saga_id))
+        return _saga_body(_require_saga_access(saga_id, _request_identity(request)))
     except DeploymentSagaError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
@@ -1957,8 +2218,9 @@ async def get_deployment_saga(saga_id: str):
     "/api/deployment/sagas/{saga_id}/progress",
     response_model=DeploymentSagaProgressBody,
 )
-async def get_deployment_saga_progress(saga_id: str):
+async def get_deployment_saga_progress(request: Request, saga_id: str):
     try:
+        _require_saga_access(saga_id, _request_identity(request))
         return orchestration_service.get_saga_progress(saga_id)
     except DeploymentSagaError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
@@ -1968,16 +2230,20 @@ async def get_deployment_saga_progress(saga_id: str):
     "/api/deployment/plans/{plan_id}/saga-progress",
     response_model=DeploymentSagaProgressBody,
 )
-async def get_deployment_plan_saga_progress(plan_id: str):
+async def get_deployment_plan_saga_progress(request: Request, plan_id: str):
     try:
+        _require_plan_access(plan_id, _request_identity(request))
         return orchestration_service.get_plan_saga_progress(plan_id)
     except DeploymentSagaError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
 
 @app.post("/api/deployment/sagas/{saga_id}/binding-created", response_model=OutboxRecordBody)
-async def record_saga_binding_created(saga_id: str, body: RecordBindingCreatedRequest):
+async def record_saga_binding_created(
+    request: Request, saga_id: str, body: RecordBindingCreatedRequest
+):
     try:
+        _require_saga_access(saga_id, _request_identity(request))
         return _outbox_body(orchestration_service.record_binding_created(saga_id, body))
     except (DeploymentPlanError, DeploymentSagaError) as exc:
         message = str(exc)
@@ -1986,8 +2252,11 @@ async def record_saga_binding_created(saga_id: str, body: RecordBindingCreatedRe
 
 
 @app.post("/api/deployment/sagas/{saga_id}/runtime-active", response_model=OutboxRecordBody)
-async def record_saga_runtime_active(saga_id: str, body: RecordRuntimeActiveRequest):
+async def record_saga_runtime_active(
+    request: Request, saga_id: str, body: RecordRuntimeActiveRequest
+):
     try:
+        _require_saga_access(saga_id, _request_identity(request))
         return _outbox_body(orchestration_service.record_runtime_active(saga_id, body))
     except (DeploymentPlanError, DeploymentSagaError) as exc:
         message = str(exc)
@@ -1996,8 +2265,11 @@ async def record_saga_runtime_active(saga_id: str, body: RecordRuntimeActiveRequ
 
 
 @app.post("/api/deployment/sagas/{saga_id}/failure", response_model=CompensationDecisionBody)
-async def record_saga_failure(saga_id: str, body: RecordSagaFailureRequest):
+async def record_saga_failure(
+    request: Request, saga_id: str, body: RecordSagaFailureRequest
+):
     try:
+        _require_saga_access(saga_id, _request_identity(request))
         return _compensation_body(orchestration_service.record_failure(saga_id, body))
     except DeploymentSagaError as exc:
         message = str(exc)
@@ -2009,8 +2281,11 @@ async def record_saga_failure(saga_id: str, body: RecordSagaFailureRequest):
     "/api/deployment/sagas/{saga_id}/compensation/finalize",
     response_model=OutboxRecordBody,
 )
-async def finalize_saga_compensation(saga_id: str, body: FinalizeCompensationRequest):
+async def finalize_saga_compensation(
+    request: Request, saga_id: str, body: FinalizeCompensationRequest
+):
     try:
+        _require_saga_access(saga_id, _request_identity(request))
         return _outbox_body(orchestration_service.finalize_compensation(saga_id, body))
     except DeploymentSagaError as exc:
         message = str(exc)
@@ -2020,28 +2295,97 @@ async def finalize_saga_compensation(saga_id: str, body: FinalizeCompensationReq
 
 @app.get("/api/deployment/outbox", response_model=List[OutboxRecordBody])
 async def list_deployment_outbox(
+    request: Request,
     owner_service: str | None = Query(default=None),
     aggregate_id: str | None = Query(default=None),
     status: str | None = Query(default=None),
 ):
+    identity = _request_identity(request)
     records = orchestration_service.list_outbox(
         owner_service=owner_service,
         aggregate_id=aggregate_id,
         status=status,
     )
-    return [_outbox_body(record) for record in records]
+    return [
+        _outbox_body(record)
+        for record in records
+        if _outbox_event_tenant_id(record) == identity.tenant_id
+    ]
+
+
+@app.post(
+    "/api/deployment/outbox/claim",
+    response_model=List[ClaimedOutboxRecordBody],
+)
+async def claim_deployment_outbox(
+    request: Request, body: ClaimOutboxEventsRequest
+):
+    identity = _request_identity(request)
+    records = [
+        record
+        for record in orchestration_service.list_outbox(
+            aggregate_id=body.aggregate_id,
+            status=OutboxStatus.PENDING.value,
+        )
+        if _outbox_event_tenant_id(record) == identity.tenant_id
+        and _outbox_retry_due(record)
+    ]
+    claimed = outbox_lease_store.claim(
+        [record.to_dict() for record in records],
+        tenant_id=identity.tenant_id,
+        consumer_name=body.consumer_name,
+        lease_seconds=body.lease_seconds,
+        limit=body.limit,
+        aggregate_id=body.aggregate_id,
+    )
+    return [ClaimedOutboxRecordBody(**record) for record in claimed]
+
+
+@app.get(
+    "/api/deployment/outbox/lease-health",
+    response_model=OutboxLeaseHealthBody,
+)
+async def get_deployment_outbox_lease_health(request: Request):
+    _request_identity(request)
+    return OutboxLeaseHealthBody(**outbox_lease_store.health())
 
 
 @app.post(
     "/api/deployment/outbox/{event_id}/failure",
     response_model=OutboxRecordBody,
 )
-async def record_deployment_outbox_failure(event_id: str, body: RecordOutboxFailureRequest):
+async def record_deployment_outbox_failure(
+    request: Request, event_id: str, body: RecordOutboxFailureRequest
+):
+    identity = _request_identity(request)
     try:
-        return _outbox_body(orchestration_service.record_outbox_failure(event_id, body))
-    except DeploymentSagaError as exc:
+        _require_outbox_access(event_id, identity)
+        if _outbox_lease_required():
+            if not body.claim_token:
+                raise OutboxLeaseError("claim_token is required for delivery failure.")
+            outbox_lease_store.require_active(
+                event_id=event_id,
+                claim_token=body.claim_token,
+                tenant_id=identity.tenant_id,
+                consumer_name=body.consumer_name,
+            )
+        record = orchestration_service.record_outbox_failure(event_id, body)
+        if _outbox_lease_required() and body.claim_token:
+            outbox_lease_store.release(
+                event_id=event_id,
+                claim_token=body.claim_token,
+                tenant_id=identity.tenant_id,
+                consumer_name=body.consumer_name,
+                reason=body.reason,
+            )
+        return _outbox_body(record)
+    except (DeploymentSagaError, OutboxLeaseError) as exc:
         message = str(exc)
-        status_code = 404 if "not found" in message.lower() else 400
+        status_code = getattr(
+            exc,
+            "status_code",
+            404 if "not found" in message.lower() else 400,
+        )
         raise HTTPException(status_code=status_code, detail=message)
 
 
@@ -2049,8 +2393,11 @@ async def record_deployment_outbox_failure(event_id: str, body: RecordOutboxFail
     "/api/deployment/outbox/{event_id}/replay",
     response_model=ReplayOutboxEventResponse,
 )
-async def replay_deployment_outbox_event(event_id: str, body: ReplayOutboxEventRequest):
+async def replay_deployment_outbox_event(
+    request: Request, event_id: str, body: ReplayOutboxEventRequest
+):
     try:
+        _require_outbox_access(event_id, _request_identity(request))
         event, replayed = orchestration_service.replay_outbox_event(event_id, body)
         return ReplayOutboxEventResponse(event=_outbox_body(event), replayed=replayed)
     except DeploymentSagaError as exc:
@@ -2060,32 +2407,76 @@ async def replay_deployment_outbox_event(event_id: str, body: ReplayOutboxEventR
 
 
 @app.post("/api/deployment/outbox/{event_id}/consume", response_model=InboxReceiptBody)
-async def consume_deployment_outbox_event(event_id: str, body: ConsumeOutboxEventRequest):
+async def consume_deployment_outbox_event(
+    request: Request, event_id: str, body: ConsumeOutboxEventRequest
+):
+    identity = _request_identity(request)
     try:
-        return _inbox_body(
-            orchestration_service.consume_outbox_event(
-                event_id,
+        _require_outbox_access(event_id, identity)
+        if _outbox_lease_required():
+            if not body.claim_token:
+                raise OutboxLeaseError("claim_token is required for outbox acknowledgement.")
+            outbox_lease_store.require_active(
+                event_id=event_id,
+                claim_token=body.claim_token,
+                tenant_id=identity.tenant_id,
                 consumer_name=body.consumer_name,
             )
+        receipt = orchestration_service.consume_outbox_event(
+            event_id,
+            consumer_name=body.consumer_name,
         )
-    except DeploymentSagaError as exc:
+        if _outbox_lease_required() and body.claim_token:
+            if ReceiptStatus(receipt.status) in {
+                ReceiptStatus.APPLIED,
+                ReceiptStatus.DUPLICATE,
+            }:
+                outbox_lease_store.acknowledge(
+                    event_id=event_id,
+                    claim_token=body.claim_token,
+                    tenant_id=identity.tenant_id,
+                    consumer_name=body.consumer_name,
+                )
+            else:
+                outbox_lease_store.release(
+                    event_id=event_id,
+                    claim_token=body.claim_token,
+                    tenant_id=identity.tenant_id,
+                    consumer_name=body.consumer_name,
+                    reason=f"inbox_receipt_{_enum_value(receipt.status)}",
+                )
+        return _inbox_body(receipt)
+    except (DeploymentSagaError, OutboxLeaseError) as exc:
         message = str(exc)
-        status_code = 404 if "not found" in message.lower() else 400
+        status_code = getattr(
+            exc,
+            "status_code",
+            404 if "not found" in message.lower() else 400,
+        )
         raise HTTPException(status_code=status_code, detail=message)
 
 
 @app.get("/api/deployment/inbox", response_model=List[InboxReceiptBody])
 async def list_deployment_inbox(
+    request: Request,
     consumer_name: str | None = Query(default=None),
     aggregate_id: str | None = Query(default=None),
     status: str | None = Query(default=None),
 ):
+    identity = _request_identity(request)
     receipts = orchestration_service.list_inbox(
         consumer_name=consumer_name,
         aggregate_id=aggregate_id,
         status=status,
     )
-    return [_inbox_body(receipt) for receipt in receipts]
+    return [
+        _inbox_body(receipt)
+        for receipt in receipts
+        if (
+            (saga := saga_store.get(receipt.aggregate_id)) is not None
+            and _saga_tenant_id(saga) == identity.tenant_id
+        )
+    ]
 
 
 @app.get("/health")

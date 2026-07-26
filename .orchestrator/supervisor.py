@@ -2752,6 +2752,39 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
                 sync_dispatched_task_status(config, event, run_id=record["run_id"])
                 changed = True
             continue
+        task_id = str(event.get("task_id") or "").strip()
+        active_task_worker = next(
+            (
+                worker
+                for worker in state.get("workers", {}).values()
+                if task_id
+                and str(worker.get("task_id") or "").strip() == task_id
+                and worker.get("status") in active_statuses
+            ),
+            None,
+        )
+        if active_task_worker:
+            record["status"] = "completed"
+            record["processed_at"] = utc_now()
+            record["skip_reason"] = "task_already_active"
+            record["active_run_id"] = active_task_worker.get("run_id")
+            write_activity_log(
+                config,
+                {
+                    "type": "wake_skipped",
+                    "task_id": task_id,
+                    "target_agent": event.get("target_display_name") or event.get("target_agent"),
+                    "message": (
+                        f"Skipped duplicate wake event for {task_id}: "
+                        f"active worker {active_task_worker.get('run_id') or 'unknown'} "
+                        "already owns the task lease."
+                    ),
+                    "queue_event_id": event_id,
+                    "worker_run_id": active_task_worker.get("run_id"),
+                },
+            )
+            changed = True
+            continue
         skip_message = stale_dispatch_skip_message(config, event, task_map)
         if skip_message:
             record["status"] = "completed"
