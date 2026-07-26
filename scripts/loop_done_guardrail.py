@@ -208,9 +208,12 @@ def _protected_closeout_roots() -> tuple[list[Path], str | None]:
     the manifest it is approving is authored in the supervisor-bound task
     worktree, and only reaches the central status root once the delivery PR has
     merged.  Searching the status root alone therefore fails a valid signed
-    verdict in exactly the split-root dispatch it is meant to guard.  The bound
-    worktree comes first because it holds the artifact under review; the status
-    root and command root follow as merged replay/audit copies.
+    verdict in exactly the split-root dispatch it is meant to guard.  The order
+    is the bound task worktree (it holds the artifact under review), then the
+    command root, then the status root; the latter two are merged replay/audit
+    copies.  Search order is not a trust decision: the manifest bytes are
+    sha256-bound into the Human/Ops signature, so a substituted copy in any
+    root fails the binding check instead of being accepted.
     """
 
     workspace_roots, error = _review_workspace_roots()

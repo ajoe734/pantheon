@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: in_progress
 - Owner: Claude
 - Reviewer: Codex2
-- Next: Ownership reconciled to the `assignment-revision-1` catalog (owner Claude, reviewer Codex2). The two rejecting findings on PR #4183 head 4731eb2c are fixed: issuance now admits one active decision per exact binding, and the BFF refuses an unclassified principal instead of defaulting it to human. Refresh the PR onto current dev and request independent review; do not issue the Human/Ops verdict from a fleet worker.
+- Next: The sequence-4 rejection on merged PR #4183 is closed. Protected closeout manifest resolution now honours the bound task worktree and command root alongside the status root, keeping containment, symlink, and conflicting-root protections, and the evidence is re-cut at sequence 5. Delivered as a follow-up PR because #4183 cannot be amended; awaiting independent Codex2 review.
 
 ## Summary
 在 final closeout 前安裝機器守門：受保護、可撤銷、不可重播的 Human/Ops 判決必須綁定 exact catalog、manifest、target 與部署 identity；fleet 不得自行簽發。
