@@ -34,6 +34,9 @@ GET   /api/v1/telemetry/runtime/<runtime_id>/heartbeat
 GET   /api/telemetry/stats
     Service statistics (buffer, writer, DLQ, backpressure).
 
+GET   /api/telemetry/events/<event_id>
+    Return the immutable event accepted by this telemetry owner process.
+
 GET   /api/telemetry/dlq
     Dead-letter queue entries.
     Query params:
@@ -905,6 +908,22 @@ def runtime_summary(runtime_id: str):
             }
         }), 404
     return jsonify(summary), 200
+
+
+@app.route("/api/telemetry/events/<event_id>", methods=["GET"])
+def accepted_event(event_id: str):
+    """Return one exact owner-accepted event without summary races."""
+
+    svc = _get_service()
+    event = svc.get_accepted_event(event_id)
+    if event is None:
+        return jsonify({
+            "error": {
+                "code": "TELEMETRY_EVENT_NOT_FOUND",
+                "message": f"No accepted telemetry event for {event_id}",
+            }
+        }), 404
+    return jsonify(event), 200
 
 
 @app.route("/api/telemetry/trade-episodes", methods=["GET"])

@@ -28,12 +28,14 @@ def run_tick(
     max_concurrency: int,
     timeout_seconds: float = 30.0,
     force_connector_ids: list[str] | None = None,
+    exclusive_connector_ids: list[str] | None = None,
     controller_token: str | None = None,
 ) -> dict[str, Any]:
     payload = json.dumps(
         {
             "max_concurrency": max_concurrency,
             "force_connector_ids": sorted(set(force_connector_ids or [])),
+            "exclusive_connector_ids": sorted(set(exclusive_connector_ids or [])),
         }
     ).encode("utf-8")
     headers = {"Accept": "application/json", "Content-Type": "application/json"}
