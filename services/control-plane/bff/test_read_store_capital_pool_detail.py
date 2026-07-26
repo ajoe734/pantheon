@@ -17,7 +17,17 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(__file__))
+import pytest
+
 from read_store import ReadSurfaceStore
+
+
+@pytest.fixture(autouse=True)
+def _enable_market_persona_seed(monkeypatch):
+    """The market-persona demo seed (which supplies the market-default capital
+    pools these tests resolve) is retired by default now that real paper
+    Personas replace it; re-enable it for this module."""
+    monkeypatch.setenv("PANTHEON_BFF_MARKET_PERSONA_SEED", "1")
 
 
 def _write_json(path: Path, payload) -> None:

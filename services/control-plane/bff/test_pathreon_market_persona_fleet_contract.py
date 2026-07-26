@@ -12,8 +12,18 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(__file__))
 
+import pytest
+
 import main as bff_main
 from read_store import ReadSurfaceStore
+
+
+@pytest.fixture(autouse=True)
+def _enable_market_persona_seed(monkeypatch):
+    """The legacy US/TW/CRYPTO demo persona seed is retired by default now that
+    real paper Personas provide the same wiring proof with live rankings. This
+    contract module asserts the seed itself, so re-enable it here."""
+    monkeypatch.setenv("PANTHEON_BFF_MARKET_PERSONA_SEED", "1")
 
 
 HEADERS = {"Authorization": "Bearer op-pathreon-fleet:operator,reviewer,admin:mfa"}

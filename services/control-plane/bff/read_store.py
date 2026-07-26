@@ -968,6 +968,25 @@ def _ref_values(refs: List[Any]) -> List[str]:
     return values
 
 
+def _market_persona_seed_enabled() -> bool:
+    """Whether to inject the legacy US/TW/CRYPTO demo persona seed (default OFF).
+
+    The seed was a read-model-only proof-of-wiring fixture (see
+    ``_merge_market_persona_fleet``). Real paper Personas now prove the same
+    Agora/Management/Execution wiring end-to-end with live telemetry-derived
+    rankings, so the hardcoded ``persona-tw-equity``/``persona-us-equity``/
+    ``persona-crypto`` fixtures are retired by default. Set
+    ``PANTHEON_BFF_MARKET_PERSONA_SEED`` truthy to re-enable (e.g. contract
+    tests that still assert the demo fleet).
+    """
+    return str(os.getenv("PANTHEON_BFF_MARKET_PERSONA_SEED", "")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _merge_market_persona_fleet(
     target: Dict[str, Any],
     *,
@@ -978,7 +997,12 @@ def _merge_market_persona_fleet(
     The records are deliberately read-model only: they prove the Agora,
     Management, and Execution Plane wiring without granting live capital
     authority. Promotion suggestions stay in governance metadata.
+
+    Retired by default: gated behind ``_market_persona_seed_enabled()`` now that
+    real paper Personas provide the same wiring proof with real rankings.
     """
+    if not _market_persona_seed_enabled():
+        return False
     skip_datasets: set[str] = set()
     if preserve_explicit_agora:
         for dataset in ("agora_signals", "agora_sessions", "agora_watchlist"):

@@ -16,8 +16,19 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
+import pytest
+
 import main as bff_main
 from read_store import ReadSurfaceStore
+
+
+@pytest.fixture(autouse=True)
+def _enable_market_persona_seed(monkeypatch):
+    """The legacy market-persona demo seed is retired by default (real paper
+    Personas replace it); this fleet contract still asserts the seeded
+    persona-tw-equity row, so re-enable it here."""
+    monkeypatch.setenv("PANTHEON_BFF_MARKET_PERSONA_SEED", "1")
+
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-b3:operator"}
 PERSONA_FLEET_ROW_HARD_LIMIT_BYTES = 8_000
