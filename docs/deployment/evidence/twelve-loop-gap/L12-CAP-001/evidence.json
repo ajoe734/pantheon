@@ -3,7 +3,7 @@
   "schema_status": {
     "formal_schema_owner": "LOOP-PROD-002",
     "formalization_trigger": "L12-CAP-001 product-level independent-review handoff.",
-    "note": "Owner evidence over the atomic Redis repair, execution-boundary claim renewal, token-fenced reconciler lease and post-spawn compensation, real Redis crash drills, and authenticated Capital mutation boundary.",
+    "note": "Owner evidence over the atomic Redis repair, continuous execution-window claim renewal, token-fenced reconciler lease and post-spawn compensation, real Redis crash drills, and authenticated Capital mutation boundary.",
     "status": "formalized"
   },
   "evidence_policy": {
@@ -16,8 +16,8 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-26T23:13:39Z",
-    "evidence_cut_semantics": "Owner validation over repaired integration head 9eba07d5a4ff712d82bfbb880aabcfa4f88642cb replayed after merging dev 1cf27337efed2f6865d2829d2e5cb2fff54fa10b; no independent approval, CI success, PR merge, deployment, or done state is claimed.",
+    "evidence_cut_at": "2026-07-26T23:47:55Z",
+    "evidence_cut_semantics": "Owner validation over repaired integration head 6bebf5c3770f61158dd7634dc858e133081881f6 replayed after merging dev 643181a067ec5c344faac0766c69de0d5cfb32eb; no independent approval, CI success, PR merge, deployment, or done state is claimed.",
     "id": "L12-CAP-001",
     "overall_admission": "owner_validation_passed_pending_independent_review",
     "owner": "Codex",
@@ -57,6 +57,7 @@
       "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/evidence.sha256",
       "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/execution_error_dlq_proof.txt",
       "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/leader_lease_convergence_proof.txt",
+      "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/long_execution_claim_renewal_proof.txt",
       "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/redis_crash_before_ack_proof.txt",
       "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/six_binding_restart_isolation_drill.txt",
       "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/slow_rebalance_claim_fence_proof.txt"
@@ -104,6 +105,12 @@
         "note": "Closes the slow-buffer claim-expiry and blocked-spawn lease-expiry defects reproduced by independent review.",
         "sha": "da77966f29e7eb9adea286f1dde04dfa138f1f88",
         "subject": "L12-CAP-001: anchor execution and spawn fences"
+      },
+      {
+        "delivery_state": "owner_validated_pending_independent_review",
+        "note": "Closes the long-execution-over-TTL duplicate-side-effect defect by renewing the claim throughout execute() and adds the exact two-worker real-Redis regression.",
+        "sha": "ceb2073a452af636b745207432be09fa93959167",
+        "subject": "L12-CAP-001: anchor execution-window claim renewal"
       }
     ],
     "required_checks": []
@@ -112,12 +119,17 @@
     "commands": [
       {
         "command": "/tmp/l12-cap-001-venv/bin/python -m unittest services.execution.lean_runtime.test_signal_consumer services.execution.lean_runtime.test_signal_isolation",
-        "conclusion": "74 tests passed in 22.991s on the merged head, including disposable real-Redis atomic transitions, slow-buffer execution fencing, and six-process restart drills",
+        "conclusion": "75 tests passed in 13.337s on the merged head, including disposable real-Redis atomic transitions, slow-buffer fencing, long-execution claim heartbeat, and six-process restart drills",
         "result": "pass"
       },
       {
         "command": "cd services/execution/runtime-manager && /tmp/l12-cap-001-venv/bin/python -m unittest test_paper_fleet_reconciler",
-        "conclusion": "44 tests passed in 17.950s on the merged head, including real-Redis two-process fencing and blocked-spawn compensating termination",
+        "conclusion": "44 tests passed in 5.829s on the merged head, including real-Redis two-process fencing and blocked-spawn compensating termination",
+        "result": "pass"
+      },
+      {
+        "command": "/tmp/l12-cap-001-venv/bin/python -m unittest -v services.execution.lean_runtime.test_signal_isolation.TestRedisPendingSignalStoreClaimVisibility.test_claim_renews_through_execution_longer_than_visibility_ttl (repeated three times in one suite)",
+        "conclusion": "3/3 passed against disposable Redis: worker-A remained inside execute() for 0.50s with a 0.20s visibility TTL, renewed at least three times, and worker-B could neither reclaim nor execute the signal",
         "result": "pass"
       },
       {
@@ -132,7 +144,7 @@
       },
       {
         "command": "/home/lupin/pantheon/.venv/bin/python -m pytest services/capital/test_service.py -q",
-        "conclusion": "59 passed in 16.65s on the merged head; one non-blocking Starlette TestClient deprecation warning",
+        "conclusion": "59 passed in 19.55s on the merged head; one non-blocking Starlette TestClient deprecation warning",
         "result": "pass"
       },
       {
@@ -141,9 +153,9 @@
         "result": "pass"
       }
     ],
-    "validated_at": "2026-07-26T23:13:39Z",
-    "validated_base_sha": "1cf27337efed2f6865d2829d2e5cb2fff54fa10b",
-    "validated_head_sha": "9eba07d5a4ff712d82bfbb880aabcfa4f88642cb"
+    "validated_at": "2026-07-26T23:47:55Z",
+    "validated_base_sha": "643181a067ec5c344faac0766c69de0d5cfb32eb",
+    "validated_head_sha": "6bebf5c3770f61158dd7634dc858e133081881f6"
   },
   "deployment": {
     "applicable": false,
@@ -173,7 +185,8 @@
       "proof": [
         "A unique monotonic claim token identifies the currently owned copy; Redis server-time renewal refuses an already expired or reclaimed token.",
         "Buffered claims are renewed before polling and again at the executor boundary, where durable processed identity is rechecked before any side effect.",
-        "The real-Redis slow-buffer regression gives one executor call after worker-B reclaims and acknowledges worker-A's expired claim."
+        "Redis stores publish a one-third-TTL heartbeat interval; the consumer renews the live claim throughout execute(), including side effects that last longer than one visibility window.",
+        "The real-Redis slow-buffer regression gives one executor call after worker-B reclaims worker-A's expired buffer, while the long-execution regression gives exactly one executor call when worker-B polls after more than two continuously renewed TTLs."
       ],
       "status": "owner_pass_pending_independent_review"
     },
@@ -242,7 +255,8 @@
       "evidence_refs": [
         "services/execution/lean_runtime/pending_signal_store.py",
         "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/redis_crash_before_ack_proof.txt",
-        "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/slow_rebalance_claim_fence_proof.txt"
+        "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/slow_rebalance_claim_fence_proof.txt",
+        "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/long_execution_claim_renewal_proof.txt"
       ],
       "id": "AC1",
       "statement": "An accepted signal remains recoverable until execution acknowledgement.",
@@ -294,7 +308,7 @@
     "independent_review": {
       "blocking_for_this_task": true,
       "containment": "Task remains outside review_approved and done; manifest explicitly avoids an approval claim.",
-      "description": "Claude rejected head 7cec6f7cb0929a34024eb67c27bb299d2a2c6d62 after reproducing slow-buffer duplicate execution and stale-leader blocked spawn; no independent verdict is yet recorded over repaired head da77966f29e7eb9adea286f1dde04dfa138f1f88.",
+      "description": "Human/Ops rejected head d4636f901b86ac6f8d0245a20012eb9ed16b1c98 after reproducing duplicate execution when execute() outlived its one-time renewed TTL. Owner added continuous execution-window renewal at ceb2073a452af636b745207432be09fa93959167 and replayed merged head 6bebf5c3770f61158dd7634dc858e133081881f6; no independent Claude verdict is yet recorded.",
       "expiry": "When Claude records an independent verdict for the repaired PR tip.",
       "owner": "Claude",
       "recheck_trigger": "After the owner evidence commit is pushed to PR #4203.",
@@ -337,6 +351,7 @@
       "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/redis_crash_before_ack_proof.txt",
       "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/execution_error_dlq_proof.txt",
       "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/leader_lease_convergence_proof.txt",
+      "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/long_execution_claim_renewal_proof.txt",
       "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/six_binding_restart_isolation_drill.txt",
       "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/slow_rebalance_claim_fence_proof.txt"
     ],
@@ -352,11 +367,12 @@
     "self_hash_omitted": true,
     "self_hash_reason": "The companion checksum contains the manifest digest and avoids recursive self-hashing.",
     "source_artifact_sha256_by_epoch": {
-      "owner_readme_2026_07_26": "177d510ae11d12295e27fba4e2946d1de7de83c8edef71090ef2d67a06e94f52",
+      "owner_readme_2026_07_26": "727eba6f20c3e8d1c5f8fa7935959fe7be32f5ab0f1d038fe9e37261b803ff77",
       "atomic_redis_proof_2026_07_26": "55ff7b8569b6162e76fa8b7364ffe188f59575ebf187d32ef8a6e2bdfde11c7b",
       "blocked_spawn_fence_proof_2026_07_26": "99866da6367d19636cead818f545e07683b4a7e0e19d9f36eb0f99ee7100ebbf",
       "execution_dlq_proof_2026_07_26": "199ce58f009757fef61cf85d6a4a516f461949a12f9f425b36ae17a39ba6d432",
       "fenced_leader_proof_2026_07_26": "70c6af21102ca13131ffa4fb632b50250415b25fd54bc4673e836378a3fae6c1",
+      "long_execution_claim_renewal_proof_2026_07_26": "dc8a0e057d96ce29933ad13facaa9d082c8f5ab5b9517df25b59f7a13716582f",
       "six_binding_proof_2026_07_26": "433fd44d38da0e2029fafd48eac049aac830940b6d23837b24ceeb804c039c87",
       "slow_rebalance_claim_fence_proof_2026_07_26": "5956d8a7c3798c9b6546f703c9da9b962b3c95139781eee17f47bf163de194f5"
     }
@@ -422,6 +438,24 @@
       "reference": "origin/dev@1cf27337efed2f6865d2829d2e5cb2fff54fa10b",
       "sequence": 7,
       "sha": "9eba07d5a4ff712d82bfbb880aabcfa4f88642cb",
+      "status": "passed_pending_independent_review"
+    },
+    {
+      "actor": "Codex",
+      "kind": "execution_window_claim_renewal_anchor",
+      "recorded_at": "2026-07-26T23:41:35Z",
+      "reference": "task/L12-CAP-001",
+      "sequence": 8,
+      "sha": "ceb2073a452af636b745207432be09fa93959167",
+      "status": "recorded"
+    },
+    {
+      "actor": "Codex",
+      "kind": "long_execution_regression_replay",
+      "recorded_at": "2026-07-26T23:44:56Z",
+      "reference": "origin/dev@643181a067ec5c344faac0766c69de0d5cfb32eb",
+      "sequence": 9,
+      "sha": "6bebf5c3770f61158dd7634dc858e133081881f6",
       "status": "passed_pending_independent_review"
     }
   ]
