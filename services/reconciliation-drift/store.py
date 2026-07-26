@@ -209,27 +209,76 @@ class ReconciliationDriftStore:
                 with contextlib.suppress(FileNotFoundError):
                     os.unlink(tmp_name)
 
+    @staticmethod
+    def _storage_record_id(record_id: str, record: Dict[str, Any]) -> str:
+        tenant_id = str(record.get("tenant_id") or "").strip()
+        if not tenant_id:
+            return record_id
+        digest = hashlib.sha256(
+            f"{tenant_id}\0{record_id}".encode("utf-8")
+        ).hexdigest()
+        return f"tenant-record-{digest}"
+
     def _put_record(self, path: Path, record_id: str, record: Dict[str, Any]) -> Dict[str, Any]:
         if not record_id:
             raise ValueError("record_id is required")
         serializable = json.loads(json.dumps(record, allow_nan=False))
+        storage_id = self._storage_record_id(record_id, serializable)
         with self._locked(path):
             records = self._read_map_locked(path)
-            records[record_id] = serializable
+            records[storage_id] = serializable
             self._write_map_locked(path, records)
-        return records[record_id]
+        return records[storage_id]
 
     def _list_records(self, path: Path) -> List[Dict[str, Any]]:
         return list(self._read_map(path).values())
 
-    def _get_record(self, path: Path, record_id: str) -> Optional[Dict[str, Any]]:
-        return self._read_map(path).get(record_id)
+    def _get_record(
+        self,
+        path: Path,
+        record_id: str,
+        *,
+        tenant_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        records = self._read_map(path)
+        if tenant_id:
+            storage_id = self._storage_record_id(
+                record_id,
+                {"tenant_id": tenant_id},
+            )
+            tenant_record = records.get(storage_id)
+            if tenant_record is not None:
+                return tenant_record
+        direct = records.get(record_id)
+        if direct is not None:
+            return direct
+        candidates = [
+            record
+            for record in records.values()
+            if record_id
+            in {
+                str(record.get("id") or ""),
+                str(record.get("evaluation_id") or ""),
+                str(record.get("alert_id") or ""),
+                str(record.get("record_id") or ""),
+                str(record.get("drift_report_id") or ""),
+                str(record.get("state_id") or ""),
+            }
+            and (not tenant_id or str(record.get("tenant_id") or "") == tenant_id)
+        ]
+        return candidates[0] if len(candidates) == 1 else None
 
     def list_evaluations(self) -> List[Dict[str, Any]]:
         return self._list_records(self.evaluations_path)
 
-    def get_evaluation(self, evaluation_id: str) -> Optional[Dict[str, Any]]:
-        return self._get_record(self.evaluations_path, evaluation_id)
+    def get_evaluation(
+        self, evaluation_id: str, tenant_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        return self._get_record(
+            self.evaluations_path,
+            evaluation_id,
+            tenant_id=tenant_id,
+        )
 
     def put_evaluation(self, evaluation: Dict[str, Any]) -> Dict[str, Any]:
         evaluation_id = str(evaluation.get("evaluation_id") or evaluation.get("id") or "").strip()
@@ -240,8 +289,10 @@ class ReconciliationDriftStore:
     def list_alert_handoffs(self) -> List[Dict[str, Any]]:
         return self._list_records(self.alerts_path)
 
-    def get_alert_handoff(self, alert_id: str) -> Optional[Dict[str, Any]]:
-        return self._get_record(self.alerts_path, alert_id)
+    def get_alert_handoff(
+        self, alert_id: str, tenant_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        return self._get_record(self.alerts_path, alert_id, tenant_id=tenant_id)
 
     def put_alert_handoff(self, alert: Dict[str, Any]) -> Dict[str, Any]:
         alert_id = str(alert.get("alert_id") or alert.get("id") or "").strip()
@@ -252,8 +303,14 @@ class ReconciliationDriftStore:
     def list_reconciliation_records(self) -> List[Dict[str, Any]]:
         return self._list_records(self.reconciliation_records_path)
 
-    def get_reconciliation_record(self, record_id: str) -> Optional[Dict[str, Any]]:
-        return self._get_record(self.reconciliation_records_path, record_id)
+    def get_reconciliation_record(
+        self, record_id: str, tenant_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        return self._get_record(
+            self.reconciliation_records_path,
+            record_id,
+            tenant_id=tenant_id,
+        )
 
     def put_reconciliation_record(self, record: Dict[str, Any]) -> Dict[str, Any]:
         record_id = str(record.get("record_id") or record.get("id") or "").strip()
@@ -264,8 +321,14 @@ class ReconciliationDriftStore:
     def list_drift_reports(self) -> List[Dict[str, Any]]:
         return self._list_records(self.drift_reports_path)
 
-    def get_drift_report(self, report_id: str) -> Optional[Dict[str, Any]]:
-        return self._get_record(self.drift_reports_path, report_id)
+    def get_drift_report(
+        self, report_id: str, tenant_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        return self._get_record(
+            self.drift_reports_path,
+            report_id,
+            tenant_id=tenant_id,
+        )
 
     def put_drift_report(self, report: Dict[str, Any]) -> Dict[str, Any]:
         report_id = str(report.get("drift_report_id") or report.get("id") or "").strip()
@@ -276,8 +339,14 @@ class ReconciliationDriftStore:
     def list_worker_states(self) -> List[Dict[str, Any]]:
         return self._list_records(self.worker_states_path)
 
-    def get_worker_state(self, state_id: str) -> Optional[Dict[str, Any]]:
-        return self._get_record(self.worker_states_path, state_id)
+    def get_worker_state(
+        self, state_id: str, tenant_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        return self._get_record(
+            self.worker_states_path,
+            state_id,
+            tenant_id=tenant_id,
+        )
 
     def put_worker_state(self, state: Dict[str, Any]) -> Dict[str, Any]:
         state_id = str(state.get("state_id") or state.get("id") or "").strip()
@@ -429,7 +498,15 @@ class ReconciliationDriftStore:
                         "reason": "completed",
                         "claim": current,
                     }
-                lease_expires_at = self._as_utc(current.get("lease_expires_at"))
+                raw_lease_expires_at = current.get("lease_expires_at")
+                if (
+                    current.get("status") == "in_progress"
+                    and not raw_lease_expires_at
+                ):
+                    raise ReconciliationStoreError(
+                        f"active work claim has no lease expiry: {claim_id}"
+                    )
+                lease_expires_at = self._as_utc(raw_lease_expires_at)
                 if (
                     current.get("status") == "in_progress"
                     and lease_expires_at > observed_at
@@ -628,8 +705,17 @@ class PostgresReconciliationDriftStore(ReconciliationDriftStore):
     def list_evaluations(self) -> List[Dict[str, Any]]:
         return self._evaluation_records.list_all()
 
-    def get_evaluation(self, evaluation_id: str) -> Optional[Dict[str, Any]]:
-        return self._evaluation_records.get(evaluation_id)
+    def get_evaluation(
+        self, evaluation_id: str, tenant_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        storage_id = self._storage_record_id(
+            evaluation_id,
+            {"tenant_id": tenant_id} if tenant_id else {},
+        )
+        record = self._evaluation_records.get(storage_id)
+        if record is None and storage_id != evaluation_id:
+            record = self._evaluation_records.get(evaluation_id)
+        return record
 
     def put_evaluation(self, evaluation: Dict[str, Any]) -> Dict[str, Any]:
         record = json.loads(json.dumps(evaluation))
@@ -638,14 +724,26 @@ class PostgresReconciliationDriftStore(ReconciliationDriftStore):
             raise ValueError("evaluation_id is required")
         record["evaluation_id"] = evaluation_id
         record["id"] = evaluation_id
-        self._evaluation_records.put(evaluation_id, record)
+        self._evaluation_records.put(
+            self._storage_record_id(evaluation_id, record),
+            record,
+        )
         return record
 
     def list_alert_handoffs(self) -> List[Dict[str, Any]]:
         return self._alert_records.list_all()
 
-    def get_alert_handoff(self, alert_id: str) -> Optional[Dict[str, Any]]:
-        return self._alert_records.get(alert_id)
+    def get_alert_handoff(
+        self, alert_id: str, tenant_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        storage_id = self._storage_record_id(
+            alert_id,
+            {"tenant_id": tenant_id} if tenant_id else {},
+        )
+        record = self._alert_records.get(storage_id)
+        if record is None and storage_id != alert_id:
+            record = self._alert_records.get(alert_id)
+        return record
 
     def put_alert_handoff(self, alert: Dict[str, Any]) -> Dict[str, Any]:
         record = json.loads(json.dumps(alert))
@@ -654,14 +752,23 @@ class PostgresReconciliationDriftStore(ReconciliationDriftStore):
             raise ValueError("alert_id is required")
         record["alert_id"] = alert_id
         record["id"] = alert_id
-        self._alert_records.put(alert_id, record)
+        self._alert_records.put(self._storage_record_id(alert_id, record), record)
         return record
 
     def list_reconciliation_records(self) -> List[Dict[str, Any]]:
         return self._reconciliation_records.list_all()
 
-    def get_reconciliation_record(self, record_id: str) -> Optional[Dict[str, Any]]:
-        return self._reconciliation_records.get(record_id)
+    def get_reconciliation_record(
+        self, record_id: str, tenant_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        storage_id = self._storage_record_id(
+            record_id,
+            {"tenant_id": tenant_id} if tenant_id else {},
+        )
+        record = self._reconciliation_records.get(storage_id)
+        if record is None and storage_id != record_id:
+            record = self._reconciliation_records.get(record_id)
+        return record
 
     def put_reconciliation_record(self, record: Dict[str, Any]) -> Dict[str, Any]:
         record_id = str(record.get("record_id") or record.get("id") or "").strip()
@@ -669,14 +776,26 @@ class PostgresReconciliationDriftStore(ReconciliationDriftStore):
             raise ValueError("record_id is required")
         record["record_id"] = record_id
         record["id"] = record_id
-        self._reconciliation_records.put(record_id, record)
+        self._reconciliation_records.put(
+            self._storage_record_id(record_id, record),
+            record,
+        )
         return record
 
     def list_drift_reports(self) -> List[Dict[str, Any]]:
         return self._drift_reports.list_all()
 
-    def get_drift_report(self, report_id: str) -> Optional[Dict[str, Any]]:
-        return self._drift_reports.get(report_id)
+    def get_drift_report(
+        self, report_id: str, tenant_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        storage_id = self._storage_record_id(
+            report_id,
+            {"tenant_id": tenant_id} if tenant_id else {},
+        )
+        record = self._drift_reports.get(storage_id)
+        if record is None and storage_id != report_id:
+            record = self._drift_reports.get(report_id)
+        return record
 
     def put_drift_report(self, report: Dict[str, Any]) -> Dict[str, Any]:
         report_id = str(report.get("drift_report_id") or report.get("id") or "").strip()
@@ -684,14 +803,26 @@ class PostgresReconciliationDriftStore(ReconciliationDriftStore):
             raise ValueError("drift_report_id is required")
         report["drift_report_id"] = report_id
         report["id"] = report_id
-        self._drift_reports.put(report_id, report)
+        self._drift_reports.put(
+            self._storage_record_id(report_id, report),
+            report,
+        )
         return report
 
     def list_worker_states(self) -> List[Dict[str, Any]]:
         return self._worker_state_records.list_all()
 
-    def get_worker_state(self, state_id: str) -> Optional[Dict[str, Any]]:
-        return self._worker_state_records.get(state_id)
+    def get_worker_state(
+        self, state_id: str, tenant_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        storage_id = self._storage_record_id(
+            state_id,
+            {"tenant_id": tenant_id} if tenant_id else {},
+        )
+        record = self._worker_state_records.get(storage_id)
+        if record is None and storage_id != state_id:
+            record = self._worker_state_records.get(state_id)
+        return record
 
     def put_worker_state(self, state: Dict[str, Any]) -> Dict[str, Any]:
         state_id = str(state.get("state_id") or state.get("id") or "").strip()
@@ -699,7 +830,10 @@ class PostgresReconciliationDriftStore(ReconciliationDriftStore):
             raise ValueError("state_id is required")
         state["state_id"] = state_id
         state["id"] = state_id
-        self._worker_state_records.put(state_id, state)
+        self._worker_state_records.put(
+            self._storage_record_id(state_id, state),
+            state,
+        )
         return state
 
     def _compare_and_set_work_claim(

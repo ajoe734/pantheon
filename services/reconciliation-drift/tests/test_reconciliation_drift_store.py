@@ -582,6 +582,37 @@ def test_work_claim_identity_is_tenant_scoped_and_corruption_fails_closed(
     assert store.work_claims_path.read_bytes() == original
 
 
+def test_tenant_records_with_same_external_id_do_not_overwrite_each_other(
+    tmp_path: Path,
+) -> None:
+    module = _load_store_module()
+    store = module.ReconciliationDriftStore(tmp_path)
+    tenant_a = store.put_drift_report(
+        {
+            "drift_report_id": "shared-report-id",
+            "tenant_id": "tenant-a",
+            "severity": "medium",
+        }
+    )
+    tenant_b = store.put_drift_report(
+        {
+            "drift_report_id": "shared-report-id",
+            "tenant_id": "tenant-b",
+            "severity": "critical",
+        }
+    )
+
+    assert (
+        store.get_drift_report("shared-report-id", tenant_id="tenant-a")
+        == tenant_a
+    )
+    assert (
+        store.get_drift_report("shared-report-id", tenant_id="tenant-b")
+        == tenant_b
+    )
+    assert len(store.list_drift_reports()) == 2
+
+
 def test_postgres_store_owns_records_reports_worker_state_and_work_claims(
     tmp_path: Path,
 ) -> None:
@@ -635,9 +666,12 @@ def test_postgres_store_owns_records_reports_worker_state_and_work_claims(
         now=datetime(2026, 7, 26, 10, 0, tzinfo=timezone.utc),
     )
 
-    assert store.get_reconciliation_record("record-1") == record
-    assert store.get_drift_report("report-1") == report
-    assert store.get_worker_state("state-1") == state
+    assert (
+        store.get_reconciliation_record("record-1", tenant_id="tenant-a")
+        == record
+    )
+    assert store.get_drift_report("report-1", tenant_id="tenant-a") == report
+    assert store.get_worker_state("state-1", tenant_id="tenant-a") == state
     assert claim["acquired"] is True
     assert not store.reconciliation_records_path.exists()
     assert not store.drift_reports_path.exists()
