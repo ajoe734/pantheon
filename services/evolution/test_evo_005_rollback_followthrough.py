@@ -37,7 +37,33 @@ if str(_CP_GOV) not in sys.path:
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from services.evolution import main as evo_main  # noqa: E402
 from services.evolution.main import app  # noqa: E402
+from services.evolution.testing_receipts import (  # noqa: E402
+    ALL_PLANES,
+    install_scripted_adapter,
+    receipt_body,
+)
+
+
+@pytest.fixture(autouse=True)
+def scripted_receipts():
+    """Give rollback-followthrough a runtime record it can really read back.
+
+    Runtime mitigation is carried out by the Rollback Controller / Runtime
+    Manager; the evolution service records its terminal outcome and refuses to
+    synthesise one. These tests exercise routing and follow-through visibility,
+    so they install a scripted runtime record that reports terminal success.
+    """
+    original = dict(evo_main.receipt_registry)
+    adapter = install_scripted_adapter(
+        evo_main.receipt_registry, *ALL_PLANES, always_succeeds=True
+    )
+    try:
+        yield adapter
+    finally:
+        evo_main.receipt_registry.clear()
+        evo_main.receipt_registry.update(original)
 import services.evolution.main as evo_main  # noqa: E402
 
 # ---- RuntimeManagerService (direct in-process, no HTTP) ----
@@ -158,6 +184,7 @@ def _rollback_followthrough(
         body["active_binding_id"] = active_binding_id
     if rollback_action_type is not None:
         body["rollback_action_type"] = rollback_action_type
+    body["execution_receipt"] = receipt_body(decision_id)
     if extra:
         body.update(extra)
     r = client.post(f"/api/evolution/proposals/{decision_id}/rollback-followthrough", json=body)
@@ -399,8 +426,11 @@ class TestBffStageVisibility:
         # execution_result is the dispatched evidence
         exec_res = executed["execution_result"]
         assert exec_res is not None, "execution_result must not be None after execute"
-        assert exec_res["status"] in {"submitted", "accepted"}, (
-            f"execution_result.status must be 'submitted' or 'accepted'; got {exec_res['status']}"
+        # 'submitted' is a dispatch intent, not an outcome, and is no longer a
+        # valid executed state: the recorded status is the terminal one the
+        # runtime record reported back.
+        assert exec_res["status"] in {"succeeded", "failed", "noop"}, (
+            f"execution_result.status must be a terminal downstream status; got {exec_res['status']}"
         )
         assert exec_res["plane"] == "governance", (
             f"Freeze decision plane must be 'governance'; got {exec_res['plane']}"
@@ -506,8 +536,10 @@ class TestRollbackFollowthroughRuntimeManagerIntegration:
         assert executed["decision_state"] == "executed"
         # The execution_ref_id traces back to the dispatch command
         exec_res = executed["execution_result"]
-        assert exec_res["execution_ref_id"].startswith("dispatch-"), (
-            f"execution_ref_id must reference the dispatch command; got {exec_res['execution_ref_id']}"
+        # execution_ref_id traces to the downstream record whose terminal state
+        # authorised the execution, not to a locally minted command id.
+        assert exec_res["execution_ref_id"] == receipt_body(did)["downstream_ref_id"], (
+            f"execution_ref_id must reference the downstream record; got {exec_res['execution_ref_id']}"
         )
 
     def test_runtime_manager_rollback_replace_strategy(self, runtime_manager):

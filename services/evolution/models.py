@@ -46,6 +46,18 @@ class ReviewStepOut(BaseModel):
     note: Optional[str] = None
 
 
+class ExecutionReceiptIn(BaseModel):
+    """Pointer to the downstream record that proves an action really ran.
+
+    Deliberately carries no status field: the evolution service reads the
+    downstream itself, so a caller cannot assert an outcome the downstream
+    never reported.
+    """
+
+    downstream_kind: str
+    downstream_ref_id: str
+
+
 class ExecutionResultOut(BaseModel):
     status: str
     plane: str
@@ -60,6 +72,10 @@ class ExecutionResultOut(BaseModel):
 
 class ProposeRequest(BaseModel):
     decision_id: str
+    # Owning tenant.  Optional at the boundary so single-tenant callers keep
+    # working; the governance object resolves an omitted value to the default
+    # tenant and every later actor is checked against it.
+    tenant_id: Optional[str] = None
     target_type: str
     target_id: str
     target_version: str
@@ -116,6 +132,9 @@ class ReviewRequest(BaseModel):
     actor_id: str
     approval_decision_id: str
     note: Optional[str] = None
+    # The acting party's tenant. Omitted means the default tenant, which is
+    # refused against a decision owned by any other tenant.
+    tenant_id: Optional[str] = None
 
 
 class ApproveRequest(BaseModel):
@@ -123,6 +142,7 @@ class ApproveRequest(BaseModel):
     actor_id: str
     approval_decision_id: Optional[str] = None
     note: Optional[str] = None
+    tenant_id: Optional[str] = None
 
 
 class RejectRequest(BaseModel):
@@ -130,6 +150,7 @@ class RejectRequest(BaseModel):
     actor_id: str
     note: str
     approval_decision_id: Optional[str] = None
+    tenant_id: Optional[str] = None
 
 
 class ExecuteRequest(BaseModel):
@@ -144,12 +165,18 @@ class ExecuteRequest(BaseModel):
     fallback_artifact_version: Optional[str] = None
     force_stage_freeze: bool = False
     note: Optional[str] = None
+    tenant_id: Optional[str] = None
+    # Reference to the downstream record whose terminal state authorises this
+    # execution.  The service re-reads that record itself; a caller-asserted
+    # status is not accepted as evidence.
+    execution_receipt: Optional["ExecutionReceiptIn"] = None
 
 
 class CancelRequest(BaseModel):
     actor_role: str
     actor_id: str
     note: str
+    tenant_id: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -208,6 +235,7 @@ class DailySweepResponse(BaseModel):
 
 class DecisionResponse(BaseModel):
     decision_id: str
+    tenant_id: str
     target_type: str
     target_id: str
     target_version: str
@@ -318,6 +346,8 @@ class DispatchCommandResponse(BaseModel):
 class RollbackFollowthroughRequest(BaseModel):
     actor_role: str
     actor_id: str
+    tenant_id: Optional[str] = None
+    execution_receipt: Optional["ExecutionReceiptIn"] = None
     active_binding_id: Optional[str] = None
     rollback_action_type: Optional[str] = None
     fallback_artifact_id: Optional[str] = None
@@ -346,3 +376,62 @@ class ActionPathEntry(BaseModel):
 class ActionPathsResponse(BaseModel):
     policy_document: str
     paths: List[ActionPathEntry]
+
+
+# ---------------------------------------------------------------------------
+# Durable dispatch outbox / compensation
+# ---------------------------------------------------------------------------
+
+class DispatchOutboxRecordResponse(BaseModel):
+    outbox_id: str
+    tenant_id: str
+    decision_id: str
+    action_type: Optional[str] = None
+    execution_plane: Optional[str] = None
+    status: str
+    delivery_ready: bool
+    delivery_attempts: int
+    redrive_count: int
+    last_error: Optional[str] = None
+    next_attempt_at: Optional[str] = None
+    replay_available_at: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    published_at: Optional[str] = None
+
+
+class DispatchOutboxListResponse(BaseModel):
+    tenant_id: Optional[str] = None
+    records: List[DispatchOutboxRecordResponse]
+
+
+class DispatchReplayRequest(BaseModel):
+    actor_id: str
+    note: str
+    tenant_id: Optional[str] = None
+
+
+class CompensationResponse(BaseModel):
+    compensation_id: str
+    tenant_id: str
+    decision_id: str
+    outbox_id: str
+    reason: str
+    downstream_kind: Optional[str] = None
+    downstream_ref_id: Optional[str] = None
+    recorded_at: Optional[str] = None
+    resolved: bool = False
+    resolved_at: Optional[str] = None
+    resolved_by: Optional[str] = None
+    resolution_note: Optional[str] = None
+
+
+class CompensationListResponse(BaseModel):
+    tenant_id: Optional[str] = None
+    compensations: List[CompensationResponse]
+
+
+class CompensationResolveRequest(BaseModel):
+    actor_id: str
+    note: str
+    tenant_id: Optional[str] = None

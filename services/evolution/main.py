@@ -74,6 +74,7 @@ from evolution_controller import (  # type: ignore
 )
 from deployment_plan import DeploymentStage  # type: ignore
 from evolution_decision import (  # type: ignore
+    DEFAULT_TENANT_ID,
     EvolutionActionType,
     EvolutionActorRole,
     EvolutionDecision,
@@ -81,7 +82,10 @@ from evolution_decision import (  # type: ignore
     EvolutionDecisionState,
     EvolutionDecisionStore,
     EvolutionTargetType,
+    ExecutionResult,
+    ExecutionStatus,
     ThresholdSnapshot,
+    normalize_tenant_id,
     utc_now,
     validate_evolution_decision,
 )
@@ -96,10 +100,16 @@ from models import (  # type: ignore
     ApproveRequest,
     BoundaryResponse,
     CancelRequest,
+    CompensationListResponse,
+    CompensationResolveRequest,
+    CompensationResponse,
     DailySweepRequest,
     DailySweepResponse,
     DecisionResponse,
     DispatchCommandResponse,
+    DispatchOutboxListResponse,
+    DispatchOutboxRecordResponse,
+    DispatchReplayRequest,
     ExecuteRequest,
     ObservationWindowReportResponse,
     ProposeFromIncidentRequest,
@@ -116,6 +126,26 @@ from sweep import run_daily_sweep  # type: ignore
 from postmortem_bridge import (  # type: ignore
     PostmortemBridgeError,
     build_published_postmortem_proposal_request,
+)
+from services.evolution.dispatch_outbox import (
+    CompensationLedger,
+    DispatchIntent,
+    EvolutionDispatchError,
+    EvolutionDispatchOutbox,
+    build_dispatch_outbox_store,
+)
+from services.evolution.dispatch_receipts import (
+    DispatchReceiptError,
+    OUTCOME_SUCCEEDED,
+    build_adapter_registry,
+    supported_planes,
+    verify_terminal_receipt,
+)
+from services.evolution.threshold_sweep_worker import (
+    assess_input_coverage,
+    default_fetch_summaries,
+    load_baselines,
+    load_thresholds,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -295,6 +325,31 @@ controller = EvolutionController()
 evaluator = ThresholdEvaluator()
 
 # ---------------------------------------------------------------------------
+# Durable dispatch outbox — every supported approved action is made durable
+# here before anything downstream is asked to do work, and a decision only
+# reaches ``executed`` once the downstream reports a terminal receipt that this
+# service re-reads for itself.
+# ---------------------------------------------------------------------------
+RESEARCH_API_URL = (
+    os.getenv("EVOLUTION_RESEARCH_API_URL")
+    or os.getenv("RESEARCH_ORCHESTRATOR_URL", "http://research-orchestrator-svc:8101")
+)
+TELEMETRY_API_URL = (
+    os.getenv("EVOCHAIN_TELEMETRY_API_URL")
+    or os.getenv("PANTHEON_TELEMETRY_API_URL")
+    or os.getenv("PANTHEON_TELEMETRY_URL", "http://telemetry:8083")
+)
+DOWNSTREAM_TIMEOUT_SECONDS = float(os.getenv("EVOLUTION_DOWNSTREAM_TIMEOUT_SECONDS", "20"))
+
+dispatch_outbox = EvolutionDispatchOutbox(
+    build_dispatch_outbox_store(data_dir=EVOLUTION_DATA_DIR)
+)
+compensation_ledger = CompensationLedger(data_dir=EVOLUTION_DATA_DIR)
+receipt_registry = build_adapter_registry(
+    research_api_url=RESEARCH_API_URL, timeout=DOWNSTREAM_TIMEOUT_SECONDS
+)
+
+# ---------------------------------------------------------------------------
 # Sweep state — updated on every POST /api/evolution/daily-sweep call.
 # Exposed via GET /api/evolution/sweep-status and the /livez health metrics.
 # ---------------------------------------------------------------------------
@@ -331,6 +386,7 @@ def _decision_to_response(decision: EvolutionDecision) -> DecisionResponse:
     d = decision.to_dict()
     return DecisionResponse(
         decision_id=d["decision_id"],
+        tenant_id=d.get("tenant_id") or DEFAULT_TENANT_ID,
         target_type=d["target_type"],
         target_id=d["target_id"],
         target_version=d["target_version"],
@@ -364,6 +420,76 @@ def _decision_to_response(decision: EvolutionDecision) -> DecisionResponse:
 
 def _not_found(decision_id: str) -> HTTPException:
     return HTTPException(status_code=404, detail=f"EvolutionDecision not found: {decision_id}")
+
+
+def _tenant_error(exc: Exception) -> HTTPException:
+    """A cross-tenant actor is an authority failure, not a validation failure."""
+    return HTTPException(status_code=403, detail=str(exc))
+
+
+def _guard_actor_tenant(decision: EvolutionDecision, tenant_id: Optional[str]) -> str:
+    try:
+        return decision.assert_actor_tenant(tenant_id)
+    except EvolutionDecisionError as exc:
+        raise _tenant_error(exc) from exc
+
+
+def _dispatch_intent_for(decision: EvolutionDecision) -> DispatchIntent | None:
+    """Build the durable dispatch intent for an approved decision.
+
+    Returns ``None`` when the controller cannot route the decision at all; an
+    unroutable action has no dispatch to make durable.  Planes without a real
+    receipt source still get an intent: the outbox is where the refusal to
+    auto-execute them is recorded, rather than being silently skipped.
+    """
+    try:
+        boundary = controller.boundary_for(decision, has_active_runtime=False)
+    except EvolutionControllerError:
+        return None
+    plane = str(_enum_value(boundary.execution_plane))
+    return DispatchIntent(
+        tenant_id=decision.tenant_id,
+        decision_id=decision.decision_id,
+        action_type=str(_enum_value(decision.action_type)),
+        execution_plane=plane,
+        boundary_key=boundary.boundary_key,
+        target_type=str(_enum_value(decision.target_type)),
+        target_id=decision.target_id,
+        target_version=decision.target_version,
+        target_stage=decision.target_stage,
+        approval_decision_id=decision.approval_decision_id,
+        command_id=f"dispatch-{decision.decision_id}",
+    )
+
+
+def _outbox_record_response(record) -> DispatchOutboxRecordResponse:
+    payload = dict(record.event.payload or {})
+    replay_at = dispatch_outbox.replay_available_at(record)
+    return DispatchOutboxRecordResponse(
+        outbox_id=record.outbox_id,
+        tenant_id=str(payload.get("tenant_id") or DEFAULT_TENANT_ID),
+        decision_id=str(payload.get("decision_id") or ""),
+        action_type=payload.get("action_type"),
+        execution_plane=payload.get("execution_plane"),
+        status=record.status.value,
+        delivery_ready=record.delivery_ready,
+        delivery_attempts=record.delivery_attempts,
+        redrive_count=record.redrive_count,
+        last_error=record.last_error,
+        next_attempt_at=_iso_or_none(record.next_attempt_at),
+        replay_available_at=_iso_or_none(replay_at),
+        created_at=_iso_or_none(record.record.created_at),
+        updated_at=_iso_or_none(record.record.updated_at),
+        published_at=_iso_or_none(record.record.published_at),
+    )
+
+
+def _iso_or_none(value: Any) -> Optional[str]:
+    if value in (None, ""):
+        return None
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    return str(value)
 
 
 def _domain_error(exc: Exception) -> HTTPException:
@@ -524,6 +650,7 @@ def _validated_delivery_event(body: ProposeRequest) -> Dict[str, Any] | None:
 
 _IMMUTABLE_PROPOSAL_FIELDS = (
     "decision_id",
+    "tenant_id",
     "target_type",
     "target_id",
     "target_version",
@@ -607,6 +734,7 @@ def _build_proposed_decision(
             persona_id=body.persona_id,
             target_stage=body.target_stage,
             metadata=body.metadata,
+            tenant_id=body.tenant_id,
         )
     except EvolutionDecisionError as exc:
         raise _domain_error(exc) from exc
@@ -1430,12 +1558,14 @@ def review_proposal(decision_id: str, body: ReviewRequest):
     decision = store.get(decision_id)
     if decision is None:
         raise _not_found(decision_id)
+    _guard_actor_tenant(decision, body.tenant_id)
     try:
         decision.mark_reviewed(
             actor_role=body.actor_role,
             actor_id=body.actor_id,
             approval_decision_id=body.approval_decision_id,
             note=body.note,
+            actor_tenant_id=body.tenant_id,
         )
         store.put(decision)
     except EvolutionDecisionError as exc:
@@ -1459,17 +1589,67 @@ def approve_proposal(decision_id: str, body: ApproveRequest):
     decision = store.get(decision_id)
     if decision is None:
         raise _not_found(decision_id)
+    _guard_actor_tenant(decision, body.tenant_id)
     try:
         decision.approve(
             actor_role=body.actor_role,
             actor_id=body.actor_id,
             approval_decision_id=body.approval_decision_id,
             note=body.note,
+            actor_tenant_id=body.tenant_id,
         )
-        store.put(decision)
     except EvolutionDecisionError as exc:
         raise _domain_error(exc) from exc
-    log.info("evolution.approved decision_id=%s actor=%s", decision_id, body.actor_id)
+
+    # Prepare the dispatch intent *before* the approval is durable, then
+    # activate it after.  A crash between the two leaves an inert prepared
+    # record that the dispatch worker's reconcile pass activates, so an
+    # approved decision can never end up with no dispatch on record.  Preparing
+    # after the commit would leave exactly that hole.
+    intent = _dispatch_intent_for(decision)
+    prepared = None
+    if intent is not None:
+        try:
+            prepared = dispatch_outbox.prepare(intent)
+        except (EvolutionDispatchError, ValueError) as exc:
+            raise _delivery_conflict(
+                f"could not prepare a durable dispatch intent for {decision_id}: {exc}"
+            ) from exc
+
+    try:
+        store.put(decision)
+    except EvolutionDecisionError as exc:
+        # The approval did not commit, so the intent must not become
+        # deliverable.  Discard it only while it is still the exact inert
+        # snapshot we wrote; anything else means a concurrent winner owns it.
+        if prepared is not None:
+            try:
+                dispatch_outbox.store.discard_prepared(prepared)
+            except Exception:  # noqa: BLE001
+                log.exception(
+                    "AUDIT: could not discard prepared dispatch intent %s after a failed approval",
+                    prepared.outbox_id,
+                )
+        raise _domain_error(exc) from exc
+
+    if prepared is not None:
+        try:
+            dispatch_outbox.activate(prepared)
+        except Exception:  # noqa: BLE001
+            # The approval is durable and the intent is durable; only the
+            # activation is missing. Reconcile picks it up on the next tick.
+            log.exception(
+                "AUDIT: prepared dispatch intent %s awaits reconcile activation",
+                prepared.outbox_id,
+            )
+
+    log.info(
+        "evolution.approved decision_id=%s tenant=%s actor=%s dispatch_intent=%s",
+        decision_id,
+        decision.tenant_id,
+        body.actor_id,
+        prepared.outbox_id if prepared is not None else None,
+    )
     return _decision_to_response(decision)
 
 
@@ -1488,12 +1668,14 @@ def reject_proposal(decision_id: str, body: RejectRequest):
     decision = store.get(decision_id)
     if decision is None:
         raise _not_found(decision_id)
+    _guard_actor_tenant(decision, body.tenant_id)
     try:
         decision.reject(
             actor_role=body.actor_role,
             actor_id=body.actor_id,
             approval_decision_id=body.approval_decision_id,
             note=body.note,
+            actor_tenant_id=body.tenant_id,
         )
         store.put(decision)
     except EvolutionDecisionError as exc:
@@ -1516,11 +1698,13 @@ def cancel_proposal(decision_id: str, body: CancelRequest):
     decision = store.get(decision_id)
     if decision is None:
         raise _not_found(decision_id)
+    _guard_actor_tenant(decision, body.tenant_id)
     try:
         decision.cancel(
             actor_role=body.actor_role,
             actor_id=body.actor_id,
             note=body.note,
+            actor_tenant_id=body.tenant_id,
         )
         store.put(decision)
     except EvolutionDecisionError as exc:
@@ -1529,66 +1713,13 @@ def cancel_proposal(decision_id: str, body: CancelRequest):
     return _decision_to_response(decision)
 
 
-def _trigger_research_retrain(decision) -> None:
-    def run():
-        try:
-            import urllib.request
-            import json
-            
-            research_url = os.getenv("RESEARCH_ORCHESTRATOR_URL", "http://research-orchestrator-svc:8101")
-            
-            # 1. Create a task in research-orchestrator
-            task_body = {
-                "title": f"Evolution Retrain Task {decision.decision_id}",
-                "objective": f"Perform evolutionary retrain for {decision.target_id}",
-                "source_refs": [{"type": "evolution_decision", "id": decision.decision_id}],
-                "actor_id": "evolution-dispatch-worker",
-                "idempotency_key": f"task-{decision.decision_id}"
-            }
-            task_req = urllib.request.Request(
-                f"{research_url}/api/research-orchestrator/tasks",
-                data=json.dumps(task_body).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
-                method="POST"
-            )
-            with urllib.request.urlopen(task_req, timeout=10) as resp:
-                task_data = json.loads(resp.read().decode("utf-8"))
-            
-            work_item_id = task_data.get("task_id")
-            if not work_item_id:
-                log.error("Failed to get task_id from research task creation: %s", task_data)
-                return
-            
-            # 2. Dispatch a run in research-orchestrator
-            run_body = {
-                "adapter": "stub",
-                "requested_mode": "stub",
-                "dispatch_mode": "stub",
-                "input_refs": [{"type": "strategy_artifact", "id": decision.target_id}],
-                "parameters": {
-                    "decision_id": decision.decision_id,
-                    "target_artifact_id": decision.target_id,
-                    "target_version": decision.target_version,
-                    "work_item_id": work_item_id
-                },
-                "actor_id": "evolution-dispatch-worker",
-                "idempotency_key": f"run-{decision.decision_id}"
-            }
-            run_req = urllib.request.Request(
-                f"{research_url}/api/research-orchestrator/tasks/{work_item_id}/runs",
-                data=json.dumps(run_body).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
-                method="POST"
-            )
-            with urllib.request.urlopen(run_req, timeout=10) as resp:
-                run_data = json.loads(resp.read().decode("utf-8"))
-            
-            log.info("Successfully triggered research run for decision %s, run_id=%s", decision.decision_id, run_data.get("run_id"))
-        except Exception as e:
-            log.error("Failed to trigger research retrain for decision %s: %s", decision.decision_id, e)
-
-    import threading
-    threading.Thread(target=run, name=f"retrain-trigger-{decision.decision_id}").start()
+# The former ``_trigger_research_retrain`` fire-and-forget thread was removed
+# here. It POSTed a research task/run from inside the execute request and
+# ignored the outcome, so the decision was already recorded as executed while
+# the research run's real result was never read back. That work now goes
+# through the durable dispatch outbox
+# (``services/evolution/dispatch_outbox.py``) and only converges the decision
+# on a terminal receipt read back from the orchestrator.
 
 
 # --- Execute -----------------------------------------------------------------
@@ -1596,30 +1727,34 @@ def _trigger_research_retrain(decision) -> None:
 @app.post("/api/evolution/proposals/{decision_id}/execute", response_model=DecisionResponse)
 def execute_proposal(decision_id: str, body: ExecuteRequest):
     """
-    Execute an approved EvolutionDecision via the EvolutionController.
+    Execute an approved EvolutionDecision on a real downstream terminal receipt.
 
     This route:
-    1. Calls ``EvolutionController.execute_approved()`` to determine the
-       action boundary, compute cooldown/observation windows, and emit
-       dispatch/rollback commands.
-    2. Mutates the decision into ``executed`` state with full cooldown
-       and observation-window metadata.
+    1. Requires an ``execution_receipt`` naming the downstream record that did
+       the work, and **re-reads that record itself**.  A caller-asserted status
+       is not evidence; the readback is.
+    2. Calls ``EvolutionController.dispatch_approved()`` for the action
+       boundary, cooldown/observation windows, and follow-through commands.
+    3. Moves the decision to ``executed`` carrying the terminal downstream
+       status and the downstream reference it was read back from.
 
     Enforcement
     -----------
     - Decision must be in ``approved`` state.
-    - actor_role must be in the execution-roles set
-    - Cooldown and observation-window timestamps are set automatically
-      from the canonical policy; callers cannot override them.
-
-    Response fields
-    ---------------
-    ``cooldown_ends_at`` and ``observation_window_ends_at`` in the
-    response surface the canonical policy windows for runtime monitoring.
+    - Actor tenant must match the decision's tenant.
+    - actor_role must be in the execution-roles set.
+    - The receipt's plane must have a real receipt source; planes that have no
+      automatic downstream are refused rather than approximated.
+    - The downstream must report a terminal state.  A ``submitted`` dispatch
+      intent is a request, not an outcome, and is rejected by the governance
+      object itself.
+    - Cooldown and observation-window timestamps come from canonical policy;
+      callers cannot override them.
     """
     decision = store.get(decision_id)
     if decision is None:
         raise _not_found(decision_id)
+    _guard_actor_tenant(decision, body.tenant_id)
     try:
         freeze_mode = FreezeFollowthroughMode(body.freeze_mode)
     except ValueError as exc:
@@ -1628,11 +1763,20 @@ def execute_proposal(decision_id: str, body: ExecuteRequest):
             status_code=400,
             detail=f"Invalid freeze_mode {body.freeze_mode!r}. Must be one of {valid}",
         ) from exc
+
+    if body.execution_receipt is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "execution_receipt is required: an EvolutionDecision may only be executed "
+                "on a downstream terminal receipt this service can read back. Dispatch the "
+                "decision through the durable outbox instead of asserting execution."
+            ),
+        )
+
     try:
-        controller.execute_approved(
+        outcome = controller.dispatch_approved(
             decision,
-            actor_role=body.actor_role,
-            actor_id=body.actor_id,
             has_active_runtime=body.has_active_runtime,
             active_binding_id=body.active_binding_id,
             freeze_mode=freeze_mode,
@@ -1641,15 +1785,58 @@ def execute_proposal(decision_id: str, body: ExecuteRequest):
             fallback_artifact_version=body.fallback_artifact_version,
             force_stage_freeze=body.force_stage_freeze,
         )
-        store.put(decision)
-        if str(_enum_value(decision.action_type)) == "retrain":
-            _trigger_research_retrain(decision)
     except (EvolutionDecisionError, EvolutionControllerError) as exc:
         raise _domain_error(exc) from exc
+
+    execution_plane = str(_enum_value(outcome.execution_result.plane))
+    try:
+        receipt = verify_terminal_receipt(
+            receipt_registry,
+            execution_plane=execution_plane,
+            downstream_kind=body.execution_receipt.downstream_kind,
+            downstream_ref_id=body.execution_receipt.downstream_ref_id,
+        )
+    except DispatchReceiptError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    execution_result = ExecutionResult(
+        status=(
+            ExecutionStatus.SUCCEEDED
+            if receipt.outcome == OUTCOME_SUCCEEDED
+            else ExecutionStatus.FAILED
+        ),
+        plane=execution_plane,
+        executed_at=utc_now(),
+        execution_ref_id=receipt.downstream_ref_id,
+        outcome_summary=(
+            f"{receipt.downstream_kind} {receipt.downstream_ref_id} reported terminal "
+            f"status={receipt.downstream_status!r}"
+        ),
+    )
+
+    try:
+        decision.execute(
+            body.actor_role,
+            body.actor_id,
+            execution_result,
+            cooldown_ends_at=outcome.primary_command.cooldown_ends_at,
+            observation_window_ends_at=outcome.primary_command.observation_window_ends_at,
+            note=body.note or execution_result.outcome_summary,
+            actor_tenant_id=body.tenant_id,
+        )
+        store.put(decision)
+    except EvolutionDecisionError as exc:
+        raise _domain_error(exc) from exc
+
     log.info(
-        "evolution.executed decision_id=%s actor=%s cooldown_ends=%s obs_ends=%s",
+        "evolution.executed decision_id=%s tenant=%s actor=%s downstream=%s:%s status=%s "
+        "cooldown_ends=%s obs_ends=%s",
         decision_id,
+        decision.tenant_id,
         body.actor_id,
+        receipt.downstream_kind,
+        receipt.downstream_ref_id,
+        receipt.downstream_status,
         decision.cooldown_ends_at,
         decision.observation_window_ends_at,
     )
@@ -1734,26 +1921,74 @@ def rollback_followthrough(decision_id: str, body: RollbackFollowthroughRequest)
                 "the governance-only or freeze-stage path instead."
             ),
         )
+    _guard_actor_tenant(decision, body.tenant_id)
+    if body.execution_receipt is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "rollback-followthrough requires an execution_receipt naming the runtime "
+                "record that carried out the mitigation. Runtime mitigation is executed by "
+                "the Rollback Controller / Runtime Manager; this route records its terminal "
+                "outcome and must not synthesise one."
+            ),
+        )
     try:
-        freeze_mode = FreezeFollowthroughMode.ROLLBACK
-        controller.execute_approved(
+        outcome = controller.dispatch_approved(
             decision,
-            actor_role=body.actor_role,
-            actor_id=body.actor_id,
             has_active_runtime=True,
             active_binding_id=body.active_binding_id,
-            freeze_mode=freeze_mode,
+            freeze_mode=FreezeFollowthroughMode.ROLLBACK,
             rollback_action_type=body.rollback_action_type,
             fallback_artifact_id=body.fallback_artifact_id,
             fallback_artifact_version=body.fallback_artifact_version,
         )
-        store.put(decision)
     except (EvolutionDecisionError, EvolutionControllerError) as exc:
         raise _domain_error(exc) from exc
+
+    execution_plane = str(_enum_value(outcome.execution_result.plane))
+    try:
+        receipt = verify_terminal_receipt(
+            receipt_registry,
+            execution_plane=execution_plane,
+            downstream_kind=body.execution_receipt.downstream_kind,
+            downstream_ref_id=body.execution_receipt.downstream_ref_id,
+        )
+    except DispatchReceiptError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    try:
+        decision.execute(
+            body.actor_role,
+            body.actor_id,
+            ExecutionResult(
+                status=(
+                    ExecutionStatus.SUCCEEDED
+                    if receipt.outcome == OUTCOME_SUCCEEDED
+                    else ExecutionStatus.FAILED
+                ),
+                plane=execution_plane,
+                executed_at=utc_now(),
+                execution_ref_id=receipt.downstream_ref_id,
+                outcome_summary=(
+                    f"{receipt.downstream_kind} {receipt.downstream_ref_id} reported terminal "
+                    f"status={receipt.downstream_status!r}"
+                ),
+            ),
+            cooldown_ends_at=outcome.primary_command.cooldown_ends_at,
+            observation_window_ends_at=outcome.primary_command.observation_window_ends_at,
+            note=body.note,
+            actor_tenant_id=body.tenant_id,
+        )
+        store.put(decision)
+    except EvolutionDecisionError as exc:
+        raise _domain_error(exc) from exc
     log.info(
-        "evolution.rollback_followthrough decision_id=%s actor=%s",
+        "evolution.rollback_followthrough decision_id=%s tenant=%s actor=%s downstream=%s:%s",
         decision_id,
+        decision.tenant_id,
         body.actor_id,
+        receipt.downstream_kind,
+        receipt.downstream_ref_id,
     )
     return _decision_to_response(decision)
 
@@ -1943,6 +2178,165 @@ _ACTION_PATHS = [
         "notes": "Redeploy is not an independent EvolutionDecision. It must occur within the parent executed decision's observation window and still pass the stage deployment gate.",
     },
 ]
+
+
+# --- Durable dispatch outbox -------------------------------------------------
+
+@app.post(
+    "/api/evolution/proposals/{decision_id}/dispatch",
+    response_model=DispatchOutboxRecordResponse,
+)
+def dispatch_proposal(decision_id: str, tenant_id: Optional[str] = Query(default=None)):
+    """Ensure an approved decision has a durable, deliverable dispatch intent.
+
+    Idempotent by construction: the intent's id is derived from
+    ``(tenant, decision)``, so a duplicate trigger returns the existing record
+    rather than dispatching the approved action a second time.  This is also the
+    manual recovery hand-crank for a decision approved before the outbox
+    existed, or whose activation was lost.
+    """
+    decision = store.get(decision_id)
+    if decision is None:
+        raise _not_found(decision_id)
+    _guard_actor_tenant(decision, tenant_id)
+
+    state = str(_enum_value(decision.decision_state))
+    if state not in {"approved", "executed"}:
+        raise HTTPException(
+            status_code=409,
+            detail=f"only an approved EvolutionDecision may be dispatched; {decision_id} is {state}",
+        )
+
+    intent = _dispatch_intent_for(decision)
+    if intent is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"no action boundary routes {decision_id}; there is no dispatch to make durable",
+        )
+    try:
+        prepared = dispatch_outbox.prepare(intent)
+        record = dispatch_outbox.activate(prepared)
+    except (EvolutionDispatchError, ValueError) as exc:
+        raise _delivery_conflict(str(exc)) from exc
+    return _outbox_record_response(record)
+
+
+@app.get("/api/evolution/dispatch-outbox", response_model=DispatchOutboxListResponse)
+def list_dispatch_outbox(
+    tenant_id: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None),
+):
+    """List durable dispatch records, tenant-scoped when a tenant is supplied."""
+    scope = normalize_tenant_id(tenant_id) if tenant_id is not None else None
+    records = dispatch_outbox.list_all(tenant_id=scope)
+    if status:
+        wanted = status.strip().lower()
+        records = [item for item in records if item.status.value == wanted]
+    return DispatchOutboxListResponse(
+        tenant_id=scope,
+        records=[_outbox_record_response(item) for item in records],
+    )
+
+
+@app.post(
+    "/api/evolution/dispatch-outbox/{outbox_id}/replay",
+    response_model=DispatchOutboxRecordResponse,
+)
+def replay_dispatch(outbox_id: str, body: DispatchReplayRequest):
+    """Replay a dead-lettered dispatch once its replay cooldown has elapsed.
+
+    The cooldown is derived from the record's own durable timestamps, so a
+    restart or a duplicate replay trigger cannot shorten it.
+    """
+    record = dispatch_outbox.get_by_id(outbox_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"dispatch record not found: {outbox_id}")
+
+    record_tenant = str(dict(record.event.payload or {}).get("tenant_id") or DEFAULT_TENANT_ID)
+    if normalize_tenant_id(body.tenant_id) != record_tenant:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"actor tenant '{normalize_tenant_id(body.tenant_id)}' is not authorized to "
+                f"replay a dispatch owned by tenant '{record_tenant}'"
+            ),
+        )
+    try:
+        replayed = dispatch_outbox.replay(outbox_id, actor=body.actor_id, note=body.note)
+    except EvolutionDispatchError as exc:
+        raise _delivery_conflict(str(exc)) from exc
+    log.info(
+        "evolution.dispatch_replayed outbox_id=%s tenant=%s actor=%s",
+        outbox_id,
+        record_tenant,
+        body.actor_id,
+    )
+    return _outbox_record_response(replayed)
+
+
+@app.get("/api/evolution/compensations", response_model=CompensationListResponse)
+def list_compensations(tenant_id: Optional[str] = Query(default=None)):
+    """List durable compensation obligations left by failed dispatches."""
+    scope = normalize_tenant_id(tenant_id) if tenant_id is not None else None
+    return CompensationListResponse(
+        tenant_id=scope,
+        compensations=[
+            CompensationResponse(**item)
+            for item in compensation_ledger.list_all(tenant_id=scope)
+        ],
+    )
+
+
+@app.post(
+    "/api/evolution/compensations/{decision_id}/resolve",
+    response_model=CompensationResponse,
+)
+def resolve_compensation(decision_id: str, body: CompensationResolveRequest):
+    """Record that a compensation obligation has been discharged."""
+    decision = store.get(decision_id)
+    if decision is None:
+        raise _not_found(decision_id)
+    tenant = _guard_actor_tenant(decision, body.tenant_id)
+    try:
+        resolved = compensation_ledger.resolve(
+            tenant_id=tenant,
+            decision_id=decision_id,
+            actor_id=body.actor_id,
+            note=body.note,
+        )
+    except EvolutionDispatchError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return CompensationResponse(**resolved)
+
+
+# --- Evolution input coverage ------------------------------------------------
+
+@app.get("/api/evolution/input-coverage")
+def get_input_coverage():
+    """Report whether every monitored artifact has usable Evolution inputs.
+
+    Reads the same live threshold and baseline config the sweep worker uses and
+    the same telemetry runtime summaries, so this answer cannot drift from what
+    the sweep would actually do.  A telemetry read failure is reported as an
+    unavailable coverage answer, never as complete coverage.
+    """
+    thresholds = load_thresholds()
+    baselines = load_baselines()
+    try:
+        summaries = default_fetch_summaries(
+            TELEMETRY_API_URL, timeout=DOWNSTREAM_TIMEOUT_SECONDS
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=503,
+            detail=f"telemetry runtime summaries are unavailable; coverage is unknown: {exc}",
+        ) from exc
+
+    coverage = assess_input_coverage(summaries, thresholds, baselines=baselines)
+    coverage["thresholds_loaded"] = len(thresholds)
+    coverage["approved_baseline_artifacts"] = sorted(baselines)
+    coverage["supported_dispatch_planes"] = supported_planes(receipt_registry)
+    return coverage
 
 
 @app.get("/api/evolution/action-paths", response_model=ActionPathsResponse)
