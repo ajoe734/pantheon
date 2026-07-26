@@ -209,6 +209,77 @@ class RuntimeSummaryProjectionStoreTest(unittest.TestCase):
             self.assertEqual(reloaded["trace_id"], "trace-paper-001")
             self.assertEqual(reloaded["aggregate_id"], "tj-paper-001")
 
+    def test_six_runtime_summaries_keep_consumer_identity_after_restart(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "runtime_summaries.json"
+            store = RuntimeSummaryProjectionStore(
+                path,
+                heartbeat_stale_after_seconds=60,
+            )
+
+            expected: dict[str, tuple[str, str]] = {}
+            for index in range(1, 7):
+                runtime_id = f"rt-paper-{index:03d}"
+                trace_id = f"trace-paper-{index:03d}"
+                journey_id = f"tj-paper-{index:03d}"
+                binding_id = f"rtb-paper-{index:03d}"
+                lifecycle = _lifecycle_event(
+                    f"position-paper-{index:03d}",
+                    created_at=f"2026-05-01T00:00:{index:02d}Z",
+                    sequence_no=index,
+                    aggregate_id=journey_id,
+                )
+                lifecycle.update(
+                    {
+                        "runtime_id": runtime_id,
+                        "binding_id": binding_id,
+                        "trace_id": trace_id,
+                        "aggregate_id": journey_id,
+                    }
+                )
+                lifecycle["correlation_envelope"].update(
+                    {
+                        "journey_id": journey_id,
+                        "trace_id": trace_id,
+                    }
+                )
+                store.project_event(lifecycle)
+
+                heartbeat = _runtime_heartbeat_event()
+                heartbeat.update(
+                    {
+                        "event_id": f"heartbeat-paper-{index:03d}",
+                        "runtime_id": runtime_id,
+                        "binding_id": binding_id,
+                        "tenant_id": "tenant-001",
+                        "created_at": f"2026-05-01T00:01:{index:02d}Z",
+                    }
+                )
+                store.project_event(heartbeat)
+                expected[runtime_id] = (trace_id, journey_id)
+
+            summaries = RuntimeSummaryProjectionStore(
+                path,
+                heartbeat_stale_after_seconds=60,
+            ).list()
+
+            self.assertEqual(len(summaries), 6)
+            for summary in summaries:
+                trace_id, journey_id = expected[summary["runtime_id"]]
+                self.assertEqual(summary["last_event_type"], "heartbeat")
+                self.assertEqual(summary["tenant_id"], "tenant-001")
+                self.assertEqual(summary["trace_id"], trace_id)
+                self.assertEqual(summary["aggregate_type"], "trade_journey")
+                self.assertEqual(summary["aggregate_id"], journey_id)
+                self.assertEqual(
+                    summary["correlation_envelope"]["journey_id"],
+                    journey_id,
+                )
+                self.assertEqual(
+                    summary["last_lifecycle_identity"]["trace_id"],
+                    trace_id,
+                )
+
     def test_recent_lifecycle_event_ids_are_ordered_deduplicated_and_bounded(self):
         store = RuntimeSummaryProjectionStore(
             heartbeat_stale_after_seconds=60,
