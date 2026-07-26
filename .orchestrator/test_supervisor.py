@@ -3378,6 +3378,64 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(queued_event["target_agent"], "Codex")
         self.assertEqual(queued_event["reason"], "owned_ready_dispatch")
 
+    def test_dispatcher_does_not_helper_claim_catalog_locked_task(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "helper_claim": {
+                    "enabled": True,
+                    "task_statuses": ["todo"],
+                    "claim_idle_work": True,
+                }
+            },
+            "worker_reassignment": {
+                "owner_fallbacks": {
+                    "Copilot": ["Codex"],
+                }
+            },
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "copilot": {"id": "copilot", "display_name": "Copilot", "provider": "copilot"},
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+            },
+            "providers": {},
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "L12-LOCKED-001",
+                    "status": "todo",
+                    "owner": "Copilot",
+                    "reviewer": "Claude",
+                    "depends_on": [],
+                    "catalog_task_contract_sha256": "c" * 64,
+                },
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+        ):
+            changed = supervisor.dispatch_ready_tasks(
+                config,
+                {"queue": {"events": {}}, "workers": {}},
+            )
+
+        self.assertTrue(changed)
+        persist.assert_not_called()
+        queued_event = queue_delivery_event.call_args.args[1]
+        self.assertEqual(queued_event["task_id"], "L12-LOCKED-001")
+        self.assertEqual(queued_event["target_agent"], "Copilot")
+        self.assertEqual(queued_event["reason"], "owned_ready_dispatch")
+
     def test_dispatcher_helper_claims_unrelated_task_during_failure_loop(self) -> None:
         config = {
             "schema": {
@@ -4094,6 +4152,51 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(kwargs["task_id"], "OPS-RTEL-003")
         self.assertEqual(kwargs["new_owner"], "Codex")
         self.assertEqual(kwargs["new_reviewer"], "Claude")
+
+    def test_normalize_does_not_reassign_catalog_locked_task(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "worker_reassignment": {
+                "eligible_statuses": ["todo"],
+                "owner_fallbacks": {"Codex2": ["Codex"]},
+                "reviewer_fallbacks": {"Codex2": ["Codex"]},
+            },
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "codex2": {"id": "codex2", "display_name": "Codex2", "provider": "codex2"},
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+            },
+            "providers": {},
+        }
+        report = {
+            "providers": {
+                "codex": {"auth_ready": True},
+                "codex2": {"auth_ready": False},
+                "claude": {"auth_ready": True},
+            }
+        }
+        task = {
+            "id": "L12-LOCKED-001",
+            "status": "todo",
+            "owner": "Codex2",
+            "reviewer": "Claude",
+            "depends_on": [],
+            "catalog_task_contract_sha256": "a" * 64,
+        }
+        with (
+            mock.patch.object(supervisor, "_cached_provider_capabilities", return_value=report),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.normalize_mainline_task_assignment(config, task)
+
+        self.assertFalse(changed)
+        persist.assert_not_called()
 
     def test_normalize_does_not_reassign_when_owner_auth_ready(self) -> None:
         config = {
@@ -7267,6 +7370,37 @@ class ChairReviewDispatchTests(unittest.TestCase):
         self.assertNotIn("waiting_for", task)
         self.assertEqual(blocker["status"], "resolved")
         self.assertEqual(blocker["resolution_ref"], "chair_reassignment:T-PUSH")
+
+    def test_persist_task_reassignment_rejects_catalog_assignment_drift(self) -> None:
+        status_path = self.root / "ai-status.json"
+        original = {
+            "tasks": [
+                {
+                    "id": "L12-LOCKED-001",
+                    "status": "todo",
+                    "owner": "Codex",
+                    "reviewer": "Codex2",
+                    "catalog_task_contract_sha256": "b" * 64,
+                }
+            ]
+        }
+        status_path.write_text(json.dumps(original), encoding="utf-8")
+
+        with mock.patch.object(supervisor, "sync_status_pipeline") as sync:
+            applied = supervisor.persist_task_reassignment(
+                self.config,
+                task_id="L12-LOCKED-001",
+                new_owner="Claude",
+                new_reviewer="Codex2",
+                message="Helper claim must not rewrite a catalog assignment.",
+            )
+
+        self.assertFalse(applied)
+        sync.assert_not_called()
+        self.assertEqual(
+            json.loads(status_path.read_text(encoding="utf-8")),
+            original,
+        )
 
     def test_refresh_chair_review_invalid_decision_retries_next_chair(self) -> None:
         review_path = self.root / "chair-reviews" / "20260428-codex.md"
