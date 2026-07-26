@@ -1,7 +1,8 @@
 # ADR: Telemetry Ingest Durable Buffer Selection
 
-**Status**: Accepted (v1)
+**Status**: Superseded by L12-TEL-001 for deployed defaults
 **Date**: 2026-04-10
+**Decision update**: 2026-07-26
 **Task**: TEL-002
 **Owner**: Qwen
 **Reviewer**: Codex
@@ -76,7 +77,19 @@ The architecture document (§3.1 Layer C) lists three v1-acceptable options:
 | Dependency footprint | **None** |
 | Tradeoff | Not durable; suitable only as v1 shim until external buffer is available |
 
-## Decision
+## L12-TEL-001 decision update
+
+Process-crash recovery is now a formal requirement, and the Pantheon deployment
+already supplies NATS with JetStream file storage. The deployed default is
+therefore `NatsJetStreamBuffer`; `put()` waits for a server PubAck, and the
+durable pull-consumer receipt remains unacknowledged until the canonical
+Postgres write or an fsynced DLQ handoff completes.
+
+`InMemoryBuffer` remains available only when explicitly selected for isolated
+development and unit tests. It must not be used to claim durable telemetry
+ingest. Redis remains an optional adapter, and Kafka remains out of scope.
+
+## Historical v1 decision
 
 ### v1: In-Memory Bounded Buffer with External Adapter Interface
 

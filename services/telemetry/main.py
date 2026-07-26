@@ -92,10 +92,30 @@ TELEMETRY_RUNTIME_HEARTBEAT_STALE_SECONDS
     degraded. Defaults to 90.
 
 TELEMETRY_BUFFER_BACKEND
-    "memory" (default) or "redis".
+    "jetstream" (default), "redis", or explicit test-only "memory".
 
 TELEMETRY_BUFFER_REDIS_URL
     Redis URL when TELEMETRY_BUFFER_BACKEND=redis.
+
+PANTHEON_NATS_URL
+    NATS URL when TELEMETRY_BUFFER_BACKEND=jetstream. The HTTP response waits
+    for a JetStream persistence acknowledgement before returning success.
+
+PANTHEON_TELEMETRY_AUTH_MODE
+    ``strict`` (default) requires a verified JWT. ``permissive`` additionally
+    accepts the shared structured-token form for isolated development.
+
+PANTHEON_TELEMETRY_JWT_SECRET / _JWKS_URI / _OIDC_DISCOVERY_URL
+    Telemetry-specific JWT verification settings. Issuer, audience, role-claim,
+    and role-map settings use the same ``PANTHEON_TELEMETRY_*`` prefix.
+
+PANTHEON_TELEMETRY_SERVICE_TOKEN
+    Exact bearer credential for internal telemetry producers. Its tenant
+    authority is restricted by ``PANTHEON_TELEMETRY_SERVICE_TENANTS``.
+
+PANTHEON_TELEMETRY_ALLOWED_TENANTS
+    Fallback tenant allowlist when a verified identity token has no tenant
+    claim. Every protected request must also send ``X-Tenant-Id``.
 
 TELEMETRY_BATCH_SIZE
     Max events per write batch (default 500).
@@ -157,6 +177,12 @@ from typing import Any
 
 from flask import Flask, jsonify, request
 
+from .auth import (
+    TelemetryAuthorityError,
+    bind_event_tenant,
+    request_tenant_id,
+    require_telemetry_authority,
+)
 from .heartbeat_service import (
     RuntimeHeartbeatValidationError,
     build_telemetry_event_from_runtime_heartbeat,
@@ -460,8 +486,9 @@ def _build_service(lineage_write_store: LineageReadService | None = None) -> Tel
 
     schema_path = os.getenv("TELEMETRY_SCHEMA_PATH", _DEFAULT_SCHEMA_PATH)
     storage_dir = os.getenv("TELEMETRY_STORAGE_DIR", _DEFAULT_STORAGE_DIR)
-    buffer_backend = os.getenv("TELEMETRY_BUFFER_BACKEND", "memory")
+    buffer_backend = os.getenv("TELEMETRY_BUFFER_BACKEND", "jetstream")
     redis_url = os.getenv("TELEMETRY_BUFFER_REDIS_URL", "redis://localhost:6379/0")
+    nats_url = os.getenv("PANTHEON_NATS_URL", "nats://localhost:4222")
 
     try:
         batch_size = int(os.getenv("TELEMETRY_BATCH_SIZE", "500"))
@@ -510,6 +537,19 @@ def _build_service(lineage_write_store: LineageReadService | None = None) -> Tel
         storage_dir=storage_dir,
         buffer_backend=buffer_backend,
         buffer_redis_url=redis_url,
+        buffer_nats_url=nats_url,
+        buffer_stream_name=os.getenv(
+            "TELEMETRY_BUFFER_STREAM_NAME",
+            "PANTHEON_TELEMETRY_INGEST",
+        ),
+        buffer_subject=os.getenv(
+            "TELEMETRY_BUFFER_SUBJECT",
+            "pantheon.telemetry.ingest",
+        ),
+        buffer_durable_name=os.getenv(
+            "TELEMETRY_BUFFER_DURABLE_NAME",
+            "telemetry-postgres-writer",
+        ),
         batch_size=batch_size,
         batch_interval=batch_interval,
         max_retries=max_retries,
@@ -764,6 +804,7 @@ def health():
 
 
 @app.route("/api/telemetry/ingest", methods=["POST"])
+@require_telemetry_authority(("service", "operator", "admin"))
 def ingest_event():
     """Ingest a single telemetry event.
 
@@ -772,6 +813,12 @@ def ingest_event():
     body = request.get_json(force=True)
     if not isinstance(body, dict):
         return jsonify({"error": {"code": "INVALID_BODY", "message": "Request body must be a JSON object"}}), 400
+
+    try:
+        body = bind_event_tenant(body, request_tenant_id())
+    except TelemetryAuthorityError as exc:
+        payload, status = exc.as_response()
+        return jsonify(payload), status
 
     svc = _get_service()
     try:
@@ -786,6 +833,7 @@ def ingest_event():
 
 
 @app.route("/api/telemetry/ingest/batch", methods=["POST"])
+@require_telemetry_authority(("service", "operator", "admin"))
 def ingest_batch():
     """Ingest a batch of telemetry events.
 
@@ -796,6 +844,22 @@ def ingest_batch():
     events = body.get("events")
     if not isinstance(events, list):
         return jsonify({"error": {"code": "INVALID_BODY", "message": "Body must have an 'events' list"}}), 400
+
+    if any(not isinstance(event, Mapping) for event in events):
+        return jsonify({
+            "error": {
+                "code": "INVALID_BODY",
+                "message": "Every batch event must be a JSON object",
+            }
+        }), 400
+    try:
+        events = [
+            bind_event_tenant(event, request_tenant_id())
+            for event in events
+        ]
+    except TelemetryAuthorityError as exc:
+        payload, status = exc.as_response()
+        return jsonify(payload), status
 
     svc = _get_service()
     try:
@@ -808,6 +872,7 @@ def ingest_batch():
 
 
 @app.route("/api/v1/telemetry/heartbeats", methods=["POST"])
+@require_telemetry_authority(("service", "operator", "admin"))
 def ingest_runtime_heartbeat():
     """Ingest a RuntimeHeartbeat through the canonical TelemetryEvent path."""
     body = request.get_json(force=True)
@@ -842,7 +907,11 @@ def ingest_runtime_heartbeat():
         return jsonify({"error": {"code": exc.code, "message": exc.message}}), 400
 
     try:
+        event = bind_event_tenant(event, request_tenant_id())
         ok = _run_async(svc.ingest(event))
+    except TelemetryAuthorityError as exc:
+        payload, status = exc.as_response()
+        return jsonify(payload), status
     except Exception as exc:
         log.exception("Unexpected error during RuntimeHeartbeat ingest")
         return jsonify({"error": {"code": "INTERNAL_ERROR", "message": str(exc)}}), 500
@@ -853,7 +922,10 @@ def ingest_runtime_heartbeat():
             "detail": "RuntimeHeartbeat failed canonical TelemetryEvent validation; see DLQ for details",
         }), 400
 
-    summary = svc.get_runtime_summary(event["runtime_id"])
+    summary = svc.get_runtime_summary(
+        event["runtime_id"],
+        tenant_id=request_tenant_id(),
+    )
     response: dict[str, Any] = {
         "status": "accepted",
         "event_id": event["event_id"],
@@ -866,10 +938,11 @@ def ingest_runtime_heartbeat():
 
 
 @app.route("/api/v1/telemetry/runtime/<runtime_id>/heartbeat", methods=["GET"])
+@require_telemetry_authority(("service", "operator", "reviewer", "admin"))
 def runtime_heartbeat_status(runtime_id: str):
     """Return the latest RuntimeHeartbeatStatus for one runtime."""
     svc = _get_service()
-    summary = svc.get_runtime_summary(runtime_id)
+    summary = svc.get_runtime_summary(runtime_id, tenant_id=request_tenant_id())
     if summary is None or not summary.get("last_heartbeat_at"):
         return jsonify({
             "error": {
@@ -881,6 +954,7 @@ def runtime_heartbeat_status(runtime_id: str):
 
 
 @app.route("/api/telemetry/stats", methods=["GET"])
+@require_telemetry_authority(("service", "operator", "reviewer", "admin"))
 def stats():
     """Return TelemetryIngestService statistics."""
     svc = _get_service()
@@ -888,18 +962,20 @@ def stats():
 
 
 @app.route("/api/telemetry/runtime-summaries", methods=["GET"])
+@require_telemetry_authority(("service", "operator", "reviewer", "admin"))
 def runtime_summaries():
     """Return telemetry-owned runtime status summaries for BFF read paths."""
     svc = _get_service()
-    summaries = svc.list_runtime_summaries()
+    summaries = svc.list_runtime_summaries(tenant_id=request_tenant_id())
     return jsonify({"summaries": summaries, "count": len(summaries)}), 200
 
 
 @app.route("/api/telemetry/runtime-summaries/<runtime_id>", methods=["GET"])
+@require_telemetry_authority(("service", "operator", "reviewer", "admin"))
 def runtime_summary(runtime_id: str):
     """Return one telemetry-owned runtime status summary."""
     svc = _get_service()
-    summary = svc.get_runtime_summary(runtime_id)
+    summary = svc.get_runtime_summary(runtime_id, tenant_id=request_tenant_id())
     if summary is None:
         return jsonify({
             "error": {
@@ -911,11 +987,12 @@ def runtime_summary(runtime_id: str):
 
 
 @app.route("/api/telemetry/events/<event_id>", methods=["GET"])
+@require_telemetry_authority(("service", "operator", "reviewer", "admin"))
 def accepted_event(event_id: str):
     """Return one exact owner-accepted event without summary races."""
 
     svc = _get_service()
-    event = svc.get_accepted_event(event_id)
+    event = svc.get_accepted_event(event_id, tenant_id=request_tenant_id())
     if event is None:
         return jsonify({
             "error": {
@@ -927,6 +1004,7 @@ def accepted_event(event_id: str):
 
 
 @app.route("/api/telemetry/trade-episodes", methods=["GET"])
+@require_telemetry_authority(("service", "operator", "reviewer", "admin"))
 def trade_episodes():
     """Return trade episode projections with filters, sorting, and pagination."""
     persona_id = request.args.get("persona_id")
@@ -961,11 +1039,13 @@ def trade_episodes():
         coverage_state=coverage_state,
         start_time=start_time,
         end_time=end_time,
+        tenant_id=request_tenant_id(),
     )
     return jsonify(result), 200
 
 
 @app.route("/api/telemetry/trade-episodes/<trade_episode_id>", methods=["GET"])
+@require_telemetry_authority(("service", "operator", "reviewer", "admin"))
 def trade_episode(trade_episode_id: str):
     """Return a single trade episode projection, supporting as-of query parameters."""
     as_of = request.args.get("as_of")
@@ -982,6 +1062,7 @@ def trade_episode(trade_episode_id: str):
         trade_episode_id,
         as_of=as_of,
         as_of_sequence=as_of_sequence,
+        tenant_id=request_tenant_id(),
     )
     if projection is None:
         return jsonify({
@@ -994,6 +1075,7 @@ def trade_episode(trade_episode_id: str):
 
 
 @app.route("/api/telemetry/dlq", methods=["GET"])
+@require_telemetry_authority(("service", "operator", "reviewer", "admin"))
 def dlq_entries():
     """Return dead-letter queue entries.
 
@@ -1008,11 +1090,16 @@ def dlq_entries():
         limit = 100
 
     svc = _get_service()
-    entries = svc.get_dlq_entries(tag_filter=tag, limit=limit)
+    entries = svc.get_dlq_entries(
+        tag_filter=tag,
+        limit=limit,
+        tenant_id=request_tenant_id(),
+    )
     return jsonify({"entries": entries, "count": len(entries)}), 200
 
 
 @app.route("/api/telemetry/replay", methods=["POST"])
+@require_telemetry_authority(("operator", "admin"))
 def replay_dlq():
     """Replay DLQ entries through the full ingest path.
 
@@ -1025,7 +1112,12 @@ def replay_dlq():
     tag = request.args.get("tag") or None
     svc = _get_service()
     try:
-        count = _run_async(svc.replay_dlq(tag_filter=tag))
+        count = _run_async(
+            svc.replay_dlq(
+                tag_filter=tag,
+                tenant_id=request_tenant_id(),
+            )
+        )
     except Exception as exc:
         log.exception("Error during DLQ replay")
         return jsonify({"error": {"code": "INTERNAL_ERROR", "message": str(exc)}}), 500
@@ -1034,6 +1126,7 @@ def replay_dlq():
 
 
 @app.route("/api/telemetry/lineage/runtime-bindings/<binding_id>/projection", methods=["GET"])
+@require_telemetry_authority(("service", "operator", "reviewer", "admin"))
 def runtime_binding_projection(binding_id: str):
     """Return the derived-only runtime binding lineage projection."""
     return _lineage_query_response(
@@ -1043,6 +1136,7 @@ def runtime_binding_projection(binding_id: str):
 
 
 @app.route("/api/telemetry/lineage/capital-pools/<pool_id>/projection", methods=["GET"])
+@require_telemetry_authority(("service", "operator", "reviewer", "admin"))
 def capital_pool_projection(pool_id: str):
     """Return the derived-only capital pool lineage projection."""
     return _lineage_query_response(
@@ -1052,6 +1146,7 @@ def capital_pool_projection(pool_id: str):
 
 
 @app.route("/api/telemetry/lineage/events/<event_id>/trace", methods=["GET"])
+@require_telemetry_authority(("service", "operator", "reviewer", "admin"))
 def telemetry_event_trace(event_id: str):
     """Return the derived-only telemetry event lineage trace."""
     return _lineage_query_response(
@@ -1061,6 +1156,7 @@ def telemetry_event_trace(event_id: str):
 
 
 @app.route("/api/telemetry/lineage/traces/<trace_id>/source-runtime-telemetry", methods=["GET"])
+@require_telemetry_authority(("service", "operator", "reviewer", "admin"))
 def source_runtime_telemetry_trace(trace_id: str):
     """Return the operator-facing source-to-runtime-to-telemetry trace."""
     return _lineage_query_response(
@@ -1070,6 +1166,7 @@ def source_runtime_telemetry_trace(trace_id: str):
 
 
 @app.route("/api/telemetry/lineage/plans/<plan_id>/forensic-trace", methods=["GET"])
+@require_telemetry_authority(("service", "operator", "reviewer", "admin"))
 def forensic_plan_trace(plan_id: str):
     """Return the rollback-aware forensic lineage trace for one plan."""
     return _lineage_query_response(
