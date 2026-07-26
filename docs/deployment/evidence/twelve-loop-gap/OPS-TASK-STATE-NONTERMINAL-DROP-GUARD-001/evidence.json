@@ -1,0 +1,136 @@
+{
+  "task_id": "OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001",
+  "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+  "title": "Reject nonterminal task-state collapse to empty snapshot",
+  "phase": "Twelve Loop Remediation / Orchestrator state integrity",
+  "owner": "Claude",
+  "reviewer": "Codex2",
+  "repository": "ajoe734/pantheon",
+  "task_branch": "task/OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001",
+  "base_branch": "dev",
+  "created_at": "2026-07-26T22:20:00Z",
+  "incident": {
+    "gap_id": "GAP-001",
+    "delta_document": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/POST_DISPATCH_RUNTIME_GAP_DELTA.md",
+    "summary": "Sequence 1592 of the authoritative task-state journal held 22 nonterminal twelve-loop tasks. Sequence 1593 committed an empty board, superseding all 22 at once; sequences 1594-1595 recovered the catalog by append-only replay."
+  },
+  "scope": {
+    "owned_layer": "The task-state journal transition guard in .orchestrator/rewrite/task_state_store.py, its regression suite, the projection verifier live-task count, and the root pytest scrub of inherited task-state environment bindings.",
+    "not_changing": "Hash-chain and event-digest validation, journal storage layout, .orchestrator/config.json, supervisor dispatch policy, and the ai_status archive/prune flow.",
+    "implementation_changed_files": [
+      ".orchestrator/rewrite/task_state_store.py",
+      ".orchestrator/rewrite/test_task_state_store.py",
+      "conftest.py",
+      "scripts/test_verify_task_state_store.py",
+      "scripts/verify_task_state_store.py"
+    ],
+    "evidence_changed_files": [
+      ".orchestrator/task-briefs/ops_task_state_nonterminal_drop_guard_001.md",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001/evidence.sha256"
+    ]
+  },
+  "superseded_approach": {
+    "rejected_rule": "previous_nonterminal > 0 and new_nonterminal == 0",
+    "why_rejected": "The count-only rule was merged and then rejected in review because it also refuses the legitimate completion of the final task on the board: the last nonterminal row moving to done drives the nonterminal count to zero without any task being removed.",
+    "replacement": "Identity-aware comparison of the previous and new task rows. A commit is refused when task identities that were still live disappear from the board, classified as disappearance when some live identities survive and as mass replacement when none do."
+  },
+  "delivered_guard": {
+    "entry_point": ".orchestrator/rewrite/task_state_store.validate_state_transition",
+    "enforced_before": "append_state_commit opens the journal for writing, so a refused commit never reaches the file",
+    "terminal_statuses": ["done", "supersede", "superseded", "cancelled", "canceled"],
+    "fail_closed_rules": [
+      "A blank, unknown, or unreadable status is treated as live work.",
+      "A task row that is not an object, or whose id is missing or blank, is counted as untrackable live work and protected by population comparison.",
+      "A tasks container that is not a list hides an unknown amount of live work and is protected the same way.",
+      "Dropping the tasks key entirely is treated as removing every live identity."
+    ],
+    "permitted_without_a_marker": [
+      "First bootstrap, which has no predecessor identity to preserve.",
+      "The final nonterminal task transitioning to a terminal status, because identity is retained.",
+      "Archiving rows that were already terminal in the predecessor state, including a fully terminal board draining to empty."
+    ],
+    "drain_marker": {
+      "state_key": "task_state_drain",
+      "required_audit_fields": ["reason", "actor", "approved_at"],
+      "task_ids": "Must name every removed live task id.",
+      "rejected_marker_forms": [
+        "A marker that is not an object.",
+        "A marker missing or blanking any audit field.",
+        "A marker whose task_ids is not a list of non-empty task ids.",
+        "A marker that names a task still present on the board, which would pre-authorize a future drop.",
+        "A marker that does not cover every removed task id.",
+        "A marker carried forward byte-identically from the previous commit, which would disable the guard permanently.",
+        "A marker without allow_unidentified when rows lacking a task id are removed."
+      ]
+    }
+  },
+  "acceptance": [
+    {
+      "criterion": "Replay sequence 1592 with 22 tasks followed by an empty state and reject before append",
+      "status": "pass",
+      "proof": ".orchestrator/rewrite/test_task_state_store.py::test_incident_replay_rejects_the_empty_snapshot_after_sequence_1592 seeds a hash-chained journal of 1592 events whose head carries 22 nonterminal tasks, asserts the empty commit is refused as a mass replacement, asserts the journal bytes are unchanged and still at sequence 1592, and then commits the recovery board at sequence 1593 linked to the surviving event hash."
+    },
+    {
+      "criterion": "Allow first bootstrap and a fully terminal explicitly evidenced drain without weakening hash-chain validation",
+      "status": "pass",
+      "proof": "test_allow_first_bootstrap_with_empty_or_no_tasks, test_allow_drain_when_all_previous_tasks_were_terminal, test_completing_and_archiving_the_last_task_stays_possible, test_terminal_rows_may_be_archived_while_live_work_remains, test_audited_drain_marker_authorizes_real_task_removal, and test_guard_rejection_does_not_weaken_hash_chain_validation, which shows a journal edited to force the collapse still fails digest validation. validate_event, the event digest, and the previous-event hash chain are untouched by this task."
+    },
+    {
+      "criterion": "Inherited live PANTHEON_TASK_STATE_EVENT_LOG cannot be used by tests or task worktrees",
+      "status": "pass",
+      "proof": "conftest.scrub_inherited_task_state_env drops PANTHEON_TASK_STATE_STORE_MODE and PANTHEON_TASK_STATE_EVENT_LOG at pytest_configure and again at pytest_runtest_setup. test_root_conftest_scrubs_an_inherited_live_event_log asserts the scrub contract, test_inherited_live_task_state_env_is_absent_during_tests asserts the resulting process state, and test_task_worktree_pytest_run_cannot_reach_an_inherited_live_event_log runs a child pytest with an authoritative binding exported and asserts the bound journal path is never created. _prepare_parent additionally refuses a relative event log path, which would otherwise mint a private journal inside the task worktree."
+    },
+    {
+      "criterion": "Rejected writes leave journal and projection unchanged and parity remains verifiable",
+      "status": "pass",
+      "proof": "test_unrelated_workers_not_superseded_and_parity_preserved_after_rejected_drop and the incident replay both compare the journal bytes before and after the refused commit, and scripts/test_verify_task_state_store.py::test_verifier_reports_parity_after_rejected_nonterminal_drop re-runs the verifier after a refused commit and asserts exit 0 with ok true."
+    },
+    {
+      "criterion": "Regression covers unrelated workers not being superseded after a rejected empty snapshot",
+      "status": "pass",
+      "proof": "test_unrelated_workers_not_superseded_and_parity_preserved_after_rejected_drop projects the journal after the refusal and asserts both task rows keep their in_progress and todo statuses and that the worker records are preserved. test_partial_nonterminal_disappearance_is_rejected covers the single-task variant."
+    },
+    {
+      "criterion": "Relevant tests PR checks independent review and merge to dev are required",
+      "status": "pending_review",
+      "proof": "Verification commands below are green locally; the PR, independent review by Codex2, and the merge into dev remain outstanding at the time of this cut."
+    }
+  ],
+  "verification": {
+    "python": "/home/lupin/pantheon/.venv/bin/python3",
+    "integrated_head": "a593091043717da8c6c2ddd186b7314d21cb377f",
+    "integrated_dev_head": "6578ef968",
+    "commands": [
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/pytest .orchestrator/rewrite scripts/test_verify_task_state_store.py -q",
+        "result": "143 passed"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/pytest scripts/test_ai_status.py -q",
+        "result": "133 passed, 25 subtests passed"
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator /home/lupin/pantheon/.venv/bin/pytest .orchestrator/test_supervisor.py -q",
+        "result": "399 passed"
+      }
+    ]
+  },
+  "known_limitations": [
+    "scripts/ai_status.py prune_archived_active_tasks removes an active row whose id already has an archive snapshot. When such a row is still nonterminal that is a real removal, so the guard now refuses it until the caller supplies an audited drain marker. This repair path is outside this task's artifact scope and is left to a follow-up in ai_status.py; the normal done flow is unaffected because a task row is archived and pruned only after it is already terminal in the predecessor commit.",
+    "The drain marker is a store-level contract only. No config, dispatch policy, or status command was changed to emit one."
+  ],
+  "compliance_declarations": {
+    "config_modified": false,
+    "hash_chain_validation_weakened": false,
+    "hosted_deployed": false,
+    "twelve_loop_completed": false,
+    "baseline_catalog_modified": false
+  },
+  "commits": {
+    "superseded_anchor": "a965d821fc4d234642e79c9f198cb063fb2b5c99",
+    "superseded_pull_request": 4199,
+    "implementation_anchor": "7aa1a256e415cc8f34627b258ec2fceaf72350c7",
+    "dev_integration_merge": "a593091043717da8c6c2ddd186b7314d21cb377f"
+  }
+}
