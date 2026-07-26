@@ -2342,6 +2342,17 @@ class SidecarTaskTests(unittest.TestCase):
     def tearDown(self) -> None:
         _teardown_test_isolation(self)
 
+    @staticmethod
+    def _artifact_guard(task_id: str, path: str, allowed: list[str]) -> dict:
+        return {
+            "schema_version": 1,
+            "program_id": "test-program",
+            "catalog_sha256": "a" * 64,
+            "task_id": task_id,
+            "artifact_scope": [{"repo": "pantheon", "path": path}],
+            "allowed_overlap_task_ids": allowed,
+        }
+
     def test_assign_supports_sidecar_metadata_from_env(self) -> None:
         env = {
             "AI_NAME": "Codex",
@@ -2377,6 +2388,133 @@ class SidecarTaskTests(unittest.TestCase):
         self.assertIsNotNone(task)
         self.assertEqual(task["owner"], "Antigravity2")
         self.assertEqual(task["reviewer"], "Claude")
+
+    def test_create_only_assign_rejects_existing_task_without_overwrite(self) -> None:
+        ai_status.command_assign(
+            self.state,
+            ["APP-003", "Codex", "Claude", "Original contract"],
+        )
+        before = deepcopy(ai_status.get_task(self.state, "APP-003"))
+
+        with mock.patch.dict(
+            os.environ,
+            {"TASK_ASSIGN_CREATE_ONLY": "true"},
+            clear=False,
+        ):
+            with self.assertRaisesRegex(SystemExit, "create-only assignment refused"):
+                ai_status.command_assign(
+                    self.state,
+                    ["APP-003", "Gemini", "Copilot", "Conflicting contract"],
+                )
+
+        self.assertEqual(ai_status.get_task(self.state, "APP-003"), before)
+
+    def test_assign_preserves_explicit_next_instruction(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {"TASK_NEXT": "Wait for the governed deployment lease"},
+            clear=False,
+        ):
+            ai_status.command_assign(
+                self.state,
+                ["APP-004", "Codex", "Claude", "Lease-gated task"],
+            )
+
+        task = ai_status.get_task(self.state, "APP-004")
+        self.assertEqual(task["next"], "Wait for the governed deployment lease")
+
+    def test_protected_existing_scope_rejects_later_rogue_assignment(self) -> None:
+        protected = {
+            "id": "CATALOG-BFF-001",
+            "status": "todo",
+            "artifacts": ["services/control-plane/bff"],
+            "target_repo": "pantheon",
+            "artifact_conflict_guard": self._artifact_guard(
+                "CATALOG-BFF-001",
+                "services/control-plane/bff",
+                ["PPL-ALLOC-009"],
+            ),
+        }
+        self.state["tasks"].append(protected)
+
+        with mock.patch.dict(
+            os.environ,
+            {"TASK_ARTIFACTS": "services/control-plane/bff/main.py"},
+            clear=False,
+        ):
+            with self.assertRaisesRegex(SystemExit, "rejected overlap"):
+                ai_status.command_assign(
+                    self.state,
+                    ["ROGUE-BFF-001", "Codex", "Claude", "Rogue overlap"],
+                )
+
+        self.assertIsNone(ai_status.get_task(self.state, "ROGUE-BFF-001"))
+
+    def test_protected_incoming_scope_allows_declared_external_owner(self) -> None:
+        self.state["tasks"].append(
+            {
+                "id": "PPL-ALLOC-009",
+                "status": "blocked",
+                "artifacts": ["services/control-plane/bff"],
+            }
+        )
+        guard = self._artifact_guard(
+            "CATALOG-BFF-002",
+            "services/control-plane/bff/main.py",
+            ["PPL-ALLOC-009"],
+        )
+        with mock.patch.dict(
+            os.environ,
+            {
+                "TASK_ARTIFACTS": "services/control-plane/bff/main.py",
+                "TASK_METADATA_JSON": json.dumps(
+                    {
+                        "target_repo": "pantheon",
+                        "artifacts": ["services/control-plane/bff/main.py"],
+                        "artifact_conflict_guard": guard,
+                    }
+                ),
+            },
+            clear=False,
+        ):
+            ai_status.command_assign(
+                self.state,
+                ["CATALOG-BFF-002", "Codex", "Claude", "Protected task"],
+            )
+
+        self.assertIsNotNone(ai_status.get_task(self.state, "CATALOG-BFF-002"))
+
+    def test_existing_artifact_conflict_guard_is_immutable(self) -> None:
+        guard = self._artifact_guard(
+            "CATALOG-BFF-003",
+            "services/control-plane/bff/main.py",
+            [],
+        )
+        self.state["tasks"].append(
+            {
+                "id": "CATALOG-BFF-003",
+                "status": "todo",
+                "owner": "Codex",
+                "reviewer": "Claude",
+                "title": "Protected task",
+                "artifacts": ["services/control-plane/bff/main.py"],
+                "target_repo": "pantheon",
+                "artifact_conflict_guard": guard,
+            }
+        )
+        tampered = deepcopy(guard)
+        tampered["allowed_overlap_task_ids"] = ["ROGUE-BFF-001"]
+
+        with mock.patch.dict(
+            os.environ,
+            {"TASK_METADATA_JSON": json.dumps({"artifact_conflict_guard": tampered})},
+            clear=False,
+        ):
+            with self.assertRaisesRegex(SystemExit, "guard is immutable"):
+                ai_status.command_assign(
+                    self.state,
+                    ["CATALOG-BFF-003", "Codex", "Claude", "Protected task"],
+                )
 
     def test_display_task_title_marks_sidecar_parent(self) -> None:
         title = ai_status.display_task_title(

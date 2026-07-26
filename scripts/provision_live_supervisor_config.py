@@ -35,6 +35,19 @@ REPO_OWNED_SUPERVISOR_LEASE_POLICY = {
         "work_progress_stale_seconds",
     ),
 }
+REPO_OWNED_READY_DISPATCHER_POLICY = (
+    "enabled",
+    "disabled_agents",
+    "sidecar_only_agents",
+    "target_workload",
+    "max_tasks_per_agent_by_agent",
+    "max_dispatches_per_tick",
+    "max_active_workers_per_task",
+    "max_concurrent_per_account",
+    "max_concurrent_workers",
+    "require_explicit_provider_accounts",
+    "allow_legacy_provider_account_aliases",
+)
 TASK_STATE_STORE_DEFAULT_FILENAME = "task-state-events.jsonl"
 
 
@@ -176,6 +189,29 @@ def apply_provider_account_schema(
         )
 
 
+def apply_ready_dispatcher_policy(
+    repo_config: dict[str, Any], rendered: dict[str, Any]
+) -> None:
+    """Keep fleet enablement and capacity aligned with the reviewed repo policy.
+
+    The split-root live config may carry environment-specific paths and
+    credentials, but a stale overlay must not silently disable all healthy
+    worker lanes after a supervisor restart. Emergency capacity changes belong
+    in the reviewed repo policy so provisioning, drift repair, and the running
+    supervisor converge on the same frontier.
+    """
+
+    repo_ready = repo_config.get("ready_dispatcher")
+    if repo_ready is None:
+        return
+    rendered_ready = rendered.setdefault("ready_dispatcher", {})
+    if not isinstance(repo_ready, dict) or not isinstance(rendered_ready, dict):
+        raise ValueError("ready_dispatcher config must be a JSON object")
+    for key in REPO_OWNED_READY_DISPATCHER_POLICY:
+        if key in repo_ready:
+            rendered_ready[key] = copy.deepcopy(repo_ready[key])
+
+
 def apply_supervisor_lease_policy(
     repo_config: dict[str, Any], rendered: dict[str, Any]
 ) -> None:
@@ -256,6 +292,7 @@ def build_live_config(
 ) -> dict[str, Any]:
     rendered = deep_merge(repo_config, existing_live_config or {})
     apply_provider_account_schema(repo_config, rendered)
+    apply_ready_dispatcher_policy(repo_config, rendered)
     apply_supervisor_lease_policy(repo_config, rendered)
     apply_task_state_store(
         repo_config,
