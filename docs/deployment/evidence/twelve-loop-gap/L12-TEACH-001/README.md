@@ -1,7 +1,6 @@
 # L12-TEACH-001 Persona Teaching evidence
 
-Status: reviewer-requested hardening is ready for independent `Codex`
-re-review.
+Status: blocked on canonical hosted-proof ownership/order revision.
 
 This packet proves the reconciled service boundary delivered by
 `L12-TEACH-001`: authenticated service/tenant teaching requests, tenant-bound
@@ -99,6 +98,32 @@ The reviewer-hardening delivery is merged but has not been proven active on a
 hosted runtime. The downstream manifest and hosted verification tasks must cite
 an exact deployed commit and real owner-service terminal record before raising
 maturity to proven-live.
+
+### Hosted activation observation
+
+The read-only replacement-dev observation at `2026-07-26T13:00:10Z` found the
+active Compose checkout at
+`6a0281e8f8996883faae3ddaab7505b2ddc68ac1`. That commit contains the original
+delivery merge but not reviewer hardening merge
+`022bb35f4cd93c82571fcaf2799905a7043efcd2` or evidence refresh merge
+`26bf434f2ebab5c47af4692cb1eb71440a74d839`. Neither the training-session nor
+persona image exposes a source-revision label, so the running images cannot be
+bound to a newer source identity.
+
+The hosted `training-session-svc` returned `200` from both health endpoints,
+but its non-secret configuration readback showed `PANTHEON_PERSISTENCE_POSTURE`
+as `dev`, `TRAINING_SESSION_EVENT_STORE_BACKEND` as `jsonl`, all four
+persona/approval/target authority URL templates absent, and the persona
+authority token absent. A healthy local-fallback service without an owner API
+cannot emit the required real persona terminal record.
+
+The task cannot repair this configuration within its declared artifact scope.
+`L12-MANIFEST-001` is the sole Compose activation owner and
+`L12-VERIFY-LEARN-001` owns the cross-service teaching drill, but both currently
+depend on `L12-TEACH-001`; `L12-HOSTED-001` is later still. The reviewer gate
+therefore creates a dependency cycle. Supervisor must either move the hosted
+proof requirement to those downstream tasks or change ordering/ownership so
+activation and verification can run before this task returns to review.
 
 ## Validation
 

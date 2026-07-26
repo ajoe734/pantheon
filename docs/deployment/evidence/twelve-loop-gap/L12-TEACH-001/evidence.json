@@ -3,8 +3,8 @@
   "task_id": "L12-TEACH-001",
   "owner": "Codex2",
   "reviewer": "Codex",
-  "status": "ready_for_review",
-  "generated_at": "2026-07-26T12:21:41Z",
+  "status": "blocked",
+  "generated_at": "2026-07-26T13:00:10Z",
   "scope": {
     "target_repo": "pantheon",
     "merge_target": "dev",
@@ -107,10 +107,38 @@
   },
   "hosted_terminal_readback": {
     "status": "not_claimed",
-    "reason": "The reviewer-hardening follow-up is merged to dev but is not yet proven active on a hosted runtime; local/fake records are not hosted proof.",
+    "reason": "The active hosted runtime cannot produce the required owner-service terminal record: it predates the reviewer-hardening merge and has neither the authoritative Postgres mode nor persona authority endpoints activated. Local/fake records are not hosted proof.",
     "activation_task": "L12-MANIFEST-001",
     "service_boundary_verification_task": "L12-VERIFY-LEARN-001",
-    "hosted_acceptance_task": "L12-HOSTED-001"
+    "hosted_acceptance_task": "L12-HOSTED-001",
+    "observed_at": "2026-07-26T13:00:10Z",
+    "active_runtime_observation": {
+      "compose_checkout_head": "6a0281e8f8996883faae3ddaab7505b2ddc68ac1",
+      "original_delivery_is_ancestor": true,
+      "reviewer_hardening_is_ancestor": false,
+      "evidence_refresh_is_ancestor": false,
+      "training_session_container": "pantheon-training-session-svc-1",
+      "healthz_status": 200,
+      "readyz_status": 200,
+      "persistence_posture": "dev",
+      "event_store_backend": "jsonl",
+      "persona_readback_url_configured": false,
+      "approval_readback_url_configured": false,
+      "persona_target_write_url_configured": false,
+      "persona_target_readback_url_configured": false,
+      "persona_authority_token_configured": false,
+      "training_session_image_revision_label": null,
+      "persona_image_revision_label": null
+    },
+    "ownership_blocker": {
+      "task_scope_allows_compose_activation": false,
+      "manifest_owner": "L12-MANIFEST-001",
+      "manifest_depends_on_this_task": true,
+      "service_drill_owner": "L12-VERIFY-LEARN-001",
+      "service_drill_depends_on_this_task": true,
+      "hosted_drill_owner": "L12-HOSTED-001",
+      "required_resolution": "Supervisor must either move hosted terminal readback proof to the downstream activation/verification tasks or allow those tasks to activate and verify before L12-TEACH-001 review."
+    }
   },
   "validation": [
     {
@@ -124,6 +152,14 @@
     {
       "command": "git diff --check",
       "result": "exit 0"
+    },
+    {
+      "command": "git -C /home/lupin/pantheon-ci-deploy/dev-root rev-parse HEAD; git -C /home/lupin/pantheon-ci-deploy/dev-root merge-base --is-ancestor <required-merge> HEAD",
+      "result": "hosted checkout 6a0281e8f8996883faae3ddaab7505b2ddc68ac1 contains original merge 6636507f274ffcaf4b6d42b1c3cb8adb09dd49f5 but not reviewer hardening 022bb35f4cd93c82571fcaf2799905a7043efcd2 or evidence refresh 26bf434f2ebab5c47af4692cb1eb71440a74d839"
+    },
+    {
+      "command": "curl hosted training-session healthz/readyz and inspect only non-secret runtime configuration presence",
+      "result": "healthz=200 readyz=200; persistence_posture=dev; event_store_backend=jsonl; persona/approval/write/readback URL templates absent; persona authority token absent; training-session and persona image revision labels absent"
     }
   ],
   "acceptance": {
@@ -144,6 +180,7 @@
     "Docker Compose/BFF credential forwarding and worker activation are outside this task artifact scope and belong to L12-MANIFEST-001.",
     "A real hosted persona terminal readback must be captured by L12-VERIFY-LEARN-001/L12-HOSTED-001 after the exact merged commit is deployed.",
     "The full suite warning is the existing Starlette httpx deprecation warning.",
-    "PR #4166 is merged, but the reviewer-hardening delivery remains unhosted until downstream deployment selects and proves its exact merged commit."
+    "PR #4166 is merged, but the reviewer-hardening delivery remains unhosted until downstream deployment selects and proves its exact merged commit.",
+    "The canonical dependency graph currently requires L12-TEACH-001 before L12-MANIFEST-001 and L12-VERIFY-LEARN-001, while L12-TEACH-001 review now requires the hosted proof owned by those downstream tasks; supervisor contract or ordering revision is required."
   ]
 }
