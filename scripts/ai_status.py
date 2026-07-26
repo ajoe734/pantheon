@@ -13,7 +13,7 @@ import tempfile
 from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from threading import local
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo
@@ -4950,6 +4950,136 @@ def _bridge_assignment_from_metadata(
     return normalized_bridge
 
 
+def _normalized_task_artifact_scope(task: Mapping[str, Any]) -> list[tuple[str, str]]:
+    raw_artifacts = task.get("artifacts")
+    if not isinstance(raw_artifacts, list):
+        return []
+    target_repo = str(task.get("target_repo") or "").strip() or "pantheon"
+    normalized: list[tuple[str, str]] = []
+    for raw in raw_artifacts:
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        value = raw.strip().rstrip("/")
+        prefix, separator, suffix = value.partition(":")
+        if separator and prefix in {"execute-plans", "frontend-checkout"}:
+            normalized.append(("execute-plans", suffix.lstrip("/")))
+        elif value.startswith("execute-plans/"):
+            normalized.append(
+                ("execute-plans", value.removeprefix("execute-plans/"))
+            )
+        elif value.startswith("frontend-checkout/"):
+            normalized.append(
+                ("execute-plans", value.removeprefix("frontend-checkout/"))
+            )
+        else:
+            normalized.append((target_repo, value))
+    return normalized
+
+
+def _artifact_paths_overlap(left: str, right: str) -> bool:
+    left_parts = PurePosixPath(left.rstrip("/")).parts
+    right_parts = PurePosixPath(right.rstrip("/")).parts
+    shorter = min(len(left_parts), len(right_parts))
+    return left_parts[:shorter] == right_parts[:shorter]
+
+
+def _validated_artifact_conflict_guard(
+    task: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    guard = task.get("artifact_conflict_guard")
+    if guard is None:
+        return None
+    required = {
+        "schema_version",
+        "program_id",
+        "catalog_sha256",
+        "task_id",
+        "artifact_scope",
+        "allowed_overlap_task_ids",
+    }
+    if not isinstance(guard, dict) or set(guard) != required:
+        raise SystemExit("artifact conflict guard contract is not exact")
+    task_id = str(task.get("id") or "").strip()
+    if (
+        guard.get("schema_version") != 1
+        or guard.get("task_id") != task_id
+        or not isinstance(guard.get("program_id"), str)
+        or not guard["program_id"].strip()
+        or not isinstance(guard.get("catalog_sha256"), str)
+        or not re.fullmatch(r"[0-9a-f]{64}", guard["catalog_sha256"])
+    ):
+        raise SystemExit(f"artifact conflict guard identity is invalid for {task_id}")
+    allowed = guard.get("allowed_overlap_task_ids")
+    if (
+        not isinstance(allowed, list)
+        or any(not isinstance(item, str) or not item.strip() for item in allowed)
+        or len(allowed) != len(set(allowed))
+    ):
+        raise SystemExit(f"artifact conflict guard allowlist is invalid for {task_id}")
+    scope = guard.get("artifact_scope")
+    if (
+        not isinstance(scope, list)
+        or any(
+            not isinstance(item, dict)
+            or set(item) != {"repo", "path"}
+            or not isinstance(item.get("repo"), str)
+            or not item["repo"].strip()
+            or not isinstance(item.get("path"), str)
+            or not item["path"].strip()
+            for item in scope
+        )
+    ):
+        raise SystemExit(f"artifact conflict guard scope is invalid for {task_id}")
+    expected_scope = [
+        {"repo": repo, "path": path}
+        for repo, path in sorted(_normalized_task_artifact_scope(task))
+    ]
+    if scope != expected_scope:
+        raise SystemExit(f"artifact conflict guard scope mismatch for {task_id}")
+    return guard
+
+
+def enforce_artifact_conflict_admission(
+    state: dict[str, Any],
+    candidate: dict[str, Any],
+) -> None:
+    candidate_id = str(candidate.get("id") or "").strip()
+    candidate_guard = _validated_artifact_conflict_guard(candidate)
+    candidate_scope = _normalized_task_artifact_scope(candidate)
+    for other in state.get("tasks", []):
+        if not isinstance(other, dict):
+            continue
+        other_id = str(other.get("id") or "").strip()
+        if not other_id or other_id == candidate_id:
+            continue
+        if str(other.get("status") or "") in {"done", "cancelled", "superseded"}:
+            continue
+        other_guard = _validated_artifact_conflict_guard(other)
+        if candidate_guard is None and other_guard is None:
+            continue
+        overlap = any(
+            left_repo == right_repo and _artifact_paths_overlap(left_path, right_path)
+            for left_repo, left_path in candidate_scope
+            for right_repo, right_path in _normalized_task_artifact_scope(other)
+        )
+        if not overlap:
+            continue
+        if (
+            candidate_guard is not None
+            and other_id not in candidate_guard["allowed_overlap_task_ids"]
+        ):
+            raise SystemExit(
+                f"artifact conflict guard rejected overlap: {candidate_id} <-> {other_id}"
+            )
+        if (
+            other_guard is not None
+            and candidate_id not in other_guard["allowed_overlap_task_ids"]
+        ):
+            raise SystemExit(
+                f"artifact conflict guard rejected overlap: {candidate_id} <-> {other_id}"
+            )
+
+
 def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
     from wave_guards import WaveGuardError, check_wave_assign
 
@@ -4962,6 +5092,7 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
     task_id, owner, reviewer = args[0], canonical_agent_name(args[1]), canonical_agent_name(args[2])
     title = args[3] if len(args) > 3 else os.environ.get("TASK_TITLE")
     summary_zh = os.environ.get("TASK_SUMMARY_ZH")
+    assignment_next = os.environ.get("TASK_NEXT", "").strip()
     metadata = task_metadata_from_env()
     ensure_agent(owner)
     ensure_agent(reviewer)
@@ -4990,6 +5121,37 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
         acceptance = parse_csv_env("TASK_ACCEPTANCE")
 
     task = get_task(state, task_id)
+    if task is not None and parse_bool_env("TASK_ASSIGN_CREATE_ONLY") is True:
+        raise SystemExit(
+            f"Task {task_id} already exists; create-only assignment refused."
+        )
+    if (
+        task is not None
+        and task.get("artifact_conflict_guard") is not None
+        and "artifact_conflict_guard" in metadata
+        and metadata["artifact_conflict_guard"] != task["artifact_conflict_guard"]
+    ):
+        raise SystemExit(
+            f"Task {task_id} artifact conflict guard is immutable."
+        )
+    if task is None:
+        candidate = {
+            "id": task_id,
+            "artifacts": artifacts,
+            **metadata,
+        }
+    else:
+        candidate = deepcopy(task)
+        candidate.update(metadata)
+    candidate.update(
+        {
+            "id": task_id,
+            "owner": owner,
+            "reviewer": reviewer,
+            "title": title,
+        }
+    )
+    enforce_artifact_conflict_admission(state, candidate)
     timestamp = iso_now()
     if task is None:
         if archived_task_snapshot(task_id):
@@ -5007,7 +5169,7 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
             "depends_on": depends_on,
             "artifacts": artifacts,
             "acceptance": acceptance,
-            "next": "Assignment created",
+            "next": assignment_next or "Assignment created",
             "last_update": timestamp,
         }
         task.update(metadata)
@@ -5042,7 +5204,7 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
         if metadata:
             task.update(metadata)
         task["last_update"] = timestamp
-        task["next"] = "Ownership updated"
+        task["next"] = assignment_next or "Ownership updated"
 
     agent = get_agent(state, owner)
     if os.environ.get("TASK_BRANCH"):

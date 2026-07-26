@@ -9,6 +9,7 @@ import pytest
 
 from provision_live_supervisor_config import (
     apply_provider_account_schema,
+    apply_ready_dispatcher_policy,
     apply_supervisor_lease_policy,
     apply_task_state_store,
     build_live_config,
@@ -64,6 +65,43 @@ def test_apply_provider_account_schema_rejects_unknown_provider_without_account(
 
     with pytest.raises(ValueError, match="unexpected"):
         apply_provider_account_schema(repo, rendered)
+
+
+def test_apply_ready_dispatcher_policy_replaces_stale_disabled_capacity_overlay() -> None:
+    repo = {
+        "ready_dispatcher": {
+            "enabled": True,
+            "disabled_agents": ["Antigravity2", "Copilot"],
+            "sidecar_only_agents": [],
+            "target_workload": {"Codex": 30, "Codex2": 30},
+            "max_tasks_per_agent_by_agent": {"Codex": 4, "Codex2": 4},
+            "max_dispatches_per_tick": 10,
+            "max_active_workers_per_task": 1,
+            "max_concurrent_per_account": {"codex1": 4, "codex2": 4},
+            "max_concurrent_workers": 13,
+        }
+    }
+    rendered = {
+        "ready_dispatcher": {
+            "enabled": True,
+            "disabled_agents": ["Codex", "Codex2"],
+            "sidecar_only_agents": ["Codex"],
+            "target_workload": {"Codex": 0, "Codex2": 0},
+            "max_tasks_per_agent_by_agent": {"Codex": 0, "Codex2": 0},
+            "max_dispatches_per_tick": 1,
+            "max_active_workers_per_task": 2,
+            "max_concurrent_per_account": {"codex1": 0, "codex2": 0},
+            "max_concurrent_workers": 1,
+            "environment_only_key": "preserved",
+        }
+    }
+
+    apply_ready_dispatcher_policy(repo, rendered)
+
+    assert rendered["ready_dispatcher"] == {
+        **repo["ready_dispatcher"],
+        "environment_only_key": "preserved",
+    }
 
 
 def test_apply_supervisor_lease_policy_replaces_stale_live_overlay() -> None:
