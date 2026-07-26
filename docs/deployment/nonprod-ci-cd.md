@@ -31,11 +31,28 @@ scripts/deploy_nonprod_vm.sh
 ```
 
 The script SSHes to the target VM through `gcloud compute ssh`, snapshots the
-current human-facing remote checkout, prepares a managed clean deploy worktree
-under `~/pantheon-ci-deploy`, starts the expected Compose stack from the pinned
-commit, and runs health checks. This keeps CI deploys from overwriting operator
-or agent work in the human-facing checkout (`/home/lupin/pantheon` on the
-replacement dev VM; the staging paths remain independently configured).
+current human-facing remote checkout, prepares a managed clean deploy
+worktree, starts the expected Compose stack from the pinned commit, and runs
+health checks. Dev worktrees live under
+`~/pantheon-ci-deploy/managed-deploy-worktrees`; the independently configured
+staging paths retain their established `~/pantheon-ci-deploy` layout. This
+keeps CI deploys from overwriting operator or agent work in the human-facing
+checkout (`/home/lupin/pantheon` on the replacement dev VM).
+
+The dev root deployment checkout is
+`/home/lupin/pantheon-ci-deploy/managed-deploy-worktrees/dev-root`. It is
+deliberately separate from the supervisor's installed command root at
+`/home/lupin/pantheon-ci-deploy/dev-root`: deployments detach at the accepted
+backend runtime SHA, while the command root remains pinned to the reviewed
+`origin/dev` command SHA. The remote deploy controller rejects equality,
+parent/child overlap, dot traversal, and symlink aliases before checkout.
+Hosted probes derive their path from the same `DEV_DEPLOY_WORKTREE_ROOT`.
+
+The workflow executes the deployment controller from its protected `dev`
+controller checkout, not from the older accepted runtime payload. The
+controller must advertise `dev-root-isolation-v1` before the workflow can
+obtain the environment lease. Runtime source and images still come from the
+exact compatibility-manifest-approved backend SHA.
 
 For private repository fetches on the VM, GitHub Actions passes its short-lived
 `GITHUB_TOKEN` only to the deploy SSH session. The token is used as a temporary
