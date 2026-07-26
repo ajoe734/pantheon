@@ -4,13 +4,16 @@ Isolate the telemetry lineage full-stack test from ambient runtime-manager
 configuration.
 
 - Owner: Claude
-- Reviewer: Antigravity
+- Reviewer: Codex2 (reassigned from Antigravity by Human/Ops at
+  2026-07-26T20:24:36Z; earlier evidence cuts named the previous reviewer)
 - Phase: Twelve-loop verification hardening
 - Manifest: [`evidence.json`](evidence.json)
 - Changed implementation file: `services/telemetry/test_lineage_write_path.py`
 - Delivery: [PR #4213](https://github.com/ajoe734/pantheon/pull/4213), squash-merged
   into `dev` as `0410a89f0e4ac3c53e7bc5192aebe6925423b4da` on 2026-07-26T20:18:15Z
-  with all Branch CI Gate and Orchestrator Sync checks green
+  with all Branch CI Gate and Orchestrator Sync checks green; the evidence re-cut
+  followed as [PR #4214](https://github.com/ajoe734/pantheon/pull/4214), merged as
+  `f687d7aeb7b9f9ebabb85247a11afbfd7c3fc16b`
 
 ## Root cause
 
@@ -89,6 +92,10 @@ Three regression guards were added:
 | Same file with hostile ambient URL, token file, and data dir exported | 7 tests, OK |
 | `unittest discover -s services/telemetry` — baseline at `HEAD~1` | 193 tests, 3 errors, 1 skip |
 | `unittest discover -s services/telemetry` — post-change | 197 tests, 2 errors, 1 skip |
+
+All four rows were independently re-run by the owner on merged `dev` tip
+`f687d7aeb` in a fresh worker session and reproduced the same counts; the exact
+re-verification command lines are appended to `validation.commands`.
 
 The two remaining discovery errors (`services.telemetry.test_capture`,
 `services.telemetry.test_feedback_adapter`) are pre-existing bare-module import
