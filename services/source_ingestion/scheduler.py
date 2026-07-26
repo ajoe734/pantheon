@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -25,6 +26,7 @@ from services.foundation import (
 
 from .connectors.base import IngestRun, IngestRunStatus, SourceEvidenceError, SourceRecord
 from .ingest_manager import IngestManager
+from .process_lock import exclusive_file_lock
 
 
 @dataclass(frozen=True)
@@ -281,6 +283,8 @@ class JsonlIngestScheduleStore:
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
+        self._lock_path = self.path.with_suffix(self.path.suffix + ".lock")
+        self._lock = threading.RLock()
         self._runs: dict[str, IngestRun] = {}
         self._watermarks: dict[str, SourceWatermark] = {}
         self._frontier: dict[str, CrawlFrontierItem] = {}
@@ -288,6 +292,10 @@ class JsonlIngestScheduleStore:
         self.reload()
 
     def reload(self) -> None:
+        with exclusive_file_lock(self._lock_path, self._lock):
+            self._reload_unlocked(recover_incomplete=True)
+
+    def _reload_unlocked(self, *, recover_incomplete: bool) -> None:
         self._runs = {}
         self._watermarks = {}
         self._frontier = {}
@@ -319,7 +327,8 @@ class JsonlIngestScheduleStore:
                 self._receipts[receipt.ingest_run_id] = receipt
             else:
                 raise SourceEvidenceError(f"Unsupported ingest schedule record: {record_type or '<missing>'}")
-        self._recover_incomplete_receipts()
+        if recover_incomplete:
+            self._recover_incomplete_receipts()
 
     def _recover_incomplete_receipts(self) -> list[IngestReceipt]:
         """Durably terminalize receipts stranded by a post-processing crash.
@@ -369,37 +378,56 @@ class JsonlIngestScheduleStore:
         return recovered
 
     def upsert_run(self, run: IngestRun) -> IngestRun:
-        self._append("ingest_run", run.ingest_run_id, run.to_dict())
-        self._runs[run.ingest_run_id] = run
-        return run
+        with exclusive_file_lock(self._lock_path, self._lock):
+            self._reload_unlocked(recover_incomplete=False)
+            self._append("ingest_run", run.ingest_run_id, run.to_dict())
+            self._runs[run.ingest_run_id] = run
+            return run
 
     def update_watermark(self, watermark: SourceWatermark) -> SourceWatermark:
-        self._append("source_watermark", watermark.connector_id, watermark.to_dict())
-        self._watermarks[watermark.connector_id] = watermark
-        return watermark
+        with exclusive_file_lock(self._lock_path, self._lock):
+            self._reload_unlocked(recover_incomplete=False)
+            self._append("source_watermark", watermark.connector_id, watermark.to_dict())
+            self._watermarks[watermark.connector_id] = watermark
+            return watermark
 
     def get_run(self, ingest_run_id: str) -> IngestRun | None:
-        return self._runs.get(ingest_run_id)
+        with exclusive_file_lock(self._lock_path, self._lock):
+            self._reload_unlocked(recover_incomplete=False)
+            return self._runs.get(ingest_run_id)
 
     def list_runs(self) -> list[IngestRun]:
-        return list(self._runs.values())
+        with exclusive_file_lock(self._lock_path, self._lock):
+            self._reload_unlocked(recover_incomplete=False)
+            return list(self._runs.values())
 
     def upsert_receipt(self, receipt: IngestReceipt) -> IngestReceipt:
-        self._append("ingest_receipt", receipt.ingest_run_id, receipt.to_dict())
-        self._receipts[receipt.ingest_run_id] = receipt
-        return receipt
+        with exclusive_file_lock(self._lock_path, self._lock):
+            self._reload_unlocked(recover_incomplete=False)
+            self._append("ingest_receipt", receipt.ingest_run_id, receipt.to_dict())
+            self._receipts[receipt.ingest_run_id] = receipt
+            return receipt
 
     def get_receipt(self, ingest_run_id: str) -> IngestReceipt | None:
-        return self._receipts.get(ingest_run_id)
+        with exclusive_file_lock(self._lock_path, self._lock):
+            self._reload_unlocked(recover_incomplete=False)
+            return self._receipts.get(ingest_run_id)
 
     def list_receipts(self, *, connector_id: str | None = None) -> list[IngestReceipt]:
-        receipts = list(self._receipts.values())
-        if connector_id is not None:
-            receipts = [receipt for receipt in receipts if receipt.connector_id == connector_id]
-        return sorted(receipts, key=lambda receipt: (receipt.finished_at or receipt.started_at, receipt.ingest_run_id))
+        with exclusive_file_lock(self._lock_path, self._lock):
+            self._reload_unlocked(recover_incomplete=False)
+            receipts = list(self._receipts.values())
+            if connector_id is not None:
+                receipts = [receipt for receipt in receipts if receipt.connector_id == connector_id]
+            return sorted(
+                receipts,
+                key=lambda receipt: (receipt.finished_at or receipt.started_at, receipt.ingest_run_id),
+            )
 
     def get_watermark(self, connector_id: str) -> SourceWatermark | None:
-        return self._watermarks.get(connector_id)
+        with exclusive_file_lock(self._lock_path, self._lock):
+            self._reload_unlocked(recover_incomplete=False)
+            return self._watermarks.get(connector_id)
 
     def enqueue_frontier(
         self,
@@ -411,33 +439,42 @@ class JsonlIngestScheduleStore:
         available_at: str | None = None,
         job_parameters: Mapping[str, Any] | None = None,
     ) -> CrawlFrontierItem:
-        for item in self._frontier.values():
-            if (
-                item.connector_id == connector_id
-                and item.status in {"queued", "running", "retry"}
-                and dict(item.job_parameters) == dict(job_parameters or {})
-            ):
-                return item
-        item = CrawlFrontierItem.new(
-            connector_id=connector_id,
-            trigger_type=trigger_type,
-            trace_id=trace_id,
-            max_attempts=max_attempts,
-            available_at=available_at,
-            job_parameters=job_parameters,
-        )
-        self._append("crawl_frontier_item", item.frontier_id, item.to_dict())
-        self._frontier[item.frontier_id] = item
-        return item
+        with exclusive_file_lock(self._lock_path, self._lock):
+            self._reload_unlocked(recover_incomplete=False)
+            for item in self._frontier.values():
+                if (
+                    item.connector_id == connector_id
+                    and item.status in {"queued", "running", "retry"}
+                    and dict(item.job_parameters) == dict(job_parameters or {})
+                ):
+                    return item
+            item = CrawlFrontierItem.new(
+                connector_id=connector_id,
+                trigger_type=trigger_type,
+                trace_id=trace_id,
+                max_attempts=max_attempts,
+                available_at=available_at,
+                job_parameters=job_parameters,
+            )
+            self._append("crawl_frontier_item", item.frontier_id, item.to_dict())
+            self._frontier[item.frontier_id] = item
+            return item
 
     def list_frontier(self, status: str | None = None) -> list[CrawlFrontierItem]:
+        with exclusive_file_lock(self._lock_path, self._lock):
+            self._reload_unlocked(recover_incomplete=False)
+            return self._list_frontier_unlocked(status=status)
+
+    def _list_frontier_unlocked(self, status: str | None = None) -> list[CrawlFrontierItem]:
         items = list(self._frontier.values())
         if status:
             items = [item for item in items if item.status == status]
         return sorted(items, key=lambda item: (item.available_at or item.created_at, item.frontier_id))
 
     def get_frontier(self, frontier_id: str) -> CrawlFrontierItem | None:
-        return self._frontier.get(frontier_id)
+        with exclusive_file_lock(self._lock_path, self._lock):
+            self._reload_unlocked(recover_incomplete=False)
+            return self._frontier.get(frontier_id)
 
     def claim_due_frontier(
         self,
@@ -453,30 +490,42 @@ class JsonlIngestScheduleStore:
             if connector_ids is None
             else {str(connector_id).strip() for connector_id in connector_ids if str(connector_id).strip()}
         )
-        claimed: list[CrawlFrontierItem] = []
-        for item in self.list_frontier():
-            if len(claimed) >= limit:
-                break
-            if item.status not in {"queued", "retry"}:
-                continue
-            if allowed_connector_ids is not None and item.connector_id not in allowed_connector_ids:
-                continue
-            try:
-                claimed.append(self.claim_frontier(item.frontier_id, now=now))
-            except SourceEvidenceError as exc:
-                if "not yet available" in str(exc):
+        with exclusive_file_lock(self._lock_path, self._lock):
+            self._reload_unlocked(recover_incomplete=False)
+            claimed: list[CrawlFrontierItem] = []
+            now_dt = _parse_utc(now or _utc_now())
+            for item in self._list_frontier_unlocked():
+                if len(claimed) >= limit:
+                    break
+                if item.status not in {"queued", "retry"}:
                     continue
-                raise
-        return claimed
+                if allowed_connector_ids is not None and item.connector_id not in allowed_connector_ids:
+                    continue
+                if item.available_at and _parse_utc(item.available_at) > now_dt:
+                    continue
+                claimed_item = self._claimed_frontier(item)
+                self._append("crawl_frontier_item", claimed_item.frontier_id, claimed_item.to_dict())
+                self._frontier[item.frontier_id] = claimed_item
+                claimed.append(claimed_item)
+            return claimed
 
     def claim_frontier(self, frontier_id: str, *, now: str | None = None) -> CrawlFrontierItem:
-        item = self._require_frontier(frontier_id)
-        if item.status not in {"queued", "retry"}:
-            raise SourceEvidenceError(f"frontier item is not claimable: {frontier_id} status={item.status}")
-        now_dt = _parse_utc(now or _utc_now())
-        if item.available_at and _parse_utc(item.available_at) > now_dt:
-            raise SourceEvidenceError(f"frontier item is not yet available: {frontier_id}")
-        claimed_item = CrawlFrontierItem(
+        with exclusive_file_lock(self._lock_path, self._lock):
+            self._reload_unlocked(recover_incomplete=False)
+            item = self._require_frontier(frontier_id)
+            if item.status not in {"queued", "retry"}:
+                raise SourceEvidenceError(f"frontier item is not claimable: {frontier_id} status={item.status}")
+            now_dt = _parse_utc(now or _utc_now())
+            if item.available_at and _parse_utc(item.available_at) > now_dt:
+                raise SourceEvidenceError(f"frontier item is not yet available: {frontier_id}")
+            claimed_item = self._claimed_frontier(item)
+            self._append("crawl_frontier_item", claimed_item.frontier_id, claimed_item.to_dict())
+            self._frontier[item.frontier_id] = claimed_item
+            return claimed_item
+
+    @staticmethod
+    def _claimed_frontier(item: CrawlFrontierItem) -> CrawlFrontierItem:
+        return CrawlFrontierItem(
             **{
                 **item.to_dict(),
                 "status": "running",
@@ -484,25 +533,24 @@ class JsonlIngestScheduleStore:
                 "updated_at": _utc_now(),
             }
         )
-        self._append("crawl_frontier_item", claimed_item.frontier_id, claimed_item.to_dict())
-        self._frontier[item.frontier_id] = claimed_item
-        return claimed_item
 
     def complete_frontier(self, frontier_id: str, *, ingest_run_id: str) -> CrawlFrontierItem:
-        item = self._require_frontier(frontier_id)
-        updated = CrawlFrontierItem(
-            **{
-                **item.to_dict(),
-                "status": "done",
-                "available_at": None,
-                "last_error": None,
-                "ingest_run_id": ingest_run_id,
-                "updated_at": _utc_now(),
-            }
-        )
-        self._append("crawl_frontier_item", frontier_id, updated.to_dict())
-        self._frontier[frontier_id] = updated
-        return updated
+        with exclusive_file_lock(self._lock_path, self._lock):
+            self._reload_unlocked(recover_incomplete=False)
+            item = self._require_frontier(frontier_id)
+            updated = CrawlFrontierItem(
+                **{
+                    **item.to_dict(),
+                    "status": "done",
+                    "available_at": None,
+                    "last_error": None,
+                    "ingest_run_id": ingest_run_id,
+                    "updated_at": _utc_now(),
+                }
+            )
+            self._append("crawl_frontier_item", frontier_id, updated.to_dict())
+            self._frontier[frontier_id] = updated
+            return updated
 
     def replay_frontier(
         self,
@@ -512,24 +560,26 @@ class JsonlIngestScheduleStore:
         trigger_type: str = "dlq_replay",
         available_at: str | None = None,
     ) -> CrawlFrontierItem:
-        item = self._require_frontier(frontier_id)
-        if item.status not in {"failed", "retry"}:
-            raise SourceEvidenceError(f"frontier item is not replayable: {frontier_id} status={item.status}")
-        updated = CrawlFrontierItem(
-            **{
-                **item.to_dict(),
-                "status": "retry",
-                "trigger_type": trigger_type,
-                "trace_id": trace_id or item.trace_id,
-                "max_attempts": max(item.max_attempts, item.attempts + 1),
-                "available_at": available_at or _utc_now(),
-                "last_error": None,
-                "updated_at": _utc_now(),
-            }
-        )
-        self._append("crawl_frontier_item", frontier_id, updated.to_dict())
-        self._frontier[frontier_id] = updated
-        return updated
+        with exclusive_file_lock(self._lock_path, self._lock):
+            self._reload_unlocked(recover_incomplete=False)
+            item = self._require_frontier(frontier_id)
+            if item.status not in {"failed", "retry"}:
+                raise SourceEvidenceError(f"frontier item is not replayable: {frontier_id} status={item.status}")
+            updated = CrawlFrontierItem(
+                **{
+                    **item.to_dict(),
+                    "status": "retry",
+                    "trigger_type": trigger_type,
+                    "trace_id": trace_id or item.trace_id,
+                    "max_attempts": max(item.max_attempts, item.attempts + 1),
+                    "available_at": available_at or _utc_now(),
+                    "last_error": None,
+                    "updated_at": _utc_now(),
+                }
+            )
+            self._append("crawl_frontier_item", frontier_id, updated.to_dict())
+            self._frontier[frontier_id] = updated
+            return updated
 
     def fail_frontier(
         self,
@@ -539,21 +589,23 @@ class JsonlIngestScheduleStore:
         backoff_seconds: int,
         ingest_run_id: str | None = None,
     ) -> CrawlFrontierItem:
-        item = self._require_frontier(frontier_id)
-        terminal = item.attempts >= item.max_attempts
-        updated = CrawlFrontierItem(
-            **{
-                **item.to_dict(),
-                "status": "failed" if terminal else "retry",
-                "available_at": None if terminal else _utc_after(backoff_seconds),
-                "last_error": error,
-                "ingest_run_id": ingest_run_id or item.ingest_run_id,
-                "updated_at": _utc_now(),
-            }
-        )
-        self._append("crawl_frontier_item", frontier_id, updated.to_dict())
-        self._frontier[frontier_id] = updated
-        return updated
+        with exclusive_file_lock(self._lock_path, self._lock):
+            self._reload_unlocked(recover_incomplete=False)
+            item = self._require_frontier(frontier_id)
+            terminal = item.attempts >= item.max_attempts
+            updated = CrawlFrontierItem(
+                **{
+                    **item.to_dict(),
+                    "status": "failed" if terminal else "retry",
+                    "available_at": None if terminal else _utc_after(backoff_seconds),
+                    "last_error": error,
+                    "ingest_run_id": ingest_run_id or item.ingest_run_id,
+                    "updated_at": _utc_now(),
+                }
+            )
+            self._append("crawl_frontier_item", frontier_id, updated.to_dict())
+            self._frontier[frontier_id] = updated
+            return updated
 
     def recover_stale_running(
         self,
@@ -565,26 +617,28 @@ class JsonlIngestScheduleStore:
 
         if timeout_seconds < 1:
             raise SourceEvidenceError("frontier running timeout must be >= 1")
-        now_value = now or _utc_now()
-        now_dt = _parse_utc(now_value)
-        recovered: list[CrawlFrontierItem] = []
-        for item in self.list_frontier(status="running"):
-            if (now_dt - _parse_utc(item.updated_at)).total_seconds() < timeout_seconds:
-                continue
-            terminal = item.attempts >= item.max_attempts
-            updated = CrawlFrontierItem(
-                **{
-                    **item.to_dict(),
-                    "status": "failed" if terminal else "retry",
-                    "available_at": None if terminal else now_value,
-                    "last_error": "stale running frontier recovered after worker restart",
-                    "updated_at": now_value,
-                }
-            )
-            self._append("crawl_frontier_item", item.frontier_id, updated.to_dict())
-            self._frontier[item.frontier_id] = updated
-            recovered.append(updated)
-        return recovered
+        with exclusive_file_lock(self._lock_path, self._lock):
+            self._reload_unlocked(recover_incomplete=False)
+            now_value = now or _utc_now()
+            now_dt = _parse_utc(now_value)
+            recovered: list[CrawlFrontierItem] = []
+            for item in self._list_frontier_unlocked(status="running"):
+                if (now_dt - _parse_utc(item.updated_at)).total_seconds() < timeout_seconds:
+                    continue
+                terminal = item.attempts >= item.max_attempts
+                updated = CrawlFrontierItem(
+                    **{
+                        **item.to_dict(),
+                        "status": "failed" if terminal else "retry",
+                        "available_at": None if terminal else now_value,
+                        "last_error": "stale running frontier recovered after worker restart",
+                        "updated_at": now_value,
+                    }
+                )
+                self._append("crawl_frontier_item", item.frontier_id, updated.to_dict())
+                self._frontier[item.frontier_id] = updated
+                recovered.append(updated)
+            return recovered
 
     def _require_frontier(self, frontier_id: str) -> CrawlFrontierItem:
         item = self._frontier.get(frontier_id)
