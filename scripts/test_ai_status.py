@@ -1316,6 +1316,29 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(archive_task["status"], "done")
         self.assertEqual(archive_task["terminal_outcome"], "completed")
 
+    def test_done_records_missing_review_file_from_owner_closeout_env(self) -> None:
+        self.state["tasks"][0]["status"] = "review_approved"
+        self.state["tasks"][0].pop("review_file", None)
+        review_file = ".orchestrator/reviews/REG-002-review-claude.md"
+
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"AI_NAME": "Codex", "REVIEW_FILE": review_file},
+                clear=False,
+            ),
+            mock.patch.object(ai_status, "collect_done_delivery_metadata", return_value={}),
+            mock.patch.object(ai_status, "archived_task_snapshot", return_value=None),
+        ):
+            ai_status.command_done(
+                self.state,
+                ["REG-002", "Owner finalized with the reviewed evidence manifest"],
+            )
+
+        archive_task = self.state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY]["snapshots"][0]["task"]
+        self.assertEqual(archive_task["status"], "done")
+        self.assertEqual(archive_task["review_file"], review_file)
+
     def test_reconcile_merged_done_requires_human_ops(self) -> None:
         self.state["tasks"][0]["status"] = "blocked"
         with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
