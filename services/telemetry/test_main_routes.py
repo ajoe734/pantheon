@@ -15,6 +15,7 @@ Run with:
 from __future__ import annotations
 
 import asyncio
+import copy
 import os
 import sys
 import threading
@@ -222,6 +223,20 @@ _LINEAGE_CORPUS = {
 }
 
 
+def _with_tenant_scope(corpus: dict, tenant_id: str) -> dict:
+    scoped = copy.deepcopy(corpus)
+    for records in scoped.get("node_sets", {}).values():
+        if not isinstance(records, list):
+            continue
+        for record in records:
+            if isinstance(record, dict):
+                record["tenant_id"] = tenant_id
+    return scoped
+
+
+_LINEAGE_CORPUS = _with_tenant_scope(_LINEAGE_CORPUS, _TENANT_ID)
+
+
 class _AuthorizedClient:
     """Flask test-client wrapper that applies the normal telemetry authority."""
 
@@ -347,6 +362,67 @@ class TestMainRoutes(unittest.TestCase):
         readback = self.client.get("/api/telemetry/events/route-known-001")
         self.assertEqual(readback.status_code, 200)
         self.assertEqual(readback.get_json(), event)
+
+    def test_batch_requires_at_least_one_durable_acceptance(self):
+        wholly_rejected = self.client.post(
+            "/api/telemetry/ingest/batch",
+            json={
+                "events": [
+                    _make_event(
+                        binding_id="missing-batch-binding",
+                        event_id="route-batch-rejected-001",
+                    )
+                ]
+            },
+        )
+        empty = self.client.post(
+            "/api/telemetry/ingest/batch",
+            json={"events": []},
+        )
+
+        self.assertEqual(wholly_rejected.status_code, 400)
+        self.assertEqual(
+            wholly_rejected.get_json(),
+            {
+                "status": "rejected",
+                "ingested": 0,
+                "rejected": 1,
+                "error": {
+                    "code": "BATCH_NOT_ACCEPTED",
+                    "message": "No telemetry event received a durable acknowledgement",
+                },
+            },
+        )
+        self.assertEqual(empty.status_code, 400)
+        self.assertEqual(empty.get_json()["error"]["code"], "EMPTY_BATCH")
+
+    def test_mixed_batch_returns_202_with_explicit_partial_semantics(self):
+        response = self.client.post(
+            "/api/telemetry/ingest/batch",
+            json={
+                "events": [
+                    _make_event(event_id="route-batch-accepted-001"),
+                    _make_event(
+                        binding_id="missing-batch-binding",
+                        event_id="route-batch-rejected-002",
+                    ),
+                ]
+            },
+        )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(
+            response.get_json(),
+            {
+                "status": "partially_accepted",
+                "ingested": 1,
+                "rejected": 1,
+            },
+        )
+        readback = self.client.get(
+            "/api/telemetry/events/route-batch-accepted-001"
+        )
+        self.assertEqual(readback.status_code, 200)
 
     def test_ingest_rejects_missing_authority(self):
         resp = self.raw_client.post(
@@ -838,6 +914,51 @@ class TestMainRoutes(unittest.TestCase):
         self.assertEqual(data["refs"]["approval_decision_ids"], ["approval-http-001"])
         self.assertEqual(data["refs"]["broker_order_event_ids"], ["boe-http-001"])
         self.assertEqual(data["refs"]["evolution_decision_ids"], ["evo-http-001"])
+
+    def test_all_lineage_routes_are_tenant_scoped_and_hide_legacy_records(self):
+        urls = (
+            f"/api/telemetry/lineage/runtime-bindings/{_KNOWN_BINDING_ID}/projection",
+            "/api/telemetry/lineage/capital-pools/pool-alpha/projection",
+            "/api/telemetry/lineage/events/evt-lineage-001/trace",
+            "/api/telemetry/lineage/traces/trace-http-001/source-runtime-telemetry",
+            "/api/telemetry/lineage/plans/plan-456/forensic-trace",
+        )
+
+        for url in urls:
+            with self.subTest(url=url, tenant="tenant-alpha"):
+                self.assertEqual(self.client.get(url).status_code, 200)
+
+        with patch.dict(
+            os.environ,
+            {"PANTHEON_TELEMETRY_ALLOWED_TENANTS": "tenant-alpha,tenant-beta"},
+        ):
+            for url in urls:
+                with self.subTest(url=url, tenant="tenant-beta"):
+                    hidden = self.client.get(
+                        url,
+                        headers={"X-Tenant-Id": "tenant-beta"},
+                    )
+                    self.assertEqual(hidden.status_code, 404)
+                    self.assertEqual(
+                        hidden.get_json()["error"]["code"],
+                        "LINEAGE_TARGET_NOT_FOUND",
+                    )
+
+        legacy_corpus = copy.deepcopy(_LINEAGE_CORPUS)
+        for records in legacy_corpus["node_sets"].values():
+            for record in records:
+                record.pop("tenant_id", None)
+        legacy_service = LineageReadService()
+        legacy_service.load_corpus(legacy_corpus)
+        current_service = _main._lineage_svc
+        try:
+            _main._lineage_svc = legacy_service
+            for url in urls:
+                with self.subTest(url=url, tenant="legacy-unscoped"):
+                    hidden = self.client.get(url)
+                    self.assertEqual(hidden.status_code, 404)
+        finally:
+            _main._lineage_svc = current_service
 
     def test_missing_lineage_target_returns_404(self):
         resp = self.client.get("/api/telemetry/lineage/events/evt-does-not-exist/trace")
