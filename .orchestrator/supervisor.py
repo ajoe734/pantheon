@@ -10434,6 +10434,7 @@ def agent_dispatch_loads(
     active_statuses: set[str],
 ) -> dict[str, list[int]]:
     loads: dict[str, list[int]] = {}
+    represented_queue_event_ids: set[str] = set()
 
     for worker in state.get("workers", {}).values():
         if worker.get("status") not in active_statuses:
@@ -10446,11 +10447,16 @@ def agent_dispatch_loads(
         if not agent_name:
             continue
         loads.setdefault(agent_name, []).append(priority)
+        queue_event_id = str(worker.get("queue_event_id") or "")
+        if queue_event_id:
+            represented_queue_event_ids.add(queue_event_id)
 
     queue_records = state.get("queue", {}).get("events", {})
     for event in load_event_queue(config):
         event_id = str(event.get("event_id") or "")
         if not event_id:
+            continue
+        if event_id in represented_queue_event_ids:
             continue
         record = queue_records.get(event_id, {})
         if record.get("status") in {"completed", "failed"}:
