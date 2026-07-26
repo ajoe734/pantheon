@@ -70,19 +70,19 @@ def _canonical_json(value: Mapping[str, Any]) -> str:
     return json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
 
 
-def source_version_digest(source: SourceRecord) -> str:
-    """Return the stable content identity for one normalized source version.
+def source_version_identity(source: SourceRecord) -> dict[str, Any]:
+    """Return the content projection that defines one normalized source version.
 
-    Run-local correlation fields are deliberately excluded. Re-ingesting the
-    same normalized content in a later run therefore maps to the same version,
-    while a revised title, reference, body, content hash, or governed metadata
+    Run-local correlation fields are deliberately excluded so that re-ingesting
+    the same normalized content in a later run maps to the same version, while
+    a revised title, reference, body, content hash, or governed metadata
     creates a distinct event and distillation job.
     """
 
     metadata = dict(source.metadata)
     for volatile_key in ("ingest_run_id", "source_ingest_run_id", "trace_id"):
         metadata.pop(volatile_key, None)
-    payload = {
+    return {
         "source_id": source.source_id,
         "connector_id": source.connector_id,
         "source_type": source.source_type.value,
@@ -90,7 +90,41 @@ def source_version_digest(source: SourceRecord) -> str:
         "content_ref": source.content_ref,
         "metadata": metadata,
     }
-    return "sha256:" + hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
+
+
+def source_version_digest(source: SourceRecord) -> str:
+    """Return the stable content identity digest for one source version."""
+
+    identity = _canonical_json(source_version_identity(source))
+    return "sha256:" + hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
+def _same_version_identity(
+    *,
+    stored_payload_json: str,
+    incoming_payload_json: str,
+    versioned: bool,
+) -> bool:
+    """Return True when two committed snapshots describe the same version.
+
+    Legacy (non-versioned) rows carry no content identity, so they must match
+    byte for byte. Versioned rows compare on the digest projection instead, so
+    a re-ingest that only changed ``ingest_run_id`` or ``trace_id`` resolves to
+    the version already committed rather than failing admission.
+    """
+
+    if stored_payload_json == incoming_payload_json:
+        return True
+    if not versioned:
+        return False
+    try:
+        stored = SourceRecord.from_dict(json.loads(stored_payload_json))
+        incoming = SourceRecord.from_dict(json.loads(incoming_payload_json))
+    except Exception:
+        return False
+    return _canonical_json(source_version_identity(stored)) == _canonical_json(
+        source_version_identity(incoming)
+    )
 
 
 def _stable_job_id(source_id: str, source_digest: str | None = None) -> str:
@@ -484,10 +518,20 @@ class DistillationJobQueue:
                     """,
                     (source_id, source_digest),
                 ).fetchone()
-                if (
-                    existing_source is None
-                    or str(existing_source["payload_json"]) != payload_json
-                    or str(existing_source["event_version"]) != event_version
+                if existing_source is None or str(
+                    existing_source["event_version"]
+                ) != event_version:
+                    raise DistillationError(
+                        f"source version identity collision: {source_id}:{source_digest}"
+                    )
+                # The committed snapshot is the first observation, so it may
+                # carry different run-local correlation fields than this one.
+                # Only the content identity has to agree; anything else under
+                # the same digest means a tampered ledger.
+                if not _same_version_identity(
+                    stored_payload_json=str(existing_source["payload_json"]),
+                    incoming_payload_json=payload_json,
+                    versioned=versioned,
                 ):
                     raise DistillationError(
                         f"source version identity collision: {source_id}:{source_digest}"
