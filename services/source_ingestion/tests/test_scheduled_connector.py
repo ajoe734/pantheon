@@ -185,7 +185,7 @@ def test_run_scheduled_force_reconciles_changed_connector_before_cadence(client)
     assert forced.json()["summary"]["forced_connector_count"] == 1
 
 
-def test_two_scheduler_workers_create_one_run_and_one_source_record(client) -> None:
+def test_two_scheduler_threads_create_one_run_and_one_source_record(client) -> None:
     test_client, _, module = client
     configured = _configure_with_records(test_client, connector_id="conn-two-workers")
     assert configured.status_code == 201, configured.text

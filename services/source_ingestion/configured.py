@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import urllib.parse
 import urllib.request
 import urllib.error
@@ -17,6 +18,7 @@ from services.external_egress import is_internal_host, open_external_url
 from .connectors import SourceConnector, SourceEvidenceError, SourceRecord
 from .external_sources import validate_external_source_connector, validate_external_source_record
 from .provider_adapters import execute_provider_owned_adapter, validate_provider_adapter_token
+from .process_lock import exclusive_file_lock
 from .scheduler import IngestBatch
 
 
@@ -76,10 +78,16 @@ class JsonlConnectorScheduleStore:
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
+        self._lock_path = self.path.with_suffix(self.path.suffix + ".lock")
+        self._lock = threading.RLock()
         self._schedules: dict[str, ConnectorScheduleConfig] = {}
         self.reload()
 
     def reload(self) -> None:
+        with exclusive_file_lock(self._lock_path, self._lock):
+            self._reload_unlocked()
+
+    def _reload_unlocked(self) -> None:
         self._schedules = {}
         if not self.path.exists():
             return
@@ -109,21 +117,34 @@ class JsonlConnectorScheduleStore:
     ) -> ConnectorScheduleConfig:
         if not str(connector_id).strip():
             raise SourceEvidenceError("schedule connector_id is required")
-        config = ConnectorScheduleConfig(
-            connector_id=connector_id,
-            interval_seconds=interval_seconds,
-            enabled=enabled,
-            updated_at=_utc_now(),
-        )
-        self._append("connector_schedule", connector_id, config.to_dict())
-        self._schedules[connector_id] = config
-        return config
+        with exclusive_file_lock(self._lock_path, self._lock):
+            self._reload_unlocked()
+            existing = self._schedules.get(connector_id)
+            if (
+                existing is not None
+                and existing.interval_seconds == interval_seconds
+                and existing.enabled == enabled
+            ):
+                return existing
+            config = ConnectorScheduleConfig(
+                connector_id=connector_id,
+                interval_seconds=interval_seconds,
+                enabled=enabled,
+                updated_at=_utc_now(),
+            )
+            self._append("connector_schedule", connector_id, config.to_dict())
+            self._schedules[connector_id] = config
+            return config
 
     def get_schedule(self, connector_id: str) -> ConnectorScheduleConfig | None:
-        return self._schedules.get(connector_id)
+        with exclusive_file_lock(self._lock_path, self._lock):
+            self._reload_unlocked()
+            return self._schedules.get(connector_id)
 
     def list_schedules(self) -> list[ConnectorScheduleConfig]:
-        return list(self._schedules.values())
+        with exclusive_file_lock(self._lock_path, self._lock):
+            self._reload_unlocked()
+            return list(self._schedules.values())
 
     def _append(self, record_type: str, record_id: str, payload: Mapping[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -169,11 +190,17 @@ class JsonlConfiguredConnectorStore:
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
+        self._lock_path = self.path.with_suffix(self.path.suffix + ".lock")
+        self._lock = threading.RLock()
         self._configs: dict[str, ConfiguredConnector] = {}
         self._states: dict[str, dict[str, Any]] = {}
         self.reload()
 
     def reload(self) -> None:
+        with exclusive_file_lock(self._lock_path, self._lock):
+            self._reload_unlocked()
+
+    def _reload_unlocked(self) -> None:
         self._configs = {}
         self._states = {}
         if not self.path.exists():
@@ -211,22 +238,40 @@ class JsonlConfiguredConnectorStore:
     def upsert_config(self, connector: SourceConnector, fetch: Mapping[str, Any]) -> ConfiguredConnector:
         connector = validate_external_source_connector(connector)
         normalized_fetch = self.normalize_fetch_config(fetch)
-        config = ConfiguredConnector(connector=connector, fetch=normalized_fetch, updated_at=_utc_now())
-        self._append("connector_config", connector.connector_id, config.to_dict())
-        self._configs[connector.connector_id] = config
-        return config
+        with exclusive_file_lock(self._lock_path, self._lock):
+            self._reload_unlocked()
+            existing = self._configs.get(connector.connector_id)
+            if (
+                existing is not None
+                and existing.connector.to_dict() == connector.to_dict()
+                and dict(existing.fetch) == normalized_fetch
+            ):
+                return existing
+            config = ConfiguredConnector(connector=connector, fetch=normalized_fetch, updated_at=_utc_now())
+            self._append("connector_config", connector.connector_id, config.to_dict())
+            self._configs[connector.connector_id] = config
+            return config
 
     def normalize_fetch_config(self, fetch: Mapping[str, Any]) -> dict[str, Any]:
         """Return the persisted fetch contract without mutating the store."""
         return self._validate_fetch_config(fetch)
 
     def get_config(self, connector_id: str) -> ConfiguredConnector | None:
-        return self._configs.get(connector_id)
+        with exclusive_file_lock(self._lock_path, self._lock):
+            self._reload_unlocked()
+            return self._configs.get(connector_id)
 
     def list_configs(self) -> list[ConfiguredConnector]:
-        return list(self._configs.values())
+        with exclusive_file_lock(self._lock_path, self._lock):
+            self._reload_unlocked()
+            return list(self._configs.values())
 
     def get_fetch_state(self, connector_id: str) -> dict[str, Any]:
+        with exclusive_file_lock(self._lock_path, self._lock):
+            self._reload_unlocked()
+            return self._fetch_state_unlocked(connector_id)
+
+    def _fetch_state_unlocked(self, connector_id: str) -> dict[str, Any]:
         return dict(
             self._states.get(
                 connector_id,
@@ -242,19 +287,21 @@ class JsonlConfiguredConnectorStore:
         )
 
     def record_fetch_attempt(self, connector_id: str, *, success: bool, error: str | None = None) -> dict[str, Any]:
-        state = self.get_fetch_state(connector_id)
-        state["connector_id"] = connector_id
-        state["attempts"] = int(state.get("attempts") or 0) + 1
-        if success:
-            state["successful_attempts"] = int(state.get("successful_attempts") or 0) + 1
-            state["last_error"] = None
-        else:
-            state["failed_attempts"] = int(state.get("failed_attempts") or 0) + 1
-            state["last_error"] = str(error or "configured connector fetch failed")
-        state["updated_at"] = _utc_now()
-        self._append("connector_fetch_state", connector_id, state)
-        self._states[connector_id] = state
-        return dict(state)
+        with exclusive_file_lock(self._lock_path, self._lock):
+            self._reload_unlocked()
+            state = self._fetch_state_unlocked(connector_id)
+            state["connector_id"] = connector_id
+            state["attempts"] = int(state.get("attempts") or 0) + 1
+            if success:
+                state["successful_attempts"] = int(state.get("successful_attempts") or 0) + 1
+                state["last_error"] = None
+            else:
+                state["failed_attempts"] = int(state.get("failed_attempts") or 0) + 1
+                state["last_error"] = str(error or "configured connector fetch failed")
+            state["updated_at"] = _utc_now()
+            self._append("connector_fetch_state", connector_id, state)
+            self._states[connector_id] = state
+            return dict(state)
 
     def _validate_fetch_config(self, fetch: Mapping[str, Any]) -> dict[str, Any]:
         _reject_inline_fetch_secrets(fetch)
