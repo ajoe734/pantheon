@@ -34,9 +34,10 @@ import json
 import logging
 import math
 import pathlib
+import threading
 from collections import defaultdict
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 from .executor import execute, ExecutionError, _signal_context_metadata, _signal_market_price
 from .symbol_parser import SymbolParseError
@@ -52,6 +53,57 @@ log = logging.getLogger(__name__)
 # How long to buffer an incomplete FinRL run_id batch before partial execution
 _REBALANCE_TIMEOUT_BARS = 3
 _SUPPORTED_SCHEMA_MAJOR = 1
+
+
+class _ExecutionClaimHeartbeat:
+    """Renew one Redis claim while its execution side effect is in progress."""
+
+    def __init__(
+        self,
+        *,
+        renew: Callable[[dict], bool],
+        signal: dict,
+        interval_seconds: float,
+    ) -> None:
+        self._renew = renew
+        self._signal = signal
+        self._interval = interval_seconds
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._run,
+            name=f"signal-claim-heartbeat-{signal.get('signal_id', 'unknown')}",
+            daemon=True,
+        )
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=max(self._interval * 2.0, 1.0))
+        if self._thread.is_alive():
+            log.error(
+                "[%s] Claim heartbeat did not stop within the join deadline",
+                self._signal.get("signal_id", "<unknown>"),
+            )
+
+    def _run(self) -> None:
+        while not self._stop.wait(self._interval):
+            try:
+                renewed = bool(self._renew(self._signal))
+            except Exception as exc:  # noqa: BLE001 - lease ambiguity fails closed on reclaim
+                log.error(
+                    "[%s] Claim heartbeat failed during execution: %s",
+                    self._signal.get("signal_id", "<unknown>"),
+                    exc,
+                )
+                return
+            if not renewed:
+                log.error(
+                    "[%s] Claim heartbeat lost ownership during execution",
+                    self._signal.get("signal_id", "<unknown>"),
+                )
+                return
 
 
 class SignalConsumer:
@@ -532,6 +584,43 @@ class SignalConsumer:
             )
         return renewed
 
+    def _start_execution_claim_heartbeat(
+        self,
+        signal: dict,
+    ) -> _ExecutionClaimHeartbeat | None:
+        """Start continuous renewal when the store publishes a safe interval."""
+        renew = getattr(self._store, "renew_claim", None)
+        interval_provider = getattr(
+            self._store,
+            "claim_renewal_interval_seconds",
+            None,
+        )
+        if not callable(renew) or not callable(interval_provider):
+            return None
+        try:
+            interval = float(interval_provider())
+        except (TypeError, ValueError, OverflowError) as exc:
+            log.error(
+                "[%s] Invalid claim heartbeat interval; refusing execution: %s",
+                signal.get("signal_id", "<unknown>"),
+                exc,
+            )
+            return None
+        if not math.isfinite(interval) or interval <= 0:
+            log.error(
+                "[%s] Invalid claim heartbeat interval %.6f; refusing execution",
+                signal.get("signal_id", "<unknown>"),
+                interval,
+            )
+            return None
+        heartbeat = _ExecutionClaimHeartbeat(
+            renew=renew,
+            signal=signal,
+            interval_seconds=interval,
+        )
+        heartbeat.start()
+        return heartbeat
+
     def _tick_rebalance_buffer(self, algo: Any | None) -> None:
         completed: list[str] = []
         for run_id, batch in self._rebalance_buffer.items():
@@ -589,6 +678,7 @@ class SignalConsumer:
             self._remember_processed(signal["signal_id"])
             self._ack_signal(signal)
             return
+        heartbeat = self._start_execution_claim_heartbeat(signal)
         try:
             execute(signal, algo)
             # Mark as processed and ack only after successful execution
@@ -603,6 +693,9 @@ class SignalConsumer:
             log.exception("Unexpected execution error for signal %s: %s",
                           signal.get("signal_id"), exc)
             self._enqueue_dlq(signal, f"unexpected_error: {exc}")
+        finally:
+            if heartbeat is not None:
+                heartbeat.stop()
 
     def _record_execution_error_noop(self, signal: dict, algo: Any | None, exc: Exception) -> None:
         reason = _execution_error_reason(exc)

@@ -365,6 +365,10 @@ return moved
             self._forget_claim(token)
         return renewed
 
+    def claim_renewal_interval_seconds(self) -> float:
+        """Return a safe heartbeat interval for the current visibility lease."""
+        return max(min(self._visibility_timeout / 3.0, 5.0), 0.01)
+
     def reclaim_expired_inflight(self) -> int:
         """Reclaim expired in-flight entries across workers back to pending queue."""
         pattern = f"{self._queue_key}:inflight:*:claims"

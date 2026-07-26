@@ -12,6 +12,7 @@ import multiprocessing
 import shutil
 import socket
 import subprocess
+import threading
 import time
 import unittest
 import uuid
@@ -610,6 +611,112 @@ class TestRedisPendingSignalStoreClaimVisibility(_RealRedisDockerTestCase):
         self.assertEqual(worker_b.inflight_depth(), 0)
         self.assertEqual(worker_a.queue_depth(), 0)
         self.assertTrue(worker_a.is_processed("sig-slow-buffer"))
+
+    def test_claim_renews_through_execution_longer_than_visibility_ttl(self):
+        from services.execution.lean_runtime.pending_signal_store import (
+            RedisPendingSignalStore,
+            binding_queue_key,
+        )
+
+        binding_id = "b-long-execution"
+        visibility_timeout = 0.2
+        signal = _signal(
+            "sig-long-execution",
+            binding_id=binding_id,
+            runtime_id="rt-long-execution",
+            capital_pool_id="pool-long-execution",
+        )
+        worker_a = RedisPendingSignalStore(
+            self.redis_url,
+            queue_key=binding_queue_key(binding_id),
+            worker_id="worker-A",
+            visibility_timeout_seconds=visibility_timeout,
+        )
+        worker_b = RedisPendingSignalStore(
+            self.redis_url,
+            queue_key=binding_queue_key(binding_id),
+            worker_id="worker-B",
+            visibility_timeout_seconds=visibility_timeout,
+        )
+        worker_a.enqueue(signal)
+        consumer_a = SignalConsumer(
+            store_client=worker_a,
+            binding_id=binding_id,
+            runtime_id="rt-long-execution",
+            capital_pool_id="pool-long-execution",
+        )
+        consumer_b = SignalConsumer(
+            store_client=worker_b,
+            binding_id=binding_id,
+            runtime_id="rt-long-execution",
+            capital_pool_id="pool-long-execution",
+        )
+
+        execution_started = threading.Event()
+        release_execution = threading.Event()
+        executions: list[str] = []
+        drain_errors: list[BaseException] = []
+        renewals: list[bool] = []
+        real_renew = worker_a.renew_claim
+
+        def counted_renew(claimed_signal):
+            renewed = real_renew(claimed_signal)
+            renewals.append(renewed)
+            return renewed
+
+        worker_a.renew_claim = counted_renew  # type: ignore[method-assign]
+
+        class _WorkerAlgo(_RecordingAlgo):
+            def __init__(self, worker_id: str) -> None:
+                super().__init__()
+                self.worker_id = worker_id
+
+        def slow_execute(_signal_payload, algo):
+            executions.append(algo.worker_id)
+            if algo.worker_id == "worker-A":
+                execution_started.set()
+                if not release_execution.wait(timeout=3):
+                    raise TimeoutError("test did not release worker-A execution")
+
+        def drain_worker_a() -> None:
+            try:
+                consumer_a.drain(algo=_WorkerAlgo("worker-A"))
+            except BaseException as exc:  # noqa: BLE001 - surface thread failures in test
+                drain_errors.append(exc)
+
+        drain_thread = threading.Thread(target=drain_worker_a)
+        with patch(
+            "services.execution.lean_runtime.signal_consumer.execute",
+            side_effect=slow_execute,
+        ):
+            drain_thread.start()
+            try:
+                self.assertTrue(execution_started.wait(timeout=2))
+                time.sleep(visibility_timeout * 2.5)
+                self.assertGreaterEqual(
+                    len(renewals),
+                    3,
+                    "claim must renew repeatedly while execute() remains blocked",
+                )
+
+                # Worker A is still inside execute() after more than two TTLs.
+                # Worker B must not reclaim or execute the same side effect.
+                consumer_b.drain(algo=_WorkerAlgo("worker-B"))
+                self.assertEqual(executions, ["worker-A"])
+                self.assertEqual(worker_a.inflight_depth(), 1)
+                self.assertEqual(worker_b.inflight_depth(), 0)
+                self.assertEqual(worker_a.queue_depth(), 0)
+            finally:
+                release_execution.set()
+                drain_thread.join(timeout=3)
+
+        self.assertFalse(drain_thread.is_alive())
+        self.assertEqual(drain_errors, [])
+        self.assertEqual(executions, ["worker-A"])
+        self.assertEqual(worker_a.inflight_depth(), 0)
+        self.assertEqual(worker_b.inflight_depth(), 0)
+        self.assertEqual(worker_a.queue_depth(), 0)
+        self.assertTrue(worker_a.is_processed("sig-long-execution"))
 
     def test_claim_response_loss_remains_recoverable(self):
         signal = _signal(
