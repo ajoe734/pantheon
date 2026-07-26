@@ -6912,6 +6912,18 @@ def sync_preempted_task_status(config: dict[str, Any], worker: dict[str, Any]) -
     return sync_status_pipeline(config)
 
 
+def task_assignment_is_catalog_locked(task: dict[str, Any]) -> bool:
+    """Return whether a materialized catalog contract fixes owner/reviewer.
+
+    The catalog contract digest covers the assignment fields.  Letting helper
+    claims or provider fallback rewrite either field makes the active task
+    conflict with its immutable execution catalog and causes the newly launched
+    worker to be killed as superseded on the next poll.
+    """
+
+    return bool(str(task.get("catalog_task_contract_sha256") or "").strip())
+
+
 def _persist_task_reassignment_locked(
     config: dict[str, Any],
     *,
@@ -6936,6 +6948,11 @@ def _persist_task_reassignment_locked(
 
     old_owner = str(task.get("owner") or "")
     old_reviewer = str(task.get("reviewer") or "")
+    if (
+        task_assignment_is_catalog_locked(task)
+        and (new_owner != old_owner or new_reviewer != old_reviewer)
+    ):
+        return False
     task["owner"] = new_owner
     task["reviewer"] = new_reviewer
     if new_status:
@@ -9758,7 +9775,7 @@ def normalize_mainline_task_assignment(
     *,
     state: dict[str, Any] | None = None,
 ) -> bool:
-    if task_is_sidecar(task):
+    if task_is_sidecar(task) or task_assignment_is_catalog_locked(task):
         return False
     settings = worker_reassignment_settings(config)
     task_id = str(task.get("id") or "").strip()
@@ -11024,6 +11041,7 @@ def dispatch_ready_tasks(
             )
             helper_claim_candidate = (
                 (not disable_helper_claims_for_failure_loops or task_id not in failure_loop_task_ids)
+                and not task_assignment_is_catalog_locked(task)
                 and dependencies_satisfied(task, task_resolver, dependency_done_statuses)
                 and task_id not in active_task_ids
                 and task_id not in pending_task_ids

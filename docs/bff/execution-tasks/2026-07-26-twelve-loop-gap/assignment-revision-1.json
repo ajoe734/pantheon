@@ -1,0 +1,133 @@
+{
+  "schema_version": 1,
+  "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+  "revision_id": "assignment-revision-1",
+  "reason": "Operator-directed correction: Antigravity and Claude must be the primary implementation fleets; Codex-family ownership of unfinished work was incorrect.",
+  "previous_catalog_sha256": "a7fbbaa560bd7f2d97750b25cd20af69b64d4f522b293689849b0e1b1763717f",
+  "revised_catalog_sha256": "8c7610b0e6bbba31c36cb0ecd1ddce4bf843fc6de89dcaecc4a5e3154af8933d",
+  "revised_at": "2026-07-26T14:05:00Z",
+  "preserve_dynamic_state": true,
+  "preserve_existing_review_verdicts": true,
+  "completed_task_contracts_unchanged": [
+    "L12-FLEET-001",
+    "L12-REC-001",
+    "L12-SRC-001",
+    "L12-ALPHA-001",
+    "L12-CONS-001",
+    "L12-DEP-001"
+  ],
+  "provider_auth_probes": {
+    "Antigravity": {
+      "ready": true,
+      "source": "live",
+      "checked_at": "2026-07-26T14:04:35Z"
+    },
+    "Claude": {
+      "ready": true,
+      "source": "live",
+      "checked_at": "2026-07-26T14:04:28Z"
+    },
+    "Antigravity2": {
+      "ready": false,
+      "source": "live",
+      "checked_at": "2026-07-26T14:04:28Z"
+    }
+  },
+  "assignments": [
+    {
+      "task_id": "L12-CTRL-001",
+      "owner": "Claude",
+      "reviewer": "Codex2"
+    },
+    {
+      "task_id": "L12-TEL-001",
+      "owner": "Antigravity",
+      "reviewer": "Codex"
+    },
+    {
+      "task_id": "L12-AGORA-001",
+      "owner": "Antigravity",
+      "reviewer": "Codex"
+    },
+    {
+      "task_id": "L12-DIST-001",
+      "owner": "Claude",
+      "reviewer": "Antigravity"
+    },
+    {
+      "task_id": "L12-TEACH-001",
+      "owner": "Antigravity",
+      "reviewer": "Codex"
+    },
+    {
+      "task_id": "L12-IMIT-001",
+      "owner": "Claude",
+      "reviewer": "Antigravity"
+    },
+    {
+      "task_id": "L12-CAP-001",
+      "owner": "Antigravity",
+      "reviewer": "Claude"
+    },
+    {
+      "task_id": "L12-EVO-001",
+      "owner": "Claude",
+      "reviewer": "Antigravity"
+    },
+    {
+      "task_id": "L12-BFF-001",
+      "owner": "Antigravity",
+      "reviewer": "Claude"
+    },
+    {
+      "task_id": "L12-SIGNOFF-001",
+      "owner": "Claude",
+      "reviewer": "Codex2"
+    },
+    {
+      "task_id": "L12-MANIFEST-001",
+      "owner": "Antigravity",
+      "reviewer": "Claude"
+    },
+    {
+      "task_id": "L12-TRUTH-001",
+      "owner": "Claude",
+      "reviewer": "Antigravity"
+    },
+    {
+      "task_id": "L12-FE-TRUTH-001",
+      "owner": "Antigravity",
+      "reviewer": "Claude"
+    },
+    {
+      "task_id": "L12-VERIFY-KNOW-001",
+      "owner": "Claude",
+      "reviewer": "Antigravity"
+    },
+    {
+      "task_id": "L12-VERIFY-LEARN-001",
+      "owner": "Antigravity",
+      "reviewer": "Claude"
+    },
+    {
+      "task_id": "L12-VERIFY-RUNTIME-001",
+      "owner": "Claude",
+      "reviewer": "Antigravity"
+    },
+    {
+      "task_id": "L12-VERIFY-OBS-001",
+      "owner": "Antigravity",
+      "reviewer": "Claude"
+    },
+    {
+      "task_id": "L12-HOSTED-001",
+      "owner": "Claude",
+      "reviewer": "Antigravity"
+    },
+    {
+      "task_id": "L12-CLOSE-001",
+      "owner": "Antigravity",
+      "reviewer": "Claude"
+    }
+  ]
+}

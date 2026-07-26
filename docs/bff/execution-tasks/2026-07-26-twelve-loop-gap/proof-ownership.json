@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+  "base_catalog_sha256": "8c7610b0e6bbba31c36cb0ecd1ddce4bf843fc6de89dcaecc4a5e3154af8933d",
+  "generated_at": "2026-07-26T14:05:00Z",
+  "delegations": [
+    {
+      "source_task_id": "L12-TEACH-001",
+      "proof": "hosted persona terminal readback",
+      "owner_task_id": "L12-VERIFY-LEARN-001",
+      "final_witness_task_id": "L12-HOSTED-001",
+      "reason": "The teaching domain task owns authenticated HA behavior and real authoritative-store terminal convergence. The hosted terminal record requires the runtime activation and cross-service drill that are dependency-ordered after that domain implementation, so production of this proof is owned by the downstream learning drill and witnessed again by the exact hosted candidate."
+    }
+  ]
+}

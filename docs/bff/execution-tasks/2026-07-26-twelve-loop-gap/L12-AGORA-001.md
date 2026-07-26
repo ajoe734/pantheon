@@ -1,6 +1,6 @@
 # L12-AGORA-001 — Govern Agora dataset extraction
 
-Wave 1, lane `agora`, owner `Codex2`, reviewer `Codex`; depends on `L12-FLEET-001` and external overlap owner `PPL-ALLOC-009`.
+Wave 1, lane `agora`, owner `Antigravity`, reviewer `Codex`; depends on `L12-FLEET-001` and external overlap owner `PPL-ALLOC-009`.
 
 Outcome: make typed OperatorIdentity, RBAC, tenant scope, idempotency conflict detection, leased extraction, and downstream acknowledgement work end to end.
 

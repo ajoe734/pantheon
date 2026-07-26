@@ -38,13 +38,21 @@ DEFAULT_CATALOG_PATH = (
     / "2026-07-26-twelve-loop-gap"
     / "tasks.json"
 )
+DEFAULT_PROOF_OWNERSHIP_PATH = (
+    REPO_ROOT
+    / "docs"
+    / "bff"
+    / "execution-tasks"
+    / "2026-07-26-twelve-loop-gap"
+    / "proof-ownership.json"
+)
 DEFAULT_LIVE_CONFIG_PATH = Path(
     "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json"
 )
 DEFAULT_COMMAND_ROOT = Path("/home/lupin/pantheon-ci-deploy/dev-root")
 PROGRAM_ID = "pantheon-twelve-loop-gap-2026-07-26"
 AUTO_CREATED_BY = "dispatch_twelve_loop_gap_2026_07_26"
-ALLOWED_FLEET_ACTORS = {"Codex", "Codex2"}
+ALLOWED_FLEET_ACTORS = {"Antigravity", "Claude", "Codex", "Codex2"}
 SUPPORTED_REPOS = {"pantheon", "execute-plans"}
 ALLOWED_TARGET_MATURITY = {
     "contract",
@@ -175,6 +183,20 @@ EXPECTED_EXTERNAL_DEPENDENCY_CONSUMERS = {
     }
 }
 DYNAMIC_TASK_FIELDS = {"status", "next"}
+PROOF_OWNERSHIP_FIELDS = {
+    "schema_version",
+    "program_id",
+    "base_catalog_sha256",
+    "generated_at",
+    "delegations",
+}
+PROOF_DELEGATION_FIELDS = {
+    "source_task_id",
+    "proof",
+    "owner_task_id",
+    "final_witness_task_id",
+    "reason",
+}
 
 
 class DispatchError(RuntimeError):
@@ -479,7 +501,9 @@ def validate_catalog(
         if task["status"] != "todo":
             raise DispatchError(f"{task_id}.status must start as todo")
         if task["owner"] not in ALLOWED_FLEET_ACTORS or task["reviewer"] not in ALLOWED_FLEET_ACTORS:
-            raise DispatchError(f"{task_id} owner/reviewer must be Codex or Codex2")
+            raise DispatchError(
+                f"{task_id} owner/reviewer must be an approved fleet actor"
+            )
         if task["owner"] == task["reviewer"]:
             raise DispatchError(f"{task_id} owner and reviewer must be distinct")
         if task["target_repo"] not in SUPPORTED_REPOS:
@@ -617,6 +641,91 @@ def validate_catalog(
 
 def task_contract(task: dict[str, Any]) -> dict[str, Any]:
     return {key: task[key] for key in sorted(REQUIRED_TASK_FIELDS - DYNAMIC_TASK_FIELDS)}
+
+
+def validate_proof_ownership(
+    payload: dict[str, Any],
+    *,
+    catalog: dict[str, Any],
+    tasks: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Validate downstream ownership for catalog proofs without rewriting the catalog.
+
+    The catalog remains the immutable task contract. This separately checks the
+    exceptional case where a proof can only be produced by a descendant
+    activation or hosted-verification task. The overlay is bound to the exact
+    base catalog and may delegate proof production only forward in the DAG.
+    """
+
+    if set(payload) != PROOF_OWNERSHIP_FIELDS:
+        missing = sorted(PROOF_OWNERSHIP_FIELDS - set(payload))
+        extra = sorted(set(payload) - PROOF_OWNERSHIP_FIELDS)
+        raise DispatchError(
+            f"proof ownership fields are not exact: missing={missing} extra={extra}"
+        )
+    if payload.get("schema_version") != 1:
+        raise DispatchError("proof ownership schema_version must be 1")
+    if payload.get("program_id") != catalog.get("program_id"):
+        raise DispatchError("proof ownership program_id is not exact")
+    expected_catalog_sha256 = canonical_json_sha256(catalog)
+    if payload.get("base_catalog_sha256") != expected_catalog_sha256:
+        raise DispatchError("proof ownership base catalog digest is not exact")
+    _nonempty_string(payload.get("generated_at"), label="proof ownership generated_at")
+
+    raw_delegations = payload.get("delegations")
+    if not isinstance(raw_delegations, list) or not raw_delegations:
+        raise DispatchError("proof ownership delegations must be a non-empty list")
+
+    by_id = {task["id"]: task for task in tasks}
+    memo: dict[str, set[str]] = {}
+    for task_id in by_id:
+        _ancestors(task_id, by_id, memo)
+    memo.pop("__visiting__", None)
+
+    normalized: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for index, raw in enumerate(raw_delegations):
+        if not isinstance(raw, dict) or set(raw) != PROOF_DELEGATION_FIELDS:
+            raise DispatchError(
+                f"proof ownership delegation {index} fields are not exact"
+            )
+        delegation = {
+            key: _nonempty_string(
+                raw.get(key),
+                label=f"proof ownership delegation {index}.{key}",
+            )
+            for key in sorted(PROOF_DELEGATION_FIELDS)
+        }
+        source_id = delegation["source_task_id"]
+        owner_id = delegation["owner_task_id"]
+        witness_id = delegation["final_witness_task_id"]
+        proof = delegation["proof"]
+        if source_id not in by_id or owner_id not in by_id or witness_id not in by_id:
+            raise DispatchError(
+                f"proof ownership delegation {index} references an unknown task"
+            )
+        if proof not in by_id[source_id]["proof_required"]:
+            raise DispatchError(
+                f"proof ownership delegation {index} is not an exact source proof"
+            )
+        identity = (source_id, proof)
+        if identity in seen:
+            raise DispatchError(
+                f"duplicate proof ownership delegation: {source_id} / {proof}"
+            )
+        seen.add(identity)
+        if source_id not in memo[owner_id]:
+            raise DispatchError(
+                f"proof owner must be a descendant of source task: "
+                f"{source_id} -> {owner_id}"
+            )
+        if owner_id != witness_id and owner_id not in memo[witness_id]:
+            raise DispatchError(
+                f"final witness must be the proof owner or its descendant: "
+                f"{owner_id} -> {witness_id}"
+            )
+        normalized.append(delegation)
+    return normalized
 
 
 def _archive_candidates(status_root: Path, task_id: str) -> Iterable[Path]:
@@ -960,6 +1069,10 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--dry-run", action="store_true")
     mode.add_argument("--apply", action="store_true")
     parser.add_argument("--catalog", default=str(DEFAULT_CATALOG_PATH))
+    parser.add_argument(
+        "--proof-ownership",
+        default=str(DEFAULT_PROOF_OWNERSHIP_PATH),
+    )
     parser.add_argument("--live-config", default=str(DEFAULT_LIVE_CONFIG_PATH))
     parser.add_argument("--command-root", default=str(DEFAULT_COMMAND_ROOT))
     parser.add_argument(
@@ -971,6 +1084,16 @@ def main(argv: list[str] | None = None) -> int:
     catalog_path = Path(args.catalog).resolve()
     catalog = load_json_object(catalog_path)
     tasks = validate_catalog(catalog)
+    proof_ownership_path = Path(args.proof_ownership).resolve()
+    proof_ownership = load_json_object(proof_ownership_path)
+    delegations = validate_proof_ownership(
+        proof_ownership,
+        catalog=catalog,
+        tasks=tasks,
+    )
+    proof_ownership_sha256 = hashlib.sha256(
+        proof_ownership_path.read_bytes()
+    ).hexdigest()
     if args.validate_only:
         print(
             json.dumps(
@@ -979,6 +1102,8 @@ def main(argv: list[str] | None = None) -> int:
                     "program_id": catalog["program_id"],
                     "task_count": len(tasks),
                     "catalog_sha256": canonical_json_sha256(catalog),
+                    "proof_delegation_count": len(delegations),
+                    "proof_ownership_sha256": proof_ownership_sha256,
                 },
                 sort_keys=True,
             )
@@ -1001,6 +1126,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     if args.dry_run:
         output = {key: value for key, value in plan.items() if key != "create_tasks"}
+        output["proof_ownership_sha256"] = proof_ownership_sha256
+        output["proof_delegation_count"] = len(delegations)
         output["task_state_store"] = {
             "mode": authority["mode"],
             "event_log": str(authority["event_log"]),
@@ -1030,6 +1157,19 @@ def main(argv: list[str] | None = None) -> int:
         raise DispatchError(
             f"--apply catalog must be the installed reviewed catalog: "
             f"{catalog_path} != {installed_catalog}"
+        )
+    installed_proof_ownership = (
+        Path(command_runtime["root"])
+        / "docs"
+        / "bff"
+        / "execution-tasks"
+        / "2026-07-26-twelve-loop-gap"
+        / "proof-ownership.json"
+    ).resolve()
+    if proof_ownership_path != installed_proof_ownership:
+        raise DispatchError(
+            "--apply proof ownership must be the installed reviewed overlay: "
+            f"{proof_ownership_path} != {installed_proof_ownership}"
         )
     created = apply_materialization(
         plan,

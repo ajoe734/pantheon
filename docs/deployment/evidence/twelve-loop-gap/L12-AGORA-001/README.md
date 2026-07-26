@@ -24,5 +24,7 @@ Machine-readable acceptance, exact validation commands, residuals, and
 delivery state are in the schema-valid ProductEvidenceManifest
 `evidence.json`. `evidence.sha256` binds that file for independent review.
 
-No hosted deployment, maturity promotion, or reviewer verdict is claimed by
-this owner pre-review packet.
+No hosted deployment or maturity promotion is claimed by this packet. Codex
+independently approved the merged dev-integration implementation after
+replaying the PostgreSQL, identity/router, schema, checksum, compile, and diff
+verification recorded in the manifest.

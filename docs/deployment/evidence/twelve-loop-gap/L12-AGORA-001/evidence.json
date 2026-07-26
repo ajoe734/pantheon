@@ -3,7 +3,7 @@
   "schema_status": {
     "formal_schema_owner": "LOOP-PROD-002",
     "formalization_trigger": "L12-AGORA-001 product-level independent-review gate.",
-    "note": "Schema-normalized owner evidence for governed, tenant-safe, leased Agora dataset extraction. The independent reviewer verdict remains intentionally pending.",
+    "note": "Schema-normalized evidence for governed, tenant-safe, leased Agora dataset extraction. Codex independently approved the merged implementation and bounded residuals.",
     "status": "formalized"
   },
   "evidence_policy": {
@@ -16,11 +16,11 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-26T12:25:29Z",
-    "evidence_cut_semantics": "Owner evidence after integrating dev c762af14d56d141c59efc31b255c3814ef4378b3 and rerunning the PostgreSQL and parent identity/router suites. No hosted deployment, maturity promotion, or runtime authority is claimed.",
+    "evidence_cut_at": "2026-07-26T13:39:22Z",
+    "evidence_cut_semantics": "Independent reviewer evidence after PR #4177 merged as 3998d9d341546209d3c854b6ce716dba2456086c and the implementation was revalidated on dev integration tip 902584bef7448b92cbf0686fd9c655481763b2bd. No hosted deployment, maturity promotion, or runtime authority is claimed.",
     "id": "L12-AGORA-001",
-    "overall_admission": "ready_for_review",
-    "owner": "Codex2",
+    "overall_admission": "review_approved",
+    "owner": "Antigravity",
     "phase": "Twelve Loop Remediation / Agora",
     "product_level_required": true,
     "repository": "ajoe734/pantheon",
@@ -71,47 +71,92 @@
   "implementation_delivery": {
     "anchor_commits": [
       {
-        "delivery_state": "task_branch",
+        "delivery_state": "merged_via_pr_4177",
         "hosted_cut_inclusion": false,
         "sha": "fe6180d0080a60c540f4d24a953cec31de91348f",
         "subject": "L12-AGORA-001: anchor governed extraction ownership"
       },
       {
-        "delivery_state": "task_branch",
+        "delivery_state": "merged_via_pr_4177",
         "hosted_cut_inclusion": false,
         "sha": "381e4373e40f1b56789b62cdc1a060a17f86cf0e",
         "subject": "L12-AGORA-001: finalize leased extraction evidence"
       },
       {
-        "delivery_state": "task_branch",
+        "delivery_state": "merged_via_pr_4177",
         "hosted_cut_inclusion": false,
         "sha": "1eaf6f620f22cae27435eb580504e37fca03127a",
         "subject": "L12-AGORA-001: record fresh extraction verification"
       },
       {
-        "delivery_state": "task_branch",
+        "delivery_state": "merged_via_pr_4177",
         "hosted_cut_inclusion": false,
         "sha": "8200b518edc18b5a43c922be1408b4c3dca09a63",
         "subject": "L12-AGORA-001: refresh integrated verification"
       }
     ],
-    "required_checks": []
+    "pull_request": {
+      "base": "dev",
+      "head_sha": "a55274f0c101798597cc77777cec662919bcdbc7",
+      "merge_sha": "3998d9d341546209d3c854b6ce716dba2456086c",
+      "merged_at": "2026-07-26T12:36:12Z",
+      "number": 4177,
+      "url": "https://github.com/ajoe734/pantheon/pull/4177"
+    },
+    "required_checks": [
+      {
+        "conclusion": "success",
+        "event": "push",
+        "head_sha": "a55274f0c101798597cc77777cec662919bcdbc7",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30202347556,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30202347556",
+        "workflow": "Branch CI Gate"
+      },
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "a55274f0c101798597cc77777cec662919bcdbc7",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30202350744,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30202350744",
+        "workflow": "Branch CI Gate"
+      }
+    ]
   },
   "validation": {
     "commands": [
       {
         "command": "TEST_DATABASE_URL=postgresql://postgres:<redacted>@127.0.0.1:55432/pantheon_test /tmp/l12-agora-venv/bin/python -m pytest services/control-plane/bff/agora/dataset_extraction -q",
-        "conclusion": "70 passed, 1 warning in 16.15s against an ephemeral localhost-only postgres:16-alpine container; the container was removed after the run.",
+        "conclusion": "Independent reviewer rerun: 70 passed, 1 warning in 14.92s against an ephemeral localhost-only postgres:16-alpine container; the container was removed after the run.",
         "result": "pass"
       },
       {
         "command": "/tmp/l12-agora-venv/bin/python -m pytest services/control-plane/bff/tests/test_agora_router.py services/control-plane/bff/tests/test_agora_identity_scope.py -q",
-        "conclusion": "27 passed, 7 warnings in 13.36s.",
+        "conclusion": "Independent reviewer rerun: 27 passed, 7 warnings in 10.83s.",
+        "result": "pass"
+      },
+      {
+        "command": "TEST_DATABASE_URL=postgresql://postgres:<redacted>@127.0.0.1:55433/pantheon_test /tmp/l12-agora-venv/bin/python -m pytest services/control-plane/bff/agora -q",
+        "conclusion": "163 passed and the same 5 adjacent trading-room WidgetPlacement schema-reference tests failed; no L12-AGORA-001 implementation or test file appeared in those traces.",
+        "result": "known_non_blocking_adjacent_failure"
+      },
+      {
+        "command": "/tmp/l12-agora-venv/bin/python -c '<validate evidence.json against schemas/product-evidence.schema.json>' && sha256sum -c evidence.sha256",
+        "conclusion": "ProductEvidenceManifest schema and companion checksum passed after recording the independent verdict.",
         "result": "pass"
       },
       {
         "command": "python3 -m compileall -q services/control-plane/bff/agora/dataset_extraction services/control-plane/bff/agora/router.py scripts/agora_workshop_restart_persistence_smoke.py",
-        "conclusion": "exit 0 after integrating current dev.",
+        "conclusion": "Independent reviewer rerun exited 0 on dev integration tip 902584bef7448b92cbf0686fd9c655481763b2bd.",
         "result": "pass"
       },
       {
@@ -120,9 +165,9 @@
         "result": "pass"
       }
     ],
-    "validated_at": "2026-07-26T12:25:29Z",
-    "validated_base_sha": "c762af14d56d141c59efc31b255c3814ef4378b3",
-    "validated_head_sha": "2c1fad5ee1cf5490a286f1bbc4dffb9725ed3607"
+    "validated_at": "2026-07-26T13:39:22Z",
+    "validated_base_sha": "902584bef7448b92cbf0686fd9c655481763b2bd",
+    "validated_head_sha": "902584bef7448b92cbf0686fd9c655481763b2bd"
   },
   "deployment": {
     "applicable": false,
@@ -208,7 +253,7 @@
       "status": "pass"
     },
     "two_person_approval": {
-      "proof": "No runtime two-person mutation is applicable to this Observe/Learn slice; owner Codex2 and reviewer Codex remain distinct and the formal reviewer verdict is pending.",
+      "proof": "No runtime two-person mutation is applicable to this Observe/Learn slice; owner Codex2 and reviewer Codex remain distinct, and Codex independently approved merged PR #4177 after PostgreSQL, identity/router, schema, checksum, compile, and diff verification.",
       "status": "not_applicable"
     }
   },
@@ -322,6 +367,15 @@
       "sequence": 1,
       "sha": "8200b518edc18b5a43c922be1408b4c3dca09a63",
       "status": "pass"
+    },
+    {
+      "actor": "Codex",
+      "kind": "independent_review_approval",
+      "recorded_at": "2026-07-26T13:39:22Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4177",
+      "sequence": 2,
+      "sha": "3998d9d341546209d3c854b6ce716dba2456086c",
+      "status": "review_approved"
     }
   ]
 }

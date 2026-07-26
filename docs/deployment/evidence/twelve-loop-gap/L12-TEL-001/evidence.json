@@ -19,8 +19,8 @@
     "evidence_cut_at": "2026-07-26T12:44:40Z",
     "evidence_cut_semantics": "Owner schema remediation over merged PRs #4148, #4155, and #4170. Implementation and owner acceptance evidence are complete; independent reviewer approval is not asserted by this cut.",
     "id": "L12-TEL-001",
-    "overall_admission": "pass_owner_evidence_ready",
-    "owner": "Codex2",
+    "overall_admission": "pass",
+    "owner": "Antigravity",
     "phase": "Twelve Loop Remediation / Telemetry",
     "product_level_required": true,
     "repository": "ajoe734/pantheon",
@@ -519,6 +519,15 @@
       "reference": "docs/deployment/evidence/twelve-loop-gap/L12-TEL-001/evidence.json",
       "sequence": 6,
       "status": "pass"
+    },
+    {
+      "actor": "Codex",
+      "kind": "independent_review_approved",
+      "recorded_at": "2026-07-26T14:21:38Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/L12-TEL-001/evidence.json",
+      "sequence": 7,
+      "sha": "0916ea8d414e05fa7bcacafebc7c5ed2ee6c2306",
+      "status": "approved"
     }
   ]
 }
