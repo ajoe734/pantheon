@@ -1,0 +1,96 @@
+OPS-CI-PR-TRAILER-RANGE-001 live range reproduction
+repository        : ajoe734/pantheon
+dev tip during the failed runs : 0410a89f0e4ac3c53e7bc5192aebe6925423b4da
+  0410a89f0e4ac3c53e7bc5192aebe6925423b4da OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001: record isolation evidence (#4213)
+  subject length : 80 bytes incl. newline
+
+== ancestry facts ==
+  0410a89f0 from PR#4211 head                                   : not reachable
+  0410a89f0 from PR#4211 synthetic refs/pull/4211/merge         : REACHABLE
+  0410a89f0 from PR#4215 pushed head                            : REACHABLE
+
+== PR #4211 (pull_request event, run 30219467575) ==
+-- OLD contract: base.sha .. github.sha (synthetic merge)
+  $ check_commit_trailers.py --range 03389c0c7fca98b543ee8329e11042f99ed5a0f6..094210780bb569ba4d253db6286a9d8a5ee8e281 --skip-merge
+    
+    [trailers] 0410a89f0e4ac3c53e7bc5192aebe6925423b4da:
+      - subject exceeds 72 chars (79)
+    
+    Fix: amend the commit message to include the required trailers. See docs/conventions/GIT_WORKFLOW.md §7.
+    exit=1
+  scanned commits:
+    4e24e895f OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001: re-cut durability evidence
+    07747254e OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001: re-cut merged evidence
+    28b13a16d OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001: anchor durable admission gate
+    0410a89f0 OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001: record isolation evidence (#4213)
+    0ffc9404c SUP-WORKER-TRUTH-RECONCILE-001: reconcile ownerless worker truth
+    8d97da02a SUP-WORKER-TRUTH-RECONCILE-001: anchor provider truth guards
+    0d0b015c9 OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001: state infra retry contract
+    eb52a3b0f OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001: re-cut infra evidence
+    2f723037e OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001: fence infra admission
+    6b13962f1 OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001: prove infra health authority
+    0b6ac7680 OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001: anchor infra authority
+
+-- NEW contract: resolver output for the same event payload
+    [range] event=pull_request resolved=origin/dev..4e24e895f59853391d269270673f57b9248964eb
+    range=origin/dev..4e24e895f59853391d269270673f57b9248964eb
+    resolver exit=0
+  $ check_commit_trailers.py --range origin/dev..4e24e895f59853391d269270673f57b9248964eb --skip-merge
+    exit=0
+  scanned commits:
+    4e24e895f OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001: re-cut durability evidence
+    28b13a16d OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001: anchor durable admission gate
+    0d0b015c9 OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001: state infra retry contract
+    eb52a3b0f OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001: re-cut infra evidence
+    2f723037e OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001: fence infra admission
+    6b13962f1 OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001: prove infra health authority
+    0b6ac7680 OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001: anchor infra authority
+
+== PR #4215 (push event on task/SUP-WORKER-TRUTH-RECONCILE-001, run 30219364096) ==
+-- OLD contract: github.event.before .. github.sha
+  $ check_commit_trailers.py --range 0ffc9404c21585539d5aea6ef0a5525e1da2fa92..3984f143a3b7f12e703e44d948da8e6d6388f206 --skip-merge
+    
+    [trailers] 0410a89f0e4ac3c53e7bc5192aebe6925423b4da:
+      - subject exceeds 72 chars (79)
+    
+    Fix: amend the commit message to include the required trailers. See docs/conventions/GIT_WORKFLOW.md §7.
+    exit=1
+  scanned commits:
+    3984f143a SUP-WORKER-TRUTH-RECONCILE-001: bind ownerless truth to one delivery
+    051eef7c0 SUP-WORKER-TRUTH-RECONCILE-001: anchor bound ownerless evidence
+    07747254e OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001: re-cut merged evidence
+    0410a89f0 OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001: record isolation evidence (#4213)
+
+-- NEW contract: resolver output for the same event payload
+    [range] event=push resolved=origin/dev..3984f143a3b7f12e703e44d948da8e6d6388f206
+    range=origin/dev..3984f143a3b7f12e703e44d948da8e6d6388f206
+    resolver exit=0
+  $ check_commit_trailers.py --range origin/dev..3984f143a3b7f12e703e44d948da8e6d6388f206 --skip-merge
+    exit=0
+  scanned commits:
+    3984f143a SUP-WORKER-TRUTH-RECONCILE-001: bind ownerless truth to one delivery
+    051eef7c0 SUP-WORKER-TRUTH-RECONCILE-001: anchor bound ownerless evidence
+    07747254e OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001: re-cut merged evidence
+
+== checkout ref availability (why origin/<base> is safe to rely on) ==
+  Both failed runs show the "Commit trailers" job fetching every branch:
+    run 30219467575 (pull_request): git fetch ... origin +refs/heads/*:refs/remotes/origin/*
+                                    +refs/tags/*:refs/tags/*
+                                    +0942107...:refs/remotes/pull/4211/merge
+    run 30219364096 (push):         git fetch ... origin +refs/heads/*:refs/remotes/origin/*
+                                    +refs/tags/*:refs/tags/*
+  So refs/remotes/origin/dev exists in that job for both event types.
+  The job pins fetch-depth: 0, and the PR head object is fetched both as a
+  branch (same-repo PRs) and as a parent of refs/pull/N/merge.
+
+== residual observations (not changed by this task) ==
+  1. The push range for a work branch is measured against the integration
+     target at CI time. In the PR #4215 reproduction that legitimately keeps
+     07747254e in range: at 2026-07-26T20:37Z it was not yet on dev (it landed
+     later through PR #4214). It carries valid trailers and passes.
+  2. The "Runtime mirror guard" job checks out at the default depth 1, so its
+     `git diff BASE_SHA HEAD_SHA` cannot resolve either object and is swallowed
+     by `|| true`, leaving CHANGED empty. That job is therefore already a no-op
+     on both events, which is why it never surfaced the same contamination.
+     Repairing it needs its own task: turning it on would start enforcing the
+     generated-file guard against history that has never been checked.
