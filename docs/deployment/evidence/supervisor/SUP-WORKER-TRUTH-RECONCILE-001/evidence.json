@@ -1,0 +1,166 @@
+{
+  "schema_version": "supervisor_runtime_repair_evidence.v1",
+  "schema_status": {
+    "note": "Task-scoped owner evidence manifest for a supervisor runtime repair. This is not a product-level loop manifest: the task changes orchestrator decision logic and its own regression suite, and claims no hosted activation, deployment, or capital authority.",
+    "product_level_required": false,
+    "status": "task_scoped"
+  },
+  "task": {
+    "id": "SUP-WORKER-TRUTH-RECONCILE-001",
+    "title": "Reconcile supervisor worker truth without config mutation",
+    "phase": "Supervisor Runtime Repair",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-WORKER-TRUTH-RECONCILE-001",
+    "review_file": "docs/deployment/evidence/supervisor/SUP-WORKER-TRUTH-RECONCILE-001/evidence.json",
+    "narrative": "docs/deployment/evidence/supervisor/SUP-WORKER-TRUTH-RECONCILE-001/evidence.md"
+  },
+  "scope": {
+    "owned_layer": "Supervisor worker-failure detection, provider auth guardrail lifetime, ownerless in_progress task reconciliation, and the queue/lease settlement that follows it.",
+    "not_changing": "No .orchestrator/config.json edit, no hand-edited ai-status.json, no dispatch ordering change, no worker launch/lease renewal change, and no product service code.",
+    "implementation_changed_files": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/supervisor/SUP-WORKER-TRUTH-RECONCILE-001/evidence.json",
+      "docs/deployment/evidence/supervisor/SUP-WORKER-TRUTH-RECONCILE-001/evidence.md",
+      "docs/deployment/evidence/supervisor/SUP-WORKER-TRUTH-RECONCILE-001/prefix-reproduction.txt"
+    ]
+  },
+  "observed_failures": [
+    {
+      "id": "OF1",
+      "summary": "A nonthrottling rate_limit_event (status allowed_warning) was read as a worker failure and classified terminal, reassigning the task away from an owner that never failed.",
+      "live_source": "/home/lupin/pantheon-ci-deploy/dev-root-bdbd0a99bf68/.orchestrator/logs/20260726T185418034797Z-claude1-2-claude1_2-08dcb8.log",
+      "root_cause": "is_allowed_rate_limit_event accepted only the literal status 'allowed', so 'allowed_warning' fell through to WORKER_FAILURE_PATTERNS."
+    },
+    {
+      "id": "OF2",
+      "summary": "A fresh live not-ready auth probe did not keep the lane unavailable.",
+      "root_cause": "refresh_provider_auth_before_dispatch mutated only the in-cycle capability report; the persisted report still said auth_ready true, so the next scan reused the cached ready probe. Non-sticky auth pauses also expired on auth_pause_seconds wall clock and could be cleared by a cached auth_ready true."
+    },
+    {
+      "id": "OF3",
+      "summary": "Seven ownerless in_progress rows were redispatched to their owner every cycle.",
+      "live_source": "ai-status.json had 10 in_progress tasks at 2026-07-26T19:39Z while .orchestrator/state.json held 2 running workers.",
+      "root_cause": "No phase moved a task off in_progress after its owner worker merged its delivery and exited, so dispatch_ready_tasks kept reading the row as owned work."
+    },
+    {
+      "id": "OF4",
+      "summary": "Queue records and worker leases had to settle together with any supervisor-side task reconciliation.",
+      "root_cause": "Without an explicit finalize step a reconciled task would leave a started queue record whose lease_owner points at a dead run id."
+    }
+  ],
+  "acceptance": [
+    {
+      "id": "AC1",
+      "statement": "Seven ownerless in_progress fixtures reconcile from terminal outcome and durable worker evidence without resetting any live worker.",
+      "status": "pass",
+      "evidence_refs": [
+        ".orchestrator/test_supervisor.py::OwnerlessInProgressReconciliationTests",
+        ".orchestrator/supervisor.py::reconcile_ownerless_in_progress_tasks"
+      ]
+    },
+    {
+      "id": "AC2",
+      "statement": "Allowed rate_limit warning remains nonterminal and redispatchable.",
+      "status": "pass",
+      "evidence_refs": [
+        ".orchestrator/test_supervisor.py::AllowedRateLimitNoticeTests",
+        ".orchestrator/supervisor.py::is_allowed_rate_limit_event"
+      ]
+    },
+    {
+      "id": "AC3",
+      "statement": "Fresh provider auth_ready false keeps the lane unavailable until a later fresh successful probe without any config edit.",
+      "status": "pass",
+      "evidence_refs": [
+        ".orchestrator/test_supervisor.py::FreshAuthProbeLaneHoldTests",
+        ".orchestrator/supervisor.py::auth_pause_requires_live_probe",
+        ".orchestrator/supervisor.py::mark_provider_auth_probe_not_ready"
+      ]
+    },
+    {
+      "id": "AC4",
+      "statement": "Merged owner delivery with no implementation remaining transitions through governed review handoff instead of repeated owner redispatch.",
+      "status": "pass",
+      "evidence_refs": [
+        ".orchestrator/test_supervisor.py::OwnerlessInProgressReconciliationTests::test_merged_owner_delivery_moves_to_governed_review_handoff",
+        ".orchestrator/test_supervisor.py::MergedDeliveryEvidenceTests",
+        ".orchestrator/supervisor.py::_prepare_ownerless_review_handoff_locked"
+      ]
+    },
+    {
+      "id": "AC5",
+      "statement": "Authoritative event log projection and queue worker lease state remain consistent under concurrent outcomes.",
+      "status": "pass",
+      "evidence_refs": [
+        ".orchestrator/supervisor.py::_prepare_ownerless_review_handoff_locked writes under canonical_task_state_lock_file and journals through write_status before the derived projection",
+        ".orchestrator/supervisor.py::reconcile_ownerless_in_progress_tasks calls finalize_queue_event_record after the transition",
+        ".orchestrator/test_supervisor.py::OwnerlessInProgressReconciliationTests::test_merged_owner_delivery_moves_to_governed_review_handoff"
+      ]
+    },
+    {
+      "id": "AC6",
+      "statement": "Focused supervisor tests reproduce all observed failures and pass.",
+      "status": "pass",
+      "evidence_refs": [
+        "docs/deployment/evidence/supervisor/SUP-WORKER-TRUTH-RECONCILE-001/prefix-reproduction.txt"
+      ]
+    }
+  ],
+  "non_interference": {
+    "live_worker_guard": "A task with a worker in an active status, or with a live pid, is skipped entirely.",
+    "in_flight_dispatch_guard": "A task with a queued/pending/started/stalled/retry_backoff queue record is skipped entirely.",
+    "failure_ladder_guard": "A terminal outcome that is not a clean completed runner exit is left to the existing failure/reassignment ladder.",
+    "evidence_guard": "No transition without a Task-ID trailer commit reachable from an integration base and no unmerged commits left on the task branch.",
+    "assignment_guard": "Owner and reviewer must both exist and differ; the locked re-read re-verifies status, owner, and reviewer before writing.",
+    "rate_guard": "ready_dispatcher.ownerless_in_progress.max_transitions_per_tick (default 4) and a per-worker reconciliation marker prevent repeat handoffs.",
+    "config_mutation": "none",
+    "task_board_hand_edit": "none"
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "git show HEAD~1:.orchestrator/supervisor.py > <scratch>/orch/supervisor.py && python3 -m unittest test_supervisor.AllowedRateLimitNoticeTests test_supervisor.FreshAuthProbeLaneHoldTests test_supervisor.OwnerlessInProgressReconciliationTests test_supervisor.MergedDeliveryEvidenceTests",
+        "conclusion": "Ran 23 tests - FAILED (failures=4, errors=15); 19 of 23 new tests fail against the pre-fix supervisor, reproducing every observed failure",
+        "result": "reproduced"
+      },
+      {
+        "command": "python3 -m unittest test_supervisor.AllowedRateLimitNoticeTests test_supervisor.FreshAuthProbeLaneHoldTests test_supervisor.OwnerlessInProgressReconciliationTests test_supervisor.MergedDeliveryEvidenceTests",
+        "conclusion": "Ran 23 tests - OK",
+        "result": "pass"
+      },
+      {
+        "command": "python3 -m unittest test_supervisor",
+        "conclusion": "Ran 357 tests - OK (334 before this task, 23 added)",
+        "result": "pass"
+      },
+      {
+        "command": "python3 -m unittest discover -s rewrite -p \"test_*.py\" -t .",
+        "conclusion": "Ran 97 tests - 95 pass; 2 pre-existing collection errors because rewrite/test_task_state_runtime_env.py and rewrite/test_task_state_store.py import pytest, which is not installed in this environment",
+        "result": "pass_with_preexisting_env_gap"
+      }
+    ],
+    "cwd": ".orchestrator (task worktree /tmp/pantheon-worker-worktrees/pantheon/sup-worker-truth-reconcile-001)"
+  },
+  "residual_risks": {
+    "merge_evidence_freshness": {
+      "severity": "low",
+      "blocking_for_this_task": false,
+      "description": "merged_delivery_commits reads the local origin/<base> ref, so a supervisor root that has not fetched recently sees a merged delivery later than GitHub does.",
+      "containment": "A stale ref can only delay a review handoff; it can never manufacture one, and the task stays on the existing owner-redispatch path until the evidence appears.",
+      "recheck_trigger": "If a merged task is observed sitting ownerless in_progress for more than one supervisor fetch interval."
+    },
+    "trailer_dependency": {
+      "severity": "low",
+      "blocking_for_this_task": false,
+      "description": "Merged-delivery evidence relies on the Task-ID commit trailer, which .githooks/commit-msg enforces for task commits.",
+      "containment": "Trailer-exempt subjects (Merge/Revert/promote/hotfix/publish) simply produce no evidence, leaving the task on the unchanged path.",
+      "recheck_trigger": "If the commit trailer convention changes."
+    }
+  }
+}
