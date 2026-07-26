@@ -162,6 +162,8 @@ class ExperimentTask:
     idempotency_key: str
     trace_id: str
     created_at: str
+    tenant_id: str | None = None
+    strategy_spec_id: str | None = None
     backend_id: str | None = None
     feature_spec_version: str | None = None
     label_spec_version: str | None = None
@@ -213,6 +215,12 @@ class ExperimentTask:
         object.__setattr__(self, "idempotency_key", _require_text(self.idempotency_key, "idempotency_key"))
         object.__setattr__(self, "trace_id", _require_text(self.trace_id, "trace_id"))
         object.__setattr__(self, "created_at", _require_text(self.created_at, "created_at"))
+        object.__setattr__(self, "tenant_id", _optional_text(self.tenant_id, "tenant_id"))
+        object.__setattr__(
+            self,
+            "strategy_spec_id",
+            _optional_text(self.strategy_spec_id, "strategy_spec_id"),
+        )
         object.__setattr__(self, "updated_at", _optional_datetime(self.updated_at, "updated_at"))
         object.__setattr__(self, "metadata", dict(_as_mapping(self.metadata, "metadata")))
 
@@ -239,6 +247,8 @@ class ExperimentTask:
             "created_at": self.created_at,
         }
         for key in (
+            "tenant_id",
+            "strategy_spec_id",
             "feature_spec_version",
             "label_spec_version",
             "cost_assumption_ref",
@@ -276,6 +286,8 @@ class ExperimentTask:
             idempotency_key=mapping.get("idempotency_key", ""),
             trace_id=mapping.get("trace_id", ""),
             created_at=mapping.get("created_at", ""),
+            tenant_id=mapping.get("tenant_id"),
+            strategy_spec_id=mapping.get("strategy_spec_id"),
             updated_at=mapping.get("updated_at"),
             metadata=mapping.get("metadata", {}),
         )
@@ -296,6 +308,8 @@ class ExperimentRun:
     artifact_refs: Sequence[str]
     trace_id: str
     created_at: str
+    tenant_id: str | None = None
+    strategy_spec_id: str | None = None
     started_at: str | None = None
     finished_at: str | None = None
     output_manifest_ref: str | None = None
@@ -333,6 +347,12 @@ class ExperimentRun:
         object.__setattr__(self, "failure_reason", _optional_text(self.failure_reason, "failure_reason"))
         object.__setattr__(self, "trace_id", _require_text(self.trace_id, "trace_id"))
         object.__setattr__(self, "created_at", _require_text(self.created_at, "created_at"))
+        object.__setattr__(self, "tenant_id", _optional_text(self.tenant_id, "tenant_id"))
+        object.__setattr__(
+            self,
+            "strategy_spec_id",
+            _optional_text(self.strategy_spec_id, "strategy_spec_id"),
+        )
         object.__setattr__(self, "updated_at", _optional_datetime(self.updated_at, "updated_at"))
         object.__setattr__(self, "metadata", dict(_as_mapping(self.metadata, "metadata")))
 
@@ -358,6 +378,8 @@ class ExperimentRun:
             "created_at": self.created_at,
         }
         for key in (
+            "tenant_id",
+            "strategy_spec_id",
             "started_at",
             "finished_at",
             "output_manifest_ref",
@@ -398,6 +420,8 @@ class ExperimentRun:
             failure_reason=mapping.get("failure_reason"),
             trace_id=mapping.get("trace_id", ""),
             created_at=mapping.get("created_at", ""),
+            tenant_id=mapping.get("tenant_id"),
+            strategy_spec_id=mapping.get("strategy_spec_id"),
             updated_at=mapping.get("updated_at"),
             metadata=mapping.get("metadata", {}),
         )
@@ -405,6 +429,8 @@ class ExperimentRun:
 
 def validate_experiment_task(task: ExperimentTask) -> list[str]:
     errors: list[str] = []
+    if bool(task.tenant_id) != bool(task.strategy_spec_id):
+        errors.append("tenant_id and strategy_spec_id must be provided together")
     if task.status in {
         ExperimentTaskStatus.READY.value,
         ExperimentTaskStatus.RUNNING.value,
@@ -418,6 +444,8 @@ def validate_experiment_task(task: ExperimentTask) -> list[str]:
 
 def validate_experiment_run(run: ExperimentRun) -> list[str]:
     errors: list[str] = []
+    if bool(run.tenant_id) != bool(run.strategy_spec_id):
+        errors.append("tenant_id and strategy_spec_id must be provided together")
     if run.status == ExperimentRunStatus.RUNNING.value and not run.started_at:
         errors.append("running ExperimentRun requires started_at")
     if run.status == ExperimentRunStatus.COMPLETED.value:
@@ -443,6 +471,10 @@ def validate_experiment_run_against_task(run: ExperimentRun, task: ExperimentTas
         errors.append("run.strategy_id must match task.strategy_id")
     if run.strategy_spec_version != task.strategy_spec_version:
         errors.append("run.strategy_spec_version must match task.strategy_spec_version")
+    if run.tenant_id != task.tenant_id:
+        errors.append("run.tenant_id must match task.tenant_id")
+    if run.strategy_spec_id != task.strategy_spec_id:
+        errors.append("run.strategy_spec_id must match task.strategy_spec_id")
     if run.dataset_version_id != task.dataset_version_id:
         errors.append("run.dataset_version_id must match task.dataset_version_id")
     if run.code_version != task.code_version:

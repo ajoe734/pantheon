@@ -1,0 +1,17 @@
+{
+  "candidate_consumer_identity_complete_count": 9,
+  "candidate_restart_readback_count": 9,
+  "exact_current_event_readback_count": 9,
+  "missing_consumer_identity": {},
+  "note": "The dispatch packet referred to six runtimes; the active local nonprod dev stack had expanded to nine, and the candidate was validated against all nine current summaries and their exact current events without seed data.",
+  "observed_at": "2026-07-26T10:01:35.317464Z",
+  "packet_minimum_runtime_count": 6,
+  "result": "PASS",
+  "runtime_id_set_sha256": "e3b9465f22317ba4f59fe2bd152daffc16287d1163db6dec92ab085023160428",
+  "schema_version": 1,
+  "source": "http://127.0.0.1:18083/api/telemetry/runtime-summaries",
+  "source_last_lifecycle_identity_complete_count": 9,
+  "source_runtime_count": 9,
+  "source_top_level_identity_complete_count": 0,
+  "task_id": "L12-TEL-001"
+}

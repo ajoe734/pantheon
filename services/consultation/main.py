@@ -5,13 +5,16 @@ import json
 import os
 import threading
 import uuid
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
 
 from .models import (
+    AcknowledgeGateHandoffRequest,
     ActorRef,
     AssignParticipantRequest,
     AttachEvidenceRequest,
@@ -37,6 +40,15 @@ from .models import (
     ParticipantType,
 )
 from .store import build_consultation_store
+from .auth import (
+    ConsultationAuthError,
+    authenticate,
+    bind_identity,
+    current_identity,
+    require_actor,
+    reset_identity,
+)
+from .workflow_state import WorkflowStateStore
 
 
 app = FastAPI(title="Pantheon Consultation Service", version="0.1.0")
@@ -45,6 +57,11 @@ DATA_DIR = os.getenv("CONSULTATION_DATA_DIR", "/tmp/pantheon/consultation")
 STORE_BACKEND = os.getenv("CONSULTATION_STORE_BACKEND", "jsonl").strip().lower() or "jsonl"
 PERSISTENCE_POSTURE = require_persistence_posture("consultation")
 store = build_consultation_store(DATA_DIR)
+WORKFLOW_STATE_PATH = os.getenv(
+    "CONSULTATION_WORKFLOW_STATE_PATH",
+    str(Path(DATA_DIR) / "consult_workflow_state.sqlite3"),
+)
+workflow_state = WorkflowStateStore(WORKFLOW_STATE_PATH)
 register_fastapi_health_routes(
     app,
     "consultation",
@@ -70,6 +87,27 @@ _SUBMITTED_OR_LATER_STATUSES = {
     ConsultRequestStatus.MEMO_PENDING,
     ConsultRequestStatus.PUBLISHED,
 }
+
+
+@app.middleware("http")
+async def consultation_identity_boundary(
+    request: Request,
+    call_next,
+):
+    if not request.url.path.startswith("/api/consult"):
+        return await call_next(request)
+    try:
+        identity = authenticate(request.headers)
+    except ConsultationAuthError as exc:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail},
+        )
+    token = bind_identity(identity)
+    try:
+        return await call_next(request)
+    finally:
+        reset_identity(token)
 
 
 def _actor_to_data(actor_ref: ActorRef | Dict[str, str]) -> Dict[str, str]:
@@ -107,9 +145,37 @@ def _emit_audit(
 
 def _get_request_or_404(request_id: str) -> ConsultRequest:
     request = store.get_request(request_id)
-    if not request:
+    if not request or request.tenant_id != current_identity().tenant_id:
         raise HTTPException(status_code=404, detail="ConsultRequest not found")
     return request
+
+
+def _stable_command_id(
+    prefix: str,
+    *,
+    request_id: str,
+    idempotency_key: str | None,
+) -> str:
+    if not idempotency_key:
+        return f"{prefix}-{uuid.uuid4().hex[:12]}"
+    identity = current_identity()
+    digest = hashlib.sha256(
+        (
+            f"{identity.tenant_id}\0{request_id}\0{idempotency_key}"
+        ).encode("utf-8")
+    ).hexdigest()[:20]
+    return f"{prefix}-{digest}"
+
+
+def _raise_auth(exc: ConsultationAuthError) -> None:
+    raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+
+def _require_actor(*actor_types: str):
+    try:
+        return require_actor(*actor_types)
+    except ConsultationAuthError as exc:
+        _raise_auth(exc)
 
 
 def _request_dict(req: Any, exclude: Optional[set[str]] = None) -> Dict[str, Any]:
@@ -207,6 +273,11 @@ def health() -> Dict[str, str]:
 def create_request(req: CreateConsultRequest) -> ConsultRequest:
     request_id = req.request_id or f"cr-{uuid.uuid4().hex[:12]}"
     create_payload = _canonical_create_payload(req)
+    identity = current_identity()
+    requested_tenant = str(create_payload.get("tenant_id") or identity.tenant_id)
+    if requested_tenant != identity.tenant_id:
+        raise HTTPException(status_code=403, detail="ConsultRequest tenant scope denied")
+    create_payload["tenant_id"] = identity.tenant_id
     fingerprint = _create_fingerprint(request_id, create_payload)
 
     with _REQUEST_COMMAND_LOCK:
@@ -246,7 +317,12 @@ def list_requests(
     target_id: Optional[str] = None,
     status: Optional[ConsultRequestStatus] = None,
 ) -> List[ConsultRequest]:
-    requests = store.list_requests()
+    tenant_id = current_identity().tenant_id
+    requests = [
+        request
+        for request in store.list_requests()
+        if request.tenant_id == tenant_id
+    ]
     if target_type:
         requests = [request for request in requests if request.target_type == target_type]
     if target_id:
@@ -328,31 +404,47 @@ def cancel_request(request_id: str, req: CancelConsultRequestRequest) -> Consult
 def assign_participant(
     request_id: str, req: AssignParticipantRequest
 ) -> ConsultParticipant:
-    request = _get_request_or_404(request_id)
-    participant = ConsultParticipant(
-        participant_id=f"cp-{uuid.uuid4().hex[:12]}",
-        request_id=request_id,
-        participant_type=req.participant_type,
-        participant_ref=req.participant_ref,
-        role=req.role,
-    )
-    store.put_participant(participant)
+    with _REQUEST_COMMAND_LOCK:
+        request = _get_request_or_404(request_id)
+        participant_id = _stable_command_id(
+            "cp",
+            request_id=request_id,
+            idempotency_key=req.idempotency_key,
+        )
+        participant = ConsultParticipant(
+            participant_id=participant_id,
+            request_id=request_id,
+            participant_type=req.participant_type,
+            participant_ref=req.participant_ref,
+            role=req.role,
+        )
+        existing = store.get_participant(participant_id)
+        if existing is not None:
+            comparable_existing = _request_dict(existing, exclude={"assigned_at"})
+            comparable_new = _request_dict(participant, exclude={"assigned_at"})
+            if comparable_existing != comparable_new:
+                raise HTTPException(
+                    status_code=409,
+                    detail="participant idempotency key conflicts with prior assignment",
+                )
+            return existing
+        store.put_participant(participant)
 
-    before_state = request.status.value
-    if request.status == ConsultRequestStatus.SUBMITTED:
-        request.status = ConsultRequestStatus.ASSIGNED
-        store.put_request(request)
+        before_state = request.status.value
+        if request.status == ConsultRequestStatus.SUBMITTED:
+            request.status = ConsultRequestStatus.ASSIGNED
+            store.put_request(request)
 
-    _emit_audit(
-        action="participant_assigned",
-        request_id=request_id,
-        actor_ref=req.initiated_by or request.requested_by,
-        service_actor_ref=CONSULTATION_SERVICE_ACTOR,
-        trace_id=req.trace_id,
-        before_state=before_state,
-        after_state=request.status.value,
-    )
-    return participant
+        _emit_audit(
+            action="participant_assigned",
+            request_id=request_id,
+            actor_ref=req.initiated_by or request.requested_by,
+            service_actor_ref=CONSULTATION_SERVICE_ACTOR,
+            trace_id=req.trace_id,
+            before_state=before_state,
+            after_state=request.status.value,
+        )
+        return participant
 
 
 @app.get(
@@ -375,28 +467,44 @@ def get_participants(request_id: str) -> List[ConsultParticipant]:
 def attach_evidence(
     request_id: str, req: AttachEvidenceRequest
 ) -> ConsultEvidenceAttachment:
-    request = _get_request_or_404(request_id)
-    attachment = ConsultEvidenceAttachment(
-        attachment_id=f"cea-{uuid.uuid4().hex[:12]}",
-        request_id=request_id,
-        evidence_ref=req.evidence_ref,
-        attached_by=req.attached_by,
-        trace_id=req.trace_id,
-    )
-    store.put_evidence_attachment(attachment)
+    with _REQUEST_COMMAND_LOCK:
+        request = _get_request_or_404(request_id)
+        attachment_id = _stable_command_id(
+            "cea",
+            request_id=request_id,
+            idempotency_key=req.idempotency_key,
+        )
+        attachment = ConsultEvidenceAttachment(
+            attachment_id=attachment_id,
+            request_id=request_id,
+            evidence_ref=req.evidence_ref,
+            attached_by=req.attached_by,
+            trace_id=req.trace_id,
+        )
+        existing = store.get_evidence_attachment(attachment_id)
+        if existing is not None:
+            comparable_existing = _request_dict(existing, exclude={"created_at"})
+            comparable_new = _request_dict(attachment, exclude={"created_at"})
+            if comparable_existing != comparable_new:
+                raise HTTPException(
+                    status_code=409,
+                    detail="evidence idempotency key conflicts with prior attachment",
+                )
+            return existing
+        store.put_evidence_attachment(attachment)
 
-    if req.evidence_ref.id not in request.evidence_refs:
-        request.evidence_refs.append(req.evidence_ref.id)
-        store.put_request(request)
+        if req.evidence_ref.id not in request.evidence_refs:
+            request.evidence_refs.append(req.evidence_ref.id)
+            store.put_request(request)
 
-    _emit_audit(
-        action="evidence_attached",
-        request_id=request_id,
-        actor_ref=req.attached_by,
-        trace_id=req.trace_id,
-        after_state=req.evidence_ref.id,
-    )
-    return attachment
+        _emit_audit(
+            action="evidence_attached",
+            request_id=request_id,
+            actor_ref=req.attached_by,
+            trace_id=req.trace_id,
+            after_state=req.evidence_ref.id,
+        )
+        return attachment
 
 
 @app.get(
@@ -431,38 +539,64 @@ def get_transcript(request_id: str) -> ConsultTranscript:
     status_code=201,
 )
 def post_event(request_id: str, req: PostTranscriptEventRequest) -> TranscriptEvent:
-    request = _get_request_or_404(request_id)
-    if req.request_id != request_id:
-        raise HTTPException(status_code=400, detail="Path request_id does not match payload")
+    with _REQUEST_COMMAND_LOCK:
+        request = _get_request_or_404(request_id)
+        if req.request_id != request_id:
+            raise HTTPException(status_code=400, detail="Path request_id does not match payload")
 
-    transcript = store.get_transcript(request_id)
-    next_seq = len(transcript.events) + 1 if transcript else 1
+        transcript = store.get_transcript(request_id)
+        event_id = _stable_command_id(
+            "evt",
+            request_id=request_id,
+            idempotency_key=req.idempotency_key,
+        )
+        if transcript:
+            existing = next(
+                (event for event in transcript.events if event.event_id == event_id),
+                None,
+            )
+            if existing is not None:
+                comparable_existing = _request_dict(
+                    existing,
+                    exclude={"sequence_no", "event_time", "session_id", "event_id"},
+                )
+                comparable_new = _request_dict(
+                    req,
+                    exclude={"request_id", "idempotency_key"},
+                )
+                if comparable_existing != comparable_new:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="event idempotency key conflicts with prior transcript event",
+                    )
+                return existing
+        next_seq = len(transcript.events) + 1 if transcript else 1
 
-    event = TranscriptEvent(
-        event_id=f"evt-{uuid.uuid4().hex[:12]}",
-        session_id=request_id,
-        sequence_no=next_seq,
-        **_request_dict(req, exclude={"request_id"}),
-    )
-    store.add_transcript_event(request_id, event)
+        event = TranscriptEvent(
+            event_id=event_id,
+            session_id=request_id,
+            sequence_no=next_seq,
+            **_request_dict(req, exclude={"request_id", "idempotency_key"}),
+        )
+        store.add_transcript_event(request_id, event)
 
-    before_state = request.status.value
-    if request.status in {
-        ConsultRequestStatus.SUBMITTED,
-        ConsultRequestStatus.ASSIGNED,
-    }:
-        request.status = ConsultRequestStatus.IN_PROGRESS
-        store.put_request(request)
+        before_state = request.status.value
+        if request.status in {
+            ConsultRequestStatus.SUBMITTED,
+            ConsultRequestStatus.ASSIGNED,
+        }:
+            request.status = ConsultRequestStatus.IN_PROGRESS
+            store.put_request(request)
 
-    _emit_audit(
-        action="transcript_event_added",
-        request_id=request_id,
-        actor_ref=event.actor,
-        trace_id=request.trace_id,
-        before_state=before_state,
-        after_state=request.status.value,
-    )
-    return event
+        _emit_audit(
+            action="transcript_event_added",
+            request_id=request_id,
+            actor_ref=event.actor,
+            trace_id=request.trace_id,
+            before_state=before_state,
+            after_state=request.status.value,
+        )
+        return event
 
 
 # --- Memos ---
@@ -473,7 +607,16 @@ def list_memos(
     request_id: Optional[str] = None,
     status: Optional[MemoStatus] = None,
 ) -> List[ConsultMemo]:
-    memos = store.list_memos()
+    tenant_id = current_identity().tenant_id
+    request_tenants = {
+        request.request_id: request.tenant_id
+        for request in store.list_requests()
+    }
+    memos = [
+        memo
+        for memo in store.list_memos()
+        if request_tenants.get(memo.request_id) == tenant_id
+    ]
     if request_id:
         memos = [memo for memo in memos if memo.request_id == request_id]
     if status:
@@ -483,43 +626,65 @@ def list_memos(
 
 @app.post("/api/consult/memos", response_model=ConsultMemo, status_code=201)
 def submit_memo(req: SubmitMemoRequest) -> ConsultMemo:
-    request = _get_request_or_404(req.request_id)
+    with _REQUEST_COMMAND_LOCK:
+        request = _get_request_or_404(req.request_id)
 
-    memo_id = f"mem-{uuid.uuid4().hex[:12]}"
-    new_memo = ConsultMemo(
-        memo_id=memo_id,
-        target_type=request.target_type,
-        target_id=request.target_id,
-        status=MemoStatus.SUBMITTED,
-        **_request_dict(req),
-    )
-    store.put_memo(new_memo)
+        memo_id = _stable_command_id(
+            "mem",
+            request_id=req.request_id,
+            idempotency_key=req.idempotency_key,
+        )
+        new_memo = ConsultMemo(
+            memo_id=memo_id,
+            target_type=request.target_type,
+            target_id=request.target_id,
+            status=MemoStatus.SUBMITTED,
+            **_request_dict(req, exclude={"idempotency_key"}),
+        )
+        existing = store.get_memo(memo_id)
+        if existing is not None:
+            comparable_existing = _request_dict(
+                existing,
+                exclude={"created_at", "published_at", "status"},
+            )
+            comparable_new = _request_dict(
+                new_memo,
+                exclude={"created_at", "published_at", "status"},
+            )
+            if comparable_existing != comparable_new:
+                raise HTTPException(
+                    status_code=409,
+                    detail="memo idempotency key conflicts with prior submission",
+                )
+            return existing
+        store.put_memo(new_memo)
 
-    before_state = request.status.value
-    if request.status in {
-        ConsultRequestStatus.SUBMITTED,
-        ConsultRequestStatus.ASSIGNED,
-        ConsultRequestStatus.IN_PROGRESS,
-    }:
-        request.status = ConsultRequestStatus.MEMO_PENDING
-        store.put_request(request)
+        before_state = request.status.value
+        if request.status in {
+            ConsultRequestStatus.SUBMITTED,
+            ConsultRequestStatus.ASSIGNED,
+            ConsultRequestStatus.IN_PROGRESS,
+        }:
+            request.status = ConsultRequestStatus.MEMO_PENDING
+            store.put_request(request)
 
-    _emit_audit(
-        action="memo_submitted",
-        request_id=req.request_id,
-        actor_ref={"actor_type": req.author_type.value, "actor_id": req.author_ref},
-        trace_id=req.trace_id,
-        before_state=before_state,
-        after_state=request.status.value,
-    )
-    return new_memo
+        _emit_audit(
+            action="memo_submitted",
+            request_id=req.request_id,
+            actor_ref={"actor_type": req.author_type.value, "actor_id": req.author_ref},
+            trace_id=req.trace_id,
+            before_state=before_state,
+            after_state=request.status.value,
+        )
+        return new_memo
 
 
 @app.get("/api/consult/memos/{memo_id}", response_model=ConsultMemo)
 def get_memo(memo_id: str) -> ConsultMemo:
     memo = store.get_memo(memo_id)
-    if not memo:
+    if not memo or store.get_request(memo.request_id) is None:
         raise HTTPException(status_code=404, detail="ConsultMemo not found")
+    _get_request_or_404(memo.request_id)
     return memo
 
 
@@ -637,7 +802,16 @@ def publish_memo(memo_id: str) -> ConsultMemo:
     response_model=List[ConsultMemo],
 )
 def list_memos_for_target(target_type: str, target_id: str) -> List[ConsultMemo]:
-    return store.list_memos_for_target(target_type, target_id)
+    tenant_id = current_identity().tenant_id
+    request_tenants = {
+        request.request_id: request.tenant_id
+        for request in store.list_requests()
+    }
+    return [
+        memo
+        for memo in store.list_memos_for_target(target_type, target_id)
+        if request_tenants.get(memo.request_id) == tenant_id
+    ]
 
 
 # --- Governance Gate Handoffs ---
@@ -645,61 +819,102 @@ def list_memos_for_target(target_type: str, target_id: str) -> List[ConsultMemo]
 
 @app.get("/api/consult/transcripts", response_model=List[ConsultTranscript])
 def list_transcripts() -> List[ConsultTranscript]:
-    return store.list_transcripts()
+    tenant_id = current_identity().tenant_id
+    request_tenants = {
+        request.request_id: request.tenant_id
+        for request in store.list_requests()
+    }
+    return [
+        transcript
+        for transcript in store.list_transcripts()
+        if request_tenants.get(transcript.request_id) == tenant_id
+    ]
 
 
 @app.get("/api/consult/handoffs", response_model=List[ConsultGateHandoff])
 def list_handoffs(request_id: Optional[str] = None) -> List[ConsultGateHandoff]:
     if request_id:
+        _get_request_or_404(request_id)
         return store.list_handoffs_for_request(request_id)
-    return store.list_handoffs()
+    tenant_id = current_identity().tenant_id
+    request_tenants = {
+        request.request_id: request.tenant_id
+        for request in store.list_requests()
+    }
+    return [
+        handoff
+        for handoff in store.list_handoffs()
+        if request_tenants.get(handoff.request_id) == tenant_id
+    ]
 
 
 @app.post("/api/consult/handoffs", response_model=ConsultGateHandoff, status_code=201)
 def create_handoff(req: CreateGateHandoffRequest) -> ConsultGateHandoff:
-    request = _get_request_or_404(req.request_id)
-    if not req.memo_ids:
-        raise HTTPException(status_code=400, detail="Gate handoff requires at least one memo")
+    with _REQUEST_COMMAND_LOCK:
+        request = _get_request_or_404(req.request_id)
+        if not req.memo_ids:
+            raise HTTPException(status_code=400, detail="Gate handoff requires at least one memo")
 
-    for memo_id in req.memo_ids:
-        memo = store.get_memo(memo_id)
-        if not memo:
-            raise HTTPException(status_code=404, detail=f"ConsultMemo {memo_id} not found")
-        if memo.request_id != req.request_id:
-            raise HTTPException(status_code=400, detail=f"ConsultMemo {memo_id} belongs to another request")
-        if memo.status != MemoStatus.PUBLISHED:
-            raise HTTPException(status_code=400, detail=f"ConsultMemo {memo_id} is not published")
-        _validate_qualified_consultation(req.request_id, memo)
+        for memo_id in req.memo_ids:
+            memo = store.get_memo(memo_id)
+            if not memo:
+                raise HTTPException(status_code=404, detail=f"ConsultMemo {memo_id} not found")
+            if memo.request_id != req.request_id:
+                raise HTTPException(status_code=400, detail=f"ConsultMemo {memo_id} belongs to another request")
+            if memo.status != MemoStatus.PUBLISHED:
+                raise HTTPException(status_code=400, detail=f"ConsultMemo {memo_id} is not published")
+            _validate_qualified_consultation(req.request_id, memo)
 
-    attached_evidence_refs = [
-        attachment.evidence_ref.id
-        for attachment in store.list_evidence_for_request(req.request_id)
-    ]
-    evidence_refs = sorted(set(request.evidence_refs + attached_evidence_refs + req.evidence_refs))
-    audit_refs = [event.audit_id for event in store.list_audit_for_request(req.request_id)]
+        attached_evidence_refs = [
+            attachment.evidence_ref.id
+            for attachment in store.list_evidence_for_request(req.request_id)
+        ]
+        evidence_refs = sorted(set(request.evidence_refs + attached_evidence_refs + req.evidence_refs))
+        audit_refs = [event.audit_id for event in store.list_audit_for_request(req.request_id)]
 
-    handoff = ConsultGateHandoff(
-        handoff_id=f"gh-{uuid.uuid4().hex[:12]}",
-        request_id=req.request_id,
-        target_gate=req.target_gate,
-        memo_ids=req.memo_ids,
-        evidence_refs=evidence_refs,
-        audit_refs=audit_refs,
-        trace_id=req.trace_id,
-    )
-    store.put_handoff(handoff)
+        handoff_id = _stable_command_id(
+            "gh",
+            request_id=req.request_id,
+            idempotency_key=req.idempotency_key,
+        )
+        handoff = ConsultGateHandoff(
+            handoff_id=handoff_id,
+            request_id=req.request_id,
+            target_gate=req.target_gate,
+            memo_ids=req.memo_ids,
+            evidence_refs=evidence_refs,
+            audit_refs=audit_refs,
+            trace_id=req.trace_id,
+        )
+        existing = store.get_handoff(handoff_id)
+        if existing is not None:
+            comparable_existing = _request_dict(
+                existing,
+                exclude={"audit_refs", "created_at", "sent_at", "status"},
+            )
+            comparable_new = _request_dict(
+                handoff,
+                exclude={"audit_refs", "created_at", "sent_at", "status"},
+            )
+            if comparable_existing != comparable_new:
+                raise HTTPException(
+                    status_code=409,
+                    detail="handoff idempotency key conflicts with prior handoff",
+                )
+            return existing
+        store.put_handoff(handoff)
 
-    handoff_audit = _emit_audit(
-        action="gate_handoff_created",
-        request_id=req.request_id,
-        actor_ref=req.initiated_by or request.requested_by,
-        service_actor_ref=CONSULTATION_SERVICE_ACTOR,
-        trace_id=req.trace_id,
-        after_state=handoff.handoff_id,
-    )
-    handoff.audit_refs.append(handoff_audit.audit_id)
-    store.put_handoff(handoff)
-    return handoff
+        handoff_audit = _emit_audit(
+            action="gate_handoff_created",
+            request_id=req.request_id,
+            actor_ref=req.initiated_by or request.requested_by,
+            service_actor_ref=CONSULTATION_SERVICE_ACTOR,
+            trace_id=req.trace_id,
+            after_state=handoff.handoff_id,
+        )
+        handoff.audit_refs.append(handoff_audit.audit_id)
+        store.put_handoff(handoff)
+        return handoff
 
 
 @app.get("/api/consult/handoffs/{handoff_id}", response_model=ConsultGateHandoff)
@@ -707,7 +922,38 @@ def get_handoff(handoff_id: str) -> ConsultGateHandoff:
     handoff = store.get_handoff(handoff_id)
     if not handoff:
         raise HTTPException(status_code=404, detail="ConsultGateHandoff not found")
+    _get_request_or_404(handoff.request_id)
     return handoff
+
+
+@app.post(
+    "/api/consult/handoffs/{handoff_id}/acknowledge",
+    response_model=ConsultGateHandoff,
+)
+def acknowledge_handoff(
+    handoff_id: str,
+    req: AcknowledgeGateHandoffRequest,
+) -> ConsultGateHandoff:
+    identity = _require_actor("service")
+    with _REQUEST_COMMAND_LOCK:
+        handoff = get_handoff(handoff_id)
+        if handoff.status == GateHandoffStatus.ACKNOWLEDGED:
+            return handoff
+        handoff.status = GateHandoffStatus.ACKNOWLEDGED
+        handoff.sent_at = req.acknowledged_at or utc_now()
+        store.put_handoff(handoff)
+        _emit_audit(
+            action="gate_handoff_acknowledged",
+            request_id=handoff.request_id,
+            actor_ref={
+                "actor_type": identity.actor_type,
+                "actor_id": req.consumer_ref,
+            },
+            service_actor_ref=CONSULTATION_SERVICE_ACTOR,
+            trace_id=handoff.trace_id,
+            after_state=handoff.handoff_id,
+        )
+        return handoff
 
 
 @app.get(
@@ -717,6 +963,48 @@ def get_handoff(handoff_id: str) -> ConsultGateHandoff:
 def list_handoffs_for_request(request_id: str) -> List[ConsultGateHandoff]:
     _get_request_or_404(request_id)
     return store.list_handoffs_for_request(request_id)
+
+
+@app.get("/api/consult/workflows")
+def list_workflows(status: Optional[str] = None) -> Dict[str, Any]:
+    identity = current_identity()
+    if status and status not in {
+        "pending",
+        "leased",
+        "blocked",
+        "dead_letter",
+        "completed",
+    }:
+        raise HTTPException(status_code=400, detail="invalid workflow status")
+    return {
+        "tenant_id": identity.tenant_id,
+        "counts": workflow_state.counts(tenant_id=identity.tenant_id),
+        "items": workflow_state.list_items(
+            tenant_id=identity.tenant_id,
+            status=status,
+        ),
+    }
+
+
+@app.post("/api/consult/workflows/dead-letters/{request_id}/replay")
+def replay_dead_letter(request_id: str) -> Dict[str, Any]:
+    identity = _require_actor("operator")
+    _get_request_or_404(request_id)
+    replayed = workflow_state.replay_dead_letter(
+        tenant_id=identity.tenant_id,
+        request_id=request_id,
+    )
+    if not replayed:
+        raise HTTPException(
+            status_code=409,
+            detail="workflow is not in dead_letter state",
+        )
+    return {
+        "tenant_id": identity.tenant_id,
+        "request_id": request_id,
+        "status": "pending",
+        "replayed": True,
+    }
 
 
 @app.post("/api/consult/committees/{committee_id}/sponsor-decision")
@@ -737,6 +1025,8 @@ def record_committee_sponsor_decision(
     matched_request: Optional[ConsultRequest] = None
     matched_consult: Dict[str, Any] = {}
     for request_record in store.list_requests():
+        if request_record.tenant_id != current_identity().tenant_id:
+            continue
         request_data = _request_dict(request_record)
         metadata = request_data.get("metadata") if isinstance(request_data.get("metadata"), dict) else {}
         consult = metadata.get("consultation") if isinstance(metadata.get("consultation"), dict) else {}

@@ -20,6 +20,7 @@ from services.consultation.models import (
 def _request_payload(**overrides: object) -> dict:
     payload = {
         "request_id": "cr-ask002-001",
+        "tenant_id": "tenant-ask002",
         "request_type": "execution_risk",
         "requested_by": {"actor_type": "operator", "actor_id": "operator-risk"},
         "from_persona_id": "persona-risk-chief",

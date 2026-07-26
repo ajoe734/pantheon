@@ -1280,7 +1280,7 @@ def apply_bus_command(
             "reopen",
             task_id,
             f"GitHub retry requested via {'issue #' + str(issue_number) if issue_number else 'relay/webhook'} by @{actor}.",
-            actor=owner or reviewer,
+            actor="Human/Ops",
         )
         queue_resume_for_task(config, target_task)
         reply = f"Queued retry for `{task_id}`."

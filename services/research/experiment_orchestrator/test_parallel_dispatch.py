@@ -16,6 +16,8 @@ def _task_payload(**overrides: object) -> dict[str, object]:
         "task_id": "etask-exp-v2-001",
         "strategy_id": "strat-cross-sectional-alpha-v1",
         "strategy_spec_version": "1.2.3",
+        "tenant_id": "tenant-research-a",
+        "strategy_spec_id": "reg-strategy-spec-cross-sectional-1.2.3",
         "requested_by": "persona-researcher",
         "task_type": "factor_eval",
         "backend_id": None,
@@ -49,6 +51,8 @@ def _run_for_backend(
         task_id=task.task_id,
         strategy_id=task.strategy_id,
         strategy_spec_version=task.strategy_spec_version,
+        tenant_id=task.tenant_id,
+        strategy_spec_id=task.strategy_spec_id,
         backend_id=backend_id,
         runtime_env="research",
         status="completed",
@@ -103,6 +107,8 @@ class TestParallelDispatch(unittest.TestCase):
 
         self.assertEqual([run.backend_id for run in result.runs], ["vectorbt", "qlib", "statsmodels"])
         self.assertEqual([run.status for run in result.runs], ["completed", "completed", "completed"])
+        self.assertTrue(all(run.tenant_id == task.tenant_id for run in result.runs))
+        self.assertTrue(all(run.strategy_spec_id == task.strategy_spec_id for run in result.runs))
         self.assertEqual(result.failures, {})
         self.assertEqual(result.comparison_summary["sharpe_by_backend"]["vectorbt"], 1.1)
         self.assertEqual(result.comparison_summary["ic_by_backend"]["qlib"], 0.15)
@@ -146,4 +152,3 @@ class TestParallelDispatch(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

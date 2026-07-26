@@ -1,0 +1,220 @@
+{
+  "schema_version": 1,
+  "task_id": "L12-ALPHA-001",
+  "owner": "Codex",
+  "reviewer": "Codex2",
+  "status": "ready_for_review",
+  "generated_at": "2026-07-26T09:59:44Z",
+  "scope": {
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/L12-ALPHA-001",
+    "base_commit": "1827cce2e9d6c31f7b57ec4400f3c5d1b3bede29",
+    "anchor_commits": [
+      {
+        "sha": "0c018d4bc4a962a878c0d2742bfcc9f5e484306b",
+        "subject": "L12-ALPHA-001: anchor tenant authority foundation"
+      },
+      {
+        "sha": "95dd93fddd8811a2fc11a03ca81eeaf6d482686b",
+        "subject": "L12-ALPHA-001: anchor authoritative execution"
+      },
+      {
+        "sha": "d1d2405122918a3f5c63f5b6cfbd6b2e5284c9a8",
+        "subject": "L12-ALPHA-001: bind loop evidence to authority receipts"
+      }
+    ],
+    "owned_layer": "Approved-only tenant-scoped Alpha replication queue, authoritative research execution/readback, and ExperimentTask/ExperimentRun tenant lineage.",
+    "not_changing": "Registry review ownership, research-orchestrator route ownership, Compose/default runtime activation, hosted deployment, or live-capital authority.",
+    "composes_with": [
+      "L12-DIST-001",
+      "L12-CTRL-001",
+      "L12-MANIFEST-001"
+    ]
+  },
+  "identity_and_admission": {
+    "canonical_key": [
+      "tenant_id",
+      "strategy_spec_id"
+    ],
+    "required_review_bindings": [
+      "artifact_state=approved",
+      "checksum",
+      "approval_decision_id",
+      "approver",
+      "approved_at"
+    ],
+    "registry_readback": "GET /api/registry/strategy-specs/{strategy_spec_id}",
+    "immutable_recheck_fields": [
+      "registry_id",
+      "strategy_id",
+      "version",
+      "artifact_state",
+      "checksum",
+      "approval_decision_id",
+      "approver",
+      "approved_at",
+      "metadata.tenant_id",
+      "metadata.strategy_spec.strategy_id"
+    ],
+    "production_activation": "disabled"
+  },
+  "queue_and_recovery": {
+    "durable_store": "alpha_replication_queue.jsonl",
+    "lease_fields": [
+      "claimed_by",
+      "claimed_at",
+      "lease_expires_at",
+      "claim_generation",
+      "claim_token"
+    ],
+    "fenced_acknowledgement": true,
+    "expired_claim_recovery": true,
+    "bounded_retries": true,
+    "dlq": true,
+    "tenant_scoped_replay": true,
+    "idempotent_replay_id": true
+  },
+  "research_authority": {
+    "boundary": "services/research/main.py FastAPI task/run routes and ResearchOrchestratorStore",
+    "task_create": "POST /api/research-orchestrator/tasks",
+    "task_readback": "GET /api/research-orchestrator/tasks/{task_id}",
+    "run_create": "POST /api/research-orchestrator/tasks/{task_id}/runs",
+    "run_complete": "POST /api/research-orchestrator/runs/{run_id}/complete",
+    "run_readback": "GET /api/research-orchestrator/runs/{run_id}",
+    "domain_task": "ExperimentTask",
+    "domain_run": "ExperimentRun",
+    "producer_backend": "replication_gate",
+    "persistence_transport": "manual_record",
+    "stub_accepted": false,
+    "local_run_file_authoritative": false,
+    "loop_evidence_ref_format": "research-authority://experiment-runs/{run_id}",
+    "ack_after_readback_only": true
+  },
+  "behavioral_proof": {
+    "approved_and_unapproved_gate": {
+      "status": "pass",
+      "proof": [
+        "Queue rejects candidate, review, and missing approval bindings.",
+        "Worker rejects changed lifecycle, checksum, approval decision, approver, approval time, registry identity, and tenant during exact-ID readback.",
+        "The actual ReplicationGate accepts the canonical approved content only after the immutable approval envelope is independently verified."
+      ]
+    },
+    "tenant_collision": {
+      "status": "pass",
+      "proof": [
+        "The same strategy_spec_id can exist for two tenants without queue, task, or run collision.",
+        "Every claim, acknowledgement, failure, DLQ, and replay operation requires tenant_id."
+      ]
+    },
+    "claim_expiry_and_crash_recovery": {
+      "status": "pass",
+      "proof": [
+        "Expired claims return to pending and the previous fencing token cannot acknowledge.",
+        "A simulated crash after authority persistence reclaims the lease and converges to the same deterministic task/run identity without duplicate authority state."
+      ]
+    },
+    "duplicate_failure_and_replay": {
+      "status": "pass",
+      "proof": [
+        "Duplicate registry discovery and controller restart converge to one queue item and one authority run.",
+        "Bounded failures enter DLQ; a duplicate replay_id is a no-op; one new replay generation produces exactly one new deterministic ExperimentRun."
+      ]
+    },
+    "real_research_service_boundary": {
+      "status": "pass",
+      "proof": [
+        "The test dynamically loads services/research/main.py, calls its actual FastAPI routes with TestClient, and reads back the ResearchOrchestratorStore records.",
+        "Readback contains the exact nested ExperimentTask and completed ExperimentRun, production_activation=disabled, adapter=manual persistence transport, and producer_backend=replication_gate."
+      ]
+    }
+  },
+  "validation": [
+    {
+      "command": "PYTHONPATH=/tmp/l12-alpha-pydeps:. python3 -m pytest -q -p no:cacheprovider services/research/alpha_replication services/research/experiment_orchestrator services/research/experiments services/research/tests/test_research_orchestrator_http_service.py",
+      "result": "58 passed, 11 warnings in 13.54s",
+      "conclusion": "pass"
+    },
+    {
+      "command": "PYTHONPATH=/tmp/l12-alpha-pydeps:. python3 -m pytest -q -p no:cacheprovider services/research/alpha_replication/test_queue.py::test_only_explicit_approved_review_enters_queue services/research/alpha_replication/test_queue.py::test_tenant_and_canonical_strategy_spec_id_form_the_only_queue_key services/research/alpha_replication/test_queue.py::test_claim_lease_expires_and_stale_token_cannot_ack services/research/alpha_replication/test_queue.py::test_failures_reach_dlq_and_replay_is_idempotent_and_tenant_scoped services/research/alpha_replication/test_revalidation_worker.py::test_registry_recheck_rejects_stale_or_changed_review services/research/alpha_replication/test_revalidation_worker.py::test_tenant_collision_isolated_across_authority_and_queue services/research/alpha_replication/test_revalidation_worker.py::test_crash_after_authority_write_reclaims_same_attempt_without_duplicate services/research/alpha_replication/test_revalidation_worker.py::test_failure_to_dlq_and_operator_replay_create_one_new_generation services/research/experiment_orchestrator/test_authority.py::test_real_research_service_boundary_persists_domain_payload_and_readback",
+      "result": "13 passed, 1 warning in 3.11s",
+      "conclusion": "pass"
+    },
+    {
+      "command": "python3 -m py_compile services/research/alpha_replication/queue.py services/research/alpha_replication/replication_controller.py services/research/alpha_replication/revalidation_worker.py services/research/experiment_orchestrator/authority.py services/research/experiment_orchestrator/parallel_dispatch.py services/research/experiments/models.py services/research/experiments/registry_writeback.py",
+      "result": "exit 0",
+      "conclusion": "pass"
+    },
+    {
+      "command": "git diff --check",
+      "result": "exit 0",
+      "conclusion": "pass"
+    }
+  ],
+  "acceptance": [
+    {
+      "id": "AC1",
+      "statement": "Only an approved reviewed immutable StrategySpec enters replication.",
+      "status": "pass",
+      "evidence_refs": [
+        "behavioral_proof.approved_and_unapproved_gate"
+      ]
+    },
+    {
+      "id": "AC2",
+      "statement": "Discovery uses the canonical StrategySpec identifier and tenant-scoped keys.",
+      "status": "pass",
+      "evidence_refs": [
+        "identity_and_admission",
+        "behavioral_proof.tenant_collision"
+      ]
+    },
+    {
+      "id": "AC3",
+      "statement": "Claims expire and stale work can be safely reclaimed or replayed.",
+      "status": "pass",
+      "evidence_refs": [
+        "queue_and_recovery",
+        "behavioral_proof.claim_expiry_and_crash_recovery"
+      ]
+    },
+    {
+      "id": "AC4",
+      "statement": "Research authority stores a non-stub ExperimentTask and ExperimentRun.",
+      "status": "pass",
+      "evidence_refs": [
+        "research_authority",
+        "behavioral_proof.real_research_service_boundary"
+      ]
+    },
+    {
+      "id": "AC5",
+      "statement": "Duplicate review, restart, failure, and DLQ replay are deterministic.",
+      "status": "pass",
+      "evidence_refs": [
+        "behavioral_proof.duplicate_failure_and_replay"
+      ]
+    }
+  ],
+  "residuals": [
+    {
+      "id": "R1",
+      "blocking_for_task": false,
+      "owner": "L12-DIST-001",
+      "description": "Upstream distillation must provide tenant-bound immutable approval metadata; this implementation fails closed until it does."
+    },
+    {
+      "id": "R2",
+      "blocking_for_task": false,
+      "owner": "L12-MANIFEST-001",
+      "description": "Compose/default runtime activation is deliberately outside this task; handoff_only remains a config alias whose execution semantics are authoritative."
+    },
+    {
+      "id": "R3",
+      "blocking_for_task": false,
+      "owner": "research replication maintainers",
+      "description": "ReplicationGate contains pre-existing datetime.utcnow() deprecation warnings with no behavioral impact."
+    }
+  ],
+  "overall": "passed_ready_for_independent_review"
+}
