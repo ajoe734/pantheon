@@ -656,6 +656,27 @@ def evaluate_gate(
             head_oid=head_oid,
         )
 
+    if str(pr.get("state") or "").strip().upper() == "MERGED":
+        merged_at = parse_timestamp(pr.get("mergedAt"))
+        if merged_at is None:
+            return _blocked(
+                contract,
+                approval,
+                "merge_timestamp_unknown",
+                "PR reports MERGED without a parseable mergedAt; cannot prove the "
+                "merge followed the approval",
+                head_oid=head_oid,
+            )
+        if merged_at < approval.approved_at:  # type: ignore[operator]
+            return _blocked(
+                contract,
+                approval,
+                "merged_before_approval",
+                f"PR merged at {pr.get('mergedAt')} before the approval at "
+                f"{approval.approved_at_text}; the delivery was never reviewed before landing",
+                head_oid=head_oid,
+            )
+
     head_committed_at, commit_problem = pr_head_committed_at(pr)
     if head_committed_at is None:
         return _blocked(

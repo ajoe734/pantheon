@@ -10,6 +10,13 @@ and its PR actually landing in `dev`. It is intentionally narrow:
 * no branch-protection bypass;
 * unblock tasks instead of stranded PRs when the safe path fails.
 
+Merge authority is delegated to `task_review_merge_gate`.  For a task whose
+canonical contract requires independent review the integrator merges only the
+exact head the assigned reviewer approved, never enables GitHub auto-merge,
+never force-pushes a rebase over the reviewed head, and actively revokes an
+auto-merge request it finds on an unapproved gated PR.  Tasks whose canonical
+contract permits merge-then-review keep the previous integration behavior.
+
 The default mode is dry-run. Pass `--execute` to mutate git/GitHub/task state.
 """
 
@@ -27,6 +34,11 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Mapping, Sequence
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import task_review_merge_gate as review_gate  # noqa: E402  (local helper module)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -59,8 +71,9 @@ FAILURE_VALUES = {
 ALLOWED_PRE_REBASE_MERGE_STATES = {"CLEAN", "HAS_HOOKS", "BEHIND", "UNKNOWN"}
 ALLOWED_DIRECT_MERGE_STATES = {"CLEAN", "HAS_HOOKS", "UNKNOWN"}
 PR_DETAIL_FIELDS = (
-    "number,title,url,headRefName,baseRefName,isDraft,mergeStateStatus,"
-    "reviewDecision,statusCheckRollup,state,mergeCommit,mergedAt"
+    "number,title,url,headRefName,headRefOid,baseRefName,isDraft,mergeStateStatus,"
+    "reviewDecision,statusCheckRollup,state,mergeCommit,mergedAt,commits,"
+    "autoMergeRequest"
 )
 
 
@@ -117,8 +130,48 @@ class IntegrationResult:
         }
 
 
+@dataclass(frozen=True)
+class ReviewGate:
+    """Canonical review-before-merge authority for one integration pass.
+
+    Production runs read the bound status root. Tests inject the canonical
+    task rows and audit events directly so the fail-closed rules can be proven
+    without GitHub or a status root on disk.
+    """
+
+    status_root: Path = ROOT
+    state: Mapping[str, Any] | None = None
+    events: Sequence[Mapping[str, Any]] | None = None
+
+    def decide(
+        self,
+        candidate: "TaskCandidate",
+        pr: Mapping[str, Any] | None,
+        settings: "Settings",
+    ) -> review_gate.GateDecision:
+        return review_gate.gate_for_task(
+            candidate.task_id,
+            pr,
+            status_root=self.status_root,
+            dev_branch=settings.dev_branch,
+            task_branch_prefix=settings.task_branch_prefix,
+            state=self.state,
+            events=self.events,
+        )
+
+
 class AutoIntegratorError(RuntimeError):
     """Base auto-integrator failure."""
+
+
+class AmbiguousPullRequests(AutoIntegratorError):
+    """More than one open PR claims the same exact task branch."""
+
+    def __init__(self, branch: str, numbers: Sequence[Any]) -> None:
+        rendered = ", ".join(f"#{number}" for number in numbers)
+        super().__init__(f"multiple open PRs claim {branch}: {rendered}")
+        self.branch = branch
+        self.numbers = list(numbers)
 
 
 class CommandFailure(AutoIntegratorError):
@@ -341,6 +394,11 @@ def fetch_pr_for_task(
     )
     if not isinstance(listing, list) or not listing:
         return None
+    if state == "open" and len(listing) > 1:
+        # GitHub ambiguity is never resolved by picking the first row: a second
+        # open PR for the same task branch can carry a different head than the
+        # one the reviewer approved.
+        raise AmbiguousPullRequests(candidate.branch, [item.get("number") for item in listing])
     number = listing[0].get("number")
     if number is None:
         return None
@@ -434,6 +492,7 @@ def run_rebase_smoke(
     root: Path,
     execute: bool,
     extra_smoke_commands: Sequence[str] = (),
+    allow_push: bool = True,
 ) -> tuple[bool, str]:
     fetch_refs(candidate, settings, runner, root=root)
     commands = tuple(extra_smoke_commands) or settings.smoke_commands
@@ -449,19 +508,31 @@ def run_rebase_smoke(
             for command in commands:
                 runner.run_shell(command, cwd=worktree)
             after = runner.run(["git", "rev-parse", "HEAD"], cwd=worktree).stdout.strip()
+            changed = after != before
             pushed = False
-            if execute and after != before:
+            if execute and allow_push and changed:
                 runner.run(
                     ["git", "push", "--force-with-lease", "origin", f"HEAD:{candidate.branch}"],
                     cwd=worktree,
                 )
                 pushed = True
-            return pushed, "rebased_and_pushed" if pushed else "clean_rebase"
+            if pushed:
+                return True, "rebased_and_pushed"
+            # `rebase_required` means the branch would have to move to land.
+            # Under review-before-merge that invalidates the reviewed head, so
+            # the caller must not push it.
+            return False, "rebase_required" if changed else "clean_rebase"
         finally:
             runner.run(["git", "worktree", "remove", "--force", str(worktree)], cwd=root, check=False)
 
 
-def merge_command(number: int, settings: Settings, *, auto: bool) -> list[str]:
+def merge_command(
+    number: int,
+    settings: Settings,
+    *,
+    auto: bool,
+    match_head_commit: str = "",
+) -> list[str]:
     args = ["gh", "pr", "merge", str(number)]
     if settings.merge_method == "squash":
         args.append("--squash")
@@ -471,7 +542,30 @@ def merge_command(number: int, settings: Settings, *, auto: bool) -> list[str]:
         args.append("--merge")
     if auto:
         args.append("--auto")
+    if match_head_commit:
+        # GitHub refuses the merge if the head moved between the gate decision
+        # and this call, which closes the concurrent-finalize race.
+        args.extend(["--match-head-commit", match_head_commit])
     return args
+
+
+def disable_auto_merge(
+    number: int | None,
+    runner: CommandRunner,
+    *,
+    root: Path,
+    execute: bool,
+) -> bool:
+    """Revoke a premature auto-merge request on a gated PR."""
+
+    if number is None or not execute:
+        return False
+    result = runner.run(["gh", "pr", "merge", str(number), "--disable-auto"], cwd=root, check=False)
+    return result.returncode == 0
+
+
+def has_auto_merge_request(pr: Mapping[str, Any]) -> bool:
+    return bool(pr.get("autoMergeRequest"))
 
 
 def reconcile_done(
@@ -567,8 +661,21 @@ def integrate_candidate(
     execute: bool = False,
     open_unblock: bool = True,
     extra_smoke_commands: Sequence[str] = (),
+    gate: ReviewGate | None = None,
 ) -> IntegrationResult:
-    pr = fetch_pr_for_task(candidate, settings, runner, root=root)
+    gate = gate or ReviewGate()
+    try:
+        pr = fetch_pr_for_task(candidate, settings, runner, root=root)
+    except AmbiguousPullRequests as exc:
+        detail = f"{exc}; refusing to choose a head for {candidate.task_id}."
+        unblock = (
+            open_unblock_task(candidate, "ambiguous-open-prs", detail, settings, runner, root=root, execute=execute)
+            if open_unblock
+            else None
+        )
+        return IntegrationResult(
+            candidate.task_id, "blocked", detail, unblock_task_id=unblock, dry_run=not execute, commands=runner.commands[:]
+        )
     if pr is None:
         merged_pr = fetch_pr_for_task(candidate, settings, runner, root=root, state="merged")
         if merged_pr is not None:
@@ -587,6 +694,28 @@ def integrate_candidate(
             if not target_contains_commit(oid, settings, runner, root=root):
                 detail = f"Merged PR #{number} merge commit {oid} is not in origin/{settings.dev_branch}; not reconciling."
                 return IntegrationResult(candidate.task_id, "waiting", detail, number, url, dry_run=not execute, commands=runner.commands[:])
+            merged_decision = gate.decide(candidate, merged_pr, settings)
+            if merged_decision.policy == review_gate.POLICY_REVIEW_BEFORE_MERGE and not merged_decision.allow_merge:
+                # An already-merged PR that the gate would have refused must not
+                # be laundered into `done` by the reconciliation path.
+                detail = (
+                    f"Merged PR #{number} does not satisfy review-before-merge for "
+                    f"{candidate.task_id}: {merged_decision.reason} - {merged_decision.detail}."
+                )
+                unblock = (
+                    open_unblock_task(
+                        candidate,
+                        f"review-gate-{merged_decision.reason.replace('_', '-')}",
+                        detail,
+                        settings,
+                        runner,
+                        root=root,
+                        execute=execute,
+                    )
+                    if open_unblock
+                    else None
+                )
+                return IntegrationResult(candidate.task_id, "blocked", detail, number, url, unblock, not execute, runner.commands[:])
             if not execute:
                 detail = f"Dry-run: PR #{number} is already merged into {settings.dev_branch}; would reconcile {candidate.task_id} to done."
                 return IntegrationResult(candidate.task_id, "would_reconcile_done", detail, number, url, dry_run=True, commands=runner.commands[:])
@@ -604,6 +733,41 @@ def integrate_candidate(
         detail = f"PR #{number} is not eligible: {problem}."
         unblock = open_unblock_task(candidate, problem, detail, settings, runner, root=root, execute=execute) if open_unblock else None
         return IntegrationResult(candidate.task_id, "blocked", detail, number, url, unblock, not execute, runner.commands[:])
+
+    # Canonical review-before-merge gate. This runs before the CI and merge
+    # state probes so a premature auto-merge request is revoked immediately
+    # rather than after the checks happen to turn green.
+    decision = gate.decide(candidate, pr, settings)
+    gated = decision.policy == review_gate.POLICY_REVIEW_BEFORE_MERGE
+    if gated and not decision.allow_merge:
+        revoked = False
+        if has_auto_merge_request(pr):
+            revoked = disable_auto_merge(number, runner, root=root, execute=execute)
+        detail = (
+            f"PR #{number} is gated by review-before-merge and not mergeable: "
+            f"{decision.reason} - {decision.detail}."
+        )
+        if has_auto_merge_request(pr):
+            detail += (
+                " Revoked the pending auto-merge request."
+                if revoked
+                else " A pending auto-merge request is still set on this PR."
+            )
+        unblock = (
+            open_unblock_task(
+                candidate,
+                f"review-gate-{decision.reason.replace('_', '-')}",
+                detail,
+                settings,
+                runner,
+                root=root,
+                execute=execute,
+            )
+            if open_unblock
+            else None
+        )
+        return IntegrationResult(candidate.task_id, "blocked", detail, number, url, unblock, not execute, runner.commands[:])
+
     checks = summarize_status_rollup(pr.get("statusCheckRollup"))
     if checks.state == "red":
         detail = f"PR #{number} has failing checks: {', '.join(checks.failing)}."
@@ -627,6 +791,9 @@ def integrate_candidate(
             root=root,
             execute=execute,
             extra_smoke_commands=extra_smoke_commands,
+            # A gated PR may never be force-pushed: replacing the head would
+            # discard the exact commit the reviewer approved.
+            allow_push=not gated,
         )
     except CommandFailure as exc:
         detail = f"Local smoke or git command failed for PR #{number}: {exc.output.strip() or exc.args_rendered}"
@@ -638,8 +805,24 @@ def integrate_candidate(
         unblock = open_unblock_task(candidate, "rebase-conflict", detail, settings, runner, root=root, execute=execute) if open_unblock else None
         return IntegrationResult(candidate.task_id, "blocked", detail, number, url, unblock, not execute, runner.commands[:])
 
+    if gated and rebase_status == "rebase_required":
+        # Landing this PR needs a new head, and no reviewer has seen that head.
+        detail = (
+            f"PR #{number} needs a refreshed head to land on {settings.dev_branch}; "
+            f"the approval of {decision.head_oid} would not cover it. "
+            "Owner refreshes the branch and the assigned reviewer re-approves the new head."
+        )
+        return IntegrationResult(candidate.task_id, "waiting", detail, number, url, dry_run=not execute, commands=runner.commands[:])
+
     if not execute:
-        detail = f"Dry-run: PR #{number} is green and {rebase_status}; would merge or enable auto-merge."
+        if gated:
+            detail = (
+                f"Dry-run: PR #{number} is green, {rebase_status}, and approved by "
+                f"{decision.contract.get('reviewer')} at {decision.approved_at} for exact head "
+                f"{decision.head_oid}; would merge that exact head."
+            )
+        else:
+            detail = f"Dry-run: PR #{number} is green and {rebase_status}; would merge or enable auto-merge."
         return IntegrationResult(candidate.task_id, "would_merge", detail, number, url, dry_run=True, commands=runner.commands[:])
 
     if pushed:
@@ -651,9 +834,23 @@ def integrate_candidate(
     if merge_state and merge_state not in ALLOWED_DIRECT_MERGE_STATES:
         detail = f"PR #{number} is green but mergeStateStatus={merge_state}; waiting instead of merging."
         return IntegrationResult(candidate.task_id, "waiting", detail, number, url, dry_run=False, commands=runner.commands[:])
-    runner.run(merge_command(number or 0, settings, auto=False), cwd=root)
+    runner.run(
+        merge_command(
+            number or 0,
+            settings,
+            auto=False,
+            match_head_commit=decision.head_oid if gated else "",
+        ),
+        cwd=root,
+    )
     reconcile_done(candidate, pr, runner, root=root, execute=True)
-    detail = f"Merged PR #{number} into {settings.dev_branch} and reconciled {candidate.task_id} to done."
+    if gated:
+        detail = (
+            f"Merged the reviewer-approved head {decision.head_oid} of PR #{number} into "
+            f"{settings.dev_branch} and reconciled {candidate.task_id} to done."
+        )
+    else:
+        detail = f"Merged PR #{number} into {settings.dev_branch} and reconciled {candidate.task_id} to done."
     return IntegrationResult(candidate.task_id, "merged", detail, number, url, dry_run=False, commands=runner.commands[:])
 
 
@@ -687,6 +884,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     candidates = candidates[:max_tasks]
     runner = CommandRunner()
     smoke_commands = tuple() if args.skip_smoke else tuple(args.smoke_command) or settings.smoke_commands
+    # The review gate reads canonical state from the same root that supplied
+    # the candidates, so status file and audit can never disagree by binding.
+    gate = ReviewGate(status_root=args.status_file.resolve().parent, state=state)
     results: list[IntegrationResult] = []
     with lock_file(settings.lock_path, enabled=not args.no_lock):
         for candidate in candidates:
@@ -699,6 +899,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     execute=args.execute,
                     open_unblock=not args.no_open_unblock,
                     extra_smoke_commands=smoke_commands,
+                    gate=gate,
                 )
             )
 

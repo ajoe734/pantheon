@@ -92,21 +92,53 @@ def completed(command: Sequence[str], stdout: str = "", returncode: int = 0):
     return Result()
 
 
+APPROVED_HEAD = "a" * 40
+
+
 def green_pr(number: int = 44) -> dict[str, Any]:
     return {
         "number": number,
         "title": "Task PR",
         "url": f"https://github.example/pr/{number}",
         "headRefName": "task/ABC-001",
+        "headRefOid": APPROVED_HEAD,
         "baseRefName": "dev",
         "isDraft": False,
         "mergeStateStatus": "CLEAN",
         "reviewDecision": "APPROVED",
+        "commits": [{"oid": APPROVED_HEAD, "committedDate": "2026-06-12T00:30:00Z"}],
         "statusCheckRollup": [
             {"name": "Commit trailers", "conclusion": "SUCCESS", "status": "COMPLETED"},
             {"name": "Smoke acceptance", "state": "SUCCESS"},
         ],
     }
+
+
+def approved_gate(task_id: str = "ABC-001") -> auto_integrator.ReviewGate:
+    """Canonical state where the assigned reviewer approved the exact head."""
+
+    return auto_integrator.ReviewGate(
+        state={
+            "tasks": [
+                {
+                    "id": task_id,
+                    "title": "Ready",
+                    "status": "review_approved",
+                    "owner": "Codex",
+                    "reviewer": "Claude",
+                }
+            ]
+        },
+        events=[
+            {
+                "ts": "2026-06-12T00:45:00Z",
+                "agent": "Claude",
+                "type": "review_approved",
+                "task_id": task_id,
+                "message": "Independent review approved.",
+            }
+        ],
+    )
 
 
 def merged_pr(number: int = 55) -> dict[str, Any]:
@@ -178,6 +210,7 @@ class IntegrationPlanTests(unittest.TestCase):
             auto_integrator.Settings(smoke_commands=("true",)),
             runner,
             execute=False,
+            gate=approved_gate(),
         )
 
         self.assertEqual(result.action, "would_merge")
@@ -202,6 +235,7 @@ class IntegrationPlanTests(unittest.TestCase):
             auto_integrator.Settings(),
             runner,
             execute=True,
+            gate=approved_gate(),
         )
 
         self.assertEqual(result.action, "blocked")
@@ -224,6 +258,7 @@ class IntegrationPlanTests(unittest.TestCase):
             auto_integrator.Settings(),
             runner,
             execute=True,
+            gate=approved_gate(),
         )
 
         self.assertEqual(result.action, "blocked")
@@ -245,6 +280,7 @@ class IntegrationPlanTests(unittest.TestCase):
             auto_integrator.Settings(),
             runner,
             execute=True,
+            gate=approved_gate(),
         )
 
         self.assertEqual(result.action, "reconciled_done")
@@ -269,6 +305,7 @@ class IntegrationPlanTests(unittest.TestCase):
             auto_integrator.Settings(),
             runner,
             execute=True,
+            gate=approved_gate(),
         )
 
         self.assertEqual(result.action, "blocked")
