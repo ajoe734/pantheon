@@ -94,10 +94,14 @@ class RevalidationAttemptError(RuntimeError):
         *,
         task_id: str | None = None,
         run_id: str | None = None,
+        authority_task_id: str | None = None,
+        authority_run_id: str | None = None,
     ) -> None:
         super().__init__(message)
         self.task_id = task_id
         self.run_id = run_id
+        self.authority_task_id = authority_task_id
+        self.authority_run_id = authority_run_id
 
 
 class AlphaRevalidationWorker:
@@ -173,7 +177,11 @@ class AlphaRevalidationWorker:
                 }
             )
 
-        created_run_ids: list[str] = []
+        created_authority_task_ids: list[str] = []
+        created_authority_run_ids: list[str] = []
+        created_experiment_task_ids: list[str] = []
+        created_experiment_run_ids: list[str] = []
+        authority_receipts: list[dict[str, str]] = []
         skipped_run_ids: list[str] = []
         errors: list[dict[str, Any]] = []
         processed_count = 0
@@ -196,6 +204,8 @@ class AlphaRevalidationWorker:
                     processed_count += 1
                     task_id: str | None = None
                     run_id: str | None = None
+                    authority_task_id: str | None = None
+                    authority_run_id: str | None = None
                     try:
                         task_receipt, run_receipt = self._process_entry(
                             entry,
@@ -203,19 +213,25 @@ class AlphaRevalidationWorker:
                         )
                         task_id = task_receipt.task.task_id
                         run_id = run_receipt.run.run_id
+                        authority_task_id = task_receipt.authority_task_id
+                        authority_run_id = run_receipt.authority_run_id
                         if run_receipt.run.status != "completed":
                             raise RevalidationAttemptError(
                                 run_receipt.run.failure_reason
                                 or "authoritative ExperimentRun failed",
                                 task_id=task_id,
                                 run_id=run_id,
+                                authority_task_id=authority_task_id,
+                                authority_run_id=authority_run_id,
                             )
                         acknowledged = self._queue.mark_revalidated(
                             tenant,
                             entry["strategy_spec_id"],
                             claim_token=entry["claim_token"],
-                            task_id=task_id,
-                            run_id=run_id,
+                            authority_task_id=authority_task_id,
+                            authority_run_id=authority_run_id,
+                            experiment_task_id=task_id,
+                            experiment_run_id=run_id,
                             status=run_receipt.run.status,
                         )
                         if not acknowledged:
@@ -223,12 +239,31 @@ class AlphaRevalidationWorker:
                                 "claim lease expired before authoritative acknowledgement",
                                 task_id=task_id,
                                 run_id=run_id,
+                                authority_task_id=authority_task_id,
+                                authority_run_id=authority_run_id,
                             )
-                        created_run_ids.append(run_id)
+                        created_authority_task_ids.append(authority_task_id)
+                        created_authority_run_ids.append(authority_run_id)
+                        created_experiment_task_ids.append(task_id)
+                        created_experiment_run_ids.append(run_id)
+                        authority_receipts.append(
+                            {
+                                "authority_task_id": authority_task_id,
+                                "authority_run_id": authority_run_id,
+                                "experiment_task_id": task_id,
+                                "experiment_run_id": run_id,
+                            }
+                        )
                     except Exception as exc:  # noqa: BLE001 - bounded retry owns failures.
                         if isinstance(exc, RevalidationAttemptError):
                             task_id = exc.task_id or task_id
                             run_id = exc.run_id or run_id
+                            authority_task_id = (
+                                exc.authority_task_id or authority_task_id
+                            )
+                            authority_run_id = (
+                                exc.authority_run_id or authority_run_id
+                            )
                         message = str(exc) or exc.__class__.__name__
                         failed_acknowledged = self._queue.mark_failed(
                             tenant,
@@ -236,6 +271,8 @@ class AlphaRevalidationWorker:
                             claim_token=entry["claim_token"],
                             error=message,
                             max_retries=self._max_retries,
+                            authority_task_id=authority_task_id,
+                            authority_run_id=authority_run_id,
                             task_id=task_id,
                             run_id=run_id,
                         )
@@ -248,15 +285,15 @@ class AlphaRevalidationWorker:
                             }
                         )
 
-        if created_run_ids:
-            self._metrics.run_count += len(created_run_ids)
+        if created_authority_run_ids:
+            self._metrics.run_count += len(created_authority_run_ids)
             self._metrics.last_success_at = _utc_now()
             self._metrics.last_run_strategy_spec_ids = [
                 entry["strategy_spec_id"]
                 for entry in self._queue.list_all()
                 if any(
-                    run_id in list(entry.get("experiment_run_ids") or [])
-                    for run_id in created_run_ids
+                    run_id in list(entry.get("authority_run_ids") or [])
+                    for run_id in created_authority_run_ids
                 )
             ]
         if errors:
@@ -268,7 +305,14 @@ class AlphaRevalidationWorker:
         return {
             "tick_at": tick_at,
             "processed": processed_count,
-            "created_run_ids": created_run_ids,
+            # ``created_run_ids`` is retained as a compatibility alias, but it
+            # now carries the resolvable research-authority IDs.
+            "created_run_ids": created_authority_run_ids,
+            "created_authority_task_ids": created_authority_task_ids,
+            "created_authority_run_ids": created_authority_run_ids,
+            "created_experiment_task_ids": created_experiment_task_ids,
+            "created_experiment_run_ids": created_experiment_run_ids,
+            "authority_receipts": authority_receipts,
             "skipped_run_ids": skipped_run_ids,
             "errors": errors,
             "dispatch_mode": self._dispatch_mode,
@@ -340,14 +384,24 @@ class AlphaRevalidationWorker:
             raise RevalidationAttemptError(
                 "claim lease lost before replication gate evaluation",
                 task_id=task.task_id,
+                authority_task_id=task_receipt.authority_task_id,
             )
 
-        run = self._evaluate(task, entry, spec, attempt_number, tick_at=tick_at)
-        run_receipt = self._authority.ensure_run(
-            task_receipt.authority_task_id,
-            run,
-            approval_decision_id=str(entry["approval_decision_id"]),
-        )
+        try:
+            run = self._evaluate(task, entry, spec, attempt_number, tick_at=tick_at)
+            run_receipt = self._authority.ensure_run(
+                task_receipt.authority_task_id,
+                run,
+                approval_decision_id=str(entry["approval_decision_id"]),
+            )
+        except RevalidationAttemptError:
+            raise
+        except Exception as exc:
+            raise RevalidationAttemptError(
+                str(exc) or exc.__class__.__name__,
+                task_id=task.task_id,
+                authority_task_id=task_receipt.authority_task_id,
+            ) from exc
         lineage_errors = validate_experiment_run_against_task(
             run_receipt.run,
             task_receipt.task,
@@ -357,6 +411,8 @@ class AlphaRevalidationWorker:
                 "; ".join(lineage_errors),
                 task_id=task_receipt.task.task_id,
                 run_id=run_receipt.run.run_id,
+                authority_task_id=task_receipt.authority_task_id,
+                authority_run_id=run_receipt.authority_run_id,
             )
         return task_receipt, run_receipt
 
