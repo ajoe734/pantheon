@@ -949,6 +949,371 @@ class TestArchiveReplayAudit(unittest.TestCase):
         self.assertIsNone(guardrail._follow_up_task_id("LOOP-PROD-X", "valid_closure"))
 
 
+class TestProtectedHumanOpsCloseoutGuard(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory(prefix="l12-signoff-guard-")
+        self.temp_root = Path(self.temp.name)
+        self.status_root = self.temp_root / "status-root"
+        self.status_root.mkdir()
+        self.protected_root = self.temp_root / "protected-runtime"
+        self.protected_root.mkdir()
+        self.manifest_path = self.status_root / "evidence" / "closeout.json"
+        self.manifest_path.parent.mkdir()
+        self.manifest = {
+            "deployment": {
+                "environment": "pantheon-lupin-dev",
+                "identity_admission": {
+                    "target_environment": "pantheon-lupin-dev",
+                    "frontend_sha": "c" * 40,
+                    "bff_sha": "d" * 40,
+                },
+            }
+        }
+        self._write_manifest()
+
+        self.module = guardrail._load_product_closeout_module()
+        self.private_key = self.module.generate_private_key()
+        self.key_id = "human-ops-key-test"
+        self.policy = self.module.VerdictPolicy(
+            policy_version="product-closeout-v1",
+            public_keys={
+                self.key_id: self.module.public_key_bytes(self.private_key)
+            },
+        )
+        self.ledger = self.module.ProtectedVerdictLedger(
+            self.protected_root / "verdict-ledger.jsonl"
+        )
+        self.issuer = self.module.ProductCloseoutVerdictService(
+            ledger=self.ledger,
+            policy=self.policy,
+            private_key=self.private_key,
+            key_id=self.key_id,
+        )
+        self.policy_path = self.protected_root / "verdict-policy.json"
+        self.policy_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "policy_version": self.policy.policy_version,
+                    "ledger_path": str(self.ledger.path),
+                    "public_keys": {
+                        self.key_id: self.module.public_key_to_base64(
+                            self.policy.public_keys[self.key_id]
+                        )
+                    },
+                    "max_verdict_age_seconds": 3600,
+                    "max_ttl_seconds": 3600,
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.default_policy_patch = mock.patch.object(
+            self.module,
+            "DEFAULT_PROTECTED_POLICY_PATH",
+            self.policy_path,
+        )
+        self.default_policy_patch.start()
+        self.task = {
+            "id": "L12-CLOSE-001",
+            "status": "review",
+            "owner": "Codex",
+            "reviewer": "Codex2",
+            "loop_ids": ["source_ingestion"],
+            "review_file": "evidence/closeout.json",
+            "requires_human_ops_signoff": True,
+        }
+        self.env = {
+            "PANTHEON_STATUS_ROOT": str(self.status_root),
+        }
+
+    def tearDown(self) -> None:
+        self.default_policy_patch.stop()
+        self.temp.cleanup()
+
+    def _write_manifest(self) -> None:
+        self.manifest_path.write_text(
+            json.dumps(self.manifest, sort_keys=True),
+            encoding="utf-8",
+        )
+
+    def _binding(self):
+        catalog = json.loads(
+            guardrail._PRODUCT_CLOSEOUT_CATALOG.read_text(encoding="utf-8")
+        )
+        return self.module.CloseoutBinding(
+            program_id=catalog["program_id"],
+            catalog_sha256=self.module.canonical_json_sha256(catalog),
+            task_id="L12-CLOSE-001",
+            closeout_manifest_sha256=guardrail._sha256_file(self.manifest_path),
+            target_environment="pantheon-lupin-dev",
+            frontend_sha="c" * 40,
+            bff_sha="d" * 40,
+        )
+
+    def _issue(self, *, decision: str = "approved") -> dict:
+        verdict = self.issuer.issue(
+            self._binding(),
+            self.module.HumanOpsIdentity(
+                actor_id="ops-human-001",
+                actor_role="ops",
+                authenticated=True,
+                mfa_verified=True,
+            ),
+            decision=decision,
+            ttl_seconds=900,
+        )
+        self.env["PANTHEON_PRODUCT_CLOSEOUT_VERDICT_ID"] = verdict["verdict_id"]
+        return verdict
+
+    def test_review_approved_verifies_and_done_consumes_once(self) -> None:
+        verdict = self._issue()
+        with mock.patch.dict(os.environ, self.env, clear=False):
+            reference = guardrail.validate_protected_closeout_transition(
+                self.task,
+                transition="review_approved",
+            )
+            self.assertEqual(reference["verdict_id"], verdict["verdict_id"])
+            self.task["protected_closeout_verdict"] = reference
+            self.task["status"] = "review_approved"
+            self.assertEqual(guardrail.check_task(self.task), [])
+
+            consumed = guardrail.validate_protected_closeout_transition(
+                self.task,
+                transition="done",
+                consume=True,
+                transition_actor="Codex",
+            )
+            self.task["protected_closeout_verdict"] = consumed
+            self.task["status"] = "done"
+            self.assertEqual(guardrail.check_task(self.task), [])
+
+            retried = guardrail.validate_protected_closeout_transition(
+                self.task,
+                transition="done",
+                consume=True,
+                transition_actor="Codex",
+            )
+            self.assertEqual(
+                retried["consumption_record_id"],
+                consumed["consumption_record_id"],
+            )
+
+            with self.assertRaisesRegex(Exception, "different transition attempt"):
+                self.module.ProductCloseoutVerdictService(
+                    ledger=self.ledger,
+                    policy=self.policy,
+                ).consume(
+                    verdict["verdict_id"],
+                    expected_binding=self._binding(),
+                    transition="done",
+                    transition_actor="Codex",
+                    idempotency_key="different-logical-closeout",
+                )
+
+    def test_direct_done_state_edit_without_consumption_is_rejected(self) -> None:
+        verdict = self._issue()
+        self.task["status"] = "done"
+        self.task.pop("requires_human_ops_signoff")
+        self.task["protected_closeout_verdict"] = {
+            "verdict_id": verdict["verdict_id"],
+            "ledger_entry_id": verdict["ledger_entry_id"],
+            "verifier_capability_sha256": verdict[
+                "verifier_capability_sha256"
+            ],
+        }
+        with mock.patch.dict(os.environ, self.env, clear=False):
+            gaps = guardrail.check_task(self.task)
+        self.assertTrue(
+            any("requires exactly one verdict consumption" in gap for gap in gaps),
+            gaps,
+        )
+
+    def test_mutable_loop_metadata_removal_cannot_disable_sink_guard(self) -> None:
+        self._issue()
+        self.task["status"] = "done"
+        self.task.pop("loop_ids")
+        self.task.pop("requires_human_ops_signoff")
+        with mock.patch.dict(os.environ, self.env, clear=False):
+            gaps = guardrail.check_task(self.task)
+
+        self.assertTrue(
+            any("requires exactly one verdict consumption" in gap for gap in gaps),
+            gaps,
+        )
+
+    def test_consumption_reference_tamper_is_rejected(self) -> None:
+        self._issue()
+        with mock.patch.dict(os.environ, self.env, clear=False):
+            consumed = guardrail.validate_protected_closeout_transition(
+                self.task,
+                transition="done",
+                consume=True,
+                transition_actor="Codex",
+            )
+            self.task["status"] = "done"
+            self.task["protected_closeout_verdict"] = {
+                **consumed,
+                "consumption_record_id": "tampered-consumption-reference",
+            }
+            gaps = guardrail.check_task(self.task)
+
+        self.assertTrue(
+            any("consumption_record_id reference mismatch" in gap for gap in gaps),
+            gaps,
+        )
+
+    def test_missing_rejected_and_candidate_only_verdicts_fail_closed(self) -> None:
+        with mock.patch.dict(os.environ, self.env, clear=False):
+            with self.assertRaisesRegex(Exception, "requires PANTHEON"):
+                guardrail.validate_protected_closeout_transition(
+                    self.task,
+                    transition="review_approved",
+                )
+
+        rejected = self._issue(decision="rejected")
+        with mock.patch.dict(os.environ, self.env, clear=False):
+            with self.assertRaisesRegex(Exception, "not approved"):
+                guardrail.validate_protected_closeout_transition(
+                    self.task,
+                    transition="review_approved",
+                )
+
+        candidate_file = self.status_root / "candidate-signed-verdict.json"
+        candidate_file.write_text(json.dumps(rejected), encoding="utf-8")
+        self.env["PANTHEON_PRODUCT_CLOSEOUT_VERDICT_ID"] = "candidate-only-verdict"
+        with mock.patch.dict(os.environ, self.env, clear=False):
+            with self.assertRaisesRegex(Exception, "exactly one issue"):
+                guardrail.validate_protected_closeout_transition(
+                    self.task,
+                    transition="review_approved",
+                )
+
+    def test_manifest_tamper_and_task_reference_tamper_are_rejected(self) -> None:
+        verdict = self._issue()
+        self.manifest["deployment"]["identity_admission"]["frontend_sha"] = "e" * 40
+        self._write_manifest()
+        with mock.patch.dict(os.environ, self.env, clear=False):
+            with self.assertRaisesRegex(Exception, "binding mismatch"):
+                guardrail.validate_protected_closeout_transition(
+                    self.task,
+                    transition="review_approved",
+                )
+
+        self.manifest["deployment"]["identity_admission"]["frontend_sha"] = "c" * 40
+        self._write_manifest()
+        self.task["protected_closeout_verdict"] = {
+            "verdict_id": verdict["verdict_id"],
+            "ledger_entry_id": "tampered-ledger-entry",
+        }
+        with mock.patch.dict(os.environ, self.env, clear=False):
+            with self.assertRaisesRegex(Exception, "ledger entry reference mismatch"):
+                guardrail.validate_protected_closeout_transition(
+                    self.task,
+                    transition="review_approved",
+                )
+
+    def test_caller_environment_cannot_override_protected_policy(self) -> None:
+        self._issue()
+        attacker_policy = self.protected_root / "attacker-policy.json"
+        attacker_policy.write_text(
+            self.policy_path.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        unsafe_env = {
+            **self.env,
+            "PANTHEON_PRODUCT_CLOSEOUT_ALLOW_TEST_CONFIG": "1",
+            "PANTHEON_PRODUCT_CLOSEOUT_TEST_POLICY_PATH": str(attacker_policy),
+        }
+        missing_default = self.protected_root / "missing-default-policy.json"
+        with (
+            mock.patch.object(
+                self.module,
+                "DEFAULT_PROTECTED_POLICY_PATH",
+                missing_default,
+            ),
+            mock.patch.dict(os.environ, unsafe_env, clear=True),
+        ):
+            with self.assertRaisesRegex(Exception, "policy is missing"):
+                guardrail.validate_protected_closeout_transition(
+                    self.task,
+                    transition="review_approved",
+                )
+
+            accepted = guardrail.validate_protected_closeout_transition(
+                self.task,
+                transition="review_approved",
+                policy_path=self.policy_path,
+            )
+        self.assertEqual(
+            accepted["verdict_id"],
+            self.env["PANTHEON_PRODUCT_CLOSEOUT_VERDICT_ID"],
+        )
+
+    def test_review_file_parent_traversal_is_rejected(self) -> None:
+        outside = self.temp_root / "outside.json"
+        outside.write_text("{}", encoding="utf-8")
+        with (
+            mock.patch.dict(os.environ, self.env, clear=False),
+            self.assertRaisesRegex(RuntimeError, "parent traversal"),
+        ):
+            guardrail._safe_status_artifact("../outside.json")
+
+    def test_revoked_review_verdict_can_be_replaced_by_new_human_ops_verdict(
+        self,
+    ) -> None:
+        first = self._issue()
+        with mock.patch.dict(os.environ, self.env, clear=False):
+            first_ref = guardrail.validate_protected_closeout_transition(
+                self.task,
+                transition="review_approved",
+            )
+        self.task["protected_closeout_verdict"] = first_ref
+        self.module.ProductCloseoutVerdictService(
+            ledger=self.ledger,
+            policy=self.policy,
+            private_key=self.private_key,
+            key_id=self.key_id,
+        ).revoke(
+            first["verdict_id"],
+            self.module.HumanOpsIdentity(
+                actor_id="ops-human-001",
+                actor_role="ops",
+                authenticated=True,
+                mfa_verified=True,
+            ),
+            reason="deployment evidence was refreshed",
+        )
+        replacement = self.issuer.issue(
+            self._binding(),
+            self.module.HumanOpsIdentity(
+                actor_id="ops-human-001",
+                actor_role="ops",
+                authenticated=True,
+                mfa_verified=True,
+            ),
+            decision="approved",
+            ttl_seconds=900,
+        )
+        replacement_env = {
+            **self.env,
+            "PANTHEON_PRODUCT_CLOSEOUT_VERDICT_ID": replacement["verdict_id"],
+        }
+
+        with mock.patch.dict(os.environ, replacement_env, clear=False):
+            replacement_ref = guardrail.validate_protected_closeout_transition(
+                self.task,
+                transition="review_approved",
+            )
+
+        self.assertEqual(
+            replacement_ref["superseded_verdict_id"],
+            first["verdict_id"],
+        )
+        self.assertEqual(
+            replacement_ref["verdict_id"],
+            replacement["verdict_id"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
