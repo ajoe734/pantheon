@@ -62,16 +62,22 @@ def test_loop_read_models_enforce_strict_jwt_auth_and_read_roles(monkeypatch) ->
     audience = "bff-operators"
     now = int(time.time())
 
-    def bearer(*roles: str) -> dict[str, str]:
+    def bearer(
+        *roles: str,
+        tenant_id: str | None = None,
+    ) -> dict[str, str]:
+        claims: dict[str, Any] = {
+            "sub": f"loop-prod-{'-'.join(roles)}",
+            "roles": list(roles),
+            "iss": issuer,
+            "aud": audience,
+            "iat": now,
+            "exp": now + 300,
+        }
+        if tenant_id is not None:
+            claims["tenant_id"] = tenant_id
         token = encode_jwt_hs256(
-            {
-                "sub": f"loop-prod-{'-'.join(roles)}",
-                "roles": list(roles),
-                "iss": issuer,
-                "aud": audience,
-                "iat": now,
-                "exp": now + 300,
-            },
+            claims,
             secret=secret,
         )
         return {"Authorization": f"Bearer {token}"}
@@ -89,7 +95,21 @@ def test_loop_read_models_enforce_strict_jwt_auth_and_read_roles(monkeypatch) ->
     for path in ("/bff/v5/loop-inventory", "/bff/v5/loop-health"):
         assert client.get(path).status_code == 401
         assert client.get(path, headers=bearer("audit_only")).status_code == 403
-        assert client.get(path, headers=bearer("viewer")).status_code == 200
+
+    assert client.get(
+        "/bff/v5/loop-inventory",
+        headers=bearer("viewer"),
+    ).status_code == 200
+    unscoped = client.get(
+        "/bff/v5/loop-health",
+        headers=bearer("viewer"),
+    )
+    assert unscoped.status_code == 403
+    assert unscoped.json()["error"]["details"]["precondition_failed"] == "tenant_scope"
+    assert client.get(
+        "/bff/v5/loop-health",
+        headers=bearer("viewer", tenant_id="tenant-loop-prod"),
+    ).status_code == 200
 
 
 def test_loop_inventory_list_exposes_sa21_catalog_for_operator_surfaces(monkeypatch) -> None:

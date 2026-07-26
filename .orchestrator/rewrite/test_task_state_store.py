@@ -108,3 +108,79 @@ def test_empty_journal_does_not_claim_projection_parity(tmp_path: Path) -> None:
 
     assert report["ok"] is False
     assert report["event_count"] == 0
+
+
+def test_reject_nonterminal_drop_to_empty_state(tmp_path: Path) -> None:
+    path = tmp_path / "task-state-events.jsonl"
+    first = state("todo", next_value="first")
+    empty_state = {"tasks": []}
+
+    store.append_state_commit(path, first, source="test")
+    with pytest.raises(store.TaskStateStoreError, match="nonterminal drop rejected"):
+        store.append_state_commit(path, empty_state, source="test")
+
+    events = store.load_events(path)
+    assert len(events) == 1
+    assert events[0]["state"] == first
+
+
+def test_allow_first_bootstrap_with_empty_or_no_tasks(tmp_path: Path) -> None:
+    path = tmp_path / "task-state-events.jsonl"
+    empty_state = {"tasks": []}
+    store.append_state_commit(path, empty_state, source="test")
+    events = store.load_events(path)
+    assert len(events) == 1
+    assert events[0]["state"] == empty_state
+
+
+def test_allow_drain_when_all_previous_tasks_were_terminal(tmp_path: Path) -> None:
+    path = tmp_path / "task-state-events.jsonl"
+    all_done = state("done", next_value="finished")
+    empty_state = {"tasks": []}
+
+    store.append_state_commit(path, all_done, source="test")
+    store.append_state_commit(path, empty_state, source="test")
+
+    events = store.load_events(path)
+    assert len(events) == 2
+    assert events[1]["state"] == empty_state
+
+
+def test_relative_event_log_path_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(store.TaskStateStoreError, match="must be an absolute path"):
+        store.append_state_commit("relative_events.jsonl", {"tasks": []}, source="test")
+
+
+def test_unrelated_workers_not_superseded_and_parity_preserved_after_rejected_drop(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "task-state-events.jsonl"
+    active_state = {
+        "tasks": [
+            {"id": "TASK-001", "status": "in_progress", "owner": "Codex", "reviewer": "Claude"},
+            {"id": "TASK-002", "status": "todo", "owner": "Antigravity", "reviewer": "Claude"},
+        ],
+        "workers": {
+            "worker-1": {"status": "running", "current_task_id": "TASK-001"},
+            "worker-2": {"status": "idle"},
+        },
+    }
+    empty_state = {"tasks": []}
+
+    store.append_state_commit(path, active_state, source="test")
+    with pytest.raises(store.TaskStateStoreError, match="nonterminal drop rejected"):
+        store.append_state_commit(path, empty_state, source="test")
+
+    events = store.load_events(path)
+    latest = store.project_latest_state(events)
+    assert len(events) == 1
+    assert latest == active_state
+    assert len(latest["tasks"]) == 2
+    assert latest["tasks"][0]["status"] == "in_progress"
+    assert latest["tasks"][1]["status"] == "todo"
+
+    report = store.verify_projection(path, active_state)
+    assert report["ok"] is True
+    assert report["event_count"] == 1
+
+

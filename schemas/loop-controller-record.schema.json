@@ -9,17 +9,65 @@
     "controller_id",
     "controller_name",
     "deployment_sha",
-    "truth_level"
+    "desired_state_query",
+    "actual_state_query",
+    "desired_state",
+    "downstream_actual_state",
+    "last_heartbeat_at",
+    "last_tick_at",
+    "last_success_at",
+    "last_failure_at",
+    "last_failure_reason",
+    "last_repair_at",
+    "last_repair_reason",
+    "backlog",
+    "lag",
+    "dlq_count",
+    "evidence_refs",
+    "truth_level",
+    "lease_token",
+    "lease_expires_at",
+    "payload"
   ],
   "properties": {
-    "loop_id": { "type": "string" },
-    "tenant_id": { "type": "string" },
-    "environment": { "type": "string" },
-    "controller_id": { "type": "string" },
-    "controller_name": { "type": "string" },
-    "deployment_sha": { "type": "string" },
+    "loop_id": { "type": "string", "minLength": 1 },
+    "tenant_id": { "type": "string", "minLength": 1 },
+    "environment": { "type": "string", "minLength": 1 },
+    "controller_id": { "type": "string", "minLength": 1 },
+    "controller_name": { "type": "string", "minLength": 1 },
+    "deployment_sha": { "type": "string", "minLength": 1 },
     "desired_state_query": { "type": ["string", "null"] },
     "actual_state_query": { "type": ["string", "null"] },
+    "desired_state": {
+      "type": ["object", "null"],
+      "required": ["present", "source", "checked_at"],
+      "properties": {
+        "present": { "type": "boolean" },
+        "source": { "type": "string", "minLength": 1 },
+        "checked_at": { "type": "string", "format": "date-time" },
+        "summary": { "type": ["string", "null"] },
+        "sources": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      },
+      "additionalProperties": true
+    },
+    "downstream_actual_state": {
+      "type": ["object", "null"],
+      "required": ["status", "source", "checked_at"],
+      "properties": {
+        "status": { "type": "string", "minLength": 1 },
+        "source": { "type": "string", "minLength": 1 },
+        "checked_at": { "type": "string", "format": "date-time" },
+        "summary": { "type": ["string", "null"] },
+        "sources": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      },
+      "additionalProperties": true
+    },
     "last_heartbeat_at": { "type": ["string", "null"], "format": "date-time" },
     "last_tick_at": { "type": ["string", "null"], "format": "date-time" },
     "last_success_at": { "type": ["string", "null"], "format": "date-time" },
@@ -27,9 +75,9 @@
     "last_failure_reason": { "type": ["string", "null"] },
     "last_repair_at": { "type": ["string", "null"], "format": "date-time" },
     "last_repair_reason": { "type": ["string", "null"] },
-    "backlog": { "type": ["integer", "null"] },
-    "lag": { "type": ["integer", "null"] },
-    "dlq_count": { "type": ["integer", "null"] },
+    "backlog": { "type": ["integer", "null"], "minimum": 0 },
+    "lag": { "type": ["integer", "null"], "minimum": 0 },
+    "dlq_count": { "type": ["integer", "null"], "minimum": 0 },
     "evidence_refs": {
       "type": "array",
       "items": { "type": "string" }
@@ -45,7 +93,9 @@
         "proven_live_evidence"
       ]
     },
+    "lease_token": { "type": ["string", "null"], "minLength": 1 },
     "lease_expires_at": { "type": ["string", "null"], "format": "date-time" },
     "payload": { "type": "object" }
-  }
+  },
+  "additionalProperties": false
 }

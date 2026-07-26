@@ -69,6 +69,8 @@ def _first_symlink_component(path: Path) -> Path | None:
 
 
 def _prepare_parent(path: Path) -> Path:
+    if not path.is_absolute():
+        raise TaskStateStoreError(f"task-state event log path must be an absolute path: {path}")
     resolved = path.expanduser().absolute()
     symlink = _first_symlink_component(resolved.parent)
     if symlink is not None:
@@ -80,6 +82,7 @@ def _prepare_parent(path: Path) -> Path:
     if resolved.is_symlink() or (resolved.exists() and not resolved.is_file()):
         raise TaskStateStoreError(f"task-state event log must be a regular file: {resolved}")
     return resolved
+
 
 
 def _fsync_directory(path: Path) -> None:
@@ -196,6 +199,42 @@ def load_events(path: str | Path) -> list[dict[str, Any]]:
         return _load_events_unlocked(event_path)
 
 
+def _count_nonterminal_tasks(state: dict[str, Any]) -> int:
+    if not isinstance(state, dict):
+        return 0
+    if "tasks" in state and not isinstance(state["tasks"], list):
+        return 1
+    tasks = state.get("tasks")
+    if not isinstance(tasks, list):
+        return 0
+    nonterminal_count = 0
+    for task in tasks:
+        if not isinstance(task, dict):
+            nonterminal_count += 1
+            continue
+        status = str(task.get("status") or "").strip().lower()
+        if status not in {"done", "supersede", "superseded"}:
+            nonterminal_count += 1
+    return nonterminal_count
+
+
+
+def validate_state_transition(
+    new_state: dict[str, Any],
+    previous_state: dict[str, Any] | None,
+) -> None:
+    if not isinstance(new_state, dict):
+        raise TaskStateStoreError("task-state commit must contain an object state")
+    if previous_state is None:
+        return
+    prev_nonterminal = _count_nonterminal_tasks(previous_state)
+    new_nonterminal = _count_nonterminal_tasks(new_state)
+    if prev_nonterminal > 0 and new_nonterminal == 0:
+        raise TaskStateStoreError(
+            f"task-state nonterminal drop rejected: state collapsed from {prev_nonterminal} nonterminal tasks to 0"
+        )
+
+
 def project_latest_state(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
     latest: dict[str, Any] | None = None
     previous_sha256: str | None = None
@@ -222,6 +261,8 @@ def append_state_commit(
     event_path = _prepare_parent(Path(path))
     with _store_lock(event_path, shared=False):
         events = _load_events_unlocked(event_path)
+        previous_state = events[-1]["state"] if events else None
+        validate_state_transition(state, previous_state)
         state_sha256 = sha256_json(state)
         if events and events[-1].get("state_sha256") == state_sha256:
             return copy.deepcopy(events[-1])

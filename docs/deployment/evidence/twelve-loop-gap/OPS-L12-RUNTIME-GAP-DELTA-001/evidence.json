@@ -1,0 +1,35 @@
+{
+  "task_id": "OPS-L12-RUNTIME-GAP-DELTA-001",
+  "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "created_at": "2026-07-26T16:11:40Z",
+  "delta_document": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/POST_DISPATCH_RUNTIME_GAP_DELTA.md",
+  "gaps_inventoried": [
+    {
+      "gap_id": "GAP-001",
+      "summary": "Task-state sequence 1593 22->0 non-terminal task disappearance and sequence 1594-1595 recovery",
+      "status": "documented_recovered"
+    },
+    {
+      "gap_id": "GAP-002",
+      "summary": "Task-brief lock-order normalization and race condition fix",
+      "status": "documented_resolved"
+    },
+    {
+      "gap_id": "GAP-003",
+      "summary": "L12-CAP-001 unverified capital fake closeout containment",
+      "status": "documented_guarded"
+    },
+    {
+      "gap_id": "GAP-004",
+      "summary": "L12-DIST-001 commit trailer validation blockage and fleet reassignment",
+      "status": "documented_reassigned"
+    }
+  ],
+  "compliance_declarations": {
+    "hosted_deployed": false,
+    "twelve_loop_completed": false,
+    "baseline_catalog_modified": false
+  }
+}
