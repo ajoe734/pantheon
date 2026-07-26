@@ -1489,11 +1489,15 @@ def make_distillation_worker(
     worker_id: str | None = None,
     lease_seconds: float = 30.0,
     retry_base_seconds: float = 5.0,
+    max_attempts: int = 3,
     registry_sync: Callable[[SourceRecord, Any, DistillationJob], RegistrySyncResult]
     | None = None,
 ) -> DistillationWorker:
     """Factory for a default-configured DistillationWorker."""
-    queue = DistillationJobQueue(queue_path)
+    queue = DistillationJobQueue(
+        queue_path,
+        default_max_attempts=max_attempts,
+    )
     seed_store = StrategySpecSeedStore(seed_store_path)
     return DistillationWorker(
         queue,
