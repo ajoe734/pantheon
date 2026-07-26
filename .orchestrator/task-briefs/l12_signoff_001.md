@@ -5,9 +5,9 @@ Generated in the worker workspace because the supervisor root did not have a tas
 ## Task
 - Title: Install protected Human-Ops closeout verdict enforcement
 - Status: in_progress
-- Owner: Codex
+- Owner: Claude
 - Reviewer: Codex2
-- Next: Live journal guard merged in PR #4173 and installed at 87b17c1107dd; recovered protected-verdict core and archived WIP are anchored/pushed at 3168a11f1. Resume implementation, merge current dev before final PR, run independent review, and do not issue the Human/Ops verdict from a fleet worker.
+- Next: Ownership reconciled to the `assignment-revision-1` catalog (owner Claude, reviewer Codex2). The two rejecting findings on PR #4183 head 4731eb2c are fixed: issuance now admits one active decision per exact binding, and the BFF refuses an unclassified principal instead of defaulting it to human. Refresh the PR onto current dev and request independent review; do not issue the Human/Ops verdict from a fleet worker.
 
 ## Summary
 在 final closeout 前安裝機器守門：受保護、可撤銷、不可重播的 Human/Ops 判決必須綁定 exact catalog、manifest、target 與部署 identity；fleet 不得自行簽發。
