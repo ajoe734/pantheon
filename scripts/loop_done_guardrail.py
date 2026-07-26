@@ -129,10 +129,6 @@ _PRODUCT_CLOSEOUT_CATALOG = (
     / "2026-07-26-twelve-loop-gap"
     / "tasks.json"
 )
-_PRODUCT_CLOSEOUT_TEST_POLICY_ENV = "PANTHEON_PRODUCT_CLOSEOUT_TEST_POLICY_PATH"
-_PRODUCT_CLOSEOUT_ALLOW_TEST_CONFIG_ENV = (
-    "PANTHEON_PRODUCT_CLOSEOUT_ALLOW_TEST_CONFIG"
-)
 _PRODUCT_CLOSEOUT_VERDICT_ID_ENV = "PANTHEON_PRODUCT_CLOSEOUT_VERDICT_ID"
 _PRODUCT_CLOSEOUT_FINAL_TASK_ID = "L12-CLOSE-001"
 
@@ -166,8 +162,14 @@ def _status_root() -> Path:
 
 
 def _safe_status_artifact(relative_path: str) -> Path:
-    root = _status_root()
-    candidate = (root / relative_path).absolute()
+    relative = Path(relative_path)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise RuntimeError(
+            "closeout review_file must be a repository-relative path "
+            "without parent traversal"
+        )
+    root = _status_root().absolute()
+    candidate = (root / relative).absolute()
     try:
         candidate.relative_to(root.absolute())
     except ValueError as exc:
@@ -188,23 +190,14 @@ def _safe_status_artifact(relative_path: str) -> Path:
     return candidate
 
 
-def _protected_policy_path(module: Any) -> Path:
-    test_path = str(
-        os.environ.get(_PRODUCT_CLOSEOUT_TEST_POLICY_ENV) or ""
-    ).strip()
-    allow_test = (
-        str(os.environ.get(_PRODUCT_CLOSEOUT_ALLOW_TEST_CONFIG_ENV) or "")
-        .strip()
-        .lower()
-        in {"1", "true", "yes"}
-    )
-    if test_path:
-        if not allow_test:
-            raise RuntimeError(
-                f"{_PRODUCT_CLOSEOUT_TEST_POLICY_ENV} is test-only and requires "
-                f"{_PRODUCT_CLOSEOUT_ALLOW_TEST_CONFIG_ENV}=1"
-            )
-        return Path(test_path)
+def _protected_policy_path(
+    module: Any,
+    explicit_policy_path: Path | str | None = None,
+) -> Path:
+    """Resolve verifier policy without accepting caller-controlled env overrides."""
+
+    if explicit_policy_path is not None:
+        return Path(explicit_policy_path)
     return Path(module.DEFAULT_PROTECTED_POLICY_PATH)
 
 
@@ -321,6 +314,7 @@ def validate_protected_closeout_transition(
     transition: str,
     consume: bool = False,
     transition_actor: str = "",
+    policy_path: Path | str | None = None,
 ) -> dict[str, Any] | None:
     """Verify the protected verdict for a guarded task transition.
 
@@ -348,14 +342,6 @@ def validate_protected_closeout_transition(
     environment_verdict_id = str(
         os.environ.get(_PRODUCT_CLOSEOUT_VERDICT_ID_ENV) or ""
     ).strip()
-    if (
-        task_verdict_id
-        and environment_verdict_id
-        and task_verdict_id != environment_verdict_id
-    ):
-        raise RuntimeError(
-            "protected verdict ID conflicts with the governed task reference"
-        )
     verdict_id = environment_verdict_id or task_verdict_id
     if not verdict_id:
         raise RuntimeError(
@@ -366,8 +352,22 @@ def validate_protected_closeout_transition(
     status_root = _status_root()
     forbidden_roots = tuple({ROOT.absolute(), status_root.absolute()})
     service = module.load_verifier_service(
-        policy_path=_protected_policy_path(module),
+        policy_path=_protected_policy_path(module, policy_path),
         forbidden_roots=forbidden_roots,
+    )
+    consumption_idempotency_key = module.canonical_json_sha256(
+        {
+            "schema_version": 1,
+            "verdict_id": verdict_id,
+            "binding": binding.to_dict(),
+            "transition": "done",
+        }
+    )
+    consumption_state = (
+        "consumed"
+        if consume
+        or (transition == "done" and task.get("status") == "done")
+        else "unconsumed"
     )
     if consume:
         consumption = service.consume(
@@ -375,6 +375,7 @@ def validate_protected_closeout_transition(
             expected_binding=binding,
             transition="done",
             transition_actor=transition_actor,
+            idempotency_key=consumption_idempotency_key,
         )
         verdict = service.verify(
             verdict_id,
@@ -383,26 +384,48 @@ def validate_protected_closeout_transition(
         )
     else:
         consumption = None
-        consumption_state = (
-            "consumed"
-            if transition == "done" and task.get("status") == "done"
-            else "unconsumed"
-        )
         verdict = service.verify(
             verdict_id,
             expected_binding=binding,
             consumption_state=consumption_state,
         )
 
-    if task_ref.get("ledger_entry_id") and (
-        task_ref.get("ledger_entry_id") != verdict.get("ledger_entry_id")
+    reference_matches_verdict = (
+        not task_verdict_id or task_verdict_id == verdict_id
+    )
+    if reference_matches_verdict:
+        if task_ref.get("ledger_entry_id") and (
+            task_ref.get("ledger_entry_id") != verdict.get("ledger_entry_id")
+        ):
+            raise RuntimeError("protected verdict ledger entry reference mismatch")
+        if task_ref.get("verifier_capability_sha256") and (
+            task_ref.get("verifier_capability_sha256")
+            != verdict.get("verifier_capability_sha256")
+        ):
+            raise RuntimeError("protected verifier capability reference mismatch")
+
+    actual_consumption = consumption
+    if consumption_state == "consumed" and actual_consumption is None:
+        actual_consumption = service.consumption_record(verdict_id)
+    if consumption_state == "unconsumed" and (
+        task_ref.get("consumption_record_id")
+        or task_ref.get("consumption_record_hash")
+        or task_ref.get("consumption_idempotency_key")
     ):
-        raise RuntimeError("protected verdict ledger entry reference mismatch")
-    if task_ref.get("verifier_capability_sha256") and (
-        task_ref.get("verifier_capability_sha256")
-        != verdict.get("verifier_capability_sha256")
-    ):
-        raise RuntimeError("protected verifier capability reference mismatch")
+        raise RuntimeError(
+            "unconsumed protected verdict cannot carry consumption references"
+        )
+    if actual_consumption is not None and reference_matches_verdict:
+        expected_consumption_refs = {
+            "consumption_record_id": actual_consumption["record_id"],
+            "consumption_record_hash": actual_consumption["record_hash"],
+            "consumption_idempotency_key": actual_consumption["idempotency_key"],
+        }
+        for field, expected_value in expected_consumption_refs.items():
+            if task_ref.get(field) and task_ref[field] != expected_value:
+                raise RuntimeError(
+                    f"protected verdict {field} reference mismatch"
+                )
     result = {
         "verdict_id": verdict["verdict_id"],
         "ledger_entry_id": verdict["ledger_entry_id"],
@@ -411,10 +434,18 @@ def validate_protected_closeout_transition(
         "key_id": verdict["key_id"],
         "decision": verdict["decision"],
     }
-    if consumption is not None:
-        result["consumption_record_id"] = consumption["record_id"]
-    elif task_ref.get("consumption_record_id"):
-        result["consumption_record_id"] = task_ref["consumption_record_id"]
+    if task_verdict_id and task_verdict_id != verdict_id:
+        result["superseded_verdict_id"] = task_verdict_id
+    if actual_consumption is not None:
+        result.update(
+            {
+                "consumption_record_id": actual_consumption["record_id"],
+                "consumption_record_hash": actual_consumption["record_hash"],
+                "consumption_idempotency_key": actual_consumption[
+                    "idempotency_key"
+                ],
+            }
+        )
     return result
 
 
@@ -514,15 +545,7 @@ def check_task(task: dict[str, Any]) -> list[str]:
 
     An empty list means the task passes all guardrail checks.
     """
-    if not is_loop_autopilot_task(task):
-        return []
-
     gaps: list[str] = []
-    non_goals: set[str] = set(task.get("non_goals") or [])
-    proof_required: list[str] = task.get("proof_required") or []
-    review_file_path = str(task.get("review_file") or "").strip()
-    product_level_required = bool(task.get("product_level_required"))
-
     if requires_protected_closeout_verdict(task):
         try:
             validate_protected_closeout_transition(
@@ -536,6 +559,16 @@ def check_task(task: dict[str, Any]) -> list[str]:
                 "protected Human/Ops closeout verdict rejected: "
                 f"{type(exc).__name__}: {exc}"
             )
+
+    # Protection truth comes from the canonical sink/catalog and must still be
+    # audited if mutable task metadata such as loop_ids or non_goals is removed.
+    if not is_loop_autopilot_task(task):
+        return gaps
+
+    non_goals: set[str] = set(task.get("non_goals") or [])
+    proof_required: list[str] = task.get("proof_required") or []
+    review_file_path = str(task.get("review_file") or "").strip()
+    product_level_required = bool(task.get("product_level_required"))
 
     # Gap 1: panel-only closure prohibited but no review_file.
     if "No panel-only closure" in non_goals and not review_file_path:

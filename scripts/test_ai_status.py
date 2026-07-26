@@ -1370,6 +1370,56 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(task["status"], "review")
         self.assertNotIn("protected_closeout_verdict", task)
 
+    def test_restore_approved_revalidates_protected_verdict(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "in_progress"
+        task["review_notes_zh"] = ["Prior independent approval."]
+        task["requires_human_ops_signoff"] = True
+        verdict_ref = {
+            "verdict_id": "pclose-restore-001",
+            "ledger_entry_id": "pclose-issue-restore-001",
+        }
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(
+                ai_status,
+                "validate_protected_closeout_transition",
+                return_value=verdict_ref,
+            ) as protected,
+        ):
+            ai_status.command_restore_approved(
+                self.state,
+                ["REG-002", "Restore independently approved state."],
+            )
+
+        self.assertEqual(task["status"], "review_approved")
+        self.assertEqual(task["protected_closeout_verdict"], verdict_ref)
+        protected.assert_called_once_with(
+            task,
+            transition="review_approved",
+        )
+
+    def test_restore_approved_protected_failure_keeps_in_progress(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "in_progress"
+        task["review_notes_zh"] = ["Prior independent approval."]
+        task["requires_human_ops_signoff"] = True
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(
+                ai_status,
+                "validate_protected_closeout_transition",
+                side_effect=SystemExit("protected verdict expired"),
+            ),
+            self.assertRaisesRegex(SystemExit, "verdict expired"),
+        ):
+            ai_status.command_restore_approved(
+                self.state,
+                ["REG-002", "Attempt stale restore."],
+            )
+
+        self.assertEqual(task["status"], "in_progress")
+
     def test_progress_promotes_todo_to_in_progress(self) -> None:
         self.state["tasks"][0]["status"] = "todo"
 
@@ -1498,6 +1548,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
     def test_reconcile_merged_done_archives_verified_delivery(self) -> None:
         self.state["tasks"][0]["status"] = "blocked"
         self.state["tasks"][0]["waiting_for"] = "Claude"
+        self.state["tasks"][0]["requires_human_ops_signoff"] = True
         self.state["blockers"] = [
             {
                 "task_id": "REG-002",
@@ -1512,9 +1563,18 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             "reconciled_from_merged_evidence": True,
             "commit": "a" * 40,
         }
+        consumed_ref = {
+            "verdict_id": "pclose-reconcile-001",
+            "consumption_record_id": "pclose-consume-reconcile-001",
+        }
         with (
             mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False),
             mock.patch.object(ai_status, "validate_merged_done_evidence", return_value=delivery),
+            mock.patch.object(
+                ai_status,
+                "validate_protected_closeout_transition",
+                return_value=consumed_ref,
+            ) as protected,
             mock.patch.object(ai_status, "archived_task_snapshot", return_value=None),
         ):
             ai_status.command_reconcile_merged_done(
@@ -1528,9 +1588,48 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(task["terminal_outcome"], "completed")
         self.assertNotIn("waiting_for", task)
         self.assertEqual(task["delivery"]["commit"], "a" * 40)
+        self.assertEqual(task["protected_closeout_verdict"], consumed_ref)
         self.assertEqual(self.state["blockers"][0]["status"], "resolved")
         archive_task = self.state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY]["snapshots"][0]["task"]
         self.assertEqual(archive_task["status"], "done")
+        self.assertEqual(
+            protected.call_args.kwargs,
+            {
+                "transition": "done",
+                "consume": True,
+                "transition_actor": "Human/Ops",
+            },
+        )
+
+    def test_reconcile_merged_done_protected_failure_is_non_mutating(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "review_approved"
+        task["requires_human_ops_signoff"] = True
+        delivery = {
+            "reconciled_from_merged_evidence": True,
+            "commit": "a" * 40,
+        }
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False),
+            mock.patch.object(
+                ai_status,
+                "validate_merged_done_evidence",
+                return_value=delivery,
+            ),
+            mock.patch.object(
+                ai_status,
+                "validate_protected_closeout_transition",
+                side_effect=SystemExit("protected verdict missing"),
+            ),
+            self.assertRaisesRegex(SystemExit, "verdict missing"),
+        ):
+            ai_status.command_reconcile_merged_done(
+                self.state,
+                ["REG-002", "Attempt protected recovery."],
+            )
+
+        self.assertEqual(task["status"], "review_approved")
+        self.assertNotIn("terminal_outcome", task)
 
     def _init_repo(self, root: Path, *, remote: str, files: dict[str, str]) -> str:
         root.mkdir(parents=True)

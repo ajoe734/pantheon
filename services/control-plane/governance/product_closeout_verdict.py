@@ -18,6 +18,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -61,6 +62,8 @@ FLEET_ACTOR_IDS = frozenset(
         "Copilot",
         "Antigravity",
         "Antigravity2",
+        "Grok",
+        "Qwen",
     }
 )
 VERDICT_BINDING_FIELDS = (
@@ -98,6 +101,11 @@ _EXPECTED_BINDING_FIELDS = (
 )
 _HEX_64_RE = re.compile(r"^[0-9a-f]{64}$")
 _GIT_SHA_RE = re.compile(r"^[0-9a-f]{40,64}$")
+_FLEET_ACTOR_ID_RE = re.compile(
+    r"^(?:claude|gemini|codex|copilot|antigravity|grok|qwen)"
+    r"(?:2)?(?:$|[-_:0-9])",
+    re.IGNORECASE,
+)
 _ZERO_HASH = "0" * 64
 
 
@@ -208,6 +216,14 @@ def _inside(path: Path, root: Path) -> bool:
     return True
 
 
+def _is_fleet_actor_id(value: Any) -> bool:
+    actor_id = str(value or "").strip()
+    return bool(actor_id) and (
+        actor_id.casefold() in {item.casefold() for item in FLEET_ACTOR_IDS}
+        or _FLEET_ACTOR_ID_RE.match(actor_id) is not None
+    )
+
+
 def _first_symlink_component(path: Path) -> Path | None:
     absolute = path.expanduser().absolute()
     current = Path(absolute.anchor)
@@ -295,7 +311,7 @@ class HumanOpsIdentity:
         actor_id = self.actor_id.strip()
         role = self.actor_role.strip().lower()
         principal_type = self.principal_type.strip().lower()
-        if not self.authenticated:
+        if self.authenticated is not True:
             raise VerdictAuthorizationError(
                 "product closeout requires an authenticated principal"
             )
@@ -303,11 +319,11 @@ class HumanOpsIdentity:
             raise VerdictAuthorizationError(
                 "service, workload, fleet, and automation principals cannot issue verdicts"
             )
-        if not self.mfa_verified:
+        if self.mfa_verified is not True:
             raise VerdictAuthorizationError(
                 "product closeout verdict issuance requires verified MFA"
             )
-        if not actor_id or actor_id in FLEET_ACTOR_IDS:
+        if not actor_id or _is_fleet_actor_id(actor_id):
             raise VerdictAuthorizationError(
                 "fleet actors cannot issue or revoke Human/Ops verdicts"
             )
@@ -369,16 +385,30 @@ class ProtectedVerdictLedger:
 
     def _ensure_parent(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        symlink = _first_symlink_component(self.path)
-        if symlink is not None or self.path.is_symlink():
-            raise VerdictIntegrityError(
-                f"protected ledger path became unsafe: {symlink or self.path}"
-            )
+        for candidate in (self.path, self.lock_path):
+            symlink = _first_symlink_component(candidate)
+            if symlink is not None or candidate.is_symlink():
+                raise VerdictIntegrityError(
+                    f"protected ledger path became unsafe: {symlink or candidate}"
+                )
 
     @contextmanager
     def transaction(self) -> Iterator[list[dict[str, Any]]]:
         self._ensure_parent()
-        with self.lock_path.open("a+", encoding="utf-8") as lock_handle:
+        flags = (
+            os.O_APPEND
+            | os.O_CREAT
+            | os.O_RDWR
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+        )
+        try:
+            lock_fd = os.open(self.lock_path, flags, 0o600)
+        except OSError as exc:
+            raise VerdictIntegrityError(
+                "cannot open protected verdict ledger lock"
+            ) from exc
+        with os.fdopen(lock_fd, "a+", encoding="utf-8") as lock_handle:
             fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
             try:
                 yield self._read_records_unlocked()
@@ -392,12 +422,28 @@ class ProtectedVerdictLedger:
     def _read_records_unlocked(self) -> list[dict[str, Any]]:
         if not self.path.exists():
             return []
-        if not self.path.is_file() or self.path.is_symlink():
-            raise VerdictIntegrityError("protected verdict ledger is not a regular file")
         records: list[dict[str, Any]] = []
         previous_hash = _ZERO_HASH
         record_ids: set[str] = set()
-        with self.path.open(encoding="utf-8") as handle:
+        flags = (
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+        )
+        try:
+            ledger_fd = os.open(self.path, flags)
+            if not stat.S_ISREG(os.fstat(ledger_fd).st_mode):
+                os.close(ledger_fd)
+                raise VerdictIntegrityError(
+                    "protected verdict ledger is not a regular file"
+                )
+        except VerdictIntegrityError:
+            raise
+        except OSError as exc:
+            raise VerdictIntegrityError(
+                "cannot open protected verdict ledger"
+            ) from exc
+        with os.fdopen(ledger_fd, encoding="utf-8") as handle:
             for line_number, raw_line in enumerate(handle, start=1):
                 line = raw_line.strip()
                 if not line:
@@ -450,13 +496,45 @@ class ProtectedVerdictLedger:
         )
         record["record_hash"] = canonical_json_sha256(record)
         encoded = _canonical_json(record) + b"\n"
-        flags = os.O_APPEND | os.O_CREAT | os.O_WRONLY
-        fd = os.open(self.path, flags, 0o600)
+        flags = (
+            os.O_APPEND
+            | os.O_CREAT
+            | os.O_WRONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+        )
         try:
-            os.write(fd, encoded)
+            fd = os.open(self.path, flags, 0o600)
+        except OSError as exc:
+            raise VerdictIntegrityError(
+                "cannot append protected verdict ledger"
+            ) from exc
+        try:
+            remaining = memoryview(encoded)
+            while remaining:
+                written = os.write(fd, remaining)
+                if written <= 0:
+                    raise VerdictIntegrityError(
+                        "short write while appending protected verdict ledger"
+                    )
+                remaining = remaining[written:]
             os.fsync(fd)
         finally:
             os.close(fd)
+        try:
+            parent_fd = os.open(
+                self.path.parent,
+                os.O_RDONLY
+                | getattr(os, "O_DIRECTORY", 0)
+                | getattr(os, "O_CLOEXEC", 0),
+            )
+        except OSError:
+            parent_fd = None
+        if parent_fd is not None:
+            try:
+                os.fsync(parent_fd)
+            finally:
+                os.close(parent_fd)
         records.append(record)
         return record
 
@@ -670,14 +748,45 @@ class ProductCloseoutVerdictService:
         expected_binding: CloseoutBinding,
         transition: str,
         transition_actor: str,
+        idempotency_key: str,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         if transition != "done":
             raise VerdictIntegrityError("protected verdict may only be consumed by done")
         actor = _require_nonempty(transition_actor, field="transition_actor")
+        retry_key = _require_nonempty(
+            idempotency_key,
+            field="consumption idempotency_key",
+        )
         checked_at = (now or self.clock()).astimezone(UTC)
         with self.ledger.transaction() as records:
             verdict = self._issued_verdict(records, verdict_id)
+            existing = self._consumption_records(records, verdict_id)
+            if existing:
+                if len(existing) != 1:
+                    raise VerdictReplayError(
+                        "verdict has multiple consumption records"
+                    )
+                record = existing[0]
+                if (
+                    record.get("idempotency_key") != retry_key
+                    or record.get("transition") != transition
+                    or record.get("transition_actor") != actor
+                    or record.get("task_id") != verdict.get("task_id")
+                    or record.get("ledger_entry_id")
+                    != verdict.get("ledger_entry_id")
+                ):
+                    raise VerdictReplayError(
+                        "verdict was consumed by a different transition attempt"
+                    )
+                self._verify_unlocked(
+                    records,
+                    verdict,
+                    expected_binding=expected_binding,
+                    consumption_state="consumed",
+                    now=checked_at,
+                )
+                return dict(record)
             self._verify_unlocked(
                 records,
                 verdict,
@@ -696,9 +805,22 @@ class ProductCloseoutVerdictService:
                     "task_id": verdict["task_id"],
                     "transition": transition,
                     "transition_actor": actor,
+                    "idempotency_key": retry_key,
                 },
             )
         return dict(record)
+
+    def consumption_record(self, verdict_id: str) -> dict[str, Any]:
+        """Return the one durable consumption record for an issued verdict."""
+
+        with self.ledger.transaction() as records:
+            self._issued_verdict(records, verdict_id)
+            consumptions = self._consumption_records(records, verdict_id)
+            if len(consumptions) != 1:
+                raise VerdictReplayError(
+                    "protected verdict must have exactly one consumption record"
+                )
+            return dict(consumptions[0])
 
     @staticmethod
     def _issued_verdict(
@@ -774,7 +896,7 @@ class ProductCloseoutVerdictService:
             )
         if verdict.get("actor_role") not in AUTHORIZED_ACTOR_ROLES:
             raise VerdictAuthorizationError("signed verdict actor role is not authorized")
-        if verdict.get("actor_id") in FLEET_ACTOR_IDS:
+        if _is_fleet_actor_id(verdict.get("actor_id")):
             raise VerdictAuthorizationError("fleet-issued verdict is forbidden")
 
         issue_records = [
@@ -798,29 +920,15 @@ class ProductCloseoutVerdictService:
         revocation_checked_at = _parse_time(
             verdict.get("revocation_checked_at"), field="revocation_checked_at"
         )
-        if issued_at > checked_at + timedelta(seconds=5):
-            raise VerdictExpiredError("verdict issued_at is in the future")
-        if expires_at <= checked_at:
-            raise VerdictExpiredError("verdict has expired")
-        if expires_at <= issued_at:
-            raise VerdictExpiredError("verdict expiry must follow issuance")
-        if expires_at - issued_at > timedelta(seconds=self.policy.max_ttl_seconds):
-            raise VerdictExpiredError("verdict TTL exceeds policy")
-        if checked_at - issued_at > timedelta(
-            seconds=self.policy.max_verdict_age_seconds
-        ):
-            raise VerdictExpiredError("verdict is stale")
-        if revocation_checked_at < issued_at or revocation_checked_at > checked_at + timedelta(
-            seconds=5
-        ):
-            raise VerdictIntegrityError("revocation_checked_at is invalid")
 
         consumptions = self._consumption_records(records, str(verdict["verdict_id"]))
         if len(consumptions) > 1:
             raise VerdictReplayError("verdict has multiple consumption records")
-        if consumption_state == "unconsumed" and consumptions:
-            raise VerdictReplayError("verdict has already been consumed")
-        if consumption_state == "consumed":
+        freshness_checked_at = checked_at
+        if consumption_state == "unconsumed":
+            if consumptions:
+                raise VerdictReplayError("verdict has already been consumed")
+        elif consumption_state == "consumed":
             if len(consumptions) != 1:
                 raise VerdictReplayError(
                     "done closeout requires exactly one verdict consumption"
@@ -831,12 +939,42 @@ class ProductCloseoutVerdictService:
                 or consumption.get("transition") != "done"
                 or consumption.get("ledger_entry_id")
                 != verdict.get("ledger_entry_id")
+                or not str(consumption.get("transition_actor") or "").strip()
+                or not str(consumption.get("idempotency_key") or "").strip()
             ):
                 raise VerdictReplayError("verdict consumption binding is invalid")
-        elif consumption_state != "unconsumed":
+            consumed_at = _parse_time(
+                consumption.get("recorded_at"),
+                field="consumption recorded_at",
+            )
+            if consumed_at > checked_at + timedelta(seconds=5):
+                raise VerdictReplayError(
+                    "verdict consumption is in the future"
+                )
+            freshness_checked_at = consumed_at
+        else:
             raise VerdictIntegrityError(
                 f"unknown verdict consumption state: {consumption_state}"
             )
+
+        if issued_at > freshness_checked_at + timedelta(seconds=5):
+            raise VerdictExpiredError("verdict issued_at is in the future")
+        if expires_at <= freshness_checked_at:
+            raise VerdictExpiredError("verdict has expired")
+        if expires_at <= issued_at:
+            raise VerdictExpiredError("verdict expiry must follow issuance")
+        if expires_at - issued_at > timedelta(seconds=self.policy.max_ttl_seconds):
+            raise VerdictExpiredError("verdict TTL exceeds policy")
+        if freshness_checked_at - issued_at > timedelta(
+            seconds=self.policy.max_verdict_age_seconds
+        ):
+            raise VerdictExpiredError("verdict is stale")
+        if (
+            revocation_checked_at < issued_at
+            or revocation_checked_at
+            > freshness_checked_at + timedelta(seconds=5)
+        ):
+            raise VerdictIntegrityError("revocation_checked_at is invalid")
 
 
 def policy_from_mapping(value: Mapping[str, Any]) -> VerdictPolicy:

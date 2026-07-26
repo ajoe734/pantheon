@@ -5453,10 +5453,16 @@ def command_restore_approved(state: dict[str, Any], args: list[str]) -> None:
             f"restore_approved requires review_notes_zh to be present as evidence of a prior approval. "
             f"Use the normal review lifecycle if the task has not been reviewed yet."
         )
+    verdict_ref = validate_protected_closeout_transition(
+        task,
+        transition="review_approved",
+    )
     timestamp = iso_now()
     task["status"] = "review_approved"
     task["last_update"] = timestamp
     task["next"] = message
+    if verdict_ref is not None:
+        task["protected_closeout_verdict"] = verdict_ref
     append_log(
         {
             "ts": timestamp,
@@ -5761,6 +5767,14 @@ def command_reconcile_merged_done(state: dict[str, Any], args: list[str]) -> Non
     delivery = validate_merged_done_evidence(task)
     timestamp = iso_now()
     delivery["recorded_at"] = timestamp
+    verdict_ref = validate_protected_closeout_transition(
+        task,
+        transition="done",
+        consume=True,
+        transition_actor=actor,
+    )
+    if verdict_ref is not None:
+        task["protected_closeout_verdict"] = verdict_ref
     task["status"] = "done"
     task["terminal_outcome"] = "completed"
     task["last_update"] = timestamp

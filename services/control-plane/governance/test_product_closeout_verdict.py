@@ -155,6 +155,22 @@ def test_authorized_human_ops_issues_signed_exactly_bound_verdict(authority: dic
             pcv.HumanOpsIdentity("Codex", "ops", True, True),
             "fleet actors",
         ),
+        (
+            pcv.HumanOpsIdentity("codex", "ops", True, True),
+            "fleet actors",
+        ),
+        (
+            pcv.HumanOpsIdentity("codex1_4", "ops", True, True),
+            "fleet actors",
+        ),
+        (
+            pcv.HumanOpsIdentity("ops-1", "ops", "true", True),
+            "authenticated",
+        ),
+        (
+            pcv.HumanOpsIdentity("ops-1", "ops", True, "true"),
+            "MFA",
+        ),
     ],
 )
 def test_unauthorized_and_fleet_issuers_fail_closed(
@@ -300,13 +316,16 @@ def test_tampered_ledger_and_standalone_candidate_verdict_are_rejected(
         )
 
 
-def test_verdict_is_consumed_once_and_replay_is_rejected(authority: dict) -> None:
+def test_consumption_retry_is_idempotent_but_distinct_replay_is_rejected(
+    authority: dict,
+) -> None:
     verdict = _issue(authority)
     consumed = authority["verifier"].consume(
         verdict["verdict_id"],
         expected_binding=authority["binding"],
         transition="done",
         transition_actor="Codex",
+        idempotency_key="done-L12-CLOSE-001-attempt-001",
     )
     assert consumed["record_type"] == "consumed"
     authority["verifier"].verify(
@@ -315,13 +334,43 @@ def test_verdict_is_consumed_once_and_replay_is_rejected(authority: dict) -> Non
         consumption_state="consumed",
     )
 
-    with pytest.raises(pcv.VerdictReplayError, match="already been consumed"):
+    retried = authority["verifier"].consume(
+        verdict["verdict_id"],
+        expected_binding=authority["binding"],
+        transition="done",
+        transition_actor="Codex",
+        idempotency_key="done-L12-CLOSE-001-attempt-001",
+    )
+    assert retried == consumed
+
+    with pytest.raises(pcv.VerdictReplayError, match="different transition attempt"):
         authority["verifier"].consume(
             verdict["verdict_id"],
             expected_binding=authority["binding"],
             transition="done",
             transition_actor="Codex",
+            idempotency_key="done-L12-CLOSE-001-attempt-002",
         )
+
+
+def test_consumed_verdict_remains_auditable_after_ttl_expires(
+    authority: dict,
+) -> None:
+    verdict = _issue(authority, ttl_seconds=30)
+    authority["verifier"].consume(
+        verdict["verdict_id"],
+        expected_binding=authority["binding"],
+        transition="done",
+        transition_actor="Codex",
+        idempotency_key="done-L12-CLOSE-001-attempt-001",
+    )
+    authority["clock"].now += timedelta(hours=2)
+
+    assert authority["verifier"].verify(
+        verdict["verdict_id"],
+        expected_binding=authority["binding"],
+        consumption_state="consumed",
+    ) == verdict
 
 
 def test_concurrent_done_consumption_has_exactly_one_winner(authority: dict) -> None:
@@ -329,7 +378,7 @@ def test_concurrent_done_consumption_has_exactly_one_winner(authority: dict) -> 
     barrier = threading.Barrier(2)
     results: list[str] = []
 
-    def consume() -> None:
+    def consume(attempt: int) -> None:
         barrier.wait()
         try:
             authority["verifier"].consume(
@@ -337,13 +386,17 @@ def test_concurrent_done_consumption_has_exactly_one_winner(authority: dict) -> 
                 expected_binding=authority["binding"],
                 transition="done",
                 transition_actor="Codex",
+                idempotency_key=f"concurrent-done-attempt-{attempt}",
             )
         except pcv.VerdictReplayError:
             results.append("replay")
         else:
             results.append("consumed")
 
-    threads = [threading.Thread(target=consume) for _ in range(2)]
+    threads = [
+        threading.Thread(target=consume, args=(attempt,))
+        for attempt in range(2)
+    ]
     for thread in threads:
         thread.start()
     for thread in threads:

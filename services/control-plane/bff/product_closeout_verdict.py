@@ -47,6 +47,7 @@ _AUTHORIZED_BFF_ROLES = frozenset({"admin", "approver", "human_ops", "ops"})
 _AUTOMATION_PRINCIPALS = frozenset(
     {"automation", "fleet", "service", "service_account", "workload"}
 )
+_PROTECTED_SESSION_KINDS = frozenset({"cookie", "jwt"})
 
 
 class CloseoutVerdictIssueRequest(BaseModel):
@@ -93,9 +94,10 @@ def human_ops_identity_from_operator(identity: Any) -> Any:
         or "human"
     ).strip().lower()
 
-    if token_kind in {"", "stub"}:
+    if token_kind not in _PROTECTED_SESSION_KINDS:
         raise VerdictAuthorizationError(
-            "protected closeout verdicts require a non-stub authenticated session"
+            "protected closeout verdicts require a verified JWT or JWT-backed "
+            "cookie session"
         )
     if principal_type in _AUTOMATION_PRINCIPALS:
         raise VerdictAuthorizationError(
@@ -111,7 +113,9 @@ def human_ops_identity_from_operator(identity: Any) -> Any:
         actor_id=operator_id,
         actor_role=actor_role,
         authenticated=True,
-        mfa_verified=bool(_identity_value(identity, "mfa_verified", False)),
+        mfa_verified=(
+            _identity_value(identity, "mfa_verified", False) is True
+        ),
         principal_type="human",
     )
     projected.authorize()
@@ -204,4 +208,3 @@ def create_product_closeout_verdict_router(
         return {"data": result}
 
     return router
-

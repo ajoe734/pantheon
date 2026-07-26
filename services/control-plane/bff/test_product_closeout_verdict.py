@@ -43,8 +43,8 @@ def _identity(
     *,
     operator_id: str = "human-ops-001",
     roles: list[str] | None = None,
-    mfa_verified: bool = True,
-    token_kind: str = "bearer",
+    mfa_verified: object = True,
+    token_kind: str = "jwt",
     principal_type: str = "human",
 ) -> SimpleNamespace:
     return SimpleNamespace(
@@ -116,9 +116,15 @@ def test_authorized_mfa_human_ops_can_issue_and_inspect(bff: tuple) -> None:
     [
         (_identity(roles=["viewer"]), "approver or admin"),
         (_identity(mfa_verified=False), "MFA"),
-        (_identity(token_kind="stub"), "non-stub"),
+        (_identity(mfa_verified="true"), "MFA"),
+        (_identity(token_kind="stub"), "verified JWT"),
+        (_identity(token_kind="test"), "verified JWT"),
+        (_identity(token_kind="structured"), "verified JWT"),
+        (_identity(token_kind="bearer"), "verified JWT"),
         (_identity(principal_type="service"), "automation"),
         (_identity(operator_id="Codex"), "fleet actors"),
+        (_identity(operator_id="codex"), "fleet actors"),
+        (_identity(operator_id="codex2_3"), "fleet actors"),
     ],
 )
 def test_wrong_role_stub_automation_and_fleet_identity_are_forbidden(

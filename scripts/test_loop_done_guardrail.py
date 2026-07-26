@@ -961,6 +961,12 @@ class TestProtectedHumanOpsCloseoutGuard(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+        self.default_policy_patch = mock.patch.object(
+            self.module,
+            "DEFAULT_PROTECTED_POLICY_PATH",
+            self.policy_path,
+        )
+        self.default_policy_patch.start()
         self.task = {
             "id": "L12-CLOSE-001",
             "status": "review",
@@ -972,11 +978,10 @@ class TestProtectedHumanOpsCloseoutGuard(unittest.TestCase):
         }
         self.env = {
             "PANTHEON_STATUS_ROOT": str(self.status_root),
-            "PANTHEON_PRODUCT_CLOSEOUT_ALLOW_TEST_CONFIG": "1",
-            "PANTHEON_PRODUCT_CLOSEOUT_TEST_POLICY_PATH": str(self.policy_path),
         }
 
     def tearDown(self) -> None:
+        self.default_policy_patch.stop()
         self.temp.cleanup()
 
     def _write_manifest(self) -> None:
@@ -1036,12 +1041,27 @@ class TestProtectedHumanOpsCloseoutGuard(unittest.TestCase):
             self.task["status"] = "done"
             self.assertEqual(guardrail.check_task(self.task), [])
 
-            with self.assertRaisesRegex(Exception, "already been consumed"):
-                guardrail.validate_protected_closeout_transition(
-                    self.task,
+            retried = guardrail.validate_protected_closeout_transition(
+                self.task,
+                transition="done",
+                consume=True,
+                transition_actor="Codex",
+            )
+            self.assertEqual(
+                retried["consumption_record_id"],
+                consumed["consumption_record_id"],
+            )
+
+            with self.assertRaisesRegex(Exception, "different transition attempt"):
+                self.module.ProductCloseoutVerdictService(
+                    ledger=self.ledger,
+                    policy=self.policy,
+                ).consume(
+                    verdict["verdict_id"],
+                    expected_binding=self._binding(),
                     transition="done",
-                    consume=True,
                     transition_actor="Codex",
+                    idempotency_key="different-logical-closeout",
                 )
 
     def test_direct_done_state_edit_without_consumption_is_rejected(self) -> None:
@@ -1059,6 +1079,40 @@ class TestProtectedHumanOpsCloseoutGuard(unittest.TestCase):
             gaps = guardrail.check_task(self.task)
         self.assertTrue(
             any("requires exactly one verdict consumption" in gap for gap in gaps),
+            gaps,
+        )
+
+    def test_mutable_loop_metadata_removal_cannot_disable_sink_guard(self) -> None:
+        self._issue()
+        self.task["status"] = "done"
+        self.task.pop("loop_ids")
+        self.task.pop("requires_human_ops_signoff")
+        with mock.patch.dict(os.environ, self.env, clear=False):
+            gaps = guardrail.check_task(self.task)
+
+        self.assertTrue(
+            any("requires exactly one verdict consumption" in gap for gap in gaps),
+            gaps,
+        )
+
+    def test_consumption_reference_tamper_is_rejected(self) -> None:
+        self._issue()
+        with mock.patch.dict(os.environ, self.env, clear=False):
+            consumed = guardrail.validate_protected_closeout_transition(
+                self.task,
+                transition="done",
+                consume=True,
+                transition_actor="Codex",
+            )
+            self.task["status"] = "done"
+            self.task["protected_closeout_verdict"] = {
+                **consumed,
+                "consumption_record_id": "tampered-consumption-reference",
+            }
+            gaps = guardrail.check_task(self.task)
+
+        self.assertTrue(
+            any("consumption_record_id reference mismatch" in gap for gap in gaps),
             gaps,
         )
 
@@ -1112,16 +1166,107 @@ class TestProtectedHumanOpsCloseoutGuard(unittest.TestCase):
                     transition="review_approved",
                 )
 
-    def test_caller_cannot_enable_policy_override_without_explicit_test_gate(self) -> None:
+    def test_caller_environment_cannot_override_protected_policy(self) -> None:
         self._issue()
-        unsafe_env = dict(self.env)
-        unsafe_env.pop("PANTHEON_PRODUCT_CLOSEOUT_ALLOW_TEST_CONFIG")
-        with mock.patch.dict(os.environ, unsafe_env, clear=True):
-            with self.assertRaisesRegex(Exception, "test-only"):
+        attacker_policy = self.protected_root / "attacker-policy.json"
+        attacker_policy.write_text(
+            self.policy_path.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        unsafe_env = {
+            **self.env,
+            "PANTHEON_PRODUCT_CLOSEOUT_ALLOW_TEST_CONFIG": "1",
+            "PANTHEON_PRODUCT_CLOSEOUT_TEST_POLICY_PATH": str(attacker_policy),
+        }
+        missing_default = self.protected_root / "missing-default-policy.json"
+        with (
+            mock.patch.object(
+                self.module,
+                "DEFAULT_PROTECTED_POLICY_PATH",
+                missing_default,
+            ),
+            mock.patch.dict(os.environ, unsafe_env, clear=True),
+        ):
+            with self.assertRaisesRegex(Exception, "policy is missing"):
                 guardrail.validate_protected_closeout_transition(
                     self.task,
                     transition="review_approved",
                 )
+
+            accepted = guardrail.validate_protected_closeout_transition(
+                self.task,
+                transition="review_approved",
+                policy_path=self.policy_path,
+            )
+        self.assertEqual(
+            accepted["verdict_id"],
+            self.env["PANTHEON_PRODUCT_CLOSEOUT_VERDICT_ID"],
+        )
+
+    def test_review_file_parent_traversal_is_rejected(self) -> None:
+        outside = self.temp_root / "outside.json"
+        outside.write_text("{}", encoding="utf-8")
+        with (
+            mock.patch.dict(os.environ, self.env, clear=False),
+            self.assertRaisesRegex(RuntimeError, "parent traversal"),
+        ):
+            guardrail._safe_status_artifact("../outside.json")
+
+    def test_revoked_review_verdict_can_be_replaced_by_new_human_ops_verdict(
+        self,
+    ) -> None:
+        first = self._issue()
+        with mock.patch.dict(os.environ, self.env, clear=False):
+            first_ref = guardrail.validate_protected_closeout_transition(
+                self.task,
+                transition="review_approved",
+            )
+        self.task["protected_closeout_verdict"] = first_ref
+        self.module.ProductCloseoutVerdictService(
+            ledger=self.ledger,
+            policy=self.policy,
+            private_key=self.private_key,
+            key_id=self.key_id,
+        ).revoke(
+            first["verdict_id"],
+            self.module.HumanOpsIdentity(
+                actor_id="ops-human-001",
+                actor_role="ops",
+                authenticated=True,
+                mfa_verified=True,
+            ),
+            reason="deployment evidence was refreshed",
+        )
+        replacement = self.issuer.issue(
+            self._binding(),
+            self.module.HumanOpsIdentity(
+                actor_id="ops-human-001",
+                actor_role="ops",
+                authenticated=True,
+                mfa_verified=True,
+            ),
+            decision="approved",
+            ttl_seconds=900,
+        )
+        replacement_env = {
+            **self.env,
+            "PANTHEON_PRODUCT_CLOSEOUT_VERDICT_ID": replacement["verdict_id"],
+        }
+
+        with mock.patch.dict(os.environ, replacement_env, clear=False):
+            replacement_ref = guardrail.validate_protected_closeout_transition(
+                self.task,
+                transition="review_approved",
+            )
+
+        self.assertEqual(
+            replacement_ref["superseded_verdict_id"],
+            first["verdict_id"],
+        )
+        self.assertEqual(
+            replacement_ref["verdict_id"],
+            replacement["verdict_id"],
+        )
 
 
 if __name__ == "__main__":
