@@ -1,0 +1,99 @@
+{
+  "buffer_backend": "memory",
+  "environment": "bounded local nonprod telemetry on 127.0.0.1:18141",
+  "hosted_activation_claimed": false,
+  "observations": {
+    "binding_spoof_on_infra_route": {
+      "code": "INFRA_BINDING_FIELD_FORBIDDEN",
+      "http": 400
+    },
+    "durable_ledger": {
+      "admitted_event_ids": [
+        "readback-infra-001"
+      ],
+      "record_count": 1
+    },
+    "event_id_conflict": {
+      "code": "INFRA_EVENT_ID_CONFLICT",
+      "http": 409
+    },
+    "healthz_metrics": {
+      "http": 200,
+      "infrastructure_health_admitted": 0,
+      "infrastructure_health_duplicates": 1,
+      "infrastructure_health_ledger_event_ids": 1,
+      "infrastructure_health_schema_loaded": 1,
+      "overall_status": "ok"
+    },
+    "infra_event_on_trading_route": {
+      "http": 400,
+      "status_field": "rejected"
+    },
+    "missing_token": {
+      "code": "401",
+      "http": 401
+    },
+    "restart_replay": {
+      "duplicate": true,
+      "http": 202
+    },
+    "retry_replay": {
+      "duplicate": true,
+      "http": 202
+    },
+    "runtime_health_spoof_on_trading_route": {
+      "http": 400,
+      "status_field": "rejected"
+    },
+    "service_boot": {
+      "health_http": 200
+    },
+    "stats_after_restart": {
+      "http": 200,
+      "infrastructure_health": {
+        "admitted": 0,
+        "conflicts": 0,
+        "duplicates": 1,
+        "ledger": {
+          "admitted_event_ids": 1,
+          "path": "/tmp/infra-health-readback-ac3pdm9v/infrastructure_health_admissions.jsonl"
+        },
+        "rejected": 0,
+        "schema_loaded": true,
+        "schema_version": "pantheon.infrastructure-health/1"
+      }
+    },
+    "stats_before_restart": {
+      "http": 200,
+      "infrastructure_health": {
+        "admitted": 1,
+        "conflicts": 1,
+        "duplicates": 1,
+        "ledger": {
+          "admitted_event_ids": 1,
+          "path": "/tmp/infra-health-readback-ac3pdm9v/infrastructure_health_admissions.jsonl"
+        },
+        "rejected": 2,
+        "schema_loaded": true,
+        "schema_version": "pantheon.infrastructure-health/1"
+      }
+    },
+    "valid_ingest": {
+      "duplicate": false,
+      "event_id": "readback-infra-001",
+      "fingerprint": "sha256:df6199676858f64adc5ce1258c7739b69364e9a9a0490ef48df7810a625a4111",
+      "http": 202
+    },
+    "wrong_producer": {
+      "code": "PRODUCER_FORBIDDEN",
+      "http": 403
+    },
+    "wrong_tenant": {
+      "code": "TENANT_FORBIDDEN",
+      "http": 403
+    }
+  },
+  "observed_at": "2026-07-26T19:16:32.005953Z",
+  "runtime_manager_url": "http://127.0.0.1:1 (unreachable; binding lookups fail closed)",
+  "task_id": "OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001"
+}

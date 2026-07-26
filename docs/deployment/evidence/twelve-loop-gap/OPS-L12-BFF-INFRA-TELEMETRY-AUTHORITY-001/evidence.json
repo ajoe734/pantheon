@@ -1,0 +1,367 @@
+{
+  "acceptance": [
+    {
+      "evidence_refs": [
+        "services/telemetry/telemetry_event.schema.json",
+        "services/telemetry/ingest_svc.py",
+        "services/telemetry/test_infrastructure_health_ingest.py"
+      ],
+      "id": "AC1",
+      "statement": "Infrastructure health uses a distinct authoritative non-trading schema and never requires or invents a RuntimeBinding.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/telemetry/auth.py",
+        "services/telemetry/main.py",
+        "services/telemetry/test_infrastructure_health_ingest.py",
+        "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/current-runtime-readback.json"
+      ],
+      "id": "AC2",
+      "statement": "Strict JWT service authentication plus tenant and producer scope is required for infrastructure ingestion and spoofed probe fields cannot bypass trading validation.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/telemetry/ingest_svc.py",
+        "services/telemetry/test_infrastructure_health_ingest.py",
+        "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/current-runtime-readback.json"
+      ],
+      "id": "AC3",
+      "statement": "The admitted event is durable and idempotent by stable event ID across retries and replicas.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/telemetry/ingest_svc.py",
+        "services/telemetry/test_infrastructure_health_ingest.py",
+        "services/telemetry/test_main_routes.py"
+      ],
+      "id": "AC4",
+      "statement": "Trading telemetry binding and lineage validation remains unchanged and fails closed.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/telemetry/test_infrastructure_health_ingest.py",
+        "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/current-runtime-readback.json"
+      ],
+      "id": "AC5",
+      "statement": "Real strict-auth service tests cover valid ingest, missing token, wrong tenant, wrong producer, runtime-health spoof, restart, and duplicate replay.",
+      "status": "pass"
+    },
+    {
+      "blocking_until": "The task PR is merged into dev with green checks and Antigravity records an independent review verdict.",
+      "evidence_refs": [
+        "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/evidence.json"
+      ],
+      "id": "AC6",
+      "statement": "The task is delivered by PR to dev with green checks and independent Antigravity review.",
+      "status": "pending_reviewer"
+    }
+  ],
+  "authorities": {
+    "actual_state": [
+      "durable infrastructure health admission ledger",
+      "telemetry ingest counters and stats",
+      "telemetry dead-letter queue"
+    ],
+    "desired_state": [
+      "InfrastructureHealthEvent contract in telemetry_event.schema.json",
+      "strict service JWT tenant and producer scope",
+      "deployment producer allowlist PANTHEON_TELEMETRY_INFRA_PRODUCERS"
+    ],
+    "task_packet": ".orchestrator/task-briefs/ops_l12_bff_infra_telemetry_authority_001.md"
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "proof": [
+        "Admission is keyed by the producer's stable event_id and a sha256 fingerprint of the canonical event JSON, recorded in an append-only ledger under a POSIX advisory lock, so an exact retry answers 202 with duplicate=true and appends no second record.",
+        "Reusing an event_id for different content is refused with 409 INFRA_EVENT_ID_CONFLICT rather than silently overwriting the first observation.",
+        "Four concurrent replica processes racing on one event ID through a shared ledger produced exactly one admission and three duplicates."
+      ],
+      "status": "pass"
+    },
+    "failure_and_degraded_behavior": {
+      "proof": [
+        "Missing bearer token, a structured permissive-mode token, the shared static service token, a non-service role, an unbound or wildcard tenant claim, a cross-tenant header, a payload tenant mismatch, an unconfigured or wildcard producer scope, and an unallowlisted producer all fail closed with stable error codes.",
+        "When the authoritative schema or the durable admission ledger is unavailable, ingestion refuses the event with INFRA_SCHEMA_UNAVAILABLE or INFRA_LEDGER_UNCONFIGURED instead of admitting something it cannot deduplicate.",
+        "A full buffer answers 503 INFRA_BUFFER_OVERFLOW and the ledger reservation is released so the producer's retry can still be admitted."
+      ],
+      "status": "pass"
+    },
+    "request_receipt_downstream_correlation": {
+      "proof": [
+        "HTTP 202 is returned only after the event is enqueued on the durable buffer behind an ledger admission record, and the response echoes the event_id, content fingerprint, bound tenant, and proven producer.",
+        "Admitted infrastructure events are readable through the existing exact event route under the same tenant authority and are never projected into runtime status summaries, the lineage graph, or trade episode projections."
+      ],
+      "status": "pass"
+    },
+    "restart_and_recovery": {
+      "proof": [
+        "Against the running Flask telemetry service, a real shutdown() and startup() cycle over the same storage directory answered the replayed event with HTTP 202 duplicate=true while the restarted instance reported zero new admissions, because the durable ledger rather than process memory is the admission authority.",
+        "A second telemetry service instance over the same storage directory treats an already admitted stable event ID as a duplicate, and four separate replica processes synchronising on a barrier admitted it exactly once."
+      ],
+      "status": "pass"
+    },
+    "rollback_or_compensation": {
+      "proof": [
+        "A reservation that is not followed by a durable enqueue is released with an append-only released record, so a failed admission never blocks the producer's retry.",
+        "This task grants no broker, allocation, deployment, runtime-control, or incident-mutation authority; infrastructure health carries only an optional incident_ref string that telemetry never acts on."
+      ],
+      "status": "pass"
+    }
+  },
+  "deployment": {
+    "applicable": false,
+    "canonical_root_deploy": {
+      "reason": "No service deployment or restart is part of this task; producer credential and Compose wiring for PANTHEON_TELEMETRY_INFRA_PRODUCERS remain a downstream manifest responsibility.",
+      "status": "not_applicable"
+    },
+    "environment": "dev integration",
+    "identity_admission": {
+      "proof": "The infrastructure health route requires a verified service JWT even when the deployment-wide telemetry auth mode is permissive; the tenant must be bound by the token's own claims, and the producer must be inside both the deployment allowlist and the token scope. Every missing or mismatched element fails closed.",
+      "status": "pass"
+    },
+    "public_bff_base_url": "not_applicable_internal_telemetry_service",
+    "publish_cut": {
+      "reason": "Hosted admission is not part of this telemetry-scope task.",
+      "status": "not_applicable"
+    }
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Task-scoped changes require a reviewed Pantheon PR; append a record_log entry whenever the accepted evidence cut or formal review state changes.",
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "artifact": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/current-runtime-readback.json",
+      "binding_spoof_http": 400,
+      "durable_ledger_admitted_ids": 1,
+      "durable_ledger_record_count": 1,
+      "environment": "bounded local nonprod telemetry on 127.0.0.1:18141",
+      "event_id_conflict_http": 409,
+      "healthz_http": 200,
+      "hosted_activation_claimed": false,
+      "missing_token_http": 401,
+      "observed_at": "2026-07-26T19:16:32.005953Z",
+      "restart_replay_duplicate": true,
+      "restart_replay_http": 202,
+      "retry_replay_duplicate": true,
+      "status": "pass",
+      "terminal_readback": "Against the running telemetry service, one stable event ID was admitted once, replayed as a duplicate on retry and again after a real service restart, and left exactly one durable admission record on disk. Missing token, wrong tenant, wrong producer, reused event ID, spoofed binding evidence, and both trading-route bypass attempts all failed closed.",
+      "valid_ingest_http": 202,
+      "wrong_producer_http": 403,
+      "wrong_tenant_http": 403
+    }
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "delivery_state": "on_task_branch_pending_pr",
+        "sha": "0b6ac76800514fd4a842cd34079f51e91622aabb",
+        "subject": "OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001: anchor infra authority"
+      }
+    ],
+    "required_checks": []
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/current-runtime-readback.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/evidence.json",
+    "normalized_hosted_readback": {
+      "binding_spoof_refused": true,
+      "durable_ledger_record_count": 1,
+      "event_id_conflict_refused": true,
+      "hosted_activation_claimed": false,
+      "missing_token_refused": true,
+      "restart_replay_deduplicated": true,
+      "retry_replay_deduplicated": true,
+      "valid_ingest_accepted": true,
+      "wrong_producer_refused": true,
+      "wrong_tenant_refused": true
+    },
+    "self_hash_omitted": true,
+    "self_hash_reason": "The companion checksum file contains the manifest digest and avoids recursive self-hashing.",
+    "source_artifact_sha256_by_epoch": {
+      "current_runtime_readback_2026_07_26": "bbabdba4710903daf69a9ebfedb1717b0f2677407ce67e84d2a4b840bdacbf97"
+    }
+  },
+  "record_log": [
+    {
+      "actor": "Claude",
+      "kind": "owner_evidence_ready",
+      "recorded_at": "2026-07-26T19:20:00Z",
+      "reference": "task/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001",
+      "sequence": 1,
+      "sha": "0b6ac76800514fd4a842cd34079f51e91622aabb",
+      "status": "pass"
+    }
+  ],
+  "residual_risks": {
+    "bff_client_adoption": {
+      "blocking_for_this_task": false,
+      "containment": "Until L12-BFF-001 adopts the contract, no producer is allowlisted and the route admits nothing, which is the fail-closed default.",
+      "description": "L12-BFF-001 still has to drop its out-of-scope telemetry edits and its shape-based binding bypass and become a strict-auth client of this contract.",
+      "expiry": "When L12-BFF-001 delivers its monitor against this route.",
+      "owner": "L12-BFF-001",
+      "recheck_trigger": "Before L12-BFF-001 acceptance.",
+      "severity": "medium"
+    },
+    "producer_credential_wiring": {
+      "blocking_for_this_task": false,
+      "containment": "PANTHEON_TELEMETRY_INFRA_PRODUCERS is empty by default and an unconfigured or wildcard allowlist is refused, so the channel stays closed until an operator admits an explicit producer.",
+      "description": "Issuing the infrastructure producer service JWT and setting the deployment allowlist is manifest and deployment work outside this telemetry scope.",
+      "expiry": "When the infrastructure producer credential is provisioned.",
+      "owner": "deployment manifest owner",
+      "recheck_trigger": "Before enabling infrastructure health in a deployed root.",
+      "severity": "medium"
+    },
+    "shared_ledger_volume": {
+      "blocking_for_this_task": false,
+      "containment": "Cross-replica idempotency was proven over a shared storage path, and the canonical Postgres writer keeps ON CONFLICT (event_id) as the final idempotency authority when replicas do not share a volume.",
+      "description": "The durable admission ledger deduplicates across replicas only when they mount the same TELEMETRY_STORAGE_DIR or TELEMETRY_INFRASTRUCTURE_HEALTH_LEDGER path.",
+      "expiry": "When telemetry replicas are deployed with a documented shared volume.",
+      "owner": "deployment manifest owner",
+      "recheck_trigger": "Before scaling telemetry beyond one replica.",
+      "severity": "low"
+    }
+  },
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "Owner evidence cut for the telemetry-side infrastructure health authority required by L12-BFF-001.",
+    "note": "Owner implementation and acceptance proof are complete. No reviewer verdict is asserted; the formal Antigravity decision must be appended to record_log before closeout.",
+    "status": "formalized"
+  },
+  "schema_version": "loop_product_evidence.v1",
+  "scope": {
+    "authoritative_write_owner": "Telemetry service for the non-trading infrastructure health contract, its strict service-JWT admission authority, and its durable idempotent admission ledger",
+    "composes_with": [
+      "L12-BFF-001, which must drop its out-of-scope telemetry edits and its shape-based binding bypass and consume this contract as a strict-auth client",
+      "L12-EVO-001, which retains sole ownership of services/incidents",
+      "L12-TEL-001 durable telemetry ingest and tenant authority"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/current-runtime-readback.json",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "services/telemetry/auth.py",
+      "services/telemetry/ingest_svc.py",
+      "services/telemetry/main.py",
+      "services/telemetry/telemetry_event.schema.json",
+      "services/telemetry/test_infrastructure_health_ingest.py"
+    ],
+    "not_changing": "services/incidents stays owned by L12-EVO-001 \u2014 telemetry never creates, mutates, or resolves an incident and only carries an optional incident_ref string; services/control-plane/bff stays owned by L12-BFF-001; and the trading telemetry evidence contract E-1 through E-6, its authoritative RuntimeBinding cross-validation, and the lineage write path are unchanged.",
+    "owned_layer": "The telemetry-side infrastructure health authority: the non-trading InfrastructureHealthEvent schema definition, the strict service-JWT tenant and producer authority in services/telemetry/auth.py, durable idempotent admission by stable event ID in services/telemetry/ingest_svc.py, and the POST /api/v1/telemetry/infrastructure-health route in services/telemetry/main.py"
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "proof": "Only the task branch, focused service tests, and a bounded local nonprod readback on 127.0.0.1 were exercised. No hosted activation is claimed and no deployment was performed.",
+      "status": "pass"
+    },
+    "hosted_frontend": {
+      "status": "not_applicable"
+    },
+    "mfa": {
+      "proof": "This is a machine-to-machine service channel; no interactive operator authentication or MFA policy is changed.",
+      "status": "not_applicable"
+    },
+    "no_live_capital": {
+      "proof": "Infrastructure health telemetry carries no RuntimeBinding, no capital pool, and no order authority, and no live-capital path was enabled.",
+      "status": "pass"
+    },
+    "rbac": {
+      "proof": "The infrastructure health route requires the service role from a verified JWT; operator and admin roles are deliberately not accepted, and the existing trading routes keep their unchanged role sets.",
+      "status": "pass"
+    },
+    "tenant_isolation": {
+      "proof": "The admitted tenant is the authenticated tenant. It must be present in the service token's own claims \u2014 the deployment-wide PANTHEON_TELEMETRY_ALLOWED_TENANTS fallback and wildcard tenant claims are both refused here \u2014 and any payload tenant that differs is rejected.",
+      "status": "pass"
+    },
+    "two_person_approval": {
+      "proof": "Owner Claude and reviewer Antigravity are distinct. No reviewer verdict is asserted by this cut; the formal Antigravity decision must be appended to record_log before closeout.",
+      "status": "pass"
+    }
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-26T19:20:00Z",
+    "evidence_cut_semantics": "Owner evidence over task branch head 0b6ac76800514fd4a842cd34079f51e91622aabb cut from dev 5b8addf628c09f88ff8199080ab68429dbe7b531. It asserts implementation and owner acceptance only; independent reviewer approval is not claimed.",
+    "id": "OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001",
+    "overall_admission": "pass_owner_evidence_ready",
+    "owner": "Claude",
+    "phase": "Twelve Loop Remediation / Telemetry",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/evidence.json",
+    "reviewer": "Antigravity",
+    "target_environment": "dev integration and bounded local nonprod telemetry",
+    "target_maturity": "reconciled",
+    "task_branch": "task/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001",
+    "title": "Add strict-auth infrastructure health telemetry authority"
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python -m pytest services/telemetry/test_infrastructure_health_ingest.py -q",
+        "conclusion": "29 strict-auth route and replica tests passed, covering valid ingest, missing token, permissive-mode refusal, static service token refusal, non-service role, wrong tenant, payload tenant mismatch, env tenant fallback refusal, wildcard tenant, wrong producer, unscoped producer, wildcard producer, binding-field spoof, nested binding spoof, unknown contract fields, runtime_health probe spoof, infrastructure event on the trading route, unchanged trading validation, duplicate replay, event_id conflict, restart replay, two-replica admission, four concurrent replica processes, reservation release, and both fail-closed deployment faults.",
+        "result": "pass"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python -m pytest services/telemetry/test_infrastructure_health_ingest.py services/telemetry/test_main_routes.py services/telemetry/test_ingest_shock_absorption.py services/telemetry/test_tel001_rebaseline_schema.py services/telemetry/test_capture.py -q",
+        "conclusion": "162 tests and 15 subtests passed in 30.24s.",
+        "result": "pass"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python -m pytest services/telemetry -q",
+        "conclusion": "305 passed, 1 skipped, 15 subtests passed, and one failure in services/telemetry/test_lineage_write_path.py::TestLiveLineageWritePathFullStackHTTPRoute::test_ingest_then_consume_threshold_route_201_then_replay_200 that reproduces identically on the unmodified tree because it requires PANTHEON_RUNTIME_MANAGER_URL in the host environment. No frame of that failure touches this task's files.",
+        "result": "pass_with_nonblocking_baseline_residual"
+      },
+      {
+        "command": "Mutation controls: strict-mode pinning removed from _infrastructure_auth_env, ledger admit short-circuited, and the producer scope intersection replaced with a union, each re-running the new suite",
+        "conclusion": "Each mutation failed the intended tests \u2014 1, 6, and 2 respectively \u2014 and the suite returned to 29 passed after restoring the implementation, so the strict-auth, durability, and producer-scope assertions are load-bearing rather than incidentally green.",
+        "result": "pass"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python services/telemetry/smoke_test_ingest.py",
+        "conclusion": "ALL SMOKE TESTS PASSED",
+        "result": "pass"
+      },
+      {
+        "command": "python3 -m compileall -q services/telemetry",
+        "conclusion": "exit 0",
+        "result": "pass"
+      },
+      {
+        "command": "python3 -m json.tool services/telemetry/telemetry_event.schema.json",
+        "conclusion": "exit 0",
+        "result": "pass"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python -m pytest tests/telemetry/test_ingest_load_10x.py services/execution/lean_runtime/test_paper_runtime.py services/control-plane/bff/test_p0_paper_operating_loop_smoke.py -q",
+        "conclusion": "56 passed and 27 subtests passed across the external consumers of telemetry_event.schema.json, with one pre-existing failure in test_p0_paper_operating_loop_smoke.py that reproduces identically when services/telemetry is reverted to the pre-change tree.",
+        "result": "pass_with_nonblocking_baseline_residual"
+      },
+      {
+        "command": "Bounded local nonprod readback over the running Flask service on 127.0.0.1 (see docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/current-runtime-readback.json)",
+        "conclusion": "Real HTTP requests against the started service produced 202 admission, 202 duplicate replay, 409 event_id conflict, 401 missing token, 403 wrong tenant, 403 wrong producer, 400 binding-field spoof, 400 for both the runtime_health probe spoof and an infrastructure event on the trading route, and a 202 duplicate replay after a real service restart with a single durable ledger record.",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-07-26T19:20:00Z",
+    "validated_base_sha": "5b8addf628c09f88ff8199080ab68429dbe7b531",
+    "validated_head_sha": "0b6ac76800514fd4a842cd34079f51e91622aabb"
+  }
+}
