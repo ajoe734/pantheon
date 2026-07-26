@@ -114,12 +114,12 @@ class DurableBuffer(ABC):
 
 
 # ---------------------------------------------------------------------------
-# v1 Default: In-Memory Bounded Buffer
+# Explicit Local/Test Backend: In-Memory Bounded Buffer
 # ---------------------------------------------------------------------------
 
 class InMemoryBuffer(DurableBuffer):
     """
-    v1 default: bounded asyncio.Queue.
+    Explicit local-development/test backend: bounded asyncio.Queue.
 
     - Zero external dependencies.
     - Backpressure: put() returns False when queue is full and timeout expires.

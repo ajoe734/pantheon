@@ -1,0 +1,138 @@
+{
+  "schema_version": 1,
+  "task_id": "L12-TEL-001",
+  "owner": "Codex2",
+  "reviewer": "Codex",
+  "status": "ready_for_review",
+  "generated_at": "2026-07-26T10:01:35Z",
+  "scope": {
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/L12-TEL-001",
+    "base_sha": "77ce7f909",
+    "candidate_sha": "196d801a940044e42c93d9958dc9275e19d0db8e",
+    "implementation_anchor_commits": [
+      "dbcc2452f",
+      "f52f82492",
+      "af252bdea"
+    ],
+    "owned_layer": "Telemetry durable ingest receipts, canonical-write acknowledgement, HTTP authority/tenant isolation, and runtime lifecycle identity projection.",
+    "not_changing": "Compose producer credentials, hosted deployment admission, or live-capital authority.",
+    "composes_with": [
+      "L12-MANIFEST-001",
+      "L12-REC-001",
+      "L12-HOSTED-001"
+    ]
+  },
+  "durable_ingest": {
+    "backend": "NATS JetStream",
+    "stream_storage": "file",
+    "retention": "work_queue",
+    "consumer": "durable_pull_explicit_ack",
+    "http_success_boundary": "JetStream persistence PubAck",
+    "canonical_ack_boundary": "Postgres write success or fsynced DLQ handoff",
+    "process_death_probe": {
+      "nats_image": "nats:2.11-alpine",
+      "nats_client": "nats-py 2.15.0",
+      "event_id": "evt-crash-3488df2aa9",
+      "tenant_id": "tenant-alpha",
+      "crash_phase_acked": 0,
+      "child_exit_code": 23,
+      "recovered_event_exact": true,
+      "acked_after_recovery": 1,
+      "result": "pass"
+    }
+  },
+  "authority": {
+    "default_mode": "strict",
+    "ingest_roles": [
+      "service",
+      "operator",
+      "admin"
+    ],
+    "read_roles": [
+      "service",
+      "operator",
+      "reviewer",
+      "admin"
+    ],
+    "replay_roles": [
+      "operator",
+      "admin"
+    ],
+    "tenant_header": "X-Tenant-Id",
+    "tenant_filters": [
+      "accepted event",
+      "runtime summary",
+      "trade episode",
+      "DLQ listing",
+      "DLQ replay"
+    ],
+    "negative_proof": [
+      "missing bearer authority returns 401",
+      "unauthorized tenant returns 403",
+      "payload/header tenant mismatch returns 403",
+      "cross-tenant exact-event read returns 404",
+      "cross-tenant DLQ entry is not listed or replayed",
+      "service-only credential cannot invoke replay"
+    ]
+  },
+  "lifecycle_identity": {
+    "authoritative_snapshot": "last_lifecycle_identity",
+    "consumer_fields": [
+      "tenant_id",
+      "trace_id",
+      "aggregate_type",
+      "aggregate_id",
+      "sequence_no",
+      "correlation_envelope"
+    ],
+    "freshness_rule": "Heartbeat updates freshness and last-event fields without erasing lifecycle identity.",
+    "restart_regression": "pass",
+    "current_runtime_readback": "current-runtime-readback.json"
+  },
+  "validation": [
+    {
+      "command": "/home/lupin/pantheon/.venv/bin/python -m unittest services.telemetry.test_ingest_shock_absorption services.telemetry.test_l12_tel_001_durable_ingest services.telemetry.test_main_routes services.telemetry.test_runtime_summary_projection",
+      "result": "123 passed in 6.748s"
+    },
+    {
+      "command": "/home/lupin/pantheon/.venv/bin/python services/telemetry/smoke_test_ingest.py",
+      "result": "ALL SMOKE TESTS PASSED"
+    },
+    {
+      "command": "python3 -m compileall -q services/telemetry",
+      "result": "exit 0"
+    },
+    {
+      "command": "python3 -m json.tool services/telemetry/trade_journal_event.schema.json",
+      "result": "exit 0"
+    },
+    {
+      "command": "real NATS crash-before-flush subprocess probe",
+      "result": "recovered exact unacked event after process exit; PASS"
+    },
+    {
+      "command": "candidate projection over active dev runtime summaries plus exact current events",
+      "result": "9/9 consumer identities complete after persisted-store reload; PASS"
+    }
+  ],
+  "acceptance": {
+    "success_only_after_durable_tenant_scoped_ingest": "pass",
+    "heartbeat_cannot_erase_lifecycle_identity": "pass",
+    "ingest_read_and_replay_authority_and_tenant_scope": "pass",
+    "process_death_before_flush_loses_no_accepted_event": "pass",
+    "current_runtime_consumer_identity": "pass_9_of_9_superset_of_packet_6",
+    "overall": "passed"
+  },
+  "deployment": {
+    "applicable_in_this_lane": false,
+    "reason": "L12-MANIFEST-001 owns Compose credential/backend wiring after this task merges; L12-HOSTED-001 owns hosted admission.",
+    "nonprod_current_state_source": "active local Pantheon dev stack on 127.0.0.1:18083"
+  },
+  "residuals": [
+    "The active runtime count increased from the packet's six to nine; candidate proof covers all nine.",
+    "The broader telemetry discovery run has one unrelated baseline RuntimeManagerClient allow_local test setup error; 252 other tests completed successfully.",
+    "Hosted deployment and producer credential wiring intentionally remain downstream task responsibilities."
+  ]
+}

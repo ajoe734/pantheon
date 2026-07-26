@@ -360,7 +360,8 @@ class TelemetryIngestService:
         storage_dir : str, optional
             Directory for spill files (DLQ, emergency buffer).
         buffer_backend : str
-            "memory" (v1) or "redis" (v2).
+            "jetstream" (deployed default), "redis", or explicit test-only
+            "memory".
         buffer_maxsize : int
             Max events in buffer before backpressure.
         buffer_redis_url : str
