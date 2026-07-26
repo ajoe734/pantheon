@@ -492,7 +492,16 @@ class ReconciliationDriftStore:
                     work_type=work_type,
                     window_id=window_id,
                 )
-                if current.get("status") == "completed":
+                current_status = current.get("status")
+                if current_status not in {"in_progress", "completed", "failed"}:
+                    raise ReconciliationStoreError(
+                        f"work claim has invalid status for {claim_id}: {current_status!r}"
+                    )
+                if current_status == "completed":
+                    if not isinstance(current.get("result"), dict):
+                        raise ReconciliationStoreError(
+                            f"completed work claim has no result receipt: {claim_id}"
+                        )
                     return {
                         "acquired": False,
                         "reason": "completed",
@@ -500,7 +509,7 @@ class ReconciliationDriftStore:
                     }
                 raw_lease_expires_at = current.get("lease_expires_at")
                 if (
-                    current.get("status") == "in_progress"
+                    current_status == "in_progress"
                     and not raw_lease_expires_at
                 ):
                     raise ReconciliationStoreError(
@@ -508,7 +517,7 @@ class ReconciliationDriftStore:
                     )
                 lease_expires_at = self._as_utc(raw_lease_expires_at)
                 if (
-                    current.get("status") == "in_progress"
+                    current_status == "in_progress"
                     and lease_expires_at > observed_at
                 ):
                     return {

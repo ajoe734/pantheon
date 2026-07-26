@@ -26,7 +26,7 @@ from services.trade_journey.correlation_envelope import (
     propagate_envelope,
     validate_envelope,
 )
-from store import ReconciliationDriftStore, build_reconciliation_drift_store
+from store import build_reconciliation_drift_store
 
 
 DEFAULT_WARNING_RELATIVE_DELTA = 0.2
