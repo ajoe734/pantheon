@@ -2,15 +2,25 @@
 
 from __future__ import annotations
 
+import importlib.util
+import os
+import sys
+import tempfile
 from copy import deepcopy
+from pathlib import Path
+from unittest import mock
 
 import pytest
+from fastapi.testclient import TestClient
 
 from services.research.experiment_orchestrator.authority import (
     ResearchAuthorityError,
     ResearchAuthorityHttpClient,
 )
 from services.research.experiments.models import ExperimentRun, ExperimentTask
+
+
+SERVICE_DIR = Path(__file__).resolve().parents[1]
 
 
 def _task() -> ExperimentTask:
@@ -123,6 +133,47 @@ class FakeResearchServiceTransport:
         raise AssertionError(f"unexpected transport request: {method} {path}")
 
 
+def _load_research_service_module():
+    with mock.patch.dict(
+        os.environ,
+        {
+            "RESEARCH_ORCHESTRATOR_DATA_DIR": tempfile.mkdtemp(),
+            "RESEARCH_ORCHESTRATOR_MAX_ACTIVE_RUNS": "8",
+            "RESEARCH_ORCHESTRATOR_ENABLE_PRODUCTION_ADAPTERS": "false",
+            "PANTHEON_OFFLINE_GATE_ENABLED": "false",
+        },
+    ):
+        sys.modules.pop("store", None)
+        sys.path.insert(0, str(SERVICE_DIR))
+        try:
+            spec = importlib.util.spec_from_file_location(
+                "l12_alpha_research_authority_main",
+                SERVICE_DIR / "main.py",
+            )
+            assert spec and spec.loader
+            module = importlib.util.module_from_spec(spec)
+            sys.modules["l12_alpha_research_authority_main"] = module
+            spec.loader.exec_module(module)
+            return module
+        finally:
+            sys.modules.pop("store", None)
+            try:
+                sys.path.remove(str(SERVICE_DIR))
+            except ValueError:
+                pass
+
+
+class FastApiTransport:
+    def __init__(self, client: TestClient) -> None:
+        self.client = client
+
+    def __call__(self, method: str, path: str, body: dict | None):
+        response = self.client.request(method, path, json=body)
+        if response.status_code >= 400:
+            raise RuntimeError(f"HTTP {response.status_code}: {response.text}")
+        return response.json()
+
+
 def test_authority_records_and_reads_back_non_stub_domain_task_and_run() -> None:
     transport = FakeResearchServiceTransport()
     client = ResearchAuthorityHttpClient(
@@ -152,6 +203,39 @@ def test_authority_records_and_reads_back_non_stub_domain_task_and_run() -> None
         tenant_id="tenant-a",
         strategy_spec_id="reg-strategy-spec-a",
     ) == [run_receipt.run]
+
+
+def test_real_research_service_boundary_persists_domain_payload_and_readback() -> None:
+    module = _load_research_service_module()
+    service_client = TestClient(module.app)
+    client = ResearchAuthorityHttpClient(
+        "http://research-orchestrator.test",
+        transport=FastApiTransport(service_client),
+    )
+    task = _task()
+
+    task_receipt = client.ensure_task(
+        task,
+        approval_decision_id="approval-a",
+        approver="reviewer-a",
+        approved_at="2026-07-26T09:00:00Z",
+        checksum="sha256:spec-a",
+    )
+    run_receipt = client.ensure_run(
+        task_receipt.authority_task_id,
+        _run(task),
+        approval_decision_id="approval-a",
+    )
+
+    stored_task = module.store.get_task(task_receipt.authority_task_id)
+    stored_run = module.store.get_run(run_receipt.authority_run_id)
+    assert stored_task["constraints"]["experiment_task"] == task.to_dict()
+    assert stored_run["parameters"]["experiment_run"] == run_receipt.run.to_dict()
+    assert stored_run["adapter"] == "manual"
+    assert stored_run["status"] == "completed"
+    assert stored_run["production_activation"] == "disabled"
+    assert len(module.store.list_tasks()) == 1
+    assert len(module.store.list_runs()) == 1
 
 
 def test_authority_idempotency_converges_duplicate_restart_once() -> None:

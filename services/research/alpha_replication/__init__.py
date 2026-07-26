@@ -1,7 +1,8 @@
-"""Alpha replication queue and scheduled revalidation worker.
+"""Approved-only tenant-scoped Alpha replication.
 
-Accepts approved StrategySpec entries and schedules revalidation runs via
-the research-worker-gateway stub path. Production adapters remain fail-closed.
+The worker evaluates immutable StrategySpec reviews and acknowledges queue work
+only after authoritative ExperimentTask/ExperimentRun service readback.
+Production activation remains fail-closed.
 """
 
 from .queue import AlphaReplicationQueue
