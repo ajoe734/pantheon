@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
+import hashlib
 import json
 import os
 import re
+import tempfile
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -27,7 +32,11 @@ SUMMARY_NUMERIC_FIELDS = (
     "queue_lag_ms",
     "event_delivery_lag_ms",
 )
-CONSUMER_STATE_VERSION = 1
+CONSUMER_STATE_VERSION = 2
+
+
+class ConsumerStateError(RuntimeError):
+    """Raised when durable consumer state is corrupt or cannot be checkpointed."""
 
 
 def utc_now() -> str:
@@ -270,6 +279,16 @@ def build_drift_report_from_event(
         normalized.get("persona_capital_binding_id") or normalized.get("persona_binding_id") or ""
     ).strip()
     trace_id = str(normalized.get("trace_id") or "").strip()
+    correlation_envelope = normalized.get("correlation_envelope")
+    tenant_id = str(
+        normalized.get("tenant_id")
+        or (
+            correlation_envelope.get("tenant_id")
+            if isinstance(correlation_envelope, dict)
+            else ""
+        )
+        or ""
+    ).strip()
     baseline_ref = str(
         normalized.get("baseline_ref")
         or normalized.get("paper_baseline_ref")
@@ -300,6 +319,7 @@ def build_drift_report_from_event(
     result = {
         "id": report_id,
         "drift_report_id": report_id,
+        "tenant_id": tenant_id or None,
         "recon_run_id": recon_run_id,
         "drift_type": _drift_type_for_metric(str(worst_check["metric"])),
         "incident_cluster_id": cluster_id,
@@ -334,7 +354,7 @@ def build_drift_report_from_event(
             "emergency_control_chain_affected": False,
         },
     }
-    incoming_envelope = normalized.get("correlation_envelope")
+    incoming_envelope = correlation_envelope
     if isinstance(incoming_envelope, dict):
         result["correlation_envelope"] = propagate_envelope(
             incoming_envelope,
@@ -347,16 +367,51 @@ def build_drift_report_from_event(
 
 def post_events(service_url: str, events: list[dict[str, Any]]) -> dict[str, Any]:
     url = service_url.rstrip("/") + "/api/reconciliation-drift/telemetry-events/consume"
+    tenant_ids = {
+        str(
+            event.get("tenant_id")
+            or (
+                event.get("correlation_envelope", {}).get("tenant_id")
+                if isinstance(event.get("correlation_envelope"), dict)
+                else ""
+            )
+            or os.getenv("PANTHEON_TENANT_ID")
+            or ""
+        ).strip()
+        for event in events
+    }
+    tenant_ids.discard("")
+    if len(tenant_ids) > 1:
+        raise RuntimeError("one consumer delivery cannot span multiple tenants")
+    tenant_id = next(iter(tenant_ids), "")
+    headers = {"Content-Type": "application/json"}
+    if tenant_id:
+        headers["X-Tenant-Id"] = tenant_id
+    auth_token = os.getenv("RECONCILIATION_DRIFT_AUTH_TOKEN", "")
+    if auth_token:
+        headers["Authorization"] = f"Bearer {auth_token}"
     request = urllib.request.Request(
         url,
-        data=json.dumps({"events": events}).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        data=json.dumps(
+            {
+                "tenant_id": tenant_id or None,
+                "worker_id": os.getenv(
+                    "RECONCILIATION_DRIFT_CONSUMER_WORKER_ID",
+                    f"{os.getenv('HOSTNAME', 'consumer')}:{os.getpid()}",
+                ),
+                "events": events,
+            }
+        ).encode("utf-8"),
+        headers=headers,
         method="POST",
     )
     try:
         with urllib.request.urlopen(request, timeout=10) as response:  # noqa: S310 - dev service URL is operator configured.
             body = response.read().decode("utf-8")
-            return json.loads(body) if body else {}
+            decoded = json.loads(body) if body else {}
+            if isinstance(decoded, dict) and decoded.get("status") == "deferred":
+                raise RuntimeError("reconciliation-drift consume lease is active")
+            return decoded
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"reconciliation-drift consume failed: {exc.code} {detail}") from exc
@@ -457,8 +512,21 @@ def runtime_summary_to_event(summary: dict[str, Any]) -> dict[str, Any]:
             "synthetic": False,
         },
     }
-    if isinstance(summary.get("correlation_envelope"), dict):
-        event["correlation_envelope"] = summary["correlation_envelope"]
+    correlation_envelope = summary.get("correlation_envelope")
+    if isinstance(correlation_envelope, dict):
+        event["correlation_envelope"] = correlation_envelope
+    tenant_id = str(
+        summary.get("tenant_id")
+        or (
+            correlation_envelope.get("tenant_id")
+            if isinstance(correlation_envelope, dict)
+            else ""
+        )
+        or os.getenv("PANTHEON_TENANT_ID")
+        or ""
+    ).strip()
+    if tenant_id:
+        event["tenant_id"] = tenant_id
     return event
 
 
@@ -475,7 +543,7 @@ def _parse_timestamp(value: Any) -> datetime | None:
 
 
 class ConsumerWorkerState:
-    """Durable delivery state for retry, DLQ, replay, and restart truth."""
+    """Fail-closed durable delivery state with a cross-process worker lease."""
 
     def __init__(self, path: str | Path | None = None) -> None:
         self.path = Path(path) if path else None
@@ -485,29 +553,107 @@ class ConsumerWorkerState:
         self.last_success_at: str | None = None
         self.last_failure_at: str | None = None
         self.last_failure_error: str | None = None
-        if self.path and self.path.exists():
-            self._load()
+        self.lease_owner: str | None = None
+        self.lease_token: str | None = None
+        self.lease_expires_at: str | None = None
+        self.load_error: str | None = None
+        self._held_lease_owner: str | None = None
+        self._held_lease_token: str | None = None
+        self._held_lease_seconds: float | None = None
+        self.reload()
 
-    def _load(self) -> None:
+    @contextlib.contextmanager
+    def _locked(self):
+        if self.path is None:
+            yield
+            return
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = self.path.parent / f".{self.path.name}.lock"
+        fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
         try:
-            payload = json.loads(self.path.read_text(encoding="utf-8"))  # type: ignore[union-attr]
-        except (OSError, json.JSONDecodeError):
-            return
-        if not isinstance(payload, dict) or payload.get("version") != CONSUMER_STATE_VERSION:
-            return
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
+    @staticmethod
+    def _parse_document(path: Path, text: str) -> dict[str, Any]:
+        def reject_constant(value: str) -> None:
+            raise ConsumerStateError(
+                f"{path}: non-standard JSON constant {value!r} is not allowed"
+            )
+
+        def reject_duplicates(pairs):
+            payload: dict[str, Any] = {}
+            for key, value in pairs:
+                if key in payload:
+                    raise ConsumerStateError(
+                        f"{path}: duplicate JSON key {key!r} is not allowed"
+                    )
+                payload[key] = value
+            return payload
+
+        try:
+            payload = json.loads(
+                text,
+                parse_constant=reject_constant,
+                object_pairs_hook=reject_duplicates,
+            )
+        except json.JSONDecodeError as exc:
+            raise ConsumerStateError(f"{path}: malformed JSON: {exc}") from exc
+        if not isinstance(payload, dict):
+            raise ConsumerStateError(f"{path}: state must be a JSON object")
+        if payload.get("version") not in {1, CONSUMER_STATE_VERSION}:
+            raise ConsumerStateError(f"{path}: unsupported state version")
         for field in ("pending", "dead_letters", "completed"):
-            value = payload.get(field)
-            if isinstance(value, dict):
-                setattr(self, field, value)
+            value = payload.get(field, {})
+            if not isinstance(value, dict):
+                raise ConsumerStateError(f"{path}: {field} must be an object")
+            for identity, record in value.items():
+                if not isinstance(record, dict):
+                    raise ConsumerStateError(
+                        f"{path}: {field}[{identity!r}] must be an object"
+                    )
+        return payload
+
+    def _apply_document(self, payload: dict[str, Any]) -> None:
+        self.pending = dict(payload.get("pending") or {})
+        self.dead_letters = dict(payload.get("dead_letters") or {})
+        self.completed = dict(payload.get("completed") or {})
         self.last_success_at = payload.get("last_success_at")
         self.last_failure_at = payload.get("last_failure_at")
         self.last_failure_error = payload.get("last_failure_error")
+        self.lease_owner = payload.get("lease_owner")
+        self.lease_token = payload.get("lease_token")
+        self.lease_expires_at = payload.get("lease_expires_at")
 
-    def save(self) -> None:
-        if self.path is None:
-            return
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
+    def _read_document_locked(self) -> dict[str, Any] | None:
+        if self.path is None or not self.path.exists():
+            return None
+        text = self.path.read_text(encoding="utf-8")
+        if not text.strip():
+            raise ConsumerStateError(f"{self.path}: state file is empty")
+        return self._parse_document(self.path, text)
+
+    def _read_locked(self) -> None:
+        try:
+            payload = self._read_document_locked()
+            if payload is not None:
+                self._apply_document(payload)
+            self.load_error = None
+        except (OSError, UnicodeError, TypeError, ValueError, ConsumerStateError) as exc:
+            self.load_error = f"{type(exc).__name__}: {exc}"
+
+    def reload(self) -> None:
+        with self._locked():
+            self._held_lease_owner = None
+            self._held_lease_token = None
+            self._held_lease_seconds = None
+            self._read_locked()
+
+    def _document(self) -> dict[str, Any]:
+        return {
             "version": CONSUMER_STATE_VERSION,
             "pending": self.pending,
             "dead_letters": self.dead_letters,
@@ -515,13 +661,200 @@ class ConsumerWorkerState:
             "last_success_at": self.last_success_at,
             "last_failure_at": self.last_failure_at,
             "last_failure_error": self.last_failure_error,
+            "lease_owner": self.lease_owner,
+            "lease_token": self.lease_token,
+            "lease_expires_at": self.lease_expires_at,
+            "updated_at": utc_now(),
         }
-        temporary = self.path.with_name(self.path.name + ".tmp")
-        temporary.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
-        os.replace(temporary, self.path)
+
+    def _write_locked(self) -> None:
+        if self.path is None:
+            return
+        temporary_name: str | None = None
+        try:
+            fd, temporary_name = tempfile.mkstemp(
+                dir=str(self.path.parent),
+                prefix=f".{self.path.name}.",
+                suffix=".tmp",
+            )
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(
+                    self._document(),
+                    handle,
+                    sort_keys=True,
+                    allow_nan=False,
+                )
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary_name, self.path)
+            temporary_name = None
+            directory_fd = os.open(str(self.path.parent), os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        finally:
+            if temporary_name:
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(temporary_name)
+
+    def save(self) -> None:
+        if self.path is None:
+            return
+        if self.load_error:
+            raise ConsumerStateError(
+                f"refusing to overwrite unreadable consumer state: {self.load_error}"
+            )
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self._locked():
+            try:
+                canonical = self._read_document_locked()
+            except (
+                OSError,
+                UnicodeError,
+                TypeError,
+                ValueError,
+                ConsumerStateError,
+            ) as exc:
+                self.load_error = f"{type(exc).__name__}: {exc}"
+                raise ConsumerStateError(self.load_error) from exc
+            self._assert_held_lease(canonical)
+            canonical_expiry = _parse_timestamp(
+                canonical.get("lease_expires_at") if canonical else None
+            )
+            if canonical_expiry is None or self._held_lease_seconds is None:
+                raise ConsumerStateError(
+                    "consumer worker lease token has no renewable expiry"
+                )
+            renewed_expiry = datetime.now(timezone.utc) + timedelta(
+                seconds=self._held_lease_seconds
+            )
+            self.lease_owner = self._held_lease_owner
+            self.lease_token = self._held_lease_token
+            self.lease_expires_at = max(
+                canonical_expiry,
+                renewed_expiry,
+            ).isoformat().replace("+00:00", "Z")
+            self._write_locked()
+
+    def _assert_held_lease(
+        self,
+        canonical: dict[str, Any] | None,
+        *,
+        worker_id: str | None = None,
+    ) -> None:
+        if (
+            canonical is None
+            or not self._held_lease_owner
+            or not self._held_lease_token
+            or canonical.get("lease_owner") != self._held_lease_owner
+            or canonical.get("lease_token") != self._held_lease_token
+            or (
+                worker_id is not None
+                and worker_id != self._held_lease_owner
+            )
+        ):
+            raise ConsumerStateError(
+                "consumer worker lease token changed or was not acquired"
+            )
+
+    def acquire_lease(
+        self,
+        *,
+        worker_id: str,
+        lease_seconds: float,
+        now: datetime,
+    ) -> bool:
+        if not worker_id.strip():
+            raise ValueError("worker_id is required")
+        if lease_seconds <= 0:
+            raise ValueError("lease_seconds must be > 0")
+        current = now.astimezone(timezone.utc)
+        with self._locked():
+            self._read_locked()
+            if self.load_error:
+                raise ConsumerStateError(self.load_error)
+            expiry = _parse_timestamp(self.lease_expires_at)
+            if (
+                self.lease_owner
+                and self.lease_token
+                and expiry is not None
+                and expiry > current
+            ):
+                self._held_lease_owner = None
+                self._held_lease_token = None
+                self._held_lease_seconds = None
+                return False
+            self.lease_owner = worker_id
+            self.lease_token = uuid.uuid4().hex
+            self.lease_expires_at = (
+                current + timedelta(seconds=lease_seconds)
+            ).isoformat().replace("+00:00", "Z")
+            self._write_locked()
+            self._held_lease_owner = worker_id
+            self._held_lease_token = self.lease_token
+            self._held_lease_seconds = lease_seconds
+            return True
+
+    def release_lease(self, *, worker_id: str) -> None:
+        if self.path is None:
+            if (
+                self._held_lease_owner != worker_id
+                or not self._held_lease_token
+                or self.lease_token != self._held_lease_token
+            ):
+                raise ConsumerStateError(
+                    "consumer worker lease token changed or was not acquired"
+                )
+            self.lease_owner = None
+            self.lease_token = None
+            self.lease_expires_at = None
+            self._held_lease_owner = None
+            self._held_lease_token = None
+            self._held_lease_seconds = None
+            return
+        with self._locked():
+            try:
+                canonical = self._read_document_locked()
+            except (
+                OSError,
+                UnicodeError,
+                TypeError,
+                ValueError,
+                ConsumerStateError,
+            ) as exc:
+                self.load_error = f"{type(exc).__name__}: {exc}"
+                raise ConsumerStateError(self.load_error) from exc
+            self._assert_held_lease(canonical, worker_id=worker_id)
+            self._apply_document(canonical)
+            self.lease_owner = None
+            self.lease_token = None
+            self.lease_expires_at = None
+            self._write_locked()
+            self._held_lease_owner = None
+            self._held_lease_token = None
+            self._held_lease_seconds = None
 
     def enqueue(self, event: dict[str, Any], *, observed_at: str) -> bool:
-        key = str(event["event_id"])
+        event_id = str(event["event_id"])
+        envelope = event.get("correlation_envelope")
+        tenant_id = str(
+            event.get("tenant_id")
+            or (
+                envelope.get("tenant_id")
+                if isinstance(envelope, dict)
+                else ""
+            )
+            or ""
+        ).strip()
+        if tenant_id:
+            digest = hashlib.sha256(
+                f"{tenant_id}\0{event_id}".encode("utf-8")
+            ).hexdigest()
+            key = f"tenant-event-{digest}"
+        else:
+            key = event_id
         if key in self.completed or key in self.pending or key in self.dead_letters:
             return False
         self.pending[key] = {
@@ -563,14 +896,50 @@ def run_runtime_summary_consumer_once(
     max_attempts: int = 3,
     retry_backoff_seconds: float = 0.0,
     replay_dead_letters: bool = False,
+    worker_id: str = "reconciliation-consumer",
+    lease_seconds: float = 120.0,
     sleep_fn: Callable[[float], None] = time.sleep,
     now_fn: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
 ) -> dict[str, Any]:
     """Fetch real summaries, durably deliver them, and expose controller truth."""
     if max_attempts < 1:
         raise ValueError("max_attempts must be >= 1")
+    if lease_seconds <= 0:
+        raise ValueError("lease_seconds must be > 0")
     now = now_fn().astimezone(timezone.utc)
     observed_at = now.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    try:
+        acquired = state.acquire_lease(
+            worker_id=worker_id,
+            lease_seconds=lease_seconds,
+            now=now,
+        )
+    except ConsumerStateError as exc:
+        return {
+            "status": "failure",
+            "controller_status": "unhealthy",
+            "summary_count": 0,
+            "pending_count": len(state.pending),
+            "dead_letter_count": len(state.dead_letters),
+            "backlog_count": len(state.pending) + len(state.dead_letters),
+            "source_error": f"consumer state unavailable: {exc}",
+            "worker_id": worker_id,
+            "lease_status": "state_error",
+        }
+    if not acquired:
+        return {
+            "status": "deferred",
+            "controller_status": "degraded",
+            "summary_count": 0,
+            "pending_count": len(state.pending),
+            "dead_letter_count": len(state.dead_letters),
+            "backlog_count": len(state.pending) + len(state.dead_letters),
+            "source_error": None,
+            "worker_id": worker_id,
+            "lease_status": "lease_active",
+            "lease_owner": state.lease_owner,
+            "lease_expires_at": state.lease_expires_at,
+        }
     replayed_count = state.replay_dead_letters() if replay_dead_letters else 0
     invalid_summaries: list[dict[str, Any]] = []
     source_error: str | None = None
@@ -595,6 +964,7 @@ def run_runtime_summary_consumer_once(
             source_lags.append(max(0.0, (now - event_at).total_seconds()))
         if state.enqueue(event, observed_at=observed_at):
             enqueued_count += 1
+    state.save()
 
     delivered_count = 0
     delivery_errors: list[dict[str, Any]] = []
@@ -604,6 +974,7 @@ def run_runtime_summary_consumer_once(
         while int(record.get("attempt_count") or 0) < max_attempts:
             record["attempt_count"] = int(record.get("attempt_count") or 0) + 1
             record["last_attempt_at"] = observed_at
+            state.save()
             try:
                 response = post_events(service_url, [record["event"]])
             except RuntimeError as exc:
@@ -614,13 +985,26 @@ def run_runtime_summary_consumer_once(
             delivered_count += 1
             drift_report_count += int(response.get("drift_report_count") or 0)
             incident_case_count += int(response.get("incident_case_count") or 0)
-            state.completed[key] = {"completed_at": observed_at, "attempt_count": record["attempt_count"]}
+            state.completed[key] = {
+                "completed_at": observed_at,
+                "attempt_count": record["attempt_count"],
+                "tenant_id": record["event"].get("tenant_id"),
+                "event_id": record["event"].get("event_id"),
+            }
             del state.pending[key]
+            state.save()
             break
         if key in state.pending and int(record.get("attempt_count") or 0) >= max_attempts:
             state.dead_letters[key] = dict(record)
             del state.pending[key]
-            delivery_errors.append({"event_id": key, "detail": record.get("last_error")})
+            delivery_errors.append(
+                {
+                    "event_id": record["event"].get("event_id"),
+                    "tenant_id": record["event"].get("tenant_id"),
+                    "detail": record.get("last_error"),
+                }
+            )
+            state.save()
 
     if len(state.completed) > 2000:
         state.completed = dict(list(state.completed.items())[-2000:])
@@ -642,7 +1026,7 @@ def run_runtime_summary_consumer_once(
     else:
         status = "ok"
     backlog_count = len(state.pending) + len(state.dead_letters)
-    return {
+    result = {
         "status": status,
         "source": "telemetry_runtime_summaries",
         "summary_count": len(summaries),
@@ -663,7 +1047,12 @@ def run_runtime_summary_consumer_once(
         "last_success_at": state.last_success_at,
         "last_failure_at": state.last_failure_at,
         "controller_status": "healthy" if status == "ok" and backlog_count == 0 else status,
+        "worker_id": worker_id,
+        "lease_status": "acquired",
     }
+    state.release_lease(worker_id=worker_id)
+    result["lease_status"] = "released"
+    return result
 
 
 def _input_paths_from_env() -> list[str]:
@@ -722,6 +1111,13 @@ def main(argv: list[str] | None = None) -> int:
         "yes",
         "on",
     }
+    worker_id = os.getenv(
+        "RECONCILIATION_DRIFT_CONSUMER_WORKER_ID",
+        f"{os.getenv('HOSTNAME', 'consumer')}:{os.getpid()}",
+    ).strip()
+    lease_seconds = float(
+        os.getenv("RECONCILIATION_DRIFT_CONSUMER_LEASE_SECONDS", "120")
+    )
     tick = 0
     while args.max_ticks <= 0 or tick < args.max_ticks:
         if inputs:
@@ -735,6 +1131,8 @@ def main(argv: list[str] | None = None) -> int:
                 max_attempts=max_attempts,
                 retry_backoff_seconds=retry_backoff_seconds,
                 replay_dead_letters=replay_dead_letters,
+                worker_id=worker_id,
+                lease_seconds=lease_seconds,
             )
         print(json.dumps(result, sort_keys=True))
         tick += 1
