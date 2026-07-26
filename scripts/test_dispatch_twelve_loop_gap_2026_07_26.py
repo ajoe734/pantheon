@@ -287,7 +287,88 @@ def test_conflicting_active_materialization_fails_closed(tmp_path: Path) -> None
         )
 
 
-def test_archived_id_fails_closed(tmp_path: Path) -> None:
+def write_archived_catalog_task(
+    root: Path,
+    payload: dict,
+    task: dict,
+    *,
+    terminal_status: str = "done",
+) -> Path:
+    archived_task = deepcopy(task)
+    archived_task.update(
+        {
+            "status": terminal_status,
+            "next": "Archived after governed completion.",
+            "program_id": payload["program_id"],
+            "auto_created_by": module.AUTO_CREATED_BY,
+            "catalog_task_contract_sha256": module.canonical_json_sha256(
+                module.task_contract(task)
+            ),
+        }
+    )
+    archive = root / "ai-task-archive" / "tasks"
+    archive.mkdir(parents=True, exist_ok=True)
+    archive_path = archive / f"{task['id']}.json"
+    archive_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "task_id": task["id"],
+                "terminal_status": terminal_status,
+                "task": archived_task,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return archive_path
+
+
+def test_exact_done_archive_is_idempotent(tmp_path: Path) -> None:
+    payload = catalog()
+    tasks = module.validate_catalog(payload)
+    write_status(tmp_path)
+    write_archived_catalog_task(tmp_path, payload, tasks[0])
+
+    plan = module.plan_materialization(
+        payload,
+        tasks,
+        status_root=tmp_path,
+        state=active_state(),
+    )
+
+    assert plan["exact"] == ["L12-FLEET-001"]
+    assert "L12-FLEET-001" not in plan["create"]
+    assert len(plan["create"]) == 24
+
+
+def test_archive_aware_resume_preserves_exact_21_create_4(tmp_path: Path) -> None:
+    payload = catalog()
+    tasks = module.validate_catalog(payload)
+    active = [deepcopy(task) for task in tasks[1:21]]
+    write_status(tmp_path, active)
+    archive_path = write_archived_catalog_task(tmp_path, payload, tasks[0])
+    status_before = (tmp_path / "ai-status.json").read_bytes()
+    archive_before = archive_path.read_bytes()
+
+    plan = module.plan_materialization(
+        payload,
+        tasks,
+        status_root=tmp_path,
+        state=active_state(active),
+    )
+
+    assert plan["exact"] == [task["id"] for task in tasks[:21]]
+    assert plan["create"] == [
+        "L12-VERIFY-RUNTIME-001",
+        "L12-VERIFY-OBS-001",
+        "L12-HOSTED-001",
+        "L12-CLOSE-001",
+    ]
+    assert (tmp_path / "ai-status.json").read_bytes() == status_before
+    assert archive_path.read_bytes() == archive_before
+
+
+def test_malformed_archived_id_fails_closed(tmp_path: Path) -> None:
     payload = catalog()
     tasks = module.validate_catalog(payload)
     write_status(tmp_path)
@@ -300,6 +381,57 @@ def test_archived_id_fails_closed(tmp_path: Path) -> None:
             tasks,
             status_root=tmp_path,
             state=active_state(),
+        )
+
+
+def test_non_done_archive_fails_closed(tmp_path: Path) -> None:
+    payload = catalog()
+    tasks = module.validate_catalog(payload)
+    write_status(tmp_path)
+    write_archived_catalog_task(
+        tmp_path,
+        payload,
+        tasks[0],
+        terminal_status="cancelled",
+    )
+    with pytest.raises(module.DispatchError, match="not successfully complete"):
+        module.plan_materialization(
+            payload,
+            tasks,
+            status_root=tmp_path,
+            state=active_state(),
+        )
+
+
+def test_conflicting_done_archive_fails_closed(tmp_path: Path) -> None:
+    payload = catalog()
+    tasks = module.validate_catalog(payload)
+    write_status(tmp_path)
+    archive_path = write_archived_catalog_task(tmp_path, payload, tasks[0])
+    archive_payload = json.loads(archive_path.read_text(encoding="utf-8"))
+    archive_payload["task"]["owner"] = "Codex2"
+    archive_path.write_text(json.dumps(archive_payload), encoding="utf-8")
+    with pytest.raises(module.DispatchError, match="contract conflicts"):
+        module.plan_materialization(
+            payload,
+            tasks,
+            status_root=tmp_path,
+            state=active_state(),
+        )
+
+
+def test_same_id_in_active_and_archive_fails_closed(tmp_path: Path) -> None:
+    payload = catalog()
+    tasks = module.validate_catalog(payload)
+    first = deepcopy(tasks[0])
+    write_status(tmp_path, [first])
+    write_archived_catalog_task(tmp_path, payload, tasks[0])
+    with pytest.raises(module.DispatchError, match="both active and archive"):
+        module.plan_materialization(
+            payload,
+            tasks,
+            status_root=tmp_path,
+            state=active_state([first]),
         )
 
 

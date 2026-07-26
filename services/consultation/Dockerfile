@@ -13,4 +13,4 @@ COPY . /workspace
 ENV PORT=8096
 EXPOSE 8096
 
-CMD ["sh", "-c", "uvicorn services.consultation.main:app --host 0.0.0.0 --port ${PORT:-8096}"]
+CMD ["python", "-m", "services.consultation.supervisor"]
