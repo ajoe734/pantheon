@@ -23,9 +23,10 @@ publish/v<YYYY>.<MM>.<DD>.<N> ── immutable snapshots from dev
    ▲
    │ nightly-publish-cut.yml  (cron hourly :00 UTC)
    │
-dev      ── PR-only ── integration line, every task PR auto-merges here
+dev      ── PR-only ── integration line, every task PR lands here
    ▲                       ↑
-   │ PR (auto-merge)   hotfix/<topic> ── dual-PR back to dev + master
+   │ PR (CI + review   hotfix/<topic> ── dual-PR back to dev + master
+   │      gate, § 2.3.1)
    │
 task/<TASK-ID>  ── ephemeral, auto-deleted by GitHub when PR merges
 ```
@@ -111,14 +112,39 @@ Equivalent to:
 
 ```bash
 git push -u origin task/<TASK-ID>
-gh pr create --base dev --head task/<TASK-ID> --label auto-merge \
+gh pr create --base dev --head task/<TASK-ID> \
   --title "<TASK-ID>: <subject>" --body-file /tmp/<TASK-ID>-pr-body.md
-gh pr merge task/<TASK-ID> --auto --merge
+# merge authority comes from the canonical task contract, see § 2.3.1
 ```
 
-Auto-merge holds until `dev` branch protection's required status checks
-(see § 7) turn green; then GitHub merges and **auto-deletes the
-`task/<TASK-ID>` branch**.
+Merge and **auto-delete of the `task/<TASK-ID>` branch** still happen on
+GitHub, but only once both CI and the review gate are satisfied.
+
+#### 2.3.1 Review-before-merge gate
+
+`scripts/git/task_review_merge_gate.py` resolves merge authority from
+canonical task state alone — the task row in the bound status root plus
+the immutable `review_approved` activity record. No label, helper flag,
+or PR field can open it.
+
+| Canonical contract | Policy | What the helper does |
+|--------------------|--------|----------------------|
+| independent reviewer assigned (the normal task) | `review_before_merge` | opens the PR with auto-merge **off** and revokes any auto-merge request found on the head |
+| row declares `merge_policy: merge_then_review` **and** requires no independent review | `merge_then_review` | `--label auto-merge` + `gh pr merge --auto --merge`, unchanged |
+| task row missing, unreadable, or gate error | `review_before_merge` | fail closed: auto-merge is never enabled |
+
+Under `review_before_merge` the merge is performed after approval by:
+
+```bash
+python3 scripts/git/auto_integrator.py --execute --task-id <TASK-ID>
+```
+
+The integrator merges only the exact head the assigned reviewer approved
+(`gh pr merge --match-head-commit <oid>`), never enables auto-merge, and
+never force-pushes a rebase over the reviewed head. Reviewer rejection, a
+head change after approval, an approval by anyone other than the assigned
+reviewer, missing canonical state, and two open PRs on one task branch all
+fail closed.
 
 ### 2.4 Lifetime guarantee
 
@@ -394,9 +420,14 @@ Provided by `.github/workflows/branch-ci.yml`:
 | `publish/*`| n/a        | runs                               | blocked    | blocked|
 | `hotfix/*` | n/a        | runs (required by the PR itself)   | allowed    | allowed (auto-deleted on merge) |
 
-Approvals required: **0**. Bots auto-merge after status checks pass.
-This is intentional: gating discipline is in CI, not in human review
-(which doesn't scale to dozens of AI-generated PRs/day).
+GitHub *branch protection* approvals required: **0**. Human code review
+does not scale to dozens of AI-generated PRs/day, so CI carries the
+mechanical gate.
+
+Independent review is not therefore optional: it is enforced off GitHub,
+by the canonical review-before-merge gate (§ 2.3.1). A task PR whose
+canonical row assigns an independent reviewer gets no auto-merge and is
+merged only at the exact head that reviewer approved.
 
 ---
 

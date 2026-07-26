@@ -1,0 +1,33 @@
+========================================================================
+SECTION 1 - PRE-FIX task_finalize.sh at f9b6760d6
+canonical row: ABC-001 status=in_progress owner=Codex reviewer=Claude
+========================================================================
+exit=0
+gh calls:
+pr create --base dev --head task/ABC-001 --title ABC-001: deliver --label auto-merge --body-file /tmp/task-pr-body-dXS2.md
+pr merge task/ABC-001 --auto --merge
+pr view task/ABC-001 --json url -q .url
+
+========================================================================
+SECTION 2 - POST-FIX task_finalize.sh (same fixture, same row)
+========================================================================
+exit=0
+gh calls:
+pr create --base dev --head task/ABC-001 --title ABC-001: deliver --body-file /tmp/task-pr-body-eqVx.md
+pr merge task/ABC-001 --disable-auto
+pr view task/ABC-001 --json url -q .url
+
+========================================================================
+SECTION 3 - recorded canonical state of PRs #4212 / #4213 / #4214
+========================================================================
+test_a_later_approval_still_cannot_bless_the_premature_merge (test_task_review_merge_gate.PrematureMergeRegressionTests.test_a_later_approval_still_cannot_bless_the_premature_merge)
+#4213 merged at 20:18:15Z; an approval recorded afterwards is not retroactive. ... ok
+test_pr_4212_supervisor_worker_truth_reconcile (test_task_review_merge_gate.PrematureMergeRegressionTests.test_pr_4212_supervisor_worker_truth_reconcile) ... ok
+test_pr_4213_telemetry_lineage_test_isolation (test_task_review_merge_gate.PrematureMergeRegressionTests.test_pr_4213_telemetry_lineage_test_isolation) ... ok
+test_pr_4214_telemetry_lineage_test_isolation_followup (test_task_review_merge_gate.PrematureMergeRegressionTests.test_pr_4214_telemetry_lineage_test_isolation_followup) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.001s
+
+OK
+

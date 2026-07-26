@@ -1,0 +1,31 @@
+== python3 scripts/git/test_task_review_merge_gate.py
+----------------------------------------------------------------------
+Ran 38 tests in 0.632s
+
+OK
+
+== python3 scripts/git/test_auto_integrator.py
+----------------------------------------------------------------------
+Ran 9 tests in 0.004s
+
+OK
+
+== python3 scripts/git/test_git_workflow_helpers.py
+Ran 34 tests in 0.271s
+OK
+
+== python3 scripts/git/test_task_pr_triage.py
+Ran 24 tests in 0.006s
+
+OK
+
+== python3 scripts/git/test_index_safety.py
+Ran 17 tests in 3.283s
+
+OK
+
+== bash -n helpers
+syntax ok
+
+== py_compile
+compile ok
