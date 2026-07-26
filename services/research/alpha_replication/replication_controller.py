@@ -238,11 +238,10 @@ def run_controller_tick(
         if writer:
             try:
                 import asyncio
-                evidence_refs = []
-                # Write runs.jsonl as evidence
-                runs_path = config.data_dir / "alpha_revalidation_runs.jsonl"
-                if runs_path.exists():
-                    evidence_refs.append(str(runs_path))
+                evidence_refs = [
+                    f"research-authority://experiment-runs/{run_id}"
+                    for run_id in tick_result.get("created_run_ids", [])
+                ]
                 
                 asyncio.run(writer.record_success(
                     loop_id=loop_id,

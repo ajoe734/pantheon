@@ -26,6 +26,18 @@ from services.research.alpha_replication.test_revalidation_worker import (
 )
 
 
+class CaptureLoopWriter:
+    def __init__(self) -> None:
+        self.successes: list[dict] = []
+        self.failures: list[dict] = []
+
+    async def record_success(self, **payload) -> None:
+        self.successes.append(payload)
+
+    async def record_failure(self, **payload) -> None:
+        self.failures.append(payload)
+
+
 def _state(path: Path, *, tenant_id: str = "tenant-a"):
     state = ControllerState(
         controller_id="test-controller",
@@ -100,6 +112,9 @@ def test_controller_discovers_canonical_id_and_reads_authority_before_success(
     config = _config(tmp_path, seed_store_path=seed_path, authority=authority)
     payload = _queue_payload()
     entry = _registry_entry(payload)
+    writer = CaptureLoopWriter()
+    stale_local_run_path = tmp_path / "alpha_revalidation_runs.jsonl"
+    stale_local_run_path.write_text('{"legacy": true}\n', encoding="utf-8")
 
     with mock.patch(
         "services.research.alpha_replication.replication_controller._get_approved_specs_for_strategy",
@@ -115,7 +130,7 @@ def test_controller_discovers_canonical_id_and_reads_authority_before_success(
             config=config,
             state=state,
             store=state_store,
-            writer=None,
+            writer=writer,
         )
 
     assert result["total_successes"] == 1
@@ -129,6 +144,15 @@ def test_controller_discovers_canonical_id_and_reads_authority_before_success(
     assert result["actual_readback"]["queue_revalidated"] == 1
     assert len(authority.tasks) == 1
     assert len(authority.runs) == 1
+    assert writer.failures == []
+    assert len(writer.successes) == 1
+    assert writer.successes[0]["evidence_refs"] == [
+        (
+            "research-authority://experiment-runs/"
+            f"{result['reconcile']['created_run_ids'][0]}"
+        )
+    ]
+    assert str(stale_local_run_path) not in writer.successes[0]["evidence_refs"]
 
     queued = AlphaReplicationQueue(tmp_path).list_all()[0]
     assert queued["tenant_id"] == "tenant-a"
