@@ -3,7 +3,8 @@
 The router deliberately accepts an already-authenticated ``OperatorIdentity``
 dependency from the host BFF.  It never trusts actor identifiers or roles from
 the request body, never exposes private-key material, and rejects dev auth
-stubs, automation principals, missing MFA, and non-approver roles.
+stubs, automation principals, unclassified principals, missing MFA, and
+non-approver roles.
 """
 from __future__ import annotations
 
@@ -47,6 +48,8 @@ _AUTHORIZED_BFF_ROLES = frozenset({"admin", "approver", "human_ops", "ops"})
 _AUTOMATION_PRINCIPALS = frozenset(
     {"automation", "fleet", "service", "service_account", "workload"}
 )
+_TRUSTED_HUMAN_PRINCIPALS = frozenset({"human", "human_ops", "user"})
+_PRINCIPAL_TYPE_CLAIMS = ("principal_type", "principalType", "actor_type", "actorType")
 _PROTECTED_SESSION_KINDS = frozenset({"cookie", "jwt"})
 
 
@@ -76,6 +79,43 @@ def _identity_value(identity: Any, field: str, default: Any = None) -> Any:
     return getattr(identity, field, default)
 
 
+def _require_trusted_human_principal(claims: dict[str, Any]) -> str:
+    """Require the session to classify itself as a trusted human principal.
+
+    Classification is never inferred: a session that carries no principal
+    classification claim, an unknown one, or two claims that disagree is
+    refused rather than defaulted, so an unclassified admin token cannot pass
+    as a human closeout authority.
+    """
+
+    declared = {
+        str(claims[claim]).strip().lower()
+        for claim in _PRINCIPAL_TYPE_CLAIMS
+        if claim in claims and str(claims[claim] or "").strip()
+    }
+    if not declared:
+        raise VerdictAuthorizationError(
+            "protected closeout verdicts require an explicit human principal "
+            "classification claim; an unclassified session is not trusted"
+        )
+    if len(declared) > 1:
+        raise VerdictAuthorizationError(
+            "conflicting principal classification claims cannot be trusted: "
+            + ", ".join(sorted(declared))
+        )
+    principal_type = declared.pop()
+    if principal_type in _AUTOMATION_PRINCIPALS:
+        raise VerdictAuthorizationError(
+            "automation and workload identities cannot issue closeout verdicts"
+        )
+    if principal_type not in _TRUSTED_HUMAN_PRINCIPALS:
+        raise VerdictAuthorizationError(
+            f"principal classification {principal_type!r} is not a trusted human "
+            "principal for closeout verdicts"
+        )
+    return principal_type
+
+
 def human_ops_identity_from_operator(identity: Any) -> Any:
     """Project the authenticated BFF identity into the protected issuer shape."""
 
@@ -86,23 +126,13 @@ def human_ops_identity_from_operator(identity: Any) -> Any:
     claims = _identity_value(identity, "claims", {}) or {}
     if not isinstance(claims, dict):
         claims = {}
-    principal_type = str(
-        claims.get("principal_type")
-        or claims.get("principalType")
-        or claims.get("actor_type")
-        or claims.get("actorType")
-        or "human"
-    ).strip().lower()
 
     if token_kind not in _PROTECTED_SESSION_KINDS:
         raise VerdictAuthorizationError(
             "protected closeout verdicts require a verified JWT or JWT-backed "
             "cookie session"
         )
-    if principal_type in _AUTOMATION_PRINCIPALS:
-        raise VerdictAuthorizationError(
-            "automation and workload identities cannot issue closeout verdicts"
-        )
+    _require_trusted_human_principal(claims)
     authorized_roles = sorted(roles.intersection(_AUTHORIZED_BFF_ROLES))
     if not authorized_roles:
         raise VerdictAuthorizationError(

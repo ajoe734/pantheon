@@ -46,13 +46,14 @@ def _identity(
     mfa_verified: object = True,
     token_kind: str = "jwt",
     principal_type: str = "human",
+    claims: object = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         operator_id=operator_id,
         roles=roles or ["admin"],
         mfa_verified=mfa_verified,
         token_kind=token_kind,
-        claims={"principal_type": principal_type},
+        claims={"principal_type": principal_type} if claims is None else claims,
     )
 
 
@@ -141,6 +142,59 @@ def test_wrong_role_stub_automation_and_fleet_identity_are_forbidden(
     )
 
     assert response.status_code == 403
+    assert expected in response.json()["detail"]["message"]
+    assert service.ledger.records() == []
+
+
+@pytest.mark.parametrize(
+    ("identity", "expected"),
+    [
+        (_identity(claims={}), "explicit human principal"),
+        (_identity(claims={"sub": "human-ops-001", "amr": ["mfa"]}), "explicit human"),
+        (_identity(claims={"principal_type": ""}), "explicit human"),
+        (_identity(claims={"principal_type": "   "}), "explicit human"),
+        (
+            SimpleNamespace(
+                operator_id="human-ops-001",
+                roles=["admin"],
+                mfa_verified=True,
+                token_kind="jwt",
+            ),
+            "explicit human",
+        ),
+        (_identity(claims="not-a-claims-object"), "explicit human"),
+        (_identity(principal_type="robot"), "not a trusted human principal"),
+        (_identity(principal_type="bot"), "not a trusted human principal"),
+        (_identity(principal_type="workload"), "automation"),
+        (_identity(principal_type="service_account"), "automation"),
+        (_identity(principal_type="fleet"), "automation"),
+        (
+            _identity(claims={"principal_type": "human", "actor_type": "service"}),
+            "conflicting principal classification",
+        ),
+        (_identity(claims={"actorType": "service"}), "automation"),
+        (_identity(claims={"actorType": "human"}), None),
+        (_identity(claims={"principalType": "user"}), None),
+    ],
+)
+def test_principal_classification_must_be_explicit_and_human(
+    bff: tuple,
+    identity: object,
+    expected: str | None,
+) -> None:
+    client, state, service = bff
+    state["identity"] = identity
+
+    response = client.post(
+        "/bff/governance/product-closeout-verdicts",
+        json=_request(),
+    )
+
+    if expected is None:
+        assert response.status_code == 201, response.text
+        assert len(service.ledger.records()) == 1
+        return
+    assert response.status_code == 403, response.text
     assert expected in response.json()["detail"]["message"]
     assert service.ledger.records() == []
 

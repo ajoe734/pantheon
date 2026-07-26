@@ -431,6 +431,119 @@ def test_concurrent_duplicate_decision_and_nonce_have_one_winner(authority: dict
     assert len(authority["ledger"].records()) == 1
 
 
+def test_concurrent_distinct_decisions_for_one_binding_admit_one_verdict(
+    authority: dict,
+) -> None:
+    barrier = threading.Barrier(2)
+    results: list[str] = []
+
+    def issue(attempt: int) -> None:
+        barrier.wait()
+        try:
+            _issue(
+                authority,
+                decision="approved" if attempt == 0 else "rejected",
+                verdict_id=f"pclose-competing-{attempt}",
+                nonce=f"nonce-competing-{attempt}",
+            )
+        except pcv.VerdictConflictError:
+            results.append("conflict")
+        else:
+            results.append("issued")
+
+    threads = [
+        threading.Thread(target=issue, args=(attempt,)) for attempt in range(2)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert sorted(results) == ["conflict", "issued"]
+    issued = [
+        record
+        for record in authority["ledger"].records()
+        if record["record_type"] == "issued"
+    ]
+    assert len(issued) == 1
+
+
+def test_second_decision_for_one_binding_is_rejected_while_the_first_stands(
+    authority: dict,
+) -> None:
+    first = _issue(authority, decision="approved")
+
+    with pytest.raises(pcv.VerdictConflictError, match="active closeout decision"):
+        _issue(
+            authority,
+            decision="rejected",
+            verdict_id="pclose-test-002",
+            nonce="nonce-product-closeout-002",
+        )
+
+    assert authority["verifier"].verify(
+        first["verdict_id"],
+        expected_binding=authority["binding"],
+    ) == first
+
+
+def test_a_different_binding_may_hold_its_own_active_decision(authority: dict) -> None:
+    _issue(authority)
+    other_values = authority["binding"].to_dict()
+    other_values["task_id"] = "L12-OTHER-001"
+    other_binding = pcv.CloseoutBinding.from_mapping(other_values)
+
+    other = authority["service"].issue(
+        other_binding,
+        authority["actor"],
+        decision="approved",
+        ttl_seconds=180,
+        verdict_id="pclose-test-other",
+        nonce="nonce-product-closeout-other",
+    )
+
+    assert authority["verifier"].verify(
+        other["verdict_id"],
+        expected_binding=other_binding,
+    ) == other
+
+
+def test_expired_or_revoked_decision_allows_an_exact_replacement(
+    authority: dict,
+) -> None:
+    expired = _issue(authority, ttl_seconds=60)
+    authority["clock"].now += timedelta(seconds=61)
+    replacement = _issue(
+        authority,
+        verdict_id="pclose-test-replacement-001",
+        nonce="nonce-product-closeout-replacement-001",
+    )
+    assert authority["verifier"].verify(
+        replacement["verdict_id"],
+        expected_binding=authority["binding"],
+    ) == replacement
+    with pytest.raises(pcv.VerdictExpiredError, match="expired"):
+        authority["verifier"].verify(
+            expired["verdict_id"],
+            expected_binding=authority["binding"],
+        )
+
+    authority["service"].revoke(
+        replacement["verdict_id"],
+        authority["actor"],
+        reason="frontend deployment identity changed",
+    )
+    after_revocation = _issue(
+        authority,
+        verdict_id="pclose-test-replacement-002",
+        nonce="nonce-product-closeout-replacement-002",
+    )
+    assert authority["verifier"].verify(
+        after_revocation["verdict_id"],
+        expected_binding=authority["binding"],
+    ) == after_revocation
+
+
 def test_protected_paths_must_be_absolute_external_and_symlink_free(
     tmp_path: Path,
 ) -> None:

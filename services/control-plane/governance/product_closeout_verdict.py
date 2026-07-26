@@ -626,6 +626,7 @@ class ProductCloseoutVerdictService:
         resolved_nonce = nonce or uuid.uuid4().hex
         ledger_entry_id = f"pclose-issue-{uuid.uuid4()}"
 
+        binding_values = binding.to_dict()
         with self.ledger.transaction() as records:
             for record in records:
                 issued = record.get("verdict") if record.get("record_type") == "issued" else None
@@ -638,8 +639,20 @@ class ProductCloseoutVerdictService:
                 if issued.get("nonce") == resolved_nonce:
                     raise VerdictConflictError("verdict nonce has already been used")
 
+            active = self._active_binding_decision(
+                records,
+                self._binding_key(binding_values),
+                now=now,
+            )
+            if active is not None:
+                raise VerdictConflictError(
+                    "an active closeout decision already exists for this binding: "
+                    f"{active.get('verdict_id')} ({active.get('decision')}); "
+                    "revoke it or let it expire before issuing a replacement"
+                )
+
             verdict: dict[str, Any] = {
-                **binding.to_dict(),
+                **binding_values,
                 "verdict_id": resolved_verdict_id,
                 "verifier_capability_sha256": self.policy.capability_sha256(
                     self.key_id
@@ -838,6 +851,51 @@ class ProductCloseoutVerdictService:
                 f"protected ledger must contain exactly one issue record for {verdict_id}"
             )
         return dict(matches[0])
+
+    @staticmethod
+    def _binding_key(value: Mapping[str, Any]) -> tuple[str, ...]:
+        """Return the exact seven-field identity a decision is bound to."""
+
+        return tuple(str(value.get(field, "")) for field in _EXPECTED_BINDING_FIELDS)
+
+    @classmethod
+    def _active_binding_decision(
+        cls,
+        records: Sequence[Mapping[str, Any]],
+        binding_key: tuple[str, ...],
+        *,
+        now: datetime,
+    ) -> Mapping[str, Any] | None:
+        """Return the still-active decision for one exact binding, if any.
+
+        A decision stops being active only through an explicit revocation or
+        its own expiry, so a replacement verdict is admitted exactly in the
+        revoked/expired cases and blocked while a decision still stands.  An
+        unreadable expiry is treated as active so the guard fails closed.
+        """
+
+        revoked_ids = {
+            record.get("verdict_id")
+            for record in records
+            if record.get("record_type") == "revoked"
+        }
+        for record in records:
+            if record.get("record_type") != "issued":
+                continue
+            issued = record.get("verdict")
+            if not isinstance(issued, dict):
+                continue
+            if cls._binding_key(issued) != binding_key:
+                continue
+            if issued.get("verdict_id") in revoked_ids:
+                continue
+            try:
+                expires_at = _parse_time(issued.get("expires_at"), field="expires_at")
+            except VerdictIntegrityError:
+                return issued
+            if expires_at > now:
+                return issued
+        return None
 
     @staticmethod
     def _consumption_records(
