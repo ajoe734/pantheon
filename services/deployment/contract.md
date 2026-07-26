@@ -1,6 +1,6 @@
 # Deployment Service API Contract
 
-Last updated: 2026-07-14
+Last updated: 2026-07-26
 Status: canonical API contract for BP5-SVC-004 and BP5-SVC-005
 Owner: Codex
 Reviewer: Claude
@@ -31,6 +31,29 @@ This service owns the deployable HTTP surface and file-backed persistence only.
 
 ---
 
+## Authentication and tenant isolation
+
+All `/api/deployment/*` requests require a bearer-authenticated service or
+operator identity and an explicit `X-Tenant-Id` header. The authenticated actor
+is authoritative; caller-supplied `created_by` or dispatch `actor_id` values
+cannot override it.
+
+The tenant boundary is persisted on DeploymentPlan metadata and copied into the
+DeploymentSaga. Plan, saga, projection, outbox, and inbox reads expose only the
+request tenant. A cross-tenant point lookup behaves as `404 Not Found`, while a
+mutation whose ApprovalDecision, DeploymentPlan, or saga belongs to another
+tenant is rejected.
+
+Authentication configuration uses `PANTHEON_DEPLOYMENT_AUTH_*`, falling back to
+the shared BFF/runtime inbound-auth configuration. The accepted role family is
+defined in `services/deployment/auth.py`.
+
+Promotion `/api/v1/*` mutation and read routes use the same boundary with
+`PANTHEON_PROMOTION_AUTH_*`; ApprovalDecision and promotion DeploymentPlan rows
+are tenant-filtered before they can feed this service.
+
+---
+
 ## Service Boundary
 
 | Concern | Owner |
@@ -39,6 +62,7 @@ This service owns the deployable HTTP surface and file-backed persistence only.
 | Stage-transition validation | **Deployment Service** via canonical `StagePlanner` |
 | DeploymentSaga bootstrap + local outbox append | **Deployment Service** via canonical `DeploymentSagaStore` |
 | Inbox dedupe / per-saga ordering receipts | **Deployment Service** |
+| Outbox exclusive lease / ack / idle recovery receipts | **Deployment Service** |
 | Compensation decision derivation | **Deployment Service** via canonical DEP-002 policy logic |
 | Deployment projection read model | **Deployment Service** derived-only composition |
 | Pool/runtime compatibility preflight | **Deployment Service** read-only composition over capital and runtime snapshots |
@@ -457,14 +481,63 @@ Default terminal status:
 
 ### `GET /api/deployment/outbox`
 
-List pending outbox events.
+List outbox events visible to the authenticated tenant. Dispatch consumers
+must use the claim endpoint rather than this inspection route.
 
 Supported filters:
 
 - `owner_service`
 - `aggregate_id`
+- `status`
 
 Returned events are ordered by `(aggregate_id, sequence_no)`.
+
+---
+
+### `POST /api/deployment/outbox/claim`
+
+Transactionally claim currently due, pending outbox events for one consumer.
+
+Request body:
+
+- `consumer_name` (required)
+- `lease_seconds` (default `60`, range `1..3600`)
+- `limit` (default `25`, range `1..250`)
+- optional `aggregate_id`
+
+Each returned record keeps the canonical outbox `status` and additionally
+includes `tenant_id`, `claim_token`, `lease_status`, `claimed_at`,
+`lease_expires_at`, and `recovery_count`.
+
+Claim invariants:
+
+- a process-safe file lock and atomic replace serialize lease changes
+- no two consumers can hold an active lease for the same event
+- events whose `next_retry_at` is in the future are not claimable
+- an expired lease is released with
+  `release_reason=lease_expired_idle_recovery` and may be reclaimed
+- the former claim token cannot acknowledge a recovered lease
+
+The canonical outbox remains in `deployment_sagas.json`. The lease ledger adds
+exclusive delivery ownership in `deployment_outbox_leases.json`; it does not
+become a second event source.
+
+---
+
+### `GET /api/deployment/outbox/lease-health`
+
+Return lease counts and recovery state for the authenticated service/operator:
+
+- `active_claim_count`
+- `acknowledged_claim_count`
+- `released_claim_count`
+- `recovered_claim_count`
+- `recovered_this_check`
+- `oldest_active_claimed_at`
+- `updated_at`
+
+The general service health dependency exposes the same ledger and the
+`outbox_lease_recovered_count` metric.
 
 ---
 
@@ -474,7 +547,9 @@ Apply the DEP-002 inbox rule to one outbox event for one consumer.
 
 Request body:
 
-- `consumer_name`
+- `consumer_name` (must own the active lease)
+- `claim_token` (required when lease enforcement is enabled, which is the
+  default)
 
 Consumer behavior:
 
@@ -482,8 +557,37 @@ Consumer behavior:
 - sequence gap -> receipt `out_of_order`
 - next expected sequence -> receipt `applied`
 
-The endpoint writes the durable inbox receipt but does not mark the outbox
-record as published.
+An `applied` or `duplicate` inbox receipt marks the canonical outbox record
+published and acknowledges the lease. A non-applied receipt releases the lease.
+If the canonical receipt/publish commit succeeds but the response or lease ack
+is lost, the published outbox record is no longer claimable and duplicate inbox
+handling remains idempotent.
+
+---
+
+### `POST /api/deployment/outbox/{event_id}/failure`
+
+Persist retry, dead-letter, and operator-visible delivery state for the active
+claim, then release its lease.
+
+Request body:
+
+- `consumer_name`
+- `claim_token`
+- `reason`
+- `retryable`
+- optional `max_attempts`
+- optional `retry_delay_seconds`
+
+The canonical outbox exposes `delivery_attempts`, `last_error`,
+`next_retry_at`, `blocked_reason`, `dlq_at`, and retry policy fields.
+
+---
+
+### `POST /api/deployment/outbox/{event_id}/replay`
+
+Operator-governed replay of a dead-lettered event. Replay is tenant-scoped and
+does not bypass inbox ordering or downstream authoritative readback.
 
 ---
 
@@ -509,6 +613,12 @@ It must be configured with a non-empty `PANTHEON_RUNTIME_MANAGER_URL` and send
 all RuntimeBinding commands/readbacks to that remote authority.  Missing remote
 configuration is fail-closed; the consumer must not instantiate an in-process
 Runtime Manager or fall back to a local binding store.
+
+The worker additionally requires `PANTHEON_DEPLOYMENT_SERVICE_TOKEN` and
+`PANTHEON_DEPLOYMENT_TENANT_ID` for every Deployment API call. Claim duration
+and batch size use `DEPLOYMENT_OUTBOX_CONSUMER_LEASE_SECONDS` and
+`DEPLOYMENT_OUTBOX_CONSUMER_CLAIM_LIMIT`. The later manifest integration must
+wire these values before accepting the dispatcher as active.
 
 Compose startup waits only for the unconditional Deployment and Runtime
 Manager authorities.  Paper fleet reconciliation is required only for a paper
@@ -546,6 +656,9 @@ Forward dispatch invariants:
   immutable authority field remain digest-covered; the current plan's
   `binding_id` and `metadata.runtime_lifecycle` must exactly match the recovered
   RuntimeBinding before the predecessor receipt can be written
+- tenant and the dispatch foundation correlation id are copied into
+  RuntimeBinding request metadata, and must agree with the authenticated
+  dispatcher tenant before a side effect is attempted
 - every newly created RuntimeBinding is paper-only; canary/live requires a
   separate target-bound governed promotion/cutover verifier with the required
   MFA/two-person proof
@@ -587,6 +700,10 @@ Compensation invariants:
 - finalize happens before consume; replay of a completed runtime-load event
   revalidates the active binding, paper fleet when applicable, and terminal
   DEP-003 projection before writing its receipt, without repeating mutation
+- a crash after RuntimeBinding creation and saga `binding-created` state but
+  before claim acknowledgement is recovered by lease expiry; the next
+  dispatcher reads the recorded binding and uses the idempotent readback path,
+  never a second `deploy`
 
 ---
 
@@ -614,6 +731,7 @@ Files:
 
 - `deployment_plans.json`
 - `deployment_sagas.json`
+- `deployment_outbox_leases.json`
 - `approval_decisions.json` (lookup only unless upstream governance writes it)
 
 This aligns with the shared file-backed baseline contract used by the operator
@@ -629,3 +747,5 @@ BP5-SVC-005 closes the deployable gap when:
 2. outbox / inbox receipts make duplicate replay and out-of-order delivery
    observable
 3. compensation paths are exposed and tested through the deployable API
+4. L12-DEP-001 adds authenticated tenant ownership plus exclusive claim,
+   acknowledgement, idle recovery, and crash-after-side-effect replay proof

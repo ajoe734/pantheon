@@ -2273,6 +2273,58 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             self.config, queue_payload, run_id="run-123"
         )
 
+    def test_process_queue_skips_second_event_when_task_worker_is_active(self) -> None:
+        current_task = {
+            "id": "BUS-VAL-DUP",
+            "status": "in_progress",
+            "owner": "Codex",
+            "reviewer": "Gemini",
+            "depends_on": [],
+            "last_update": "2026-07-26T10:20:30Z",
+        }
+        queue_payload = {
+            "event_id": "evt-duplicate",
+            "task_id": "BUS-VAL-DUP",
+            "target_agent": "codex",
+            "target_display_name": "Codex",
+            "reason": "github_retry",
+            "message": "wake",
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {
+                "run-existing": {
+                    "run_id": "run-existing",
+                    "task_id": "BUS-VAL-DUP",
+                    "agent_id": "codex",
+                    "queue_event_id": "evt-original",
+                    "status": "running",
+                }
+            },
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_event_queue", return_value=[queue_payload]),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [current_task]}),
+            mock.patch.object(
+                supervisor,
+                "start_worker_for_request",
+                side_effect=AssertionError("duplicate task event must not start another worker"),
+            ),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.process_queue(self.config, state, self.provider_report)
+
+        self.assertTrue(changed)
+        record = state["queue"]["events"]["evt-duplicate"]
+        self.assertEqual(record["status"], "completed")
+        self.assertEqual(record["skip_reason"], "task_already_active")
+        self.assertEqual(record["active_run_id"], "run-existing")
+        write_activity_log.assert_called_once()
+        activity = write_activity_log.call_args.args[1]
+        self.assertEqual(activity["type"], "wake_skipped")
+        self.assertEqual(activity["worker_run_id"], "run-existing")
+
     def test_failed_auto_lane_dispatch_does_not_create_manual_pending_worker(self) -> None:
         current_task = {
             "id": "BUS-VAL-005",
@@ -11363,6 +11415,90 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
 
         self.assertIsNotNone(reason)
         self.assertIn("quota group claude_account_shared", reason or "")
+
+
+class AgentDispatchLoadTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.config = {
+            "agents": {
+                "codex2_2": {
+                    "id": "codex2_2",
+                    "display_name": "Codex2",
+                    "provider": "codex2-2",
+                },
+            },
+        }
+
+    def test_active_worker_queue_event_is_counted_once(self) -> None:
+        state = {
+            "workers": {
+                "run-active": {
+                    "status": "running",
+                    "agent_id": "codex2_2",
+                    "queue_event_id": "evt-active",
+                    "request_snapshot": {"reason": "owned_finalize_dispatch"},
+                },
+            },
+            "queue": {
+                "events": {
+                    "evt-active": {"status": "started"},
+                    "evt-pending": {"status": "queued"},
+                },
+            },
+        }
+        queued_events = [
+            {
+                "event_id": "evt-active",
+                "target_display_name": "Codex2",
+                "reason": "owned_finalize_dispatch",
+            },
+            {
+                "event_id": "evt-pending",
+                "target_display_name": "Codex2",
+                "reason": "owned_in_progress_dispatch",
+            },
+        ]
+
+        with mock.patch.object(supervisor, "load_event_queue", return_value=queued_events):
+            loads = supervisor.agent_dispatch_loads(self.config, state, {"running"})
+
+        self.assertEqual(
+            loads,
+            {
+                "Codex2": [
+                    supervisor.dispatch_reason_priority("owned_finalize_dispatch"),
+                    supervisor.dispatch_reason_priority("owned_in_progress_dispatch"),
+                ],
+            },
+        )
+
+    def test_queue_event_remains_fallback_when_worker_reason_is_missing(self) -> None:
+        state = {
+            "workers": {
+                "run-active": {
+                    "status": "running",
+                    "agent_id": "codex2_2",
+                    "queue_event_id": "evt-active",
+                    "request_snapshot": {},
+                },
+            },
+            "queue": {"events": {"evt-active": {"status": "started"}}},
+        }
+        queued_events = [
+            {
+                "event_id": "evt-active",
+                "target_display_name": "Codex2",
+                "reason": "owned_in_progress_dispatch",
+            },
+        ]
+
+        with mock.patch.object(supervisor, "load_event_queue", return_value=queued_events):
+            loads = supervisor.agent_dispatch_loads(self.config, state, {"running"})
+
+        self.assertEqual(
+            loads,
+            {"Codex2": [supervisor.dispatch_reason_priority("owned_in_progress_dispatch")]},
+        )
 
 
 class MaxConcurrentWorkersCapTests(unittest.TestCase):

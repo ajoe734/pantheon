@@ -99,4 +99,7 @@ Focused L12 proof in `services/consultation/test_workflow_executor.py`:
    replays with an operator token, and completes after provider recovery.
 
 Machine-readable verification metadata is in
-[`verification.json`](verification.json).
+[`verification.json`](verification.json). The product-level owner closeout,
+merged delivery, independent reviewer verdict, residual boundaries, and
+guardrail admission are recorded in [`evidence.json`](evidence.json), with its
+companion digest in `evidence.sha256`.

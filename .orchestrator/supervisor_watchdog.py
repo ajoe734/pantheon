@@ -1132,8 +1132,6 @@ def main() -> int:
         return 0
     result = run_watchdog(config, restart=args.restart, dry_run=args.dry_run)
     if args.json:
-        import json
-
         print(json.dumps(result, indent=2, sort_keys=True))
     else:
         print(f"watchdog decision={result['decision']} reason={result['reason']} pid={result.get('pid')} new_pid={result.get('new_pid')}")
