@@ -12,7 +12,9 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import subprocess
 import sys
+import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -174,145 +176,284 @@ class ResolveCommitTrailerRangeTests(unittest.TestCase):
 
 
 class PublishPromoteTests(unittest.TestCase):
-    def test_discover_skips_recent_tags(self) -> None:
-        now = datetime.now(timezone.utc)
-        recent = (now.replace(microsecond=0))
-        old = recent.replace(year=recent.year - 1)
+    SETTINGS = {
+        "main_branch": "master",
+        "publish_branch_prefix": "publish/",
+        "release_tag_prefix": "release/",
+        "soak_days": 0,
+        "regression_label_prefix": "regression/",
+        "block_labels": [],
+        "promote_pr_label": "auto-promote",
+    }
+
+    def _discover(self, tags, *, input_version=None, blockers=None, ancestor=None, existing=None, mode=None):
+        blockers = blockers or {}
+        ancestor = ancestor or (lambda _left, _right: False)
+        existing = existing or {}
+        mode = mode or (lambda _main, _release: ("clean_merge", "clean"))
         with (
+            mock.patch.object(publish_promote, "fetch_promote_refs"),
+            mock.patch.object(publish_promote, "list_release_tags", return_value=tags),
+            mock.patch.object(publish_promote, "publish_ref_matches_tag", return_value=True),
+            mock.patch.object(publish_promote, "git_is_ancestor", side_effect=ancestor),
             mock.patch.object(
                 publish_promote,
-                "list_release_tags",
-                return_value=[("v2026.20.0", recent), ("v2025.10.0", old)],
+                "fetch_blocking_issue_map",
+                return_value=(blockers, [], None),
             ),
-            mock.patch.object(publish_promote, "fetch_blocking_labels", return_value=[]),
-            mock.patch.object(publish_promote.subprocess, "run") as run,
+            mock.patch.object(
+                publish_promote,
+                "list_open_promote_prs",
+                return_value=(existing, None),
+            ),
+            mock.patch.object(publish_promote, "assess_promotion_mode", side_effect=mode),
         ):
-            # is-ancestor → non-zero (not merged); pr list → empty
-            run.return_value.returncode = 1
-            run.return_value.stdout = ""
-            cands = publish_promote.discover(
-                input_version=None,
+            return publish_promote.discover(
+                input_version=input_version,
                 soak_days=3,
                 prefix="regression/",
                 block_labels=[],
                 publish_prefix="publish/",
             )
-        versions = [c["version"] for c in cands]
-        self.assertIn("v2025.10.0", versions)
-        self.assertNotIn("v2026.20.0", versions)
+
+    def test_discover_reports_recent_tags_as_soaking(self) -> None:
+        now = datetime.now(timezone.utc)
+        recent = now.replace(microsecond=0)
+        old = recent.replace(year=recent.year - 1)
+        cands = self._discover([("v2026.07.20.0", recent), ("v2025.07.10.0", old)])
+        dispositions = {c["version"]: c["disposition"] for c in cands}
+        self.assertEqual(dispositions["v2026.07.20.0"], "soaking")
+        self.assertEqual(dispositions["v2025.07.10.0"], "eligible")
 
     def test_discover_includes_recent_when_version_forced(self) -> None:
         now = datetime.now(timezone.utc)
-        with (
-            mock.patch.object(
-                publish_promote, "list_release_tags",
-                return_value=[("v2026.20.0", now)],
-            ),
-            mock.patch.object(publish_promote, "fetch_blocking_labels", return_value=[]),
-            mock.patch.object(publish_promote.subprocess, "run") as run,
-        ):
-            run.return_value.returncode = 1
-            run.return_value.stdout = ""
-            cands = publish_promote.discover(
-                input_version="v2026.20.0",
-                soak_days=3,
-                prefix="regression/",
-                block_labels=[],
-                publish_prefix="publish/",
-            )
-        self.assertEqual([c["version"] for c in cands], ["v2026.20.0"])
+        cands = self._discover([("v2026.07.20.0", now)], input_version="v2026.07.20.0")
+        self.assertEqual(cands[0]["disposition"], "eligible")
 
-    def test_discover_skips_already_merged(self) -> None:
+    def test_forced_historical_version_remains_superseded_by_later_snapshot(self) -> None:
+        now = datetime.now(timezone.utc)
+        older = now.replace(year=now.year - 2)
+        newer = now.replace(year=now.year - 1)
+        cands = self._discover(
+            [("v2024.07.10.0", older), ("v2025.07.10.0", newer)],
+            input_version="v2024.07.10.0",
+            ancestor=lambda left, right: left.endswith("v2024.07.10.0")
+            and right.endswith("v2025.07.10.0"),
+        )
+        self.assertEqual(len(cands), 1)
+        self.assertEqual(cands[0]["disposition"], "superseded")
+        self.assertEqual(cands[0]["superseded_by"], "v2025.07.10.0")
+
+    def test_discover_reports_legacy_weekly_tags_without_promoting(self) -> None:
+        old = datetime.now(timezone.utc).replace(year=2025)
+        cands = self._discover([("v2025.25.0", old)])
+        self.assertEqual(cands[0]["disposition"], "legacy_format")
+
+    def test_discover_reports_already_reachable(self) -> None:
         now = datetime.now(timezone.utc)
         old = now.replace(year=now.year - 1)
-        with (
-            mock.patch.object(
-                publish_promote, "list_release_tags",
-                return_value=[("v2025.10.0", old)],
-            ),
-            mock.patch.object(publish_promote, "fetch_blocking_labels", return_value=[]),
-            mock.patch.object(publish_promote.subprocess, "run") as run,
-        ):
-            # is-ancestor returns 0 → already merged.
-            run.return_value.returncode = 0
-            run.return_value.stdout = ""
-            cands = publish_promote.discover(
-                input_version=None,
-                soak_days=3,
-                prefix="regression/",
-                block_labels=[],
-                publish_prefix="publish/",
-            )
-        self.assertEqual(cands, [])
+        cands = self._discover(
+            [("v2025.07.10.0", old)],
+            ancestor=lambda left, right: left.startswith("refs/tags/") and right == "origin/master",
+        )
+        self.assertEqual(cands[0]["disposition"], "already_reachable")
 
     def test_discover_records_blockers(self) -> None:
         now = datetime.now(timezone.utc)
         old = now.replace(year=now.year - 1)
-        with (
-            mock.patch.object(
-                publish_promote, "list_release_tags",
-                return_value=[("v2025.10.0", old)],
-            ),
-            mock.patch.object(
-                publish_promote, "fetch_blocking_labels",
-                return_value=["#42 regression in X"],
-            ),
-            mock.patch.object(publish_promote.subprocess, "run") as run,
-        ):
-            run.return_value.returncode = 1
-            run.return_value.stdout = ""
-            cands = publish_promote.discover(
-                input_version=None,
-                soak_days=3,
-                prefix="regression/",
-                block_labels=[],
-                publish_prefix="publish/",
-            )
-        self.assertEqual(len(cands), 1)
+        cands = self._discover(
+            [("v2025.07.10.0", old)],
+            blockers={"v2025.07.10.0": ["#42 regression in X"]},
+        )
+        self.assertEqual(cands[0]["disposition"], "blocked")
         self.assertEqual(cands[0]["blockers"], ["#42 regression in X"])
 
-    def test_open_prs_adds_promote_label_best_effort(self) -> None:
-        candidates = [
-            {
-                "version": "v2026.20.0",
-                "publish_branch": "publish/v2026.20.0",
-                "age_days": 1.25,
-                "blockers": [],
-                "promote_branch": "promote/v2026.20.0",
-            }
-        ]
-        settings = {
-            "main_branch": "master",
-            "publish_branch_prefix": "publish/",
-            "release_tag_prefix": "release/",
-            "soak_days": 0,
-            "regression_label_prefix": "regression/",
-            "block_labels": [],
-            "promote_pr_label": "auto-promote",
+    def test_discover_marks_older_ancestor_superseded(self) -> None:
+        now = datetime.now(timezone.utc)
+        older = now.replace(year=now.year - 2)
+        newer = now.replace(year=now.year - 1)
+        cands = self._discover(
+            [("v2024.07.10.0", older), ("v2025.07.10.0", newer)],
+            ancestor=lambda left, right: left.endswith("v2024.07.10.0")
+            and right.endswith("v2025.07.10.0"),
+        )
+        dispositions = {c["version"]: c for c in cands}
+        self.assertEqual(dispositions["v2024.07.10.0"]["disposition"], "superseded")
+        self.assertEqual(dispositions["v2024.07.10.0"]["superseded_by"], "v2025.07.10.0")
+        self.assertEqual(dispositions["v2025.07.10.0"]["disposition"], "eligible")
+
+    def test_discover_reports_content_conflict(self) -> None:
+        old = datetime.now(timezone.utc).replace(year=2024)
+        cands = self._discover(
+            [("v2024.07.10.0", old)],
+            mode=lambda _main, _release: ("conflicted", "both modified config"),
+        )
+        self.assertEqual(cands[0]["disposition"], "conflicted")
+
+    def _git(self, repo: Path, *args: str, check: bool = True):
+        return subprocess.run(
+            ["git", *args], cwd=repo, check=check, capture_output=True, text=True
+        )
+
+    def test_v2026_07_15_0_fixture_reproduces_unrelated_history_and_bridges_exact_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            self._git(repo, "init", "-b", "master")
+            self._git(repo, "config", "user.name", "fixture")
+            self._git(repo, "config", "user.email", "fixture@example.invalid")
+            (repo / "state.txt").write_text("master snapshot\n")
+            self._git(repo, "add", "state.txt")
+            self._git(repo, "commit", "-m", "re-rooted master")
+            master = self._git(repo, "rev-parse", "HEAD").stdout.strip()
+            master_tree = self._git(repo, "rev-parse", "HEAD^{tree}").stdout.strip()
+
+            self._git(repo, "checkout", "--orphan", "publish/v2026.07.15.0")
+            self._git(repo, "rm", "-rf", ".")
+            (repo / "state.txt").write_text("accepted dev snapshot\n")
+            self._git(repo, "add", "state.txt")
+            self._git(repo, "commit", "-m", "publish snapshot")
+            self._git(repo, "tag", "release/v2026.07.15.0")
+            release_tree = self._git(repo, "rev-parse", "HEAD^{tree}").stdout.strip()
+            self._git(repo, "checkout", "master")
+
+            failed = self._git(
+                repo, "merge", "--no-ff", "release/v2026.07.15.0", check=False
+            )
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertIn("unrelated histories", failed.stderr)
+
+            with mock.patch.object(publish_promote, "ROOT", repo):
+                mode, detail = publish_promote.assess_promotion_mode(
+                    master, "release/v2026.07.15.0"
+                )
+                self.assertEqual((mode, detail), ("snapshot_bridge", "histories are unrelated"))
+                self._git(repo, "checkout", "-B", "promote/v2026.07.15.0", master)
+                commit = publish_promote.create_snapshot_bridge(
+                    "v2026.07.15.0", master, "release/v2026.07.15.0"
+                )
+
+            parents = self._git(repo, "show", "-s", "--format=%P", commit).stdout.split()
+            self.assertEqual(parents[0], master)
+            self.assertEqual(len(parents), 2)
+            self.assertEqual(self._git(repo, "rev-parse", f"{commit}^{{tree}}").stdout.strip(), release_tree)
+            self._git(repo, "revert", "-m", "1", commit, "--no-edit")
+            self.assertEqual(
+                self._git(repo, "rev-parse", "HEAD^{tree}").stdout.strip(), master_tree
+            )
+
+    def test_common_history_conflict_uses_exact_snapshot_and_is_rollback_safe(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            self._git(repo, "init", "-b", "master")
+            self._git(repo, "config", "user.name", "fixture")
+            self._git(repo, "config", "user.email", "fixture@example.invalid")
+            (repo / "state.txt").write_text("base\n")
+            self._git(repo, "add", "state.txt")
+            self._git(repo, "commit", "-m", "base")
+            self._git(repo, "checkout", "-b", "publish")
+            (repo / "state.txt").write_text("publish\n")
+            self._git(repo, "commit", "-am", "publish")
+            release = self._git(repo, "rev-parse", "HEAD").stdout.strip()
+            release_tree = self._git(repo, "rev-parse", "HEAD^{tree}").stdout.strip()
+            self._git(repo, "checkout", "master")
+            (repo / "state.txt").write_text("master\n")
+            self._git(repo, "commit", "-am", "master")
+            master = self._git(repo, "rev-parse", "HEAD").stdout.strip()
+            master_tree = self._git(repo, "rev-parse", "HEAD^{tree}").stdout.strip()
+            with mock.patch.object(publish_promote, "ROOT", repo):
+                mode, _detail = publish_promote.assess_promotion_mode(master, release)
+                self.assertEqual(mode, "snapshot_replace")
+                merge_commit = publish_promote.create_snapshot_bridge(
+                    "v2026.07.22.2", master, release
+                )
+            parents = self._git(repo, "show", "-s", "--format=%P", merge_commit).stdout.split()
+            self.assertEqual(parents, [master, release])
+            self.assertEqual(
+                self._git(repo, "rev-parse", f"{merge_commit}^{{tree}}").stdout.strip(),
+                release_tree,
+            )
+            self._git(repo, "revert", "-m", "1", merge_commit, "--no-edit")
+            self.assertEqual(
+                self._git(repo, "rev-parse", "HEAD^{tree}").stdout.strip(), master_tree
+            )
+
+    def test_empty_successful_merge_base_is_portably_unrelated(self) -> None:
+        no_base = subprocess.CompletedProcess(
+            ["git", "merge-base"], returncode=0, stdout="", stderr=""
+        )
+        with mock.patch.object(publish_promote, "_run_git_result", return_value=no_base):
+            mode, detail = publish_promote.assess_promotion_mode("master", "release")
+        self.assertEqual((mode, detail), ("snapshot_bridge", "histories are unrelated"))
+
+    def test_open_candidate_uses_normal_push_and_protected_auto_merge(self) -> None:
+        candidate = {
+            "version": "v2026.20.0",
+            "publish_branch": "publish/v2026.20.0",
+            "age_days": 1.25,
+            "blockers": [],
+            "promote_branch": "promote/v2026.20.0",
+            "promotion_mode": "clean_merge",
         }
         with (
-            mock.patch.dict(os.environ, {"PROMOTE_CANDIDATES": json.dumps(candidates)}),
-            mock.patch.object(publish_promote, "load_promote_settings", return_value=settings),
-            mock.patch.object(publish_promote, "ensure_git_identity"),
             mock.patch.object(publish_promote, "run_git") as run_git,
+            mock.patch.object(publish_promote, "publish_ref_matches_tag", return_value=True),
+            mock.patch.object(publish_promote, "find_open_promote_pr", return_value=(None, None)),
             mock.patch.object(publish_promote.subprocess, "run") as run,
         ):
-            run.return_value.returncode = 1
-            rc = publish_promote.cmd_open_prs(mock.Mock())
+            result = publish_promote.open_candidate(candidate, self.SETTINGS)
 
-        self.assertEqual(rc, 0)
-        run_git.assert_any_call("fetch", "origin", "master", "publish/v2026.20.0", "--tags")
-        pr_create = run.call_args_list[0].args[0]
-        self.assertEqual(pr_create[:3], ["gh", "pr", "create"])
-        self.assertNotIn("--label", pr_create)
+        self.assertEqual(result["disposition"], "pr_opened")
+        run_git.assert_any_call("fetch", "origin", "master", "--tags")
+        run_git.assert_any_call("push", "-u", "origin", "promote/v2026.20.0")
+        for call in run_git.call_args_list:
+            self.assertNotIn("--force", call.args)
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertIn(["gh", "pr", "merge", "promote/v2026.20.0", "--auto", "--merge"], commands)
         self.assertIn(
-            mock.call(
-                ["gh", "pr", "edit", "promote/v2026.20.0", "--add-label", "auto-promote"],
-                check=False,
-                cwd=publish_promote.ROOT,
-            ),
-            run.call_args_list,
+            ["gh", "pr", "edit", "promote/v2026.20.0", "--add-label", "auto-promote"],
+            commands,
         )
+
+    def test_open_candidate_is_idempotent_when_pr_exists(self) -> None:
+        candidate = {
+            "version": "v2026.20.0",
+            "publish_branch": "publish/v2026.20.0",
+            "age_days": 1.25,
+            "blockers": [],
+            "promote_branch": "promote/v2026.20.0",
+            "promotion_mode": "clean_merge",
+        }
+        with (
+            mock.patch.object(publish_promote, "run_git") as run_git,
+            mock.patch.object(publish_promote, "publish_ref_matches_tag", return_value=True),
+            mock.patch.object(
+                publish_promote,
+                "find_open_promote_pr",
+                return_value=({"number": 42, "url": "https://example.invalid/42"}, None),
+            ),
+        ):
+            result = publish_promote.open_candidate(candidate, self.SETTINGS)
+        self.assertEqual(result["disposition"], "existing_pr")
+        self.assertFalse(any(call.args[0] == "push" for call in run_git.call_args_list))
+
+    def test_open_prs_continues_after_candidate_conflict(self) -> None:
+        candidates = [{"version": "v1"}, {"version": "v2"}]
+        with (
+            mock.patch.dict(os.environ, {"PROMOTE_CANDIDATES": json.dumps(candidates)}),
+            mock.patch.object(publish_promote, "load_promote_settings", return_value=self.SETTINGS),
+            mock.patch.object(publish_promote, "ensure_git_identity"),
+            mock.patch.object(
+                publish_promote,
+                "open_candidate",
+                side_effect=[
+                    publish_promote.PromotionConflict("historical conflict"),
+                    {"version": "v2", "disposition": "pr_opened"},
+                ],
+            ) as open_candidate,
+        ):
+            rc = publish_promote.cmd_open_prs(mock.Mock())
+        self.assertEqual(rc, 0)
+        self.assertEqual(open_candidate.call_count, 2)
 
 
 class NotifyOrchestratorClassifyTests(unittest.TestCase):
