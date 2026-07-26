@@ -1,6 +1,6 @@
 # L12-CTRL-001 canonical loop-controller evidence
 
-Status: ready for independent `Codex2` review.
+Status: independently reviewed and approved; owner closeout verification passed.
 
 This packet proves a shared controller-record contract for all twelve
 canonical loops. The implementation serializes updates for one
@@ -54,6 +54,20 @@ Final combined regression over all six files:
 `bdbd0a99bf68e6a635d9bd936782c659298b7bb7`; the tested integration head was
 `5b0be9d2c1df8d4b5824bb0d8cf0562637c0c7fd`.
 ```
+
+## Owner closeout verification
+
+After `Codex2` recorded the independent approval, the owner merged current
+`origin/dev` at `d054bd49cb485f091e3fb31b1d91e57d4fe372ab` into the task branch
+and reran the same combined six-file regression:
+
+```text
+110 passed, 13 warnings in 31.43s
+```
+
+Python compilation, JSON schema parsing, the reviewed evidence checksum, and
+`git diff --check` also passed. The reviewed `evidence.json` and its checksum
+were not changed during owner closeout.
 
 Hosted deployment and all-loop live drill admission remain owned by
 `L12-MANIFEST-001` and `L12-HOSTED-001`; this task does not enable live-capital
