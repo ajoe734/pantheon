@@ -28,7 +28,7 @@
         "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/current-runtime-readback.json"
       ],
       "id": "AC3",
-      "statement": "The admitted event is durable and idempotent by stable event ID across retries and replicas.",
+      "statement": "The admitted event is durable and idempotent by stable event ID across retries and replicas, and no caller is told it succeeded before a durable receipt exists.",
       "status": "pass"
     },
     {
@@ -76,9 +76,9 @@
   "behavioral_proof": {
     "duplicate_safety": {
       "proof": [
-        "Admission is keyed by the producer's stable event_id and a sha256 fingerprint of the canonical event JSON, recorded in an append-only ledger under a POSIX advisory lock, so an exact retry answers 202 with duplicate=true and appends no second record.",
+        "Admission is keyed by the producer's stable event_id and a sha256 fingerprint of the canonical event JSON in a two-phase append-only ledger under a POSIX advisory lock. Only a committed record \u2014 written after a durable enqueue receipt \u2014 makes an exact retry answer 202 duplicate; a caller that meets a live reservation is answered 503 INFRA_ADMISSION_IN_FLIGHT so it retries instead of treating an unpersisted observation as delivered.",
         "Reusing an event_id for different content is refused with 409 INFRA_EVENT_ID_CONFLICT rather than silently overwriting the first observation.",
-        "Four concurrent replica processes racing on one event ID through a shared ledger produced exactly one admission and three duplicates."
+        "Four concurrent replica processes racing on one event ID through a shared ledger produced exactly one committed receipt and three in-flight retry answers, and exactly one committed ledger record."
       ],
       "status": "pass"
     },
@@ -86,27 +86,28 @@
       "proof": [
         "Missing bearer token, a structured permissive-mode token, the shared static service token, a non-service role, an unbound or wildcard tenant claim, a cross-tenant header, a payload tenant mismatch, an unconfigured or wildcard producer scope, and an unallowlisted producer all fail closed with stable error codes.",
         "When the authoritative schema or the durable admission ledger is unavailable, ingestion refuses the event with INFRA_SCHEMA_UNAVAILABLE or INFRA_LEDGER_UNCONFIGURED instead of admitting something it cannot deduplicate.",
-        "A full buffer answers 503 INFRA_BUFFER_OVERFLOW and the ledger reservation is released so the producer's retry can still be admitted."
+        "A full buffer answers 503 INFRA_BUFFER_OVERFLOW, and a cancelled enqueue raises, with the ledger reservation released in both cases so the producer's retry can still be admitted."
       ],
       "status": "pass"
     },
     "request_receipt_downstream_correlation": {
       "proof": [
-        "HTTP 202 is returned only after the event is enqueued on the durable buffer behind an ledger admission record, and the response echoes the event_id, content fingerprint, bound tenant, and proven producer.",
+        "HTTP 202 is returned only after the durable enqueue receipt exists and the reservation is committed, and the response echoes the event_id, content fingerprint, bound tenant, and proven producer.",
         "Admitted infrastructure events are readable through the existing exact event route under the same tenant authority and are never projected into runtime status summaries, the lineage graph, or trade episode projections."
       ],
       "status": "pass"
     },
     "restart_and_recovery": {
       "proof": [
-        "Against the running Flask telemetry service, a real shutdown() and startup() cycle over the same storage directory answered the replayed event with HTTP 202 duplicate=true while the restarted instance reported zero new admissions, because the durable ledger rather than process memory is the admission authority.",
+        "Against the running Flask telemetry service, a real shutdown() and startup() cycle over the same storage directory answered the replayed event with HTTP 202 duplicate=true while the restarted instance reported zero new admissions, because the durable committed receipt rather than process memory is the admission authority.",
+        "A real service instance SIGKILLed inside its durable enqueue left a reserved-not-committed claim. Retries were refused as in-flight while the lease was live, the claim was recovered by the next caller once the lease expired, and the event then reached a committed receipt \u2014 so a crash in that window neither loses the event nor strands the event_id forever.",
         "A second telemetry service instance over the same storage directory treats an already admitted stable event ID as a duplicate, and four separate replica processes synchronising on a barrier admitted it exactly once."
       ],
       "status": "pass"
     },
     "rollback_or_compensation": {
       "proof": [
-        "A reservation that is not followed by a durable enqueue is released with an append-only released record, so a failed admission never blocks the producer's retry.",
+        "A reservation that is not followed by a durable enqueue is released with an append-only, token-scoped released record, so a failed admission never blocks the producer's retry, and an owner whose lease was taken over is fenced out of both commit and release.",
         "This task grants no broker, allocation, deployment, runtime-control, or incident-mutation authority; infrastructure health carries only an optional incident_ref string that telemetry never acts on."
       ],
       "status": "pass"
@@ -141,19 +142,25 @@
     "pre_deploy": {
       "artifact": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/current-runtime-readback.json",
       "binding_spoof_http": 400,
-      "durable_ledger_admitted_ids": 1,
-      "durable_ledger_record_count": 1,
-      "environment": "bounded local nonprod telemetry on 127.0.0.1:18141",
+      "concurrent_attempt_during_reservation_code": "INFRA_ADMISSION_IN_FLIGHT",
+      "concurrent_attempt_during_reservation_http": 503,
+      "durable_ledger_committed_ids": 3,
+      "durable_ledger_orphan_reservations": 0,
+      "durable_ledger_record_count": 7,
+      "environment": "bounded local nonprod telemetry on 127.0.0.1:18149",
       "event_id_conflict_http": 409,
       "healthz_http": 200,
       "hosted_activation_claimed": false,
       "missing_token_http": 401,
-      "observed_at": "2026-07-26T19:16:32.005953Z",
+      "observed_at": "2026-07-26T19:39:08.935082Z",
+      "replay_after_durable_receipt_duplicate": true,
       "restart_replay_duplicate": true,
       "restart_replay_http": 202,
       "retry_replay_duplicate": true,
       "status": "pass",
-      "terminal_readback": "Against the running telemetry service, one stable event ID was admitted once, replayed as a duplicate on retry and again after a real service restart, and left exactly one durable admission record on disk. Missing token, wrong tenant, wrong producer, reused event ID, spoofed binding evidence, and both trading-route bypass attempts all failed closed.",
+      "stranded_reservation_recovered_http": 202,
+      "stranded_reservation_refused_code": "INFRA_ADMISSION_IN_FLIGHT",
+      "terminal_readback": "Against the running telemetry service, one stable event ID was admitted once, replayed as a duplicate on retry and again after a real service restart. A concurrent attempt during a live reservation was refused as retryable rather than answered as a success, a reservation stranded as if by a crash was refused while its lease was live and recovered after it expired, and no orphan reservation remained. Missing token, wrong tenant, wrong producer, reused event ID, spoofed binding evidence, and both trading-route bypass attempts all failed closed.",
       "valid_ingest_http": 202,
       "wrong_producer_http": 403,
       "wrong_tenant_http": 403
@@ -165,6 +172,11 @@
         "delivery_state": "on_task_branch_pending_pr",
         "sha": "0b6ac76800514fd4a842cd34079f51e91622aabb",
         "subject": "OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001: anchor infra authority"
+      },
+      {
+        "delivery_state": "on_task_branch_pending_pr",
+        "sha": "2f723037e10c9d4a4f290f3e4729d187f4aea5d8",
+        "subject": "OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001: fence infra admission"
       }
     ],
     "required_checks": []
@@ -180,12 +192,15 @@
     "manifest_path": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/evidence.json",
     "normalized_hosted_readback": {
       "binding_spoof_refused": true,
-      "durable_ledger_record_count": 1,
+      "concurrent_attempt_refused_without_receipt": true,
+      "durable_ledger_committed_count": 3,
+      "durable_ledger_orphan_reservation_count": 0,
       "event_id_conflict_refused": true,
       "hosted_activation_claimed": false,
       "missing_token_refused": true,
       "restart_replay_deduplicated": true,
       "retry_replay_deduplicated": true,
+      "stranded_reservation_recovered": true,
       "valid_ingest_accepted": true,
       "wrong_producer_refused": true,
       "wrong_tenant_refused": true
@@ -193,7 +208,7 @@
     "self_hash_omitted": true,
     "self_hash_reason": "The companion checksum file contains the manifest digest and avoids recursive self-hashing.",
     "source_artifact_sha256_by_epoch": {
-      "current_runtime_readback_2026_07_26": "bbabdba4710903daf69a9ebfedb1717b0f2677407ce67e84d2a4b840bdacbf97"
+      "current_runtime_readback_2026_07_26": "05070d4219272cf587acfcef92cb4b4e118ced933d88e3e6e93cab6ba73af062"
     }
   },
   "record_log": [
@@ -204,6 +219,24 @@
       "reference": "task/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001",
       "sequence": 1,
       "sha": "0b6ac76800514fd4a842cd34079f51e91622aabb",
+      "status": "pass"
+    },
+    {
+      "actor": "Antigravity",
+      "kind": "independent_review",
+      "recorded_at": "2026-07-26T19:26:46Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4211",
+      "sequence": 2,
+      "sha": "796c6e5e39c4651a4bb1dc384c78e00c4fd8175c",
+      "status": "changes_requested"
+    },
+    {
+      "actor": "Claude",
+      "kind": "owner_evidence_ready",
+      "recorded_at": "2026-07-26T19:41:00Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4211",
+      "sequence": 3,
+      "sha": "2f723037e10c9d4a4f290f3e4729d187f4aea5d8",
       "status": "pass"
     }
   ],
@@ -226,9 +259,18 @@
       "recheck_trigger": "Before enabling infrastructure health in a deployed root.",
       "severity": "medium"
     },
+    "reservation_lease_tuning": {
+      "blocking_for_this_task": false,
+      "containment": "The lease defaults to 30 seconds, far above the durable enqueue latency of the supported buffers, and a lease that is too short only causes retryable in-flight or fenced answers, never a false success or a lost event.",
+      "description": "TELEMETRY_INFRASTRUCTURE_HEALTH_LEASE_SECONDS must exceed the worst-case durable enqueue latency, and cross-host replicas sharing one ledger volume also share its wall-clock assumption.",
+      "expiry": "When telemetry replicas are deployed with a tuned lease.",
+      "owner": "deployment manifest owner",
+      "recheck_trigger": "Before scaling telemetry beyond one host.",
+      "severity": "low"
+    },
     "shared_ledger_volume": {
       "blocking_for_this_task": false,
-      "containment": "Cross-replica idempotency was proven over a shared storage path, and the canonical Postgres writer keeps ON CONFLICT (event_id) as the final idempotency authority when replicas do not share a volume.",
+      "containment": "Cross-replica idempotency and crash recovery were proven over a shared storage path with real processes, and the canonical Postgres writer keeps ON CONFLICT (event_id) as the final idempotency authority when replicas do not share a volume.",
       "description": "The durable admission ledger deduplicates across replicas only when they mount the same TELEMETRY_STORAGE_DIR or TELEMETRY_INFRASTRUCTURE_HEALTH_LEDGER path.",
       "expiry": "When telemetry replicas are deployed with a documented shared volume.",
       "owner": "deployment manifest owner",
@@ -297,8 +339,8 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-26T19:20:00Z",
-    "evidence_cut_semantics": "Owner evidence over task branch head 0b6ac76800514fd4a842cd34079f51e91622aabb cut from dev 5b8addf628c09f88ff8199080ab68429dbe7b531. It asserts implementation and owner acceptance only; independent reviewer approval is not claimed.",
+    "evidence_cut_at": "2026-07-26T19:41:00Z",
+    "evidence_cut_semantics": "Second owner cut over task branch head 2f723037e10c9d4a4f290f3e4729d187f4aea5d8, cut from dev 5b8addf628c09f88ff8199080ab68429dbe7b531, after Antigravity rejected the first cut for a real admission-to-durable-enqueue loss window. It asserts implementation and owner acceptance only; independent reviewer approval is not claimed.",
     "id": "OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001",
     "overall_admission": "pass_owner_evidence_ready",
     "owner": "Claude",
@@ -316,22 +358,27 @@
     "commands": [
       {
         "command": "/home/lupin/pantheon/.venv/bin/python -m pytest services/telemetry/test_infrastructure_health_ingest.py -q",
-        "conclusion": "29 strict-auth route and replica tests passed, covering valid ingest, missing token, permissive-mode refusal, static service token refusal, non-service role, wrong tenant, payload tenant mismatch, env tenant fallback refusal, wildcard tenant, wrong producer, unscoped producer, wildcard producer, binding-field spoof, nested binding spoof, unknown contract fields, runtime_health probe spoof, infrastructure event on the trading route, unchanged trading validation, duplicate replay, event_id conflict, restart replay, two-replica admission, four concurrent replica processes, reservation release, and both fail-closed deployment faults.",
+        "conclusion": "33 strict-auth route and replica tests passed, covering valid ingest, missing token, permissive-mode refusal, static service token refusal, non-service role, wrong tenant, payload tenant mismatch, env tenant fallback refusal, wildcard tenant, wrong producer, unscoped producer, wildcard producer, binding-field spoof, nested binding spoof, unknown contract fields, runtime_health probe spoof, infrastructure event on the trading route, unchanged trading validation, duplicate replay, event_id conflict, restart replay, two-replica admission, the concurrent loser that must retry instead of being told it succeeded, four concurrent replica processes where exactly one commits, SIGKILL of a real service instance inside the durable enqueue window followed by lease-expiry recovery, fenced commit and release after takeover, reservation release on a cancelled or failed enqueue, and both fail-closed deployment faults.",
         "result": "pass"
       },
       {
         "command": "/home/lupin/pantheon/.venv/bin/python -m pytest services/telemetry/test_infrastructure_health_ingest.py services/telemetry/test_main_routes.py services/telemetry/test_ingest_shock_absorption.py services/telemetry/test_tel001_rebaseline_schema.py services/telemetry/test_capture.py -q",
-        "conclusion": "162 tests and 15 subtests passed in 30.24s.",
+        "conclusion": "166 tests and 15 subtests passed.",
         "result": "pass"
       },
       {
         "command": "/home/lupin/pantheon/.venv/bin/python -m pytest services/telemetry -q",
-        "conclusion": "305 passed, 1 skipped, 15 subtests passed, and one failure in services/telemetry/test_lineage_write_path.py::TestLiveLineageWritePathFullStackHTTPRoute::test_ingest_then_consume_threshold_route_201_then_replay_200 that reproduces identically on the unmodified tree because it requires PANTHEON_RUNTIME_MANAGER_URL in the host environment. No frame of that failure touches this task's files.",
+        "conclusion": "309 passed, 1 skipped, 15 subtests passed, and one failure in services/telemetry/test_lineage_write_path.py::TestLiveLineageWritePathFullStackHTTPRoute::test_ingest_then_consume_threshold_route_201_then_replay_200 that reproduces identically on the unmodified tree because it requires PANTHEON_RUNTIME_MANAGER_URL in the host environment. No frame of that failure touches this task's files.",
         "result": "pass_with_nonblocking_baseline_residual"
       },
       {
-        "command": "Mutation controls: strict-mode pinning removed from _infrastructure_auth_env, ledger admit short-circuited, and the producer scope intersection replaced with a union, each re-running the new suite",
-        "conclusion": "Each mutation failed the intended tests \u2014 1, 6, and 2 respectively \u2014 and the suite returned to 29 passed after restoring the implementation, so the strict-auth, durability, and producer-scope assertions are load-bearing rather than incidentally green.",
+        "command": "Mutation controls over the strict-auth gates: strict-mode pinning removed from _infrastructure_auth_env, ledger admission short-circuited, and the producer scope intersection replaced with a union, each re-running the focused suite",
+        "conclusion": "Each mutation failed the intended tests \u2014 1, 6, and 2 respectively \u2014 and the suite returned to green after restoring the implementation, so the strict-auth, durability, and producer-scope assertions are load-bearing rather than incidentally green.",
+        "result": "pass"
+      },
+      {
+        "command": "Mutation controls over the two-phase reservation: a live reservation reported as committed (the exact reviewed loss condition), the commit token fencing check removed, reservations made non-expiring, and the release-on-cancellation path removed, each re-running the focused suite",
+        "conclusion": "Each mutation failed the intended tests \u2014 3, 1, 2, and 1 respectively. Reinstating the reviewed bug (answering a live reservation as committed) fails test_concurrent_admission_loser_is_not_told_it_succeeded, test_concurrent_replica_processes_admit_exactly_once, and test_crash_between_reservation_and_enqueue_is_recoverable, so the repair is proven by tests that fail without it.",
         "result": "pass"
       },
       {
@@ -356,12 +403,12 @@
       },
       {
         "command": "Bounded local nonprod readback over the running Flask service on 127.0.0.1 (see docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/current-runtime-readback.json)",
-        "conclusion": "Real HTTP requests against the started service produced 202 admission, 202 duplicate replay, 409 event_id conflict, 401 missing token, 403 wrong tenant, 403 wrong producer, 400 binding-field spoof, 400 for both the runtime_health probe spoof and an infrastructure event on the trading route, and a 202 duplicate replay after a real service restart with a single durable ledger record.",
+        "conclusion": "Real HTTP requests against the started service produced 202 admission, 202 duplicate replay, 409 event_id conflict, 401 missing token, 403 wrong tenant, 403 wrong producer, 400 binding-field spoof, 400 for both the runtime_health probe spoof and an infrastructure event on the trading route, and a 202 duplicate replay after a real service restart. A concurrent attempt arriving while the owner was inside its durable enqueue received 503 INFRA_ADMISSION_IN_FLIGHT rather than a false 202, and only became an idempotent 202 duplicate after the owner's receipt was committed. A reservation stranded as if by a crash was refused as in-flight while its lease was live, recovered to 202 accepted once the lease expired, and left no orphan reservation behind.",
         "result": "pass"
       }
     ],
-    "validated_at": "2026-07-26T19:20:00Z",
+    "validated_at": "2026-07-26T19:41:00Z",
     "validated_base_sha": "5b8addf628c09f88ff8199080ab68429dbe7b531",
-    "validated_head_sha": "0b6ac76800514fd4a842cd34079f51e91622aabb"
+    "validated_head_sha": "2f723037e10c9d4a4f290f3e4729d187f4aea5d8"
   }
 }

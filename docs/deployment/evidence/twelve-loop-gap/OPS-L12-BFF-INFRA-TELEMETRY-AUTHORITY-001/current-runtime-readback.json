@@ -1,17 +1,24 @@
 {
   "buffer_backend": "memory",
-  "environment": "bounded local nonprod telemetry on 127.0.0.1:18141",
+  "environment": "bounded local nonprod telemetry on 127.0.0.1:18149",
   "hosted_activation_claimed": false,
   "observations": {
     "binding_spoof_on_infra_route": {
       "code": "INFRA_BINDING_FIELD_FORBIDDEN",
       "http": 400
     },
+    "concurrent_attempt_during_reservation": {
+      "code": "INFRA_ADMISSION_IN_FLIGHT",
+      "http": 503
+    },
     "durable_ledger": {
-      "admitted_event_ids": [
-        "readback-infra-001"
+      "committed_event_ids": [
+        "readback-infra-001",
+        "readback-infra-crash-001",
+        "readback-infra-inflight-001"
       ],
-      "record_count": 1
+      "open_or_expired_reservation_event_ids": [],
+      "record_count": 7
     },
     "event_id_conflict": {
       "code": "INFRA_EVENT_ID_CONFLICT",
@@ -21,7 +28,8 @@
       "http": 200,
       "infrastructure_health_admitted": 0,
       "infrastructure_health_duplicates": 1,
-      "infrastructure_health_ledger_event_ids": 1,
+      "infrastructure_health_in_flight_rejections": 0,
+      "infrastructure_health_ledger_committed_ids": 3,
       "infrastructure_health_schema_loaded": 1,
       "overall_status": "ok"
     },
@@ -32,6 +40,14 @@
     "missing_token": {
       "code": "401",
       "http": 401
+    },
+    "replay_after_durable_receipt": {
+      "duplicate": true,
+      "http": 202
+    },
+    "reserved_attempt_completion": {
+      "duplicate": false,
+      "http": 202
     },
     "restart_replay": {
       "duplicate": true,
@@ -54,9 +70,14 @@
         "admitted": 0,
         "conflicts": 0,
         "duplicates": 1,
+        "fenced_rejections": 0,
+        "in_flight_rejections": 0,
         "ledger": {
-          "admitted_event_ids": 1,
-          "path": "/tmp/infra-health-readback-ac3pdm9v/infrastructure_health_admissions.jsonl"
+          "committed_event_ids": 3,
+          "lease_seconds": 2.0,
+          "open_reservations": 0,
+          "path": "/tmp/infra-health-readback-1e5c8qrx/infrastructure_health_admissions.jsonl",
+          "recoverable_expired_reservations": 0
         },
         "rejected": 0,
         "schema_loaded": true,
@@ -69,14 +90,30 @@
         "admitted": 1,
         "conflicts": 1,
         "duplicates": 1,
+        "fenced_rejections": 0,
+        "in_flight_rejections": 0,
         "ledger": {
-          "admitted_event_ids": 1,
-          "path": "/tmp/infra-health-readback-ac3pdm9v/infrastructure_health_admissions.jsonl"
+          "committed_event_ids": 1,
+          "lease_seconds": 2.0,
+          "open_reservations": 0,
+          "path": "/tmp/infra-health-readback-1e5c8qrx/infrastructure_health_admissions.jsonl",
+          "recoverable_expired_reservations": 0
         },
         "rejected": 2,
         "schema_loaded": true,
         "schema_version": "pantheon.infrastructure-health/1"
       }
+    },
+    "stranded_reservation_before_lease_expiry": {
+      "code": "INFRA_ADMISSION_IN_FLIGHT",
+      "http": 503,
+      "reservation_state": "reserved"
+    },
+    "stranded_reservation_recovered_after_lease": {
+      "committed": true,
+      "duplicate": false,
+      "fenced_owner_commit": "committed",
+      "http": 202
     },
     "valid_ingest": {
       "duplicate": false,
@@ -93,7 +130,7 @@
       "http": 403
     }
   },
-  "observed_at": "2026-07-26T19:16:32.005953Z",
+  "observed_at": "2026-07-26T19:39:08.935082Z",
   "runtime_manager_url": "http://127.0.0.1:1 (unreachable; binding lookups fail closed)",
   "task_id": "OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001"
 }
