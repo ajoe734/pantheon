@@ -2610,6 +2610,32 @@ def validate_loop_completion_claim(task: dict[str, Any]) -> None:
         )
 
 
+def validate_protected_closeout_transition(
+    task: dict[str, Any],
+    *,
+    transition: str,
+    consume: bool = False,
+    transition_actor: str = "",
+) -> dict[str, Any] | None:
+    """Delegate protected Human/Ops verdict checks to the loop guardrail."""
+
+    import loop_done_guardrail
+
+    try:
+        return loop_done_guardrail.validate_protected_closeout_transition(
+            task,
+            transition=transition,
+            consume=consume,
+            transition_actor=transition_actor,
+        )
+    except Exception as exc:
+        task_id = task.get("id", "?")
+        raise SystemExit(
+            f"Protected Human/Ops verdict rejected for {task_id} "
+            f"{transition} transition: {type(exc).__name__}: {exc}"
+        ) from exc
+
+
 def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str, Any]:
     settings = delivery_gate_settings()
     commit_rules = commit_convention_settings()
@@ -5501,10 +5527,16 @@ def command_restore_approved(state: dict[str, Any], args: list[str]) -> None:
             f"restore_approved requires review_notes_zh to be present as evidence of a prior approval. "
             f"Use the normal review lifecycle if the task has not been reviewed yet."
         )
+    verdict_ref = validate_protected_closeout_transition(
+        task,
+        transition="review_approved",
+    )
     timestamp = iso_now()
     task["status"] = "review_approved"
     task["last_update"] = timestamp
     task["next"] = message
+    if verdict_ref is not None:
+        task["protected_closeout_verdict"] = verdict_ref
     append_log(
         {
             "ts": timestamp,
@@ -5809,6 +5841,14 @@ def command_reconcile_merged_done(state: dict[str, Any], args: list[str]) -> Non
     delivery = validate_merged_done_evidence(task)
     timestamp = iso_now()
     delivery["recorded_at"] = timestamp
+    verdict_ref = validate_protected_closeout_transition(
+        task,
+        transition="done",
+        consume=True,
+        transition_actor=actor,
+    )
+    if verdict_ref is not None:
+        task["protected_closeout_verdict"] = verdict_ref
     task["status"] = "done"
     task["terminal_outcome"] = "completed"
     task["last_update"] = timestamp
@@ -5851,6 +5891,14 @@ def command_done(state: dict[str, Any], args: list[str]) -> None:
     timestamp = iso_now()
     delivery = collect_done_delivery_metadata(task, actor)
     delivery["recorded_at"] = timestamp
+    verdict_ref = validate_protected_closeout_transition(
+        task,
+        transition="done",
+        consume=True,
+        transition_actor=actor,
+    )
+    if verdict_ref is not None:
+        task["protected_closeout_verdict"] = verdict_ref
     task["status"] = "done"
     task["terminal_outcome"] = "completed"
     task["last_update"] = timestamp
@@ -5923,20 +5971,29 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
     if task.get("status") != "review":
         raise SystemExit(f"{task_id} must be in review before it can move to review_approved")
 
+    review_notes = parse_delimited_env("REVIEW_NOTES_ZH")
+    review_file = os.environ.get("REVIEW_FILE", "").strip()
+    transition_candidate = dict(task)
+    if review_notes:
+        transition_candidate["review_notes_zh"] = review_notes
+    if review_file:
+        transition_candidate["review_file"] = review_file
+    verdict_ref = validate_protected_closeout_transition(
+        transition_candidate,
+        transition="review_approved",
+    )
+
     timestamp = iso_now()
     task["status"] = "review_approved"
     task["last_update"] = timestamp
     task["next"] = message
     task.pop("waiting_for", None)
-
-    review_notes = parse_delimited_env("REVIEW_NOTES_ZH")
     if review_notes:
         task["review_notes_zh"] = review_notes
-
-    review_file = os.environ.get("REVIEW_FILE", "").strip()
     if review_file:
         task["review_file"] = review_file
-
+    if verdict_ref is not None:
+        task["protected_closeout_verdict"] = verdict_ref
     mark_blockers_resolved(state, task_id)
     mark_handoffs_done_for_actor(state, task_id, actor)
     ensure_review_finalize_handoff(
