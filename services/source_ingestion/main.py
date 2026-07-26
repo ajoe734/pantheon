@@ -1642,6 +1642,34 @@ def _provider_metadata_from_records(result: Any) -> dict[str, Any]:
     return metadata
 
 
+def _source_health_outcome(result: Any) -> dict[str, Any]:
+    """Project the scheduler's typed receipt truth onto SourceHealth."""
+
+    if result.run.status.value == "completed":
+        return {
+            "schema_version": "source_health_outcome.v1",
+            "classification": "success",
+            "category": "success",
+            "code": "completed",
+            "retryable": False,
+        }
+    typed_failure = dict(result.typed_failure) if isinstance(result.typed_failure, Mapping) else {}
+    category = str(typed_failure.get("category") or "unknown")
+    classification = {
+        "external_egress": "policy_denial",
+        "credential": "credential_unavailable",
+        "provider": "provider_failure",
+    }.get(category, "failure")
+    return {
+        "schema_version": "source_health_outcome.v1",
+        "classification": classification,
+        "category": category,
+        "code": str(typed_failure.get("code") or "source_ingest_failed"),
+        "error_type": str(typed_failure.get("error_type") or "UnknownSourceFailure"),
+        "retryable": bool(typed_failure.get("retryable", False)),
+    }
+
+
 def _source_timestamp_state_for_result(
     result: Any,
     *,
@@ -1769,6 +1797,7 @@ def _update_source_health_and_usage(
             **(dict(existing.metadata) if existing else {}),
             "last_ingest_run_id": result.run.ingest_run_id,
             "last_run_status": result.run.status.value,
+            "last_outcome": _source_health_outcome(result),
             "source_error": source_error,
             "failure_count": failure_count,
             "storage_refs": storage_refs,
@@ -2862,6 +2891,11 @@ def _run_scheduled_connectors(request: RunScheduledRequest | None = None) -> dic
     force_connector_ids.update(exclusive_connector_ids)
     if max_concurrency < 1:
         raise HTTPException(status_code=400, detail="max_concurrency must be >= 1")
+    if max_concurrency > SCHEDULER_MAX_CONCURRENCY:
+        raise HTTPException(
+            status_code=400,
+            detail=f"max_concurrency exceeds SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY={SCHEDULER_MAX_CONCURRENCY}",
+        )
     schedules = schedule_config_store.list_schedules()
     enqueued: list[dict[str, Any]] = []
     ran: list[dict[str, Any]] = []

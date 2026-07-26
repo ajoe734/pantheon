@@ -6,6 +6,7 @@ import importlib
 import os
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -182,6 +183,50 @@ def test_run_scheduled_force_reconciles_changed_connector_before_cadence(client)
     assert duplicate.json()["summary"]["total_skipped"] == 1
     assert forced.json()["summary"]["total_ran"] == 1
     assert forced.json()["summary"]["forced_connector_count"] == 1
+
+
+def test_two_scheduler_workers_create_one_run_and_one_source_record(client) -> None:
+    test_client, _, module = client
+    configured = _configure_with_records(test_client, connector_id="conn-two-workers")
+    assert configured.status_code == 201, configured.text
+    scheduled = test_client.put(
+        "/api/source-ingest/connectors/conn-two-workers/schedule",
+        json={"interval_seconds": 3600, "enabled": True},
+    )
+    assert scheduled.status_code == 200, scheduled.text
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        responses = list(
+            executor.map(
+                lambda _worker: test_client.post(
+                    "/api/source-ingest/run-scheduled",
+                    json={"max_concurrency": 1},
+                ),
+                range(2),
+            )
+        )
+
+    assert [response.status_code for response in responses] == [200, 200]
+    payloads = [response.json() for response in responses]
+    assert sum(payload["summary"]["total_ran"] for payload in payloads) == 1
+    assert sum(payload["summary"]["total_skipped"] for payload in payloads) == 1
+    assert len(module.store.list_runs()) == 1
+    assert len(module.store.list_frontier(status="done")) == 1
+    assert len(module.evidence_repository.list_source_records()) == 1
+    assert len(module.schedule_config_store.list_schedules()) == 1
+    assert module.connector_store.get_fetch_state("conn-two-workers")["attempts"] == 1
+
+
+def test_run_scheduled_rejects_concurrency_above_supervised_limit(client) -> None:
+    test_client, _, _ = client
+
+    response = test_client.post(
+        "/api/source-ingest/run-scheduled",
+        json={"max_concurrency": 2},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "max_concurrency exceeds SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY=1"
 
 
 def test_run_scheduled_exclusive_scope_never_enqueues_or_runs_unrelated_due_connector(client) -> None:
@@ -374,6 +419,92 @@ def test_blocked_host_records_typed_denial_without_outbound_request(client, monk
     assert receipt["typed_failure"]["code"] == "host_not_allowlisted"
     assert receipt["typed_failure"]["retryable"] is False
     assert outbound_called is False
+
+
+def test_provider_failure_matrix_is_isolated_and_projected_to_source_health(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    test_client, _, module = client
+    connector_ids = {
+        "success": "conn-00-success",
+        "policy": "conn-10-policy",
+        "credential": "conn-20-credential",
+        "provider": "conn-30-provider",
+    }
+    for classification in ("success", "credential", "provider"):
+        configured = _configure_with_records(test_client, connector_id=connector_ids[classification])
+        assert configured.status_code == 201, configured.text
+    configured_policy = test_client.post(
+        "/api/source-ingest/connectors",
+        json={
+            "connector": _connector(connector_id=connector_ids["policy"]),
+            "fetch": {
+                "mode": "external_feed",
+                "url": "https://blocked.example/source.json",
+                "allowed_url_prefixes": ["https://blocked.example/"],
+                "respect_robots_txt": False,
+                "max_records": 1,
+            },
+        },
+    )
+    assert configured_policy.status_code == 201, configured_policy.text
+    for connector_id in connector_ids.values():
+        scheduled = test_client.put(
+            f"/api/source-ingest/connectors/{connector_id}/schedule",
+            json={"interval_seconds": 60, "enabled": True},
+        )
+        assert scheduled.status_code == 200, scheduled.text
+
+    class CredentialUnavailableError(RuntimeError):
+        pass
+
+    class ProviderServiceFailure(RuntimeError):
+        pass
+
+    original_fetch = module.configured_fetcher.fetch_batch
+
+    def classified_fetch(connector_id, watermark, **kwargs):
+        if connector_id == connector_ids["credential"]:
+            raise CredentialUnavailableError("credential reference unavailable")
+        if connector_id == connector_ids["provider"]:
+            raise ProviderServiceFailure("provider unavailable")
+        return original_fetch(connector_id, watermark, **kwargs)
+
+    monkeypatch.setattr(module.configured_fetcher, "fetch_batch", classified_fetch)
+
+    payloads = [
+        test_client.post(
+            "/api/source-ingest/run-scheduled",
+            json={"max_concurrency": 1},
+        ).json()
+        for _ in connector_ids
+    ]
+
+    assert sum(payload["summary"]["total_ran"] for payload in payloads) == 1
+    assert sum(payload["summary"]["total_failed"] for payload in payloads) == 3
+    expected_outcomes = {
+        "success": ("success", "success", "completed"),
+        "policy": ("policy_denial", "external_egress", "host_not_allowlisted"),
+        "credential": ("credential_unavailable", "credential", "credential_unavailable"),
+        "provider": ("provider_failure", "provider", "provider_fetch_failed"),
+    }
+    for label, connector_id in connector_ids.items():
+        response = test_client.get(f"/api/source-ingest/health/{connector_id}")
+        assert response.status_code == 200, response.text
+        health = response.json()
+        outcome = health["metadata"]["last_outcome"]
+        classification, category, code = expected_outcomes[label]
+        assert outcome["classification"] == classification
+        assert outcome["category"] == category
+        assert outcome["code"] == code
+        if label == "success":
+            assert health["status"] == "ok"
+            assert health["last_success_at"]
+        else:
+            assert health["status"] == "failed"
+            assert health["last_failure_at"]
+    assert len(module.evidence_repository.list_source_records()) == 1
 
 
 def test_post_processing_failure_keeps_durable_typed_receipt_after_reload(
