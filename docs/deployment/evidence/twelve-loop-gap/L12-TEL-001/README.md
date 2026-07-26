@@ -1,6 +1,6 @@
 # L12-TEL-001 telemetry durability evidence
 
-Status: ready for independent `Codex` review.
+Status: owner evidence ready for independent `Codex` review.
 
 This packet proves the `Codex2` telemetry lane removes the
 202-before-durable-write loss window, preserves authoritative lifecycle
@@ -11,6 +11,37 @@ The implementation is deliberately limited to `services/telemetry`. Runtime
 producer credentials and Compose wiring remain owned by `L12-MANIFEST-001`;
 hosted deployment admission remains owned by `L12-HOSTED-001`. No live-capital
 authority was enabled.
+
+## Product evidence admission
+
+[`evidence.json`](evidence.json) is a schema-valid
+`ProductEvidenceManifest` for
+`schemas/product-evidence.schema.json`. Its exact repository-relative
+`task.review_file` is
+`docs/deployment/evidence/twelve-loop-gap/L12-TEL-001/evidence.json`, and
+`overall_admission=pass_owner_evidence_ready` means only that the owner proof
+is complete enough to enter independent review. It does not assert reviewer
+approval.
+
+The manifest records the two `Codex` changes-requested decisions and
+deliberately has no approved formal reviewer verdict. After a later governed
+approval, owner closeout must append the actual `Codex` verdict to
+`record_log`, change the admission to the approved state, refresh this README
+and the companion checksum, merge that task-scoped closeout update through a
+PR, and only then run `done`.
+
+Implementation delivery is already merged to `dev`:
+
+- PR [#4148](https://github.com/ajoe734/pantheon/pull/4148), merge
+  `809c286e456cea262b0b272b34c5e16c87792090`
+- PR [#4155](https://github.com/ajoe734/pantheon/pull/4155), merge
+  `4f905c5a563483ff15eee9221c47eb720b8cecce`
+- PR [#4170](https://github.com/ajoe734/pantheon/pull/4170), merge
+  `c762af14d56d141c59efc31b255c3814ef4378b3`
+
+Each PR's recorded `Branch CI Gate` run passed Commit trailers, Runtime mirror
+guard, and Smoke acceptance. The manifest binds the exact PR head, merge,
+timestamp, workflow run, and job conclusions.
 
 The resumed owner audit added a fail-closed hardening anchor
 (`644321d8a`): telemetry no longer inherits runtime-manager auth defaults,
@@ -124,3 +155,8 @@ The broader telemetry discovery run completed 266 tests with one skip and hit
 one unrelated baseline error in `test_lineage_write_path`: that legacy test
 constructs `RuntimeManagerClient()` without the now-required explicit
 `allow_local=True`. No L12-TEL-001 task code is present in its failing stack.
+
+The schema-remediation review cut additionally validates the manifest against
+`schemas/product-evidence.schema.json`, checks the exact task/reviewer/review
+path and all positive acceptance/security statuses, verifies both companion
+checksums, and runs `git diff --check`.
