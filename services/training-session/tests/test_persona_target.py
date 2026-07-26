@@ -13,6 +13,7 @@ SERVICE_DIR = Path(__file__).resolve().parents[1]
 NOW = datetime(2026, 7, 15, 14, 0, tzinfo=timezone.utc)
 AUTHORIZATION_TOKEN = "training-session-service-token"
 APPROVAL_DECISION_REF = "approval-decision://persona-alpha/session-alpha/generation-4"
+TENANT_ID = "tenant-alpha"
 
 
 def _load_module():
@@ -65,6 +66,7 @@ def _scenario(module, *, generation: int = 4):
     control_digest = module.canonical_digest(control_state)
     persona = {
         "persona_id": "persona-alpha",
+        "tenant_id": TENANT_ID,
         "status": "active",
         "generation": generation - 1,
         "authority_status": "authoritative",
@@ -76,6 +78,7 @@ def _scenario(module, *, generation: int = 4):
     proof = {
         "proof_ref": "trainer-eval-proof:session-alpha:eval-4",
         "status": "passed",
+        "tenant_id": TENANT_ID,
         "dataset_digest": "sha256:" + "d" * 64,
         "candidate_binding": candidate,
         "candidate_digest": candidate_digest,
@@ -86,6 +89,7 @@ def _scenario(module, *, generation: int = 4):
         },
         "target_precondition": {
             "persona_id": "persona-alpha",
+            "tenant_id": TENANT_ID,
             "expected_previous_generation": generation - 1,
             "target_generation": generation,
             "precondition_digest": precondition_digest,
@@ -101,6 +105,7 @@ def _scenario(module, *, generation: int = 4):
         "decision_state": "decided",
         "decision": "approved",
         "persona_id": "persona-alpha",
+        "tenant_id": TENANT_ID,
         "session_id": "session-alpha",
         "candidate_digest": candidate_digest,
         "proof_digest": proof_digest,
@@ -114,6 +119,7 @@ def _scenario(module, *, generation: int = 4):
     approval_digest = module.canonical_digest(approval)
     binding = {
         "persona_id": "persona-alpha",
+        "tenant_id": TENANT_ID,
         "session_id": "session-alpha",
         "candidate_digest": candidate_digest,
         "control_digest": control_digest,
@@ -130,6 +136,7 @@ def _scenario(module, *, generation: int = 4):
     }
     inputs = {
         "persona_id": "persona-alpha",
+        "tenant_id": TENANT_ID,
         "session_id": "session-alpha",
         "candidate": candidate,
         "control_state": control_state,
@@ -174,6 +181,7 @@ def test_commit_persona_target_reads_authorities_writes_and_verifies_terminal() 
         call["headers"]["Authorization"] == f"Bearer {AUTHORIZATION_TOKEN}"
         for call in transport.calls
     )
+    assert all(call["headers"]["X-Tenant-Id"] == TENANT_ID for call in transport.calls)
     write = transport.calls[2]
     assert write["headers"]["Idempotency-Key"] == inputs["idempotency_key"]
     assert write["json_body"]["candidate_digest"] == receipt["candidate_digest"]
@@ -192,6 +200,7 @@ def test_read_persona_target_precondition_is_authenticated_and_read_only() -> No
 
     precondition = module.read_persona_target_precondition(
         persona_id=inputs["persona_id"],
+        tenant_id=inputs["tenant_id"],
         persona_readback_url=inputs["persona_readback_url"],
         authorization_token=AUTHORIZATION_TOKEN,
         trusted_now=NOW,
@@ -200,6 +209,7 @@ def test_read_persona_target_precondition_is_authenticated_and_read_only() -> No
 
     assert precondition == {
         "persona_id": "persona-alpha",
+        "tenant_id": TENANT_ID,
         "status": "active",
         "current_generation": 3,
         "expected_previous_generation": 3,
@@ -233,6 +243,7 @@ def test_public_authority_calls_reject_missing_or_unsafe_bearer_token(token: str
     with pytest.raises(module.PersonaTargetError):
         module.read_persona_target_precondition(
             persona_id=inputs["persona_id"],
+            tenant_id=inputs["tenant_id"],
             persona_readback_url=inputs["persona_readback_url"],
             authorization_token=token,
             trusted_now=NOW,
@@ -307,6 +318,7 @@ def test_recorded_at_allows_configured_skew_but_rejects_later_future() -> None:
 
     receipt = module.read_persona_target_precondition(
         persona_id=inputs["persona_id"],
+        tenant_id=inputs["tenant_id"],
         persona_readback_url=inputs["persona_readback_url"],
         authorization_token=AUTHORIZATION_TOKEN,
         trusted_now=NOW,
@@ -320,6 +332,7 @@ def test_recorded_at_allows_configured_skew_but_rejects_later_future() -> None:
     with pytest.raises(module.PersonaTargetError, match="recorded_at is in the future"):
         module.read_persona_target_precondition(
             persona_id=inputs["persona_id"],
+            tenant_id=inputs["tenant_id"],
             persona_readback_url=inputs["persona_readback_url"],
             authorization_token=AUTHORIZATION_TOKEN,
             trusted_now=NOW,
@@ -337,6 +350,7 @@ def test_naive_recorded_at_fails_closed() -> None:
     with pytest.raises(module.PersonaTargetError, match="must include a timezone"):
         module.read_persona_target_precondition(
             persona_id=inputs["persona_id"],
+            tenant_id=inputs["tenant_id"],
             persona_readback_url=inputs["persona_readback_url"],
             authorization_token=AUTHORIZATION_TOKEN,
             trusted_now=NOW,
