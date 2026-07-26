@@ -1,6 +1,7 @@
 # L12-TEACH-001 Persona Teaching evidence
 
-Status: ready for independent `Codex` review.
+Status: reviewer-requested hardening is ready for independent `Codex`
+re-review.
 
 This packet proves the reconciled service boundary delivered by
 `L12-TEACH-001`: authenticated service/tenant teaching requests, tenant-bound
@@ -8,10 +9,12 @@ session and event contracts, authoritative Postgres state, cross-worker replay
 serialization, fail-closed persona mutation, and functional readiness based on
 real evaluation/commit outcomes.
 
-It does not claim that this unmerged task branch is already hosted. Runtime
-manifest activation belongs to `L12-MANIFEST-001`; the service-boundary and
-hosted drills belong to `L12-VERIFY-LEARN-001` and `L12-HOSTED-001`. No seed
-fixture or local mock is presented as hosted proof.
+PR #4149 delivered the original boundary to `dev`. This follow-up addresses
+all three findings from the reviewer's independent post-merge probes. It does
+not claim that this follow-up branch is already hosted. Runtime manifest
+activation belongs to `L12-MANIFEST-001`; the service-boundary and hosted
+drills belong to `L12-VERIFY-LEARN-001` and `L12-HOSTED-001`. No seed fixture
+or local mock is presented as hosted proof.
 
 ## Source identity
 
@@ -23,6 +26,10 @@ fixture or local mock is presented as hosted proof.
   `5a942db461633dbd755fdf0578c42ad519c516b2`
 - Authority/tenant/health anchor:
   `184b5a54d7816e40841a1c52fd2c970d6c0ade36`
+- Reviewer-hardening anchor:
+  `cc8592176e62907794e3a8943c13d0bd74524bc6`
+- Original merged delivery: PR #4149, merge commit
+  `6636507f274ffcaf4b6d42b1c3cb8adb09dd49f5`
 
 ## Acceptance evidence
 
@@ -31,24 +38,37 @@ fixture or local mock is presented as hosted proof.
 `inbound_authority.py` requires a verified bearer identity, the
 `training-service` role, an allowlisted `X-Pantheon-Service` that matches the
 verified service claim, and an `X-Tenant-Id` within verified tenant claims.
-Commit/discard requires MFA before route execution. Body actor fields cannot
-override the verified delegated actor.
+JWTs that omit role claims are no longer promoted to `training-service`; both
+missing and wrong-role JWTs fail with `403 AUTH_FORBIDDEN`. Commit/discard
+requires MFA asserted by the verified JWT/IdP claim before route execution.
+A caller-supplied six-digit `X-MFA-Token` without claim-bound proof fails with
+`401 MFA_NOT_VERIFIED`. Body actor fields cannot override the verified
+delegated actor.
 
 The negative matrix proves missing bearer, missing tenant, mismatched service,
-cross-tenant read, actor spoof, missing MFA, and malformed MFA rejection.
+cross-tenant read, actor spoof, missing role, wrong role, missing MFA,
+malformed MFA, and well-formed-but-unverified MFA rejection on both commit and
+discard.
 
 ### Authoritative HA state and restart
 
 Postgres mode stores sessions, controls, previews, preview jobs, replays, and
 functional results in `training_session.authority_records`; teaching events
 remain in `training_session.teaching_events`. Preview-job and replay mutations
-use transaction-scoped Postgres advisory locks.
+use transaction-scoped Postgres advisory locks. Session event append now takes
+the session-scoped advisory lock and performs event conflict readback plus
+session mutation in the same transaction. An identical duplicate returns the
+durable prior event; a duplicate `event_id` with a different payload raises a
+conflict without replacing the durable row.
 
-The real-Postgres test used two independent store instances against isolated
-random tables in the existing local dev Postgres. Both workers observed a
-terminal committed replay, the persona-target callback ran exactly once, and a
-third newly constructed store instance read the same terminal controller
-record. The test dropped only its two random tables in `finally`.
+The real-Postgres tests used two independent store instances against isolated
+random tables in the existing local dev Postgres. The replay workers both
+observed a terminal committed replay, the persona-target callback ran exactly
+once, and a newly constructed store read the same terminal controller record.
+The append workers concurrently produced durable sequence numbers `1` and `2`
+without a lost session update. The same test proved identical duplicate
+readback and mismatched duplicate rejection while retaining exactly one prior
+row. Each test dropped only its random tables in `finally`.
 
 ### Evaluation failure and functional health
 
@@ -71,33 +91,31 @@ target binding, and every authority request carries `X-Tenant-Id`.
 approval, changed preconditions, timeouts, idempotent duplicate commit, and
 terminal digest/readback mismatch.
 
-Hosted terminal readback is deliberately `not_claimed` here because the task
-branch is not yet merged or activated. The downstream manifest and hosted
-verification tasks must cite an exact deployed commit and real owner-service
-terminal record before raising maturity to proven-live.
+Hosted terminal readback is deliberately `not_claimed` for this follow-up
+because the reviewer-hardening branch is not yet merged or activated. The
+downstream manifest and hosted verification tasks must cite an exact deployed
+commit and real owner-service terminal record before raising maturity to
+proven-live.
 
 ## Validation
 
 ```text
+TRAINING_SESSION_TEST_POSTGRES_DSN=<local-dev-dsn> \
 PYTHONPATH=services/training-session/tests:services/training-session:. \
   /home/lupin/pantheon/.venv/bin/python -m pytest -q -p no:cacheprovider \
   services/training-session
-123 passed, 1 skipped, 1 warning in 45.04s
-
-TRAINING_SESSION_TEST_POSTGRES_DSN=<local-dev-dsn> PYTHONPATH=. \
-  /home/lupin/pantheon/.venv/bin/python -m pytest -q -p no:cacheprovider \
-  services/training-session/tests/test_postgres_event_store.py::test_real_postgres_two_workers_and_restart_observe_one_terminal_commit
-1 passed in 0.94s
+129 passed, 1 warning in 29.71s
 
 PYTHONPATH=. /home/lupin/pantheon/.venv/bin/python -m py_compile \
   services/training-session/inbound_authority.py \
   services/training-session/main.py \
-  services/training-session/models.py \
-  services/training-session/persona_target.py \
-  services/training-session/preview_eval_worker.py \
-  services/training-session/store.py
+  services/training-session/store.py \
+  services/training-session/tests/test_inbound_authority.py \
+  services/training-session/tests/test_postgres_event_store.py
+exit 0
+
+git diff --check
 exit 0
 ```
 
-The single skipped test in the full suite is the same opt-in real-Postgres
-test; it passed separately with the local dev DSN.
+The full suite ran both opt-in real-Postgres tests; no test was skipped.
