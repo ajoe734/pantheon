@@ -24,7 +24,7 @@
     "phase": "Twelve Loop Remediation / Fleet Bootstrap",
     "product_level_required": true,
     "repository": "ajoe734/pantheon",
-    "review_file": "/tmp/pantheon-worker-worktrees/pantheon/l12-fleet-001/docs/deployment/evidence/twelve-loop-gap/L12-FLEET-001/closeout/evidence.json",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-001/closeout/evidence.json",
     "reviewer": "Codex2",
     "target_environment": "dev",
     "target_maturity": "reconciled",
