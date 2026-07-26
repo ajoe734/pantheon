@@ -326,7 +326,13 @@ def api_stack():
     sys.modules.pop("services.deployment.service", None)
     deployment_service = importlib.import_module("services.deployment.service")
     deployment_service = importlib.reload(deployment_service)
-    deployment_client = TestClient(deployment_service.app)
+    deployment_client = TestClient(
+        deployment_service.app,
+        headers={
+            "Authorization": "Bearer promote-pipeline:operator,service",
+            "X-Tenant-Id": "tenant-evoloop-006",
+        },
+    )
     decision = {
         "decision_id": "approval-evoloop-006-integration",
         "target_type": "registry_entry",
@@ -335,6 +341,7 @@ def api_stack():
         "decision_state": "decided",
         "decision": "approved",
         "risk_level": "low",
+        "tenant_id": "tenant-evoloop-006",
         "capital_pool_id": old_binding["capital_pool_id"],
         "persona_id": "persona-tw-equity",
     }
@@ -375,6 +382,7 @@ def _request(stack: Mapping[str, Any], *, plan_id: str) -> PromoteRequest:
         expected_runtime_id=stack["old_binding"]["runtime_id"],
         source_task_id="EVOLOOP-006",
         created_by="Codex2",
+        tenant_id="tenant-evoloop-006",
     )
 
 
@@ -468,6 +476,7 @@ def test_promote_and_rollback_through_real_service_apis(api_stack):
         expected_runtime_id=restored["runtime_id"],
         source_task_id="EVOLOOP-006",
         created_by="Codex2",
+        tenant_id="tenant-evoloop-006",
     )
     final_receipt = pipeline.promote(final_request)
     assert final_receipt["status"] == "promoted"

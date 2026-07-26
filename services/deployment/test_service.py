@@ -15,6 +15,11 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+_AUTH_HEADERS = {
+    "Authorization": "Bearer deployment-test:operator,service",
+    "X-Tenant-Id": "tenant-deployment-test",
+}
+
 
 def _seed_approval_store(path: Path) -> None:
     payload = {
@@ -26,6 +31,7 @@ def _seed_approval_store(path: Path) -> None:
             "decision": "approved",
             "capital_pool_id": "pool-001",
             "persona_id": "persona-ops",
+            "tenant_id": "tenant-deployment-test",
         }
     }
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -150,19 +156,23 @@ def client():
         "PANTHEON_DEPLOYMENT_REGISTRY_SNAPSHOT_PATH": os.environ.get(
             "PANTHEON_DEPLOYMENT_REGISTRY_SNAPSHOT_PATH"
         ),
+        "PANTHEON_DEPLOYMENT_OUTBOX_LEASE_REQUIRED": os.environ.get(
+            "PANTHEON_DEPLOYMENT_OUTBOX_LEASE_REQUIRED"
+        ),
     }
     os.environ["CAPITAL_DATA_DIR"] = str(governance_dir)
     os.environ["DEPLOYMENT_DATA_DIR"] = str(governance_dir)
     os.environ["PANTHEON_GOVERNANCE_DATA_DIR"] = str(governance_dir)
     os.environ["PANTHEON_RUNTIME_BINDING_STORE_PATH"] = str(runtime_binding_store)
     os.environ["PANTHEON_DEPLOYMENT_REGISTRY_SNAPSHOT_PATH"] = str(registry_snapshot)
+    os.environ["PANTHEON_DEPLOYMENT_OUTBOX_LEASE_REQUIRED"] = "false"
 
     sys.modules.pop("services.deployment.service", None)
     module = importlib.import_module("services.deployment.service")
     module = importlib.reload(module)
 
     try:
-        yield TestClient(module.app), governance_dir
+        yield TestClient(module.app, headers=_AUTH_HEADERS), governance_dir
     finally:
         for key, value in env_backup.items():
             if value is None:
