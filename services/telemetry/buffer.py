@@ -16,6 +16,7 @@ are buffer-agnostic — they work against the DurableBuffer protocol.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 from abc import ABC, abstractmethod
@@ -23,6 +24,24 @@ from collections import defaultdict, deque
 from typing import Any, Optional
 
 log = logging.getLogger(__name__)
+
+
+def _durable_receipt_id(event: dict[str, Any]) -> str:
+    """Return a tenant- and content-bound broker idempotency key.
+
+    ``event_id`` remains the canonical Postgres idempotency key. The broker
+    receipt additionally binds the complete immutable payload so a conflicting
+    retry after an ingest-process restart is retained for canonical conflict
+    handling instead of being silently suppressed by JetStream deduplication.
+    """
+
+    payload = json.dumps(
+        event,
+        separators=(",", ":"),
+        sort_keys=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    return f"sha256:{hashlib.sha256(payload).hexdigest()}"
 
 
 # ---------------------------------------------------------------------------
@@ -364,8 +383,8 @@ class RedisStreamBuffer(DurableBuffer):
         try:
             if self._released:
                 msg_id, event = self._released.popleft()
-                event_id = str(event.get("event_id") or "")
-                self._pending[event_id].append((msg_id, event))
+                receipt_id = _durable_receipt_id(event)
+                self._pending[receipt_id].append((msg_id, event))
                 return event
 
             client = await self._ensure_client()
@@ -386,8 +405,8 @@ class RedisStreamBuffer(DurableBuffer):
                     self._last_id = msg_id
                     self._total_dequeued += 1
                     event = json.loads(fields.get("message_data", "{}"))
-                    event_id = str(event.get("event_id") or "")
-                    self._pending[event_id].append((msg_id, event))
+                    receipt_id = _durable_receipt_id(event)
+                    self._pending[receipt_id].append((msg_id, event))
                     return event
             return None
         except Exception as e:
@@ -398,26 +417,26 @@ class RedisStreamBuffer(DurableBuffer):
         client = await self._ensure_client()
         message_ids: list[str] = []
         for event in events:
-            event_id = str(event.get("event_id") or "")
-            pending = self._pending.get(event_id)
+            receipt_id = _durable_receipt_id(event)
+            pending = self._pending.get(receipt_id)
             if pending:
                 msg_id, _ = pending.popleft()
                 message_ids.append(msg_id)
                 if not pending:
-                    self._pending.pop(event_id, None)
+                    self._pending.pop(receipt_id, None)
         if message_ids:
             await client.xdel(self._stream_name, *message_ids)
 
     async def release(self, events: list[dict[str, Any]]) -> bool:
         for event in events:
-            event_id = str(event.get("event_id") or "")
-            pending = self._pending.get(event_id)
+            receipt_id = _durable_receipt_id(event)
+            pending = self._pending.get(receipt_id)
             if not pending:
                 continue
             item = pending.popleft()
             self._released.append(item)
             if not pending:
-                self._pending.pop(event_id, None)
+                self._pending.pop(receipt_id, None)
         return True
 
     def is_durable(self) -> bool:
@@ -467,8 +486,8 @@ class RedisStreamBuffer(DurableBuffer):
                         self._last_id = msg_id
                         self._total_dequeued += 1
                         event = json.loads(fields.get("message_data", "{}"))
-                        event_id = str(event.get("event_id") or "")
-                        self._pending[event_id].append((msg_id, event))
+                        receipt_id = _durable_receipt_id(event)
+                        self._pending[receipt_id].append((msg_id, event))
                         events.append(event)
         except Exception as e:
             log.error(f"RedisStreamBuffer.drain error: {e}")
@@ -632,6 +651,7 @@ class NatsJetStreamBuffer(DurableBuffer):
                 sort_keys=True,
                 allow_nan=False,
             ).encode("utf-8")
+            receipt_id = f"sha256:{hashlib.sha256(payload).hexdigest()}"
             publish_timeout = max(float(timeout), 0.001) if timeout is not None else 5.0
             await self._js.publish(
                 self._subject,
@@ -639,7 +659,7 @@ class NatsJetStreamBuffer(DurableBuffer):
                 timeout=publish_timeout,
                 stream=self._stream_name,
                 headers={
-                    "Nats-Msg-Id": event_id,
+                    "Nats-Msg-Id": receipt_id,
                     "Pantheon-Tenant-Id": tenant_id,
                 },
             )
@@ -678,34 +698,35 @@ class NatsJetStreamBuffer(DurableBuffer):
             self._total_rejected += 1
             self._estimated_depth = max(0, self._estimated_depth - 1)
             return None
-        self._pending[event_id].append(message)
+        receipt_id = _durable_receipt_id(event)
+        self._pending[receipt_id].append(message)
         self._total_dequeued += 1
         return event
 
     async def ack(self, events: list[dict[str, Any]]) -> None:
         for event in events:
-            event_id = str(event.get("event_id") or "").strip()
-            pending = self._pending.get(event_id)
+            receipt_id = _durable_receipt_id(event)
+            pending = self._pending.get(receipt_id)
             if not pending:
                 continue
             message = pending[0]
             await message.ack_sync(timeout=5.0)
             pending.popleft()
             if not pending:
-                self._pending.pop(event_id, None)
+                self._pending.pop(receipt_id, None)
             self._total_acked += 1
             self._estimated_depth = max(0, self._estimated_depth - 1)
 
     async def release(self, events: list[dict[str, Any]]) -> bool:
         for event in events:
-            event_id = str(event.get("event_id") or "").strip()
-            pending = self._pending.get(event_id)
+            receipt_id = _durable_receipt_id(event)
+            pending = self._pending.get(receipt_id)
             if not pending:
                 continue
             message = pending.popleft()
             await message.nak(delay=0.1)
             if not pending:
-                self._pending.pop(event_id, None)
+                self._pending.pop(receipt_id, None)
             self._total_released += 1
         return True
 

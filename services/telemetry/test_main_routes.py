@@ -25,6 +25,7 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 import services.telemetry.main as _main
+from services.runtime_auth_inbound import encode_jwt_hs256
 from services.telemetry.ingest_svc import TelemetryIngestService
 from services.telemetry.heartbeat_service import build_telemetry_event_from_runtime_heartbeat
 from services.telemetry.lineage_read import LineageReadService
@@ -355,6 +356,38 @@ class TestMainRoutes(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 401)
 
+    def test_strict_jwt_without_explicit_role_is_forbidden(self):
+        secret = "telemetry-strict-test-secret"
+        token = encode_jwt_hs256(
+            {
+                "sub": "roleless-telemetry-caller",
+                "allowed_tenants": [_TENANT_ID],
+            },
+            secret=secret,
+        )
+        with patch.dict(
+            os.environ,
+            {
+                "PANTHEON_TELEMETRY_AUTH_MODE": "strict",
+                "PANTHEON_TELEMETRY_JWT_SECRET": secret,
+                # An unrelated runtime-manager default must not grant
+                # telemetry authority to a roleless JWT.
+                "PANTHEON_RUNTIME_DEFAULT_ROLE": "admin",
+            },
+            clear=True,
+        ):
+            resp = self.raw_client.post(
+                "/api/telemetry/ingest",
+                json=_make_event(event_id="route-roleless-jwt-001"),
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "X-Tenant-Id": _TENANT_ID,
+                },
+            )
+
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(resp.get_json()["error"]["code"], "AUTH_FORBIDDEN")
+
     def test_ingest_rejects_cross_tenant_header_and_payload(self):
         forbidden_scope = self.client.post(
             "/api/telemetry/ingest",
@@ -413,6 +446,30 @@ class TestMainRoutes(unittest.TestCase):
         self.assertEqual(
             forbidden.get_json()["error"]["code"],
             "TENANT_FORBIDDEN",
+        )
+
+    def test_service_token_without_dedicated_tenant_scope_is_forbidden(self):
+        with patch.dict(
+            os.environ,
+            {
+                "PANTHEON_TELEMETRY_SERVICE_TOKEN": "telemetry-service-secret",
+                "PANTHEON_TELEMETRY_ALLOWED_TENANTS": _TENANT_ID,
+            },
+            clear=True,
+        ):
+            resp = self.raw_client.post(
+                "/api/telemetry/ingest",
+                json=_make_event(event_id="route-unscoped-service-token-001"),
+                headers={
+                    "Authorization": "Bearer telemetry-service-secret",
+                    "X-Tenant-Id": _TENANT_ID,
+                },
+            )
+
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(
+            resp.get_json()["error"]["code"],
+            "TENANT_SCOPE_UNCONFIGURED",
         )
 
     def test_exact_event_read_is_tenant_scoped(self):
