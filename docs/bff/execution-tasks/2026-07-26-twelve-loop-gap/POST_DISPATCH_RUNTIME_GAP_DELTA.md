@@ -631,16 +631,22 @@ commit sha 無法在 commit 之前得知，因此把交付 bytes 綁在 commit s
 4. `.orchestrator/task-briefs/ops_l12_runtime_gap_delta_001.md` **刻意排除**於綁定之外：
    它由 supervisor 於每次派工重新產生，納入綁定會產生與交付無關的失效。
 
-驗證器 `scripts/validate_twelve_loop_gap_evidence.py` 對這份 evidence 執行四條
+驗證器 `scripts/validate_twelve_loop_gap_evidence.py` 對這份 evidence 執行五條
 **fail-closed 拒絕規則**，並由 `scripts/test_validate_twelve_loop_gap_evidence.py`
 以迴歸測試逐條覆蓋：
 
 | 規則 | 拒絕條件 | 對應的 v4.0.0 缺陷 |
 | :--- | :--- | :--- |
-| `future_timestamp` | `task.evidence_cut_at`、`validation.validated_at`、`hosted_readback.pre_deploy.observed_at` 或任一 `record_log[].recorded_at` 晚於檢查時點 | §7.2 第 3 項 |
+| `future_timestamp` | `task.evidence_cut_at`、`validation.validated_at`、`hosted_readback.pre_deploy.observed_at`、任一 `record_log[].recorded_at` 或任一 `required_checks[].completed_at` 晚於檢查時點 | §7.2 第 3 項 |
 | `head_binding` | `validated_head_sha` 為裸 40-hex commit sha，或 `content-digest` 摘要與重算結果不符，或被綁定檔案的 sha256 與 `source_artifact_sha256_by_epoch` 不符 | §7.2 第 4 項 |
 | `record_log_ordering` | `record_log` 的 `sequence` 非嚴格遞增，或 `recorded_at` 相對前一筆倒退 | §7.2 第 3 項的一般化 |
 | `checks_bound_to_commits` | `implementation_delivery.required_checks[].head_sha` 未出現在 `anchor_commits[].sha` | §7.2 第 4 項的一般化 |
+| `companion_checksum` | `evidence.json` 的實際 sha256 與 `evidence.sha256` 記載不符，或 companion 檔案缺少該筆記錄 | 封存 §7.3 第 3 點的那一環 |
+
+驗證器只讀不寫：它不修改工作樹，也不觸碰任何 status plane。以 `--now` 指定檢查時點，
+即可對已提交的舊 evidence 重放稽核；對 `0bb6d7f` 的 v4 bytes 以
+`--now 2026-07-26T21:49:00Z` 重放，會精確重現 `Human/Ops` 當時的三筆拒絕
+（兩筆 `future_timestamp`、一筆 `head_binding`）並以 exit 1 結束。
 
 ---
 

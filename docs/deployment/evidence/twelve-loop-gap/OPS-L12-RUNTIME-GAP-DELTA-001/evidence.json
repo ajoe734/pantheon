@@ -16,7 +16,7 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-26T22:21:23Z",
+    "evidence_cut_at": "2026-07-26T22:26:48Z",
     "evidence_cut_semantics": "Owner evidence cut v5.0.0. Supersedes v1.0.0 (merged by PR #4200), the unreviewed v2.0.0/v3.0.0 recuts, and v4.0.0 (commits 5c39428dda1d3c1e42fa926aa5f320467e1b8324 and 0bb6d7ffbef956a57f3a3b300056f77088837f2a on PR #4221). The Human/Ops audit at 2026-07-26T21:49Z rejected v4.0.0 on four counts: canonical facts read from the expired journal seq 1952 snapshot; L12-CAP-001 recorded as Antigravity/Claude/blocked when the canonical row is Codex/Claude/in_progress; a record_log entry asserting recorded_at 2026-07-26T22:00:00Z, which had not happened yet; and validation.validated_head_sha naming 5c39428 while the delivered bytes had moved to 0bb6d7f. This cut re-derives every canonical fact from journal seq 2014, replaces every record_log timestamp with a value checkable against a git commit time or a GitHub check run completed_at, and replaces the commit-sha head binding with a non-circular content digest over artifacts finalized before this manifest was written. The task branch was merged forward onto dev tip 6578ef968f7e0374b046de0afb5b07ce2f81558e so PR #4221 is not BEHIND; auto-merge remains disabled by Human/Ops and is not re-enabled here.",
     "id": "OPS-L12-RUNTIME-GAP-DELTA-001",
     "overall_admission": "in_progress",
@@ -105,9 +105,15 @@
       },
       {
         "delivery_state": "v5_anchor_delta_document_and_evidence_validator",
-        "note": "Carries the three artifacts bound by integrity.source_artifact_sha256_by_epoch. Committed before this manifest so the content digest is computable without circularity.",
+        "note": "First commit of the v5 delta document and the evidence validator pair. The delta document was corrected again in c5cc564ceb33279f3a5255dcede44a09dc44a0e0; the bound digest tracks the final bytes, not this commit.",
         "sha": "20f68b219e4912b447fddb0ba69ac0a538b7789e",
         "subject": "OPS-L12-RUNTIME-GAP-DELTA-001: anchor v5 facts and evidence guard"
+      },
+      {
+        "delivery_state": "superseded_v5_first_evidence_cut",
+        "note": "Its delta document understated the validator as four rejection rules when the validator ships five, so the document and this manifest were recut together. The content digest recorded here tracks the corrected bytes.",
+        "sha": "c5cc564ceb33279f3a5255dcede44a09dc44a0e0",
+        "subject": "OPS-L12-RUNTIME-GAP-DELTA-001: recut v5 evidence with digest binding"
       },
       {
         "delivery_state": "v5_dev_refresh_merge",
@@ -231,9 +237,9 @@
         "result": "pass"
       }
     ],
-    "validated_at": "2026-07-26T22:21:23Z",
+    "validated_at": "2026-07-26T22:26:48Z",
     "validated_base_sha": "6578ef968f7e0374b046de0afb5b07ce2f81558e",
-    "validated_head_sha": "content-digest:sha256:313fb8b59af0381cd344bede419c3cfc4935eaf0ca099ed1f5d43083953deda0"
+    "validated_head_sha": "content-digest:sha256:636d898159e987416a2a43cc509f04a7c650367eb970bff04708aa236bff572a"
   },
   "deployment": {
     "applicable": false,
@@ -256,7 +262,7 @@
     "pre_deploy": {
       "environment": "dev integration",
       "hosted_activation_claimed": false,
-      "observed_at": "2026-07-26T22:21:23Z",
+      "observed_at": "2026-07-26T22:26:48Z",
       "status": "pass",
       "terminal_readback": "Served frontend commit 6a8d2d9b4f725056735eefd7165ef47b52cda53d and BFF runtime commit be956c07aca889043ef301389412b6744452f20b, pair c05fc6b0abea92ceb1805cde8c2f3f4d7bcfab12fb77ac45be0a4241ea5874cf, deploymentState accepted with acceptedAt 2026-07-26T07:23:44Z from execute-plans deploy run 30192435033. This is the PPL-ALLOC-009 hosted acceptance identity. Twelve-loop hosted proof remains 0 of 12: the loop catalog registry reports controller_contract.status not_implemented for 12 of 12 loops and evidence_profile.proven_live_evidence present for 0 of 12."
     }
@@ -476,7 +482,7 @@
     "self_hash_omitted": true,
     "self_hash_reason": "Companion checksum file records the manifest digest; the manifest cannot contain its own hash. This is why validated_head_sha binds artifacts finalized before the manifest rather than the manifest or its commit.",
     "source_artifact_sha256_by_epoch": {
-      "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/POST_DISPATCH_RUNTIME_GAP_DELTA.md@v5.0.0": "a3cc1ea07640c88da26d9c483e53ae951ff1f40730b7ac5f60813fcc893670d5",
+      "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/POST_DISPATCH_RUNTIME_GAP_DELTA.md@v5.0.0": "6d919c5da0ffb5e5dd2b3016732f972b17532e4143404ed43991c7c6c57ed9de",
       "scripts/validate_twelve_loop_gap_evidence.py@v5.0.0": "bcb5995dd213c8f2fb39a5f732dd3c5ec902e71775125ce0988a8a343b603348",
       "scripts/test_validate_twelve_loop_gap_evidence.py@v5.0.0": "9bcee795edba0fe28f7c230dedd04babda1726e813978a863e8daa058a1c0d84"
     }
@@ -601,10 +607,19 @@
     },
     {
       "actor": "Claude",
-      "kind": "owner_evidence_recut_v5",
-      "recorded_at": "2026-07-26T22:21:23Z",
-      "reference": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-RUNTIME-GAP-DELTA-001/evidence.json; head bound as content-digest:sha256:313fb8b59af0381cd344bede419c3cfc4935eaf0ca099ed1f5d43083953deda0 rather than a commit sha",
+      "kind": "owner_evidence_recut_v5_superseded_by_document_correction",
+      "recorded_at": "2026-07-26T22:25:34Z",
+      "reference": "git committer date of c5cc564ceb33279f3a5255dcede44a09dc44a0e0; its delta document said the validator has four rejection rules while scripts/validate_twelve_loop_gap_evidence.py ships five, so document and manifest were recut together",
       "sequence": 14,
+      "sha": "c5cc564ceb33279f3a5255dcede44a09dc44a0e0",
+      "status": "superseded"
+    },
+    {
+      "actor": "Claude",
+      "kind": "owner_evidence_recut_v5",
+      "recorded_at": "2026-07-26T22:26:48Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-RUNTIME-GAP-DELTA-001/evidence.json; head bound as content-digest:sha256:636d898159e987416a2a43cc509f04a7c650367eb970bff04708aa236bff572a rather than a commit sha",
+      "sequence": 15,
       "status": "in_progress"
     }
   ]
