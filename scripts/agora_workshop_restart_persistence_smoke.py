@@ -32,8 +32,9 @@ from agora.strategy_workshop.store import (  # noqa: E402
 from agora.dataset_extraction.extractor import (  # noqa: E402
     BACKEND_ENV as DATASET_BACKEND_ENV,
     AgoraDatasetStore,
-    AgoraInteractionEvidenceRequest,
+    evidence_request_digest,
 )
+from agora.dataset_extraction.models import AgoraInteractionEvidenceRequest  # noqa: E402
 
 
 def require_postgres_backends() -> None:
@@ -212,6 +213,8 @@ def seed(
         tenant_id,
         user_id,
         "2026-07-14T00:01:00Z",
+        idempotency_key=f"restart-smoke:{evidence_id}",
+        request_digest=evidence_request_digest(evidence),
     )
     if not is_new:
         raise RuntimeError(f"evidence {evidence_id!r} was already in inbox during seed")
@@ -347,7 +350,11 @@ def verify(
     if evidence_id not in backlog_ids:
         raise RuntimeError(f"evidence {evidence_id!r} was not found in backlog during verify")
 
-    dataset_result = dataset_store.process_inbox()
+    dataset_result = dataset_store.process_inbox(
+        tenant_id=tenant_id,
+        user_id=user_id,
+        worker_id="restart-persistence-smoke",
+    )
     if dataset_result["processed"] < 1:
         raise RuntimeError(f"evidence {evidence_id!r} was not processed by dataset worker")
 
@@ -356,7 +363,11 @@ def verify(
     if evidence_id in backlog_ids_after:
         raise RuntimeError(f"evidence {evidence_id!r} remained in backlog after processing")
 
-    record = dataset_store.get(evidence_id)
+    record = dataset_store.get(
+        evidence_id,
+        tenant_id=tenant_id,
+        user_id=user_id,
+    )
     if record is None:
         raise RuntimeError(f"dataset record for {evidence_id!r} was not found after processing")
     if record.tenant_id != tenant_id or record.user_id != user_id:

@@ -220,7 +220,12 @@ def create_agora_router(
     router.include_router(create_shadow_router(**_kw))
     router.include_router(create_personalization_router(**_kw))
     router.include_router(create_management_projection_router(**_kw))
-    router.include_router(create_dataset_extraction_router(**_kw))
+    router.include_router(
+        create_dataset_extraction_router(
+            **_kw,
+            require_write_role=require_write_role,
+        )
+    )
     router.include_router(create_interaction_router(
         **_kw,
         require_write_role=require_write_role,
