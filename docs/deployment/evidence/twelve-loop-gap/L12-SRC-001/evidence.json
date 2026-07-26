@@ -7,7 +7,7 @@
     "reviewer": "Codex",
     "branch": "task/L12-SRC-001",
     "merge_target": "dev",
-    "status": "cross_process_repair_complete_re_review_required",
+    "status": "review_approved_closeout_complete",
     "anchor_commit": "f3bba1009b40f8b7fc6d6f63a889c9512ad8781c"
   },
   "scope": {
@@ -133,15 +133,24 @@
       "result": "3 normalized TWSE tw_price_daily SourceRecords; max_records=3; connector concurrency=1",
       "status": "pass",
       "artifact": "bounded-live-proof.json"
+    },
+    {
+      "command": "/home/lupin/pantheon/.venv/bin/pytest -q services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_persona_source_reconciler.py services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_multi_process_source_reconciliation.py",
+      "result": "125 passed, 1 warning in 58.53s",
+      "status": "pass",
+      "purpose": "owner closeout revalidation",
+      "captured_at": "2026-07-26T11:38:44Z"
     }
   ],
   "publication": {
     "previous_pull_request": "https://github.com/ajoe734/pantheon/pull/4144",
     "previous_review_outcome": "rejected: thread-only tests did not satisfy explicit two-worker acceptance",
-    "pull_request": null,
-    "checks": "pending",
-    "merge_commit": null,
-    "review": "pending Codex re-review of cross-process repair",
+    "pull_request": "https://github.com/ajoe734/pantheon/pull/4156",
+    "checks": "passed: Commit trailers, Runtime mirror guard, Smoke acceptance",
+    "merge_commit": "e79b6ee483c352463c8653b094f99377b383fda8",
+    "review": "approved by Codex after independent multiprocessing-spawn acceptance",
+    "reviewed_at": "2026-07-26T11:31:50Z",
+    "owner_closeout_revalidated_at": "2026-07-26T11:38:44Z",
     "hosted_deployment": "not claimed by this source-owned packet"
   }
 }
