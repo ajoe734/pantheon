@@ -311,6 +311,47 @@ class TaskStateShadowTests(unittest.TestCase):
 
         self.assertEqual(json.loads(self._test_status_file.read_text(encoding="utf-8")), original)
 
+    def test_authoritative_store_rejects_in_process_projection_rebinding(self) -> None:
+        journal = self._test_root / "runtime" / "task-state-events.jsonl"
+        canonical = {
+            "sprint": "authoritative",
+            "tasks": [{"id": "LIVE-001", "status": "in_progress"}],
+        }
+        fixture = {
+            "sprint": "test-fixture",
+            "tasks": [{"id": "LOCK-ONE", "status": "in_progress"}],
+        }
+        ai_status.append_state_commit(journal, canonical, source="fixture-migration")
+        rebound = self._test_root / "test-helper" / "ai-status.json"
+
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    ai_status.TASK_STATE_STORE_MODE_ENV: "authoritative",
+                    ai_status.TASK_STATE_EVENT_LOG_ENV: str(journal),
+                    "ORCH_RUN_ID": "worker-running-tests",
+                },
+                clear=False,
+            ),
+            mock.patch.object(ai_status, "STATUS_FILE", rebound),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "task-state projection binding mismatch",
+            ):
+                ai_status.load_state()
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "task-state projection binding mismatch",
+            ):
+                ai_status.save_state(fixture)
+
+        events = load_events(journal)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[-1]["state"], canonical)
+        self.assertFalse(rebound.exists())
+
 
 class LogicalActorNormalizationTests(unittest.TestCase):
     def test_distinct_logical_lanes_do_not_collapse_numeric_suffixes(self) -> None:
@@ -4667,13 +4708,23 @@ class PortableStateRenderingTests(unittest.TestCase):
 
 class CanonicalTaskStateAndActivityRecoveryTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.temp_dir = tempfile.TemporaryDirectory(prefix="ai-status-transaction-")
-        self.addCleanup(self.temp_dir.cleanup)
-        self.root = Path(self.temp_dir.name)
-        self.status_file = self.root / "ai-status.json"
-        self.log_file = self.root / "ai-activity-log.jsonl"
+        _setup_test_isolation(self)
+        self.addCleanup(_teardown_test_isolation, self)
+        self.root = self._test_root
+        self.status_file = self._test_status_file
+        self.log_file = self._test_log_file
+        self.log_file.unlink()
+        self._task_state_env = mock.patch.dict(
+            os.environ,
+            {
+                ai_status.TASK_STATE_STORE_MODE_ENV: "",
+                ai_status.TASK_STATE_EVENT_LOG_ENV: "",
+            },
+            clear=False,
+        )
+        self._task_state_env.start()
+        self.addCleanup(self._task_state_env.stop)
 
-        import subprocess
         subprocess.run(["git", "init", "-q"], cwd=str(self.root), check=True)
         subprocess.run(["git", "config", "user.name", "Test"], cwd=str(self.root), check=True)
         subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=str(self.root), check=True)
