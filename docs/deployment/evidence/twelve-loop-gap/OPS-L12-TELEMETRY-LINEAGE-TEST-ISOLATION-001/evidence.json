@@ -3,7 +3,7 @@
   "schema_status": {
     "formal_schema_owner": "LOOP-PROD-002",
     "formalization_trigger": "OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001 owner evidence cut for the twelve-loop verification-hardening lane.",
-    "note": "Owner evidence cut for a test-isolation task. Implementation and owner verification are complete; the independent reviewer verdict from Antigravity is intentionally absent until approval occurs and is appended to record_log.",
+    "note": "Owner evidence cut for a test-isolation task. Implementation and owner verification are complete; the independent reviewer verdict from Codex2 is intentionally absent until approval occurs and is appended to record_log. The earlier cuts named Antigravity; Human/Ops reassigned the reviewer to Codex2 at 2026-07-26T20:24:36Z and this cut rebinds the manifest to the canonical reviewer.",
     "status": "formalized"
   },
   "evidence_policy": {
@@ -16,8 +16,8 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-26T20:25:00Z",
-    "evidence_cut_semantics": "Owner re-cut after PR #4213 squash-merged into dev as 0410a89f0e4ac3c53e7bc5192aebe6925423b4da. Verification commands below were re-run against the merged dev tree. Independent reviewer approval is not asserted by this cut.",
+    "evidence_cut_at": "2026-07-26T20:45:00Z",
+    "evidence_cut_semantics": "Owner re-cut binding the manifest to the reassigned reviewer Codex2 and recording an independent owner re-verification on merged dev tip f687d7aeb7b9f9ebabb85247a11afbfd7c3fc16b. The delivery itself is unchanged: PR #4213 squash-merged into dev as 0410a89f0e4ac3c53e7bc5192aebe6925423b4da and PR #4214 merged as f687d7aeb. Independent reviewer approval is not asserted by this cut.",
     "id": "OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001",
     "overall_admission": "pass",
     "owner": "Claude",
@@ -25,7 +25,7 @@
     "product_level_required": false,
     "repository": "ajoe734/pantheon",
     "review_file": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001/evidence.json",
-    "reviewer": "Antigravity",
+    "reviewer": "Codex2",
     "target_environment": "local developer and CI test execution only",
     "target_maturity": "reconciled",
     "task_branch": "task/OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001",
@@ -169,11 +169,36 @@
         "command": "env -u PANTHEON_RUNTIME_MANAGER_URL /home/lupin/pantheon/.venv/bin/python3 -m unittest services.telemetry.test_lineage_write_path (post-merge, dev tip 0410a89f0)",
         "conclusion": "Ran 7 tests in 0.472s; OK. Confirms the isolation holds on the merged dev tree, not only on the task branch.",
         "result": "pass"
+      },
+      {
+        "command": "env -u PANTHEON_RUNTIME_MANAGER_URL -u PANTHEON_RUNTIME_MANAGER_TOKEN_FILE -u PANTHEON_RUNTIME_MANAGER_TIMEOUT_SECONDS -u PANTHEON_RUNTIME_MANAGER_TOKEN -u PANTHEON_RUNTIME_BINDING_STORE_PATH /home/lupin/pantheon/.venv/bin/python -m unittest services.telemetry.test_lineage_write_path",
+        "conclusion": "Ran 7 tests in 1.222s; OK. Independent owner re-verification in a fresh worker session with every ambient runtime-manager variable unset, reproducing the recorded clean-environment result on dev tip f687d7aeb.",
+        "result": "pass"
+      },
+      {
+        "command": "PANTHEON_RUNTIME_MANAGER_URL=http://198.51.100.7:8099 PANTHEON_RUNTIME_MANAGER_TOKEN=ambient-operator-token PANTHEON_RUNTIME_MANAGER_TOKEN_FILE=/nonexistent/ambient-token PANTHEON_RUNTIME_BINDING_STORE_PATH=/nonexistent/ambient/bindings.json PANTHEON_SINGLE_RUNTIME_ENFORCED=false INCIDENTS_DATA_DIR=/nonexistent/ambient/incidents /home/lupin/pantheon/.venv/bin/python -m unittest services.telemetry.test_lineage_write_path",
+        "conclusion": "Ran 7 tests in 0.933s; OK. Independent owner re-verification with the full hostile ambient set from _HOSTILE_AMBIENT_ENV exported at process level; none of it reaches the fixture.",
+        "result": "pass"
+      },
+      {
+        "command": "env -u PANTHEON_RUNTIME_MANAGER_URL -u PANTHEON_RUNTIME_MANAGER_TOKEN_FILE -u PANTHEON_RUNTIME_MANAGER_TIMEOUT_SECONDS -u PANTHEON_RUNTIME_MANAGER_TOKEN -u PANTHEON_RUNTIME_BINDING_STORE_PATH /home/lupin/pantheon/.venv/bin/python -m unittest discover -s services/telemetry -t .",
+        "conclusion": "Ran 197 tests in 12.844s; FAILED (errors=2, skipped=1). Independent owner re-verification reproducing the recorded post-change counts exactly; both residual errors are the pre-existing services.telemetry.test_capture and services.telemetry.test_feedback_adapter loader ModuleNotFoundError.",
+        "result": "pass_with_nonblocking_baseline_residual"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python -c \"import json,jsonschema; jsonschema.validate(json.load(open('docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001/evidence.json')), json.load(open('schemas/product-evidence.schema.json')))\"",
+        "conclusion": "Manifest validates clean against schemas/product-evidence.schema.json.",
+        "result": "pass"
+      },
+      {
+        "command": "/usr/bin/python3 -m unittest services.telemetry.test_lineage_write_path",
+        "conclusion": "ModuleNotFoundError: No module named 'fastapi'. Recorded as an environment fact rather than a regression: the full-stack case needs the project venv, and the bare system interpreter has none of the service dependencies. The pre-task file failed the same way for the same reason, so this is unchanged by the task. It does mean test_full_stack_case_passes_under_hostile_ambient_config surfaces a missing dependency as a failure rather than a skip.",
+        "result": "environment_note"
       }
     ],
-    "validated_at": "2026-07-26T20:25:00Z",
+    "validated_at": "2026-07-26T20:45:00Z",
     "validated_base_sha": "03389c0c7fca98b543ee8329e11042f99ed5a0f6",
-    "validated_head_sha": "0410a89f0e4ac3c53e7bc5192aebe6925423b4da"
+    "validated_head_sha": "f687d7aeb7b9f9ebabb85247a11afbfd7c3fc16b"
   },
   "deployment": {
     "applicable": false,
@@ -260,7 +285,7 @@
       "status": "pass"
     },
     "two_person_approval": {
-      "proof": "Owner Claude and reviewer Antigravity are distinct. The reviewer verdict is not asserted here and must be appended to record_log before done.",
+      "proof": "Owner Claude and reviewer Codex2 are distinct, matching the canonical ai-status.json row after the 2026-07-26T20:24:36Z Human/Ops reviewer reassignment. The reviewer verdict is not asserted here and must be appended to record_log before done.",
       "status": "pass"
     }
   },
@@ -310,7 +335,7 @@
       "id": "AC5",
       "statement": "Branch, commit, push, PR, checks, independent review, merge, archive, and evidence are complete.",
       "status": "pass_pending_review",
-      "blocking_until": "Antigravity approval appended to record_log, then owner done"
+      "blocking_until": "Codex2 approval appended to record_log, then owner done"
     }
   ],
   "residual_risks": {
@@ -336,7 +361,8 @@
   "integrity": {
     "algorithm": "sha256",
     "checksum_coverage": [
-      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001/README.md"
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001/evidence.json"
     ],
     "companion_checksum_path": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001/evidence.sha256",
     "hosted_semantic_sha256": {
@@ -349,7 +375,7 @@
       "status": "not_applicable"
     },
     "self_hash_omitted": true,
-    "self_hash_reason": "A manifest cannot contain its own digest; evidence.sha256 covers the companion artifacts and the manifest digest is recorded by the merge commit.",
+    "self_hash_reason": "A manifest cannot contain its own digest, so no digest of evidence.json appears inside evidence.json. The digest is instead recorded in the companion evidence.sha256, which is the convention used by the sibling twelve-loop-gap evidence directories and gives the file bound as REVIEW_FILE an integrity anchor; the merge commit records it a second time.",
     "source_artifact_sha256_by_epoch": {
       "a608a81c7785e191e7e0f8e940e2a4464ecca404": {
         "services/telemetry/test_lineage_write_path.py": "12e1159b8ad9b7ebc05b50ce466ba98cdf7ac84d2b2d1a53b6e6e14edb294b4c"
@@ -392,6 +418,43 @@
       "recorded_at": "2026-07-26T20:25:00Z",
       "reference": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001/evidence.json",
       "sequence": 4,
+      "status": "recorded"
+    },
+    {
+      "actor": "Human/Ops",
+      "kind": "reviewer_reassigned",
+      "note": "Reviewer moved from Antigravity to Codex2. Owner unchanged. Recorded here because cuts 2 and 4 predate the reassignment and named the previous reviewer.",
+      "recorded_at": "2026-07-26T20:24:36Z",
+      "reference": "ai-activity-log.jsonl assign event ai-status-event-5ab0af3fdc0771d56e7a6f739b9866e24eb469355711cecef1711c3c159c5ed3",
+      "sequence": 5,
+      "status": "recorded"
+    },
+    {
+      "actor": "Claude",
+      "kind": "delivery_merged",
+      "note": "Evidence re-cut PR carrying the merge facts for PR #4213.",
+      "recorded_at": "2026-07-26T20:22:00Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4214",
+      "sequence": 6,
+      "sha": "f687d7aeb7b9f9ebabb85247a11afbfd7c3fc16b",
+      "status": "recorded"
+    },
+    {
+      "actor": "Claude",
+      "kind": "owner_evidence_recut",
+      "note": "Rebinds the manifest to the canonical reviewer Codex2 and records an independent owner re-verification run on dev tip f687d7aeb. No implementation file changed; validated_head_sha advanced from 0410a89f0 to f687d7aeb.",
+      "recorded_at": "2026-07-26T20:45:00Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001/evidence.json",
+      "sequence": 7,
+      "status": "recorded"
+    },
+    {
+      "actor": "Claude",
+      "kind": "owner_handoff_to_review",
+      "note": "Owner hands the merged delivery to reviewer Codex2 with this manifest as REVIEW_FILE.",
+      "recorded_at": "2026-07-26T20:45:00Z",
+      "reference": "OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001 handoff Claude -> Codex2",
+      "sequence": 8,
       "status": "recorded"
     }
   ]
