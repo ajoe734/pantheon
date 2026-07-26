@@ -173,6 +173,31 @@ class TestExtractEvidence:
         assert record.tenant_id == "tenant-abc"
         assert record.user_id == "user-xyz"
 
+    def test_concurrent_duplicate_extraction_returns_one_version_without_500_window(self) -> None:
+        store = AgoraDatasetStore()
+        evidence = _make_evidence(evidence_id="ev-concurrent-duplicate")
+        results: list[tuple[Any, bool]] = []
+        errors: list[Exception] = []
+
+        def submit() -> None:
+            try:
+                results.append(_extract(evidence, store))
+            except Exception as exc:
+                errors.append(exc)
+
+        workers = [threading.Thread(target=submit) for _ in range(10)]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join()
+
+        assert errors == []
+        assert len(results) == 10
+        assert sum(1 for _, is_new in results if is_new) == 1
+        assert {record.dataset_version_id for record, _ in results} == {
+            results[0][0].dataset_version_id
+        }
+
 
 # ---------------------------------------------------------------------------
 # Store listing tests
@@ -624,3 +649,147 @@ class TestLeasedExtractionOwnership:
             is None
         )
         assert len(store.get_backlog("tenant-b", "user-b")) == 1
+
+    def test_concurrent_processors_use_postgres_skip_locked(self) -> None:
+        dsn = os.getenv("TEST_DATABASE_URL")
+        if not dsn:
+            pytest.skip("TEST_DATABASE_URL is not set")
+        schema = f"agora_lease_{uuid.uuid4().hex[:12]}"
+        store = AgoraDatasetStore(backend="postgres", dsn=dsn, schema=schema)
+        try:
+            for index in range(30):
+                self._enqueue(store, f"ev-pg-worker-{index}")
+            results: list[dict[str, Any]] = []
+
+            def process(worker_id: str) -> None:
+                results.append(
+                    store.process_inbox(
+                        tenant_id="tenant-lease",
+                        user_id="user-lease",
+                        worker_id=worker_id,
+                        batch_size=10,
+                    )
+                )
+
+            workers = [
+                threading.Thread(target=process, args=(f"pg-worker-{index}",))
+                for index in range(3)
+            ]
+            for worker in workers:
+                worker.start()
+            for worker in workers:
+                worker.join()
+
+            assert sum(item["processed"] for item in results) == 30
+            assert sum(item["lost_claims"] for item in results) == 0
+            assert len(
+                store.list_handoffs(
+                    tenant_id="tenant-lease",
+                    user_id="user-lease",
+                )
+            ) == 30
+        finally:
+            with store._connect() as conn:
+                conn.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
+
+
+class TestPostgresScopeMigration:
+    def test_prior_global_primary_keys_migrate_to_tenant_user_scope(self) -> None:
+        dsn = os.getenv("TEST_DATABASE_URL")
+        if not dsn:
+            pytest.skip("TEST_DATABASE_URL is not set")
+        schema = f"agora_migrate_{uuid.uuid4().hex[:12]}"
+        quoted = f'"{schema}"'
+        with __import__("psycopg").connect(dsn) as conn:
+            conn.execute(f"CREATE SCHEMA {quoted}")
+            conn.execute(
+                f"""
+                CREATE TABLE {quoted}.agora_evidence_inbox (
+                    evidence_id TEXT PRIMARY KEY,
+                    tenant_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    interaction_kind TEXT NOT NULL,
+                    persona_id TEXT NOT NULL,
+                    session_id TEXT,
+                    content JSONB NOT NULL,
+                    source_refs JSONB NOT NULL,
+                    learning_eligible BOOLEAN NOT NULL,
+                    captured_at TEXT NOT NULL,
+                    extracted_at TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    error_message TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    processed_at TIMESTAMPTZ
+                )
+                """
+            )
+            conn.execute(
+                f"""
+                CREATE TABLE {quoted}.agora_dataset_records (
+                    evidence_id TEXT PRIMARY KEY
+                      REFERENCES {quoted}.agora_evidence_inbox(evidence_id) ON DELETE CASCADE,
+                    dataset_kind TEXT NOT NULL,
+                    interaction_kind TEXT NOT NULL,
+                    persona_id TEXT NOT NULL,
+                    session_id TEXT,
+                    tenant_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    content JSONB NOT NULL,
+                    source_refs JSONB NOT NULL,
+                    learning_eligible BOOLEAN NOT NULL,
+                    governance_boundary TEXT NOT NULL DEFAULT 'observe_or_learn_only',
+                    no_promote_proof TEXT NOT NULL DEFAULT 'agora_observe_learn_only',
+                    no_runtime_mutation_proof TEXT NOT NULL DEFAULT 'agora_evidence_extract_only',
+                    captured_at TEXT NOT NULL,
+                    extracted_at TEXT NOT NULL,
+                    version INTEGER NOT NULL DEFAULT 1
+                )
+                """
+            )
+            conn.execute(
+                f"""
+                CREATE TABLE {quoted}.agora_evidence_handoffs (
+                    handoff_id TEXT PRIMARY KEY,
+                    tenant_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    dataset_kind TEXT NOT NULL,
+                    evidence_ids JSONB NOT NULL,
+                    summary TEXT NOT NULL,
+                    authority_limit TEXT NOT NULL DEFAULT 'Observe/Learn',
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+                """
+            )
+            conn.execute(
+                f"""
+                INSERT INTO {quoted}.agora_evidence_inbox (
+                    evidence_id, tenant_id, user_id, interaction_kind, persona_id,
+                    content, source_refs, learning_eligible, captured_at,
+                    extracted_at, status
+                ) VALUES (
+                    'legacy-evidence', 'tenant-legacy', 'user-legacy', 'ask',
+                    'persona-legacy', '{{}}', '[]', true, '2026', '2026', 'pending'
+                )
+                """
+            )
+        store = AgoraDatasetStore(backend="postgres", dsn=dsn, schema=schema)
+        try:
+            assert len(store.get_backlog("tenant-legacy", "user-legacy")) == 1
+            evidence = _make_evidence(evidence_id="shared-after-migration")
+            for tenant_id, user_id in (
+                ("tenant-a", "user-a"),
+                ("tenant-b", "user-b"),
+            ):
+                store.add_to_inbox(
+                    evidence,
+                    tenant_id,
+                    user_id,
+                    "2026-07-26T00:00:00Z",
+                    idempotency_key=f"migrate-key:{tenant_id}",
+                    request_digest=evidence_request_digest(evidence),
+                )
+            assert len(store.get_backlog("tenant-a", "user-a")) == 1
+            assert len(store.get_backlog("tenant-b", "user-b")) == 1
+        finally:
+            with store._connect() as conn:
+                conn.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")

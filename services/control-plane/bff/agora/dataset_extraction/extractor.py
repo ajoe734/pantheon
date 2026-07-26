@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
@@ -255,7 +256,7 @@ class AgoraDatasetStore:
             conn.execute(
                 f"UPDATE {self._records_table} SET dataset_version_id = "
                 "COALESCE(NULLIF(dataset_version_id, ''), "
-                "'dsv-' || substr(md5(tenant_id || chr(0) || user_id || chr(0) || evidence_id), 1, 24))"
+                "'dsv-' || substr(md5(tenant_id || '|' || user_id || '|' || evidence_id), 1, 24))"
             )
             conn.execute(
                 f"ALTER TABLE {self._records_table} "
@@ -300,7 +301,7 @@ class AgoraDatasetStore:
             conn.execute(
                 f"UPDATE {self._handoffs_table} SET dataset_version_id = "
                 "COALESCE(NULLIF(dataset_version_id, ''), "
-                "'legacy-' || substr(md5(tenant_id || chr(0) || user_id || chr(0) || handoff_id), 1, 24))"
+                "'legacy-' || substr(md5(tenant_id || '|' || user_id || '|' || handoff_id), 1, 24))"
             )
             conn.execute(
                 f"ALTER TABLE {self._handoffs_table} "
@@ -628,7 +629,7 @@ class AgoraDatasetStore:
                     if evidence_id is not None and entry["evidence_id"] != evidence_id:
                         continue
                     expiry = entry.get("lease_expires_at")
-                    expired = False
+                    expired = entry["status"] == "processing" and not expiry
                     if expiry:
                         expired = datetime.fromisoformat(str(expiry).replace("Z", "+00:00")) <= claimed_at
                     if entry["status"] == "pending" or (
@@ -661,7 +662,10 @@ class AgoraDatasetStore:
                     WHERE tenant_id = %s AND user_id = %s
                       AND (
                         status = 'pending'
-                        OR (status = 'processing' AND lease_expires_at <= %s)
+                        OR (
+                          status = 'processing'
+                          AND (lease_expires_at IS NULL OR lease_expires_at <= %s)
+                        )
                       )
                       {evidence_sql}
                     ORDER BY created_at ASC, evidence_id ASC
@@ -1300,6 +1304,21 @@ def extract_evidence(
         batch_size=1,
     )
     record = store.get(evidence.evidence_id, tenant_id=tenant_id, user_id=user_id)
+    # A duplicate request may arrive after another worker claimed the row but
+    # before its atomic record/handoff commit.  Preserve synchronous response
+    # compatibility with a short bounded readback wait; never steal an active
+    # lease or drain unrelated work.
+    deadline = time.monotonic() + 0.5
+    while record is None and time.monotonic() < deadline:
+        status = store.get_inbox_status(
+            evidence.evidence_id,
+            tenant_id=tenant_id,
+            user_id=user_id,
+        )
+        if status != "processing":
+            break
+        time.sleep(0.01)
+        record = store.get(evidence.evidence_id, tenant_id=tenant_id, user_id=user_id)
     if record is None:
         status = store.get_inbox_status(
             evidence.evidence_id,

@@ -1,0 +1,213 @@
+{
+  "schema_version": "twelve_loop_gap_evidence.v1",
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/L12-AGORA-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "id": "L12-AGORA-001",
+    "title": "Make Agora extraction governed, tenant-safe, and leased",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "branch": "task/L12-AGORA-001",
+    "merge_target": "dev",
+    "status": "ready_for_review",
+    "base_sha": "6a0281e8f8996883faae3ddaab7505b2ddc68ac1",
+    "anchor_commit": "fe6180d0080a60c540f4d24a953cec31de91348f",
+    "evidence_cut_at": "2026-07-26T11:50:40Z"
+  },
+  "scope": {
+    "owned_layer": "Agora interaction evidence inbox, dataset extraction leases, scoped projections, handoff generation, and downstream acknowledgement",
+    "not_changing": [
+      "RuntimeBinding write ownership",
+      "artifact promotion or deployment authority",
+      "capital binding",
+      "broker or order routing",
+      "loop-controller maturity truth"
+    ],
+    "implementation_files": [
+      "services/control-plane/bff/agora/dataset_extraction/extractor.py",
+      "services/control-plane/bff/agora/dataset_extraction/models.py",
+      "services/control-plane/bff/agora/dataset_extraction/router.py",
+      "services/control-plane/bff/agora/dataset_extraction/test_extractor.py",
+      "services/control-plane/bff/agora/dataset_extraction/test_router.py",
+      "services/control-plane/bff/agora/router.py",
+      "scripts/agora_workshop_restart_persistence_smoke.py"
+    ],
+    "composes_with": [
+      "L12-IMIT-001 governed dataset consumption",
+      "Codex independent review",
+      "later replacement-dev deployment and loop truth verification"
+    ]
+  },
+  "behavioral_contract": {
+    "identity_and_scope": {
+      "identity_type": "bff.models.OperatorIdentity",
+      "scope_resolver": "agora.identity.scope.resolve_agora_user_scope",
+      "mandatory_predicate": [
+        "tenant_id",
+        "user_id"
+      ],
+      "cross_scope_missing_semantics": "404 or empty scoped projection"
+    },
+    "mutation_authority": {
+      "write_guard": "injected require_write_role",
+      "protected_mutations": [
+        "submit",
+        "process",
+        "DLQ replay",
+        "handoff acknowledgement"
+      ],
+      "viewer_write_access": "denied"
+    },
+    "idempotency": {
+      "digest": "SHA-256 over canonical sorted route and Pydantic JSON payload",
+      "scope": [
+        "tenant_id",
+        "user_id",
+        "Idempotency-Key"
+      ],
+      "changed_key_payload": "409 IDEMPOTENCY_CONFLICT",
+      "changed_evidence_payload": "409 IDEMPOTENCY_CONFLICT"
+    },
+    "claim_and_recovery": {
+      "postgres_claim": "bounded SELECT ... FOR UPDATE SKIP LOCKED",
+      "default_batch_size": 25,
+      "maximum_batch_size": 100,
+      "default_lease_seconds": 30,
+      "maximum_lease_seconds": 300,
+      "recovery": "pending or expired processing lease",
+      "stale_owner_commit": "rejected by lease_token compare"
+    },
+    "dataset_and_handoff": {
+      "dataset_version": "stable dsv-* identity with immutable version 1 per scoped evidence digest",
+      "handoff_cardinality": "one stable handoff per dataset_version_id",
+      "authority_limit": "Observe/Learn",
+      "acknowledgement": "one acknowledgement_id bound to the exact dataset_version_id and digest",
+      "runtime_authority": "none"
+    }
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "statement": "Real OperatorIdentity submit, process, read, and replay paths use typed identity access.",
+      "status": "pass",
+      "proof": [
+        "test_real_operator_identity_attribute_path_succeeds",
+        "test_backlog_routes",
+        "test_dlq_and_replay_routes",
+        "services/control-plane/bff/tests/test_agora_router.py"
+      ]
+    },
+    {
+      "id": "AC2",
+      "statement": "Every read, mutation, claim, and replay is tenant and user scoped.",
+      "status": "pass",
+      "proof": [
+        "test_scoped_get_does_not_disclose_other_tenant_or_user",
+        "test_requested_tenant_must_be_bound_to_identity",
+        "test_processing_one_scope_does_not_drain_another_tenant",
+        "test_prior_global_primary_keys_migrate_to_tenant_user_scope"
+      ]
+    },
+    {
+      "id": "AC3",
+      "statement": "Mutations require write authority and stable idempotency conflicts fail closed.",
+      "status": "pass",
+      "proof": [
+        "test_viewer_can_read_but_cannot_submit_process_or_replay",
+        "test_same_idempotency_key_with_different_payload_returns_409",
+        "test_same_evidence_id_with_changed_payload_returns_409",
+        "test_concurrent_duplicate_extraction_returns_one_version_without_500_window"
+      ]
+    },
+    {
+      "id": "AC4",
+      "statement": "Concurrent processors use bounded leases and cannot double-own or stale-commit work.",
+      "status": "pass",
+      "proof": [
+        "test_claim_is_bounded_and_exclusive",
+        "test_expired_claim_is_recovered_and_stale_owner_cannot_commit",
+        "test_concurrent_processors_create_one_version_and_handoff_each",
+        "test_concurrent_processors_use_postgres_skip_locked"
+      ]
+    },
+    {
+      "id": "AC5",
+      "statement": "Dataset version and Observe/Learn handoff are acknowledged once without runtime authority.",
+      "status": "pass",
+      "proof": [
+        "test_acknowledgement_is_exactly_once_and_authority_limited",
+        "test_ack_requires_matching_dataset_version_and_write_role",
+        "test_expired_claim_is_recovered_and_stale_owner_cannot_commit"
+      ]
+    }
+  ],
+  "validation": {
+    "validated_at": "2026-07-26T11:50:40Z",
+    "commands": [
+      {
+        "command": "TEST_DATABASE_URL=postgresql://postgres:<redacted>@127.0.0.1:55432/pantheon_test /tmp/l12-agora-venv/bin/python -m pytest services/control-plane/bff/agora/dataset_extraction -q",
+        "result": "70 passed, 1 warning in 26.96s",
+        "status": "pass",
+        "notes": "Ephemeral localhost-only postgres:16-alpine; container removed after the run."
+      },
+      {
+        "command": "/tmp/l12-agora-venv/bin/python -m pytest services/control-plane/bff/tests/test_agora_router.py services/control-plane/bff/tests/test_agora_identity_scope.py -q",
+        "result": "27 passed, 7 warnings in 18.01s",
+        "status": "pass"
+      },
+      {
+        "command": "python3 -m compileall -q services/control-plane/bff/agora/dataset_extraction services/control-plane/bff/agora/router.py scripts/agora_workshop_restart_persistence_smoke.py",
+        "result": "exit 0",
+        "status": "pass"
+      },
+      {
+        "command": "git diff --check",
+        "result": "exit 0",
+        "status": "pass"
+      }
+    ],
+    "adjacent_suite": {
+      "command": "/tmp/l12-agora-venv/bin/python -m pytest services/control-plane/bff/agora -q",
+      "result": "146 passed, 16 skipped, 5 failed",
+      "status": "non_task_pre_existing_failure",
+      "failure_scope": "Five unchanged trading-room tests fail while resolving the existing JSON pointer definitions/WidgetPlacement.",
+      "task_files_in_failure_trace": false
+    }
+  },
+  "security_and_safety": {
+    "rbac": "Viewer reads remain allowed; all extraction mutations require the write-role guard.",
+    "tenant_isolation": "All durable keys and SQL predicates include authenticated tenant_id and user_id; caller tenant overrides are validated by the canonical scope resolver.",
+    "no_live_capital": "Records and handoffs carry no promotion or runtime mutation proofs, and the implementation imports no runtime, capital, broker, or order writer.",
+    "ack_after_durable_completion": "Dataset record, handoff, and processed inbox state commit atomically before downstream acknowledgement can succeed."
+  },
+  "publication": {
+    "pull_request": null,
+    "checks": "pending independent review and task PR",
+    "merge_commit": null,
+    "hosted_deployment": "not claimed",
+    "review": "pending Codex"
+  },
+  "residual_risks": [
+    {
+      "severity": "medium",
+      "blocking_for_this_task": false,
+      "owner": "L12-MANIFEST-001 and L12-HOSTED-001",
+      "description": "Replacement-dev activation and restart readback remain downstream deployment proof; this packet proves the Postgres contract in an ephemeral local instance."
+    },
+    {
+      "severity": "low",
+      "blocking_for_this_task": false,
+      "owner": "Agora trading-room",
+      "description": "The broader Agora suite has five unrelated WidgetPlacement JSON-schema reference failures in unchanged trading-room tests."
+    }
+  ],
+  "independent_review": {
+    "status": "pending",
+    "reviewer": "Codex",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-AGORA-001/evidence.json"
+  }
+}
