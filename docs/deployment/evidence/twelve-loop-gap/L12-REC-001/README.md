@@ -1,6 +1,7 @@
 # L12-REC-001 reconciliation durability evidence
 
-Status: ready for independent `Codex2` review.
+Status: ready for independent `Codex2` re-review after the PR #4150
+acceptance repairs.
 
 This packet proves the repository implementation and focused product tests for
 durable, tenant-scoped reconciliation windows. It does not claim that the
@@ -22,13 +23,20 @@ digest in [`evidence.sha256`](evidence.sha256).
   `9948a1da6be9969df7ce7c052ac64c5214189360`
 - Worker/API anchor:
   `e175b29c71b73caa10eb1b2e35c46a4f3bc168f7`
+- Rejected-acceptance regression anchor:
+  `23959c7ae2816067fa2a605397cd936f7e2e8eeb`
+- Consumer recovery repair anchor:
+  `f4d9a84d5c79b1669f260f25fd428054e65d45d2`
 
 Postgres mode now owns evaluations, alert handoffs, ReconciliationRecords,
 DriftReports, work claims, and worker checkpoints. JSON mode implements the
 same logical authorities with strict reads, transaction-scoped file locks,
 atomic replace, file fsync, and directory fsync. Tenant identity participates
 in the storage key, so equal external IDs from two tenants cannot overwrite
-one another.
+one another. Tenant-aware JSON and Postgres legacy/raw-key fallback also
+verifies the record's exact tenant before returning it; this guard covers
+evaluations, alert handoffs, reconciliation records, drift reports, and worker
+states.
 
 ## Lease and recovery proof
 
@@ -47,9 +55,15 @@ Telemetry consumption uses one tenant/event claim before DriftReport creation
 or incident classification. A replay may return the already accepted report
 for compatibility, but it does not repeat the incident side effect. Consumer
 pending/DLQ/completed state is checkpointed around delivery attempts and
-guarded by a cross-process lease. Corrupt state returns unhealthy without a
-source fetch and without overwriting the corrupt bytes. Existing incident
-listener replay remains fail-closed and idempotent.
+guarded by a cross-process lease. Its checkpoint and release operations compare
+the exact token acquired by that process against the canonical token while
+holding the state-file lock; a matching checkpoint renews the lease. After
+expiry and successor acquisition, the stale process cannot save or release,
+even when the successor reuses the same worker ID. Pending, DLQ, and completed
+identity is tenant plus event ID, so two tenants with the same external event
+ID both enqueue and deliver. Corrupt state returns unhealthy without a source
+fetch and without overwriting the corrupt bytes. Existing incident listener
+replay remains fail-closed and idempotent.
 
 ## Tenant and incident proof
 
@@ -60,7 +74,9 @@ match the authenticated tenant. Reads filter by tenant, and cross-tenant
 lookups return no foreign record.
 
 The hardening suite writes the same external DriftReport ID for `tenant-a` and
-`tenant-b`, then reads one isolated record per tenant. Its incident case
+`tenant-b`, then reads one isolated record per tenant. It also seeds each
+legacy/raw-key record type with a tenant-A record and proves that a tenant-B
+lookup returns no record in either JSON or Postgres mode. Its incident case
 preserves `tenant_id`, `incident_id`, `source_event_id`, binding/runtime
 identity, and telemetry event IDs. A tenant-B request carrying tenant-A
 incident identity is rejected with HTTP 403.
@@ -77,13 +93,13 @@ python3 -m py_compile \
 exit 0
 
 pytest -q services/reconciliation-drift/tests
-94 passed, 1 warning in 36.49s
+98 passed, 1 warning in 30.45s
 
 pytest -q \
   services/foundation/tests/test_control_plane_postgres_owner_stores.py \
   services/foundation/tests/test_persistence_posture.py \
   services/trade_journey/test_canonical_paper_lifecycle_integration.py
-26 passed in 6.07s
+26 passed in 4.60s
 
 ruff check --select F,E9 \
   services/reconciliation-drift/store.py \
@@ -105,7 +121,9 @@ deprecation notice; it is not a reconciliation failure.
 | --- | --- |
 | Measured configurable SLA | deterministic clock test asserts 0.25 seconds against 1.0-second SLA; timeout/SLA config is validated |
 | No duplicate logical window | two scheduler requests execute one dependency read/evaluation; two consumer requests build/classify one report/incident |
-| Durable tenant records/reports/state | JSON/Postgres owner-store tests, equal-ID tenant isolation, persisted worker checkpoint |
+| Durable tenant records/reports/state | JSON/Postgres owner-store tests, equal-ID tenant isolation, persisted worker checkpoint, and exact-tenant legacy/raw lookup across all five getters |
+| Consumer takeover recovery | successor token/checkpoint survive stale save and release attempts, including reuse of the same worker ID |
+| Tenant-scoped consumer delivery | equal external event IDs for tenant A and tenant B both enqueue, deliver, and retain separate completed receipts |
 | Corruption fail-closed | corrupt consumer/work-claim sources remain byte-identical and return errors |
 | Restart/retry/DLQ recovery | stable scheduler timeout retry, expired/failed claim recovery, consumer and incident-listener replay regression tests |
 
