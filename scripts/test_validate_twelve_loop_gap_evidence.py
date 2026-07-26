@@ -195,6 +195,134 @@ def test_required_check_on_unrecorded_head_is_rejected(staged: Path) -> None:
     assert "checks_bound_to_commits" in _rules(rejections)
 
 
+def _receipt(manifest: dict) -> dict:
+    anchors = manifest["implementation_delivery"]["anchor_commits"]
+    return next(anchor for anchor in anchors if anchor.get("receipt_role") == validator.RECEIPT_ROLE)
+
+
+def test_checks_covering_only_superseded_heads_are_rejected(staged: Path) -> None:
+    """The exact v5 defect: every required check names a rejected v4 head.
+
+    ``checks_bound_to_commits`` accepts this manifest because both heads are
+    recorded anchors, so only ``current_delivery_checks`` can catch it.
+    """
+
+    manifest = _load(staged)
+    delivery = manifest["implementation_delivery"]
+    superseded = {
+        anchor["sha"]
+        for anchor in delivery["anchor_commits"]
+        if validator.is_superseded_state(anchor.get("delivery_state"))
+    }
+    delivery["required_checks"] = [
+        check for check in delivery["required_checks"] if check.get("head_sha") in superseded
+    ]
+    assert delivery["required_checks"], "fixture must retain the superseded-head checks"
+    _store(staged, manifest)
+
+    rejections = validator.validate(staged / MANIFEST_RELATIVE, staged, _now())
+    assert "checks_bound_to_commits" not in _rules(rejections)
+    assert "current_delivery_checks" in _rules(rejections)
+    assert any("no check covers the current delivery" in rejection.detail for rejection in rejections)
+
+
+def test_missing_delivery_receipt_is_rejected(staged: Path) -> None:
+    manifest = _load(staged)
+    for anchor in manifest["implementation_delivery"]["anchor_commits"]:
+        anchor.pop("receipt_role", None)
+    _store(staged, manifest)
+
+    rejections = validator.validate(staged / MANIFEST_RELATIVE, staged, _now())
+    assert "current_delivery_checks" in _rules(rejections)
+    assert any("never names the delivery" in rejection.detail for rejection in rejections)
+
+
+def test_receipt_not_covering_the_bound_digest_is_rejected(staged: Path) -> None:
+    manifest = _load(staged)
+    _receipt(manifest)["bound_content_digest"] = f"{validator.CONTENT_DIGEST_PREFIX}{'0' * 64}"
+    _store(staged, manifest)
+
+    rejections = validator.validate(staged / MANIFEST_RELATIVE, staged, _now())
+    assert "current_delivery_checks" in _rules(rejections)
+    assert any("does not equal" in rejection.detail for rejection in rejections)
+
+
+def test_receipt_missing_one_required_workflow_is_rejected(staged: Path) -> None:
+    manifest = _load(staged)
+    delivery = manifest["implementation_delivery"]
+    head = _receipt(manifest)["sha"]
+    dropped = validator.REQUIRED_DELIVERY_WORKFLOWS[-1]
+    delivery["required_checks"] = [
+        check
+        for check in delivery["required_checks"]
+        if not (check.get("head_sha") == head and check.get("workflow") == dropped)
+    ]
+    _store(staged, manifest)
+
+    rejections = validator.validate(staged / MANIFEST_RELATIVE, staged, _now())
+    assert "current_delivery_checks" in _rules(rejections)
+    assert any(dropped in rejection.detail for rejection in rejections)
+
+
+def test_superseded_commit_cannot_be_the_delivery_receipt(staged: Path) -> None:
+    manifest = _load(staged)
+    _receipt(manifest)["delivery_state"] = "superseded_by_a_later_recut"
+    _store(staged, manifest)
+
+    rejections = validator.validate(staged / MANIFEST_RELATIVE, staged, _now())
+    assert "current_delivery_checks" in _rules(rejections)
+    assert any("cannot be the current delivery receipt" in rejection.detail for rejection in rejections)
+
+
+def _mutable_command_index(manifest: dict) -> int:
+    for index, entry in enumerate(manifest["validation"]["commands"]):
+        if validator.MUTABLE_COMMAND.search(entry.get("command", "")):
+            return index
+    raise AssertionError("manifest records no mutable GitHub command")
+
+
+def test_mutable_command_without_observations_is_rejected(staged: Path) -> None:
+    manifest = _load(staged)
+    manifest["validation"]["commands"][_mutable_command_index(manifest)].pop("observations")
+    _store(staged, manifest)
+
+    rejections = validator.validate(staged / MANIFEST_RELATIVE, staged, _now())
+    assert "mutable_observation_binding" in _rules(rejections)
+    assert any("records no observations[]" in rejection.detail for rejection in rejections)
+
+
+def test_mutable_observation_without_an_exact_head_is_rejected(staged: Path) -> None:
+    manifest = _load(staged)
+    entry = manifest["validation"]["commands"][_mutable_command_index(manifest)]
+    entry["observations"][0]["head_sha"] = "5dbc956"
+    _store(staged, manifest)
+
+    rejections = validator.validate(staged / MANIFEST_RELATIVE, staged, _now())
+    assert "mutable_observation_binding" in _rules(rejections)
+    assert any("must name the exact" in rejection.detail for rejection in rejections)
+
+
+def test_mutable_command_without_observed_at_is_rejected(staged: Path) -> None:
+    manifest = _load(staged)
+    manifest["validation"]["commands"][_mutable_command_index(manifest)].pop("observed_at")
+    _store(staged, manifest)
+
+    rejections = validator.validate(staged / MANIFEST_RELATIVE, staged, _now())
+    assert "mutable_observation_binding" in _rules(rejections)
+    assert any("records no observed_at" in rejection.detail for rejection in rejections)
+
+
+def test_future_observation_timestamp_is_rejected(staged: Path) -> None:
+    manifest = _load(staged)
+    manifest["validation"]["commands"][_mutable_command_index(manifest)]["observations"][0][
+        "observed_at"
+    ] = "2099-01-01T00:00:00Z"
+    _store(staged, manifest)
+
+    rejections = validator.validate(staged / MANIFEST_RELATIVE, staged, _now())
+    assert "future_timestamp" in _rules(rejections)
+
+
 def test_companion_checksum_mismatch_is_rejected(staged: Path) -> None:
     (staged / CHECKSUM_RELATIVE).write_text(f"{'0' * 64}  {MANIFEST_RELATIVE}\n", encoding="utf-8")
 
@@ -236,4 +364,9 @@ def test_cli_exits_nonzero_on_rejection(staged: Path) -> None:
     assert completed.returncode == 1
     payload = json.loads(completed.stdout)
     assert payload["result"] == "reject"
-    assert {rejection["rule"] for rejection in payload["rejections"]} == {"head_binding"}
+    # Rewriting the head binding also orphans the delivery receipt, which is
+    # bound to the same content digest.
+    assert {rejection["rule"] for rejection in payload["rejections"]} == {
+        "head_binding",
+        "current_delivery_checks",
+    }

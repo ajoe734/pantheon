@@ -18,6 +18,25 @@ binding to be a *content digest* over artifacts that are finalized before the
 manifest is written.  ``evidence.json`` cannot hash itself; its bytes are sealed
 by the companion ``evidence.sha256`` instead, which keeps the chain acyclic.
 
+The v5 recut was rejected for two further defects, which the last two rules
+close:
+
+* every ``required_checks`` entry named a *superseded* head (the rejected v4
+  commits ``5c39428`` / ``0bb6d7f``).  ``checks_bound_to_commits`` only asks
+  whether a check head appears somewhere in ``anchor_commits``, so a manifest
+  with no check at all for the delivered bytes still reported zero rejections.
+  ``current_delivery_checks`` therefore requires the manifest to name a
+  *delivery receipt*: an anchor commit whose tree carries the bound artifacts
+  (``bound_content_digest`` equal to ``validated_head_sha``), which is not
+  itself superseded, and which has a green check for every required workflow.
+* the manifest quoted mutable GitHub state (PR heads, merge states, check
+  colours) as though it were current at the evidence cut, when the underlying
+  PRs had already moved.  ``mutable_observation_binding`` requires any
+  ``validation.commands`` entry that reads a mutable GitHub surface to carry an
+  ``observed_at`` and an ``observations`` list binding each fact to the exact
+  head it was read from, so the claim can only ever be a point-in-time
+  observation.
+
 Usage::
 
     python3 scripts/validate_twelve_loop_gap_evidence.py <evidence.json> [--now ISO8601] [--json]
@@ -42,11 +61,27 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 BARE_COMMIT_SHA = re.compile(r"\A[0-9a-f]{40}\Z")
 CONTENT_DIGEST_PREFIX = "content-digest:sha256:"
 
+# The three required status checks on the dev and master branch protections
+# (.github/workflows/branch-ci.yml).  A delivery receipt is only complete when
+# all three are green on the receipt head.
+REQUIRED_DELIVERY_WORKFLOWS = ("Commit trailers", "Runtime mirror guard", "Smoke acceptance")
+
+# Substrings that mark an anchor commit as no longer the delivered state.
+SUPERSEDED_MARKERS = ("superseded", "squashed", "rejected", "merged_to_dev")
+
+RECEIPT_ROLE = "current_delivery_receipt"
+
+# Commands that read a surface which can change between the observation and the
+# review.  Facts sourced from these must be bound to an exact head and instant.
+MUTABLE_COMMAND = re.compile(r"\bgh\s+(pr|run|api|search)\b")
+
 RULES = (
     "future_timestamp",
     "head_binding",
     "record_log_ordering",
     "checks_bound_to_commits",
+    "current_delivery_checks",
+    "mutable_observation_binding",
     "companion_checksum",
 )
 
@@ -121,6 +156,16 @@ def _timestamp_fields(manifest: dict[str, Any]) -> list[tuple[str, str]]:
     delivery = manifest.get("implementation_delivery", {}) or {}
     for index, check in enumerate(delivery.get("required_checks", []) or []):
         add(f"implementation_delivery.required_checks[{index}].completed_at", check.get("completed_at"))
+    for index, entry in enumerate(manifest.get("validation", {}).get("commands", []) or []):
+        if not isinstance(entry, dict):
+            continue
+        add(f"validation.commands[{index}].observed_at", entry.get("observed_at"))
+        for position, observation in enumerate(entry.get("observations", []) or []):
+            if isinstance(observation, dict):
+                add(
+                    f"validation.commands[{index}].observations[{position}].observed_at",
+                    observation.get("observed_at"),
+                )
     return found
 
 
@@ -250,6 +295,180 @@ def check_checks_bound_to_commits(manifest: dict[str, Any]) -> list[Rejection]:
     return rejections
 
 
+def is_superseded_state(delivery_state: Any) -> bool:
+    """True when an anchor's ``delivery_state`` marks it as no longer delivered."""
+
+    text = delivery_state if isinstance(delivery_state, str) else ""
+    lowered = text.lower()
+    return any(marker in lowered for marker in SUPERSEDED_MARKERS)
+
+
+def check_current_delivery_checks(manifest: dict[str, Any]) -> list[Rejection]:
+    """Required checks must prove CI on the bytes this manifest actually delivers.
+
+    ``checks_bound_to_commits`` is satisfied by any check whose head appears
+    anywhere in ``anchor_commits``, including heads the manifest itself declares
+    superseded.  That let the v5 cut report five green rules while carrying no
+    check at all for its own delivery.  This rule closes that hole from both
+    ends: the named receipt must be complete, and at least one green check must
+    land on a head the manifest does not call superseded.
+    """
+
+    delivery = manifest.get("implementation_delivery", {}) or {}
+    anchors = delivery.get("anchor_commits", []) or []
+    checks = delivery.get("required_checks", []) or []
+    declared_head = manifest.get("validation", {}).get("validated_head_sha", "")
+
+    receipts = [anchor for anchor in anchors if anchor.get("receipt_role") == RECEIPT_ROLE]
+    if not receipts:
+        return [
+            Rejection(
+                "current_delivery_checks",
+                f"no anchor_commits entry carries receipt_role={RECEIPT_ROLE!r}; the manifest never "
+                "names the delivery whose bytes its required checks are supposed to cover",
+            )
+        ]
+
+    rejections: list[Rejection] = []
+    for receipt in receipts:
+        sha = receipt.get("sha") or "<missing sha>"
+        label = f"delivery receipt {sha}"
+
+        if is_superseded_state(receipt.get("delivery_state")):
+            rejections.append(
+                Rejection(
+                    "current_delivery_checks",
+                    f"{label} is marked delivery_state={receipt.get('delivery_state')!r}; a superseded "
+                    "commit cannot be the current delivery receipt",
+                )
+            )
+
+        bound = receipt.get("bound_content_digest")
+        if bound != declared_head:
+            rejections.append(
+                Rejection(
+                    "current_delivery_checks",
+                    f"{label} declares bound_content_digest={bound!r}, which does not equal "
+                    f"validation.validated_head_sha={declared_head!r}; the receipt does not cover the "
+                    "delivered bytes",
+                )
+            )
+
+        green = {
+            check.get("workflow")
+            for check in checks
+            if check.get("head_sha") == receipt.get("sha") and check.get("conclusion") == "success"
+        }
+        missing = [workflow for workflow in REQUIRED_DELIVERY_WORKFLOWS if workflow not in green]
+        if missing:
+            rejections.append(
+                Rejection(
+                    "current_delivery_checks",
+                    f"{label} has no successful required_checks entry for {missing}; a receipt is only "
+                    f"complete with all of {list(REQUIRED_DELIVERY_WORKFLOWS)} green on that head",
+                )
+            )
+
+    state_by_sha = {anchor.get("sha"): anchor.get("delivery_state", "") for anchor in anchors}
+    green_heads = {
+        check.get("head_sha") for check in checks if check.get("conclusion") == "success" and check.get("head_sha")
+    }
+    live_heads = {head for head in green_heads if not is_superseded_state(state_by_sha.get(head, ""))}
+    if green_heads and not live_heads:
+        rejections.append(
+            Rejection(
+                "current_delivery_checks",
+                "every successful required check is bound to a superseded delivery head "
+                f"({sorted(green_heads)}); no check covers the current delivery",
+            )
+        )
+    return rejections
+
+
+def check_mutable_observation_binding(manifest: dict[str, Any]) -> list[Rejection]:
+    """Facts read from a mutable surface must name the head and instant they came from.
+
+    A PR head, merge state, or check colour is true only of one head at one
+    instant.  The v5 cut quoted three PRs as current at its evidence cut when
+    all three had already advanced, so every such command entry must now bind
+    its facts explicitly and can only be read as a point-in-time observation.
+    """
+
+    rejections: list[Rejection] = []
+    for index, entry in enumerate(manifest.get("validation", {}).get("commands", []) or []):
+        if not isinstance(entry, dict):
+            continue
+        command = entry.get("command")
+        if not isinstance(command, str) or not MUTABLE_COMMAND.search(command):
+            continue
+        label = f"validation.commands[{index}]"
+
+        raw_observed = entry.get("observed_at")
+        if not isinstance(raw_observed, str) or not raw_observed.strip():
+            rejections.append(
+                Rejection(
+                    "mutable_observation_binding",
+                    f"{label} reads a mutable GitHub surface but records no observed_at",
+                )
+            )
+        else:
+            try:
+                parse_iso(raw_observed)
+            except ValueError:
+                rejections.append(
+                    Rejection(
+                        "mutable_observation_binding",
+                        f"{label}.observed_at is not an ISO-8601 timestamp: {raw_observed!r}",
+                    )
+                )
+
+        observations = entry.get("observations")
+        if not isinstance(observations, list) or not observations:
+            rejections.append(
+                Rejection(
+                    "mutable_observation_binding",
+                    f"{label} reads a mutable GitHub surface but records no observations[]; each fact "
+                    "must name the exact head it was read from",
+                )
+            )
+            continue
+
+        for position, observation in enumerate(observations):
+            where = f"{label}.observations[{position}]"
+            if not isinstance(observation, dict):
+                rejections.append(Rejection("mutable_observation_binding", f"{where} is not an object"))
+                continue
+
+            subject = observation.get("subject")
+            if not isinstance(subject, str) or not subject.strip():
+                rejections.append(Rejection("mutable_observation_binding", f"{where}.subject is missing"))
+
+            head = observation.get("head_sha")
+            if not isinstance(head, str) or not BARE_COMMIT_SHA.match(head.strip()):
+                rejections.append(
+                    Rejection(
+                        "mutable_observation_binding",
+                        f"{where}.head_sha is {head!r}; a mutable observation must name the exact "
+                        "40-character lowercase head it was read from",
+                    )
+                )
+
+            raw = observation.get("observed_at")
+            if not isinstance(raw, str) or not raw.strip():
+                rejections.append(Rejection("mutable_observation_binding", f"{where}.observed_at is missing"))
+                continue
+            try:
+                parse_iso(raw)
+            except ValueError:
+                rejections.append(
+                    Rejection(
+                        "mutable_observation_binding",
+                        f"{where}.observed_at is not an ISO-8601 timestamp: {raw!r}",
+                    )
+                )
+    return rejections
+
+
 def check_companion_checksum(manifest: dict[str, Any], manifest_path: Path, repo_root: Path) -> list[Rejection]:
     relative = manifest.get("integrity", {}).get("companion_checksum_path")
     if not relative:
@@ -281,6 +500,8 @@ def validate(manifest_path: Path, repo_root: Path, now: datetime) -> list[Reject
     rejections += check_head_binding(manifest, repo_root)
     rejections += check_record_log_ordering(manifest)
     rejections += check_checks_bound_to_commits(manifest)
+    rejections += check_current_delivery_checks(manifest)
+    rejections += check_mutable_observation_binding(manifest)
     rejections += check_companion_checksum(manifest, manifest_path, repo_root)
     return rejections
 
