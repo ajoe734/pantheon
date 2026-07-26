@@ -14,7 +14,7 @@ task-state journal → `sync_status_pipeline`).
 | Round | Delivery | Decision |
 |---|---|---|
 | 1 | PR #4212, merged into `dev` as `8703d1f5d` | **Rejected** by Codex2 |
-| 2 | this follow-up PR, cut from `dev` `f687d7aeb` | pending independent Codex2 review |
+| 2 | PR #4215, cut from `dev` `f687d7aeb` | pending independent Codex2 review |
 
 Codex2 accepted the round-1 repairs for the `allowed_warning` rate-limit
 classifier (§1.1) and the live auth-probe lane hold (§1.2); both stay exactly as
@@ -22,6 +22,12 @@ merged and are untouched by this round. Codex2 rejected the **ownerless
 `in_progress` reconciliation** (§1.3) as unsafe, and this round rebuilds its
 evidence rule (§1.5, §2.1). The merged runtime must not be loaded into the live
 supervisor until this follow-up merges.
+
+Mid-round, Codex2 audited anchor `051eef7c0` and accepted the identity /
+timestamp / exact-head binding as materially safer, but found that an
+ancestry-only gate can never see a **squash-merged** delivery — correct but
+permanently inert for that shape, which brings the §1.3 redispatch loop straight
+back. That is §1.6, answered by anchor `6b6eefa59` and §2.2.
 
 ## 1. Observed failures and where they came from
 
@@ -105,9 +111,31 @@ false positives follow directly:
    merged code never looked at the head at all, so it could not tell that run
    apart from one that actually delivered.
 
+### 1.6 Exact ancestry alone cannot see a squash-merged delivery
+
+*Reported by Codex2's mid-round audit of anchor `051eef7c0`. This is the second
+failure this round repairs.*
+
+Binding to the worker's exact delivery head is the right instinct, but a squash
+merge deliberately **rewrites** that head into a new commit on the base. The
+worker's head is therefore not an ancestor of `dev`, and never will be — so
+`_git_commit_is_ancestor(head, dev)` stays false forever even though the
+delivery is real and complete.
+
+The live example on this repository is PR #4213:
+
+| | |
+|---|---|
+| `headRefOid` | `9e484e2522cd8778b85a4c880e4cd33d07ef401f` |
+| squash-merged to | `0410a89f0e4ac3c53e7bc5192aebe6925423b4da` on `dev` |
+| `mergedAt` | `2026-07-26T20:18:15Z` |
+
+Failing closed here is safe but useless: the phase would be permanently inert
+for every squash-merged task, and §1.3's redispatch loop returns for that shape.
+
 ## 2. Delivered behaviour
 
-### 2.1 This round — binding the evidence (repairs §1.5)
+### 2.1 Binding the evidence to one delivery and one owner (repairs §1.5)
 
 The reconciliation phase itself is unchanged in shape. What changed is what it
 is allowed to accept as evidence: it must now be able to name **one specific
@@ -139,7 +167,43 @@ Two notes on what was deliberately **not** used as the binding:
   fall back to an older worker that happens to match; leaving the filter at the
   gate makes a reassignment fail closed instead.
 
-### 2.2 Round 1 — merged as `8703d1f5d`, unchanged by this round
+### 2.2 Recognising both delivery shapes (repairs §1.6)
+
+`merged_delivery_commits` now recognises two shapes and binds each to this exact
+worker. Ancestry is tried first because it is local, free, and needs no network;
+the PR-metadata path runs only after it fails.
+
+| Shape | How it is proven |
+|---|---|
+| `merge_ancestry` | The delivery head is an ancestor of the integration base, and a `Task-ID:` trailer commit reachable from that head is dated at or after the worker's dispatch. The merge commit carrying the head into the base is recorded when there is one. |
+| `squash_pr_metadata` | Authoritative GitHub PR metadata, because the head was rewritten and git ancestry can never see it. |
+
+The squash binding (`squash_merged_delivery_metadata`) requires **all** of:
+
+- exactly **one** merged PR whose `headRefOid` equals this worker's delivery
+  head — no match, or more than one, fails closed;
+- `state` `MERGED`;
+- `baseRefName` equal to the expected integration branch;
+- `mergedAt` at or after the worker's dispatch;
+- a `mergeCommit` present locally and an ancestor of the base ref;
+- that merge commit itself carrying this task's `Task-ID:` trailer and dated at
+  or after the dispatch (`git log --no-walk`, so the search stays on the
+  squashed commit rather than walking its whole ancestry).
+
+The task branch name is **only the lookup key** for
+`gh pr list --head <branch> --state merged` — it is never the evidence. A task
+id alone never implies a squash, and provider prose and `pr_url` are never
+consulted. `_merged_pull_requests_for_branch` returns `None` — never an
+empty-but-trusted answer — when the lookup is disabled, `gh` is missing, the
+`origin` remote is not a resolvable `github.com` `owner/repo`, the process exits
+non-zero, it times out, or the payload is not a JSON list.
+
+One consequence for the branch check: a squash-merged branch is *legitimately*
+never an ancestor of the base, so the base comparison is skipped for that shape
+only. Movement past the delivery head still blocks, and the merge itself is
+proven by the PR metadata instead.
+
+### 2.3 Round 1 — merged as `8703d1f5d`, unchanged by this round
 
 | # | Change | Location |
 |---|---|---|
@@ -168,13 +232,19 @@ The reconciliation returns without touching a task when **any** of these hold:
 - **the worker recorded no commit progress during this run** (a clean rerun over
   an already merged branch delivered nothing);
 - **the worker has no full-sha delivery head;**
-- **that delivery head is not an ancestor of the integration base** (unpushed
-  work, or a squash merge that rewrote the head);
+- **that delivery head is neither an ancestor of the integration base nor the
+  `headRefOid` of exactly one merged PR into that base** (unpushed work, or a
+  delivery no recognised shape can prove);
 - **no `Task-ID:` trailer commit reachable from that head is dated at or after
-  the worker's dispatch** (older-only merged commits from a previous round);
+  the worker's dispatch** (older-only merged commits from a previous round), or
+  for a squash, the squashed commit itself carries no such trailer;
+- **the PR metadata disagrees on any field** — wrong head, wrong base, not
+  merged, merged before the dispatch, or a merge commit that is not on the base;
 - a surviving task branch is ahead of the base **or has moved past the delivery
   head**;
-- **any git command fails** — a transport error never reads as "merged";
+- **any git command fails, or the PR lookup cannot be answered** — a transport
+  error, a timeout, a missing `gh`, or unparseable metadata never reads as
+  "merged";
 - owner or reviewer is missing, or reviewer equals owner;
 - the locked re-read no longer shows `in_progress` with the same owner/reviewer.
 
@@ -198,11 +268,13 @@ git show origin/dev:.orchestrator/supervisor.py > <scratch>/orch/supervisor.py
 env -C <scratch>/orch python3 -m unittest \
   test_supervisor.OwnerlessInProgressReconciliationTests \
   test_supervisor.MergedDeliveryEvidenceTests \
+  test_supervisor.SquashMergedDeliveryEvidenceTests \
+  test_supervisor.MergedPullRequestLookupTests \
   test_supervisor.WorkerDeliveryIdentityTests
 ```
 
-Result: `Ran 31 tests` → `FAILED (failures=5, errors=15)` — 20 of 31 fail.
-The five behavioural failures are the merged code actually producing the false
+Result: `Ran 55 tests` → `FAILED (failures=6, errors=38)` — 44 of 55 fail.
+The six behavioural failures are the merged code actually producing the false
 positives Codex2 described (each asserts `changed is False` and gets `True`,
 i.e. the row was moved to `review` on evidence it should not have accepted):
 
@@ -210,31 +282,50 @@ i.e. the row was moved to `review` on evidence it should not have accepted):
 - `test_rerun_without_commit_progress_is_not_evidence`;
 - `test_unregistered_worker_identity_fails_closed`;
 - `test_worker_without_a_delivery_head_fails_closed`;
-- `test_worker_without_a_dispatch_timestamp_fails_closed`.
+- `test_worker_without_a_dispatch_timestamp_fails_closed`;
+- `test_squash_merged_delivery_reconciles_and_skips_base_comparison`.
 
-The 15 errors are the merged code having no binding entry point at all —
+The 38 errors are the merged code having no binding entry point at all —
 `TypeError` on the keyword-only `delivery_head` / `since` arguments, and
 `AttributeError` on helpers that do not exist there.
 
 Full transcript, including the fixed run and the full suite:
 `prefix-reproduction.txt`.
 
-### 3.2 Focused suite after the fix
+### 3.2 Focused suites after the fix
 
 ```bash
 env -C .orchestrator python3 -m unittest \
   test_supervisor.OwnerlessInProgressReconciliationTests \
   test_supervisor.MergedDeliveryEvidenceTests \
+  test_supervisor.SquashMergedDeliveryEvidenceTests \
+  test_supervisor.MergedPullRequestLookupTests \
   test_supervisor.WorkerDeliveryIdentityTests
-# Ran 31 tests — OK
+# Ran 55 tests — OK
 ```
 
 ### 3.3 Full supervisor suite
 
 ```bash
 env -C .orchestrator python3 -m unittest test_supervisor
-# Ran 375 tests — OK   (357 after round 1, +18 this round)
+# Ran 399 tests — OK   (357 after round 1, +42 this round)
 ```
+
+### 3.3b Live binding against this repository — not a mock
+
+`merged_delivery_commits` was run against the real `pantheon` checkout and the
+real GitHub PR metadata, for both shapes and their negatives:
+
+| Input | Result |
+|---|---|
+| PR #4213 head `9e484e252`, dispatch `2026-07-26T19:53:14Z` | `squash_pr_metadata`, merge commit `0410a89f0`, base `origin/dev`, `mergedAt 2026-07-26T20:18:15Z` |
+| same task, delivery head `ffff…` | `None` |
+| same task and head, dispatch `2026-07-26T23:00:00Z` (after the merge) | `None` |
+| PR #4212 head `0ffc9404c`, dispatch `2026-07-26T18:00:00Z` | `merge_ancestry`, merge commit `8703d1f5d`, base `origin/dev` |
+| same task and head, dispatch `2026-07-26T21:00:00Z` | `None` |
+
+Full output: the `LIVE BINDING` section at the end of
+`prefix-reproduction.txt`.
 
 ### 3.4 Rewrite package suite
 
@@ -256,6 +347,21 @@ env -C .orchestrator python3 -m unittest discover -s rewrite -p "test_*.py" -t .
 | Older-only merged `Task-ID` commits | `test_older_only_merged_trailer_commits_are_not_this_delivery`, `test_trailer_commit_reachable_from_the_delivery_head_is_merged_evidence` (pins both the `--since` and the head-scoping arguments) |
 | Fail-closed absent linkage | `test_worker_without_a_delivery_head_fails_closed`, `test_worker_without_a_dispatch_timestamp_fails_closed`, `test_unregistered_worker_identity_fails_closed`, `test_missing_delivery_head_or_since_fails_closed`, `test_git_log_failure_fails_closed`, `test_rev_list_failure_reports_unmerged_commits` |
 
+And for the squash shape (`SquashMergedDeliveryEvidenceTests`,
+`MergedPullRequestLookupTests`):
+
+| Required case | Tests |
+|---|---|
+| Squash positive, live #4213 shape | `test_live_4213_squash_shape_binds_through_pr_metadata`, `test_squash_merged_delivery_reconciles_and_skips_base_comparison` |
+| Normal merge / fast-forward positive | `test_trailer_commit_reachable_from_the_delivery_head_is_merged_evidence`, `test_fast_forward_merge_without_a_merge_commit_still_binds`, `test_ancestry_shape_is_preferred_and_skips_the_pr_lookup` |
+| Wrong PR head | `test_wrong_pr_head_is_not_this_delivery` |
+| Wrong base | `test_wrong_base_branch_fails_closed` |
+| Pre-dispatch merge | `test_merge_before_the_worker_was_dispatched_fails_closed`, `test_unmergeable_or_unparseable_merged_at_fails_closed` |
+| Unrelated merge commit | `test_unrelated_merge_commit_fails_closed`, `test_merge_commit_without_this_tasks_trailer_fails_closed`, `test_missing_merge_commit_oid_fails_closed`, `test_pr_not_actually_merged_fails_closed` |
+| Deleted branch | `test_deleted_branch_with_no_merged_pr_fails_closed`, `test_squash_delivery_does_not_require_branch_ancestry` |
+| GitHub lookup failure | `test_github_lookup_failure_fails_closed`, and all of `MergedPullRequestLookupTests` (disabled, gh missing, unknown repository, non-zero exit, timeout, unparseable or non-list JSON) |
+| Multiple PRs for the same task id | `test_multiple_prs_for_the_task_resolve_by_exact_head`, `test_ambiguous_duplicate_head_metadata_fails_closed` |
+
 ## 5. Acceptance mapping
 
 | Acceptance item | Covered by |
@@ -263,7 +369,7 @@ env -C .orchestrator python3 -m unittest discover -s rewrite -p "test_*.py" -t .
 | Seven ownerless `in_progress` fixtures reconcile from terminal outcome and durable worker evidence without resetting any live worker | `OwnerlessInProgressReconciliationTests` — seven per-fixture tests plus `test_seven_ownerless_fixtures_reconcile_in_one_pass` |
 | Allowed `rate_limit` warning remains nonterminal and redispatchable | `AllowedRateLimitNoticeTests` (6 tests, live payload) |
 | Fresh provider `auth_ready` false keeps the lane unavailable until a later fresh successful probe without any config edit | `FreshAuthProbeLaneHoldTests` — asserts the config dict is byte-identical after the whole cycle |
-| Merged owner delivery with no implementation remaining transitions through governed review handoff instead of repeated owner redispatch | `test_merged_owner_delivery_moves_to_governed_review_handoff`, `test_reconciled_evidence_records_the_bound_delivery` |
+| Merged owner delivery with no implementation remaining transitions through governed review handoff instead of repeated owner redispatch | `test_merged_owner_delivery_moves_to_governed_review_handoff`, `test_reconciled_evidence_records_the_bound_delivery`, `test_squash_merged_delivery_reconciles_and_skips_base_comparison` (both delivery shapes) |
 | Authoritative event log projection and queue worker lease state remain consistent under concurrent outcomes | `write_status` journals before the projection write; the locked re-read rejects a raced row; `finalize_queue_event_record` settles the queue record and lease (asserted in fixture 1) |
 | Focused supervisor tests reproduce all observed failures and pass | §3.1 / §3.2 |
 | Branch, commit, push, PR checks, independent Codex2 review, merge, evidence archive | this follow-up task PR — **in progress**, awaiting independent Codex2 review |
@@ -272,7 +378,8 @@ env -C .orchestrator python3 -m unittest discover -s rewrite -p "test_*.py" -t .
 
 | Risk | Severity | Containment |
 |---|---|---|
-| A squash-merged PR rewrites the delivery head, so the head is not an ancestor of the base and the phase produces no evidence for that task | low | Fail-closed by design — the task stays on the existing owner-redispatch path, exactly as before this task existed. If the repository moves to squash-only merges this phase becomes inert and would need a squash-aware binding, not a relaxed one. |
+| The squash shape is the only one needing a network answer; `gh` may be unavailable, unauthenticated, rate-limited, or slow | low | Fail-closed and retried — the task stays on owner redispatch and the next cycle re-runs the lookup. An unanswered lookup never reads as merged, and `merge_ancestry` needs no network and is always tried first. |
+| A PR merged with GitHub's **rebase** strategy also rewrites the commits and produces no single merge commit to bind to, so neither shape recognises it | low | Fail-closed by design — the task stays on the existing owner-redispatch path. This repository's task PRs use merge commits and squash, both covered. Enabling rebase merging would need a third shape (binding each rebased commit's trailer and patch-id), not a relaxed gate. |
 | A supervisor root that has not fetched recently sees a merged delivery later than GitHub does | low | A stale ref can only delay a handoff, never manufacture one. |
 | Evidence relies on the `Task-ID:` commit trailer enforced by `.githooks/commit-msg` | low | Trailer-exempt subjects simply produce no evidence. |
 | The run binding relies on `update_worker_commit_progress` having observed the worktree advance; a delivery that landed entirely between two polls records no progress | low | Fail-closed — no observed progress means no transition. It cannot create a false positive. |

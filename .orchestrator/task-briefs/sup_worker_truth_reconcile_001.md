@@ -47,13 +47,39 @@ the live state at 2026-07-26T20:21Z carried a malformed value naming an
 unrelated PR. It is recorded with `pr_url_is_authoritative: false` and pinned by
 a regression test.
 
+### Mid-round: squash-merged deliveries (Codex2 audit of anchor `051eef7c0`)
+
+Codex2 accepted the binding above but found that exact git ancestry can never
+see a **squash** merge — correct, but permanently inert for that shape, which
+brings the redispatch loop straight back. The live case is PR #4213, head
+`9e484e252` squash-merged to `0410a89f0` on `dev`.
+
+`merged_delivery_commits` now recognises two shapes. `merge_ancestry` is tried
+first (local git only). `squash_pr_metadata` runs only after ancestry fails and
+binds authoritative GitHub PR metadata: exactly one merged PR whose
+`headRefOid` equals this worker's delivery head, `state` `MERGED`, `baseRefName`
+the expected integration branch, `mergedAt` at or after the dispatch, and a
+`mergeCommit` that is an ancestor of the base and itself carries this task's
+`Task-ID:` trailer dated at or after the dispatch. The task branch name is only
+the lookup key; a task id alone never implies a squash; provider prose and
+`pr_url` are never consulted. A disabled lookup, missing `gh`, unknown
+repository, non-zero exit, timeout, unparseable payload, or two records claiming
+the same head all fail closed. The base comparison in the branch check is
+skipped for the squash shape only, because a squash rewrites the commits and the
+original branch is legitimately never an ancestor of the base.
+
 Evidence: `docs/deployment/evidence/supervisor/SUP-WORKER-TRUTH-RECONCILE-001/`
 (`evidence.json`, `evidence.md`, `prefix-reproduction.txt`).
 
-Verification: 20 of the 31 focused tests fail against the merged round-1
-supervisor (`origin/dev:.orchestrator/supervisor.py`), including five that
-reproduce the exact false positives Codex2 described; all 31 pass after.
-`python3 -m unittest test_supervisor` reports 375 tests OK.
+Verification: 44 of the 55 focused tests fail against the merged round-1
+supervisor (`origin/dev:.orchestrator/supervisor.py`), including six that
+reproduce the exact false positives Codex2 described; all 55 pass after.
+`python3 -m unittest test_supervisor` reports 399 tests OK. A live, unmocked
+re-run against the real repository and real GitHub metadata resolves PR #4213 as
+`squash_pr_metadata` and PR #4212 as `merge_ancestry`, with a wrong delivery
+head and a post-merge dispatch both returning `None`.
+
+Delivery: PR #4215.
 
 ## Coordination Root
 - Auto workers inherit `PANTHEON_STATUS_ROOT`, `PANTHEON_COMMAND_ROOT`, and `PANTHEON_COMMAND_RUNTIME_SHA` from the supervisor.
