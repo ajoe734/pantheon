@@ -161,33 +161,91 @@ def _status_root() -> Path:
     return Path(raw).expanduser().resolve() if raw else ROOT
 
 
-def _safe_status_artifact(relative_path: str) -> Path:
+def _closeout_relative_artifact(relative_path: str) -> Path:
     relative = Path(relative_path)
     if relative.is_absolute() or ".." in relative.parts:
         raise RuntimeError(
             "closeout review_file must be a repository-relative path "
             "without parent traversal"
         )
-    root = _status_root().absolute()
+    return relative
+
+
+def _safe_rooted_artifact(root: Path, relative: Path) -> Path | None:
+    """Resolve ``relative`` under ``root`` or return ``None`` when absent.
+
+    A candidate that exists but breaks containment or crosses a symlink is a
+    hard failure: the caller must not silently fall through to another trusted
+    root once an untrustworthy artifact has been observed.
+    """
+
+    root = root.absolute()
     candidate = (root / relative).absolute()
     try:
-        candidate.relative_to(root.absolute())
+        candidate.relative_to(root)
     except ValueError as exc:
-        raise RuntimeError("closeout review_file escapes PANTHEON_STATUS_ROOT") from exc
-    cursor = Path(candidate.anchor)
-    for part in candidate.parts[1:]:
+        raise RuntimeError(
+            f"closeout review_file escapes its trusted root: {root}"
+        ) from exc
+    cursor = root
+    for part in relative.parts:
         cursor /= part
         if cursor.is_symlink():
             raise RuntimeError(
                 f"closeout review_file cannot contain a symlink: {cursor}"
             )
         if not cursor.exists():
-            break
-    if not candidate.is_file() or candidate.is_symlink():
-        raise RuntimeError(
-            f"closeout review_file is missing or not regular: {relative_path}"
-        )
+            return None
+    if not candidate.is_file():
+        return None
     return candidate
+
+
+def _protected_closeout_roots() -> tuple[list[Path], str | None]:
+    """Return the ordered trusted roots that may hold a protected manifest.
+
+    A governed reviewer command executes from the immutable command root while
+    the manifest it is approving is authored in the supervisor-bound task
+    worktree, and only reaches the central status root once the delivery PR has
+    merged.  Searching the status root alone therefore fails a valid signed
+    verdict in exactly the split-root dispatch it is meant to guard.  The order
+    is the bound task worktree (it holds the artifact under review), then the
+    command root, then the status root; the latter two are merged replay/audit
+    copies.  Search order is not a trust decision: the manifest bytes are
+    sha256-bound into the Human/Ops signature, so a substituted copy in any
+    root fails the binding check instead of being accepted.
+    """
+
+    workspace_roots, error = _review_workspace_roots()
+    if error:
+        return [], error
+
+    roots: list[Path] = []
+    for root in [*workspace_roots, _status_root()]:
+        resolved = root.resolve()
+        if resolved not in roots:
+            roots.append(resolved)
+    return roots, None
+
+
+def _safe_protected_closeout_artifact(relative_path: str) -> Path:
+    """Resolve a protected closeout manifest across validated roots."""
+
+    relative = _closeout_relative_artifact(relative_path)
+    roots, root_error = _protected_closeout_roots()
+    if root_error:
+        raise RuntimeError(f"closeout review_file root binding is invalid: {root_error}")
+
+    for root in roots:
+        resolved = _safe_rooted_artifact(root, relative)
+        if resolved is not None:
+            return resolved
+
+    searched = ", ".join(str(root) for root in roots)
+    raise RuntimeError(
+        f"closeout review_file is missing or not regular: {relative_path} "
+        f"(searched: {searched})"
+    )
 
 
 def _protected_policy_path(
@@ -252,7 +310,7 @@ def _load_product_closeout_binding(task: dict[str, Any], module: Any) -> Any:
         )
     if Path(review_file).is_absolute():
         raise RuntimeError("protected closeout review_file must be repository-relative")
-    manifest_path = _safe_status_artifact(review_file)
+    manifest_path = _safe_protected_closeout_artifact(review_file)
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:

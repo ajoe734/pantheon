@@ -1022,8 +1022,13 @@ class TestProtectedHumanOpsCloseoutGuard(unittest.TestCase):
             "review_file": "evidence/closeout.json",
             "requires_human_ops_signoff": True,
         }
+        # Explicitly neutralise the worker workspace bindings so the default
+        # cases resolve from the status root even when this suite runs inside a
+        # dispatched task worktree.
         self.env = {
             "PANTHEON_STATUS_ROOT": str(self.status_root),
+            "PANTHEON_WORKTREE_ROOT": "",
+            "ORCH_WORKSPACE_PATH": "",
         }
 
     def tearDown(self) -> None:
@@ -1256,7 +1261,178 @@ class TestProtectedHumanOpsCloseoutGuard(unittest.TestCase):
             mock.patch.dict(os.environ, self.env, clear=False),
             self.assertRaisesRegex(RuntimeError, "parent traversal"),
         ):
-            guardrail._safe_status_artifact("../outside.json")
+            guardrail._safe_protected_closeout_artifact("../outside.json")
+
+    def _relocate_manifest_to(self, root: Path) -> Path:
+        """Move the manifest out of the status root into ``root``."""
+
+        relocated = root / "evidence" / "closeout.json"
+        relocated.parent.mkdir(parents=True, exist_ok=True)
+        relocated.write_text(
+            self.manifest_path.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        self.manifest_path.unlink()
+        self.manifest_path = relocated
+        return relocated
+
+    def test_review_approved_resolves_manifest_from_bound_task_worktree(self) -> None:
+        """The reviewed manifest lives in the worktree, not the status root."""
+
+        worktree_root = self.temp_root / "task-worktree"
+        worktree_root.mkdir()
+        self._relocate_manifest_to(worktree_root)
+        verdict = self._issue()
+        split_root_env = {
+            **self.env,
+            "PANTHEON_WORKTREE_ROOT": str(worktree_root),
+            "ORCH_WORKSPACE_PATH": str(worktree_root),
+        }
+
+        with mock.patch.dict(os.environ, split_root_env, clear=False):
+            reference = guardrail.validate_protected_closeout_transition(
+                self.task,
+                transition="review_approved",
+            )
+
+        self.assertEqual(reference["verdict_id"], verdict["verdict_id"])
+
+    def test_review_approved_resolves_manifest_from_command_root(self) -> None:
+        """A merged manifest is still readable from the immutable command root."""
+
+        command_root = self.temp_root / "command-root"
+        command_root.mkdir()
+        self._relocate_manifest_to(command_root)
+        verdict = self._issue()
+
+        with (
+            mock.patch.object(guardrail, "ROOT", command_root),
+            mock.patch.dict(os.environ, self.env, clear=False),
+        ):
+            reference = guardrail.validate_protected_closeout_transition(
+                self.task,
+                transition="review_approved",
+            )
+
+        self.assertEqual(reference["verdict_id"], verdict["verdict_id"])
+
+    def test_conflicting_workspace_root_bindings_fail_closed(self) -> None:
+        worktree_root = self.temp_root / "task-worktree"
+        worktree_root.mkdir()
+        self._relocate_manifest_to(worktree_root)
+        self._issue()
+        conflicting_env = {
+            **self.env,
+            "PANTHEON_WORKTREE_ROOT": str(worktree_root),
+            "ORCH_WORKSPACE_PATH": str(self.temp_root / "other-worktree"),
+        }
+
+        with (
+            mock.patch.dict(os.environ, conflicting_env, clear=False),
+            self.assertRaisesRegex(RuntimeError, "conflicting"),
+        ):
+            guardrail.validate_protected_closeout_transition(
+                self.task,
+                transition="review_approved",
+            )
+
+    def test_relative_workspace_root_binding_fails_closed(self) -> None:
+        self._issue()
+        relative_env = {
+            **self.env,
+            "PANTHEON_WORKTREE_ROOT": "relative/task-worktree",
+        }
+
+        with (
+            mock.patch.dict(os.environ, relative_env, clear=False),
+            self.assertRaisesRegex(RuntimeError, "must be an absolute path"),
+        ):
+            guardrail.validate_protected_closeout_transition(
+                self.task,
+                transition="review_approved",
+            )
+
+    def test_symlinked_manifest_in_bound_worktree_is_rejected(self) -> None:
+        self._issue()
+        worktree_root = self.temp_root / "task-worktree"
+        (worktree_root / "evidence").mkdir(parents=True)
+        planted = self.temp_root / "planted.json"
+        planted.write_text(
+            self.manifest_path.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        (worktree_root / "evidence" / "closeout.json").symlink_to(planted)
+        self.manifest_path.unlink()
+        split_root_env = {
+            **self.env,
+            "PANTHEON_WORKTREE_ROOT": str(worktree_root),
+        }
+
+        with (
+            mock.patch.dict(os.environ, split_root_env, clear=False),
+            self.assertRaisesRegex(RuntimeError, "cannot contain a symlink"),
+        ):
+            guardrail.validate_protected_closeout_transition(
+                self.task,
+                transition="review_approved",
+            )
+
+    def test_manifest_absent_from_every_trusted_root_reports_search(self) -> None:
+        self._issue()
+        worktree_root = self.temp_root / "task-worktree"
+        worktree_root.mkdir()
+        self.manifest_path.unlink()
+        split_root_env = {
+            **self.env,
+            "PANTHEON_WORKTREE_ROOT": str(worktree_root),
+        }
+
+        with (
+            mock.patch.dict(os.environ, split_root_env, clear=False),
+            self.assertRaisesRegex(RuntimeError, "missing or not regular"),
+        ):
+            guardrail.validate_protected_closeout_transition(
+                self.task,
+                transition="review_approved",
+            )
+
+        with mock.patch.dict(os.environ, split_root_env, clear=False):
+            roots, error = guardrail._protected_closeout_roots()
+        self.assertIsNone(error)
+        self.assertEqual(roots[0], worktree_root.resolve())
+        self.assertIn(self.status_root.resolve(), roots)
+        self.assertIn(guardrail.ROOT.resolve(), roots)
+
+    def test_bound_worktree_manifest_takes_precedence_over_status_root(self) -> None:
+        """A stale merged copy cannot silently displace the reviewed artifact."""
+
+        worktree_root = self.temp_root / "task-worktree"
+        (worktree_root / "evidence").mkdir(parents=True)
+        stale = dict(self.manifest)
+        stale["deployment"] = {
+            **self.manifest["deployment"],
+            "identity_admission": {
+                **self.manifest["deployment"]["identity_admission"],
+                "frontend_sha": "f" * 40,
+            },
+        }
+        self.manifest_path.write_text(json.dumps(stale, sort_keys=True), encoding="utf-8")
+        reviewed = worktree_root / "evidence" / "closeout.json"
+        reviewed.write_text(json.dumps(self.manifest, sort_keys=True), encoding="utf-8")
+        self.manifest_path = reviewed
+        verdict = self._issue()
+        split_root_env = {
+            **self.env,
+            "PANTHEON_WORKTREE_ROOT": str(worktree_root),
+        }
+
+        with mock.patch.dict(os.environ, split_root_env, clear=False):
+            reference = guardrail.validate_protected_closeout_transition(
+                self.task,
+                transition="review_approved",
+            )
+
+        self.assertEqual(reference["verdict_id"], verdict["verdict_id"])
 
     def test_revoked_review_verdict_can_be_replaced_by_new_human_ops_verdict(
         self,
