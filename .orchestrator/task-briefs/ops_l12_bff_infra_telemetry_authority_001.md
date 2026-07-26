@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Add strict-auth infrastructure health telemetry authority
-- Status: todo
+- Status: in_progress
 - Owner: Claude
 - Reviewer: Antigravity
-- Next: Implement the cross-service telemetry authority required by L12-BFF-001 within telemetry scope only. Define a non-trading infrastructure_health contract that does not invent RuntimeBinding fields. Require strict service JWT tenant binding and an allowlisted producer scope. Remove the shape-based binding bypass. Preserve all trading telemetry validation. Prove durable idempotent admission with real strict-auth route tests including spoof and restart/replica replay. L12-BFF-001 must drop its out-of-scope telemetry edits and consume this contract. Do not modify incidents because L12-EVO-001 currently owns that subtree.
+- Next: Independent rejection of PR #4211 head 0d0b015c9: documenting that the readback used a volatile memory buffer does not satisfy AC3 (the admitted event is durable across retries and replicas). Current code accepts 202 and commits the durable ledger after InMemoryBuffer.put even though is_durable() is false; a process crash can erase the only event copy while the ledger causes every later retry to return duplicate 202. Required owner repair: fail closed before reservation/commit when the configured buffer is non-durable in authoritative infrastructure-health mode; tests may inject a fake durable broker contract but must not create a production-enableable volatile bypass. Add a real process/broker crash matrix covering crash before put, after durable put before commit, after commit, restart replay, and replica concurrency, with no false success/permanent loss. Re-cut evidence only after focused and full telemetry suites pass. No config change and no weakening strict auth/trading validation.
 
 ## Summary
 -

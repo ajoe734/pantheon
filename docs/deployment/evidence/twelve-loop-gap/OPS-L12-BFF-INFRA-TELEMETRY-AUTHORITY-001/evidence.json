@@ -28,7 +28,7 @@
         "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/current-runtime-readback.json"
       ],
       "id": "AC3",
-      "statement": "The admitted event is durable and idempotent by stable event ID across retries and replicas, and no caller is told it succeeded before a durable receipt exists.",
+      "statement": "The admitted event is durable and idempotent by stable event ID across retries and replicas: admission fails closed unless the configured buffer is a durable broker, no caller is told it succeeded before a durable receipt exists, and an admitted event survives process crash and restart.",
       "status": "pass"
     },
     {
@@ -85,6 +85,7 @@
     "failure_and_degraded_behavior": {
       "proof": [
         "Missing bearer token, a structured permissive-mode token, the shared static service token, a non-service role, an unbound or wildcard tenant claim, a cross-tenant header, a payload tenant mismatch, an unconfigured or wildcard producer scope, and an unallowlisted producer all fail closed with stable error codes.",
+        "When the deployment has no durable broker behind the route, ingestion refuses the event with 503 INFRA_BUFFER_NOT_DURABLE before taking a reservation, rather than admitting an observation it cannot keep.",
         "When the authoritative schema or the durable admission ledger is unavailable, ingestion refuses the event with INFRA_SCHEMA_UNAVAILABLE or INFRA_LEDGER_UNCONFIGURED instead of admitting something it cannot deduplicate.",
         "A full buffer answers 503 INFRA_BUFFER_OVERFLOW, and a cancelled enqueue raises, with the ledger reservation released in both cases so the producer's retry can still be admitted."
       ],
@@ -101,7 +102,12 @@
       "proof": [
         "Against the running Flask telemetry service, a real shutdown() and startup() cycle over the same storage directory answered the replayed event with HTTP 202 duplicate=true while the restarted instance reported zero new admissions, because the durable committed receipt rather than process memory is the admission authority.",
         "A real service instance SIGKILLed inside its durable enqueue left a reserved-not-committed claim. Retries were refused as in-flight while the lease was live, the claim was recovered by the next caller once the lease expired, and the event then reached a committed receipt \u2014 so a crash in that window neither loses the event nor strands the event_id forever.",
-        "A second telemetry service instance over the same storage directory treats an already admitted stable event ID as a duplicate, and four separate replica processes synchronising on a barrier admitted it exactly once."
+        "A second telemetry service instance over the same storage directory treats an already admitted stable event ID as a duplicate, and four separate replica processes synchronising on a barrier admitted it exactly once.",
+        "Admission fails closed before any reservation and again before the commit unless the configured buffer proves durability through its own is_durable(). A deployment running the volatile memory buffer answers 503 INFRA_BUFFER_NOT_DURABLE, writes no ledger record at all, and reports infrastructure_health_buffer_durable=0 on /healthz, so no committed receipt can ever outlive the only copy of an event.",
+        "There is no production-enableable volatile bypass: the gate reads only the backend's own durability, and a test sets every PANTHEON_* telemetry environment variable found in main.py, ingest_svc.py, buffer.py, and auth.py to its most permissive value at once without changing the refusal. The injectable buffer seam used by the tests is an in-process constructor argument that buffer.create_buffer and the environment-driven service builder never reach, and injecting a volatile buffer through it still fails closed.",
+        "Against a real NATS JetStream broker (file storage, work-queue retention), an admitted event was still present in the stream after the telemetry process was SIGKILLed, and the restarted service answered the producer's replay with 202 duplicate=true \u2014 the duplicate answer is backed by an event that actually survived the crash.",
+        "A backend that stops proving durability between the enqueue and the commit is refused with the reservation released, so a degraded broker cannot convert an unsafe write into an idempotent success and the producer's retry stays admissible.",
+        "A process/broker crash matrix SIGKILLs a real ingest process in each admission window \u2014 before the durable put, after the durable put but before the commit, and after the commit \u2014 and asserts both failure modes are absent: no producer is answered accepted or duplicate for an observation that is not in durable storage, and a retry with the same stable event_id always ends with exactly one committed receipt over durable copies that are byte-identical to the original event. Four concurrent replica processes over the same broker log and ledger produce exactly one accepted admission, one durable copy, and one committed record."
       ],
       "status": "pass"
     },
@@ -140,28 +146,36 @@
   },
   "hosted_readback": {
     "pre_deploy": {
+      "admitted_event_durable_after_crash": true,
       "artifact": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/current-runtime-readback.json",
       "binding_spoof_http": 400,
-      "concurrent_attempt_during_reservation_code": "INFRA_ADMISSION_IN_FLIGHT",
-      "concurrent_attempt_during_reservation_http": 503,
-      "durable_ledger_committed_ids": 3,
+      "buffer_backend": "jetstream (real NATS JetStream, file storage, work queue)",
+      "durable_broker_messages_after_admission": 1,
+      "durable_broker_retention": "workqueue",
+      "durable_broker_storage": "file",
+      "durable_ledger_committed_ids": 2,
       "durable_ledger_orphan_reservations": 0,
-      "durable_ledger_record_count": 7,
-      "environment": "bounded local nonprod telemetry on 127.0.0.1:18149",
+      "durable_ledger_record_count": 5,
+      "environment": "bounded local nonprod telemetry over real HTTP on 127.0.0.1:18150 (durable) and :18151 (volatile refusal)",
       "event_id_conflict_http": 409,
+      "healthz_buffer_durable": 1,
       "healthz_http": 200,
       "hosted_activation_claimed": false,
       "missing_token_http": 401,
-      "observed_at": "2026-07-26T19:39:08.935082Z",
-      "replay_after_durable_receipt_duplicate": true,
+      "observed_at": "2026-07-26T20:33:47.965636Z",
+      "payload_tenant_mismatch_http": 403,
+      "process_crash_signal": "SIGKILL",
       "restart_replay_duplicate": true,
       "restart_replay_http": 202,
       "retry_replay_duplicate": true,
       "status": "pass",
       "stranded_reservation_recovered_http": 202,
       "stranded_reservation_refused_code": "INFRA_ADMISSION_IN_FLIGHT",
-      "terminal_readback": "Against the running telemetry service, one stable event ID was admitted once, replayed as a duplicate on retry and again after a real service restart. A concurrent attempt during a live reservation was refused as retryable rather than answered as a success, a reservation stranded as if by a crash was refused while its lease was live and recovered after it expired, and no orphan reservation remained. Missing token, wrong tenant, wrong producer, reused event ID, spoofed binding evidence, and both trading-route bypass attempts all failed closed.",
+      "terminal_readback": "Against the running telemetry service backed by a real NATS JetStream file-storage work queue, one stable event ID was admitted once, deduplicated on retry, and still present in the broker stream after the service process was SIGKILLed; the restarted service answered the same event as a duplicate, and the ledger held no orphan reservation. A reservation stranded as if by a crashed replica was refused as retryable while its lease was live and recovered once it expired. A second service instance booted with the volatile memory buffer reported buffer_durable=0 and refused admission with 503 INFRA_BUFFER_NOT_DURABLE without writing a single ledger record. Missing token, wrong tenant, payload tenant mismatch, wrong producer, reused event ID, spoofed binding evidence, and both trading-route bypass attempts all failed closed.",
       "valid_ingest_http": 202,
+      "volatile_backend_admission_code": "INFRA_BUFFER_NOT_DURABLE",
+      "volatile_backend_admission_http": 503,
+      "volatile_backend_ledger_records": 0,
       "wrong_producer_http": 403,
       "wrong_tenant_http": 403
     }
@@ -177,6 +191,16 @@
         "delivery_state": "on_task_branch_pending_pr",
         "sha": "2f723037e10c9d4a4f290f3e4729d187f4aea5d8",
         "subject": "OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001: fence infra admission"
+      },
+      {
+        "delivery_state": "on_task_branch_pending_pr",
+        "sha": "0d0b015c9",
+        "subject": "OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001: state infra retry contract"
+      },
+      {
+        "delivery_state": "on_task_branch_pending_pr",
+        "sha": "28b13a16d0af770f7825edf75014b4a2b8ae9b46",
+        "subject": "OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001: anchor durable admission gate"
       }
     ],
     "required_checks": []
@@ -191,9 +215,11 @@
     "hosted_semantic_sha256": {},
     "manifest_path": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/evidence.json",
     "normalized_hosted_readback": {
+      "admitted_event_durable_after_sigkill": true,
       "binding_spoof_refused": true,
       "concurrent_attempt_refused_without_receipt": true,
-      "durable_ledger_committed_count": 3,
+      "durable_broker_is_file_backed": true,
+      "durable_ledger_committed_count": 2,
       "durable_ledger_orphan_reservation_count": 0,
       "event_id_conflict_refused": true,
       "hosted_activation_claimed": false,
@@ -202,13 +228,15 @@
       "retry_replay_deduplicated": true,
       "stranded_reservation_recovered": true,
       "valid_ingest_accepted": true,
+      "volatile_backend_admission_refused": true,
+      "volatile_backend_wrote_no_ledger_record": true,
       "wrong_producer_refused": true,
       "wrong_tenant_refused": true
     },
     "self_hash_omitted": true,
     "self_hash_reason": "The companion checksum file contains the manifest digest and avoids recursive self-hashing.",
     "source_artifact_sha256_by_epoch": {
-      "current_runtime_readback_2026_07_26": "05070d4219272cf587acfcef92cb4b4e118ced933d88e3e6e93cab6ba73af062"
+      "current_runtime_readback_2026_07_26_durable_broker": "9c464d0f44934fa8582e610ba554eb34d30efccceac78763a6f1e723fe4ed017"
     }
   },
   "record_log": [
@@ -238,6 +266,26 @@
       "sequence": 3,
       "sha": "2f723037e10c9d4a4f290f3e4729d187f4aea5d8",
       "status": "pass"
+    },
+    {
+      "actor": "Antigravity",
+      "kind": "independent_review",
+      "note": "The readback used a volatile memory buffer, so AC3 was not satisfied: the committed ledger receipt could outlive the only copy of the admitted event.",
+      "recorded_at": "2026-07-26T20:01:08Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4211",
+      "sequence": 4,
+      "sha": "0d0b015c9",
+      "status": "changes_requested"
+    },
+    {
+      "actor": "Claude",
+      "kind": "owner_evidence_ready",
+      "note": "Durability is now proven from the buffer itself before any reservation and again before the commit, with a real JetStream readback and a process/broker crash matrix.",
+      "recorded_at": "2026-07-26T20:40:00Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4211",
+      "sequence": 5,
+      "sha": "28b13a16d0af770f7825edf75014b4a2b8ae9b46",
+      "status": "pass"
     }
   ],
   "residual_risks": {
@@ -250,6 +298,15 @@
       "recheck_trigger": "Before L12-BFF-001 acceptance.",
       "severity": "medium"
     },
+    "durable_backend_configuration": {
+      "blocking_for_this_task": false,
+      "containment": "This is the intended fail-closed behaviour and it is observable before any traffic: /healthz exposes infrastructure_health_buffer_durable, which is 0 for such a deployment. The deployed default backend is jetstream.",
+      "description": "A deployment that configures TELEMETRY_BUFFER_BACKEND=memory can no longer admit infrastructure health at all: the route answers 503 INFRA_BUFFER_NOT_DURABLE until a durable broker is configured behind it.",
+      "expiry": "Not applicable; this is a permanent contract of the route.",
+      "owner": "deployment manifest owner",
+      "recheck_trigger": "Before enabling infrastructure health in any root.",
+      "severity": "low"
+    },
     "producer_credential_wiring": {
       "blocking_for_this_task": false,
       "containment": "PANTHEON_TELEMETRY_INFRA_PRODUCERS is empty by default and an unconfigured or wildcard allowlist is refused, so the channel stays closed until an operator admits an explicit producer.",
@@ -259,11 +316,11 @@
       "recheck_trigger": "Before enabling infrastructure health in a deployed root.",
       "severity": "medium"
     },
-    "readback_buffer_backend": {
+    "readback_canonical_write_sink": {
       "blocking_for_this_task": false,
-      "containment": "The commit phase is driven by whatever the configured buffer reports as a durable receipt, so the deployed JetStream PubAck path proven by L12-TEL-001 applies unchanged; the readback exercises the admission protocol, not the buffer's own durability.",
-      "description": "The bounded local readback ran with TELEMETRY_BUFFER_BACKEND=memory, so its durable receipt is the in-process buffer acknowledgement rather than a JetStream PubAck or a canonical Postgres commit.",
-      "expiry": "When infrastructure health is exercised on a deployed JetStream root.",
+      "containment": "The Postgres write path and its ON CONFLICT (event_id) idempotency are proven unchanged by L12-TEL-001 and by the telemetry suite; this task only changes what may be admitted into the buffer, and it admits strictly less than before.",
+      "description": "The bounded local readback ran without TELEMETRY_DB_DSN, so the canonical write sink behind the broker was the in-process dev sink and the batch interval was raised so the writer would not acknowledge inside the readback window. The durable receipt driving the commit phase was a real JetStream PubAck, but the canonical Postgres commit itself was not exercised here.",
+      "expiry": "When infrastructure health is exercised on a deployed root with TELEMETRY_DB_DSN set.",
       "owner": "deployment manifest owner",
       "recheck_trigger": "Before enabling infrastructure health in a deployed root.",
       "severity": "low"
@@ -348,8 +405,8 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-26T19:41:00Z",
-    "evidence_cut_semantics": "Second owner cut over task branch head 2f723037e10c9d4a4f290f3e4729d187f4aea5d8, cut from dev 5b8addf628c09f88ff8199080ab68429dbe7b531, after Antigravity rejected the first cut for a real admission-to-durable-enqueue loss window. It asserts implementation and owner acceptance only; independent reviewer approval is not claimed.",
+    "evidence_cut_at": "2026-07-26T20:40:00Z",
+    "evidence_cut_semantics": "Third owner cut over task branch head 28b13a16d0af770f7825edf75014b4a2b8ae9b46, cut from dev 5b8addf628c09f88ff8199080ab68429dbe7b531, after Antigravity rejected the second cut (head 0d0b015c9) because admission committed a durable ledger receipt behind a volatile in-memory buffer, so a crash could erase the only copy of an event while every later retry was answered as a duplicate. It asserts implementation and owner acceptance only; independent reviewer approval is not claimed.",
     "id": "OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001",
     "overall_admission": "pass_owner_evidence_ready",
     "owner": "Claude",
@@ -367,27 +424,37 @@
     "commands": [
       {
         "command": "/home/lupin/pantheon/.venv/bin/python -m pytest services/telemetry/test_infrastructure_health_ingest.py -q",
-        "conclusion": "33 strict-auth route and replica tests passed, covering valid ingest, missing token, permissive-mode refusal, static service token refusal, non-service role, wrong tenant, payload tenant mismatch, env tenant fallback refusal, wildcard tenant, wrong producer, unscoped producer, wildcard producer, binding-field spoof, nested binding spoof, unknown contract fields, runtime_health probe spoof, infrastructure event on the trading route, unchanged trading validation, duplicate replay, event_id conflict, restart replay, two-replica admission, the concurrent loser that must retry instead of being told it succeeded, four concurrent replica processes where exactly one commits, SIGKILL of a real service instance inside the durable enqueue window followed by lease-expiry recovery, fenced commit and release after takeover, reservation release on a cancelled or failed enqueue, and both fail-closed deployment faults.",
-        "result": "pass"
-      },
-      {
-        "command": "/home/lupin/pantheon/.venv/bin/python -m pytest services/telemetry/test_infrastructure_health_ingest.py services/telemetry/test_main_routes.py services/telemetry/test_ingest_shock_absorption.py services/telemetry/test_tel001_rebaseline_schema.py services/telemetry/test_capture.py -q",
-        "conclusion": "166 tests and 15 subtests passed.",
+        "conclusion": "44 real strict-auth route, replica, durability-authority, and crash-matrix tests passed. Beyond the previous 33, the cut adds: volatile-buffer admission fails closed before any reservation; a volatile deployment leaves no committed receipt to lie with; no environment variable can enable volatile admission; the strict-auth route answers 503 INFRA_BUFFER_NOT_DURABLE with buffer_durable=0 in metrics; a backend that degrades before the commit is refused with its reservation released; an accepted event is present in durable storage byte for byte; and a process/broker crash matrix covering crash before put, after durable put before commit, after commit, restart replay, and four-process replica concurrency.",
         "result": "pass"
       },
       {
         "command": "/home/lupin/pantheon/.venv/bin/python -m pytest services/telemetry -q",
-        "conclusion": "309 passed, 1 skipped, 15 subtests passed, and one failure in services/telemetry/test_lineage_write_path.py::TestLiveLineageWritePathFullStackHTTPRoute::test_ingest_then_consume_threshold_route_201_then_replay_200 that reproduces identically on the unmodified tree because it requires PANTHEON_RUNTIME_MANAGER_URL in the host environment. No frame of that failure touches this task's files.",
+        "conclusion": "320 passed, 1 skipped, 15 subtests passed, and one failure in services/telemetry/test_lineage_write_path.py::TestLiveLineageWritePathFullStackHTTPRoute::test_ingest_then_consume_threshold_route_201_then_replay_200 that reproduces identically on the unmodified base commit 0d0b015c9 because it requires PANTHEON_RUNTIME_MANAGER_URL in the host environment. No frame of that failure touches this task's files.",
         "result": "pass_with_nonblocking_baseline_residual"
       },
       {
-        "command": "Mutation controls over the strict-auth gates: strict-mode pinning removed from _infrastructure_auth_env, ledger admission short-circuited, and the producer scope intersection replaced with a union, each re-running the focused suite",
-        "conclusion": "Each mutation failed the intended tests \u2014 1, 6, and 2 respectively \u2014 and the suite returned to green after restoring the implementation, so the strict-auth, durability, and producer-scope assertions are load-bearing rather than incidentally green.",
+        "command": "/home/lupin/pantheon/.venv/bin/python -m pytest tests/telemetry/test_ingest_load_10x.py services/control-plane/bff/test_p0_paper_operating_loop_smoke.py scripts/test_seed_tj_e2e_012_hosted_scenarios.py -q",
+        "conclusion": "11 passed and one pre-existing failure in test_p0_paper_operating_loop_smoke.py::MinimumPaperOperatingLoopSmokeTest::test_deployment_plan_to_runtime_binding_to_bff_runtime_status, which reproduces identically on base commit 0d0b015c9 and fails on an unwritable /data/runtime lifecycle-outbox path in this host, not on telemetry admission.",
+        "result": "pass_with_nonblocking_baseline_residual"
+      },
+      {
+        "command": "Runtime readback against the running Flask telemetry service over real HTTP, backed by the local NATS JetStream server on nats://127.0.0.1:14222 with a task-scoped file-storage work-queue stream, plus a second service instance booted with TELEMETRY_BUFFER_BACKEND=memory",
+        "conclusion": "Recorded in current-runtime-readback.json. The durable deployment admitted once, deduplicated the retry, survived SIGKILL with the admitted event still in the JetStream stream, and answered the post-restart replay as a duplicate. The volatile deployment refused every admission with 503 INFRA_BUFFER_NOT_DURABLE and wrote zero ledger records.",
         "result": "pass"
       },
       {
-        "command": "Mutation controls over the two-phase reservation: a live reservation reported as committed (the exact reviewed loss condition), the commit token fencing check removed, reservations made non-expiring, and the release-on-cancellation path removed, each re-running the focused suite",
-        "conclusion": "Each mutation failed the intended tests \u2014 3, 1, 2, and 1 respectively. Reinstating the reviewed bug (answering a live reservation as committed) fails test_concurrent_admission_loser_is_not_told_it_succeeded, test_concurrent_replica_processes_admit_exactly_once, and test_crash_between_reservation_and_enqueue_is_recoverable, so the repair is proven by tests that fail without it.",
+        "command": "Mutation control: the buffer durability gate short-circuited to accept any backend, re-running the focused suite",
+        "conclusion": "5 of the 6 durability-authority tests failed, including test_volatile_buffer_fails_closed_before_any_reservation and test_strict_auth_route_answers_503_when_no_durable_broker_is_configured. The suite returned to green after restoring the implementation.",
+        "result": "pass"
+      },
+      {
+        "command": "Mutation control: the pre-commit durability re-check removed, re-running the focused suite",
+        "conclusion": "test_admission_is_refused_when_durability_is_lost_before_the_commit failed and the rest stayed green, so the second gate is load-bearing on its own.",
+        "result": "pass"
+      },
+      {
+        "command": "Mutation control: the ledger committed immediately after the reservation instead of after the durable enqueue \u2014 the reviewed defect in its most direct form \u2014 re-running the focused suite",
+        "conclusion": "8 tests failed, including all three crash-window tests (test_crash_before_durable_put_never_reports_success_and_loses_nothing, test_crash_after_durable_put_before_commit_keeps_the_event, and test_crash_after_commit_answers_retries_with_a_truthful_duplicate), so the crash matrix fails without the repair rather than being incidentally green.",
         "result": "pass"
       },
       {
@@ -403,16 +470,6 @@
       {
         "command": "python3 -m json.tool services/telemetry/telemetry_event.schema.json",
         "conclusion": "exit 0",
-        "result": "pass"
-      },
-      {
-        "command": "/home/lupin/pantheon/.venv/bin/python -m pytest tests/telemetry/test_ingest_load_10x.py services/execution/lean_runtime/test_paper_runtime.py services/control-plane/bff/test_p0_paper_operating_loop_smoke.py -q",
-        "conclusion": "56 passed and 27 subtests passed across the external consumers of telemetry_event.schema.json, with one pre-existing failure in test_p0_paper_operating_loop_smoke.py that reproduces identically when services/telemetry is reverted to the pre-change tree.",
-        "result": "pass_with_nonblocking_baseline_residual"
-      },
-      {
-        "command": "Bounded local nonprod readback over the running Flask service on 127.0.0.1 (see docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/current-runtime-readback.json)",
-        "conclusion": "Real HTTP requests against the started service produced 202 admission, 202 duplicate replay, 409 event_id conflict, 401 missing token, 403 wrong tenant, 403 wrong producer, 400 binding-field spoof, 400 for both the runtime_health probe spoof and an infrastructure event on the trading route, and a 202 duplicate replay after a real service restart. A concurrent attempt arriving while the owner was inside its durable enqueue received 503 INFRA_ADMISSION_IN_FLIGHT rather than a false 202, and only became an idempotent 202 duplicate after the owner's receipt was committed. A reservation stranded as if by a crash was refused as in-flight while its lease was live, recovered to 202 accepted once the lease expired, and left no orphan reservation behind.",
         "result": "pass"
       }
     ],

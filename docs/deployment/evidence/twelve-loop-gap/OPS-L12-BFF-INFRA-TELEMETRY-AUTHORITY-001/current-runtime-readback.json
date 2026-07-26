@@ -1,24 +1,43 @@
 {
-  "buffer_backend": "memory",
-  "environment": "bounded local nonprod telemetry on 127.0.0.1:18149",
+  "buffer_backend": "jetstream (real NATS JetStream, file storage, work queue)",
+  "environment": "bounded local nonprod telemetry over real HTTP on 127.0.0.1:18150 (durable) and :18151 (volatile refusal)",
   "hosted_activation_claimed": false,
   "observations": {
     "binding_spoof_on_infra_route": {
       "code": "INFRA_BINDING_FIELD_FORBIDDEN",
       "http": 400
     },
-    "concurrent_attempt_during_reservation": {
-      "code": "INFRA_ADMISSION_IN_FLIGHT",
-      "http": 503
+    "durable_broker_after_admission": {
+      "event_ids": [
+        "readback-infra-001"
+      ],
+      "messages": 1,
+      "retention": "workqueue",
+      "storage": "file",
+      "stream": "PANTHEON_INFRA_HEALTH_READBACK"
+    },
+    "durable_broker_after_crash": {
+      "event_ids": [
+        "readback-infra-001",
+        "readback-infra-inflight-001"
+      ],
+      "messages": 2,
+      "retention": "workqueue",
+      "storage": "file",
+      "stream": "PANTHEON_INFRA_HEALTH_READBACK"
+    },
+    "durable_broker_retained_admitted_event": {
+      "admitted_event_still_durable": true,
+      "after_crash_messages": 2,
+      "before_crash_messages": 2
     },
     "durable_ledger": {
       "committed_event_ids": [
         "readback-infra-001",
-        "readback-infra-crash-001",
         "readback-infra-inflight-001"
       ],
       "open_or_expired_reservation_event_ids": [],
-      "record_count": 7
+      "record_count": 5
     },
     "event_id_conflict": {
       "code": "INFRA_EVENT_ID_CONFLICT",
@@ -26,10 +45,7 @@
     },
     "healthz_metrics": {
       "http": 200,
-      "infrastructure_health_admitted": 0,
-      "infrastructure_health_duplicates": 1,
-      "infrastructure_health_in_flight_rejections": 0,
-      "infrastructure_health_ledger_committed_ids": 3,
+      "infrastructure_health_buffer_durable": 1,
       "infrastructure_health_schema_loaded": 1,
       "overall_status": "ok"
     },
@@ -38,19 +54,19 @@
       "status_field": "rejected"
     },
     "missing_token": {
-      "code": "401",
       "http": 401
     },
-    "replay_after_durable_receipt": {
-      "duplicate": true,
-      "http": 202
+    "payload_tenant_mismatch": {
+      "code": "TENANT_PAYLOAD_MISMATCH",
+      "http": 403
     },
-    "reserved_attempt_completion": {
-      "duplicate": false,
-      "http": 202
+    "process_crash_after_commit": {
+      "exitcode": -9,
+      "signal": "SIGKILL"
     },
     "restart_replay": {
       "duplicate": true,
+      "health_http": 200,
       "http": 202
     },
     "retry_replay": {
@@ -62,44 +78,30 @@
       "status_field": "rejected"
     },
     "service_boot": {
-      "health_http": 200
+      "buffer_backend": "jetstream",
+      "health_http": 200,
+      "nats_url": "nats://127.0.0.1:14222"
     },
     "stats_after_restart": {
       "http": 200,
       "infrastructure_health": {
         "admitted": 0,
+        "buffer_durability_defect": null,
+        "buffer_durable": true,
+        "buffer_type": "NatsJetStreamBuffer",
         "conflicts": 0,
         "duplicates": 1,
         "fenced_rejections": 0,
         "in_flight_rejections": 0,
         "ledger": {
-          "committed_event_ids": 3,
+          "committed_event_ids": 2,
           "lease_seconds": 2.0,
           "open_reservations": 0,
-          "path": "/tmp/infra-health-readback-1e5c8qrx/infrastructure_health_admissions.jsonl",
+          "path": "/tmp/infra-health-readback-durable-vlt4a3nr/infrastructure_health_admissions.jsonl",
           "recoverable_expired_reservations": 0
         },
+        "non_durable_rejections": 0,
         "rejected": 0,
-        "schema_loaded": true,
-        "schema_version": "pantheon.infrastructure-health/1"
-      }
-    },
-    "stats_before_restart": {
-      "http": 200,
-      "infrastructure_health": {
-        "admitted": 1,
-        "conflicts": 1,
-        "duplicates": 1,
-        "fenced_rejections": 0,
-        "in_flight_rejections": 0,
-        "ledger": {
-          "committed_event_ids": 1,
-          "lease_seconds": 2.0,
-          "open_reservations": 0,
-          "path": "/tmp/infra-health-readback-1e5c8qrx/infrastructure_health_admissions.jsonl",
-          "recoverable_expired_reservations": 0
-        },
-        "rejected": 2,
         "schema_loaded": true,
         "schema_version": "pantheon.infrastructure-health/1"
       }
@@ -110,16 +112,33 @@
       "reservation_state": "reserved"
     },
     "stranded_reservation_recovered_after_lease": {
-      "committed": true,
       "duplicate": false,
-      "fenced_owner_commit": "committed",
       "http": 202
     },
     "valid_ingest": {
       "duplicate": false,
       "event_id": "readback-infra-001",
-      "fingerprint": "sha256:df6199676858f64adc5ce1258c7739b69364e9a9a0490ef48df7810a625a4111",
+      "fingerprint": "sha256:5f0b8d5ba0322d55800ecf7701c0c7fe83251471fcab85e06f10877aa7b2620f",
       "http": 202
+    },
+    "volatile_backend_admission": {
+      "code": "INFRA_BUFFER_NOT_DURABLE",
+      "http": 503,
+      "message": "Configured telemetry buffer 'InMemoryBuffer' is volatile; infrastructure health admission requires a durable broker so an admitted event survives process crash, restart, and replica failover"
+    },
+    "volatile_backend_boot": {
+      "buffer_backend": "memory",
+      "health_http": 200,
+      "infrastructure_health_buffer_durable": 0
+    },
+    "volatile_backend_ledger": {
+      "record_count": 0,
+      "reserved_or_committed_anything": false
+    },
+    "volatile_backend_metrics": {
+      "infrastructure_health_admitted": 0,
+      "infrastructure_health_buffer_durable": 0,
+      "infrastructure_health_non_durable_rejections": 1
     },
     "wrong_producer": {
       "code": "PRODUCER_FORBIDDEN",
@@ -130,7 +149,7 @@
       "http": 403
     }
   },
-  "observed_at": "2026-07-26T19:39:08.935082Z",
+  "observed_at": "2026-07-26T20:33:47.965636Z",
   "runtime_manager_url": "http://127.0.0.1:1 (unreachable; binding lookups fail closed)",
   "task_id": "OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001"
 }

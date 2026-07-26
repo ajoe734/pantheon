@@ -1,16 +1,26 @@
 # OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001 evidence
 
-Status: second owner cut, ready for independent `Antigravity` re-review.
+Status: third owner cut, ready for independent `Antigravity` re-review.
 
-`Antigravity` rejected the first cut (head `796c6e5e3`) for a real defect, and
-the rejection is recorded in `evidence.json` `record_log` sequence 2. The
-single-phase admission ledger had a loss window: a second caller arriving
-between the durable `admitted` record and the durable enqueue was answered as a
-successful duplicate although nothing had been persisted, and the first caller
-could still fail and release the reservation. A crash in the same window left an
-event_id permanently marked admitted and permanently never enqueued. See
-[§ Durable idempotent admission](#durable-idempotent-admission) for the repair
-and the tests that fail without it.
+`Antigravity` has rejected two earlier cuts, and both rejections are recorded in
+`evidence.json` `record_log` (sequences 2 and 4).
+
+The first cut (head `796c6e5e3`) had a single-phase admission ledger with a loss
+window: a second caller arriving between the durable `admitted` record and the
+durable enqueue was answered as a successful duplicate although nothing had been
+persisted. That was repaired by the two-phase fenced reservation described in
+[§ Durable idempotent admission](#durable-idempotent-admission).
+
+The second cut (head `0d0b015c9`) still did not satisfy AC3, because the
+reservation protocol was correct but what it committed against was not durable:
+the service accepted `202` and committed the ledger receipt after
+`InMemoryBuffer.put`, whose `is_durable()` is `False`. A process crash could
+erase the only copy of the event while the committed receipt made every later
+retry an idempotent `duplicate` — a permanent loss with no error anywhere. The
+repair is [§ Durability is proven, not assumed](#durability-is-proven-not-assumed):
+admission now fails closed unless the configured buffer is a durable broker,
+and this cut's readback runs against a **real NATS JetStream** file-storage work
+queue rather than a memory buffer.
 
 This packet proves that telemetry now owns an authoritative, strict-auth,
 non-trading contract for infrastructure health, so control-plane health
@@ -65,6 +75,30 @@ stays owned by `L12-EVO-001` — this contract only carries an optional
   worst-case durable enqueue latency. A lease that is too short only produces
   retryable in-flight or fenced answers — never a false success or a lost event.
 
+- <a id="durability-is-proven-not-assumed"></a>**Durability is proven, not
+  assumed.** The ledger protocol above is only as honest as the thing it commits
+  against, so the configured buffer must prove durability from its own
+  `is_durable()` — **before** the reservation is taken, and again before the
+  receipt is committed:
+
+  - a deployment whose buffer is volatile answers `503 INFRA_BUFFER_NOT_DURABLE`
+    and writes **no ledger record at all**, so nothing can later masquerade as an
+    admitted event;
+  - a backend that degrades between the enqueue and the commit has its
+    reservation released instead of committed, so the producer's retry is still
+    admissible;
+  - `/healthz` exposes `infrastructure_health_buffer_durable`, so a deployment
+    that cannot admit infrastructure health says so before any traffic arrives.
+
+  There is no production-enableable volatile bypass. The gate consults nothing
+  but the backend's own durability: no environment variable, config key, or event
+  field can assert durability on its behalf, and a test sets every telemetry
+  `PANTHEON_*` variable to its most permissive value at once to prove it. The
+  tests reach a durable broker through an in-process constructor argument that
+  `buffer.create_buffer` and the environment-driven service builder never touch —
+  and injecting a *volatile* buffer through that same seam still fails closed,
+  because durability is what is checked, not who supplied the buffer.
+
 - **Trading validation untouched.** The trading ingest path keeps evidence
   contract E-1 through E-6 and its authoritative RuntimeBinding cross-validation
   exactly as they were, and now also refuses `infrastructure_health` outright so
@@ -76,7 +110,8 @@ stays owned by `L12-EVO-001` — this contract only carries an optional
 wildcard allowlist is refused, so this route admits nothing until an operator
 explicitly admits a producer. If the authoritative schema or the durable ledger
 is unavailable, ingestion refuses the event rather than admitting something it
-cannot deduplicate.
+cannot deduplicate. If the deployment has no durable broker behind the route,
+ingestion refuses the event rather than admitting something it cannot keep.
 
 ## Product evidence admission
 
@@ -88,8 +123,9 @@ and `overall_admission=pass_owner_evidence_ready` means only that the owner proo
 is complete enough to enter independent review. **It does not assert reviewer
 approval.**
 
-`record_log` contains the `Antigravity` `changes_requested` decision on the first
-cut but **no approval**, and `AC6` remains `pending_reviewer`. After a governed
+`record_log` contains both `Antigravity` `changes_requested` decisions — on the
+first cut and on the second — but **no approval**, and `AC6` remains
+`pending_reviewer`. After a governed
 `Antigravity` approval, owner closeout must append the actual verdict to
 `record_log`, populate
 `implementation_delivery.required_checks` and the merged PR record, refresh this
@@ -100,60 +136,78 @@ only then run `done`.
 
 - [`current-runtime-readback.json`](current-runtime-readback.json) — a bounded
   local nonprod readback against the **running** Flask telemetry service over
-  real HTTP on `127.0.0.1`, with `PANTHEON_RUNTIME_MANAGER_URL` pointed at an
-  unreachable address so authoritative binding lookups fail closed:
+  real HTTP on `127.0.0.1`, backed by a **real NATS JetStream broker** (file
+  storage, work-queue retention, task-scoped stream) and with
+  `PANTHEON_RUNTIME_MANAGER_URL` pointed at an unreachable address so
+  authoritative binding lookups fail closed:
 
   | observation | result |
   | --- | --- |
+  | `/healthz` on the durable deployment | `200`, `infrastructure_health_buffer_durable=1` |
   | valid strict-auth ingest | `202`, `duplicate=false` |
   | retry with the same stable event ID | `202`, `duplicate=true` |
-  | **concurrent attempt while the owner is inside its durable enqueue** | **`503 INFRA_ADMISSION_IN_FLIGHT`** |
-  | same attempt replayed after the owner's receipt committed | `202`, `duplicate=true` |
-  | **reservation stranded as if by a crash, lease still live** | **`503 INFRA_ADMISSION_IN_FLIGHT`** |
+  | the admitted event in the JetStream stream | present, file storage, work queue |
+  | **telemetry process SIGKILLed after the receipt committed** | **the admitted event is still in the broker** |
+  | replay after restarting the crashed service | `202`, `duplicate=true` |
+  | **reservation stranded as if by a crashed replica, lease still live** | **`503 INFRA_ADMISSION_IN_FLIGHT`** |
   | **same event once the lease expired** | **`202` accepted, receipt committed** |
-  | fenced owner trying to commit after takeover | refused unless the receipt already exists |
-  | replay after a real service restart | `202`, `duplicate=true`, zero new admissions |
   | event ID reused with different content | `409 INFRA_EVENT_ID_CONFLICT` |
   | missing token | `401` |
   | wrong tenant | `403 TENANT_FORBIDDEN` |
+  | payload tenant ≠ authenticated tenant | `403 TENANT_PAYLOAD_MISMATCH` |
   | wrong producer | `403 PRODUCER_FORBIDDEN` |
   | spoofed `binding_id` on the infra route | `400 INFRA_BINDING_FIELD_FORBIDDEN` |
   | `runtime_health` probe shape on the trading route | `400 rejected` |
   | infrastructure event on the trading route | `400 rejected` |
-  | durable ledger after all of the above | `3` committed receipts, `0` orphan reservations |
+  | durable ledger after all of the above | `2` committed receipts, `0` orphan reservations |
+  | **second service booted with `TELEMETRY_BUFFER_BACKEND=memory`** | **`503 INFRA_BUFFER_NOT_DURABLE`, `0` ledger records, `buffer_durable=0`** |
 
 - [`services/telemetry/test_infrastructure_health_ingest.py`](../../../../../services/telemetry/test_infrastructure_health_ingest.py)
-  — 33 real strict-auth route and replica tests, including four concurrent
-  replica **processes** racing on one event ID through a shared ledger where
-  exactly one commits and every loser is told to retry, and a real service
-  instance **SIGKILLed inside its durable enqueue** whose stranded claim is
-  refused while its lease is live and recovered once it expires.
+  — 44 real strict-auth route, replica, durability-authority, and crash-matrix
+  tests. Beyond the strict-auth and two-phase coverage of the previous cut, the
+  crash matrix **SIGKILLs a real ingest process in each admission window** —
+  before the durable put, after the durable put but before the commit, and after
+  the commit — plus restart replay and four concurrent replica **processes** over
+  one broker log and one ledger. Each window asserts both failure modes are
+  absent: no producer is ever answered `accepted` or `duplicate` for an
+  observation that is not in durable storage, and a retry with the same stable
+  event ID always ends with exactly one committed receipt over durable copies
+  byte-identical to the original event.
 
-- Mutation controls, run in two groups:
+  The tests reach durability through a file-backed broker double whose `put`
+  `fsync`s before returning, so the return of `put` is a real durability point
+  that a `SIGKILL` one instruction later cannot undo. It lives in the test module
+  and is unreachable from `buffer.create_buffer`.
+
+- Mutation controls, run in three groups:
 
   - strict-auth gates — removing the strict-mode pinning, short-circuiting the
     ledger admission, and replacing the producer-scope intersection with a union
     failed 1, 6, and 2 tests respectively;
-  - two-phase reservation — **reinstating the reviewed bug** (answering a live
-    reservation as committed) failed 3 tests, including
-    `test_concurrent_admission_loser_is_not_told_it_succeeded`; removing the
-    commit token fencing failed 1; making reservations non-expiring failed 2;
-    removing the release-on-cancellation path failed 1.
+  - two-phase reservation — **reinstating the first reviewed bug** (answering a
+    live reservation as committed) failed 3 tests; removing the commit token
+    fencing failed 1; making reservations non-expiring failed 2; removing the
+    release-on-cancellation path failed 1;
+  - durability gate — short-circuiting the buffer durability check failed 5 of
+    the 6 durability-authority tests; removing only the pre-commit re-check
+    failed `test_admission_is_refused_when_durability_is_lost_before_the_commit`;
+    and **reinstating the second reviewed bug** by committing the receipt before
+    the durable enqueue failed 8 tests, including all three crash-window tests.
 
   The suite returned to green after each restore, so the repair is proven by
   tests that fail without it rather than by assertions that were already true.
 
 Exact commands and their conclusions, including the two pre-existing baseline
-residuals that reproduce identically on the unmodified tree, are recorded in
+residuals that reproduce identically on base commit `0d0b015c9`, are recorded in
 `evidence.json` under `validation.commands`.
 
-Scope of the readback: it ran with `TELEMETRY_BUFFER_BACKEND=memory`, so the
-durable receipt driving the commit phase is the in-process buffer
-acknowledgement rather than a JetStream PubAck or a canonical Postgres commit.
-The commit phase consumes whatever the configured buffer reports as durable, so
-the deployed JetStream path proven by `L12-TEL-001` applies unchanged — what this
-readback exercises is the admission protocol, not the buffer's own durability.
-This is recorded as a residual risk rather than claimed as deployed proof.
+Scope of the readback: it ran without `TELEMETRY_DB_DSN`, so the canonical sink
+behind the broker was the in-process dev sink and the batch interval was raised
+so the writer would not acknowledge inside the readback window. The durable
+receipt driving the commit phase is a real JetStream PubAck; the canonical
+Postgres commit itself — unchanged by this task and proven by `L12-TEL-001` —
+was not re-exercised here. This is recorded as a residual risk rather than
+claimed as deployed proof.
 
 ## Composition
 
@@ -165,7 +219,12 @@ stable `event_id` from the observation identity (producer, component, probe
 window) rather than generating one per attempt or per replica.
 
 Client contract for the BFF: treat `202` as delivered, `409` as a producer bug in
-`event_id` derivation, and every `503` — including `INFRA_ADMISSION_IN_FLIGHT`
-and `INFRA_ADMISSION_FENCED` — as **retry with the same `event_id`**. A `503`
-means no durable receipt exists yet, so retrying is what makes delivery
-at-least-once, and the ledger keeps it exactly-once.
+`event_id` derivation, and every `503` — including `INFRA_ADMISSION_IN_FLIGHT`,
+`INFRA_ADMISSION_FENCED`, and `INFRA_BUFFER_NOT_DURABLE` — as **retry with the
+same `event_id`**. A `503` means no durable receipt exists yet, so retrying is
+what makes delivery at-least-once, and the ledger keeps it exactly-once.
+
+`INFRA_BUFFER_NOT_DURABLE` is the one `503` a client cannot retry its way out of:
+it says the deployment has no durable broker behind the route, so retries will
+keep failing until that is fixed. Alert on it rather than backing off silently —
+`/healthz` reports the same fact as `infrastructure_health_buffer_durable=0`.
