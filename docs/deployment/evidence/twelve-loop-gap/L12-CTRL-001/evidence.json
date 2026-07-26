@@ -4,12 +4,14 @@
   "owner": "Codex",
   "reviewer": "Codex2",
   "status": "ready_for_review",
-  "generated_at": "2026-07-26T12:32:04Z",
+  "generated_at": "2026-07-26T12:34:07Z",
   "scope": {
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/L12-CTRL-001",
     "base_sha": "c762af14d56d141c59efc31b255c3814ef4378b3",
+    "integration_base_sha": "2723ddf19adc52fba95160b6bf08ac87ae764408",
+    "integration_head_sha": "bea98ce1cf9a38d269634006212d0cf8c24c6d22",
     "candidate_sha": "9f1caa445933062c91a3432b87dd53f5add94e30",
     "implementation_anchor_commits": [
       "19e864d8fc670f2c504936e2b4a14bfcafc73cbb",
@@ -108,7 +110,7 @@
     },
     {
       "command": "DATABASE_URL=postgresql://pantheon_app:***@localhost:15432/pantheon /home/lupin/pantheon/.venv/bin/python -m pytest services/loop-control/test_loop_control.py services/control-plane/bff/test_loop_health_read_model_contract.py services/control-plane/bff/test_loop_inventory_read_model_contract.py services/research/alpha_replication/test_replication_controller.py services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_distillation_controller.py -q",
-      "result": "110 passed in 31.26s"
+      "result": "110 passed in 31.26s; repeated after merging origin/dev 2723ddf19: 110 passed in 29.51s"
     }
   ],
   "acceptance": {
