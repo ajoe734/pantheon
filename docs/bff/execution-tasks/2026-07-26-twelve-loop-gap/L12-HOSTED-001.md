@@ -1,6 +1,6 @@
 # L12-HOSTED-001 — Deploy and restart-drill the candidate
 
-Wave 5, lane `hosted-drill`, owner `Codex2`, reviewer `Codex`; depends on the frontend truth task and all four verification lanes.
+Wave 5, lane `hosted-drill`, owner `Claude`, reviewer `Antigravity`; depends on the frontend truth task and all four verification lanes.
 
 Outcome: deploy exact merged Pantheon/execute-plans identities to replacement dev and prove all workers, records, restart recovery, and two cross-loop product drills.
 
