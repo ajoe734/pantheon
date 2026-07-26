@@ -54,6 +54,8 @@ from services.telemetry.runtime_summary import RuntimeSummaryProjectionStore
 from services.evolution.threshold_sweep_worker import (
     DEFAULT_BASELINES_PATH,
     DEFAULT_CONFIG_PATH,
+    approved_baseline_value,
+    assess_input_coverage,
     evaluate_breaches,
     load_baselines,
     load_thresholds,
@@ -102,7 +104,14 @@ THRESHOLDS = [
     },
 ]
 
-BASELINES = {"artifact-evochain-001": {"expected_drawdown": 0.12}}
+BASELINES = {
+    "artifact-evochain-001": {
+        "expected_drawdown": 0.12,
+        # A baseline only counts as approved when it names the governance
+        # decision that set it; load_baselines() drops entries without one.
+        "policy_source": "EVOLUTION_REVIEW_AND_THRESHOLDS.md#7.1 test baseline",
+    }
+}
 
 # Fixed reference "now" for freshness checks: 30 seconds after the fixtures'
 # heartbeat/metric as-of times below — within RuntimeSummaryProjectionStore's
@@ -344,6 +353,49 @@ def test_load_baselines_reads_per_artifact_values(tmp_path):
     cfg = tmp_path / "baselines.json"
     cfg.write_text(json.dumps({"baselines": BASELINES}), encoding="utf-8")
     assert load_baselines(str(cfg)) == BASELINES
+
+
+def test_load_baselines_drops_entries_without_approving_policy_source(tmp_path):
+    """An unapproved number must never become a ratio denominator.
+
+    A baseline with no ``policy_source`` has no governance decision behind it,
+    so it is exactly the fabricated-baseline case the sweep must fail closed
+    on (L12-EVO-001 acceptance 1).
+    """
+    cfg = tmp_path / "baselines.json"
+    cfg.write_text(
+        json.dumps(
+            {
+                "baselines": {
+                    "artifact-approved-001": {
+                        "expected_drawdown": 0.10,
+                        "policy_source": "docs/example-governed-baseline.md#decision",
+                    },
+                    "artifact-unapproved-001": {"expected_drawdown": 0.10},
+                    "artifact-blank-source-001": {
+                        "expected_drawdown": 0.10,
+                        "policy_source": "   ",
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    loaded = load_baselines(str(cfg))
+    assert set(loaded) == {"artifact-approved-001"}
+
+
+def test_approved_baseline_value_fails_closed_on_unusable_numbers():
+    baselines = {
+        "artifact-a": {"expected_drawdown": 0.12, "policy_source": "doc#d"},
+        "artifact-zero": {"expected_drawdown": 0.0, "policy_source": "doc#d"},
+        "artifact-negative": {"expected_drawdown": -0.5, "policy_source": "doc#d"},
+        "artifact-bool": {"expected_drawdown": True, "policy_source": "doc#d"},
+        "artifact-text": {"expected_drawdown": "0.12", "policy_source": "doc#d"},
+    }
+    assert approved_baseline_value(baselines, "artifact-a", "expected_drawdown") == 0.12
+    for artifact_id in ("artifact-zero", "artifact-negative", "artifact-bool", "artifact-text", "artifact-missing"):
+        assert approved_baseline_value(baselines, artifact_id, "expected_drawdown") is None
 
 
 # ---------------------------------------------------------------------------

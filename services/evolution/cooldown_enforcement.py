@@ -26,6 +26,14 @@ from services.governance.human_gate.decision_model import (
 
 
 COOLDOWN_ENFORCEMENT_SCHEMA_VERSION = "EvolutionProposalCooldownEnforcement.v1"
+
+# Mirrors ``evolution_decision.DEFAULT_TENANT_ID``.  Duplicated as a plain
+# constant rather than imported because this module is loaded as an ordinary
+# ``services.evolution`` package member and must not depend on the
+# ``services/control-plane/governance`` sys.path bootstrap.  The two constants
+# are pinned equal by
+# ``test_l12_evo_001_tenant_authority.py::test_cooldown_tenant_default_matches_governance``.
+DEFAULT_TENANT_ID = "pantheon-default"
 COOLDOWN_REJECTION_ACTION_TYPE = "evolution_proposal_cooldown_rejected"
 COOLDOWN_OVERRIDE_SCOPE = "evolution_proposal_cooldown_override"
 POLICY_REFS = (
@@ -66,21 +74,41 @@ class CooldownEnforcementError(ValueError):
     """Raised when cooldown enforcement input is malformed."""
 
 
+def normalize_tenant_id(value: Any) -> str:
+    """Resolve any tenant input to the authoritative tenant identifier."""
+
+    text = "" if value is None else str(value).strip()
+    return text or DEFAULT_TENANT_ID
+
+
 @dataclass(frozen=True)
 class ProposalArtifactKey:
-    """The artifact identity used for cooldown matching."""
+    """The artifact identity used for cooldown matching.
+
+    Cooldown is tenant-scoped: one tenant's open cooldown on an artifact must
+    not suppress another tenant's proposal for an artifact that happens to
+    share an id, and conversely a proposal must never escape its own tenant's
+    cooldown by omitting the tenant.  ``tenant_id`` is therefore part of the
+    match key and of the emitted ``target_ref`` audit string.
+    """
 
     artifact_id: str
     artifact_version: str | None = None
     target_type: str = "candidate_artifact"
+    tenant_id: str = DEFAULT_TENANT_ID
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "tenant_id", normalize_tenant_id(self.tenant_id))
 
     @property
     def target_ref(self) -> str:
         if self.artifact_version:
-            return f"{self.target_type}:{self.artifact_id}@{self.artifact_version}"
-        return f"{self.target_type}:{self.artifact_id}"
+            return f"{self.tenant_id}/{self.target_type}:{self.artifact_id}@{self.artifact_version}"
+        return f"{self.tenant_id}/{self.target_type}:{self.artifact_id}"
 
     def matches(self, other: "ProposalArtifactKey") -> bool:
+        if self.tenant_id != other.tenant_id:
+            return False
         if self.artifact_id != other.artifact_id:
             return False
         if self.artifact_version and other.artifact_version:
@@ -89,6 +117,7 @@ class ProposalArtifactKey:
 
     def to_dict(self) -> dict[str, Any]:
         payload = {
+            "tenant_id": self.tenant_id,
             "target_type": self.target_type,
             "artifact_id": self.artifact_id,
             "target_ref": self.target_ref,
@@ -133,6 +162,9 @@ class EmittedProposalRecord:
             ),
             target_type=_optional_text(artifact_payload.get("target_type") or data.get("target_type"))
             or "candidate_artifact",
+            tenant_id=normalize_tenant_id(
+                artifact_payload.get("tenant_id") or data.get("tenant_id")
+            ),
         )
         return cls(
             proposal_id=_required_text(data.get("proposal_id") or data.get("decision_id"), "record.proposal_id"),
@@ -359,6 +391,23 @@ def validate_cooldown_override(
         raise CooldownEnforcementError(
             f"cooldown override HumanGateDecision override_scope must be {COOLDOWN_OVERRIDE_SCOPE!r}"
         )
+
+    # A cooldown override is tenant-scoped authority.  An override raised in
+    # one tenant must not unlock another tenant's cooldown on an artifact that
+    # happens to share an id, so a non-default tenant must be named explicitly
+    # and any declared tenant must match the artifact being re-proposed.
+    override_tenant = str(normalized.metadata.get("override_tenant_id") or "").strip()
+    if not override_tenant:
+        if artifact.tenant_id != DEFAULT_TENANT_ID:
+            raise CooldownEnforcementError(
+                "cooldown override HumanGateDecision must declare metadata.override_tenant_id "
+                f"for tenant-scoped artifact tenant '{artifact.tenant_id}'"
+            )
+    elif normalize_tenant_id(override_tenant) != artifact.tenant_id:
+        raise CooldownEnforcementError(
+            f"cooldown override HumanGateDecision override_tenant_id '{override_tenant}' does not "
+            f"match proposal tenant '{artifact.tenant_id}'"
+        )
     return normalized
 
 
@@ -382,6 +431,7 @@ def proposal_artifact_key(proposal: Mapping[str, Any] | Any) -> ProposalArtifact
         artifact_id=artifact_id,
         artifact_version=artifact_version,
         target_type=target_type,
+        tenant_id=normalize_tenant_id(payload.get("tenant_id")),
     )
 
 

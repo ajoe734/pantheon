@@ -229,6 +229,14 @@ def load_baselines(path: str | None = None) -> dict[str, dict[str, Any]]:
     empty mapping. A threshold that needs a baseline for an artifact not
     present here is skipped as a diagnostic (never fabricated) by
     ``evaluate_breaches``.
+
+    A baseline only counts as *approved* when its artifact entry carries a
+    non-empty ``policy_source`` naming the governance decision that set it.
+    An entry without that provenance is dropped here rather than being used as
+    the denominator of a ratio threshold: an unapproved number is exactly the
+    fabricated-baseline case this worker must never turn into a breach
+    (L12-EVO-001 acceptance: "All monitored artifacts have numeric drawdown and
+    approved expected baselines").
     """
     baselines_path = path or DEFAULT_BASELINES_PATH
     try:
@@ -243,9 +251,40 @@ def load_baselines(path: str | None = None) -> dict[str, dict[str, Any]]:
 
     valid: dict[str, dict[str, Any]] = {}
     for artifact_id, values in raw_baselines.items():
-        if isinstance(values, Mapping):
-            valid[str(artifact_id)] = dict(values)
+        if not isinstance(values, Mapping):
+            continue
+        policy_source = values.get("policy_source")
+        if not isinstance(policy_source, str) or not policy_source.strip():
+            continue
+        valid[str(artifact_id)] = dict(values)
     return valid
+
+
+def approved_baseline_value(
+    baselines: Mapping[str, Mapping[str, Any]],
+    artifact_id: str,
+    baseline_key: str,
+) -> float | None:
+    """Return an artifact's approved positive baseline, or ``None``.
+
+    ``None`` means "no usable approved baseline" for every reason that must
+    fail closed: no entry, non-numeric, boolean, non-positive, or non-finite.
+    A single reader keeps ``evaluate_breaches`` and the input-coverage report
+    from disagreeing about whether an artifact is governed.
+    """
+    artifact_baselines = baselines.get(artifact_id)
+    if not isinstance(artifact_baselines, Mapping):
+        return None
+    value = artifact_baselines.get(baseline_key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(numeric) or numeric <= 0:
+        return None
+    return numeric
 
 
 def _extract_identity(summary: Mapping[str, Any]) -> tuple[dict[str, str], list[str]]:
@@ -421,22 +460,18 @@ def evaluate_breaches(
 
                 baseline_key = threshold.get("ratio_baseline_key")
                 if baseline_key:
-                    artifact_baselines = active_baselines.get(identity["artifact_id"])
-                    baseline_value = (
-                        artifact_baselines.get(baseline_key) if isinstance(artifact_baselines, Mapping) else None
+                    baseline_value = approved_baseline_value(
+                        active_baselines, identity["artifact_id"], str(baseline_key)
                     )
-                    if (
-                        isinstance(baseline_value, bool)
-                        or not isinstance(baseline_value, (int, float))
-                        or baseline_value <= 0
-                    ):
+                    if baseline_value is None:
                         diagnostics.append(
                             f"skip {identity['binding_id']}/{metric_name}: no approved "
                             f"{baseline_key!r} baseline for artifact_id={identity['artifact_id']!r} "
-                            "(fail-closed; add one to threshold_sweep_baselines.json)"
+                            "(fail-closed; add a positive value plus its approving policy_source "
+                            "to threshold_sweep_baselines.json)"
                         )
                         continue
-                    observed = observed_raw_float / float(baseline_value)
+                    observed = observed_raw_float / baseline_value
                 else:
                     baseline_value = None
                     observed = observed_raw_float
@@ -520,6 +555,165 @@ def evaluate_breaches(
             )
 
     return payloads, diagnostics
+
+
+def assess_input_coverage(
+    summaries: Sequence[Mapping[str, Any]],
+    thresholds: Sequence[Mapping[str, Any]],
+    *,
+    baselines: Mapping[str, Mapping[str, Any]] | None = None,
+    now: datetime | None = None,
+    metric_max_age_seconds: int = _DEFAULT_METRIC_MAX_AGE_SECONDS,
+) -> dict[str, Any]:
+    """Report whether every monitored artifact has usable Evolution inputs.
+
+    ``evaluate_breaches`` fails closed per metric, which is correct but silent:
+    an artifact whose ``drawdown`` never arrives, or whose expected baseline was
+    never approved, simply stops producing candidates and looks identical to a
+    healthy artifact that is not breaching.  This function makes that
+    distinction observable and auditable.
+
+    A monitored artifact is one that reaches the eligible deployment stage with
+    a fresh, non-degraded summary — the same admission gate ``evaluate_breaches``
+    applies — so the report never claims coverage for a runtime the sweep would
+    have refused to evaluate anyway.  For each enabled threshold it records
+    whether the artifact has a numeric, fresh, correctly-attributed metric and,
+    when the threshold is a ratio, an approved positive baseline.
+
+    ``coverage_complete`` is the acceptance-level answer: it is true only when
+    at least one artifact is monitored and every monitored artifact has every
+    input its thresholds require.  Zero monitored artifacts is reported as
+    incomplete, not vacuously complete.
+    """
+    moment = now or datetime.now(timezone.utc)
+    active_baselines = baselines or {}
+
+    artifacts: list[dict[str, Any]] = []
+    ineligible: list[dict[str, Any]] = []
+
+    for summary in summaries:
+        if not isinstance(summary, Mapping):
+            ineligible.append({"reason": "summary is not an object"})
+            continue
+
+        stage = str(summary.get("deployment_stage") or "").strip().lower()
+        runtime_id = summary.get("runtime_id")
+        if stage != _ELIGIBLE_STAGE:
+            ineligible.append(
+                {
+                    "runtime_id": runtime_id,
+                    "deployment_stage": stage or None,
+                    "reason": f"deployment_stage is not {_ELIGIBLE_STAGE!r}",
+                }
+            )
+            continue
+        if _is_stale_or_degraded(summary, now=moment):
+            ineligible.append(
+                {
+                    "runtime_id": runtime_id,
+                    "deployment_stage": stage,
+                    "reason": "summary is stale or degraded",
+                }
+            )
+            continue
+        identity, missing = _extract_identity(summary)
+        if missing:
+            ineligible.append(
+                {
+                    "runtime_id": runtime_id,
+                    "deployment_stage": stage,
+                    "reason": f"missing identity fields {missing}",
+                }
+            )
+            continue
+
+        metrics: list[dict[str, Any]] = []
+        gaps: list[str] = []
+        for threshold in thresholds:
+            metric_name = str(threshold["metric_name"])
+            field = str(threshold["summary_field"])
+            baseline_key = threshold.get("ratio_baseline_key")
+
+            observed_raw = summary.get(field)
+            has_numeric = not isinstance(observed_raw, bool) and isinstance(
+                observed_raw, (int, float)
+            )
+            if has_numeric:
+                try:
+                    has_numeric = math.isfinite(float(observed_raw))
+                except (TypeError, ValueError, OverflowError):
+                    has_numeric = False
+
+            metric_binding_id = summary.get(f"{field}_binding_id")
+            current_binding_id = summary.get("binding_id") or summary.get("runtime_binding_id")
+            provenance_ok = bool(metric_binding_id) and (
+                not current_binding_id or metric_binding_id == current_binding_id
+            )
+            fresh = not _metric_is_stale(
+                summary, field, now=moment, max_age_seconds=metric_max_age_seconds
+            )
+
+            baseline_value = (
+                approved_baseline_value(
+                    active_baselines, identity["artifact_id"], str(baseline_key)
+                )
+                if baseline_key
+                else None
+            )
+            baseline_ok = baseline_value is not None if baseline_key else True
+
+            entry = {
+                "metric_name": metric_name,
+                "summary_field": field,
+                "has_numeric_value": has_numeric,
+                "metric_provenance_ok": provenance_ok,
+                "metric_fresh": fresh,
+                "requires_baseline": bool(baseline_key),
+                "baseline_key": str(baseline_key) if baseline_key else None,
+                "approved_baseline_value": baseline_value,
+                "has_approved_baseline": baseline_ok,
+                "evaluable": bool(has_numeric and provenance_ok and fresh and baseline_ok),
+            }
+            metrics.append(entry)
+
+            if not has_numeric:
+                gaps.append(f"{metric_name}: telemetry field {field!r} missing or non-numeric")
+            if not provenance_ok:
+                gaps.append(f"{metric_name}: telemetry field {field!r} has missing/mismatched provenance")
+            if not fresh:
+                gaps.append(f"{metric_name}: telemetry field {field!r} has no fresh as-of time")
+            if baseline_key and not baseline_ok:
+                gaps.append(
+                    f"{metric_name}: no approved {str(baseline_key)!r} baseline for "
+                    f"artifact_id={identity['artifact_id']!r}"
+                )
+
+        artifacts.append(
+            {
+                "artifact_id": identity["artifact_id"],
+                "artifact_version": identity["artifact_version"],
+                "binding_id": identity["binding_id"],
+                "runtime_id": identity["runtime_id"],
+                "deployment_stage": identity["deployment_stage"],
+                "metrics": metrics,
+                "gaps": gaps,
+                "complete": not gaps,
+            }
+        )
+
+    complete = [item for item in artifacts if item["complete"]]
+    incomplete = [item for item in artifacts if not item["complete"]]
+    return {
+        "assessed_at": _utc_now(),
+        "eligible_stage": _ELIGIBLE_STAGE,
+        "thresholds_considered": [str(item["metric_name"]) for item in thresholds],
+        "monitored_artifacts": len(artifacts),
+        "complete_artifacts": len(complete),
+        "incomplete_artifacts": len(incomplete),
+        "coverage_complete": bool(artifacts) and not incomplete,
+        "artifacts": artifacts,
+        "ineligible_summaries": ineligible,
+    }
 
 
 def default_fetch_summaries(telemetry_api_url: str, *, timeout: float) -> list[dict[str, Any]]:
@@ -742,6 +936,7 @@ def run_tick(
         "incidents_deduped": 0,
         "errors": 0,
         "diagnostics": [],
+        "input_coverage": None,
     }
 
     # 1. Load pending evidence (WAL state) first, as required by fail-closed rules.
@@ -840,6 +1035,24 @@ def run_tick(
                 result["diagnostics"].append("telemetry fetch returned zero active runtime summaries; nothing to evaluate")
 
             result["summaries_evaluated"] = len(summaries)
+            # Report input completeness before evaluating. A monitored artifact
+            # missing its drawdown value or its approved baseline produces no
+            # candidate and would otherwise be indistinguishable from a healthy
+            # non-breaching artifact.
+            coverage = assess_input_coverage(
+                summaries,
+                active_thresholds,
+                baselines=active_baselines,
+                now=moment,
+                metric_max_age_seconds=metric_max_age_seconds,
+            )
+            result["input_coverage"] = coverage
+            if not coverage["coverage_complete"]:
+                result["diagnostics"].append(
+                    "input coverage incomplete: "
+                    f"{coverage['incomplete_artifacts']}/{coverage['monitored_artifacts']} "
+                    "monitored artifact(s) lack a numeric metric or an approved baseline"
+                )
             candidates, diagnostics = evaluate_breaches(
                 summaries,
                 active_thresholds,
