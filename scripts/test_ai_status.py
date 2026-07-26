@@ -2780,6 +2780,13 @@ class SidecarTaskTests(unittest.TestCase):
                 "artifact_conflict_guard": guard,
             }
         )
+        self.state["tasks"].append(
+            {
+                "id": "LATER-OVERLAP-001",
+                "status": "in_progress",
+                "artifacts": ["services/control-plane/bff"],
+            }
+        )
         revised = deepcopy(guard)
         revised["catalog_sha256"] = "b" * 64
         metadata = {

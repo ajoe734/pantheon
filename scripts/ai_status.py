@@ -5208,16 +5208,21 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
         raise SystemExit(
             f"Task {task_id} already exists; create-only assignment refused."
         )
-    if (
+    artifact_guard_changed = bool(
         task is not None
         and task.get("artifact_conflict_guard") is not None
         and "artifact_conflict_guard" in metadata
         and metadata["artifact_conflict_guard"] != task["artifact_conflict_guard"]
-        and not _catalog_assignment_revision_allows_guard_change(task, metadata)
-    ):
-        raise SystemExit(
-            f"Task {task_id} artifact conflict guard is immutable."
+    )
+    catalog_assignment_revision = False
+    if artifact_guard_changed:
+        catalog_assignment_revision = (
+            _catalog_assignment_revision_allows_guard_change(task, metadata)
         )
+        if not catalog_assignment_revision:
+            raise SystemExit(
+                f"Task {task_id} artifact conflict guard is immutable."
+            )
     if task is None:
         candidate = {
             "id": task_id,
@@ -5235,7 +5240,14 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
             "title": title,
         }
     )
-    enforce_artifact_conflict_admission(state, candidate)
+    if catalog_assignment_revision:
+        # This transition does not admit a new scope. Validate that the revised
+        # candidate still matches the pre-existing exact guard, but do not
+        # retroactively reject it because another already-active task later
+        # acquired a conflicting scope.
+        _validated_artifact_conflict_guard(candidate)
+    else:
+        enforce_artifact_conflict_admission(state, candidate)
     timestamp = iso_now()
     if task is None:
         if archived_task_snapshot(task_id):
