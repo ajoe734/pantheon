@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import multiprocessing
+import os
 import tempfile
 import unittest
+import uuid
 from pathlib import Path
 
 from services.telemetry.batch_writer import AsyncBatchWriter, WriteResult
@@ -89,6 +93,41 @@ def _started_buffer(
     buffer._js = jetstream
     buffer._subscription = subscription
     return buffer
+
+
+def _fetch_then_crash(
+    connection,
+    *,
+    nats_url: str,
+    stream_name: str,
+    subject: str,
+    durable_name: str,
+) -> None:
+    """Fetch one durable receipt in a child process, then exit without ACK."""
+
+    async def fetch() -> dict | None:
+        buffer = NatsJetStreamBuffer(
+            nats_url=nats_url,
+            stream_name=stream_name,
+            subject=subject,
+            durable_name=durable_name,
+            maxsize=100,
+            ack_wait=1.0,
+            duplicate_window=120.0,
+        )
+        await buffer.start()
+        return await buffer.get(timeout=5.0)
+
+    try:
+        connection.send(asyncio.run(fetch()))
+        connection.close()
+    except BaseException as exc:  # pragma: no cover - child failure surfaced to parent
+        try:
+            connection.send({"child_error": repr(exc)})
+            connection.close()
+        finally:
+            os._exit(24)
+    os._exit(23)
 
 
 class DurableIngestReceiptTest(unittest.IsolatedAsyncioTestCase):
@@ -206,6 +245,90 @@ class DurableIngestReceiptTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await buffer.release([fetched]))
         self.assertEqual(calls, ["nak"])
         self.assertEqual(buffer.stats()["total_acked"], 0)
+
+
+@unittest.skipUnless(
+    os.getenv("PANTHEON_TEST_NATS_URL"),
+    "set PANTHEON_TEST_NATS_URL to run the real JetStream crash probe",
+)
+class RealNatsCrashRecoveryTest(unittest.IsolatedAsyncioTestCase):
+    async def test_process_death_before_flush_redelivers_exact_receipt(self):
+        nats_url = os.environ["PANTHEON_TEST_NATS_URL"]
+        suffix = uuid.uuid4().hex[:12]
+        stream_name = f"L12_TEL_{suffix.upper()}"
+        subject = f"l12.tel.{suffix}.ingest"
+        durable_name = f"l12-tel-{suffix}-writer"
+        event = {
+            **_event(),
+            "event_id": f"evt-crash-{suffix}",
+        }
+        publisher = NatsJetStreamBuffer(
+            nats_url=nats_url,
+            stream_name=stream_name,
+            subject=subject,
+            durable_name=durable_name,
+            maxsize=100,
+            ack_wait=1.0,
+            duplicate_window=120.0,
+        )
+        recovery: NatsJetStreamBuffer | None = None
+        process = None
+        parent_connection = None
+        try:
+            await publisher.start()
+            self.assertTrue(await publisher.put(event))
+            await publisher.close()
+
+            context = multiprocessing.get_context("spawn")
+            parent_connection, child_connection = context.Pipe(duplex=False)
+            process = context.Process(
+                target=_fetch_then_crash,
+                kwargs={
+                    "connection": child_connection,
+                    "nats_url": nats_url,
+                    "stream_name": stream_name,
+                    "subject": subject,
+                    "durable_name": durable_name,
+                },
+            )
+            process.start()
+            child_connection.close()
+            fetched_ready = await asyncio.to_thread(parent_connection.poll, 8.0)
+            self.assertTrue(fetched_ready, "child did not fetch the durable receipt")
+            fetched = parent_connection.recv()
+            await asyncio.to_thread(process.join, 8.0)
+            self.assertEqual(process.exitcode, 23)
+            self.assertEqual(fetched, event)
+
+            await asyncio.sleep(1.2)
+            recovery = NatsJetStreamBuffer(
+                nats_url=nats_url,
+                stream_name=stream_name,
+                subject=subject,
+                durable_name=durable_name,
+                maxsize=100,
+                ack_wait=1.0,
+                duplicate_window=120.0,
+            )
+            await recovery.start()
+            recovered = await recovery.get(timeout=5.0)
+            self.assertEqual(recovered, event)
+            await recovery.ack([recovered])
+            self.assertEqual(recovery.stats()["total_acked"], 1)
+        finally:
+            if parent_connection is not None:
+                parent_connection.close()
+            if process is not None and process.is_alive():
+                process.terminate()
+                process.join(timeout=2.0)
+            cleanup = recovery or publisher
+            if cleanup._js is not None:
+                try:
+                    await cleanup._js.delete_stream(stream_name)
+                except Exception:
+                    pass
+            if recovery is not None:
+                await recovery.close()
 
 
 if __name__ == "__main__":
