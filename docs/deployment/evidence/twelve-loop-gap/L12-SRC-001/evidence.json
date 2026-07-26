@@ -7,8 +7,8 @@
     "reviewer": "Codex",
     "branch": "task/L12-SRC-001",
     "merge_target": "dev",
-    "status": "implementation_complete_review_required",
-    "anchor_commit": "720f308db"
+    "status": "cross_process_repair_complete_re_review_required",
+    "anchor_commit": "f3bba1009b40f8b7fc6d6f63a889c9512ad8781c"
   },
   "scope": {
     "owned_layer": "source-ingest desired-state reconciliation, provider execution boundary, bounded scheduling policy, SourceHealth outcome truth, and source-lane regression proof",
@@ -33,6 +33,12 @@
       "maximum_ticks": 24,
       "api_concurrency_cap": "SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY",
       "egress_posture": "deny by default; exact host allowlist required for external access"
+    },
+    "cross_process_safety": {
+      "reconcile_transaction": "process-shared exclusive file lock across requirement admission and connector/schedule convergence",
+      "jsonl_mutations": "refresh durable log while holding a stable sidecar exclusive file lock",
+      "frontier_claim": "enqueue dedupe and claim transition are each atomic against the latest shared frontier",
+      "execution_owner": "only the durable frontier claimant may create the ingest run and SourceRecord"
     },
     "source_health_outcomes": [
       "success",
@@ -65,10 +71,27 @@
       "requirement": "Duplicate ticks and two workers create no duplicate schedule or SourceRecord",
       "status": "pass",
       "proof": [
-        "test_two_reconcile_workers_converge_without_duplicate_connector_or_schedule",
-        "test_two_scheduler_workers_create_one_run_and_one_source_record",
+        "test_two_process_workers_create_one_connector_schedule_run_and_source_record",
         "test_duplicate_reconcile_tick_does_not_append_duplicate_records"
-      ]
+      ],
+      "process_proof": {
+        "start_method": "multiprocessing spawn",
+        "worker_count": 2,
+        "module_instances": 2,
+        "shared_surface": "one SOURCE_INGEST_DATA_DIR",
+        "asserted_cardinality": {
+          "connector_config_record": 1,
+          "connector_schedule_record": 1,
+          "crawl_frontier_id": 1,
+          "ingest_run_id": 1,
+          "source_record": 1
+        },
+        "thread_only_tests": [
+          "test_two_reconcile_threads_converge_without_duplicate_connector_or_schedule",
+          "test_two_scheduler_threads_create_one_run_and_one_source_record"
+        ],
+        "thread_only_tests_are_acceptance_proof": false
+      }
     },
     {
       "requirement": "Missed ticks recover after restart and connector failures remain isolated",
@@ -91,13 +114,18 @@
   ],
   "validation": [
     {
-      "command": "/home/lupin/pantheon/.venv/bin/pytest -q services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_persona_source_reconciler.py services/source_ingestion/tests/test_scheduled_connector.py",
-      "result": "124 passed, 1 warning in 35.56s",
+      "command": "/home/lupin/pantheon/.venv/bin/pytest -q services/source_ingestion/tests/test_multi_process_source_reconciliation.py services/source_ingestion/tests/test_persona_source_reconciler.py::test_two_reconcile_threads_converge_without_duplicate_connector_or_schedule services/source_ingestion/tests/test_scheduled_connector.py::test_two_scheduler_threads_create_one_run_and_one_source_record",
+      "result": "3 passed, 1 warning in 4.77s",
+      "status": "pass"
+    },
+    {
+      "command": "/home/lupin/pantheon/.venv/bin/pytest -q services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_persona_source_reconciler.py services/source_ingestion/tests/test_scheduled_connector.py services/source_ingestion/tests/test_multi_process_source_reconciliation.py",
+      "result": "125 passed, 1 warning in 43.54s",
       "status": "pass"
     },
     {
       "command": "/home/lupin/pantheon/.venv/bin/pytest -q services/source_ingestion",
-      "result": "729 passed, 2 skipped, 3 warnings in 196.99s",
+      "result": "730 passed, 2 skipped, 3 warnings in 175.98s",
       "status": "pass"
     },
     {
@@ -108,10 +136,12 @@
     }
   ],
   "publication": {
+    "previous_pull_request": "https://github.com/ajoe734/pantheon/pull/4144",
+    "previous_review_outcome": "rejected: thread-only tests did not satisfy explicit two-worker acceptance",
     "pull_request": null,
     "checks": "pending",
     "merge_commit": null,
-    "review": "pending Codex",
+    "review": "pending Codex re-review of cross-process repair",
     "hosted_deployment": "not claimed by this source-owned packet"
   }
 }
