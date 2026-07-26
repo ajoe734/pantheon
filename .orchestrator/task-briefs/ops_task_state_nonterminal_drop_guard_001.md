@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: in_progress
 - Owner: Claude
 - Reviewer: Codex2
-- Next: Continue the canonical follow-up after merged PR #4199 rejection. Replace count-only previous_nonterminal greater than zero to new_nonterminal zero rejection with identity-aware disappearance or mass-replacement detection so legitimate final-task completion remains possible. Require explicit audited drain marker only for actual task removal. Reproduce exact sequence 1592 22 tasks to sequence 1593 empty then recovery. Add last-task-done malformed tasks task-worktree event-log isolation environment scrubbing assertions rejected-write byte invariance parity and unrelated-worker preservation. Antigravity is quota-terminal. No config edit and do not weaken hash-chain validation.
+- Next: Independent review of PR #4224 head fb5f8c58b30fb3bdcf6ad7be03c5e2281a7773a3: declared suites pass (143 store/verifier; 133 ai_status plus 25 subtests; 399 supervisor) and CI is green, but validate_state_transition accepts non-auditable drain markers. Reproduced acceptance when only live A is removed with task_ids [A, NEVER_EXISTED], duplicate [A, A], approved_at not-a-timestamp or 2099-01-01T00:00:00Z, and non-string reason/actor. Require task_ids to be unique non-empty strings exactly equal to the removed live-id set, reason/actor to be non-empty strings, approved_at to be timezone-aware parseable and not future, add negative regressions for extra/duplicate IDs and malformed/future audit fields, then update evidence.json and evidence.sha256. PR is open and not merged; return to Codex2 review after the corrected head is pushed.
 
 ## Summary
 防止 authoritative journal 在仍有非終態任務時被 worker 或 supervisor 測試／投影一次寫成空 task state，避免整批 workers 被錯誤 supersede。
@@ -20,13 +20,21 @@ Generated in the worker workspace because the supervisor root did not have a tas
   (`previous_nonterminal > 0 and new_nonterminal == 0`), which was then
   rejected in review because it also refuses the legitimate completion of
   the final task on the board.
-- Delivered guard: `validate_state_transition` now compares the previous and
-  new boards by task identity. A commit is refused when task identities that
-  were still live disappear — reported as `disappearance` when some live
-  identities survive and as `mass replacement` when none do, which is the
-  shape of the sequence 1592 → 1593 incident. Real removal stays possible
-  through an explicit audited `task_state_drain` marker that names exactly
-  the dropped ids.
+- Delivered guard: `validate_state_transition` compares the previous and new
+  boards by task identity. A commit is refused when task identities that were
+  still live disappear — reported as `disappearance` when some live identities
+  survive and as `mass replacement` when none do, which is the shape of the
+  sequence 1592 → 1593 incident. Real removal stays possible through an
+  explicit audited `task_state_drain` marker that names exactly the dropped
+  ids.
+- Review round 1 (Codex2, head `fb5f8c58b`): the guard accepted
+  non-auditable drain markers. Remediated on this branch — `reason` and
+  `actor` must now be non-empty strings, `approved_at` must parse as a
+  timezone-aware ISO 8601 timestamp that is not in the future, and
+  `task_ids` must be a list of unique non-empty strings whose set equals
+  exactly the live ids removed by that commit (a padded, phantom, or
+  duplicated id is refused). Ten new negative cases plus two accepted-form
+  regressions pin the contract.
 - Not changing: hash-chain and event-digest validation, journal storage
   layout, `.orchestrator/config.json`, supervisor dispatch policy, and the
   `ai_status` archive/prune flow.

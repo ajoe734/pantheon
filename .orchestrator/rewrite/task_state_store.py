@@ -29,6 +29,7 @@ TERMINAL_TASK_STATUSES = frozenset({"done", "supersede", "superseded", "cancelle
 # Removing a live task is legal only when the commit carries this audited marker.
 DRAIN_MARKER_KEY = "task_state_drain"
 DRAIN_MARKER_AUDIT_FIELDS = ("reason", "actor", "approved_at")
+DRAIN_MARKER_TIMESTAMP_FIELD = "approved_at"
 NONTERMINAL_DROP_REJECTION = "task-state nonterminal drop rejected"
 REJECTION_ID_SAMPLE = 5
 
@@ -273,6 +274,68 @@ def nonterminal_task_ids(state: Any) -> set[str]:
     return set(_task_census(state)["nonterminal_ids"])
 
 
+def _parse_audit_timestamp(value: str) -> datetime | None:
+    """Parse an audit timestamp, requiring an explicit UTC offset."""
+
+    text = value.strip()
+    if text[-1:] in {"z", "Z"}:
+        text = f"{text[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    # A naive timestamp cannot be ordered against the commit clock, so an
+    # unauditable "approved at 00:00" claim must not license a drop.
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed
+
+
+def _drain_marker_audit_rejection(marker: dict[str, Any]) -> str | None:
+    """Return ``None`` when the marker's audit fields are usable as evidence."""
+
+    # A non-string audit value (number, bool, object) is not an auditable
+    # reason/actor/timestamp, so it is refused exactly like a blank one.
+    missing = [
+        field
+        for field in DRAIN_MARKER_AUDIT_FIELDS
+        if not isinstance(marker.get(field), str) or not marker[field].strip()
+    ]
+    if missing:
+        return f"{DRAIN_MARKER_KEY} lacks audit fields {missing}"
+    raw_approved_at = marker[DRAIN_MARKER_TIMESTAMP_FIELD]
+    approved_at = _parse_audit_timestamp(raw_approved_at)
+    if approved_at is None:
+        return (
+            f"{DRAIN_MARKER_KEY}.{DRAIN_MARKER_TIMESTAMP_FIELD} must be a timezone-aware "
+            f"ISO 8601 timestamp: {raw_approved_at!r}"
+        )
+    if approved_at > datetime.now(timezone.utc):
+        # An approval dated in the future was never granted by anyone.
+        return (
+            f"{DRAIN_MARKER_KEY}.{DRAIN_MARKER_TIMESTAMP_FIELD} is in the future: "
+            f"{raw_approved_at!r}"
+        )
+    return None
+
+
+def _drain_marker_ids(marker: dict[str, Any]) -> tuple[set[str] | None, str | None]:
+    """Return the authorized id set, or the reason the id list is unusable."""
+
+    raw_ids = marker.get("task_ids")
+    if not isinstance(raw_ids, list) or not all(
+        isinstance(item, str) and item.strip() for item in raw_ids
+    ):
+        return None, f"{DRAIN_MARKER_KEY}.task_ids must list the removed task ids"
+    authorized = [item.strip() for item in raw_ids]
+    duplicates = sorted({item for item in authorized if authorized.count(item) > 1})
+    if duplicates:
+        # A repeated id inflates the marker's apparent coverage without adding
+        # evidence, so the list must be a clean set of the dropped identities.
+        return None, f"{DRAIN_MARKER_KEY}.task_ids repeats task ids: {duplicates}"
+    return set(authorized), None
+
+
 def _drain_marker_rejection(
     new_state: dict[str, Any],
     previous_state: Any,
@@ -287,22 +350,15 @@ def _drain_marker_rejection(
         return f"no explicit audited {DRAIN_MARKER_KEY} marker was supplied"
     if not isinstance(marker, dict):
         return f"{DRAIN_MARKER_KEY} must be an object"
-    missing = [
-        field
-        for field in DRAIN_MARKER_AUDIT_FIELDS
-        if not str(marker.get(field) or "").strip()
-    ]
-    if missing:
-        return f"{DRAIN_MARKER_KEY} lacks audit fields {missing}"
+    audit_rejection = _drain_marker_audit_rejection(marker)
+    if audit_rejection is not None:
+        return audit_rejection
     if isinstance(previous_state, dict) and previous_state.get(DRAIN_MARKER_KEY) == marker:
         # A marker carried forward unchanged would disable the guard forever.
         return f"{DRAIN_MARKER_KEY} is an unchanged copy of the previous commit"
-    raw_ids = marker.get("task_ids")
-    if not isinstance(raw_ids, list) or not all(
-        isinstance(item, str) and item.strip() for item in raw_ids
-    ):
-        return f"{DRAIN_MARKER_KEY}.task_ids must list the removed task ids"
-    authorized = {item.strip() for item in raw_ids}
+    authorized, id_rejection = _drain_marker_ids(marker)
+    if authorized is None:
+        return id_rejection
     still_present = sorted(authorized & _task_census(new_state)["ids"])
     if still_present:
         # The marker must describe this drain only, not pre-authorize future ones.
@@ -310,6 +366,14 @@ def _drain_marker_rejection(
     uncovered = sorted(set(removed) - authorized)
     if uncovered:
         return f"{DRAIN_MARKER_KEY} does not cover removed tasks: {uncovered}"
+    unrelated = sorted(authorized - set(removed))
+    if unrelated:
+        # The id set must equal this commit's live removals: an id that was never
+        # live here is a padded marker, not evidence for the drop being made.
+        return (
+            f"{DRAIN_MARKER_KEY} names tasks that were not live removals in this "
+            f"commit: {unrelated}"
+        )
     if unidentified_shortfall and marker.get("allow_unidentified") is not True:
         return (
             f"{DRAIN_MARKER_KEY} must set allow_unidentified for "

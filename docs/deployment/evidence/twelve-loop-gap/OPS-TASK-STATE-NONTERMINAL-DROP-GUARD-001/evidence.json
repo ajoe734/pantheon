@@ -9,6 +9,7 @@
   "task_branch": "task/OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001",
   "base_branch": "dev",
   "created_at": "2026-07-26T22:20:00Z",
+  "updated_at": "2026-07-26T23:02:00Z",
   "incident": {
     "gap_id": "GAP-001",
     "delta_document": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/POST_DISPATCH_RUNTIME_GAP_DELTA.md",
@@ -53,18 +54,47 @@
     "drain_marker": {
       "state_key": "task_state_drain",
       "required_audit_fields": ["reason", "actor", "approved_at"],
-      "task_ids": "Must name every removed live task id.",
+      "audit_field_contract": "reason and actor must be non-empty strings. approved_at must be a non-empty string that parses as an ISO 8601 timestamp with an explicit UTC offset and is not in the future relative to the commit clock.",
+      "task_ids": "Must be a list of unique non-empty strings whose stripped set equals exactly the live task ids removed by this commit.",
       "rejected_marker_forms": [
         "A marker that is not an object.",
-        "A marker missing or blanking any audit field.",
-        "A marker whose task_ids is not a list of non-empty task ids.",
+        "A marker missing, blanking, or non-string typing any audit field, including a numeric or boolean reason/actor/approved_at.",
+        "A marker whose approved_at does not parse as an ISO 8601 timestamp, or parses without a timezone offset, such as a date-only or naive value.",
+        "A marker whose approved_at is in the future, such as 2099-01-01T00:00:00Z.",
+        "A marker whose task_ids is not a list of non-empty task id strings.",
+        "A marker whose task_ids repeats an id, which inflates apparent coverage without adding evidence.",
         "A marker that names a task still present on the board, which would pre-authorize a future drop.",
         "A marker that does not cover every removed task id.",
+        "A marker that names an id that was not a live removal in this commit, such as a never-existing id padded next to the real one.",
         "A marker carried forward byte-identically from the previous commit, which would disable the guard permanently.",
         "A marker without allow_unidentified when rows lacking a task id are removed."
+      ],
+      "accepted_marker_forms": [
+        "approved_at as Z, +00:00, a non-UTC offset such as +09:00, or with fractional seconds, provided it is not in the future.",
+        "approved_at stamped at commit time by utc_now(), so the not-future rule does not refuse a fresh approval.",
+        "task_ids equal to the removed live-id set, including an empty list when the only removal is rows without a task id and allow_unidentified is true."
       ]
     }
   },
+  "review_rounds": [
+    {
+      "round": 1,
+      "reviewer": "Codex2",
+      "reviewed_head": "fb5f8c58b30fb3bdcf6ad7be03c5e2281a7773a3",
+      "pull_request": 4224,
+      "decision": "changes_requested",
+      "finding": "The declared suites passed and CI was green, but validate_state_transition accepted non-auditable drain markers. With only live task A removed, the guard accepted task_ids [A, NEVER_EXISTED], duplicate task_ids [A, A], approved_at set to a non-timestamp or to the future value 2099-01-01T00:00:00Z, and non-string reason/actor values, because the audit fields were coerced with str(value or '') and the id set was only checked for coverage, not for equality.",
+      "remediation": {
+        "code": "_drain_marker_audit_rejection now requires reason, actor, and approved_at to be non-empty str instances; _parse_audit_timestamp requires an ISO 8601 value with an explicit UTC offset and refuses a naive or unparseable one; a parsed approved_at later than datetime.now(timezone.utc) is refused as an approval that was never granted. _drain_marker_ids refuses a repeated id, and the marker id set must now equal the removed live-id set exactly: coverage is still checked first, then any id that was not a live removal in this commit is refused.",
+        "tests": [
+          "test_drain_marker_must_be_explicit_and_audited gained negative cases pads-with-an-id-that-was-never-live, duplicate-task-ids, non-string-task-id, non-string-reason, non-string-actor, non-string-approved-at, unparseable-approved-at, naive-approved-at, date-only-approved-at, and future-approved-at.",
+          "test_drain_marker_for_unidentified_rows_must_not_name_phantom_ids covers a padded id on the allow_unidentified path.",
+          "The still-legal marker forms are pinned by test_drain_marker_accepts_past_timezone_aware_approvals (Z, +00:00, +09:00, fractional seconds) and test_drain_marker_accepts_an_approval_stamped_at_commit_time, so the not-future rule cannot become a false rejection."
+        ],
+        "parent_commit": "fb5f8c58b30fb3bdcf6ad7be03c5e2281a7773a3"
+      }
+    }
+  ],
   "acceptance": [
     {
       "criterion": "Replay sequence 1592 with 22 tasks followed by an empty state and reject before append",
@@ -74,7 +104,7 @@
     {
       "criterion": "Allow first bootstrap and a fully terminal explicitly evidenced drain without weakening hash-chain validation",
       "status": "pass",
-      "proof": "test_allow_first_bootstrap_with_empty_or_no_tasks, test_allow_drain_when_all_previous_tasks_were_terminal, test_completing_and_archiving_the_last_task_stays_possible, test_terminal_rows_may_be_archived_while_live_work_remains, test_audited_drain_marker_authorizes_real_task_removal, and test_guard_rejection_does_not_weaken_hash_chain_validation, which shows a journal edited to force the collapse still fails digest validation. validate_event, the event digest, and the previous-event hash chain are untouched by this task."
+      "proof": "test_allow_first_bootstrap_with_empty_or_no_tasks, test_allow_drain_when_all_previous_tasks_were_terminal, test_completing_and_archiving_the_last_task_stays_possible, test_terminal_rows_may_be_archived_while_live_work_remains, test_audited_drain_marker_authorizes_real_task_removal, test_drain_marker_accepts_past_timezone_aware_approvals, test_drain_marker_accepts_an_approval_stamped_at_commit_time, and test_guard_rejection_does_not_weaken_hash_chain_validation, which shows a journal edited to force the collapse still fails digest validation. The explicitly evidenced drain is only accepted through a marker whose audit fields and id set survive the checks listed under delivered_guard.drain_marker; the sixteen negative cases in test_drain_marker_must_be_explicit_and_audited plus test_drain_marker_for_unidentified_rows_must_not_name_phantom_ids pin the rejected forms. validate_event, the event digest, and the previous-event hash chain are untouched by this task."
     },
     {
       "criterion": "Inherited live PANTHEON_TASK_STATE_EVENT_LOG cannot be used by tests or task worktrees",
@@ -94,17 +124,18 @@
     {
       "criterion": "Relevant tests PR checks independent review and merge to dev are required",
       "status": "pending_review",
-      "proof": "Verification commands below are green locally; the PR, independent review by Codex2, and the merge into dev remain outstanding at the time of this cut."
+      "proof": "Verification commands below are green locally on the review-round-1 remediation. PR #4224 is open with the three required Branch CI Gate checks green on the previous head; the corrected head returns to Codex2 for independent review, and the merge into dev remains outstanding at the time of this cut."
     }
   ],
   "verification": {
     "python": "/home/lupin/pantheon/.venv/bin/python3",
     "integrated_head": "a593091043717da8c6c2ddd186b7314d21cb377f",
     "integrated_dev_head": "6578ef968",
+    "remediation_parent_head": "fb5f8c58b30fb3bdcf6ad7be03c5e2281a7773a3",
     "commands": [
       {
         "command": "/home/lupin/pantheon/.venv/bin/pytest .orchestrator/rewrite scripts/test_verify_task_state_store.py -q",
-        "result": "143 passed"
+        "result": "159 passed"
       },
       {
         "command": "/home/lupin/pantheon/.venv/bin/pytest scripts/test_ai_status.py -q",

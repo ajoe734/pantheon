@@ -297,6 +297,74 @@ def test_audited_drain_marker_authorizes_real_task_removal(tmp_path: Path) -> No
 
 
 @pytest.mark.parametrize(
+    "approved_at",
+    [
+        pytest.param("2026-07-26T00:00:00Z", id="utc-zulu"),
+        pytest.param("2026-07-26T00:00:00+00:00", id="utc-offset"),
+        pytest.param("2026-07-26T09:00:00+09:00", id="non-utc-offset"),
+        pytest.param("2026-07-26T00:00:00.123456Z", id="fractional-seconds"),
+    ],
+)
+def test_drain_marker_accepts_past_timezone_aware_approvals(
+    tmp_path: Path,
+    approved_at: str,
+) -> None:
+    path = tmp_path / "task-state-events.jsonl"
+    before = board(("KEEP-001", "in_progress"), ("DROP-001", "blocked"))
+    drained = board(
+        ("KEEP-001", "in_progress"),
+        **{store.DRAIN_MARKER_KEY: drain_marker("DROP-001", approved_at=approved_at)},
+    )
+
+    store.append_state_commit(path, before, source="ai-status")
+    store.append_state_commit(path, drained, source="ai-status")
+
+    assert store.project_latest_state(store.load_events(path)) == drained
+
+
+def test_drain_marker_accepts_an_approval_stamped_at_commit_time(tmp_path: Path) -> None:
+    """The not-future rule must not reject a marker approved moments ago."""
+
+    path = tmp_path / "task-state-events.jsonl"
+    before = board(("KEEP-001", "in_progress"), ("DROP-001", "blocked"))
+    drained = board(
+        ("KEEP-001", "in_progress"),
+        **{store.DRAIN_MARKER_KEY: drain_marker("DROP-001", approved_at=store.utc_now())},
+    )
+
+    store.append_state_commit(path, before, source="ai-status")
+    store.append_state_commit(path, drained, source="ai-status")
+
+    assert store.project_latest_state(store.load_events(path)) == drained
+
+
+def test_drain_marker_for_unidentified_rows_must_not_name_phantom_ids(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "task-state-events.jsonl"
+    before = {"tasks": [{"status": "in_progress"}]}
+
+    store.append_state_commit(path, before, source="ai-status")
+    with pytest.raises(
+        store.TaskStateStoreError,
+        match="not live removals in this commit: \\['PHANTOM-001'\\]",
+    ):
+        store.append_state_commit(
+            path,
+            {
+                "tasks": [],
+                store.DRAIN_MARKER_KEY: drain_marker(
+                    "PHANTOM-001",
+                    allow_unidentified=True,
+                ),
+            },
+            source="rogue",
+        )
+
+    assert store.project_latest_state(store.load_events(path)) == before
+
+
+@pytest.mark.parametrize(
     ("marker", "expected"),
     [
         pytest.param("drained", "must be an object", id="not-an-object"),
@@ -324,6 +392,56 @@ def test_audited_drain_marker_authorizes_real_task_removal(tmp_path: Path) -> No
             drain_marker("DROP-001", "KEEP-001"),
             "still on the board: \\['KEEP-001'\\]",
             id="preauthorizes-live-task",
+        ),
+        pytest.param(
+            drain_marker("DROP-001", "NEVER-EXISTED-001"),
+            "not live removals in this commit: \\['NEVER-EXISTED-001'\\]",
+            id="pads-with-an-id-that-was-never-live",
+        ),
+        pytest.param(
+            drain_marker("DROP-001", "DROP-001"),
+            "repeats task ids: \\['DROP-001'\\]",
+            id="duplicate-task-ids",
+        ),
+        pytest.param(
+            drain_marker("DROP-001", task_ids=["DROP-001", 7]),
+            "must list the removed task ids",
+            id="non-string-task-id",
+        ),
+        pytest.param(
+            drain_marker("DROP-001", reason=7),
+            "lacks audit fields \\['reason'\\]",
+            id="non-string-reason",
+        ),
+        pytest.param(
+            drain_marker("DROP-001", actor=True),
+            "lacks audit fields \\['actor'\\]",
+            id="non-string-actor",
+        ),
+        pytest.param(
+            drain_marker("DROP-001", approved_at=1784073600),
+            "lacks audit fields \\['approved_at'\\]",
+            id="non-string-approved-at",
+        ),
+        pytest.param(
+            drain_marker("DROP-001", approved_at="not-a-timestamp"),
+            "approved_at must be a timezone-aware ISO 8601 timestamp",
+            id="unparseable-approved-at",
+        ),
+        pytest.param(
+            drain_marker("DROP-001", approved_at="2026-07-26T00:00:00"),
+            "approved_at must be a timezone-aware ISO 8601 timestamp",
+            id="naive-approved-at",
+        ),
+        pytest.param(
+            drain_marker("DROP-001", approved_at="2026-07-26"),
+            "approved_at must be a timezone-aware ISO 8601 timestamp",
+            id="date-only-approved-at",
+        ),
+        pytest.param(
+            drain_marker("DROP-001", approved_at="2099-01-01T00:00:00Z"),
+            "approved_at is in the future",
+            id="future-approved-at",
         ),
     ],
 )
