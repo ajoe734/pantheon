@@ -66,6 +66,18 @@ def _targets_legacy_frontend(config: dict[str, Any], payload: dict[str, Any]) ->
     return bool(target) and matching_repo_id(config, target) == LEGACY_FRONTEND_REPO_ID
 
 
+def _sources_legacy_frontend(
+    config: dict[str, Any],
+    repo_id: str,
+    payload: dict[str, Any],
+) -> bool:
+    source = str(
+        payload.get("source_repo") or payload.get("source_repo_id") or ""
+    ).strip()
+    source_repo_id = matching_repo_id(config, source) if source else repo_id
+    return source_repo_id == LEGACY_FRONTEND_REPO_ID
+
+
 def _default_coordination_state() -> dict[str, Any]:
     return {
         "last_scan_at": None,
@@ -364,6 +376,23 @@ def sync_coordination_files(config: dict[str, Any], state: dict[str, Any]) -> bo
 
                 current_type = str(payload.get("type") or "").strip()
                 mirror_only = to_bool(payload.get("mirror_only"))
+                if _sources_legacy_frontend(config, repo_id, payload):
+                    skip = {
+                        "reason": "legacy_frontend_source",
+                        "source_repo": str(
+                            payload.get("source_repo")
+                            or payload.get("source_repo_id")
+                            or repository_slug(config, repo_id)
+                            or repo_id
+                        ),
+                        "replacement_repo": (
+                            repository_slug(config, ACTIVE_FRONTEND_REPO_ID)
+                            or "ajoe734/execute-plans"
+                        ),
+                    }
+                    record["coordination_skip"] = skip
+                    files_state[key]["coordination_skip"] = skip
+                    continue
                 if current_type in {"contract-ready", "backend-delivery"} and _targets_legacy_frontend(config, payload):
                     skip = {
                         "reason": "legacy_frontend_target",
