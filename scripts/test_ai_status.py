@@ -1311,6 +1311,65 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(pending[0]["to"], "Codex")
         self.assertIn("finalize", pending[0]["message"].lower())
 
+    def test_approve_protected_task_verifies_before_review_approved(self) -> None:
+        self.state["tasks"][0]["requires_human_ops_signoff"] = True
+        verdict_ref = {
+            "verdict_id": "pclose-001",
+            "ledger_entry_id": "pclose-issue-001",
+            "verifier_capability_sha256": "a" * 64,
+        }
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    "AI_NAME": "Claude",
+                    "REVIEW_FILE": "docs/evidence/closeout.json",
+                },
+                clear=False,
+            ),
+            mock.patch.object(
+                ai_status,
+                "validate_protected_closeout_transition",
+                return_value=verdict_ref,
+            ) as protected,
+        ):
+            ai_status.command_approve(
+                self.state,
+                ["REG-002", "Protected review passed."],
+            )
+
+        task = ai_status.get_task(self.state, "REG-002")
+        self.assertEqual(task["status"], "review_approved")
+        self.assertEqual(task["review_file"], "docs/evidence/closeout.json")
+        self.assertEqual(task["protected_closeout_verdict"], verdict_ref)
+        candidate = protected.call_args.args[0]
+        self.assertEqual(candidate["status"], "review")
+        self.assertEqual(candidate["review_file"], "docs/evidence/closeout.json")
+        self.assertEqual(
+            protected.call_args.kwargs,
+            {"transition": "review_approved"},
+        )
+
+    def test_approve_protected_task_failure_does_not_change_state(self) -> None:
+        self.state["tasks"][0]["requires_human_ops_signoff"] = True
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False),
+            mock.patch.object(
+                ai_status,
+                "validate_protected_closeout_transition",
+                side_effect=SystemExit("protected verdict missing"),
+            ),
+            self.assertRaisesRegex(SystemExit, "verdict missing"),
+        ):
+            ai_status.command_approve(
+                self.state,
+                ["REG-002", "Attempted protected approval."],
+            )
+
+        task = ai_status.get_task(self.state, "REG-002")
+        self.assertEqual(task["status"], "review")
+        self.assertNotIn("protected_closeout_verdict", task)
+
     def test_progress_promotes_todo_to_in_progress(self) -> None:
         self.state["tasks"][0]["status"] = "todo"
 
@@ -1356,6 +1415,76 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         archive_task = self.state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY]["snapshots"][0]["task"]
         self.assertEqual(archive_task["status"], "done")
         self.assertEqual(archive_task["terminal_outcome"], "completed")
+
+    def test_done_consumes_protected_verdict_before_terminal_mutation(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "review_approved"
+        task["requires_human_ops_signoff"] = True
+        consumed_ref = {
+            "verdict_id": "pclose-001",
+            "ledger_entry_id": "pclose-issue-001",
+            "verifier_capability_sha256": "a" * 64,
+            "consumption_record_id": "pclose-consume-001",
+        }
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(ai_status, "validate_loop_completion_claim"),
+            mock.patch.object(
+                ai_status,
+                "collect_done_delivery_metadata",
+                return_value={},
+            ),
+            mock.patch.object(
+                ai_status,
+                "validate_protected_closeout_transition",
+                return_value=consumed_ref,
+            ) as protected,
+            mock.patch.object(ai_status, "archived_task_snapshot", return_value=None),
+        ):
+            ai_status.command_done(
+                self.state,
+                ["REG-002", "Protected owner closeout complete."],
+            )
+
+        terminal = ai_status.get_task(self.state, "REG-002")
+        self.assertEqual(terminal["status"], "done")
+        self.assertEqual(terminal["protected_closeout_verdict"], consumed_ref)
+        self.assertEqual(
+            protected.call_args.kwargs,
+            {
+                "transition": "done",
+                "consume": True,
+                "transition_actor": "Codex",
+            },
+        )
+
+    def test_done_protected_verdict_failure_remains_review_approved(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "review_approved"
+        task["requires_human_ops_signoff"] = True
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(ai_status, "validate_loop_completion_claim"),
+            mock.patch.object(
+                ai_status,
+                "collect_done_delivery_metadata",
+                return_value={},
+            ),
+            mock.patch.object(
+                ai_status,
+                "validate_protected_closeout_transition",
+                side_effect=SystemExit("protected verdict replay"),
+            ),
+            self.assertRaisesRegex(SystemExit, "verdict replay"),
+        ):
+            ai_status.command_done(
+                self.state,
+                ["REG-002", "Attempted replayed closeout."],
+            )
+
+        self.assertEqual(task["status"], "review_approved")
+        self.assertNotIn("terminal_outcome", task)
+        self.assertNotIn(ai_status.STATUS_ARCHIVE_OUTBOX_KEY, self.state)
 
     def test_reconcile_merged_done_requires_human_ops(self) -> None:
         self.state["tasks"][0]["status"] = "blocked"

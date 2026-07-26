@@ -134,6 +134,7 @@ _PRODUCT_CLOSEOUT_ALLOW_TEST_CONFIG_ENV = (
     "PANTHEON_PRODUCT_CLOSEOUT_ALLOW_TEST_CONFIG"
 )
 _PRODUCT_CLOSEOUT_VERDICT_ID_ENV = "PANTHEON_PRODUCT_CLOSEOUT_VERDICT_ID"
+_PRODUCT_CLOSEOUT_FINAL_TASK_ID = "L12-CLOSE-001"
 
 
 def _load_product_closeout_module() -> Any:
@@ -293,6 +294,27 @@ def _load_product_closeout_binding(task: dict[str, Any], module: Any) -> Any:
     )
 
 
+def requires_protected_closeout_verdict(task: dict[str, Any]) -> bool:
+    """Return canonical protection truth; mutable task metadata cannot disable it."""
+
+    task_id = str(task.get("id") or "").strip()
+    if task.get("requires_human_ops_signoff") is True:
+        return True
+    if task_id == _PRODUCT_CLOSEOUT_FINAL_TASK_ID:
+        return True
+    try:
+        catalog = json.loads(_PRODUCT_CLOSEOUT_CATALOG.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(catalog, dict):
+        return False
+    authority = catalog.get("completion_authority")
+    if not isinstance(authority, dict):
+        return False
+    protected_ids = authority.get("required_human_ops_signoff_task_ids")
+    return isinstance(protected_ids, list) and task_id in protected_ids
+
+
 def validate_protected_closeout_transition(
     task: dict[str, Any],
     *,
@@ -308,7 +330,7 @@ def validate_protected_closeout_transition(
     consumption.
     """
 
-    if task.get("requires_human_ops_signoff") is not True:
+    if not requires_protected_closeout_verdict(task):
         return None
     if transition not in {"review_approved", "done"}:
         raise RuntimeError(f"unsupported protected closeout transition: {transition}")
@@ -501,7 +523,7 @@ def check_task(task: dict[str, Any]) -> list[str]:
     review_file_path = str(task.get("review_file") or "").strip()
     product_level_required = bool(task.get("product_level_required"))
 
-    if task.get("requires_human_ops_signoff") is True:
+    if requires_protected_closeout_verdict(task):
         try:
             validate_protected_closeout_transition(
                 task,
