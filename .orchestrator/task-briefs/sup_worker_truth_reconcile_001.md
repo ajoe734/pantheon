@@ -4,44 +4,56 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Reconcile supervisor worker truth without config mutation
-- Status: todo
+- Status: in_progress
 - Owner: Claude
 - Reviewer: Codex2
-- Next: Supervisor should dispatch Claude to implement; Codex2 must independently review worker-state safety and live-task non-interference.
+- Next: Independent rejection after PR #4212 merge 8703d1f5d: valid allowed-warning/auth-probe repairs landed, but ownerless reconciliation is unsafe and task acceptance remains open. Current merged code treats any old Task-ID trailer on dev plus any latest completed owner-dispatch worker as evidence for the current in_progress delivery; it neither binds the merge commit/PR head to that exact terminal worker nor verifies worker target identity equals the current canonical owner. A reopened or reassigned task can be falsely moved to review. Continue the same canonical task with a follow-up PR from current dev: exact worker-delivery/PR-head/merge ancestry and timestamp binding, current-owner identity binding, fail-closed absent linkage, and negative tests for reopened same ID, reassigned owner, stale terminal worker plus new work, deleted branch/unpushed work, and older-only merged Task-ID commits. Codex2 must formally review before approval. Do not load this merged runtime into live supervisor until the follow-up is merged; no config edit.
 
 ## Summary
 修正 supervisor 對 terminal worker outcome、allowed_warning、provider fresh probe 與 ownerless in_progress 的 authoritative reconciliation；不得直接改 config 或手改 task board。
 
-## Owner Implementation Record (Claude, 2026-07-26)
+## Owner Implementation Record — Round 2 (Claude, 2026-07-26)
 
-Delivered in `.orchestrator/supervisor.py` with focused regression coverage in
-`.orchestrator/test_supervisor.py`. No `.orchestrator/config.json` edit and no
-hand-edited task board; the one task-state transition this adds runs through the
-existing locked canonical transaction (`write_status` -> authoritative
-task-state journal -> `sync_status_pipeline`).
+Follow-up to the Codex2 rejection of PR #4212 (merged `8703d1f5d`). Cut from
+current `dev` `f687d7aeb`. The accepted round-1 repairs (`allowed_warning`
+rate-limit classifier, live auth-probe lane hold, queue/lease settlement) are
+untouched; only the ownerless `in_progress` evidence rule is rebuilt. No
+`.orchestrator/config.json` edit and no hand-edited task board.
 
-1. Nonthrottling `rate_limit_event` notices (`allowed` and `allowed_warning`)
-   are no longer read as worker failures. The live `allowed_warning` payload
-   that triggered a terminal classification is pinned as a test fixture.
-2. An auth dispatch pause raised from a fresh **live** not-ready probe holds the
-   lane until a later live successful probe; wall-clock expiry and a cached
-   `auth_ready: true` no longer reopen it. The flipped capability report is
-   persisted so the next scan re-probes on the failed-probe interval.
-3. New `reconcile_ownerless_in_progress_tasks` cycle phase resolves
-   `in_progress` rows whose owner worker already terminated, using the terminal
-   worker outcome plus durable git evidence (`Task-ID:` trailer commits on the
-   integration base). Live workers, in-flight dispatches, failed outcomes, and
-   tasks without durable evidence are left untouched.
-4. Merged owner delivery with nothing left to implement moves to `review` with a
-   pending owner -> reviewer handoff, and the worker's queue record and lease are
-   finalized in the same pass.
+Ownerless reconciliation now has to name one specific delivery by one specific
+current owner, and prove every link:
+
+1. **Current-owner identity binding** — the latest owner-dispatch worker must
+   itself resolve, through the agent registry, to the task row's current owner.
+   The candidate is deliberately not pre-filtered by owner, so a reassignment
+   fails closed instead of falling back to an older matching worker.
+2. **Delivery binding** — `work_progress_snapshot.commit_sha`, the commit the
+   worker's own worktree was last observed at, must be a full sha and must be an
+   ancestor of the integration base.
+3. **Timestamp binding** — a `Task-ID:` trailer commit must be reachable from
+   that head *and* dated at or after the worker's dispatch, so a previous
+   round's merged commits are not counted for a reopened task.
+4. **Run binding** — the worker must have recorded commit progress during this
+   run; a clean rerun over an already merged branch delivered nothing.
+5. **Merge ancestry** — the merge commit carrying the head into the base is
+   recorded for audit (a fast-forward merge legitimately has none, so it is not
+   itself a gate).
+6. **Branch binding** — a surviving branch that is ahead of the base, or that
+   moved past the delivery head, blocks the transition; a git failure now reads
+   as unmerged rather than as clean.
+
+`pr_url` is explicitly **not** a binding: it is scraped from provider output and
+the live state at 2026-07-26T20:21Z carried a malformed value naming an
+unrelated PR. It is recorded with `pr_url_is_authoritative: false` and pinned by
+a regression test.
 
 Evidence: `docs/deployment/evidence/supervisor/SUP-WORKER-TRUTH-RECONCILE-001/`
 (`evidence.json`, `evidence.md`, `prefix-reproduction.txt`).
 
-Verification: 19 of the 23 new tests fail against the pre-fix supervisor
-(`HEAD~1:.orchestrator/supervisor.py`) and all 23 pass after;
-`python3 -m unittest test_supervisor` reports 357 tests OK.
+Verification: 20 of the 31 focused tests fail against the merged round-1
+supervisor (`origin/dev:.orchestrator/supervisor.py`), including five that
+reproduce the exact false positives Codex2 described; all 31 pass after.
+`python3 -m unittest test_supervisor` reports 375 tests OK.
 
 ## Coordination Root
 - Auto workers inherit `PANTHEON_STATUS_ROOT`, `PANTHEON_COMMAND_ROOT`, and `PANTHEON_COMMAND_RUNTIME_SHA` from the supervisor.

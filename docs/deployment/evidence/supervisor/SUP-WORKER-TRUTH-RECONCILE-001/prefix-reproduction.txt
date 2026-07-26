@@ -1,254 +1,241 @@
-.FF..FE.EFEEEEEEEEEEEEE
+SUP-WORKER-TRUTH-RECONCILE-001 prefix reproduction (round 2 / follow-up after Codex2 rejection)
+
+Prefix under test : origin/dev f687d7aeb7b9f9ebabb85247a11afbfd7c3fc16b
+                    (contains the merged round-1 delivery, PR #4212 / 8703d1f5d)
+Method            : copy the task worktree .orchestrator/ into a scratch tree, then
+                    overwrite supervisor.py with the merged origin/dev version and run
+                    THIS branch's test_supervisor.py against it.
+
+  git show origin/dev:.orchestrator/supervisor.py > <scratch>/orch/supervisor.py
+  env -C <scratch>/orch python3 -m unittest \
+    test_supervisor.OwnerlessInProgressReconciliationTests \
+    test_supervisor.MergedDeliveryEvidenceTests \
+    test_supervisor.WorkerDeliveryIdentityTests
+
+Reading the result: a FAIL on a loop fixture is the false positive Codex2 rejected -- the
+merged code moved the row to review on unbound evidence. An ERROR is the merged code not
+having the binding entry point at all (TypeError on the keyword-only delivery_head/since
+arguments, or AttributeError on a helper that does not exist yet).
+
+================================ PREFIX RUN ================================
+....FE.F.....FFFEEEEEEEE.EEEEEE
 ======================================================================
-ERROR: test_cached_not_ready_probe_does_not_raise_a_lane_hold (test_supervisor.FreshAuthProbeLaneHoldTests.test_cached_not_ready_probe_does_not_raise_a_lane_hold)
+ERROR: test_reconciled_evidence_records_the_bound_delivery (test_supervisor.OwnerlessInProgressReconciliationTests.test_reconciled_evidence_records_the_bound_delivery)
 ----------------------------------------------------------------------
 Traceback (most recent call last):
-  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/test_supervisor.py", line 12517, in test_cached_not_ready_probe_does_not_raise_a_lane_hold
-    self._refresh(probe, state)
-  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/test_supervisor.py", line 12441, in _refresh
-    supervisor.refresh_provider_auth_before_dispatch(self.config, report, "codex2", state)
-TypeError: refresh_provider_auth_before_dispatch() takes 3 positional arguments but 4 were given
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 12961, in test_reconciled_evidence_records_the_bound_delivery
+    self.assertEqual(evidence["delivery_head_commit"], "a" * 40)
+                     ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+KeyError: 'delivery_head_commit'
 
 ======================================================================
-ERROR: test_live_not_ready_probe_holds_lane_until_a_live_success (test_supervisor.FreshAuthProbeLaneHoldTests.test_live_not_ready_probe_holds_lane_until_a_live_success)
+ERROR: test_branch_moved_past_the_delivery_head_reports_unmerged_commits (test_supervisor.MergedDeliveryEvidenceTests.test_branch_moved_past_the_delivery_head_reports_unmerged_commits)
+Deleted remote branch, local branch carrying newer unpushed work.
 ----------------------------------------------------------------------
 Traceback (most recent call last):
-  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/test_supervisor.py", line 12457, in test_live_not_ready_probe_holds_lane_until_a_live_success
-    report = self._refresh(probe, state)
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/test_supervisor.py", line 12441, in _refresh
-    supervisor.refresh_provider_auth_before_dispatch(self.config, report, "codex2", state)
-TypeError: refresh_provider_auth_before_dispatch() takes 3 positional arguments but 4 were given
-
-======================================================================
-ERROR: test_failed_terminal_outcome_stays_with_the_failure_ladder (test_supervisor.OwnerlessInProgressReconciliationTests.test_failed_terminal_outcome_stays_with_the_failure_ladder)
-----------------------------------------------------------------------
-Traceback (most recent call last):
-  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/test_supervisor.py", line 12729, in test_failed_terminal_outcome_stays_with_the_failure_ladder
-    changed, status, _ = self._run(
-                         ^^^^^^^^^^
-  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/test_supervisor.py", line 12627, in _run
-    with (
-  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
-    original, local = self.get_original()
-                      ^^^^^^^^^^^^^^^^^^^
-  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
-    raise AttributeError(
-AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/supervisor.py'> does not have the attribute 'merged_delivery_commits'
-
-======================================================================
-ERROR: test_in_flight_queue_event_is_left_for_dispatch (test_supervisor.OwnerlessInProgressReconciliationTests.test_in_flight_queue_event_is_left_for_dispatch)
-----------------------------------------------------------------------
-Traceback (most recent call last):
-  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/test_supervisor.py", line 12699, in test_in_flight_queue_event_is_left_for_dispatch
-    changed, status, _ = self._run(
-                         ^^^^^^^^^^
-  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/test_supervisor.py", line 12627, in _run
-    with (
-  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
-    original, local = self.get_original()
-                      ^^^^^^^^^^^^^^^^^^^
-  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
-    raise AttributeError(
-AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/supervisor.py'> does not have the attribute 'merged_delivery_commits'
-
-======================================================================
-ERROR: test_live_worker_task_is_never_reset (test_supervisor.OwnerlessInProgressReconciliationTests.test_live_worker_task_is_never_reset)
-----------------------------------------------------------------------
-Traceback (most recent call last):
-  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/test_supervisor.py", line 12681, in test_live_worker_task_is_never_reset
-    changed, status, sync_pipeline = self._run(
-                                     ^^^^^^^^^^
-  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/test_supervisor.py", line 12627, in _run
-    with (
-  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
-    original, local = self.get_original()
-                      ^^^^^^^^^^^^^^^^^^^
-  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
-    raise AttributeError(
-AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/supervisor.py'> does not have the attribute 'merged_delivery_commits'
-
-======================================================================
-ERROR: test_merged_owner_delivery_moves_to_governed_review_handoff (test_supervisor.OwnerlessInProgressReconciliationTests.test_merged_owner_delivery_moves_to_governed_review_handoff)
-----------------------------------------------------------------------
-Traceback (most recent call last):
-  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/test_supervisor.py", line 12650, in test_merged_owner_delivery_moves_to_governed_review_handoff
-    changed, status, sync_pipeline = self._run(
-                                     ^^^^^^^^^^
-  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/test_supervisor.py", line 12627, in _run
-    with (
-  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
-    original, local = self.get_original()
-                      ^^^^^^^^^^^^^^^^^^^
-  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
-    raise AttributeError(
-AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/supervisor.py'> does not have the attribute 'merged_delivery_commits'
-
-======================================================================
-ERROR: test_reconciled_task_is_not_handed_off_twice (test_supervisor.OwnerlessInProgressReconciliationTests.test_reconciled_task_is_not_handed_off_twice)
-----------------------------------------------------------------------
-Traceback (most recent call last):
-  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/test_supervisor.py", line 12821, in test_reconciled_task_is_not_handed_off_twice
-    changed, status, _ = self._run(
-                         ^^^^^^^^^^
-  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/test_supervisor.py", line 12627, in _run
-    with (
-  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
-    original, local = self.get_original()
-                      ^^^^^^^^^^^^^^^^^^^
-  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
-    raise AttributeError(
-AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/supervisor.py'> does not have the attribute 'merged_delivery_commits'
-
-======================================================================
-ERROR: test_seven_ownerless_fixtures_reconcile_in_one_pass (test_supervisor.OwnerlessInProgressReconciliationTests.test_seven_ownerless_fixtures_reconcile_in_one_pass)
-----------------------------------------------------------------------
-Traceback (most recent call last):
-  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/test_supervisor.py", line 12790, in test_seven_ownerless_fixtures_reconcile_in_one_pass
-    changed, status, sync_pipeline = self._run(
-                                     ^^^^^^^^^^
-  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/test_supervisor.py", line 12627, in _run
-    with (
-  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
-    original, local = self.get_original()
-                      ^^^^^^^^^^^^^^^^^^^
-  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
-    raise AttributeError(
-AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/supervisor.py'> does not have the attribute 'merged_delivery_commits'
-
-======================================================================
-ERROR: test_task_without_a_distinct_reviewer_is_untouched (test_supervisor.OwnerlessInProgressReconciliationTests.test_task_without_a_distinct_reviewer_is_untouched)
-----------------------------------------------------------------------
-Traceback (most recent call last):
-  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/test_supervisor.py", line 12757, in test_task_without_a_distinct_reviewer_is_untouched
-    changed, status, _ = self._run(
-                         ^^^^^^^^^^
-  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/test_supervisor.py", line 12627, in _run
-    with (
-  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
-    original, local = self.get_original()
-                      ^^^^^^^^^^^^^^^^^^^
-  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
-    raise AttributeError(
-AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/supervisor.py'> does not have the attribute 'merged_delivery_commits'
-
-======================================================================
-ERROR: test_task_without_any_terminal_worker_evidence_is_untouched (test_supervisor.OwnerlessInProgressReconciliationTests.test_task_without_any_terminal_worker_evidence_is_untouched)
-----------------------------------------------------------------------
-Traceback (most recent call last):
-  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/test_supervisor.py", line 12711, in test_task_without_any_terminal_worker_evidence_is_untouched
-    changed, status, _ = self._run(
-                         ^^^^^^^^^^
-  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/test_supervisor.py", line 12627, in _run
-    with (
-  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
-    original, local = self.get_original()
-                      ^^^^^^^^^^^^^^^^^^^
-  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
-    raise AttributeError(
-AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/supervisor.py'> does not have the attribute 'merged_delivery_commits'
-
-======================================================================
-ERROR: test_unmerged_delivery_is_left_for_owner_redispatch (test_supervisor.OwnerlessInProgressReconciliationTests.test_unmerged_delivery_is_left_for_owner_redispatch)
-----------------------------------------------------------------------
-Traceback (most recent call last):
-  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/test_supervisor.py", line 12742, in test_unmerged_delivery_is_left_for_owner_redispatch
-    changed, status, _ = self._run(
-                         ^^^^^^^^^^
-  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/test_supervisor.py", line 12627, in _run
-    with (
-  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
-    original, local = self.get_original()
-                      ^^^^^^^^^^^^^^^^^^^
-  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
-    raise AttributeError(
-AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/supervisor.py'> does not have the attribute 'merged_delivery_commits'
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13108, in test_branch_moved_past_the_delivery_head_reports_unmerged_commits
+    supervisor.task_branch_has_unmerged_commits(
+TypeError: task_branch_has_unmerged_commits() got an unexpected keyword argument 'delivery_head'
 
 ======================================================================
 ERROR: test_deleted_task_branch_reports_no_unmerged_commits (test_supervisor.MergedDeliveryEvidenceTests.test_deleted_task_branch_reports_no_unmerged_commits)
 ----------------------------------------------------------------------
 Traceback (most recent call last):
-  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/test_supervisor.py", line 12867, in test_deleted_task_branch_reports_no_unmerged_commits
-    supervisor.task_branch_has_unmerged_commits(self.config, "SUP-MERGED-001", "origin/dev")
-    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-AttributeError: module 'supervisor' has no attribute 'task_branch_has_unmerged_commits'
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13073, in test_deleted_task_branch_reports_no_unmerged_commits
+    supervisor.task_branch_has_unmerged_commits(
+TypeError: task_branch_has_unmerged_commits() got an unexpected keyword argument 'delivery_head'
 
 ======================================================================
-ERROR: test_no_trailer_commit_means_no_merged_evidence (test_supervisor.MergedDeliveryEvidenceTests.test_no_trailer_commit_means_no_merged_evidence)
+ERROR: test_delivery_head_not_merged_into_the_base_is_not_evidence (test_supervisor.MergedDeliveryEvidenceTests.test_delivery_head_not_merged_into_the_base_is_not_evidence)
+Unpushed work, or a squash merge that rewrote the delivery head.
 ----------------------------------------------------------------------
 Traceback (most recent call last):
-  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/test_supervisor.py", line 12858, in test_no_trailer_commit_means_no_merged_evidence
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13030, in test_delivery_head_not_merged_into_the_base_is_not_evidence
     with (
   File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
     original, local = self.get_original()
                       ^^^^^^^^^^^^^^^^^^^
   File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
     raise AttributeError(
-AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/supervisor.py'> does not have the attribute '_git_capture'
+AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/supervisor.py'> does not have the attribute '_git_commit_is_ancestor'
 
 ======================================================================
-ERROR: test_task_branch_ahead_of_base_reports_unmerged_commits (test_supervisor.MergedDeliveryEvidenceTests.test_task_branch_ahead_of_base_reports_unmerged_commits)
+ERROR: test_fast_forward_merge_without_a_merge_commit_still_binds (test_supervisor.MergedDeliveryEvidenceTests.test_fast_forward_merge_without_a_merge_commit_still_binds)
 ----------------------------------------------------------------------
 Traceback (most recent call last):
-  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/test_supervisor.py", line 12871, in test_task_branch_ahead_of_base_reports_unmerged_commits
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13060, in test_fast_forward_merge_without_a_merge_commit_still_binds
     with (
   File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
     original, local = self.get_original()
                       ^^^^^^^^^^^^^^^^^^^
   File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
     raise AttributeError(
-AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/supervisor.py'> does not have the attribute '_git_capture'
+AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/supervisor.py'> does not have the attribute '_git_commit_is_ancestor'
 
 ======================================================================
-ERROR: test_trailer_commit_on_the_integration_base_is_merged_evidence (test_supervisor.MergedDeliveryEvidenceTests.test_trailer_commit_on_the_integration_base_is_merged_evidence)
+ERROR: test_git_log_failure_fails_closed (test_supervisor.MergedDeliveryEvidenceTests.test_git_log_failure_fails_closed)
 ----------------------------------------------------------------------
 Traceback (most recent call last):
-  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/test_supervisor.py", line 12846, in test_trailer_commit_on_the_integration_base_is_merged_evidence
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13039, in test_git_log_failure_fails_closed
     with (
   File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
     original, local = self.get_original()
                       ^^^^^^^^^^^^^^^^^^^
   File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
     raise AttributeError(
-AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/supervisor.py'> does not have the attribute '_git_capture'
+AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/supervisor.py'> does not have the attribute '_git_commit_is_ancestor'
 
 ======================================================================
-FAIL: test_allowed_warning_event_is_not_detected_as_worker_failure (test_supervisor.AllowedRateLimitNoticeTests.test_allowed_warning_event_is_not_detected_as_worker_failure)
+ERROR: test_missing_delivery_head_or_since_fails_closed (test_supervisor.MergedDeliveryEvidenceTests.test_missing_delivery_head_or_since_fails_closed)
 ----------------------------------------------------------------------
 Traceback (most recent call last):
-  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/test_supervisor.py", line 12381, in test_allowed_warning_event_is_not_detected_as_worker_failure
-    self.assertIsNone(supervisor.detect_worker_failure(worker))
-AssertionError: '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","resetsAt":1785153600,"rateLimitType":"seven_day","utilization":0.83,"isUsingOverage":false,"surpassedThreshold":0.75},"uuid":"466e8308-da86-4dbd-a188-985b8558a428","session_id":"30c27323-d5f9-41ec-8d84-6ea882f1ba15"}' is not None
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13047, in test_missing_delivery_head_or_since_fails_closed
+    with (
+  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
+    raise AttributeError(
+AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/supervisor.py'> does not have the attribute '_git_commit_is_ancestor'
 
 ======================================================================
-FAIL: test_allowed_warning_reason_classifies_nonterminal_and_never_pauses (test_supervisor.AllowedRateLimitNoticeTests.test_allowed_warning_reason_classifies_nonterminal_and_never_pauses)
+ERROR: test_older_only_merged_trailer_commits_are_not_this_delivery (test_supervisor.MergedDeliveryEvidenceTests.test_older_only_merged_trailer_commits_are_not_this_delivery)
+The reopened-task case: the id merged before, nothing merged since.
 ----------------------------------------------------------------------
 Traceback (most recent call last):
-  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/test_supervisor.py", line 12407, in test_allowed_warning_reason_classifies_nonterminal_and_never_pauses
-    self.assertEqual(failure["kind"], "transient")
-AssertionError: 'terminal' != 'transient'
-- terminal
-+ transient
-
-
-======================================================================
-FAIL: test_truncated_allowed_warning_line_is_not_a_worker_failure (test_supervisor.AllowedRateLimitNoticeTests.test_truncated_allowed_warning_line_is_not_a_worker_failure)
-----------------------------------------------------------------------
-Traceback (most recent call last):
-  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/test_supervisor.py", line 12401, in test_truncated_allowed_warning_line_is_not_a_worker_failure
-    self.assertIsNone(supervisor.detect_worker_failure(worker))
-AssertionError: '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning"' is not None
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13021, in test_older_only_merged_trailer_commits_are_not_this_delivery
+    with (
+  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
+    raise AttributeError(
+AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/supervisor.py'> does not have the attribute '_git_commit_is_ancestor'
 
 ======================================================================
-FAIL: test_probe_gated_auth_pause_survives_its_wall_clock_window (test_supervisor.FreshAuthProbeLaneHoldTests.test_probe_gated_auth_pause_survives_its_wall_clock_window)
-The observed regression: an auth pause reopened the lane on a timer.
+ERROR: test_rev_list_failure_reports_unmerged_commits (test_supervisor.MergedDeliveryEvidenceTests.test_rev_list_failure_reports_unmerged_commits)
 ----------------------------------------------------------------------
 Traceback (most recent call last):
-  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/040b1210-d68e-49d9-a673-382d4c5972d4/scratchpad/prefix-check/orch/test_supervisor.py", line 12536, in test_probe_gated_auth_pause_survives_its_wall_clock_window
-    self.assertFalse(expired)
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13123, in test_rev_list_failure_reports_unmerged_commits
+    supervisor.task_branch_has_unmerged_commits(
+TypeError: task_branch_has_unmerged_commits() got an unexpected keyword argument 'delivery_head'
+
+======================================================================
+ERROR: test_trailer_commit_reachable_from_the_delivery_head_is_merged_evidence (test_supervisor.MergedDeliveryEvidenceTests.test_trailer_commit_reachable_from_the_delivery_head_is_merged_evidence)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 12993, in test_trailer_commit_reachable_from_the_delivery_head_is_merged_evidence
+    with (
+  File "/usr/lib/python3.12/unittest/mock.py", line 1458, in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 1431, in get_original
+    raise AttributeError(
+AttributeError: <module 'supervisor' from '/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/supervisor.py'> does not have the attribute '_git_commit_is_ancestor'
+
+======================================================================
+ERROR: test_delivery_head_requires_a_full_commit_sha (test_supervisor.WorkerDeliveryIdentityTests.test_delivery_head_requires_a_full_commit_sha)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13151, in test_delivery_head_requires_a_full_commit_sha
+    supervisor.worker_delivery_head_commit({"work_progress_snapshot": {"commit_sha": "C" * 40}}),
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: module 'supervisor' has no attribute 'worker_delivery_head_commit'
+
+======================================================================
+ERROR: test_dispatch_start_prefers_the_lease_acquisition (test_supervisor.WorkerDeliveryIdentityTests.test_dispatch_start_prefers_the_lease_acquisition)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13180, in test_dispatch_start_prefers_the_lease_acquisition
+    supervisor._isoformat_utc(supervisor.worker_dispatch_started_at(worker)),
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: module 'supervisor' has no attribute 'worker_dispatch_started_at'
+
+======================================================================
+ERROR: test_logical_agent_id_resolves_the_dispatched_display_name (test_supervisor.WorkerDeliveryIdentityTests.test_logical_agent_id_resolves_the_dispatched_display_name)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13143, in test_logical_agent_id_resolves_the_dispatched_display_name
+    self.assertEqual(supervisor.worker_target_agent_display_name(self.config, worker), "Claude")
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: module 'supervisor' has no attribute 'worker_target_agent_display_name'
+
+======================================================================
+ERROR: test_scraped_pr_url_is_never_the_delivery_binding (test_supervisor.WorkerDeliveryIdentityTests.test_scraped_pr_url_is_never_the_delivery_binding)
+Pinned from live .orchestrator/state.json at 2026-07-26T20:21Z.
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13173, in test_scraped_pr_url_is_never_the_delivery_binding
+    supervisor.worker_delivery_head_commit(worker),
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: module 'supervisor' has no attribute 'worker_delivery_head_commit'
+
+======================================================================
+ERROR: test_unregistered_agent_id_is_unresolved_not_echoed (test_supervisor.WorkerDeliveryIdentityTests.test_unregistered_agent_id_is_unresolved_not_echoed)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 13147, in test_unregistered_agent_id_is_unresolved_not_echoed
+    self.assertEqual(supervisor.worker_target_agent_display_name(self.config, worker), "")
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: module 'supervisor' has no attribute 'worker_target_agent_display_name'
+
+======================================================================
+FAIL: test_reassigned_owner_blocks_the_previous_owners_worker (test_supervisor.OwnerlessInProgressReconciliationTests.test_reassigned_owner_blocks_the_previous_owners_worker)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 12876, in test_reassigned_owner_blocks_the_previous_owners_worker
+    self.assertFalse(changed)
+AssertionError: True is not false
+
+======================================================================
+FAIL: test_rerun_without_commit_progress_is_not_evidence (test_supervisor.OwnerlessInProgressReconciliationTests.test_rerun_without_commit_progress_is_not_evidence)
+A reopened task re-dispatched over an already merged branch.
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 12898, in test_rerun_without_commit_progress_is_not_evidence
+    self.assertFalse(changed)
+AssertionError: True is not false
+
+======================================================================
+FAIL: test_unregistered_worker_identity_fails_closed (test_supervisor.OwnerlessInProgressReconciliationTests.test_unregistered_worker_identity_fails_closed)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 12936, in test_unregistered_worker_identity_fails_closed
+    self.assertFalse(changed)
+AssertionError: True is not false
+
+======================================================================
+FAIL: test_worker_without_a_delivery_head_fails_closed (test_supervisor.OwnerlessInProgressReconciliationTests.test_worker_without_a_delivery_head_fails_closed)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 12909, in test_worker_without_a_delivery_head_fails_closed
+    self.assertFalse(changed)
+AssertionError: True is not false
+
+======================================================================
+FAIL: test_worker_without_a_dispatch_timestamp_fails_closed (test_supervisor.OwnerlessInProgressReconciliationTests.test_worker_without_a_dispatch_timestamp_fails_closed)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/claude-1002/-tmp-pantheon-worker-worktrees-pantheon-sup-worker-truth-reconcile-001/955d0133-5bc2-457c-92a5-186dd3f38526/scratchpad/prefix/orch/test_supervisor.py", line 12919, in test_worker_without_a_dispatch_timestamp_fails_closed
+    self.assertFalse(changed)
 AssertionError: True is not false
 
 ----------------------------------------------------------------------
-Ran 23 tests in 0.088s
+Ran 31 tests in 0.395s
 
-FAILED (failures=4, errors=15)
+FAILED (failures=5, errors=15)
+
+================================ FIXED RUN =================================
+$ env -C .orchestrator python3 -m unittest test_supervisor.OwnerlessInProgressReconciliationTests test_supervisor.MergedDeliveryEvidenceTests test_supervisor.WorkerDeliveryIdentityTests
+...............................
+----------------------------------------------------------------------
+Ran 31 tests in 0.038s
+
+OK
+
+============================== FULL SUITE ==================================
+$ env -C .orchestrator python3 -m unittest test_supervisor
+----------------------------------------------------------------------
+Ran 375 tests in 9.843s
+
+OK

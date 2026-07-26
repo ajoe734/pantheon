@@ -12588,12 +12588,17 @@ class OwnerlessInProgressReconciliationTests(unittest.TestCase):
             "task_id": task_id,
             "provider": "claude1-1",
             "agent_id": "claude1_1",
+            "logical_agent_id": "claude",
             "status": "completed",
             "runner_status": "completed",
             "exit_code": 0,
+            "lease_acquired_at": "2026-07-26T17:00:00Z",
             "last_event_at": "2026-07-26T18:00:00Z",
             "runner_finished_at": "2026-07-26T18:00:00Z",
             "queue_event_id": f"evt-{task_id}",
+            "commit_progress_count": 2,
+            "last_commit_progress_at": "2026-07-26T17:45:00Z",
+            "work_progress_snapshot": {"commit_sha": "a" * 40},
             "request_snapshot": {"reason": supervisor.REASON_OWNED_IN_PROGRESS},
         }
         worker.update(overrides)
@@ -12615,12 +12620,33 @@ class OwnerlessInProgressReconciliationTests(unittest.TestCase):
         def fake_write_status(_config: dict[str, object], payload: dict[str, object], *, source: str) -> None:
             self.write_sources.append(source)
 
-        def fake_merged(_config: dict[str, object], task_id: str) -> dict[str, object] | None:
+        def fake_merged(
+            _config: dict[str, object],
+            task_id: str,
+            *,
+            # Defaults keep this fake callable under the pre-fix (PR #4212)
+            # signature so the prefix reproduction shows the real false
+            # positive instead of a TypeError.
+            delivery_head: str = "",
+            since: str = "",
+        ) -> dict[str, object] | None:
             if task_id not in merged_task_ids:
                 return None
-            return {"base_ref": "origin/dev", "commits": [f"{task_id}-sha"]}
+            return {
+                "base_ref": "origin/dev",
+                "commits": [f"{task_id}-sha"],
+                "delivery_head": delivery_head,
+                "merge_commit": f"{task_id}-merge",
+                "trailer_commits_since": since,
+            }
 
-        def fake_unmerged(_config: dict[str, object], task_id: str, _base_ref: str) -> bool:
+        def fake_unmerged(
+            _config: dict[str, object],
+            task_id: str,
+            _base_ref: str,
+            *,
+            delivery_head: str | None = None,
+        ) -> bool:
             return task_id in (unmerged_task_ids or set())
 
         self.write_sources: list[str] = []
@@ -12831,9 +12857,122 @@ class OwnerlessInProgressReconciliationTests(unittest.TestCase):
         self.assertFalse(changed)
         sync_pipeline.assert_not_called()
 
+    # -- ownership / delivery binding negatives ----------------------------
+    #
+    # Each of these has merged Task-ID evidence for the task id and a clean,
+    # successful terminal worker. Only the binding between that worker, that
+    # delivery, and the task's current owner is missing, and each one must
+    # leave the row untouched.
+
+    def test_reassigned_owner_blocks_the_previous_owners_worker(self) -> None:
+        worker = self._worker("SUP-REASSIGNED")
+        state = {"workers": {worker["run_id"]: worker}, "queue": {"events": {}}}
+        changed, status, sync_pipeline = self._run(
+            tasks=[self._task("SUP-REASSIGNED", owner="Codex2", reviewer="Claude")],
+            state=state,
+            merged_task_ids={"SUP-REASSIGNED"},
+        )
+
+        self.assertFalse(changed)
+        self.assertEqual(status["tasks"][0]["status"], "in_progress")
+        self.assertEqual(status["handoffs"], [])
+        sync_pipeline.assert_not_called()
+        self.assertNotIn("ownerless_reconciled_task_status", worker)
+
+    def test_rerun_without_commit_progress_is_not_evidence(self) -> None:
+        """A reopened task re-dispatched over an already merged branch.
+
+        The worker exits cleanly, and its head is the previously merged tip, but
+        it never advanced its worktree, so it delivered nothing this round.
+        """
+        worker = self._worker(
+            "SUP-REOPENED",
+            commit_progress_count=0,
+            last_commit_progress_at=None,
+        )
+        state = {"workers": {worker["run_id"]: worker}, "queue": {"events": {}}}
+        changed, status, sync_pipeline = self._run(
+            tasks=[self._task("SUP-REOPENED")], state=state, merged_task_ids={"SUP-REOPENED"}
+        )
+
+        self.assertFalse(changed)
+        self.assertEqual(status["tasks"][0]["status"], "in_progress")
+        sync_pipeline.assert_not_called()
+
+    def test_worker_without_a_delivery_head_fails_closed(self) -> None:
+        worker = self._worker("SUP-NOHEAD", work_progress_snapshot={})
+        state = {"workers": {worker["run_id"]: worker}, "queue": {"events": {}}}
+        changed, status, _ = self._run(
+            tasks=[self._task("SUP-NOHEAD")], state=state, merged_task_ids={"SUP-NOHEAD"}
+        )
+
+        self.assertFalse(changed)
+        self.assertEqual(status["tasks"][0]["status"], "in_progress")
+
+    def test_worker_without_a_dispatch_timestamp_fails_closed(self) -> None:
+        worker = self._worker("SUP-NOSTART", lease_acquired_at=None)
+        state = {"workers": {worker["run_id"]: worker}, "queue": {"events": {}}}
+        changed, status, _ = self._run(
+            tasks=[self._task("SUP-NOSTART")], state=state, merged_task_ids={"SUP-NOSTART"}
+        )
+
+        self.assertFalse(changed)
+        self.assertEqual(status["tasks"][0]["status"], "in_progress")
+
+    def test_unregistered_worker_identity_fails_closed(self) -> None:
+        worker = self._worker(
+            "SUP-UNKNOWN-AGENT",
+            logical_agent_id="ghost",
+            agent_id="ghost_1",
+            provider="ghost-1",
+        )
+        state = {"workers": {worker["run_id"]: worker}, "queue": {"events": {}}}
+        changed, status, _ = self._run(
+            tasks=[self._task("SUP-UNKNOWN-AGENT")],
+            state=state,
+            merged_task_ids={"SUP-UNKNOWN-AGENT"},
+        )
+
+        self.assertFalse(changed)
+        self.assertEqual(status["tasks"][0]["status"], "in_progress")
+
+    def test_stale_terminal_worker_with_new_branch_work_is_not_reconciled(self) -> None:
+        worker = self._worker("SUP-STALE")
+        state = {"workers": {worker["run_id"]: worker}, "queue": {"events": {}}}
+        changed, status, _ = self._run(
+            tasks=[self._task("SUP-STALE")],
+            state=state,
+            merged_task_ids={"SUP-STALE"},
+            unmerged_task_ids={"SUP-STALE"},
+        )
+
+        self.assertFalse(changed)
+        self.assertEqual(status["tasks"][0]["status"], "in_progress")
+
+    def test_reconciled_evidence_records_the_bound_delivery(self) -> None:
+        worker = self._worker("SUP-BOUND")
+        state = {"workers": {worker["run_id"]: worker}, "queue": {"events": {}}}
+        changed, status, _ = self._run(
+            tasks=[self._task("SUP-BOUND")], state=state, merged_task_ids={"SUP-BOUND"}
+        )
+
+        self.assertTrue(changed)
+        evidence = status["status_activity_outbox"]["events"][0]["evidence"]
+        self.assertEqual(evidence["delivery_head_commit"], "a" * 40)
+        self.assertEqual(evidence["worker_target_agent"], "Claude")
+        self.assertEqual(evidence["task_owner"], "Claude")
+        self.assertEqual(evidence["dispatched_at"], "2026-07-26T17:00:00Z")
+        self.assertEqual(evidence["trailer_commits_since"], "2026-07-26T17:00:00Z")
+        self.assertEqual(evidence["merge_commit"], "SUP-BOUND-merge")
+        self.assertEqual(evidence["commit_progress_count"], 2)
+        self.assertFalse(evidence["pr_url_is_authoritative"])
+        self.assertIn("a" * 12, status["tasks"][0]["next"])
+
 
 class MergedDeliveryEvidenceTests(unittest.TestCase):
-    """Durable git evidence, not a surviving branch ref, proves the delivery."""
+    """Merged evidence is bound to one delivery head, not to a task id."""
+
+    HEAD = "b" * 40
 
     def setUp(self) -> None:
         self.config = {
@@ -12842,29 +12981,98 @@ class MergedDeliveryEvidenceTests(unittest.TestCase):
             "worker_worktree_cleanup": {"base_branches": ["dev"]},
         }
 
-    def test_trailer_commit_on_the_integration_base_is_merged_evidence(self) -> None:
+    def _merged(self, task_id: str, **overrides: object) -> dict[str, object] | None:
+        kwargs = {"delivery_head": self.HEAD, "since": "2026-07-26T17:00:00Z"}
+        kwargs.update(overrides)
+        return supervisor.merged_delivery_commits(self.config, task_id, **kwargs)
+
+    def test_trailer_commit_reachable_from_the_delivery_head_is_merged_evidence(self) -> None:
+        def fake_capture(_root: object, args: list[str]) -> str:
+            return "abc123\ndef456\n" if args[0] == "log" else "merge999\n"
+
         with (
             mock.patch.object(supervisor, "_git_ref_exists", side_effect=lambda _root, ref: ref == "origin/dev"),
-            mock.patch.object(supervisor, "_git_capture", return_value="abc123\ndef456\n") as capture,
+            mock.patch.object(supervisor, "_git_commit_is_ancestor", return_value=True) as ancestor,
+            mock.patch.object(supervisor, "_git_capture", side_effect=fake_capture) as capture,
         ):
-            evidence = supervisor.merged_delivery_commits(self.config, "SUP-MERGED-001")
+            evidence = self._merged("SUP-MERGED-001")
 
-        self.assertEqual(evidence, {"base_ref": "origin/dev", "commits": ["abc123", "def456"]})
-        args = capture.call_args.args[1]
-        self.assertIn("--fixed-strings", args)
-        self.assertIn("--grep=Task-ID: SUP-MERGED-001", args)
+        self.assertEqual(
+            evidence,
+            {
+                "base_ref": "origin/dev",
+                "commits": ["abc123", "def456"],
+                "delivery_head": self.HEAD,
+                "merge_commit": "merge999",
+                "trailer_commits_since": "2026-07-26T17:00:00Z",
+            },
+        )
+        ancestor.assert_called_once()
+        self.assertEqual(ancestor.call_args.args[1:], (self.HEAD, "origin/dev"))
+        log_args = capture.call_args_list[0].args[1]
+        self.assertIn("--fixed-strings", log_args)
+        self.assertIn("--grep=Task-ID: SUP-MERGED-001", log_args)
+        self.assertIn("--since=2026-07-26T17:00:00Z", log_args)
+        # The search is scoped to the delivery head, not to the base ref.
+        self.assertEqual(log_args[-1], self.HEAD)
 
-    def test_no_trailer_commit_means_no_merged_evidence(self) -> None:
+    def test_older_only_merged_trailer_commits_are_not_this_delivery(self) -> None:
+        """The reopened-task case: the id merged before, nothing merged since."""
         with (
             mock.patch.object(supervisor, "_git_ref_exists", side_effect=lambda _root, ref: ref == "origin/dev"),
+            mock.patch.object(supervisor, "_git_commit_is_ancestor", return_value=True),
             mock.patch.object(supervisor, "_git_capture", return_value=""),
         ):
-            self.assertIsNone(supervisor.merged_delivery_commits(self.config, "SUP-OPEN-001"))
+            self.assertIsNone(self._merged("SUP-REOPENED-001"))
+
+    def test_delivery_head_not_merged_into_the_base_is_not_evidence(self) -> None:
+        """Unpushed work, or a squash merge that rewrote the delivery head."""
+        with (
+            mock.patch.object(supervisor, "_git_ref_exists", side_effect=lambda _root, ref: ref == "origin/dev"),
+            mock.patch.object(supervisor, "_git_commit_is_ancestor", return_value=False),
+            mock.patch.object(supervisor, "_git_capture") as capture,
+        ):
+            self.assertIsNone(self._merged("SUP-UNPUSHED-001"))
+        capture.assert_not_called()
+
+    def test_git_log_failure_fails_closed(self) -> None:
+        with (
+            mock.patch.object(supervisor, "_git_ref_exists", side_effect=lambda _root, ref: ref == "origin/dev"),
+            mock.patch.object(supervisor, "_git_commit_is_ancestor", return_value=True),
+            mock.patch.object(supervisor, "_git_capture", return_value=None),
+        ):
+            self.assertIsNone(self._merged("SUP-GITFAIL-001"))
+
+    def test_missing_delivery_head_or_since_fails_closed(self) -> None:
+        with (
+            mock.patch.object(supervisor, "_git_ref_exists", return_value=True),
+            mock.patch.object(supervisor, "_git_commit_is_ancestor", return_value=True),
+            mock.patch.object(supervisor, "_git_capture", return_value="abc123\n"),
+        ):
+            self.assertIsNone(self._merged("SUP-NOHEAD-001", delivery_head=""))
+            self.assertIsNone(self._merged("SUP-NOHEAD-001", delivery_head="task/branch"))
+            self.assertIsNone(self._merged("SUP-NOSINCE-001", since=""))
+
+    def test_fast_forward_merge_without_a_merge_commit_still_binds(self) -> None:
+        def fake_capture(_root: object, args: list[str]) -> str:
+            return "abc123\n" if args[0] == "log" else ""
+
+        with (
+            mock.patch.object(supervisor, "_git_ref_exists", side_effect=lambda _root, ref: ref == "origin/dev"),
+            mock.patch.object(supervisor, "_git_commit_is_ancestor", return_value=True),
+            mock.patch.object(supervisor, "_git_capture", side_effect=fake_capture),
+        ):
+            evidence = self._merged("SUP-FASTFORWARD-001")
+
+        self.assertIsNotNone(evidence)
+        self.assertIsNone(evidence["merge_commit"])
 
     def test_deleted_task_branch_reports_no_unmerged_commits(self) -> None:
         with mock.patch.object(supervisor, "_git_ref_exists", return_value=False):
             self.assertFalse(
-                supervisor.task_branch_has_unmerged_commits(self.config, "SUP-MERGED-001", "origin/dev")
+                supervisor.task_branch_has_unmerged_commits(
+                    self.config, "SUP-MERGED-001", "origin/dev", delivery_head=self.HEAD
+                )
             )
 
     def test_task_branch_ahead_of_base_reports_unmerged_commits(self) -> None:
@@ -12879,6 +13087,101 @@ class MergedDeliveryEvidenceTests(unittest.TestCase):
             self.assertTrue(
                 supervisor.task_branch_has_unmerged_commits(self.config, "SUP-OPEN-001", "origin/dev")
             )
+
+    def test_branch_moved_past_the_delivery_head_reports_unmerged_commits(self) -> None:
+        """Deleted remote branch, local branch carrying newer unpushed work."""
+
+        def fake_capture(_root: object, args: list[str]) -> str:
+            # Everything the terminal worker delivered is on the base, but the
+            # surviving local branch has advanced past that delivery head.
+            return "0\n" if args[-1].startswith("origin/dev..") else "2\n"
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "_git_ref_exists",
+                side_effect=lambda _root, ref: ref == "task/SUP-STALE-001",
+            ),
+            mock.patch.object(supervisor, "_git_capture", side_effect=fake_capture),
+        ):
+            self.assertTrue(
+                supervisor.task_branch_has_unmerged_commits(
+                    self.config, "SUP-STALE-001", "origin/dev", delivery_head=self.HEAD
+                )
+            )
+
+    def test_rev_list_failure_reports_unmerged_commits(self) -> None:
+        with (
+            mock.patch.object(
+                supervisor,
+                "_git_ref_exists",
+                side_effect=lambda _root, ref: ref == "task/SUP-GITFAIL-001",
+            ),
+            mock.patch.object(supervisor, "_git_capture", return_value=None),
+        ):
+            self.assertTrue(
+                supervisor.task_branch_has_unmerged_commits(
+                    self.config, "SUP-GITFAIL-001", "origin/dev", delivery_head=self.HEAD
+                )
+            )
+
+
+class WorkerDeliveryIdentityTests(unittest.TestCase):
+    """Which worker, dispatched as whom, delivered which commit."""
+
+    def setUp(self) -> None:
+        self.config = {
+            "agents": {
+                "claude": {"display_name": "Claude"},
+                "claude1_1": {"display_name": "Claude"},
+                "codex2": {"display_name": "Codex2"},
+            }
+        }
+
+    def test_logical_agent_id_resolves_the_dispatched_display_name(self) -> None:
+        worker = {"logical_agent_id": "claude", "agent_id": "claude1_1", "provider": "claude1-1"}
+        self.assertEqual(supervisor.worker_target_agent_display_name(self.config, worker), "Claude")
+
+    def test_unregistered_agent_id_is_unresolved_not_echoed(self) -> None:
+        worker = {"logical_agent_id": "ghost", "agent_id": "ghost_1", "provider": "ghost-1"}
+        self.assertEqual(supervisor.worker_target_agent_display_name(self.config, worker), "")
+
+    def test_delivery_head_requires_a_full_commit_sha(self) -> None:
+        self.assertEqual(
+            supervisor.worker_delivery_head_commit({"work_progress_snapshot": {"commit_sha": "C" * 40}}),
+            "c" * 40,
+        )
+        self.assertIsNone(supervisor.worker_delivery_head_commit({"work_progress_snapshot": {}}))
+        self.assertIsNone(
+            supervisor.worker_delivery_head_commit({"work_progress_snapshot": {"commit_sha": "abc123"}})
+        )
+        self.assertIsNone(supervisor.worker_delivery_head_commit({"work_progress_snapshot": None}))
+
+    def test_scraped_pr_url_is_never_the_delivery_binding(self) -> None:
+        """Pinned from live .orchestrator/state.json at 2026-07-26T20:21Z.
+
+        That worker was running SUP/OPS task work whose delivery head was
+        8703d1f5d, while its scraped pr_url was a malformed string naming an
+        unrelated PR. Any binding that trusted pr_url would bind the wrong PR.
+        """
+        worker = {
+            "task_id": "OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001",
+            "pr_url": 'https://github.com/ajoe734/pantheon/pull/4170\\"\\n',
+            "work_progress_snapshot": {"commit_sha": "8703d1f5db76fc16f8c579177fc35dec4f526922"},
+        }
+        self.assertEqual(
+            supervisor.worker_delivery_head_commit(worker),
+            "8703d1f5db76fc16f8c579177fc35dec4f526922",
+        )
+
+    def test_dispatch_start_prefers_the_lease_acquisition(self) -> None:
+        worker = {"lease_acquired_at": "2026-07-26T17:00:00Z", "started_at": "2026-07-26T10:00:00Z"}
+        self.assertEqual(
+            supervisor._isoformat_utc(supervisor.worker_dispatch_started_at(worker)),
+            "2026-07-26T17:00:00Z",
+        )
+        self.assertIsNone(supervisor.worker_dispatch_started_at({"lease_acquired_at": "not-a-date"}))
+        self.assertIsNone(supervisor.worker_dispatch_started_at({}))
 
 
 if __name__ == "__main__":

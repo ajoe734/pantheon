@@ -9,9 +9,25 @@ hand-edited task board.** Every behaviour below is decided inside
 existing locked canonical transaction (`write_status` → authoritative
 task-state journal → `sync_status_pipeline`).
 
+## 0. Review history
+
+| Round | Delivery | Decision |
+|---|---|---|
+| 1 | PR #4212, merged into `dev` as `8703d1f5d` | **Rejected** by Codex2 |
+| 2 | this follow-up PR, cut from `dev` `f687d7aeb` | pending independent Codex2 review |
+
+Codex2 accepted the round-1 repairs for the `allowed_warning` rate-limit
+classifier (§1.1) and the live auth-probe lane hold (§1.2); both stay exactly as
+merged and are untouched by this round. Codex2 rejected the **ownerless
+`in_progress` reconciliation** (§1.3) as unsafe, and this round rebuilds its
+evidence rule (§1.5, §2.1). The merged runtime must not be loaded into the live
+supervisor until this follow-up merges.
+
 ## 1. Observed failures and where they came from
 
 ### 1.1 A nonthrottling `rate_limit_event` was read as a worker failure
+
+*Repaired in round 1, merged as `8703d1f5d`, unchanged by this round.*
 
 Live worker log
 `/home/lupin/pantheon-ci-deploy/dev-root-bdbd0a99bf68/.orchestrator/logs/20260726T185418034797Z-claude1-2-claude1_2-08dcb8.log`
@@ -31,6 +47,8 @@ means throttled. `is_allowed_rate_limit_event` accepted the literal string
 as failed and its task reassigned away from an owner that never failed.
 
 ### 1.2 A fresh not-ready auth probe did not keep the lane unavailable
+
+*Repaired in round 1, merged as `8703d1f5d`, unchanged by this round.*
 
 `refresh_provider_auth_before_dispatch` force-probes the selected provider at
 launch time but only mutated the **in-cycle** capability report. The persisted
@@ -57,11 +75,71 @@ nothing left for it to implement.
 
 ### 1.4 Queue and lease truth had to stay consistent with that decision
 
+*Repaired in round 1, merged as `8703d1f5d`, unchanged by this round.*
+
 Any supervisor-side reconciliation of an ownerless task must also settle the
 worker's queue record and release its lease, or the queue keeps a `started`
 record with a `lease_owner` pointing at a dead run id.
 
+### 1.5 The round-1 reconciliation accepted evidence that was not its own
+
+*Reported by Codex2's independent review of PR #4212. This is the failure this
+round repairs.*
+
+The merged `merged_delivery_commits` grepped the **whole integration base** for
+any commit carrying `Task-ID: <id>`, with no ancestry, delivery, or time
+binding, and `merged_owner_delivery_evidence` never compared the terminal
+worker's target identity to the task row's **current** owner. Three concrete
+false positives follow directly:
+
+1. **Reopened same id.** A task delivered and merged in an earlier round, then
+   reopened, still carries that round's trailer commits on `dev`. Any later
+   clean worker exit satisfied the grep and moved the reopened task to `review`
+   with nothing new delivered.
+2. **Reassigned owner.** `latest_owner_worker_for_task` returns the most recent
+   owner-dispatch worker regardless of who that worker was dispatched as. After
+   a reassignment, the previous owner's terminal worker was still read as
+   evidence about the new owner's work.
+3. **Clean no-op rerun.** A re-dispatched worker that exits successfully without
+   committing anything has a worktree head equal to the already merged tip. The
+   merged code never looked at the head at all, so it could not tell that run
+   apart from one that actually delivered.
+
 ## 2. Delivered behaviour
+
+### 2.1 This round — binding the evidence (repairs §1.5)
+
+The reconciliation phase itself is unchanged in shape. What changed is what it
+is allowed to accept as evidence: it must now be able to name **one specific
+delivery by one specific current owner**, and it must prove every link.
+
+| # | Change | Location |
+|---|---|---|
+| 1 | `worker_target_agent_display_name` — resolves the display name the worker was dispatched as, **through the agent registry**. `display_name_for` echoes an unknown id back, so an id absent from `config["agents"]` is treated as unresolved rather than accepted as its own name | `supervisor.py` |
+| 2 | `worker_delivery_head_commit` — the commit the worker's own isolated worktree was last observed at (`work_progress_snapshot.commit_sha`), requiring a full 40–64 hex sha | `supervisor.py` |
+| 3 | `worker_dispatch_started_at` — the dispatch time (`lease_acquired_at`, then `runner_started_at` / `started_at`) that bounds what this run may claim | `supervisor.py` |
+| 4 | `_git_commit_is_ancestor` — a positive `git merge-base --is-ancestor` answer; any non-zero exit or transport failure reads as "not proven merged" | `supervisor.py` |
+| 5 | `merged_delivery_commits` now takes **required** keyword arguments `delivery_head` and `since`; the head must be an ancestor of the integration base, and the trailer search runs over that head with `--since=<dispatch time>` | `supervisor.py` |
+| 6 | `_merge_commit_carrying_head` — records the oldest merge on the ancestry path from the head into the base, for audit. A fast-forward merge legitimately has none, so this is recorded and not gated | `supervisor.py` |
+| 7 | `task_branch_has_unmerged_commits` now fails closed and also blocks when a surviving branch has moved **past** the delivery head; a git failure is read as unmerged | `supervisor.py` |
+| 8 | `merged_owner_delivery_evidence` takes a required `owner` and gates on identity, dispatch time, observed commit progress this run, delivery head, merged ancestry, trailer-since, and branch state — returning the whole chain as the recorded evidence | `supervisor.py` |
+
+Two notes on what was deliberately **not** used as the binding:
+
+- **`pr_url` is not authoritative.** It is scraped from provider output. The
+  live `.orchestrator/state.json` at 2026-07-26T20:21Z held
+  `"https://github.com/ajoe734/pantheon/pull/4170\\\"\\n"` on a worker whose
+  actual delivery head was `8703d1f5d` — a malformed string naming an unrelated
+  PR. Binding to it would have bound the wrong PR. It is recorded in the
+  evidence with `pr_url_is_authoritative: false` and pinned by
+  `test_scraped_pr_url_is_never_the_delivery_binding`.
+- **The candidate worker is not pre-filtered by owner.** Only the *latest*
+  owner-dispatch worker is ever considered, and it must itself match the current
+  owner. Filtering the candidate list by owner first would let a reassignment
+  fall back to an older worker that happens to match; leaving the filter at the
+  gate makes a reassignment fail closed instead.
+
+### 2.2 Round 1 — merged as `8703d1f5d`, unchanged by this round
 
 | # | Change | Location |
 |---|---|---|
@@ -72,9 +150,8 @@ record with a `lease_owner` pointing at a dead run id.
 | 5 | `mark_provider_auth_probe_not_ready` records that hold in supervisor state, and the flipped capability report is persisted so the next scan re-probes on the failed-probe interval | `supervisor.py` |
 | 6 | `reconcile_provider_auth_recovery` requires a live probe success for every live-probe-gated auth pause (previously sticky-only) | `supervisor.py` |
 | 7 | `reconcile_ownerless_in_progress_tasks` — new cycle phase between `prune_event_queue` and `refresh_chair_review_state` | `supervisor.py` |
-| 8 | `merged_delivery_commits` / `task_branch_has_unmerged_commits` — durable git evidence via the `Task-ID:` commit trailer on the integration base (task branches are auto-deleted on merge, so the branch ref is exactly what is absent in the merged case) | `supervisor.py` |
-| 9 | `_prepare_ownerless_review_handoff_locked` — locked canonical transaction that sets `review`, appends the pending owner→reviewer handoff, emits a `task_ownerless_review_handoff` outbox event, and journals through `write_status` before `sync_status_pipeline` | `supervisor.py` |
-| 10 | The same reconciliation calls `finalize_queue_event_record`, so the queue record and lease settle with the task decision | `supervisor.py` |
+| 8 | `_prepare_ownerless_review_handoff_locked` — locked canonical transaction that sets `review`, appends the pending owner→reviewer handoff, emits a `task_ownerless_review_handoff` outbox event, and journals through `write_status` before `sync_status_pipeline` | `supervisor.py` |
+| 9 | The same reconciliation calls `finalize_queue_event_record`, so the queue record and lease settle with the task decision | `supervisor.py` |
 
 ### Non-interference guarantees
 
@@ -85,8 +162,19 @@ The reconciliation returns without touching a task when **any** of these hold:
   `retry_backoff` (a dispatch is in flight);
 - no terminal owner-dispatch worker record exists;
 - the terminal outcome is not a clean `completed` runner exit;
-- no `Task-ID:` trailer commit is reachable from an integration base;
-- the task branch still carries commits the base has not absorbed;
+- **the latest owner-dispatch worker was not dispatched as the task's current
+  owner, or its agent id does not resolve through the agent registry;**
+- **the worker has no dispatch timestamp;**
+- **the worker recorded no commit progress during this run** (a clean rerun over
+  an already merged branch delivered nothing);
+- **the worker has no full-sha delivery head;**
+- **that delivery head is not an ancestor of the integration base** (unpushed
+  work, or a squash merge that rewrote the head);
+- **no `Task-ID:` trailer commit reachable from that head is dated at or after
+  the worker's dispatch** (older-only merged commits from a previous round);
+- a surviving task branch is ahead of the base **or has moved past the delivery
+  head**;
+- **any git command fails** — a transport error never reads as "merged";
 - owner or reviewer is missing, or reviewer equals owner;
 - the locked re-read no longer shows `in_progress` with the same owner/reviewer.
 
@@ -98,69 +186,93 @@ record so the same task is never handed off twice.
 Commands run from `.orchestrator/` in the task worktree
 `/tmp/pantheon-worker-worktrees/pantheon/sup-worker-truth-reconcile-001`.
 
-### 3.1 Failures reproduced against the pre-fix supervisor
+### 3.1 Failures reproduced against the merged round-1 supervisor
 
-The new tests were run against `HEAD~1:.orchestrator/supervisor.py` (the
-supervisor before this task's changes) with the rest of `.orchestrator`
+The tests on this branch were run against `origin/dev:.orchestrator/supervisor.py`
+— that is, against the **merged round-1 code Codex2 rejected** (`f687d7aeb`,
+which contains PR #4212 / `8703d1f5d`) — with the rest of `.orchestrator`
 unchanged:
 
 ```bash
-git show HEAD~1:.orchestrator/supervisor.py > <scratch>/orch/supervisor.py
-python3 -m unittest test_supervisor.AllowedRateLimitNoticeTests \
-  test_supervisor.FreshAuthProbeLaneHoldTests \
+git show origin/dev:.orchestrator/supervisor.py > <scratch>/orch/supervisor.py
+env -C <scratch>/orch python3 -m unittest \
   test_supervisor.OwnerlessInProgressReconciliationTests \
-  test_supervisor.MergedDeliveryEvidenceTests
+  test_supervisor.MergedDeliveryEvidenceTests \
+  test_supervisor.WorkerDeliveryIdentityTests
 ```
 
-Result: `Ran 23 tests` → `FAILED (failures=4, errors=15)` — 19 of 23 fail.
-The four behavioural failures on pre-existing API are:
+Result: `Ran 31 tests` → `FAILED (failures=5, errors=15)` — 20 of 31 fail.
+The five behavioural failures are the merged code actually producing the false
+positives Codex2 described (each asserts `changed is False` and gets `True`,
+i.e. the row was moved to `review` on evidence it should not have accepted):
 
-- `test_allowed_warning_event_is_not_detected_as_worker_failure`
-  → returned the live `allowed_warning` line as a failure reason;
-- `test_truncated_allowed_warning_line_is_not_a_worker_failure`
-  → same for a truncated record;
-- `test_allowed_warning_reason_classifies_nonterminal_and_never_pauses`
-  → `'terminal' != 'transient'`;
-- `test_probe_gated_auth_pause_survives_its_wall_clock_window`
-  → the auth pause expired on its timer and the lane reopened.
+- `test_reassigned_owner_blocks_the_previous_owners_worker`;
+- `test_rerun_without_commit_progress_is_not_evidence`;
+- `test_unregistered_worker_identity_fails_closed`;
+- `test_worker_without_a_delivery_head_fails_closed`;
+- `test_worker_without_a_dispatch_timestamp_fails_closed`.
 
-The remaining 15 errors are the new reconciliation and evidence surfaces that
-did not exist before this task.
+The 15 errors are the merged code having no binding entry point at all —
+`TypeError` on the keyword-only `delivery_head` / `since` arguments, and
+`AttributeError` on helpers that do not exist there.
+
+Full transcript, including the fixed run and the full suite:
+`prefix-reproduction.txt`.
 
 ### 3.2 Focused suite after the fix
 
 ```bash
-python3 -m unittest test_supervisor.AllowedRateLimitNoticeTests \
-  test_supervisor.FreshAuthProbeLaneHoldTests \
+env -C .orchestrator python3 -m unittest \
   test_supervisor.OwnerlessInProgressReconciliationTests \
-  test_supervisor.MergedDeliveryEvidenceTests
-# Ran 23 tests — OK
+  test_supervisor.MergedDeliveryEvidenceTests \
+  test_supervisor.WorkerDeliveryIdentityTests
+# Ran 31 tests — OK
 ```
 
 ### 3.3 Full supervisor suite
 
 ```bash
-python3 -m unittest test_supervisor
-# Ran 357 tests — OK   (334 before this task, +23 new)
+env -C .orchestrator python3 -m unittest test_supervisor
+# Ran 375 tests — OK   (357 after round 1, +18 this round)
 ```
 
 ### 3.4 Rewrite package suite
 
 ```bash
-python3 -m unittest discover -s rewrite -p "test_*.py" -t .
-# Ran 97 tests — 95 pass; 2 pre-existing collection errors
+env -C .orchestrator python3 -m unittest discover -s rewrite -p "test_*.py" -t .
+# Ran 97 tests — 95 pass; the same 2 pre-existing collection errors as round 1
 # (rewrite/test_task_state_runtime_env.py and rewrite/test_task_state_store.py
 #  import pytest, which is not installed in this environment — unrelated to this task)
 ```
 
-## 4. Acceptance mapping
+## 4. Negative tests requested by the reviewer
+
+| Required case | Tests |
+|---|---|
+| Reopened same id | `test_older_only_merged_trailer_commits_are_not_this_delivery`, `test_rerun_without_commit_progress_is_not_evidence` |
+| Reassigned owner | `test_reassigned_owner_blocks_the_previous_owners_worker`, `test_unregistered_agent_id_is_unresolved_not_echoed` |
+| Stale terminal worker plus new work | `test_stale_terminal_worker_with_new_branch_work_is_not_reconciled`, `test_branch_moved_past_the_delivery_head_reports_unmerged_commits` |
+| Deleted branch / unpushed work | `test_deleted_task_branch_reports_no_unmerged_commits`, `test_task_branch_ahead_of_base_reports_unmerged_commits`, `test_delivery_head_not_merged_into_the_base_is_not_evidence` |
+| Older-only merged `Task-ID` commits | `test_older_only_merged_trailer_commits_are_not_this_delivery`, `test_trailer_commit_reachable_from_the_delivery_head_is_merged_evidence` (pins both the `--since` and the head-scoping arguments) |
+| Fail-closed absent linkage | `test_worker_without_a_delivery_head_fails_closed`, `test_worker_without_a_dispatch_timestamp_fails_closed`, `test_unregistered_worker_identity_fails_closed`, `test_missing_delivery_head_or_since_fails_closed`, `test_git_log_failure_fails_closed`, `test_rev_list_failure_reports_unmerged_commits` |
+
+## 5. Acceptance mapping
 
 | Acceptance item | Covered by |
 |---|---|
 | Seven ownerless `in_progress` fixtures reconcile from terminal outcome and durable worker evidence without resetting any live worker | `OwnerlessInProgressReconciliationTests` — seven per-fixture tests plus `test_seven_ownerless_fixtures_reconcile_in_one_pass` |
 | Allowed `rate_limit` warning remains nonterminal and redispatchable | `AllowedRateLimitNoticeTests` (6 tests, live payload) |
 | Fresh provider `auth_ready` false keeps the lane unavailable until a later fresh successful probe without any config edit | `FreshAuthProbeLaneHoldTests` — asserts the config dict is byte-identical after the whole cycle |
-| Merged owner delivery with no implementation remaining transitions through governed review handoff instead of repeated owner redispatch | `test_merged_owner_delivery_moves_to_governed_review_handoff`, `MergedDeliveryEvidenceTests` |
+| Merged owner delivery with no implementation remaining transitions through governed review handoff instead of repeated owner redispatch | `test_merged_owner_delivery_moves_to_governed_review_handoff`, `test_reconciled_evidence_records_the_bound_delivery` |
 | Authoritative event log projection and queue worker lease state remain consistent under concurrent outcomes | `write_status` journals before the projection write; the locked re-read rejects a raced row; `finalize_queue_event_record` settles the queue record and lease (asserted in fixture 1) |
 | Focused supervisor tests reproduce all observed failures and pass | §3.1 / §3.2 |
-| Branch, commit, push, PR checks, independent Codex2 review, merge, evidence archive | this task PR |
+| Branch, commit, push, PR checks, independent Codex2 review, merge, evidence archive | this follow-up task PR — **in progress**, awaiting independent Codex2 review |
+
+## 6. Residual risks
+
+| Risk | Severity | Containment |
+|---|---|---|
+| A squash-merged PR rewrites the delivery head, so the head is not an ancestor of the base and the phase produces no evidence for that task | low | Fail-closed by design — the task stays on the existing owner-redispatch path, exactly as before this task existed. If the repository moves to squash-only merges this phase becomes inert and would need a squash-aware binding, not a relaxed one. |
+| A supervisor root that has not fetched recently sees a merged delivery later than GitHub does | low | A stale ref can only delay a handoff, never manufacture one. |
+| Evidence relies on the `Task-ID:` commit trailer enforced by `.githooks/commit-msg` | low | Trailer-exempt subjects simply produce no evidence. |
+| The run binding relies on `update_worker_commit_progress` having observed the worktree advance; a delivery that landed entirely between two polls records no progress | low | Fail-closed — no observed progress means no transition. It cannot create a false positive. |
