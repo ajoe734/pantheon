@@ -6,6 +6,8 @@ Canonical catalog: `tasks.json`
 
 Proof-production ownership overlay: `proof-ownership.json`
 
+Fleet assignment correction: `assignment-revision-1.json`
+
 Source plan:
 `docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/TWELVE_LOOP_GAP_INVENTORY_2026-07-26.md`
 
@@ -51,10 +53,17 @@ rejected even if it races the batch after dry-run.
 | 4 | four disjoint product drill packets |
 | 5 | current hosted all-loop drill and unique closeout |
 
-The installed fleet has eight Codex-family slots. While external dependency
-`PPL-ALLOC-009` is blocked, seven non-overlapping implementation lanes are
-immediately useful and the eighth handles review/finalization; overlapping BFF
-and execute-plans tasks remain dependency-blocked.
+Assignment revision 1 makes Antigravity and Claude the implementation owners
+for every unfinished task. The live primary capacity is four Antigravity lanes
+plus the single shared Claude account lane. Codex-family workers are limited to
+the inherited independent reviews whose existing verdicts must remain valid;
+they are not unfinished-task owners. Antigravity2 remains fail-closed until its
+live authentication probe succeeds.
+
+The archived parallel plan records the initial Codex-family allocation and is
+historical. `assignment-revision-1.json` is the reviewed successor record; it
+binds the old and new catalog digests, preserves completed task contracts and
+dynamic task state, and lists every corrected unfinished assignment.
 
 ## Task index
 

@@ -1,6 +1,6 @@
 # L12-VERIFY-KNOW-001 — Prove knowledge flows
 
-Wave 4, lane `verify-knowledge`, owner `Codex2`, reviewer `Codex`; depends on Distillation, Alpha, and integrated truth.
+Wave 4, lane `verify-knowledge`, owner `Claude`, reviewer `Antigravity`; depends on Distillation, Alpha, and integrated truth.
 
 Outcome: at real service boundaries, prove Persona requirement → SourceRecord → mutable StrategySpec draft and approved immutable StrategySpec → authoritative ExperimentRun.
 

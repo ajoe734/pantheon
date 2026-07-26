@@ -1,6 +1,6 @@
 # L12-VERIFY-RUNTIME-001 — Prove Deployment and Capital recovery
 
-Wave 4, lane `verify-runtime`, owner `Codex2`, reviewer `Codex`; depends on Capital, runtime manifest, and integrated truth.
+Wave 4, lane `verify-runtime`, owner `Claude`, reviewer `Antigravity`; depends on Capital, runtime manifest, and integrated truth.
 
 Outcome: prove immutable approval through plan/binding/exactly-one paper worker to signal/order/fill/heartbeat, including failure and lifecycle transitions.
 

@@ -20,6 +20,7 @@ CATALOG = (
     / "tasks.json"
 )
 PROOF_OWNERSHIP = CATALOG.with_name("proof-ownership.json")
+ASSIGNMENT_REVISION = CATALOG.with_name("assignment-revision-1.json")
 SPEC = importlib.util.spec_from_file_location("dispatch_twelve_loop_gap", SCRIPT)
 assert SPEC and SPEC.loader
 module = importlib.util.module_from_spec(SPEC)
@@ -33,6 +34,10 @@ def catalog() -> dict:
 
 def proof_ownership() -> dict:
     return json.loads(PROOF_OWNERSHIP.read_text(encoding="utf-8"))
+
+
+def assignment_revision() -> dict:
+    return json.loads(ASSIGNMENT_REVISION.read_text(encoding="utf-8"))
 
 
 def external_task() -> dict:
@@ -87,6 +92,60 @@ def test_canonical_catalog_is_valid_and_has_unique_sink() -> None:
     assert len(tasks) == 25
     assert tasks[-1]["id"] == "L12-CLOSE-001"
     assert set(tasks[-1]["loop_ids"]) == module.CANONICAL_LOOP_IDS
+
+
+def test_every_unfinished_assignment_uses_antigravity_or_claude_owner() -> None:
+    finished = {
+        "L12-FLEET-001",
+        "L12-REC-001",
+        "L12-SRC-001",
+        "L12-ALPHA-001",
+        "L12-CONS-001",
+        "L12-DEP-001",
+    }
+    tasks = module.validate_catalog(catalog())
+
+    unfinished = [task for task in tasks if task["id"] not in finished]
+    assert unfinished
+    assert {task["owner"] for task in unfinished} == {"Antigravity", "Claude"}
+    assert all(task["owner"] != task["reviewer"] for task in unfinished)
+
+
+def test_catalog_rejects_unapproved_fleet_actor() -> None:
+    payload = catalog()
+    payload["tasks"][1]["owner"] = "Copilot"
+
+    with pytest.raises(module.DispatchError, match="approved fleet actor"):
+        module.validate_catalog(payload)
+
+
+def test_assignment_revision_is_exactly_bound_to_unfinished_catalog_tasks() -> None:
+    payload = catalog()
+    revision = assignment_revision()
+    finished = set(revision["completed_task_contracts_unchanged"])
+    expected = {
+        task["id"]: {
+            "task_id": task["id"],
+            "owner": task["owner"],
+            "reviewer": task["reviewer"],
+        }
+        for task in payload["tasks"]
+        if task["id"] not in finished
+    }
+
+    assert revision["previous_catalog_sha256"] == (
+        "a7fbbaa560bd7f2d97750b25cd20af69b64d4f522b293689849b0e1b1763717f"
+    )
+    assert revision["revised_catalog_sha256"] == module.canonical_json_sha256(
+        payload
+    )
+    assert {
+        assignment["task_id"]: assignment
+        for assignment in revision["assignments"]
+    } == expected
+    assert revision["provider_auth_probes"]["Antigravity"]["ready"] is True
+    assert revision["provider_auth_probes"]["Claude"]["ready"] is True
+    assert revision["provider_auth_probes"]["Antigravity2"]["ready"] is False
 
 
 def test_proof_ownership_is_bound_to_catalog_and_forward_dag() -> None:

@@ -1,6 +1,6 @@
 # L12-MANIFEST-001 — Activate the complete runtime manifest
 
-Wave 3, lane `runtime-manifest`, owner `Codex`, reviewer `Codex2`; depends on every loop implementation task listed in `tasks.json`.
+Wave 3, lane `runtime-manifest`, owner `Antigravity`, reviewer `Claude`; depends on every loop implementation task listed in `tasks.json`.
 
 Outcome: one owner integrates all required scheduled/async workers into the default Compose/deploy path with restart, health, durable volumes, auth, and safe egress/capital defaults.
 
