@@ -469,6 +469,32 @@ class TestRecoveryTracking:
         # Local incident tracking cleared after recovery
         assert "telemetry" not in monitor._open_incident_ids
 
+    def test_recovery_calls_incident_resolve(self):
+        monitor = DownstreamHealthMonitor(
+            telemetry_url="http://tel:8080",
+            incidents_url="http://inc:8090",
+            probe_interval_seconds=9999,
+            failure_threshold=3,
+        )
+        monitor._open_incident_ids["telemetry"] = "bff-downstream-telemetry-degraded"
+        ok_result = DownstreamProbeResult(
+            target_name="telemetry", ok=True, status_code=200, latency_ms=5.0,
+            checked_at="2026-06-27T00:00:01Z",
+        )
+        captured: List[Dict[str, Any]] = []
+
+        def mock_post_json(url, body, timeout):
+            captured.append({"url": url, "body": body})
+            return True, 200
+
+        with patch("downstream_health_monitor._post_json", side_effect=mock_post_json):
+            _run(monitor._handle_probe_result(ok_result))
+
+        assert "telemetry" not in monitor._open_incident_ids
+        resolve_calls = [c for c in captured if "/resolve" in c["url"]]
+        assert len(resolve_calls) == 1
+        assert resolve_calls[0]["body"]["status"] == "resolved"
+
 
 # ---------------------------------------------------------------------------
 # BFF route contract tests

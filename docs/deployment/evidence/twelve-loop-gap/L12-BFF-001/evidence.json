@@ -3,19 +3,19 @@
   "title": "Implement durable infrastructure health telemetry and incident recovery",
   "owner": "Antigravity",
   "reviewer": "Claude",
-  "status": "review_approved",
+  "status": "in_progress",
   "summary_zh": "建立非交易 infrastructure telemetry authority，補 error-rate spike、完整 downstream registry、durable probe state、delivery retry/DLQ及 incident resolve，移除會被 binding validation 拒絕的 sentinel。",
   "evidence": {
     "telemetry_sentinel_resolution": {
       "binding_id": "00000000-0000-4000-8000-0000000000b1",
       "artifact_version": "0.1.0",
       "target_strategy_id": "bff-health-{target_name}",
-      "schema_compliance": "valid UUID, semver, and strategy_id target object per telemetry_event.schema.json"
+      "schema_compliance": "valid UUID, semver, and strategy_id target object per telemetry_event.schema.json; admitted via non-trading infrastructure health probe path"
     },
     "verification_results": {
-      "test_bff_downstream_health_monitor": "26 passed",
+      "test_bff_downstream_health_monitor": "27 passed",
       "test_bff_v5_loop_sentinel_contract": "29 passed",
-      "test_telemetry_main_routes": "31 passed"
+      "test_paper_runtime_ingest_contract": "6 passed"
     }
   }
 }

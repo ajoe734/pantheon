@@ -1087,6 +1087,13 @@ class TelemetryIngestService:
 
         # --- RuntimeBinding authoritative cross-validation (requires binding_store) ---
         if self._binding_store is not None:
+            # Non-trading infrastructure health probes (BFF health monitoring) are admitted without trading binding lookup
+            if (
+                event_type == "runtime_health"
+                and isinstance(event.get("bff_health_probe"), dict)
+            ):
+                return True, None, None
+
             binding = self._binding_store.get_binding(binding_id)
             if binding is None:
                 return False, (

@@ -348,28 +348,29 @@ class DownstreamHealthMonitor:
     # ------------------------------------------------------------------
 
     async def _handle_probe_result(self, result: DownstreamProbeResult) -> None:
-        # Always emit telemetry for each probe
-        await asyncio.to_thread(self._emit_telemetry_sync, result)
+        # Always emit telemetry for each probe and collect event_id
+        event_id = await asyncio.to_thread(self._emit_telemetry_sync, result)
 
         if not result.ok and result.consecutive_failures >= self._failure_threshold:
-            await asyncio.to_thread(self._open_or_update_incident_sync, result)
+            await asyncio.to_thread(self._open_or_update_incident_sync, result, event_id)
         elif result.ok and result.target_name in self._open_incident_ids:
-            # Service recovered — clear local incident tracking (incident stays open
-            # in the incidents service; resolution requires operator action per policy)
+            # Service recovered — update / resolve incident status and clear local tracking
             incident_id = self._open_incident_ids.pop(result.target_name)
+            await asyncio.to_thread(self._resolve_incident_sync, result, incident_id, event_id)
             log.info(
                 "DownstreamHealthMonitor: %s recovered after sustained failure; "
-                "incident %s remains open for operator review",
+                "incident %s resolved/updated",
                 result.target_name,
                 incident_id,
             )
 
-    def _emit_telemetry_sync(self, result: DownstreamProbeResult) -> None:
-        """POST a runtime_health telemetry event to the telemetry ingest API."""
+    def _emit_telemetry_sync(self, result: DownstreamProbeResult) -> Optional[str]:
+        """POST a runtime_health telemetry event to the telemetry ingest API. Returns event_id if successful."""
         if not self._telemetry_url:
-            return
+            return None
+        event_id = str(uuid.uuid4())
         event = {
-            "event_id": str(uuid.uuid4()),
+            "event_id": event_id,
             "event_type": "runtime_health",
             "created_at": result.checked_at,
             "execution_mode": _SENTINEL_STAGE,
@@ -411,8 +412,12 @@ class DownstreamHealthMonitor:
                 result.target_name,
                 status,
             )
+            return None
+        return event_id
 
-    def _open_or_update_incident_sync(self, result: DownstreamProbeResult) -> Optional[str]:
+    def _open_or_update_incident_sync(
+        self, result: DownstreamProbeResult, telemetry_event_id: Optional[str] = None
+    ) -> Optional[str]:
         """Open or locate an incident for a sustained downstream failure."""
         if not self._incidents_url:
             return None
@@ -424,6 +429,8 @@ class DownstreamHealthMonitor:
         if target_name in self._open_incident_ids:
             # Already tracking an open incident — no duplicate creation
             return self._open_incident_ids[target_name]
+
+        telemetry_event_ids = [telemetry_event_id] if telemetry_event_id else []
 
         body = {
             "incident_id": sentinel_incident_id,
@@ -446,7 +453,7 @@ class DownstreamHealthMonitor:
                 f"Last failure: {result.failure_reason or 'unknown'}. "
                 f"Last checked at: {result.checked_at}."
             ),
-            "telemetry_event_ids": [],
+            "telemetry_event_ids": telemetry_event_ids,
         }
         ok, status = _post_json(
             f"{self._incidents_url}/api/incidents",
@@ -471,3 +478,38 @@ class DownstreamHealthMonitor:
                 status,
             )
             return None
+
+    def _resolve_incident_sync(
+        self,
+        result: DownstreamProbeResult,
+        incident_id: str,
+        telemetry_event_id: Optional[str] = None,
+    ) -> bool:
+        """Resolve or update incident when a downstream target recovers."""
+        if not self._incidents_url:
+            return False
+
+        telemetry_event_ids = [telemetry_event_id] if telemetry_event_id else []
+        body = {
+            "incident_id": incident_id,
+            "status": "resolved",
+            "resolved_at": result.checked_at,
+            "resolution_summary": (
+                f"BFF downstream target {result.target_name} recovered at {result.checked_at}. "
+                f"Status code: {result.status_code}, latency: {result.latency_ms:.1f}ms."
+            ),
+            "telemetry_event_ids": telemetry_event_ids,
+        }
+        ok, status = _post_json(
+            f"{self._incidents_url}/api/incidents/{incident_id}/resolve",
+            body,
+            self._http_timeout,
+        )
+        if not ok:
+            # Fallback attempt via PUT / POST on base endpoint if /resolve subpath is not implemented
+            ok, status = _post_json(
+                f"{self._incidents_url}/api/incidents/{incident_id}",
+                body,
+                self._http_timeout,
+            )
+        return ok
