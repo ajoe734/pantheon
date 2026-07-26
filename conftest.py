@@ -136,8 +136,18 @@ def pytest_pycollect_makemodule(module_path: Path, parent):  # noqa: ANN001
     return IsolatedServiceModule.from_parent(parent, path=module_path)
 
 
+def pytest_configure(config):  # noqa: ANN001
+    import os
+    os.environ.pop("PANTHEON_TASK_STATE_STORE_MODE", None)
+    os.environ.pop("PANTHEON_TASK_STATE_EVENT_LOG", None)
+
+
 def pytest_runtest_setup(item):  # noqa: ANN001
+    import os
+    os.environ.pop("PANTHEON_TASK_STATE_STORE_MODE", None)
+    os.environ.pop("PANTHEON_TASK_STATE_EVENT_LOG", None)
     module_path = Path(item.path)
     _clear_transient_local_modules()
     _activate_import_roots(module_path)
     _restore_transient_modules(module_path)
+
