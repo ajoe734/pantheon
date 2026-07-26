@@ -16,8 +16,8 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-26T23:08:47Z",
-    "evidence_cut_semantics": "Owner validation over repaired implementation head da77966f29e7eb9adea286f1dde04dfa138f1f88 replayed on dev 6578ef968f7e0374b046de0afb5b07ce2f81558e; no independent approval, CI success, merge, deployment, or done state is claimed.",
+    "evidence_cut_at": "2026-07-26T23:13:39Z",
+    "evidence_cut_semantics": "Owner validation over repaired integration head 9eba07d5a4ff712d82bfbb880aabcfa4f88642cb replayed after merging dev 1cf27337efed2f6865d2829d2e5cb2fff54fa10b; no independent approval, CI success, PR merge, deployment, or done state is claimed.",
     "id": "L12-CAP-001",
     "overall_admission": "owner_validation_passed_pending_independent_review",
     "owner": "Codex",
@@ -112,12 +112,12 @@
     "commands": [
       {
         "command": "/tmp/l12-cap-001-venv/bin/python -m unittest services.execution.lean_runtime.test_signal_consumer services.execution.lean_runtime.test_signal_isolation",
-        "conclusion": "74 tests passed in 6.160s, including disposable real-Redis atomic transitions, slow-buffer execution fencing, and six-process restart drills",
+        "conclusion": "74 tests passed in 22.991s on the merged head, including disposable real-Redis atomic transitions, slow-buffer execution fencing, and six-process restart drills",
         "result": "pass"
       },
       {
         "command": "cd services/execution/runtime-manager && /tmp/l12-cap-001-venv/bin/python -m unittest test_paper_fleet_reconciler",
-        "conclusion": "44 tests passed in 2.662s, including real-Redis two-process fencing and blocked-spawn compensating termination",
+        "conclusion": "44 tests passed in 17.950s on the merged head, including real-Redis two-process fencing and blocked-spawn compensating termination",
         "result": "pass"
       },
       {
@@ -132,7 +132,7 @@
       },
       {
         "command": "/home/lupin/pantheon/.venv/bin/python -m pytest services/capital/test_service.py -q",
-        "conclusion": "59 passed in 29.68s; one non-blocking Starlette TestClient deprecation warning",
+        "conclusion": "59 passed in 16.65s on the merged head; one non-blocking Starlette TestClient deprecation warning",
         "result": "pass"
       },
       {
@@ -141,9 +141,9 @@
         "result": "pass"
       }
     ],
-    "validated_at": "2026-07-26T23:08:47Z",
-    "validated_base_sha": "6578ef968f7e0374b046de0afb5b07ce2f81558e",
-    "validated_head_sha": "da77966f29e7eb9adea286f1dde04dfa138f1f88"
+    "validated_at": "2026-07-26T23:13:39Z",
+    "validated_base_sha": "1cf27337efed2f6865d2829d2e5cb2fff54fa10b",
+    "validated_head_sha": "9eba07d5a4ff712d82bfbb880aabcfa4f88642cb"
   },
   "deployment": {
     "applicable": false,
@@ -352,7 +352,7 @@
     "self_hash_omitted": true,
     "self_hash_reason": "The companion checksum contains the manifest digest and avoids recursive self-hashing.",
     "source_artifact_sha256_by_epoch": {
-      "owner_readme_2026_07_26": "4df7b5eab66d2f70a5fddd6ff018ce7c6393024d9deaf6753c324b3849ec1122",
+      "owner_readme_2026_07_26": "177d510ae11d12295e27fba4e2946d1de7de83c8edef71090ef2d67a06e94f52",
       "atomic_redis_proof_2026_07_26": "55ff7b8569b6162e76fa8b7364ffe188f59575ebf187d32ef8a6e2bdfde11c7b",
       "blocked_spawn_fence_proof_2026_07_26": "99866da6367d19636cead818f545e07683b4a7e0e19d9f36eb0f99ee7100ebbf",
       "execution_dlq_proof_2026_07_26": "199ce58f009757fef61cf85d6a4a516f461949a12f9f425b36ae17a39ba6d432",
@@ -413,6 +413,15 @@
       "reference": "origin/dev@6578ef968f7e0374b046de0afb5b07ce2f81558e",
       "sequence": 6,
       "sha": "da77966f29e7eb9adea286f1dde04dfa138f1f88",
+      "status": "passed_pending_independent_review"
+    },
+    {
+      "actor": "Codex",
+      "kind": "dev_merge_regression_replay",
+      "recorded_at": "2026-07-26T23:13:39Z",
+      "reference": "origin/dev@1cf27337efed2f6865d2829d2e5cb2fff54fa10b",
+      "sequence": 7,
+      "sha": "9eba07d5a4ff712d82bfbb880aabcfa4f88642cb",
       "status": "passed_pending_independent_review"
     }
   ]

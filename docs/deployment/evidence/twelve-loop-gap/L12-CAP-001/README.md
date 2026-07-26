@@ -49,8 +49,8 @@ The six task proof transcripts are:
 - `slow_rebalance_claim_fence_proof.txt`
 - `blocked_spawn_fence_compensation_proof.txt`
 
-Owner validation at repaired code head
-`da77966f29e7eb9adea286f1dde04dfa138f1f88`:
+Owner validation at repaired integration head
+`9eba07d5a4ff712d82bfbb880aabcfa4f88642cb`:
 
 ```text
 services.execution.lean_runtime.test_signal_isolation + test_signal_consumer: 74 tests, OK
