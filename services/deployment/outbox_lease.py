@@ -134,7 +134,9 @@ class DeploymentOutboxLeaseStore:
                     "recovery_count": recovery_count,
                 }
                 leases[event_id] = lease
-                record.update(copy.deepcopy(lease))
+                response_lease = copy.deepcopy(lease)
+                response_lease["lease_status"] = response_lease.pop("status")
+                record.update(response_lease)
                 claimed.append(record)
             state["updated_at"] = rfc3339(now)
         return claimed

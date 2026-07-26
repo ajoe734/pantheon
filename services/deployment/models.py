@@ -279,6 +279,7 @@ class ClaimedOutboxRecordBody(OutboxRecordBody):
     tenant_id: str
     consumer_name: str
     claim_token: str
+    lease_status: str
     claimed_at: str
     lease_expires_at: str
     recovery_count: int = 0
