@@ -41,6 +41,34 @@ def _read_json_response(request: urllib.request.Request, timeout_seconds: float)
     return json.loads(body) if body else {}
 
 
+def _authority_headers() -> dict[str, str]:
+    token = str(os.getenv("TRAINING_SESSION_WORKER_TOKEN") or "").strip()
+    tenant_id = str(os.getenv("TRAINING_SESSION_TENANT_ID") or "").strip()
+    actor_service = str(
+        os.getenv("TRAINING_SESSION_WORKER_SERVICE_ID")
+        or "training-session-preview-worker"
+    ).strip()
+    missing = [
+        name
+        for name, value in (
+            ("TRAINING_SESSION_WORKER_TOKEN", token),
+            ("TRAINING_SESSION_TENANT_ID", tenant_id),
+            ("TRAINING_SESSION_WORKER_SERVICE_ID", actor_service),
+        )
+        if not value
+    ]
+    if missing:
+        raise RuntimeError(
+            "preview worker inbound authority is incomplete: "
+            + ", ".join(missing)
+        )
+    return {
+        "Authorization": token if token.startswith("Bearer ") else f"Bearer {token}",
+        "X-Tenant-Id": tenant_id,
+        "X-Pantheon-Service": actor_service,
+    }
+
+
 def fetch_claimable_jobs(
     *,
     api_url: str,
@@ -50,7 +78,7 @@ def fetch_claimable_jobs(
     query = urllib.parse.urlencode({"status": "claimable", "limit": limit})
     request = urllib.request.Request(
         api_url.rstrip("/") + f"/api/training/preview-jobs?{query}",
-        headers={"Accept": "application/json"},
+        headers={"Accept": "application/json", **_authority_headers()},
         method="GET",
     )
     payload = _read_json_response(request, timeout_seconds)
@@ -69,7 +97,11 @@ def run_job(
     request = urllib.request.Request(
         api_url.rstrip("/") + f"/api/training/preview-jobs/{job_id}/run",
         data=payload,
-        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            **_authority_headers(),
+        },
         method="POST",
     )
     response = _read_json_response(request, timeout_seconds)
@@ -146,13 +178,25 @@ def run_tick(
     }
 
 
-def _write_alive(path: str) -> None:
+def _write_alive(path: str, result: dict[str, Any] | None = None) -> None:
+    """Persist a marker only for a functionally successful worker tick."""
+
     if not path:
         return
     try:
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(_utc_now(), encoding="utf-8")
+        target.write_text(
+            json.dumps(
+                {
+                    "status": "ok",
+                    "completed_at": _utc_now(),
+                    "result": dict(result or {}),
+                },
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
     except Exception:
         pass
 
@@ -173,15 +217,15 @@ def main() -> int:
                 api_url=api_url,
                 limit=batch_limit,
                 timeout_seconds=timeout_seconds,
-                heartbeat=lambda: _write_alive(alive_path),
             )
             print(json.dumps({"tick": tick, "result": result}, sort_keys=True), flush=True)
+            if result.get("failed") == 0:
+                _write_alive(alive_path, result)
         except Exception as exc:  # noqa: BLE001
             print(
                 json.dumps({"tick": tick, "error": f"{type(exc).__name__}: {exc}"}, sort_keys=True),
                 flush=True,
             )
-        _write_alive(alive_path)
         if max_ticks and tick >= max_ticks:
             return 0
         time.sleep(interval_seconds)

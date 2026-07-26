@@ -1,109 +1,231 @@
-# PPL-ALLOC-009 hosted closeout truth record — 2026-07-25
+# PPL-ALLOC-009 hosted closeout truth record — 2026-07-26
 
-Status: incomplete; this record must not be used as `done` evidence
+Status: owner evidence complete for B1/B3 and safe restore; independent B5
+reviewer decision pending
+
 Task ID: `PPL-ALLOC-009`
-Truth correction owner: Codex
-Final B5 reviewer: pending
 
-## Correction notice
+Owner: Codex
 
-The first version of this file, merged in
+Required final reviewer: Claude2
+
+Real/live capital authority: disabled and out of scope
+
+Machine-readable evidence index:
+[`PPL-ALLOC-009-B1-B3-EVIDENCE-INDEX-2026-07-26.json`](./PPL-ALLOC-009-B1-B3-EVIDENCE-INDEX-2026-07-26.json)
+
+## Final truth correction
+
+The first version of this record, merged in
 [Pantheon PR #4124](https://github.com/ajoe734/pantheon/pull/4124),
-incorrectly marked B3 and B5 as passed. PR #4124 has no GitHub review and the
-declared reviewer trailer is not an independent B5 decision. Its B3 reference
-was a general frontend integration gate, not the required same-chain hosted
-desktop and 393px acceptance.
+incorrectly marked B3 and B5 as passed. The second version, merged in
+[Pantheon PR #4128](https://github.com/ajoe734/pantheon/pull/4128), correctly
+recorded the then-current failed browser proof and left B3/B5 open.
 
-The only authorized PPL-ALLOC-009 hosted acceptance,
-[run 30163260347](https://github.com/ajoe734/pantheon/actions/runs/30163260347),
-concluded `failure`. This correction supersedes the earlier completion claim
-without deleting the historical commit.
+Subsequent repairs were merged, deployed, and exercised. The final
+non-diagnostic hosted acceptance
+[run 30194836870](https://github.com/ajoe734/pantheon/actions/runs/30194836870)
+completed successfully at `2026-07-26T08:36:22.092Z`. Its single active test
+was the same-chain test named `correlates governed B1 and proves the same
+identity on desktop and 393px mobile`; the read-only diagnostic test was
+skipped. This run supersedes the earlier negative B1/B3 result.
 
-## Unique hosted acceptance result
+This record does **not** self-approve B5 and must not be used as `done`
+evidence until Claude2 records an explicit IA disposition.
 
-The run used the accepted exact pair:
+## Accepted exact pair
 
-- frontend: `ef5185148157c422b41cc2a0ee497d2860e002a3`
-- BFF: `be956c07aca889043ef301389412b6744452f20b`
-- sanitized artifact:
-  [8620845277](https://github.com/ajoe734/pantheon/actions/runs/30163260347/artifacts/8620845277)
+The successful run verified the accepted hosted pair before executing the
+chain:
 
-The test reached the first desktop `runBrowserProof` call only after every
-preceding B1 API call and assertion had passed. That includes distinct
-operator/approver authentication, promotion submission and decision, paper
-allocation evaluation, rebalance proposal/approval/apply, an `executed`
-command receipt, and authoritative paper-capital readback with
-`live_capital_side_effects=false`.
+| Component | Exact identity |
+| --- | --- |
+| Frontend repository | `ajoe734/execute-plans` |
+| Frontend commit | `6a8d2d9b4f725056735eefd7165ef47b52cda53d` |
+| BFF repository | `ajoe734/pantheon` |
+| BFF runtime commit | `be956c07aca889043ef301389412b6744452f20b` |
+| Pair ID | `c05fc6b0abea92ceb1805cde8c2f3f4d7bcfab12fb77ac45be0a4241ea5874cf` |
+| FE gate | [30192097967](https://github.com/ajoe734/execute-plans/actions/runs/30192097967) |
+| Hosted acceptance | [30194836870](https://github.com/ajoe734/pantheon/actions/runs/30194836870) |
+| Sanitized evidence artifact | [8629787902](https://github.com/ajoe734/pantheon/actions/runs/30194836870/artifacts/8629787902) |
+| Artifact JSON SHA-256 | `8f13eb7c9632ae61c3e020db00cee54396f26b2a90f76485f2a9a487fa0c21df` |
+| Artifact ZIP SHA-256 | `2968a40f3ae17434c1f57661005bb306117d9d5d4123645dfaa08efdf934bd3d` |
 
-The then-current harness persisted its last checkpoint before that complete B1
-tail, so artifact 8620845277 stops at `promotion_recommendation_ready`. The
-failure location in the run log proves the later calls completed, but the
-artifact does not contain their final linked identifiers. B1 therefore passed
-at runtime with incomplete final packet capture.
+The accepted frontend manifest reported `deploymentState=accepted`,
+`profile=read-only`, `VITE_BFF_MODE=live`, `VITE_BFF_FALLBACK=strict`, and all
+real-write, dev-stub-write, and embedded-bearer flags `false`. The BFF reported
+strict auth, MFA required, and the exact runtime commit above.
 
-B3 failed inside the first desktop browser proof before any mobile proof ran.
-The page rendered the strict authentication boundary:
-`Your Pantheon session is missing or expired`. The harness had put a
-server-issued BFF dev-login JWT into Firebase browser storage. That token was
-not a GCP Identity Platform ID token, so Firebase rejected and cleared the
-session. No browser response interception or fallback data was used.
+## B1 — correlated governed paper-only allocation chain
 
-## Repair delivery
+Gate result: **passed**.
 
-The harness and controller defects are repaired:
+The evidence contains one linked chain:
 
-- [execute-plans PR #544](https://github.com/ajoe734/execute-plans/pull/544),
-  merged to `dev` as
-  `3bf97323f7c72bd47256c7a60618dd7f837cd592`, signs in through the hosted
-  GCP Identity Platform UI with a dedicated dev account and writes the complete
-  B1 checkpoint before B3 starts.
-- [Pantheon PR #4127](https://github.com/ajoe734/pantheon/pull/4127), merged
-  to `dev` as `72afd991b9133dc7e73c775978dc854e6d3877ce`, provides the masked
-  dev-only browser identity inputs and advances the exact Agora pair.
-- FE integration gate
-  [30165226542](https://github.com/ajoe734/execute-plans/actions/runs/30165226542)
-  attempt 2 passed.
-- Read-only dev deployment
-  [30165771519](https://github.com/ajoe734/execute-plans/actions/runs/30165771519)
-  passed gate-before-switch and post-switch probes.
+| Boundary | Authoritative identity / result |
+| --- | --- |
+| Tenant | `tenant-dev` |
+| Persona | `persona-34ac77f34d030185079d` |
+| Runtime | `rt-bc3d8bbd` |
+| Runtime binding | `rb-b174499b69484ee7b207f6e437605cd9` |
+| Current paper session | `prmon-rb-b174499b69484ee7b207f6e437605cd9-621fd2b0` |
+| Telemetry eligibility event | `b07c14a3-c3e5-5004-85e1-8ec11879dbc6` |
+| Ranking snapshot | `ranking-quarterly-2026-q3-507a8d36f7269e406f429d3f` |
+| Promotion review | `pm12-2026-q3-persona-34ac77f34d030185079d-promote_to_canary_candidate--snapshot-221d3a44f5a0ac9bb6141685209e888b` |
+| Paper allocation evaluation | `paper-allocation-evaluation-84beb9ef6a8067bcb85a1845` |
+| Paper ledger | `paper-ledger-75b390797fd9861f92c6` |
+| Capital binding | `pcb-persona-paper-75b390797fd9861f92c6` |
+| Rebalance | `rb-20260725-3be1a73f7b06` |
+| Approval decision | `approval-30095677466` |
+| Apply command | `cmd-a39c04a4a90743d7a88056275f3f6b0e` |
 
-The hosted deployment now reports:
+The chain was not produced by fixtures or a direct store edit:
 
-- frontend `3bf97323f7c72bd47256c7a60618dd7f837cd592`
-- BFF `be956c07aca889043ef301389412b6744452f20b`
-- Pantheon pair controller `72afd991b9133dc7e73c775978dc854e6d3877ce`
-- `deploymentState=accepted`, `profile=read-only`
-- `VITE_BFF_MODE=live`, `VITE_BFF_FALLBACK=strict`
-- real writes, dev-stub writes, and embedded bearer token all `false`
+1. operator authentication returned `200`;
+2. Persona/paper bundle creation returned `201`;
+3. provisioning reconciliation and Persona readback returned `200`;
+4. the guarded eligibility producer returned `202` and Telemetry owner
+   accepted and read back the exact event;
+5. canonical quarterly ranking and recommendation reads returned `200`;
+6. promotion submission and the human promotion decision each returned `202`;
+7. allocation evaluation returned `200`;
+8. the existing idempotent rebalance proposal was recovered after the expected
+   `409`, then read back from the owner;
+9. a distinct approver created approval `approval-30095677466`;
+10. the operator obtained a confirmation token and applied the rebalance;
+11. command receipt readback returned `200`;
+12. Capital owner readback returned `200` with
+    `authoritativeCapitalReadback=true`.
 
-The BFF remains strict and ready. Lifecycle projection is accepted-live with
-zero backlog. Terminal proof-off run
-[30163425775](https://github.com/ajoe734/pantheon/actions/runs/30163425775)
-passed with artifact
-[8621090468](https://github.com/ajoe734/pantheon/actions/runs/30163425775/artifacts/8621090468);
-the effective write-proof flag is `false`.
+The resumed owner record was `applied`, used
+`persona-paper-allocation-simulation-v1`, and retained the same ranking,
+allocation-evaluation, rebalance, approval, and apply identities. The
+eligibility producer recorded telemetry owner status `accepted`,
+`reconciliation=accepted`, and a matching readback event ID.
 
-## Corrected gate status
+Identity separation was verified:
 
-| Gate | Correct status | Evidence / remaining condition |
+- approval actor: `pantheon-dev-approver`, class `approver`, MFA true;
+- apply actor: `pantheon-dev-operator-a`, class `operator_a`, MFA true;
+- `distinctApprovalAndApply=true`.
+
+## B3 — exact-chain authenticated desktop and mobile proof
+
+Gate result: **passed**.
+
+Both browser sessions used GCP Identity Platform email/password sign-in;
+`syntheticSession=false`.
+
+| Viewport | Routes exercised | Result |
 | --- | --- | --- |
-| B1 | Passed at runtime; final artifact checkpoint incomplete | Run 30163260347 reached B3 only after the full governed paper-only chain and authoritative readback passed. PR #544 fixes checkpoint placement for any future authorized proof. |
-| B2 | Passed | Strict auth, MFA claims, distinct dev clients, and a real GCP Identity browser account are provisioned. Raw secrets remain only in GCP Secret Manager and masked GitHub dev-environment secrets. |
-| B3 | Failed; repair deployed but not re-accepted | The unique authorized run failed on the first desktop auth session and never ran 393px mobile. PRs #544/#4127 fix the cause; no second acceptance was dispatched. |
-| B4 | Passed | The previously recorded dependency deliveries remain merged. |
-| B5 | Pending | PR #4124 contains no independent reviewer decision, and B3 is not accepted. The IA supersession cannot be closed as passed yet. |
+| Desktop `1440x900` | Rankings, Governance recommendations, Capital | all expected BFF requests `200`; no console errors, page errors, request failures, serious/critical accessibility violations, or horizontal overflow |
+| Mobile `393x852` | Rankings, Governance recommendations, Capital | all expected BFF requests `200`; no console errors, page errors, request failures, serious/critical accessibility violations, or horizontal overflow |
 
-## Remaining closeout work
+The browser routes were bound to the exact Persona, quarter, pool, and
+rebalance IDs from B1. The artifact records 23 API request/response checkpoints
+plus route-level network correlation evidence for both viewports.
 
-Do not mark `PPL-ALLOC-009` done from build, gate, or deployment evidence alone.
-Completion now requires:
+## Safe restore and current posture
 
-1. explicit authority for a new hosted acceptance after the consumed one-run
-   allowance;
-2. one successful same-chain desktop and 393px proof using the repaired real
-   GCP Identity session;
-3. an explicit B5 reviewer decision accepting or rejecting the canonical
-   Rankings, Governance, and Performance-center IA.
+Immediately after acceptance, proof-off deployment
+[run 30194930965](https://github.com/ajoe734/pantheon/actions/runs/30194930965)
+completed successfully. It verified inside the deployed BFF container:
 
-Real/live capital execution and real frontend writes remain disabled. Any
-future transition to those authorities requires a separate Human/Ops decision.
+```text
+PANTHEON_PPL_ALLOC_009_DEV_PROOF_ENABLED=false
+```
+
+The later deployment
+[run 30195508721](https://github.com/ajoe734/pantheon/actions/runs/30195508721)
+again completed successfully with the proof flag `false`, strict auth, exact
+BFF version proof, lifecycle readiness, restart persistence, and the same
+accepted FE/BFF pair. No rollback was required.
+
+The final acceptance evidence asserts:
+
+- `paperOnly=true`;
+- `authoritativeCapitalReadback=true`;
+- `canaryExecutionEnabled=false`;
+- `liveCapitalSideEffects=false`;
+- `realWritesEnabled=false`.
+
+## Delivery inventory
+
+### Pantheon
+
+| PR | Merge commit | Purpose |
+| --- | --- | --- |
+| [#4056](https://github.com/ajoe734/pantheon/pull/4056) | `763c98b1761f6d56b379b3a07e48d5e18d3e8d16` | governed paper allocation path |
+| [#4061](https://github.com/ajoe734/pantheon/pull/4061) | `99ece708c8e48c6889b224047a9f70a1179af7eb` | governed hosted acceptance workflow |
+| [#4063](https://github.com/ajoe734/pantheon/pull/4063) | `33ee1d4b906a27ffc30a8c26dbfbb0bbfc4f0db0` | guarded paper eligibility producer |
+| [#4079](https://github.com/ajoe734/pantheon/pull/4079) | `789f5e0865b4a87294def470f06079ae83baf07f` | retry-safe telemetry proof |
+| [#4127](https://github.com/ajoe734/pantheon/pull/4127) | `72afd991b9133dc7e73c775978dc854e6d3877ce` | real browser identity inputs |
+| [#4128](https://github.com/ajoe734/pantheon/pull/4128) | `5e5a3ff072c325173040704c495ea77aa2a36b4e` | prior truth correction |
+| [#4130](https://github.com/ajoe734/pantheon/pull/4130) | `dab595770df46db98c7dd692b058704da81b5102` | strict lineage resume pair |
+| [#4131](https://github.com/ajoe734/pantheon/pull/4131) | `8bdb85b6441536bd095426abb5c4226a1bd7828b` | applied-owner resume pair |
+| [#4133](https://github.com/ajoe734/pantheon/pull/4133) | `f9851d0f4702776e77e5d6560150664ebd639116` | accessibility pair |
+| [#4134](https://github.com/ajoe734/pantheon/pull/4134) | `d8c1a81756e5ad904d173c2ffeea83373d4f2d97` | browser navigation pair |
+| [#4136](https://github.com/ajoe734/pantheon/pull/4136) | `ea25a615fe89e400f071c48a79f987a2b1b09a72` | isolated final browser pair |
+
+### execute-plans
+
+| PR | Merge commit | Purpose |
+| --- | --- | --- |
+| [#528](https://github.com/ajoe734/execute-plans/pull/528) | `9defed5029c4422bb5a0a4b4c79e2ad637eb4bca` | exact-pair acceptance harness |
+| [#531](https://github.com/ajoe734/execute-plans/pull/531) | `7492ad7fd0b430df40dd7fe7b6b0d187d8742350` | immutable action repair |
+| [#533](https://github.com/ajoe734/execute-plans/pull/533) | `6d74db4d1ffb327224080642dd9cdae5c5f9a017` | genuine eligibility wait |
+| [#535](https://github.com/ajoe734/execute-plans/pull/535) | `ecb78bd9b647bbb4ffcbe83069aea38b642d0bb0` | canonical run identity |
+| [#537](https://github.com/ajoe734/execute-plans/pull/537) | `861b02a5254c57f84bb31a4dee6d6532e37303fb` | retry-safe proof identity |
+| [#544](https://github.com/ajoe734/execute-plans/pull/544) | `3bf97323f7c72bd47256c7a60618dd7f837cd592` | real GCP browser identity |
+| [#547](https://github.com/ajoe734/execute-plans/pull/547) | `694ecdf28f90773f8c127b6038c8475b9d68a00b` | strict rebalance lineage resume |
+| [#548](https://github.com/ajoe734/execute-plans/pull/548) | `69888404584d31caacf394b1e4c7dc99bb26191f` | approved/applied owner resume |
+| [#550](https://github.com/ajoe734/execute-plans/pull/550) | `acd2d6610d01845cd361db3f36266c006ea47ce6` | ranking accessibility |
+| [#551](https://github.com/ajoe734/execute-plans/pull/551) | `59844bab22006bcc16f5c18ef0543d7657b562a4` | login/navigation settling |
+| [#552](https://github.com/ajoe734/execute-plans/pull/552) | `6a8d2d9b4f725056735eefd7165ef47b52cda53d` | isolated final browser proof |
+
+## Gate disposition
+
+| Gate | Current status | Remaining condition |
+| --- | --- | --- |
+| B1 | Passed | none |
+| B2 | Passed | credentials remain masked; no reprovisioning required |
+| B3 | Passed | none |
+| B4 | Passed | merged delivery inventory recorded above |
+| B5 | Pending independent reviewer | Claude2 must explicitly accept the canonical IA supersession or reopen a bounded UI task |
+
+## Required B5 reviewer decision
+
+Claude2 must record exactly one of these outcomes:
+
+1. **Accept** — canonical Rankings, Governance, and Performance centers
+   supersede the original primary-workbench IA contract; or
+2. **Reopen** — identify the bounded UI gap, affected route/component,
+   acceptance test, owner, and blocking/non-blocking status.
+
+The owner intentionally makes no B5 decision in this record.
+
+## Residual risks
+
+- GitHub retains the full sanitized artifact for 90 days. This repository
+  preserves its content digest, exact linked IDs, request/response index,
+  accepted-pair identity, safety posture, and browser verdicts so later
+  artifact expiry cannot turn B1/B3 into an unsupported assertion.
+- The proof producer remains disabled by default and in the current hosted
+  container. Any future use requires another explicit strict dev/root
+  deployment with the bounded flag enabled.
+- The applied allocation is paper-ledger state only. It is not evidence of,
+  and grants no authority for, canary/live/real-capital execution.
+- B5 is blocking for terminal task closeout. It is a reviewer governance
+  action, not an implementation or Human/Ops credential dependency.
+
+## Completion checklist
+
+- [x] PR and merge-SHA inventory
+- [x] accepted deployment manifest identity
+- [x] B1 linked evidence index
+- [x] B3 desktop and 393px evidence index
+- [x] proof-off restore and current safe posture
+- [x] residual risks with ownership and blocking status
+- [ ] independent Claude2 B5 IA decision
+- [ ] reviewer approval transition
+- [ ] owner finalization and canonical `done`

@@ -1,12 +1,13 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://pantheon/training-session/teaching-session/v1",
+  "$id": "https://pantheon/training-session/teaching-session/v2",
   "title": "TeachingSession",
-  "description": "Canonical trainer teaching session contract. The session records persona-scoped teaching intent, lifecycle state, trace identity, optional control-state refs, and the append-only events used by preview, commit/discard, replay, and later imitation dataset stages.",
+  "description": "Canonical tenant- and persona-scoped trainer teaching session contract. The session records teaching intent, lifecycle state, trace identity, optional control-state refs, and the append-only events used by preview, commit/discard, replay, and later imitation dataset stages.",
   "type": "object",
   "required": [
     "session_id",
     "persona_id",
+    "tenant_id",
     "opened_by",
     "mode",
     "status",
@@ -22,6 +23,10 @@
       "minLength": 1
     },
     "persona_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tenant_id": {
       "type": "string",
       "minLength": 1
     },

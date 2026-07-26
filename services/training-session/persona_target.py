@@ -122,6 +122,7 @@ def canonical_digest(payload: Any) -> str:
 def read_persona_target_precondition(
     *,
     persona_id: str,
+    tenant_id: str,
     persona_readback_url: str,
     authorization_token: str,
     trusted_now: datetime,
@@ -132,8 +133,12 @@ def read_persona_target_precondition(
     """Read the authoritative current persona generation without mutating it."""
 
     normalized_persona_id = _required_text(persona_id, "persona_id")
+    normalized_tenant_id = _required_text(tenant_id, "tenant_id")
     url = _configured_url(persona_readback_url, "persona_readback_url")
-    authorization_headers = _authorization_headers(authorization_token)
+    authorization_headers = {
+        **_authorization_headers(authorization_token),
+        "X-Tenant-Id": normalized_tenant_id,
+    }
     now = _trusted_utc(trusted_now)
     timeout = _positive_finite_number(timeout_seconds, "timeout_seconds")
     future_skew = _nonnegative_finite_number(
@@ -152,11 +157,13 @@ def read_persona_target_precondition(
     status, generation, record_ref, recorded_at = _validate_persona_authority(
         record,
         persona_id=normalized_persona_id,
+        tenant_id=normalized_tenant_id,
         trusted_now=now,
         max_future_skew_seconds=future_skew,
     )
     return {
         "persona_id": normalized_persona_id,
+        "tenant_id": normalized_tenant_id,
         "status": status,
         "current_generation": generation,
         "expected_previous_generation": generation,
@@ -170,6 +177,7 @@ def read_persona_target_precondition(
 def commit_persona_target(
     *,
     persona_id: str,
+    tenant_id: str,
     session_id: str,
     candidate: Any,
     control_state: Any,
@@ -198,6 +206,7 @@ def commit_persona_target(
     """
 
     normalized_persona_id = _required_text(persona_id, "persona_id")
+    normalized_tenant_id = _required_text(tenant_id, "tenant_id")
     normalized_session_id = _required_text(session_id, "session_id")
     normalized_key = _required_text(idempotency_key, "idempotency_key")
     normalized_generation = _strict_int(generation, "generation", minimum=1)
@@ -207,7 +216,10 @@ def commit_persona_target(
     normalized_approval_ref = _required_text(
         approval_decision_ref, "approval_decision_ref"
     )
-    authorization_headers = _authorization_headers(authorization_token)
+    authorization_headers = {
+        **_authorization_headers(authorization_token),
+        "X-Tenant-Id": normalized_tenant_id,
+    }
     now = _trusted_utc(trusted_now)
     normalized_timeout = _positive_finite_number(timeout_seconds, "timeout_seconds")
     future_skew = _nonnegative_finite_number(
@@ -235,6 +247,7 @@ def commit_persona_target(
         candidate_digest=candidate_digest,
         control_digest=control_digest,
         persona_id=normalized_persona_id,
+        tenant_id=normalized_tenant_id,
         generation=normalized_generation,
         expected_precondition_digest=normalized_precondition_digest,
         approval_decision_ref=normalized_approval_ref,
@@ -253,12 +266,14 @@ def commit_persona_target(
     _, observed_generation, persona_record_ref, _ = _validate_persona_authority(
         persona,
         persona_id=normalized_persona_id,
+        tenant_id=normalized_tenant_id,
         trusted_now=now,
         max_future_skew_seconds=future_skew,
     )
     pre_generation = _validate_persona_pre_readback(
         persona,
         persona_id=normalized_persona_id,
+        tenant_id=normalized_tenant_id,
         session_id=normalized_session_id,
         generation=normalized_generation,
         candidate_digest=candidate_digest,
@@ -292,6 +307,7 @@ def commit_persona_target(
         approval,
         expected_approval_decision_ref=normalized_approval_ref,
         persona_id=normalized_persona_id,
+        tenant_id=normalized_tenant_id,
         session_id=normalized_session_id,
         candidate_digest=candidate_digest,
         proof_digest=proof_digest,
@@ -301,6 +317,7 @@ def commit_persona_target(
 
     binding = {
         "persona_id": normalized_persona_id,
+        "tenant_id": normalized_tenant_id,
         "session_id": normalized_session_id,
         "candidate_digest": candidate_digest,
         "control_digest": control_digest,
@@ -473,6 +490,7 @@ def _validate_persona_authority(
     record: Mapping[str, Any],
     *,
     persona_id: str,
+    tenant_id: str,
     trusted_now: datetime,
     max_future_skew_seconds: float,
 ) -> tuple[str, int, str, datetime]:
@@ -483,6 +501,7 @@ def _validate_persona_authority(
         max_future_skew_seconds=max_future_skew_seconds,
     )
     _require_exact(record, "persona_id", persona_id, "persona pre-readback")
+    _require_exact(record, "tenant_id", tenant_id, "persona pre-readback")
     status = _required_alias_text(
         record,
         ("target_status", "status", "state"),
@@ -500,6 +519,7 @@ def _validate_persona_pre_readback(
     record: Mapping[str, Any],
     *,
     persona_id: str,
+    tenant_id: str,
     session_id: str,
     generation: int,
     candidate_digest: str,
@@ -508,6 +528,7 @@ def _validate_persona_pre_readback(
 ) -> int:
     _reject_forbidden_markers(record, "persona pre-readback")
     _require_exact(record, "persona_id", persona_id, "persona pre-readback")
+    _require_exact(record, "tenant_id", tenant_id, "persona pre-readback")
     status = _required_alias_text(
         record,
         ("target_status", "status", "state"),
@@ -529,6 +550,7 @@ def _validate_persona_pre_readback(
         raise PersonaTargetError("same-generation persona pre-readback is not committed")
     expected = {
         "persona_id": persona_id,
+        "tenant_id": tenant_id,
         "session_id": session_id,
         "candidate_digest": candidate_digest,
         "control_digest": control_digest,
@@ -545,12 +567,14 @@ def _validated_proof_digest(
     candidate_digest: str,
     control_digest: str,
     persona_id: str,
+    tenant_id: str,
     generation: int,
     expected_precondition_digest: str,
     approval_decision_ref: str,
 ) -> tuple[str, str]:
     if not isinstance(proof, Mapping):
         raise PersonaTargetError("evaluation proof must be an authoritative JSON object")
+    _require_exact(proof, "tenant_id", tenant_id, "evaluation proof")
 
     authority = proof.get("authority")
     policy = authority.get("policy") if isinstance(authority, Mapping) else None
@@ -568,6 +592,9 @@ def _validated_proof_digest(
         raise PersonaTargetError("evaluation proof target_precondition is missing")
     _require_exact(
         precondition, "persona_id", persona_id, "evaluation proof target_precondition"
+    )
+    _require_exact(
+        precondition, "tenant_id", tenant_id, "evaluation proof target_precondition"
     )
     if (
         _strict_int(
@@ -633,6 +660,7 @@ def _validate_approval(
     *,
     expected_approval_decision_ref: str,
     persona_id: str,
+    tenant_id: str,
     session_id: str,
     candidate_digest: str,
     proof_digest: str,
@@ -659,6 +687,7 @@ def _validate_approval(
         raise PersonaTargetError("approval readback does not prove approval")
 
     _require_exact(decision, "persona_id", persona_id, "approval readback")
+    _require_exact(decision, "tenant_id", tenant_id, "approval readback")
     _require_exact(decision, "session_id", session_id, "approval readback")
     _require_exact(
         decision, "candidate_digest", candidate_digest, "approval readback"

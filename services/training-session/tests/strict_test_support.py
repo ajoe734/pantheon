@@ -57,6 +57,8 @@ class StrictAuthorityFixture:
             "TRAINING_SESSION_RUNTIME_EVIDENCE_PATH": str(self.runtime_evidence_path),
             "TRAINING_SESSION_PREVIEW_JOB_LEASE_SECONDS": "120",
             "TRAINING_SESSION_PREVIEW_JOB_MAX_ATTEMPTS": "3",
+            "TRAINING_SESSION_AUTH_DISABLED": "true",
+            "TRAINING_SESSION_TEST_TENANT_ID": "tenant-test",
             # Production code must still request VectorbtBackend explicitly.
             # The unit-test fake below intercepts before the package is loaded.
             "PANTHEON_VECTORBT_BACKEND": "real",
@@ -309,7 +311,13 @@ def seed_changed_supported_controls(
     ]
     return module.store.put_controls(
         session_key,
-        {"session_id": session_key, "controls": controls},
+        {
+            "session_id": session_key,
+            "tenant_id": (
+                module.store.get_session(session_key) or {}
+            ).get("tenant_id", "tenant-test"),
+            "controls": controls,
+        },
     )
 
 
@@ -456,15 +464,19 @@ def make_fake_target_precondition_reader(
         trusted_now: datetime,
     ) -> dict[str, Any]:
         persona_id = str(session.get("persona_id") or "").strip()
+        tenant_id = str(session.get("tenant_id") or "").strip()
         normalized_session_id = str(session_id or "").strip()
-        if not persona_id or not normalized_session_id:
-            raise ValueError("test target precondition requires persona_id and session_id")
+        if not persona_id or not tenant_id or not normalized_session_id:
+            raise ValueError(
+                "test target precondition requires persona_id, tenant_id, and session_id"
+            )
         now = _aware_utc(trusted_now, "trusted_now")
         controller_record_ref = (
             f"test-persona-controller:{persona_id}:generation:{current_generation}"
         )
         authoritative_record = {
             "persona_id": persona_id,
+            "tenant_id": tenant_id,
             "status": "active",
             "generation": current_generation,
             "controller_record_ref": controller_record_ref,
@@ -472,6 +484,7 @@ def make_fake_target_precondition_reader(
         }
         return {
             "persona_id": persona_id,
+            "tenant_id": tenant_id,
             "status": "active",
             "current_generation": current_generation,
             "expected_previous_generation": current_generation,
@@ -505,9 +518,12 @@ def make_fake_persona_target_commit() -> Callable[..., dict[str, Any]]:
     ) -> dict[str, Any]:
         normalized_session_id = str(session_id or "").strip()
         persona_id = str(replay.get("persona_id") or "").strip()
+        tenant_id = str(replay.get("tenant_id") or "").strip()
         normalized_key = str(idempotency_key or "").strip()
-        if not normalized_session_id or not persona_id or not normalized_key:
-            raise ValueError("test persona commit requires session, persona, and idempotency key")
+        if not normalized_session_id or not persona_id or not tenant_id or not normalized_key:
+            raise ValueError(
+                "test persona commit requires session, persona, tenant, and idempotency key"
+            )
         now = _aware_utc(trusted_now, "trusted_now")
         precondition = proof.get("target_precondition")
         authority = proof.get("authority")
@@ -544,6 +560,7 @@ def make_fake_persona_target_commit() -> Callable[..., dict[str, Any]]:
                     "approval_decision_id": approval_decision_id,
                     "approval_decision_ref": approval_decision_ref,
                     "persona_id": persona_id,
+                    "tenant_id": tenant_id,
                     "session_id": normalized_session_id,
                     "candidate_digest": digests["candidate_digest"],
                     "proof_digest": digests["proof_digest"],
@@ -553,6 +570,7 @@ def make_fake_persona_target_commit() -> Callable[..., dict[str, Any]]:
         return {
             "status": "committed",
             "persona_id": persona_id,
+            "tenant_id": tenant_id,
             "session_id": normalized_session_id,
             "candidate_digest": digests["candidate_digest"],
             "control_digest": digests["control_digest"],

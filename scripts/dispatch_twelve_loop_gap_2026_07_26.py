@@ -3,9 +3,10 @@
 
 The catalog is validated as one immutable graph before any live mutation.
 Materialization then uses the canonical ``scripts/ai_status.py assign`` writer
-one task at a time. Exact reruns are skipped; archived or conflicting IDs fail
-closed. This avoids the DevTaskPacket bulk delimiter/partial-replay limitation
-while preserving the repository task-state locks and audit log.
+one task at a time. Exact active or successfully archived catalog tasks are
+skipped; malformed, non-successful, or conflicting IDs fail closed. This avoids
+the DevTaskPacket bulk delimiter/partial-replay limitation while preserving the
+repository task-state locks and audit log.
 """
 from __future__ import annotations
 
@@ -623,6 +624,42 @@ def _archive_candidates(status_root: Path, task_id: str) -> Iterable[Path]:
     yield archive_root / f"{task_id}.json"
 
 
+def _validate_exact_archived_task(
+    archive_path: Path,
+    *,
+    catalog: dict[str, Any],
+    task: dict[str, Any],
+) -> None:
+    task_id = str(task["id"])
+    archive = load_json_object(archive_path)
+    if str(archive.get("task_id") or "").strip() != task_id:
+        raise DispatchError(f"archived task identity conflicts with catalog: {task_id}")
+    if str(archive.get("terminal_status") or "").strip() != "done":
+        raise DispatchError(
+            f"archived task is not successfully complete and cannot satisfy catalog: {task_id}"
+        )
+    archived_task = archive.get("task")
+    if not isinstance(archived_task, dict):
+        raise DispatchError(f"archived task record is malformed: {task_id}")
+    if str(archived_task.get("id") or "").strip() != task_id:
+        raise DispatchError(f"archived task payload conflicts with catalog: {task_id}")
+    if str(archived_task.get("program_id") or "").strip() != catalog["program_id"]:
+        raise DispatchError(f"archived task program conflicts with catalog: {task_id}")
+    if str(archived_task.get("auto_created_by") or "").strip() != AUTO_CREATED_BY:
+        raise DispatchError(f"archived task creator conflicts with catalog: {task_id}")
+
+    expected_contract = task_contract(task)
+    archived_contract = {key: archived_task.get(key) for key in expected_contract}
+    if archived_contract != expected_contract:
+        raise DispatchError(f"archived task contract conflicts with catalog: {task_id}")
+    expected_contract_sha256 = canonical_json_sha256(expected_contract)
+    if (
+        str(archived_task.get("catalog_task_contract_sha256") or "").strip()
+        != expected_contract_sha256
+    ):
+        raise DispatchError(f"archived task contract digest conflicts with catalog: {task_id}")
+
+
 def plan_materialization(
     catalog: dict[str, Any],
     tasks: list[dict[str, Any]],
@@ -714,8 +751,26 @@ def plan_materialization(
     exact: list[str] = []
     for task in tasks:
         task_id = str(task["id"])
-        if any(path.exists() for path in _archive_candidates(status_root, task_id)):
-            raise DispatchError(f"task ID is already archived and cannot be reused: {task_id}")
+        archive_path = next(
+            (
+                path
+                for path in _archive_candidates(status_root, task_id)
+                if path.is_file()
+            ),
+            None,
+        )
+        if archive_path is not None:
+            if task_id in active_by_id:
+                raise DispatchError(
+                    f"task ID is present in both active and archive truth: {task_id}"
+                )
+            _validate_exact_archived_task(
+                archive_path,
+                catalog=catalog,
+                task=task,
+            )
+            exact.append(task_id)
+            continue
         active = active_by_id.get(task_id)
         if active is None:
             create.append(task)

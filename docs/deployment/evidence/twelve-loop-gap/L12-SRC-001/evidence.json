@@ -1,0 +1,117 @@
+{
+  "schema_version": "twelve_loop_gap_evidence.v1",
+  "task": {
+    "id": "L12-SRC-001",
+    "title": "Implement safe supervised source due-state reconciliation",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "branch": "task/L12-SRC-001",
+    "merge_target": "dev",
+    "status": "implementation_complete_review_required",
+    "anchor_commit": "720f308db"
+  },
+  "scope": {
+    "owned_layer": "source-ingest desired-state reconciliation, provider execution boundary, bounded scheduling policy, SourceHealth outcome truth, and source-lane regression proof",
+    "not_changing": "root deployment profile wiring, external-egress authority, live broker authority, frontend surfaces, or unrelated loop controllers",
+    "composes_with": [
+      "L12-DIST-001 deployment composition",
+      "Codex independent acceptance review"
+    ]
+  },
+  "behavioral_contract": {
+    "reconcile_only": {
+      "provider_egress_attempted": false,
+      "accepted_truth_level": "scheduled_tick",
+      "side_effect_guarded_counts": [
+        "source_record_count",
+        "dlq_count",
+        "frontier_backlog"
+      ]
+    },
+    "reconcile_and_pull": {
+      "minimum_ticks": 1,
+      "maximum_ticks": 24,
+      "api_concurrency_cap": "SOURCE_INGEST_SCHEDULER_MAX_CONCURRENCY",
+      "egress_posture": "deny by default; exact host allowlist required for external access"
+    },
+    "source_health_outcomes": [
+      "success",
+      "policy_denial",
+      "credential_unavailable",
+      "provider_failure"
+    ]
+  },
+  "acceptance": [
+    {
+      "requirement": "Persona source requirement creates or updates connector and schedule without manual calls",
+      "status": "pass",
+      "proof": [
+        "test_run_controller_tick_reconcile_only_never_executes_provider",
+        "test_tw_price_daily_requirement_creates_connector_and_schedule",
+        "test_missing_schedule_is_repaired_on_next_reconcile"
+      ]
+    },
+    {
+      "requirement": "Scheduled reconciliation remains supervised while provider pulls remain bounded and allowlisted",
+      "status": "pass",
+      "proof": [
+        "reconcile_only rejects provider connector selection and provider-side effects",
+        "reconcile_and_pull rejects zero/unbounded and greater-than-24 tick configurations",
+        "run-scheduled rejects max concurrency above the configured supervisor limit",
+        "bounded-live-proof.json"
+      ]
+    },
+    {
+      "requirement": "Duplicate ticks and two workers create no duplicate schedule or SourceRecord",
+      "status": "pass",
+      "proof": [
+        "test_two_reconcile_workers_converge_without_duplicate_connector_or_schedule",
+        "test_two_scheduler_workers_create_one_run_and_one_source_record",
+        "test_duplicate_reconcile_tick_does_not_append_duplicate_records"
+      ]
+    },
+    {
+      "requirement": "Missed ticks recover after restart and connector failures remain isolated",
+      "status": "pass",
+      "proof": [
+        "test_controller_state_counts_ticks_missed_while_worker_was_down",
+        "test_startup_missed_ticks_reported_on_restart",
+        "test_stale_running_frontier_is_durably_recovered_after_restart",
+        "test_provider_failure_matrix_is_isolated_and_projected_to_source_health"
+      ]
+    },
+    {
+      "requirement": "SourceHealth reports policy denial credentials provider failure and success truthfully",
+      "status": "pass",
+      "proof": [
+        "source_health_outcome.v1 projection stored as SourceHealth.metadata.last_outcome",
+        "test_provider_failure_matrix_is_isolated_and_projected_to_source_health"
+      ]
+    }
+  ],
+  "validation": [
+    {
+      "command": "/home/lupin/pantheon/.venv/bin/pytest -q services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_persona_source_reconciler.py services/source_ingestion/tests/test_scheduled_connector.py",
+      "result": "124 passed, 1 warning in 35.56s",
+      "status": "pass"
+    },
+    {
+      "command": "/home/lupin/pantheon/.venv/bin/pytest -q services/source_ingestion",
+      "result": "729 passed, 2 skipped, 3 warnings in 196.99s",
+      "status": "pass"
+    },
+    {
+      "command": "PANTHEON_EXTERNAL_EGRESS=allowlist PANTHEON_EXTERNAL_EGRESS_ALLOWED_HOSTS=openapi.twse.com.tw bounded TaiwanOfficialMarketDatasetAdapter run",
+      "result": "3 normalized TWSE tw_price_daily SourceRecords; max_records=3; connector concurrency=1",
+      "status": "pass",
+      "artifact": "bounded-live-proof.json"
+    }
+  ],
+  "publication": {
+    "pull_request": null,
+    "checks": "pending",
+    "merge_commit": null,
+    "review": "pending Codex",
+    "hosted_deployment": "not claimed by this source-owned packet"
+  }
+}

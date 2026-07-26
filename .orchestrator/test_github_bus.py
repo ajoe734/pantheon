@@ -60,6 +60,46 @@ class GitHubBusCommandTests(unittest.TestCase):
             actor="Claude",
         )
 
+    def test_apply_bus_command_retry_uses_human_ops_actor(self) -> None:
+        status = {
+            "tasks": [
+                {
+                    "id": "LIN-001",
+                    "status": "blocked",
+                    "owner": "Codex",
+                    "reviewer": "Claude",
+                    "waiting_for": "Human/Ops",
+                    "next": "waiting for operator retry",
+                }
+            ]
+        }
+        command = GitHubCommand(verb="retry", target="LIN-001", raw="/retry LIN-001")
+
+        with (
+            mock.patch.object(github_bus, "run_ai_status") as run_ai_status,
+            mock.patch.object(github_bus, "queue_resume_for_task", return_value=True) as queue_resume,
+            mock.patch.object(github_bus, "write_activity_log"),
+        ):
+            changed, reply = github_bus.apply_bus_command(
+                self.config,
+                self.bus_state,
+                status,
+                "ajoe734/pantheon",
+                command,
+                "ajoe734",
+                issue_number=4,
+            )
+
+        self.assertTrue(changed)
+        self.assertEqual(reply, "Queued retry for `LIN-001`.")
+        run_ai_status.assert_called_once_with(
+            "reopen",
+            "LIN-001",
+            "GitHub retry requested via issue #4 by @ajoe734.",
+            actor="Human/Ops",
+        )
+        queue_resume.assert_called_once_with(self.config, status["tasks"][0])
+
     def test_queue_resume_marks_github_retry_as_isolated_task_work(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

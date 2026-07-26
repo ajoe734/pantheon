@@ -201,13 +201,23 @@ class AsyncBatchWriter:
         self._running = False
         if self._task:
             if graceful:
-                # Drain remaining
+                # Let the run loop flush the batch it already fetched, then
+                # drain messages that are still pending in the buffer.
+                try:
+                    await asyncio.wait_for(self._task, timeout=2.0)
+                except asyncio.TimeoutError:
+                    self._task.cancel()
+                    try:
+                        await self._task
+                    except asyncio.CancelledError:
+                        pass
                 await self._flush_batch()
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
+            else:
+                self._task.cancel()
+                try:
+                    await self._task
+                except asyncio.CancelledError:
+                    pass
             self._task = None
         log.info(
             f"AsyncBatchWriter stopped. "
@@ -234,21 +244,20 @@ class AsyncBatchWriter:
                 # Check if event should be delayed under backpressure
                 event_type = event.get("event_type", "")
                 if self._backpressure and self._backpressure.should_delay(event_type):
-                    # Put it back — buffer will handle re-queue or spill
-                    # For in-memory buffer, we just hold it briefly
+                    # Release it through the buffer's native retry mechanism.
+                    # Durable backends retain the original broker record; they
+                    # must not publish a second copy merely to delay delivery.
                     await asyncio.sleep(0.1)
-                    # Re-enqueue by putting back. If the buffer stays full,
-                    # preserve the event in DLQ instead of dropping it silently.
-                    # Do not wait here: the writer is the active consumer, so
-                    # blocking on a full queue can self-deadlock this path.
-                    requeued = await self._buffer.put(event)
-                    if not requeued:
+                    released = await self._buffer.release([event])
+                    if not released:
                         self._dlq.reject(
                             event=event,
                             tags=[TAG_BUFFER_OVERFLOW],
-                            reason="Backpressure delay requeue failed: buffer remained full",
+                            reason="Backpressure delay release failed: buffer remained full",
                         )
-                        self._mark_write_failure("Backpressure delay requeue failed: buffer remained full")
+                        self._mark_write_failure(
+                            "Backpressure delay release failed: buffer remained full"
+                        )
                         self._mark_dlq_write()
                         self._total_dlq += 1
                         self._total_failed += 1
@@ -301,6 +310,10 @@ class AsyncBatchWriter:
                 result = await self._write_fn(batch)
 
                 if result.success:
+                    # The durable broker receipt remains pending until the
+                    # canonical write is complete. ack_sync failures retry the
+                    # idempotent Postgres write and never create data loss.
+                    await self._buffer.ack(batch)
                     self._total_written += result.count
                     self._mark_write_success()
                     if self._backpressure:
@@ -314,15 +327,17 @@ class AsyncBatchWriter:
 
                 if not result.retryable:
                     # Poison event — send all to DLQ immediately
+                    durable_dlq = True
                     for event in batch:
-                        self._dlq.reject(
+                        durable_dlq = self._dlq.reject(
                             event=event,
                             tags=[TAG_POISON_EVENT],
                             reason=f"Non-retryable write failure: {result.error}",
                             original_attempt_count=attempt + 1,
-                        )
+                        ) and durable_dlq
                         self._mark_dlq_write()
                         self._total_dlq += 1
+                    await self._finalize_dead_lettered_batch(batch, durable_dlq)
                     self._total_failed += len(batch)
                     return
 
@@ -337,15 +352,17 @@ class AsyncBatchWriter:
                     delay = min(delay * 2, self._max_retry_delay)
                 else:
                     # Retries exhausted
+                    durable_dlq = True
                     for event in batch:
-                        self._dlq.reject(
+                        durable_dlq = self._dlq.reject(
                             event=event,
                             tags=[TAG_RETRY_EXHAUSTED],
                             reason=f"Write failed after {self._max_retries} retries: {result.error}",
                             original_attempt_count=self._max_retries + 1,
-                        )
+                        ) and durable_dlq
                         self._mark_dlq_write()
                         self._total_dlq += 1
+                    await self._finalize_dead_lettered_batch(batch, durable_dlq)
                     self._total_failed += len(batch)
                     return
 
@@ -363,20 +380,37 @@ class AsyncBatchWriter:
                     await asyncio.sleep(delay)
                     delay = min(delay * 2, self._max_retry_delay)
                 else:
+                    durable_dlq = True
                     for event in batch:
-                        self._dlq.reject(
+                        durable_dlq = self._dlq.reject(
                             event=event,
                             tags=[TAG_WRITER_ERROR],
                             reason=f"Write exception after {self._max_retries} retries: {e}",
                             original_attempt_count=self._max_retries + 1,
-                        )
+                        ) and durable_dlq
                         self._mark_dlq_write()
                         self._total_dlq += 1
+                    await self._finalize_dead_lettered_batch(batch, durable_dlq)
                     self._total_failed += len(batch)
                     log.error(
                         f"Batch write permanently failed after {self._max_retries} retries: {e}"
                     )
                     return
+
+    async def _finalize_dead_lettered_batch(
+        self,
+        batch: list[dict[str, Any]],
+        durable_dlq: bool,
+    ) -> None:
+        """Move a failed durable receipt only after the DLQ fsync succeeds."""
+        if durable_dlq or not self._buffer.is_durable():
+            await self._buffer.ack(batch)
+            return
+        log.error(
+            "Durable telemetry DLQ persistence failed; releasing %s broker receipts",
+            len(batch),
+        )
+        await self._buffer.release(batch)
 
     def stats(self) -> dict[str, Any]:
         """Return writer statistics."""

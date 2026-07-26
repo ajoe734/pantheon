@@ -15,6 +15,7 @@ from __future__ import annotations
 from collections import deque
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -118,7 +119,7 @@ class DeadLetterQueue:
         reason: str,
         retry_count: int = 0,
         original_attempt_count: int = 0,
-    ) -> None:
+    ) -> bool:
         """
         Route an event to the dead-letter queue with diagnostic tags.
 
@@ -149,11 +150,17 @@ class DeadLetterQueue:
         if len(self._entries) > self._max_memory_entries:
             self._entries = self._entries[-self._max_memory_entries:]
 
-        # Persist to spill file
+        # Persist to spill file. A durable buffer may be acknowledged only
+        # after this append is fsynced, otherwise a writer failure followed by
+        # process death could lose both the broker receipt and its replay copy.
+        persisted = False
         if self._spill_path:
             try:
                 with open(self._spill_path, "a") as f:
                     f.write(entry.to_json() + "\n")
+                    f.flush()
+                    os.fsync(f.fileno())
+                persisted = True
             except Exception as e:
                 log.error(f"DeadLetterQueue spill write failed: {e}")
 
@@ -171,6 +178,7 @@ class DeadLetterQueue:
             f"DeadLetterQueue: event {event_id} rejected. "
             f"tags={tags}, reason={reason}, total_rejected={self._total_rejected}"
         )
+        return persisted
 
     def get_entries(
         self,
