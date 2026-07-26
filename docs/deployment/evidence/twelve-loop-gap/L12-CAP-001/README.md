@@ -18,12 +18,16 @@ Admission: owner validation passed; independent review is still required
 - Ack, nack, dead-letter transfer, and expired-claim recovery are each atomic Redis
   transitions. A lost client response cannot create a state between removal from
   in-flight and durable ack/requeue/DLQ placement.
+- Buffered rebalance claims renew only while their worker-scoped token is still
+  unexpired. The consumer revalidates that claim and the durable processed marker
+  at the executor boundary, so a reclaimed slow buffer cannot execute twice.
 - Missing or mismatched runtime, binding, or capital-pool identity fails closed in
   governed-paper mode.
 - The paper fleet reconciler fails closed without a lease backend. Its production
   constructor uses a Redis token-fenced lease (or an explicitly configured,
-  file-locked backend), validates fencing before worker mutations, and rejects
-  stale renewal after succession.
+  file-locked backend), validates fencing before worker mutations and again after
+  subprocess spawn, rejects stale renewal after succession, and terminates a child
+  created while the lease expired before registering it.
 - Every Capital mutation is bound to a verified bearer-token service, actor, role,
   and tenant. Request-body spoofing and cross-tenant mutations are rejected.
 - No live-capital flag, deployment setting, or production posture was enabled.
@@ -36,19 +40,21 @@ The Redis integration drills use:
 redis@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
 ```
 
-The four task proof transcripts are:
+The six task proof transcripts are:
 
 - `redis_crash_before_ack_proof.txt`
 - `execution_error_dlq_proof.txt`
 - `leader_lease_convergence_proof.txt`
 - `six_binding_restart_isolation_drill.txt`
+- `slow_rebalance_claim_fence_proof.txt`
+- `blocked_spawn_fence_compensation_proof.txt`
 
-Post-merge owner validation at code head
-`e94774b260f12b2751eb98ab563df49422e8c5b1`:
+Owner validation at repaired code head
+`da77966f29e7eb9adea286f1dde04dfa138f1f88`:
 
 ```text
-services.execution.lean_runtime.test_signal_isolation + test_signal_consumer: 73 tests, OK
-services/execution/runtime-manager/test_paper_fleet_reconciler.py: 43 tests, OK
+services.execution.lean_runtime.test_signal_isolation + test_signal_consumer: 74 tests, OK
+services/execution/runtime-manager/test_paper_fleet_reconciler.py: 44 tests, OK
 services/capital/test_service.py: 59 passed, 1 deprecation warning
 git diff --check: passed
 ```
