@@ -90,6 +90,10 @@ async def test_store_crud_and_validation():
     assert fetched["controller_name"] == "TestController"
     assert fetched["desired_state_query"] == "SELECT 1"
     assert fetched["truth_level"] == "reconciled_live_proof"
+    assert fetched["desired_state"]["present"] is True
+    assert fetched["desired_state"]["checked_at"] == now.isoformat()
+    assert fetched["downstream_actual_state"]["status"] == "ready"
+    assert fetched["downstream_actual_state"]["checked_at"] == now.isoformat()
 
     # 4. List records
     records = await store.list_records("default", "test")
@@ -411,6 +415,54 @@ async def test_concurrent_partial_updates_preserve_monotonic_fields():
         "runtime:failure",
         "runtime:heartbeat",
     }
+
+
+@pytest.mark.asyncio
+async def test_store_isolates_same_loop_by_tenant_and_environment():
+    loop_id = "test-loop-isolation"
+    scopes = (
+        ("tenant-a", "dev"),
+        ("tenant-b", "dev"),
+        ("tenant-a", "prod"),
+    )
+    writers = {
+        scope: LoopControllerWriter(
+            DB_DSN,
+            tenant_id=scope[0],
+            environment=scope[1],
+            controller_id=f"controller-{scope[0]}-{scope[1]}",
+        )
+        for scope in scopes
+    }
+
+    import asyncpg
+    conn = await asyncpg.connect(DB_DSN)
+    await conn.execute(
+        "DELETE FROM loop_controller_records WHERE loop_id=$1",
+        loop_id,
+    )
+    await conn.close()
+
+    for index, scope in enumerate(scopes):
+        await writers[scope].record_heartbeat(
+            loop_id,
+            backlog=index,
+            evidence_refs=[f"runtime:{scope[0]}:{scope[1]}"],
+        )
+
+    store = LoopControllerStore(DB_DSN)
+    for index, scope in enumerate(scopes):
+        record = await store.get_record(loop_id, scope[0], scope[1])
+        assert record is not None
+        assert record["tenant_id"] == scope[0]
+        assert record["environment"] == scope[1]
+        assert record["backlog"] == index
+        scoped_records = await store.list_records(scope[0], scope[1])
+        matches = [row for row in scoped_records if row["loop_id"] == loop_id]
+        assert len(matches) == 1
+        assert matches[0]["controller_id"] == f"controller-{scope[0]}-{scope[1]}"
+
+    assert await store.get_record(loop_id, "tenant-b", "prod") is None
 
 
 @pytest.mark.asyncio

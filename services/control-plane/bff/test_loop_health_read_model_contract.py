@@ -20,6 +20,7 @@ sys.path.insert(0, str(BFF_DIR))
 import main as bff_main  # noqa: E402
 import loop_inventory as loop_inventory_model  # noqa: E402
 from read_store import ReadSurfaceStore  # noqa: E402
+from services.runtime_auth_inbound import encode_jwt_hs256  # noqa: E402
 
 
 TENANT_ID = "tenant-loop-health"
@@ -766,7 +767,32 @@ def test_loop_health_db_store_merge_with_file_store(monkeypatch) -> None:
 def test_loop_health_database_lookup_uses_authenticated_tenant_and_environment(
     monkeypatch,
 ) -> None:
-    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
+    secret = "loop-health-tenant-scope-secret"
+    issuer = "pantheon-loop-health-test"
+    audience = "bff-operators"
+    now = int(datetime.now(timezone.utc).timestamp())
+    token = encode_jwt_hs256(
+        {
+            "sub": "loop-health-tenant-viewer",
+            "roles": ["viewer"],
+            "tenant_id": TENANT_ID,
+            "iss": issuer,
+            "aud": audience,
+            "iat": now,
+            "exp": now + 300,
+        },
+        secret=secret,
+    )
+    strict_headers = {"Authorization": f"Bearer {token}"}
+
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "false")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", secret)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_ISSUER", issuer)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_AUDIENCE", audience)
+    monkeypatch.setenv("PANTHEON_BFF_MFA_REQUIRED", "false")
+    monkeypatch.delenv("PANTHEON_BFF_JWKS_URI", raising=False)
+    monkeypatch.delenv("PANTHEON_BFF_OIDC_DISCOVERY_URL", raising=False)
     monkeypatch.setenv(
         "DATABASE_URL",
         "postgresql://dummy_user:dummy_pass@localhost:5432/dummy_db",
@@ -797,14 +823,14 @@ def test_loop_health_database_lookup_uses_authenticated_tenant_and_environment(
         mock_list_records,
     )
     with _loop_health_client() as client:
-        response = client.get("/bff/v5/loop-health", headers=HEADERS)
+        response = client.get("/bff/v5/loop-health", headers=strict_headers)
         denied = client.get(
             "/bff/v5/loop-health",
-            headers={**HEADERS, "X-Tenant-Id": "tenant-other"},
+            headers={**strict_headers, "X-Tenant-Id": "tenant-other"},
         )
         denied_environment = client.get(
             "/bff/v5/loop-health?environment=prod",
-            headers=HEADERS,
+            headers=strict_headers,
         )
 
     assert response.status_code == 200, response.text
