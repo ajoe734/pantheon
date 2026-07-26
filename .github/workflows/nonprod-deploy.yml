@@ -170,6 +170,9 @@ jobs:
         working-directory: .agora-gate-controller
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
+          grep -Fxq \
+            'PANTHEON_DEPLOY_CONTROLLER_CONTRACT_VERSION="dev-root-isolation-v1"' \
+            scripts/deploy_nonprod_vm.sh
           python3 scripts/agora_compat_manifest.py deployment-gate \
             --manifest docs/contracts/agora/dev-compatibility-manifest.json \
             --frontend-root "${GITHUB_WORKSPACE}/.agora-frontend" \
@@ -484,6 +487,8 @@ jobs:
           DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
           DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR || '/home/lupin/pantheon' }}
+          PANTHEON_DEPLOY_WORKTREE_ROOT: ${{ vars.DEV_DEPLOY_WORKTREE_ROOT || '/home/lupin/pantheon-ci-deploy/managed-deploy-worktrees' }}
+          PANTHEON_DEV_SUPERVISOR_COMMAND_ROOT: ${{ vars.DEV_SUPERVISOR_COMMAND_ROOT || '/home/lupin/pantheon-ci-deploy/dev-root' }}
           DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS: ${{ vars.DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS || '300' }}
           DEV_BFF_CANONICAL_CORS_ORIGIN: ${{ vars.DEV_BFF_CANONICAL_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
           DEV_BFF_CORS_ORIGINS: ${{ vars.DEV_BFF_CORS_ORIGINS || vars.DEV_BFF_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
@@ -566,7 +571,7 @@ jobs:
           echo "Dev BFF auth profile: ${DEV_AUTH_PROFILE} (stub=${DEV_BFF_AUTH_STUB}, mode=${DEV_BFF_AUTH_MODE})"
           echo "PPL-ALLOC-009 dev proof enabled: ${DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED}"
           args=(
-            bash "${GITHUB_WORKSPACE}/.target/scripts/deploy_nonprod_vm.sh"
+            bash "${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/deploy_nonprod_vm.sh"
             --environment dev
             --component "${TARGET_COMPONENT}"
             --sha "${TARGET_SHA}"
@@ -639,7 +644,7 @@ jobs:
           REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
           DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
-          DEV_DEPLOY_WORKTREE: ${{ vars.DEV_DEPLOY_WORKTREE || '/home/lupin/pantheon-ci-deploy/dev-root' }}
+          DEV_DEPLOY_WORKTREE: ${{ vars.DEV_DEPLOY_WORKTREE || format('{0}/dev-root', vars.DEV_DEPLOY_WORKTREE_ROOT || '/home/lupin/pantheon-ci-deploy/managed-deploy-worktrees') }}
           GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-lupin-dev-20260719' }}
           DEPLOY_SHA: ${{ steps.target.outputs.sha }}
         run: |
@@ -687,7 +692,7 @@ jobs:
           REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
           DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
-          DEV_DEPLOY_WORKTREE: ${{ vars.DEV_DEPLOY_WORKTREE || '/home/lupin/pantheon-ci-deploy/dev-root' }}
+          DEV_DEPLOY_WORKTREE: ${{ vars.DEV_DEPLOY_WORKTREE || format('{0}/dev-root', vars.DEV_DEPLOY_WORKTREE_ROOT || '/home/lupin/pantheon-ci-deploy/managed-deploy-worktrees') }}
           GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-lupin-dev-20260719' }}
           DEV_BFF_PUBLIC_URL: ${{ vars.DEV_BFF_PUBLIC_URL || 'https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io' }}
           # The generic operator identity is intentionally not MFA-verified.

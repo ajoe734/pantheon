@@ -8,6 +8,8 @@
 
 set -euo pipefail
 
+PANTHEON_DEPLOY_CONTROLLER_CONTRACT_VERSION="dev-root-isolation-v1"
+
 PROJECT_ID="${PROJECT_ID:-pantheon-lupin-dev-20260719}"
 REMOTE_USER="${REMOTE_USER:-lupin}"
 
@@ -95,6 +97,7 @@ DEV_ASSISTANT_REPAIR_REMOTE_URL_EXECUTE_PLANS="${DEV_ASSISTANT_REPAIR_REMOTE_URL
 DEV_BFF_STUB_CAPABILITIES="${DEV_BFF_STUB_CAPABILITIES:-assistant.kernel.debug,assistant.kernel.repair}"
 DEV_STATUS_ROOT_HOST="${DEV_STATUS_ROOT_HOST:-}"
 DEV_STATUS_ROOT_CONTAINER="${DEV_STATUS_ROOT_CONTAINER:-/workspace/status-root}"
+DEV_SUPERVISOR_COMMAND_ROOT="${PANTHEON_DEV_SUPERVISOR_COMMAND_ROOT:-/home/lupin/pantheon-ci-deploy/dev-root}"
 DEV_MANAGEMENT_AI_STORE_BACKEND="${DEV_MANAGEMENT_AI_STORE_BACKEND:-postgres}"
 DEV_MANAGEMENT_AI_STORE_SCHEMA="${DEV_MANAGEMENT_AI_STORE_SCHEMA:-management_ai}"
 DEV_MANAGEMENT_AI_DB_USER="${DEV_MANAGEMENT_AI_DB_USER:-pantheon_management_ai}"
@@ -201,7 +204,7 @@ Options:
 
 Environment overrides:
   REMOTE_USER
-  PANTHEON_DEPLOY_WORKTREE_ROOT
+  PANTHEON_DEPLOY_WORKTREE_ROOT PANTHEON_DEV_SUPERVISOR_COMMAND_ROOT
   GITHUB_TOKEN
   DEV_VM DEV_ZONE DEV_REMOTE_DIR
   DEV_BFF_PUBLIC_HOST DEV_FE_PUBLIC_HOST DEV_FE_STATIC_ROOT
@@ -460,6 +463,7 @@ if [[ "$DRY_RUN" == "true" ]]; then
   info "dev_bff_stub_capabilities_configured=$([[ -n "${PANTHEON_BFF_STUB_CAPABILITIES:-}" ]] && echo true || echo false)"
   info "dev_status_root_host=${PANTHEON_STATUS_ROOT_HOST:-}"
   info "dev_status_root_container=${PANTHEON_STATUS_ROOT_CONTAINER:-}"
+  info "dev_supervisor_command_root=${DEV_SUPERVISOR_COMMAND_ROOT}"
   info "dev_docker_prune=${PANTHEON_DEV_DOCKER_PRUNE}"
   info "dev_compose_profiles=${DEV_COMPOSE_PROFILES:-<default-safe>}"
   info "source_refresh_egress_mode=${SOURCE_REFRESH_EGRESS_MODE}"
@@ -549,6 +553,7 @@ ssh_bash() {
   command_prefix+=" PANTHEON_DEPLOY_PROJECT_ID=$(shell_quote "$PROJECT_ID")"
   command_prefix+=" PANTHEON_REMOTE_DIR=$(shell_quote "$remote_dir")"
   command_prefix+=" PANTHEON_DEPLOY_WORKTREE_ROOT=$(shell_quote "${PANTHEON_DEPLOY_WORKTREE_ROOT:-}")"
+  command_prefix+=" PANTHEON_DEV_SUPERVISOR_COMMAND_ROOT=$(shell_quote "${DEV_SUPERVISOR_COMMAND_ROOT}")"
   command_prefix+=" PANTHEON_GITHUB_TOKEN=$(shell_quote "${GITHUB_TOKEN:-}")"
   command_prefix+=" PANTHEON_ALLOW_DIRTY_DEPLOY=$(shell_quote "$ALLOW_DIRTY")"
   command_prefix+=" PANTHEON_ALLOW_EXAMPLE_ENV=$(shell_quote "$ALLOW_EXAMPLE_ENV")"
@@ -1291,9 +1296,87 @@ git_fetch_origin_default_refs() {
 prepare_deploy_worktree() {
   local sha="${PANTHEON_DEPLOY_SHA}"
   local source_dir="${PANTHEON_REMOTE_DIR}"
-  local root="${PANTHEON_DEPLOY_WORKTREE_ROOT:-${HOME}/pantheon-ci-deploy}"
+  local root
+  local command_root="${PANTHEON_DEV_SUPERVISOR_COMMAND_ROOT:-/home/lupin/pantheon-ci-deploy/dev-root}"
+  if [[ -n "${PANTHEON_DEPLOY_WORKTREE_ROOT:-}" ]]; then
+    root="${PANTHEON_DEPLOY_WORKTREE_ROOT}"
+  elif [[ "${PANTHEON_DEPLOY_ENV}" == "dev" ]]; then
+    root="${HOME}/pantheon-ci-deploy/managed-deploy-worktrees"
+  else
+    # Preserve the established staging-live layout.  Dev alone needs the
+    # supervisor/deployment split because only dev hosts the task fleet.
+    root="${HOME}/pantheon-ci-deploy"
+  fi
   local deploy_dir="${root}/${PANTHEON_DEPLOY_ENV}-${PANTHEON_DEPLOY_COMPONENT}"
   local marker="${root}/.${PANTHEON_DEPLOY_ENV}-${PANTHEON_DEPLOY_COMPONENT}.marker"
+
+  if [[ "${PANTHEON_DEPLOY_ENV}" == "dev" ]]; then
+    # BEGIN_DEV_DEPLOY_PATH_ISOLATION_PY
+    python3 - "$root" "$deploy_dir" "$command_root" <<'PY'
+from pathlib import Path
+import sys
+
+
+def lexical_absolute_path(value: str, label: str, *, must_exist: bool) -> Path:
+    raw = Path(value)
+    if not raw.is_absolute():
+        raise SystemExit(f"{label} must be absolute: {raw}")
+    if any(part in {".", ".."} for part in raw.parts):
+        raise SystemExit(f"{label} must not contain dot traversal: {raw}")
+    for candidate in (raw, *raw.parents):
+        if candidate.is_symlink():
+            raise SystemExit(
+                f"{label} contains a symlink component: {candidate}"
+            )
+    if must_exist and not raw.is_dir():
+        raise SystemExit(f"{label} must be an existing directory: {raw}")
+    return raw.resolve(strict=must_exist)
+
+
+def contains(parent: Path, child: Path) -> bool:
+    try:
+        child.relative_to(parent)
+    except ValueError:
+        return False
+    return True
+
+
+deploy_root = lexical_absolute_path(
+    sys.argv[1],
+    "deploy worktree root",
+    must_exist=False,
+)
+deploy_dir = lexical_absolute_path(
+    sys.argv[2],
+    "deploy worktree",
+    must_exist=False,
+)
+command_root = lexical_absolute_path(
+    sys.argv[3],
+    "supervisor command root",
+    must_exist=True,
+)
+if contains(deploy_dir, command_root) or contains(command_root, deploy_dir):
+    raise SystemExit(
+        "deploy worktree and supervisor command root must be disjoint: "
+        f"deploy={deploy_dir} command={command_root}"
+    )
+deploy_root.mkdir(parents=True, exist_ok=True)
+created_deploy_root = lexical_absolute_path(
+    str(deploy_root),
+    "deploy worktree root",
+    must_exist=True,
+)
+if created_deploy_root != deploy_root:
+    raise SystemExit(
+        "deploy worktree root changed identity while being created: "
+        f"before={deploy_root} after={created_deploy_root}"
+    )
+PY
+    # END_DEV_DEPLOY_PATH_ISOLATION_PY
+  else
+    mkdir -p "$root"
+  fi
 
   cd "$source_dir"
   info "fetching origin"
@@ -1301,8 +1384,6 @@ prepare_deploy_worktree() {
   if ! git cat-file -e "${sha}^{commit}" 2>/dev/null; then
     git_fetch_origin "$sha"
   fi
-
-  mkdir -p "$root"
 
   if [[ -e "$deploy_dir" ]]; then
     [[ -f "$marker" ]] || error "refusing to reuse unmarked deploy path: ${deploy_dir}"
@@ -1778,6 +1859,7 @@ assert int(payload.get("total_sweeps_run") or 0) >= 1
 
 provision_dev_supervisor_watchdog() {
   local live_config="${PANTHEON_DEV_SUPERVISOR_CONFIG:-${HOME}/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json}"
+  local command_root="${PANTHEON_DEV_SUPERVISOR_COMMAND_ROOT:-/home/lupin/pantheon-ci-deploy/dev-root}"
   local attempt
   local linger_state=""
 
@@ -1786,14 +1868,14 @@ provision_dev_supervisor_watchdog() {
   [[ -n "${PANTHEON_STATUS_ROOT_HOST:-}" ]] \
     || error "supervisor watchdog provisioning requires PANTHEON_STATUS_ROOT_HOST"
 
-  info "provisioning split-root dev supervisor config and persistent watchdog"
-  python3 scripts/provision_live_supervisor_config.py \
-    --repo-config "$(pwd)/.orchestrator/config.json" \
+  info "provisioning split-root dev supervisor config and persistent watchdog from ${command_root}"
+  python3 "${command_root}/scripts/provision_live_supervisor_config.py" \
+    --repo-config "${command_root}/.orchestrator/config.json" \
     --live-config "$live_config" \
-    --command-root "$(pwd)" \
+    --command-root "$command_root" \
     --status-root "${PANTHEON_STATUS_ROOT_HOST}"
-  python3 scripts/check_config_drift.py \
-    --repo-config "$(pwd)/.orchestrator/config.json" \
+  python3 "${command_root}/scripts/check_config_drift.py" \
+    --repo-config "${command_root}/.orchestrator/config.json" \
     --live-config "$live_config" \
     --fix
 
@@ -1807,15 +1889,15 @@ provision_dev_supervisor_watchdog() {
     [[ "$linger_state" == "yes" ]] \
       || error "systemd user linger is not enabled for ${USER}"
   fi
-  python3 scripts/supervisor_watchdog_install.py \
-    --repo "$(pwd)" \
+  python3 "${command_root}/scripts/supervisor_watchdog_install.py" \
+    --repo "$command_root" \
     --config "$live_config" \
     --method auto \
     --start-now
 
   for attempt in $(seq 1 12); do
-    if python3 scripts/supervisor_runtime_health.py \
-      --repo "$(pwd)" \
+    if python3 "${command_root}/scripts/supervisor_runtime_health.py" \
+      --repo "$command_root" \
       --config-path "$live_config" \
       --require-watchdog; then
       info "persistent dev supervisor watchdog is healthy"
