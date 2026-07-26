@@ -32,10 +32,12 @@ Ran 4 tests in 0.001s
 OK
 
 ========================================================================
-SECTION 4 - recorded canonical state of the seven later live regressions
-           PRs #4217 / #4222 / #4225 (enable + direct merge) / #4226
-           / #4227 / #4230, plus the shared-credential entry points
+SECTION 4 - recorded canonical state of the eight later live regressions
+           PRs #4201 / #4217 / #4222 / #4225 (enable + direct merge)
+           / #4226 / #4227 / #4230, plus shared-credential entry points
 ========================================================================
+test_a_behind_pr_cannot_regain_auto_merge_once_it_catches_up (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_a_behind_pr_cannot_regain_auto_merge_once_it_catches_up)
+The stale base clearing changes nothing; the task is still unapproved. ... ok
 test_a_changes_requested_decision_blocks_the_merge (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_a_changes_requested_decision_blocks_the_merge)
 Canonical rejection blocks even with a GitHub APPROVED review present. ... ok
 test_a_payload_claim_cannot_downgrade_the_declared_policy (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_a_payload_claim_cannot_downgrade_the_declared_policy) ... ok
@@ -43,6 +45,10 @@ test_an_approved_task_never_unlocks_auto_merge_creation (test_task_review_merge_
 Approval unlocks an exact-head merge, never a standing merge grant. ... ok
 test_an_ordinary_progress_note_does_not_revoke_an_approval (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_an_ordinary_progress_note_does_not_revoke_an_approval)
 Only an explicit do-not-merge marker revokes; notes are not blanket. ... ok
+test_approval_binds_the_head_that_would_actually_merge (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_approval_binds_the_head_that_would_actually_merge)
+Refreshing a BEHIND branch produces a head nobody approved. ... ok
+test_pr_4201_behind_pr_may_not_retain_an_auto_merge_request (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_pr_4201_behind_pr_may_not_retain_an_auto_merge_request)
+Only `mergeStateStatus=BEHIND` was holding this back, not the gate. ... ok
 test_pr_4217_direct_merge_without_any_auto_merge_request (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_pr_4217_direct_merge_without_any_auto_merge_request)
 The gate cannot be an auto-merge-only guard: #4217 had none. ... ok
 test_pr_4217_owner_cannot_record_its_own_approval (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_pr_4217_owner_cannot_record_its_own_approval)
@@ -73,8 +79,19 @@ test_the_shared_credential_cannot_enable_auto_merge (test_task_review_merge_gate
 Creation half: the request #4230 armed at 23:33:20Z is refused. ... ok
 test_the_shared_credential_cannot_finalize_a_merge (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_the_shared_credential_cannot_finalize_a_merge)
 Finalization half: the same account completing the merge is refused. ... ok
+test_approved_but_behind_gated_pr_still_loses_its_auto_merge_request (test_task_review_merge_gate.IntegratorGateTests.test_approved_but_behind_gated_pr_still_loses_its_auto_merge_request)
+`waiting` for a new approval must not leave the old grant armed. ... ok
+test_approved_gated_pr_merges_the_exact_head_without_auto (test_task_review_merge_gate.IntegratorGateTests.test_approved_gated_pr_merges_the_exact_head_without_auto) ... ok
+test_approved_gated_pr_revokes_a_standing_auto_merge_request_first (test_task_review_merge_gate.IntegratorGateTests.test_approved_gated_pr_revokes_a_standing_auto_merge_request_first)
+PR #4227's hazard: never leave a merge grant armed for the next push. ... ok
+test_behind_gated_pr_has_auto_merge_revoked_before_any_merge_probe (test_task_review_merge_gate.IntegratorGateTests.test_behind_gated_pr_has_auto_merge_revoked_before_any_merge_probe)
+PR #4201's shape: BEHIND, unapproved, auto-merge still armed. ... ok
+test_concurrent_open_prs_for_one_task_branch_fail_closed (test_task_review_merge_gate.IntegratorGateTests.test_concurrent_open_prs_for_one_task_branch_fail_closed) ... ok
+test_gated_pr_needing_a_rebase_is_not_force_pushed (test_task_review_merge_gate.IntegratorGateTests.test_gated_pr_needing_a_rebase_is_not_force_pushed) ... ok
+test_merge_then_review_task_keeps_its_documented_behavior (test_task_review_merge_gate.IntegratorGateTests.test_merge_then_review_task_keeps_its_documented_behavior) ... ok
+test_unapproved_gated_pr_is_never_merged_and_auto_merge_is_revoked (test_task_review_merge_gate.IntegratorGateTests.test_unapproved_gated_pr_is_never_merged_and_auto_merge_is_revoked) ... ok
 
 ----------------------------------------------------------------------
-Ran 20 tests in 0.003s
+Ran 31 tests in 0.008s
 
 OK

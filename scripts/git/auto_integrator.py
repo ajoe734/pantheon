@@ -739,10 +739,15 @@ def integrate_candidate(
     # rather than after the checks happen to turn green.
     decision = gate.decide(candidate, pr, settings)
     gated = decision.policy == review_gate.POLICY_REVIEW_BEFORE_MERGE
+    # A gated PR must never hold an auto-merge request, whatever the gate went
+    # on to decide and whatever GitHub currently thinks of its merge state. PR
+    # #4201 sat BEHIND with auto-merge armed and no approval: only the stale
+    # base was holding it back, and it would have merged the moment the base
+    # caught up. Revoke first, then classify.
+    revoked = False
+    if gated and has_auto_merge_request(pr):
+        revoked = disable_auto_merge(number, runner, root=root, execute=execute)
     if gated and not decision.allow_merge:
-        revoked = False
-        if has_auto_merge_request(pr):
-            revoked = disable_auto_merge(number, runner, root=root, execute=execute)
         detail = (
             f"PR #{number} is gated by review-before-merge and not mergeable: "
             f"{decision.reason} - {decision.detail}."
@@ -834,11 +839,6 @@ def integrate_candidate(
     if merge_state and merge_state not in ALLOWED_DIRECT_MERGE_STATES:
         detail = f"PR #{number} is green but mergeStateStatus={merge_state}; waiting instead of merging."
         return IntegrationResult(candidate.task_id, "waiting", detail, number, url, dry_run=False, commands=runner.commands[:])
-    if gated and decision.revoke_auto_merge and has_auto_merge_request(pr):
-        # A gated PR lands through an explicit --match-head-commit merge. Any
-        # standing auto-merge request would outlive this call and arm the next
-        # push, so it is revoked even though this head is approved.
-        disable_auto_merge(number, runner, root=root, execute=True)
     runner.run(
         merge_command(
             number or 0,

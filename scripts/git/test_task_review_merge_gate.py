@@ -1,11 +1,12 @@
 """Fail-closed proofs for the canonical review-before-merge gate.
 
-The regression fixtures replay ten live 2026-07-26 governance failures from
-recorded canonical state: the premature auto-merges of Pantheon PRs #4212,
-#4213 and #4214, and the seven later events on PRs #4217, #4222, #4225
-(auto-merge enable, then direct merge), #4226, #4227 and #4230. They are data
-only: no test impersonates the owner or the reviewer, and nothing here writes
-canonical status, activity, or GitHub state.
+The regression fixtures replay eleven live 2026-07-26 governance failures
+from recorded canonical state: the premature auto-merges of Pantheon PRs
+#4212, #4213 and #4214, the seven later events on PRs #4217, #4222, #4225
+(auto-merge enable, then direct merge), #4226, #4227 and #4230, and the
+still-armed auto-merge request Human/Ops found on the BEHIND PR #4201. They
+are data only: no test impersonates the owner or the reviewer, and nothing
+here writes canonical status, activity, or GitHub state.
 """
 
 from __future__ import annotations
@@ -484,7 +485,7 @@ LIVE_NOW = datetime(2026, 7, 27, 0, 0, 0, tzinfo=timezone.utc)
 
 
 class LiveMergeGovernanceRegressionTests(unittest.TestCase):
-    """The seven live 2026-07-26 review-before-merge regressions.
+    """The eight live 2026-07-26 review-before-merge regressions.
 
     Every field is recorded state: task rows and audit events come from the
     canonical status root, PR fields from the GitHub API. None of these tests
@@ -498,9 +499,11 @@ class LiveMergeGovernanceRegressionTests(unittest.TestCase):
     | #4226 | auto-merge enable      | enabled after the head  |
     | #4227 | auto-merge enable      | enabled *before* the head it landed |
     | #4230 | auto-merge enable      | enabled after the head  |
+    | #4201 | auto-merge enable      | armed, held only by a BEHIND base |
 
-    All seven report ``reviews=[]`` and an empty ``reviewDecision``, and all
-    seven were merged by the one GitHub account every Pantheon agent shares.
+    All of them report ``reviews=[]`` and an empty ``reviewDecision``. The
+    seven that merged were merged by the one GitHub account every Pantheon
+    agent shares; #4201 did not merge only because its base was stale.
     """
 
     OWNER = "Claude"
@@ -1158,6 +1161,102 @@ class LiveMergeGovernanceRegressionTests(unittest.TestCase):
         self.assertFalse(decision.allow_auto_merge)
         self.assertEqual(decision.reason, "approval_revoked")
 
+    # -- #4201: auto-merge armed on a BEHIND PR, held only by a stale base --
+
+    TASK_4201 = "P0-TW-PAPER-ACTIVATE-001"
+
+    PR_4201 = {
+        "number": 4201,
+        "url": "https://github.com/ajoe734/pantheon/pull/4201",
+        "headRefName": f"task/{TASK_4201}",
+        "headRefOid": "dc5d7128bad1717b23b6c750076b0cb47a213ae3",
+        "baseRefName": "dev",
+        "isDraft": False,
+        "state": "OPEN",
+        "mergeStateStatus": "BEHIND",
+        "reviewDecision": "",
+        "autoMergeRequest": {
+            "enabledAt": "2026-07-26T17:30:00Z",
+            "enabledBy": {"login": GITHUB_ACTOR},
+            "mergeMethod": "MERGE",
+        },
+        "reviews": [],
+        "latestReviews": [],
+        "commits": [
+            {
+                "oid": "dc5d7128bad1717b23b6c750076b0cb47a213ae3",
+                "committedDate": "2026-07-26T17:22:48Z",
+            }
+        ],
+    }
+
+    def test_pr_4201_behind_pr_may_not_retain_an_auto_merge_request(self) -> None:
+        """Only `mergeStateStatus=BEHIND` was holding this back, not the gate."""
+
+        decision = self._decide(
+            task_id=self.TASK_4201,
+            pr=self.PR_4201,
+            row_extra={"owner": "Antigravity", "reviewer": "Claude"},
+            events=(
+                {
+                    "ts": "2026-07-26T18:01:45Z",
+                    "agent": "Antigravity",
+                    "type": "progress",
+                    "task_id": self.TASK_4201,
+                    "message": "Supervisor re-dispatched P0-TW-PAPER-ACTIVATE-001; task remains in progress.",
+                },
+            ),
+        )
+
+        self.assertFalse(decision.allow_merge)
+        self.assertFalse(decision.allow_auto_merge)
+        self.assertEqual(decision.reason, "review_not_approved")
+        self.assertTrue(decision.revoke_auto_merge)
+        self.assertTrue(decision.auto_merge_request["present"])
+
+    def test_a_behind_pr_cannot_regain_auto_merge_once_it_catches_up(self) -> None:
+        """The stale base clearing changes nothing; the task is still unapproved."""
+
+        decision = self._decide(
+            task_id=self.TASK_4201,
+            pr={**self.PR_4201, "mergeStateStatus": "CLEAN"},
+            row_extra={"owner": "Antigravity", "reviewer": "Claude"},
+        )
+
+        self.assertFalse(decision.allow_merge)
+        self.assertFalse(decision.allow_auto_merge)
+        self.assertTrue(decision.revoke_auto_merge)
+
+    def test_approval_binds_the_head_that_would_actually_merge(self) -> None:
+        """Refreshing a BEHIND branch produces a head nobody approved."""
+
+        refreshed_head = "e" * 40
+        decision = self._decide(
+            task_id=self.TASK_4201,
+            pr={
+                **self.PR_4201,
+                "mergeStateStatus": "CLEAN",
+                "autoMergeRequest": None,
+                "headRefOid": refreshed_head,
+                "commits": [{"oid": refreshed_head, "committedDate": "2026-07-26T23:50:00Z"}],
+            },
+            status="review_approved",
+            row_extra={"owner": "Antigravity", "reviewer": "Claude"},
+            events=(
+                {
+                    "ts": "2026-07-26T23:45:00Z",
+                    "agent": "Claude",
+                    "type": "review_approved",
+                    "task_id": self.TASK_4201,
+                    "message": "Approved head dc5d7128bad1717b23b6c750076b0cb47a213ae3.",
+                },
+            ),
+        )
+
+        self.assertFalse(decision.allow_merge)
+        self.assertEqual(decision.reason, "head_changed_after_approval")
+        self.assertEqual(decision.head_oid, refreshed_head)
+
     def test_a_payload_claim_cannot_downgrade_the_declared_policy(self) -> None:
         contract = gate.contract_from_task_row(
             {
@@ -1289,6 +1388,63 @@ class IntegratorGateTests(unittest.TestCase):
         self.assertIn("re-approves the new head", result.detail)
         self.assertFalse(any(command[:2] == ["git", "push"] for command in runner.commands))
         self.assertFalse(any(command[:3] == ["gh", "pr", "merge"] for command in runner.commands))
+
+    def test_behind_gated_pr_has_auto_merge_revoked_before_any_merge_probe(self) -> None:
+        """PR #4201's shape: BEHIND, unapproved, auto-merge still armed."""
+
+        pr = open_pr(
+            mergeStateStatus="BEHIND",
+            autoMergeRequest={"enabledAt": "2026-07-26T11:31:00Z"},
+        )
+        runner = self._runner(pr)
+
+        result = auto_integrator.integrate_candidate(
+            self.candidate,
+            self.settings,
+            runner,
+            execute=True,
+            gate=self._gate(tasks=[task_row(status="in_progress")], events=[]),
+        )
+
+        self.assertEqual(result.action, "blocked")
+        merge_commands = [c for c in runner.commands if c[:3] == ["gh", "pr", "merge"]]
+        self.assertEqual(merge_commands, [["gh", "pr", "merge", "100", "--disable-auto"]])
+
+    def test_approved_but_behind_gated_pr_still_loses_its_auto_merge_request(self) -> None:
+        """`waiting` for a new approval must not leave the old grant armed."""
+
+        runner = self._runner(
+            open_pr(
+                mergeStateStatus="BEHIND",
+                autoMergeRequest={"enabledAt": "2026-07-26T11:31:00Z"},
+            )
+        )
+        original_run = runner.run
+        state = {"calls": 0}
+
+        def run(args: Sequence[str], **kwargs: Any):  # type: ignore[override]
+            command = [str(arg) for arg in args]
+            if command[:3] == ["git", "rev-parse", "HEAD"]:
+                state["calls"] += 1
+                runner.commands.append(command)
+                from test_auto_integrator import completed
+
+                return completed(command, stdout=("before\n" if state["calls"] == 1 else "after\n"))
+            return original_run(args, **kwargs)
+
+        runner.run = run  # type: ignore[method-assign]
+
+        result = auto_integrator.integrate_candidate(
+            self.candidate,
+            self.settings,
+            runner,
+            execute=True,
+            gate=self._gate(tasks=[task_row()], events=[approval_event()]),
+        )
+
+        self.assertEqual(result.action, "waiting")
+        merge_commands = [c for c in runner.commands if c[:3] == ["gh", "pr", "merge"]]
+        self.assertEqual(merge_commands, [["gh", "pr", "merge", "100", "--disable-auto"]])
 
     def test_concurrent_open_prs_for_one_task_branch_fail_closed(self) -> None:
         from test_auto_integrator import FakeRunner, completed

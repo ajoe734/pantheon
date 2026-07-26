@@ -50,9 +50,9 @@ Section 1 of `prefix-reproduction.txt` replays the pre-fix helper against a
 synthetic repository whose canonical row is `in_progress` with an independent
 reviewer, and shows it enabling `--auto --merge` anyway.
 
-### 1.1 Seven more live regressions the same evening
+### 1.1 Eight more live regressions the same evening
 
-The first three were all the same failure through the same entry point. Seven
+The first three were all the same failure through the same entry point. Eight
 later events, each reported by Human/Ops on PR #4218, showed the gate needed
 to cover more than that:
 
@@ -65,6 +65,7 @@ to cover more than that:
 | #4226 | same | auto-merge at 23:06:04Z | 23:07:09Z → `1cf27337e` | Third unreviewed merge on one task branch; PR history changes nothing |
 | #4227 | `SUP-COMMAND-RUNTIME-REFRESH-001` | auto-merge at 23:10:54Z | 23:14:41Z → `e376955ff` | The request outlived its head and landed a different commit |
 | #4230 | `OPS-CI-PR-TRAILER-RANGE-001` | auto-merge at 23:33:20Z | 23:34:22Z → `643181a06` | Every required check green; green CI is not canonical review |
+| #4201 | `P0-TW-PAPER-ACTIVATE-001` | auto-merge still armed | — (held only by `BEHIND`) | A stale base is not a safety property; the grant must be revoked |
 
 Every one of these merges reports `reviews=[]`, an empty `reviewDecision`,
 `mergedBy: ajoe734`, and a canonical task row still `in_progress` with
@@ -116,7 +117,7 @@ at merge time is auditable afterwards. Closing the hole entirely would require
 branch protection to demand a review, which is a config change this task is
 explicitly forbidden to make.
 
-Section 4 of `prefix-reproduction.txt` replays all seven from recorded state.
+Section 4 of `prefix-reproduction.txt` replays all eight from recorded state.
 
 ## 2. The gate
 
@@ -231,8 +232,9 @@ and block, instead of silently resolving to the first row returned by GitHub.
 | 6 | Focused workflow tests cover branch, commit, push, PR, checks, independent review, merge, and evidence archive | pass | `validation.txt` |
 
 AC5 is met as written and then extended: `LiveMergeGovernanceRegressionTests`
-covers the seven later live regressions (#4217, #4222, #4225 auto-merge enable,
-#4225 direct merge, #4226, #4227, #4230) under the same data-only convention.
+covers the eight later live regressions (#4201, #4217, #4222, #4225 auto-merge
+enable, #4225 direct merge, #4226, #4227, #4230) under the same data-only
+convention.
 The full map of PR → entry point → fixture is the `live_regressions` table in
 `evidence.json`, and the per-entry-point controls are
 `merge_entry_point_coverage`.
@@ -242,7 +244,7 @@ The full map of PR → entry point → fixture is the `live_regressions` table i
 See `validation.txt` for the captured transcript.
 
 ```
-python3 scripts/git/test_task_review_merge_gate.py     Ran 59 tests - OK
+python3 scripts/git/test_task_review_merge_gate.py     Ran 64 tests - OK
 python3 scripts/git/test_auto_integrator.py            Ran  9 tests - OK
 python3 scripts/git/test_git_workflow_helpers.py       Ran 52 tests - OK
 python3 scripts/git/test_task_pr_triage.py             Ran 24 tests - OK
@@ -253,7 +255,7 @@ bash -n scripts/git/task_finalize.sh scripts/git/safe_pr.sh   syntax ok
 The pre-fix reproduction is `prefix-reproduction.txt`; its §1 shows the old
 helper enabling auto-merge on an unreviewed task and §2 shows the new helper
 refusing on the identical fixture. §3 replays PRs #4212/#4213/#4214 and §4
-replays the seven later live regressions.
+replays the eight later live regressions.
 
 ## 6. Residual risks
 

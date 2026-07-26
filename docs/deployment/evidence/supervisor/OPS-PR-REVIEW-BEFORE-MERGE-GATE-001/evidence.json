@@ -108,6 +108,12 @@
       "summary": "PR #4230 (task/OPS-CI-PR-TRAILER-RANGE-001) enabled auto-merge at 2026-07-26T23:33:20Z on head 1bb2b839bad3258d7c5fe353e957e6a5fec08545 and merged at 23:34:22Z as 643181a067ec5c344faac0766c69de0d5cfb32eb with every required check green, reviewDecision empty, reviews=[], latestReviews=[], mergedBy ajoe734, while the canonical task was in_progress with reviewer Codex2 since 23:28:46Z.",
       "live_source": "https://github.com/ajoe734/pantheon/pull/4218#issuecomment-5085938374; gh pr view 4230 --json autoMergeRequest,mergedAt,mergeCommit,reviewDecision,reviews,latestReviews; /home/lupin/pantheon/ai-activity-log.jsonl OPS-CI-PR-TRAILER-RANGE-001 slice",
       "root_cause": "Green CI was the only thing standing between the push and the merge. CI proves the delivery builds; it is not the independent canonical review the task contract requires, and no GitHub-side signal on a single shared account can supply that."
+    },
+    {
+      "id": "OF13",
+      "summary": "Open PR #4201 (task/P0-TW-PAPER-ACTIVATE-001, owner Antigravity, reviewer Claude) still had auto-merge armed on head dc5d7128bad1717b23b6c750076b0cb47a213ae3 with reviewDecision empty and reviews=[] while the canonical task was in_progress. Only mergeStateStatus=BEHIND kept it from merging; Human/Ops disabled auto-merge without touching the branch.",
+      "live_source": "https://github.com/ajoe734/pantheon/pull/4218#issuecomment-5085953216; gh pr view 4201 --json mergeStateStatus,autoMergeRequest,reviewDecision,reviews,headRefOid",
+      "root_cause": "The first pass revoked a standing auto-merge request only on the blocked path, and on the approved path only just before the merge call. A gated PR that resolves to waiting - which is exactly what BEHIND produces - kept its request. A stale base is not a safety property: it expires the moment the base catches up."
     }
   ],
   "live_regressions": [
@@ -164,6 +170,12 @@
       "task": "OPS-CI-PR-TRAILER-RANGE-001",
       "entry_point": "auto-merge enabled with all required checks green",
       "fixture": "LiveMergeGovernanceRegressionTests::test_pr_4230_green_ci_is_not_canonical_reviewer_approval, ::test_the_shared_credential_cannot_enable_auto_merge, ::test_the_shared_credential_cannot_finalize_a_merge"
+    },
+    {
+      "pr": 4201,
+      "task": "P0-TW-PAPER-ACTIVATE-001",
+      "entry_point": "auto-merge armed on a BEHIND PR; did not merge only because the base was stale",
+      "fixture": "LiveMergeGovernanceRegressionTests::test_pr_4201_behind_pr_may_not_retain_an_auto_merge_request, ::test_a_behind_pr_cannot_regain_auto_merge_once_it_catches_up, ::test_approval_binds_the_head_that_would_actually_merge; IntegratorGateTests::test_behind_gated_pr_has_auto_merge_revoked_before_any_merge_probe, ::test_approved_but_behind_gated_pr_still_loses_its_auto_merge_request"
     }
   ],
   "merge_entry_point_coverage": [
@@ -186,6 +198,11 @@
       "entry_point": "auto-merge creation (`gh pr merge --auto`, GitHub UI, or API)",
       "control": "allow_auto_merge is False for every gated task in every state, including an approved exact head; revoke_auto_merge is set whenever a request is standing",
       "proof": "scripts/git/test_task_review_merge_gate.py::LiveMergeGovernanceRegressionTests::test_the_shared_credential_cannot_enable_auto_merge, ::test_an_approved_task_never_unlocks_auto_merge_creation"
+    },
+    {
+      "entry_point": "an auto-merge request already standing on a gated PR",
+      "control": "the integrator revokes it immediately after the gate decision, before the CI and merge-state probes, so a PR that resolves to blocked or waiting cannot keep it; a BEHIND base is not treated as protection",
+      "proof": "scripts/git/test_task_review_merge_gate.py::IntegratorGateTests::test_behind_gated_pr_has_auto_merge_revoked_before_any_merge_probe, ::test_approved_but_behind_gated_pr_still_loses_its_auto_merge_request"
     },
     {
       "entry_point": "auto-merge finalization by GitHub",
@@ -253,7 +270,7 @@
       "id": "AC5",
       "statement": "Regression fixtures cover PRs 4212, 4213 and 4214 without impersonating owner or reviewer.",
       "status": "pass",
-      "note": "Extended beyond the canonical statement: the seven later live regressions on PRs 4217, 4222, 4225 (auto-merge enable and direct merge), 4226, 4227 and 4230 are covered by the same data-only convention. See the live_regressions table, and merge_entry_point_coverage for the per-entry-point controls.",
+      "note": "Extended beyond the canonical statement: the eight later live regressions on PRs 4201, 4217, 4222, 4225 (auto-merge enable and direct merge), 4226, 4227 and 4230 are covered by the same data-only convention. See the live_regressions table, and merge_entry_point_coverage for the per-entry-point controls.",
       "evidence_refs": [
         "scripts/git/test_task_review_merge_gate.py::PrematureMergeRegressionTests",
         "scripts/git/test_task_review_merge_gate.py::LiveMergeGovernanceRegressionTests",
@@ -288,7 +305,7 @@
       },
       {
         "command": "python3 scripts/git/test_task_review_merge_gate.py",
-        "conclusion": "Ran 59 tests - OK (38 from the first pass plus 21 covering the seven later live regressions and the shared-credential entry points)",
+        "conclusion": "Ran 64 tests - OK (38 from the first pass plus 26 covering the eight later live regressions, the shared-credential entry points, and the BEHIND auto-merge revocation)",
         "result": "pass"
       },
       {

@@ -146,8 +146,8 @@ head change after approval, an approval by anyone other than the assigned
 reviewer, missing canonical state, and two open PRs on one task branch all
 fail closed.
 
-Five further rules come from the 2026-07-26 live regressions on PRs #4217,
-#4222, #4225, #4226, #4227 and #4230:
+Six further rules come from the 2026-07-26 live regressions on PRs #4201,
+#4217, #4222, #4225, #4226, #4227 and #4230:
 
 - **Every entry point, not just `--auto`.** #4217 landed through a plain
   `gh pr merge` with no auto-merge request at all. Merge authority is denied
@@ -160,6 +160,11 @@ Five further rules come from the 2026-07-26 live regressions on PRs #4217,
 - **An auto-merge request is itself the grant.** #4222 enabled auto-merge
   and merged 67 seconds later. Enabling it is what the gate refuses; waiting
   until merge time is too late.
+- **A stale base is not protection.** PR #4201 sat `BEHIND` with auto-merge
+  armed and no approval; it would have merged the moment the base caught up.
+  The integrator revokes a standing request on any gated PR immediately after
+  the gate decision, before the CI and merge-state probes, so a PR that
+  resolves to `blocked` or `waiting` cannot keep one.
 - **An auto-merge request must never outlive its head.** #4227 enabled
   auto-merge at 23:10:54Z, the head moved at 23:13:21Z, and GitHub merged
   that newer head at 23:14:41Z. A gated PR therefore has any standing

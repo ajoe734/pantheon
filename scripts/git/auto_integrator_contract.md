@@ -46,9 +46,11 @@ For each eligible task, capped by `max_tasks_per_run`:
    merge commit is already in `origin/dev`; if found, reconcile the task to
    `done` and stop.
 4. If no open or already-merged PR exists, create a missing-PR unblock task.
-5. Evaluate the review-before-merge gate against this exact PR head. A gated
-   PR that is not approved is blocked here, before the CI probe, and any
-   pending auto-merge request on it is revoked.
+5. Evaluate the review-before-merge gate against this exact PR head. Any
+   pending auto-merge request on a gated PR is revoked here, before the CI and
+   merge-state probes, whatever the gate decided - a PR that ends up `waiting`
+   because it is `BEHIND` must not keep one. A gated PR that is not approved is
+   then blocked at this step.
 6. Require green GitHub status rollup.
 7. Fetch `origin/dev` and the task branch.
 8. Create a temporary detached worktree for the task branch.
@@ -59,9 +61,8 @@ For each eligible task, capped by `max_tasks_per_run`:
     auto-merge so CI can re-run. A gated task branch is never pushed; if it
     needs a refreshed head the result is `waiting` and the owner must rebase
     and obtain a new approval for the new head.
-12. If no push was needed and the PR is still mergeable, revoke any standing
-    auto-merge request on a gated PR, then run `gh pr merge`, with
-    `--match-head-commit <approved-oid>` for a gated task so a concurrent
+12. If no push was needed and the PR is still mergeable, run `gh pr merge`,
+    with `--match-head-commit <approved-oid>` for a gated task so a concurrent
     finalize cannot slip a different head into the merge.
 13. After merge, run `scripts/ai_status.py done` as the task owner so the normal
     delivery gate archives the task.
