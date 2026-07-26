@@ -1,6 +1,6 @@
 # L12-ALPHA-001 authoritative Alpha replication evidence
 
-Status: ready for independent `Codex2` review.
+Status: independently reviewed and approved for the review-fix PR to `dev`.
 
 This packet proves the implementation boundary required by `L12-ALPHA-001`:
 an approved immutable StrategySpec is rechecked by its canonical registry ID,
@@ -33,6 +33,19 @@ its digest in [`evidence.sha256`](evidence.sha256).
   `d1d2405122918a3f5c63f5b6cfbd6b2e5284c9a8`
 - Replay/receipt review fixes:
   `288c21eadbfa9995bf50a3d54ab3307cdbf055bc`
+- Reviewer-approved fix tip:
+  `03264cb0eaebd2bf9d2ddcf002096e57fa731c57`
+- Initial delivery: PR
+  [#4147](https://github.com/ajoe734/pantheon/pull/4147), merged as
+  `dd9d83722b24598a623692c2b6ca8b80f159fe04`
+
+## Independent review approval
+
+`Codex2` approved the reviewer-fix tip after independently rerunning the
+60-test scoped suite and 15-case acceptance subset. The fix tip's Commit
+trailers, Runtime mirror guard, and Smoke acceptance checks all completed
+successfully. Owner closeout reran the same suites and the integrity checks
+below before publication.
 
 ## Acceptance proof
 
@@ -53,11 +66,11 @@ PYTHONPATH=/tmp/l12-alpha-pydeps:. python3 -m pytest -q -p no:cacheprovider \
   services/research/experiment_orchestrator \
   services/research/experiments \
   services/research/tests/test_research_orchestrator_http_service.py
-60 passed, 11 warnings in 24.41s
+60 passed, 11 warnings in 12.56s
 
 PYTHONPATH=/tmp/l12-alpha-pydeps:. python3 -m pytest -q -p no:cacheprovider \
   <15 approved/tenant/lease/DLQ/ABA/crash/authority-ref cases>
-15 passed, 1 warning in 5.17s
+15 passed, 1 warning in 4.96s
 
 python3 -m py_compile \
   services/research/alpha_replication/queue.py \
