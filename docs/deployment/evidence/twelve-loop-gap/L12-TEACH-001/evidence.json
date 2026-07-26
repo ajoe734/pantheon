@@ -4,7 +4,7 @@
   "owner": "Codex2",
   "reviewer": "Codex",
   "status": "ready_for_review",
-  "generated_at": "2026-07-26T11:37:20Z",
+  "generated_at": "2026-07-26T12:21:41Z",
   "scope": {
     "target_repo": "pantheon",
     "merge_target": "dev",
@@ -14,7 +14,10 @@
     "authority_anchor_commit": "184b5a54d7816e40841a1c52fd2c970d6c0ade36",
     "reviewer_hardening_anchor_commit": "cc8592176e62907794e3a8943c13d0bd74524bc6",
     "original_delivery_pr": 4149,
-    "original_merge_commit": "6636507f274ffcaf4b6d42b1c3cb8adb09dd49f5"
+    "original_merge_commit": "6636507f274ffcaf4b6d42b1c3cb8adb09dd49f5",
+    "reviewer_hardening_pr": 4166,
+    "reviewer_hardening_source_head": "408db61c5e8884d603555db03f2579ae071a4bb3",
+    "reviewer_hardening_merge_commit": "022bb35f4cd93c82571fcaf2799905a7043efcd2"
   },
   "inbound_authority": {
     "bearer_verified": true,
@@ -104,7 +107,7 @@
   },
   "hosted_terminal_readback": {
     "status": "not_claimed",
-    "reason": "The reviewer-hardening follow-up is not merged or activated; local/fake records are not hosted proof.",
+    "reason": "The reviewer-hardening follow-up is merged to dev but is not yet proven active on a hosted runtime; local/fake records are not hosted proof.",
     "activation_task": "L12-MANIFEST-001",
     "service_boundary_verification_task": "L12-VERIFY-LEARN-001",
     "hosted_acceptance_task": "L12-HOSTED-001"
@@ -112,7 +115,7 @@
   "validation": [
     {
       "command": "TRAINING_SESSION_TEST_POSTGRES_DSN=<local-dev-dsn> PYTHONPATH=services/training-session/tests:services/training-session:. /home/lupin/pantheon/.venv/bin/python -m pytest -q -p no:cacheprovider services/training-session",
-      "result": "129 passed, 1 warning in 29.71s"
+      "result": "129 passed, 1 warning in 31.16s"
     },
     {
       "command": "PYTHONPATH=. /home/lupin/pantheon/.venv/bin/python -m py_compile services/training-session/inbound_authority.py services/training-session/main.py services/training-session/store.py services/training-session/tests/test_inbound_authority.py services/training-session/tests/test_postgres_event_store.py",
@@ -141,6 +144,6 @@
     "Docker Compose/BFF credential forwarding and worker activation are outside this task artifact scope and belong to L12-MANIFEST-001.",
     "A real hosted persona terminal readback must be captured by L12-VERIFY-LEARN-001/L12-HOSTED-001 after the exact merged commit is deployed.",
     "The full suite warning is the existing Starlette httpx deprecation warning.",
-    "PR #4149 is merged, but this reviewer-hardening follow-up remains unhosted until its follow-up PR merges and downstream deployment selects it."
+    "PR #4166 is merged, but the reviewer-hardening delivery remains unhosted until downstream deployment selects and proves its exact merged commit."
   ]
 }
