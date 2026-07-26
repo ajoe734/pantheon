@@ -15,3 +15,8 @@ Generated in the worker workspace because the supervisor root did not have a tas
 ## Coordination Root
 - Auto workers inherit `PANTHEON_STATUS_ROOT`, `PANTHEON_COMMAND_ROOT`, and `PANTHEON_COMMAND_RUNTIME_SHA` from the supervisor.
 - Run `$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh` for governed status changes; git, tests, and product edits continue in this task worktree while canonical status, activity, archive and lock writes are routed to the validated central root.
+
+## Implementation Evidence
+- `write_task_brief` now reads the active task and archived dependencies under the configured canonical task-state lock, with `TaskResolver` bound to that same status root.
+- The run_once/process_queue regression trace records exactly one real `task_state` acquisition after `runtime_admission`; full task fields, archived dependency status, and artifacts render without the minimal-context fallback.
+- Verified with `PYTHONPATH=.orchestrator python3 -m unittest test_supervisor` (334 tests), clean-env `test_common` (90 tests), and focused post-merge regression execution.
