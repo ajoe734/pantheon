@@ -720,6 +720,7 @@ class TelemetryIngestService:
         schema_path: Optional[str] = None,
         storage_dir: Optional[str] = None,
         buffer_backend: str = "memory",
+        buffer: Optional[DurableBuffer] = None,
         buffer_maxsize: int = 100_000,
         buffer_redis_url: str = "redis://localhost:6379/0",
         buffer_nats_url: str = "nats://localhost:4222",
@@ -753,6 +754,13 @@ class TelemetryIngestService:
         buffer_backend : str
             "jetstream" (deployed default), "redis", or explicit test-only
             "memory".
+        buffer : DurableBuffer, optional
+            Pre-built buffer instance used instead of the ``buffer_backend``
+            factory. This is an in-process wiring seam for tests and embedders
+            that supply their own broker adapter; it is deliberately not
+            reachable from configuration, and it grants no durability of its
+            own. Infrastructure health admission trusts ``is_durable()`` alone,
+            so injecting a volatile buffer here still fails closed.
         buffer_maxsize : int
             Max events in buffer before backpressure.
         buffer_redis_url : str
@@ -821,19 +829,22 @@ class TelemetryIngestService:
         self._infrastructure_health_schema = self._extract_infrastructure_health_schema()
 
         # Buffer
-        buffer_kwargs: dict[str, Any] = {"maxsize": buffer_maxsize}
-        if buffer_backend == "redis":
-            buffer_kwargs["redis_url"] = buffer_redis_url
-        elif buffer_backend in {"jetstream", "nats", "nats_jetstream"}:
-            buffer_kwargs.update(
-                {
-                    "nats_url": buffer_nats_url,
-                    "stream_name": buffer_stream_name,
-                    "subject": buffer_subject,
-                    "durable_name": buffer_durable_name,
-                }
-            )
-        self._buffer: DurableBuffer = create_buffer(backend=buffer_backend, **buffer_kwargs)
+        if buffer is not None:
+            self._buffer: DurableBuffer = buffer
+        else:
+            buffer_kwargs: dict[str, Any] = {"maxsize": buffer_maxsize}
+            if buffer_backend == "redis":
+                buffer_kwargs["redis_url"] = buffer_redis_url
+            elif buffer_backend in {"jetstream", "nats", "nats_jetstream"}:
+                buffer_kwargs.update(
+                    {
+                        "nats_url": buffer_nats_url,
+                        "stream_name": buffer_stream_name,
+                        "subject": buffer_subject,
+                        "durable_name": buffer_durable_name,
+                    }
+                )
+            self._buffer = create_buffer(backend=buffer_backend, **buffer_kwargs)
 
         # Dead-letter queue
         dlq_spill = dlq_spill_path
@@ -911,6 +922,7 @@ class TelemetryIngestService:
         self._infrastructure_health_conflicts = 0
         self._infrastructure_health_in_flight = 0
         self._infrastructure_health_fenced = 0
+        self._infrastructure_health_non_durable = 0
         self._infrastructure_health_rejected = 0
 
         # State
@@ -1346,6 +1358,41 @@ class TelemetryIngestService:
                 )
         return found
 
+    def _buffer_durability_defect(self) -> Optional[str]:
+        """Return why the configured buffer cannot back an admission, or None.
+
+        Infrastructure health admission is authoritative: a 202 plus a committed
+        ledger receipt is a promise that the event survives this process. A
+        volatile buffer cannot keep that promise — a crash erases the only copy
+        of the event while the committed receipt makes every later producer
+        retry an idempotent ``duplicate``, so the observation is permanently
+        lost with no error anywhere. The buffer's own ``is_durable()`` is the
+        single authority here; there is no configuration, environment variable,
+        or event field that can assert durability on a backend's behalf.
+        """
+
+        buffer = self._buffer
+        is_durable = getattr(buffer, "is_durable", None)
+        if not callable(is_durable):
+            return (
+                f"Configured telemetry buffer {type(buffer).__name__!r} does not "
+                "implement the durable broker contract"
+            )
+        try:
+            durable = bool(is_durable())
+        except Exception as exc:  # noqa: BLE001 - an unprovable buffer is not durable
+            return (
+                f"Configured telemetry buffer {type(buffer).__name__!r} could not "
+                f"prove durability: {exc}"
+            )
+        if not durable:
+            return (
+                f"Configured telemetry buffer {type(buffer).__name__!r} is volatile; "
+                "infrastructure health admission requires a durable broker so an "
+                "admitted event survives process crash, restart, and replica failover"
+            )
+        return None
+
     def _reject_infrastructure_health(
         self,
         event: dict[str, Any],
@@ -1388,11 +1435,15 @@ class TelemetryIngestService:
            spoof trading binding identity.
         3. Validate against the authoritative non-trading schema. Fail closed
            when that schema or its validator is unavailable.
-        4. Take a leased, fenced reservation on the stable event_id in the
+        4. Fail closed *before* any reservation when the configured buffer is
+           not a durable broker, so no volatile enqueue can ever be recorded as
+           an admitted event.
+        5. Take a leased, fenced reservation on the stable event_id in the
            durable admission ledger. A live reservation held by another attempt
            is answered as retryable, never as success.
-        5. Enqueue for durable persistence, then commit the reservation. A
-           failed enqueue releases it so the producer's retry still works.
+        6. Enqueue for durable persistence, re-check durability, then commit the
+           reservation. A failed enqueue releases it so the producer's retry
+           still works.
 
         Only a committed reservation — one backed by a durable enqueue receipt —
         makes a later retry an idempotent ``duplicate``.
@@ -1451,6 +1502,20 @@ class TelemetryIngestService:
                 event,
                 "INFRA_EVENT_ID_REQUIRED",
                 "infrastructure health telemetry requires a stable event_id",
+            )
+
+        # Durability is checked before the reservation, not after the enqueue.
+        # A reservation taken against a volatile buffer could still be committed
+        # by this attempt, and a committed receipt is irreversible: it turns
+        # every later retry of a lost event into a successful duplicate.
+        durability_defect = self._buffer_durability_defect()
+        if durability_defect is not None:
+            self._infrastructure_health_non_durable += 1
+            return self._reject_infrastructure_health(
+                event,
+                "INFRA_BUFFER_NOT_DURABLE",
+                durability_defect,
+                dead_letter=False,
             )
 
         ledger = self._infrastructure_health_ledger
@@ -1528,6 +1593,21 @@ class TelemetryIngestService:
                 tag=TAG_BUFFER_OVERFLOW,
             )
 
+        # Re-prove durability before the commit makes the receipt permanent. A
+        # backend that degraded to a volatile path during this enqueue must not
+        # be able to convert an unsafe write into an idempotent success; release
+        # the claim so the producer's retry is still admissible.
+        durability_defect = self._buffer_durability_defect()
+        if durability_defect is not None:
+            ledger.release(event_id, token)
+            self._infrastructure_health_non_durable += 1
+            return self._reject_infrastructure_health(
+                event,
+                "INFRA_BUFFER_NOT_DURABLE",
+                durability_defect,
+                dead_letter=False,
+            )
+
         commit_outcome = ledger.commit(event_id, fingerprint, token)
         if commit_outcome == ledger.OUTCOME_CONFLICT:
             self._infrastructure_health_conflicts += 1
@@ -1567,14 +1647,19 @@ class TelemetryIngestService:
 
     def infrastructure_health_stats(self) -> dict[str, Any]:
         ledger = self._infrastructure_health_ledger
+        durability_defect = self._buffer_durability_defect()
         return {
             "schema_version": INFRASTRUCTURE_HEALTH_SCHEMA_VERSION,
             "schema_loaded": self._infrastructure_health_schema is not None,
+            "buffer_type": type(self._buffer).__name__,
+            "buffer_durable": durability_defect is None,
+            "buffer_durability_defect": durability_defect,
             "admitted": self._infrastructure_health_admitted,
             "duplicates": self._infrastructure_health_duplicates,
             "conflicts": self._infrastructure_health_conflicts,
             "in_flight_rejections": self._infrastructure_health_in_flight,
             "fenced_rejections": self._infrastructure_health_fenced,
+            "non_durable_rejections": self._infrastructure_health_non_durable,
             "rejected": self._infrastructure_health_rejected,
             "ledger": ledger.stats() if ledger is not None else {
                 "path": None,

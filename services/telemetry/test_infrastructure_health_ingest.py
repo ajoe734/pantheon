@@ -22,9 +22,11 @@ Run with:
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import json
 import multiprocessing
 import os
+import re
 import shutil
 import signal
 import sys
@@ -34,12 +36,14 @@ import time
 import types
 import unittest
 from pathlib import Path
+from typing import Any, Optional
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 import services.telemetry.main as _main
 from services.runtime_auth_inbound import encode_jwt_hs256
+from services.telemetry.buffer import DurableBuffer
 from services.telemetry.dead_letter import TAG_BINDING_MISMATCH, TAG_SCHEMA_VIOLATION
 from services.telemetry.ingest_svc import (
     INFRASTRUCTURE_HEALTH_LEDGER_FILENAME,
@@ -72,6 +76,8 @@ _STRICT_ENV = {
 # healthy admission never races its own lease.
 _CRASH_LEASE_SECONDS = 2.0
 
+_BROKER_FILENAME = "infrastructure_health_broker.jsonl"
+
 _KNOWN_BINDING_ID = "infra-authority-binding-001"
 _KNOWN_BINDING = types.SimpleNamespace(
     binding_id=_KNOWN_BINDING_ID,
@@ -93,6 +99,185 @@ class _StubBindingStore:
 
     def get_binding(self, binding_id: str):
         return _KNOWN_BINDING if binding_id == _KNOWN_BINDING_ID else None
+
+
+# ---------------------------------------------------------------------------
+# Durable broker contract stand-in
+# ---------------------------------------------------------------------------
+
+
+class _DurableFileBroker(DurableBuffer):
+    """Test-only stand-in for the deployed durable broker (JetStream/Redis).
+
+    It is defined in this test module — never in ``buffer.create_buffer`` — so
+    no deployment configuration can select it and it can never become a
+    production volatile bypass. What it does provide is the half of the broker
+    contract this task depends on, honestly:
+
+    * ``put`` appends the event to an append-only log and ``fsync``s it before
+      returning ``True``, so the return of ``put`` is a real durability point:
+      a ``SIGKILL`` one instruction later still leaves the event readable by
+      another process;
+    * an event stays readable until the canonical writer acknowledges it, so an
+      un-acked event is redelivered after a crash instead of being lost;
+    * concurrent replicas serialise on a POSIX advisory lock over the same log,
+      exactly like two ingest processes sharing one stream.
+
+    ``is_durable()`` is therefore the truth, not a claim: everything a caller is
+    told about admission is backed by an fsync'd record on disk.
+    """
+
+    STATE_ENQUEUED = "enqueued"
+    STATE_ACKED = "acked"
+
+    def __init__(self, path: str, maxsize: int = 100_000):
+        self._path = Path(path)
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._path.touch(exist_ok=True)
+        self._maxsize = maxsize
+        self._closed = False
+        self._in_flight: list[tuple[int, dict[str, Any]]] = []
+
+    # -- durable log primitives --
+
+    def _append_locked(self, record: dict[str, Any]) -> None:
+        with self._path.open("r+b") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                handle.seek(0, os.SEEK_END)
+                line = json.dumps(
+                    record, separators=(",", ":"), sort_keys=True
+                ).encode("utf-8")
+                handle.write(line + b"\n")
+                handle.flush()
+                # The durability point. A crash after this fsync cannot lose the
+                # event, which is exactly what a broker ACK promises.
+                os.fsync(handle.fileno())
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+    def _records(self) -> list[dict[str, Any]]:
+        return _broker_records(str(self._path))
+
+    def _pending_records(self) -> list[dict[str, Any]]:
+        return _broker_pending_records(str(self._path))
+
+    def _next_receipt_id(self) -> int:
+        return len(self._records())
+
+    # -- DurableBuffer contract --
+
+    async def start(self) -> None:
+        return None
+
+    async def put(self, event: dict[str, Any], timeout: Optional[float] = None) -> bool:
+        if self._closed:
+            return False
+        if len(self._pending_records()) >= self._maxsize:
+            return False
+        self._append_locked(
+            {
+                "receipt_id": self._next_receipt_id(),
+                "state": self.STATE_ENQUEUED,
+                "event": event,
+            }
+        )
+        return True
+
+    async def get(self, timeout: Optional[float] = None) -> Optional[dict[str, Any]]:
+        deadline = time.monotonic() + (timeout if timeout is not None else 1.0)
+        while True:
+            claimed = {receipt for receipt, _ in self._in_flight}
+            for record in self._pending_records():
+                if record["receipt_id"] not in claimed:
+                    self._in_flight.append((record["receipt_id"], record["event"]))
+                    return record["event"]
+            if time.monotonic() >= deadline:
+                return None
+            await asyncio.sleep(0.01)
+
+    async def ack(self, events: list[dict[str, Any]]) -> None:
+        for event in events:
+            for index, (receipt_id, in_flight_event) in enumerate(self._in_flight):
+                if in_flight_event == event:
+                    self._append_locked(
+                        {"receipt_id": receipt_id, "state": self.STATE_ACKED}
+                    )
+                    self._in_flight.pop(index)
+                    break
+
+    async def release(self, events: list[dict[str, Any]]) -> bool:
+        for event in events:
+            for index, (_, in_flight_event) in enumerate(self._in_flight):
+                if in_flight_event == event:
+                    self._in_flight.pop(index)
+                    break
+        return True
+
+    def is_durable(self) -> bool:
+        return True
+
+    def size(self) -> int:
+        return len(self._pending_records())
+
+    def capacity(self) -> Optional[int]:
+        return self._maxsize
+
+    async def close(self) -> None:
+        self._closed = True
+
+    def is_closed(self) -> bool:
+        return self._closed
+
+    async def drain(self) -> list[dict[str, Any]]:
+        claimed = {receipt for receipt, _ in self._in_flight}
+        drained = []
+        for record in self._pending_records():
+            if record["receipt_id"] not in claimed:
+                self._in_flight.append((record["receipt_id"], record["event"]))
+                drained.append(record["event"])
+        return drained
+
+
+def _broker_records(path: str) -> list[dict]:
+    target = Path(path)
+    if not target.exists():
+        return []
+    return [
+        json.loads(line)
+        for line in target.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def _broker_pending_records(path: str) -> list[dict]:
+    """Records that reached durable storage and were never acknowledged."""
+    enqueued: dict[int, dict] = {}
+    for record in _broker_records(path):
+        if record.get("state") == _DurableFileBroker.STATE_ENQUEUED:
+            enqueued[record["receipt_id"]] = record
+        elif record.get("state") == _DurableFileBroker.STATE_ACKED:
+            enqueued.pop(record["receipt_id"], None)
+    return list(enqueued.values())
+
+
+def _broker_durable_events(path: str, event_id: str) -> list[dict]:
+    """Every copy of *event_id* that ever reached durable storage."""
+    return [
+        record["event"]
+        for record in _broker_records(path)
+        if record.get("state") == _DurableFileBroker.STATE_ENQUEUED
+        and record.get("event", {}).get("event_id") == event_id
+    ]
+
+
+def _broker_retained_events(path: str, event_id: str) -> list[dict]:
+    """Copies of *event_id* still awaiting the canonical write."""
+    return [
+        record["event"]
+        for record in _broker_pending_records(path)
+        if record.get("event", {}).get("event_id") == event_id
+    ]
 
 
 def _service_token(
@@ -212,6 +397,128 @@ def _replica_reserve_then_hang(ledger_path: str, event: dict, connection) -> Non
         time.sleep(0.2)
 
 
+_CRASH_BEFORE_PUT = "before_put"
+_CRASH_AFTER_DURABLE_PUT = "after_durable_put"
+_CRASH_AFTER_COMMIT = "after_commit"
+
+
+def _crash_matrix_child(
+    storage_dir: str,
+    ledger_path: str,
+    broker_path: str,
+    event: dict,
+    crash_point: str,
+    connection,
+) -> None:
+    """Child process: run the real admission path and stop dead at *crash_point*.
+
+    Nothing about the ingest service is faked here — only the moment the process
+    stops existing is chosen, so the parent can SIGKILL it in exactly the window
+    it wants to reason about. The child reports when it has reached that window;
+    it never reports an outcome, because a process that dies mid-admission is
+    precisely a producer that never learned whether it succeeded.
+    """
+
+    async def run() -> None:
+        broker = _DurableFileBroker(broker_path)
+        svc = TelemetryIngestService(
+            schema_path=_SCHEMA_PATH,
+            storage_dir=storage_dir,
+            buffer=broker,
+            infrastructure_health_ledger_path=ledger_path,
+            infrastructure_health_lease_seconds=_CRASH_LEASE_SECONDS,
+            # Keep the canonical writer from acknowledging inside the test
+            # window, so the parent observes the broker exactly as a crash left it.
+            batch_size=10_000,
+            batch_interval=3600.0,
+        )
+        await svc.start()
+
+        reached = asyncio.Event()
+        original_put = broker.put
+        ledger = svc._infrastructure_health_ledger
+        assert ledger is not None
+
+        if crash_point == _CRASH_BEFORE_PUT:
+
+            async def _stop_before_put(pending, timeout=None):
+                reached.set()
+                await asyncio.Event().wait()
+                return True
+
+            broker.put = _stop_before_put  # type: ignore[assignment]
+        elif crash_point == _CRASH_AFTER_DURABLE_PUT:
+
+            async def _stop_after_put(pending, timeout=None):
+                enqueued = await original_put(pending, timeout=timeout)
+                reached.set()
+                await asyncio.Event().wait()
+                return enqueued
+
+            broker.put = _stop_after_put  # type: ignore[assignment]
+        elif crash_point == _CRASH_AFTER_COMMIT:
+            original_commit = ledger.commit
+
+            def _stop_after_commit(event_id, fingerprint, token):
+                original_commit(event_id, fingerprint, token)
+                # Report from here rather than from a task: this call blocks the
+                # event loop, which is what a process dying at this instant does.
+                connection.send(crash_point)
+                connection.close()
+                while True:  # pragma: no cover - the parent SIGKILLs this process
+                    time.sleep(0.2)
+
+            ledger.commit = _stop_after_commit  # type: ignore[assignment]
+        else:  # pragma: no cover - guarded by the caller
+            raise ValueError(f"unknown crash point: {crash_point}")
+
+        async def _notify() -> None:
+            await reached.wait()
+            connection.send(crash_point)
+            connection.close()
+
+        if crash_point != _CRASH_AFTER_COMMIT:
+            asyncio.ensure_future(_notify())
+        await svc.ingest_infrastructure_health(event)
+
+    asyncio.run(run())
+
+
+def _crash_matrix_replica(
+    storage_dir: str,
+    ledger_path: str,
+    broker_path: str,
+    event: dict,
+    barrier,
+    connection,
+) -> None:
+    """Child process: one full real-service admission, reported terminally."""
+
+    async def run() -> dict:
+        svc = TelemetryIngestService(
+            schema_path=_SCHEMA_PATH,
+            storage_dir=storage_dir,
+            buffer=_DurableFileBroker(broker_path),
+            infrastructure_health_ledger_path=ledger_path,
+            infrastructure_health_lease_seconds=_CRASH_LEASE_SECONDS,
+        )
+        await svc.start()
+        try:
+            return await svc.ingest_infrastructure_health(event)
+        finally:
+            await svc.stop()
+
+    if barrier is not None:
+        barrier.wait(timeout=30)
+    try:
+        result = asyncio.run(run())
+        payload = {"status": result.get("status"), "code": result.get("code")}
+    except Exception as exc:  # noqa: BLE001
+        payload = {"status": "error", "code": str(exc)}
+    connection.send(payload)
+    connection.close()
+
+
 def _service_reserve_then_hang(
     storage_dir: str,
     ledger_path: str,
@@ -228,7 +535,7 @@ def _service_reserve_then_hang(
         svc = TelemetryIngestService(
             schema_path=_SCHEMA_PATH,
             storage_dir=storage_dir,
-            buffer_backend="memory",
+            buffer=_DurableFileBroker(str(Path(storage_dir) / _BROKER_FILENAME)),
             infrastructure_health_ledger_path=ledger_path,
             infrastructure_health_lease_seconds=_CRASH_LEASE_SECONDS,
         )
@@ -271,6 +578,7 @@ class TestInfrastructureHealthRoute(unittest.TestCase):
         cls._ledger_path = str(
             Path(cls._storage_dir) / INFRASTRUCTURE_HEALTH_LEDGER_FILENAME
         )
+        cls._broker_path = str(Path(cls._storage_dir) / _BROKER_FILENAME)
 
         loop = asyncio.new_event_loop()
 
@@ -297,7 +605,7 @@ class TestInfrastructureHealthRoute(unittest.TestCase):
         svc = TelemetryIngestService(
             schema_path=_SCHEMA_PATH,
             storage_dir=cls._storage_dir,
-            buffer_backend="memory",
+            buffer=_DurableFileBroker(cls._broker_path),
             batch_size=10,
             batch_interval=0.05,
             binding_store=_StubBindingStore(),
@@ -752,12 +1060,15 @@ class TestInfrastructureHealthReplicaAdmission(unittest.TestCase):
         self._ledger_path = str(
             Path(self._storage_dir) / INFRASTRUCTURE_HEALTH_LEDGER_FILENAME
         )
+        self._broker_path = str(Path(self._storage_dir) / _BROKER_FILENAME)
 
     def _service(self) -> TelemetryIngestService:
+        # Every replica speaks to the same durable broker log, the way two
+        # ingest processes share one stream.
         return TelemetryIngestService(
             schema_path=_SCHEMA_PATH,
             storage_dir=self._storage_dir,
-            buffer_backend="memory",
+            buffer=_DurableFileBroker(self._broker_path),
         )
 
     def test_second_replica_treats_a_stable_event_id_as_duplicate(self):
@@ -944,7 +1255,7 @@ class TestInfrastructureHealthReplicaAdmission(unittest.TestCase):
             svc = TelemetryIngestService(
                 schema_path=_SCHEMA_PATH,
                 storage_dir=self._storage_dir,
-                buffer_backend="memory",
+                buffer=_DurableFileBroker(self._broker_path),
                 infrastructure_health_ledger_path=self._ledger_path,
                 infrastructure_health_lease_seconds=_CRASH_LEASE_SECONDS,
             )
@@ -1062,7 +1373,7 @@ class TestInfrastructureHealthReplicaAdmission(unittest.TestCase):
         async def run() -> dict:
             svc = TelemetryIngestService(
                 schema_path=_SCHEMA_PATH,
-                buffer_backend="memory",
+                buffer=_DurableFileBroker(self._broker_path),
             )
             await svc.start()
             try:
@@ -1080,7 +1391,7 @@ class TestInfrastructureHealthReplicaAdmission(unittest.TestCase):
         async def run() -> dict:
             svc = TelemetryIngestService(
                 storage_dir=self._storage_dir,
-                buffer_backend="memory",
+                buffer=_DurableFileBroker(self._broker_path),
             )
             await svc.start()
             try:
@@ -1093,6 +1404,535 @@ class TestInfrastructureHealthReplicaAdmission(unittest.TestCase):
         result = asyncio.run(run())
         self.assertEqual(result["status"], "rejected")
         self.assertEqual(result["code"], "INFRA_SCHEMA_UNAVAILABLE")
+
+
+# ---------------------------------------------------------------------------
+# Durability authority
+# ---------------------------------------------------------------------------
+
+
+class _DegradingBroker(_DurableFileBroker):
+    """A broker adapter that stops being durable after its first enqueue.
+
+    This stands in for a backend that silently falls back to a process-local
+    path mid-flight. The admission must not be able to convert that enqueue into
+    a committed receipt.
+    """
+
+    def __init__(self, path: str):
+        super().__init__(path)
+        self._durable = True
+
+    async def put(self, event: dict[str, Any], timeout: Optional[float] = None) -> bool:
+        enqueued = await super().put(event, timeout=timeout)
+        self._durable = False
+        return enqueued
+
+    def is_durable(self) -> bool:
+        return self._durable
+
+
+class TestInfrastructureHealthDurabilityAuthority(unittest.TestCase):
+    """A volatile buffer may never back an infrastructure health admission.
+
+    AC3 says the admitted event is durable across retries and replicas. The
+    admission ledger alone cannot deliver that: committing a receipt for an
+    event that only ever reached process memory is worse than rejecting it,
+    because the crash erases the event while the receipt turns every later
+    retry into a successful ``duplicate``. So durability is proven from the
+    buffer itself, before anything is reserved or committed.
+    """
+
+    def setUp(self):
+        self._storage_dir = tempfile.mkdtemp(prefix="infra-health-durability-")
+        self.addCleanup(shutil.rmtree, self._storage_dir, ignore_errors=True)
+        self._ledger_path = str(
+            Path(self._storage_dir) / INFRASTRUCTURE_HEALTH_LEDGER_FILENAME
+        )
+        self._broker_path = str(Path(self._storage_dir) / _BROKER_FILENAME)
+
+    def _volatile_service(self) -> TelemetryIngestService:
+        # "memory" is the only volatile backend a deployment can select, and it
+        # is what the rejected implementation admitted into.
+        return TelemetryIngestService(
+            schema_path=_SCHEMA_PATH,
+            storage_dir=self._storage_dir,
+            buffer_backend="memory",
+            infrastructure_health_ledger_path=self._ledger_path,
+        )
+
+    def _durable_service(self) -> TelemetryIngestService:
+        return TelemetryIngestService(
+            schema_path=_SCHEMA_PATH,
+            storage_dir=self._storage_dir,
+            buffer=_DurableFileBroker(self._broker_path),
+            infrastructure_health_ledger_path=self._ledger_path,
+        )
+
+    def test_volatile_buffer_fails_closed_before_any_reservation(self):
+        event = _infra_event("infra-volatile-001")
+
+        async def run() -> tuple[dict, dict]:
+            svc = self._volatile_service()
+            await svc.start()
+            try:
+                result = await svc.ingest_infrastructure_health(event)
+                return result, svc.infrastructure_health_stats()
+            finally:
+                await svc.stop()
+
+        result, stats = asyncio.run(run())
+
+        self.assertEqual(result["status"], "rejected")
+        self.assertEqual(result["code"], "INFRA_BUFFER_NOT_DURABLE")
+        self.assertIn("volatile", result["message"])
+        self.assertFalse(stats["buffer_durable"])
+        self.assertEqual(stats["buffer_type"], "InMemoryBuffer")
+        self.assertEqual(stats["non_durable_rejections"], 1)
+        self.assertEqual(stats["admitted"], 0)
+
+        # Nothing was reserved and nothing was committed: a later retry against a
+        # correctly configured deployment is still a first admission.
+        self.assertEqual(_ledger_records(self._ledger_path), [])
+
+    def test_volatile_admission_leaves_no_committed_receipt_to_lie_with(self):
+        """The exact defect: a receipt that outlives the only copy of the event."""
+        event = _infra_event("infra-volatile-receipt-001")
+
+        async def run() -> dict:
+            svc = self._volatile_service()
+            await svc.start()
+            try:
+                await svc.ingest_infrastructure_health(event)
+            finally:
+                await svc.stop()
+
+            # A restart is exactly what erases a memory buffer. The producer's
+            # retry must be admissible, not answered as an already-delivered
+            # duplicate of an event that no longer exists anywhere.
+            restarted = self._durable_service()
+            await restarted.start()
+            try:
+                return await restarted.ingest_infrastructure_health(event)
+            finally:
+                await restarted.stop()
+
+        retried = asyncio.run(run())
+        self.assertEqual(
+            retried["status"],
+            "accepted",
+            "a retry after a volatile-buffer rejection must still be admissible",
+        )
+        self.assertEqual(
+            _broker_durable_events(self._broker_path, event["event_id"]),
+            [event],
+        )
+
+    def test_no_environment_flag_can_enable_volatile_admission(self):
+        """There is no production-enableable bypass of the durability gate.
+
+        Every telemetry environment variable the service reads is set to its most
+        permissive plausible value at once; the volatile buffer is still refused,
+        because the gate consults the backend's own ``is_durable()`` and nothing
+        else.
+        """
+        sources = "\n".join(
+            Path(__file__).resolve().parent.joinpath(name).read_text(encoding="utf-8")
+            for name in ("main.py", "ingest_svc.py", "buffer.py", "auth.py")
+        )
+        env_names = sorted(set(re.findall(r"PANTHEON_[A-Z0-9_]+", sources)))
+        self.assertGreater(len(env_names), 5, "expected to find telemetry env knobs")
+
+        permissive = {name: "1" for name in env_names}
+        permissive.update(
+            {
+                "PANTHEON_TELEMETRY_AUTH_MODE": "permissive",
+                "PANTHEON_TELEMETRY_BUFFER_BACKEND": "memory",
+            }
+        )
+
+        async def run() -> dict:
+            svc = self._volatile_service()
+            await svc.start()
+            try:
+                return await svc.ingest_infrastructure_health(
+                    _infra_event("infra-no-bypass-001")
+                )
+            finally:
+                await svc.stop()
+
+        with patch.dict(os.environ, permissive, clear=False):
+            result = asyncio.run(run())
+
+        self.assertEqual(result["status"], "rejected")
+        self.assertEqual(result["code"], "INFRA_BUFFER_NOT_DURABLE")
+
+    def test_strict_auth_route_answers_503_when_no_durable_broker_is_configured(self):
+        event = _infra_event("infra-volatile-route-001")
+        loop = asyncio.new_event_loop()
+        thread = threading.Thread(
+            target=lambda: (asyncio.set_event_loop(loop), loop.run_forever()),
+            daemon=True,
+            name="infra-health-durability-loop",
+        )
+        thread.start()
+        svc = self._volatile_service()
+        asyncio.run_coroutine_threadsafe(svc.start(), loop).result(timeout=10)
+
+        previous_svc, previous_loop = _main._svc, _main._loop
+        _main._svc, _main._loop = svc, loop
+        try:
+            client = _main.app.test_client()
+            with patch.dict(os.environ, _STRICT_ENV, clear=False):
+                response = client.post(
+                    "/api/v1/telemetry/infrastructure-health",
+                    json=event,
+                    headers={
+                        "Authorization": f"Bearer {_service_token()}",
+                        "X-Tenant-Id": _TENANT_ID,
+                    },
+                )
+            self.assertEqual(response.status_code, 503)
+            self.assertEqual(
+                response.get_json()["error"]["code"], "INFRA_BUFFER_NOT_DURABLE"
+            )
+            metrics = _main._telemetry_metrics()
+            self.assertEqual(metrics["infrastructure_health_buffer_durable"], 0)
+            self.assertEqual(metrics["infrastructure_health_non_durable_rejections"], 1)
+            self.assertEqual(metrics["infrastructure_health_admitted"], 0)
+        finally:
+            asyncio.run_coroutine_threadsafe(svc.stop(), loop).result(timeout=10)
+            _main._svc, _main._loop = previous_svc, previous_loop
+            loop.call_soon_threadsafe(loop.stop)
+
+    def test_admission_is_refused_when_durability_is_lost_before_the_commit(self):
+        """A backend that degrades mid-flight cannot buy a committed receipt."""
+        event = _infra_event("infra-degraded-001")
+
+        async def run() -> tuple[dict, Optional[str], dict]:
+            svc = TelemetryIngestService(
+                schema_path=_SCHEMA_PATH,
+                storage_dir=self._storage_dir,
+                buffer=_DegradingBroker(self._broker_path),
+                infrastructure_health_ledger_path=self._ledger_path,
+            )
+            await svc.start()
+            try:
+                degraded = await svc.ingest_infrastructure_health(event)
+                state = svc._infrastructure_health_ledger.state_of(event["event_id"])
+            finally:
+                await svc.stop()
+
+            healthy = self._durable_service()
+            await healthy.start()
+            try:
+                return degraded, state, await healthy.ingest_infrastructure_health(event)
+            finally:
+                await healthy.stop()
+
+        degraded, state, retried = asyncio.run(run())
+        self.assertEqual(degraded["status"], "rejected")
+        self.assertEqual(degraded["code"], "INFRA_BUFFER_NOT_DURABLE")
+        self.assertIsNone(
+            state, "the reservation must be released, not committed, on degradation"
+        )
+        self.assertEqual(
+            retried["status"],
+            "accepted",
+            "the producer's retry must still be admissible after a degraded attempt",
+        )
+
+    def test_durable_broker_admission_is_backed_by_an_fsynced_event(self):
+        event = _infra_event("infra-durable-receipt-001")
+
+        async def run() -> dict:
+            svc = self._durable_service()
+            await svc.start()
+            try:
+                return await svc.ingest_infrastructure_health(event)
+            finally:
+                await svc.stop()
+
+        result = asyncio.run(run())
+        self.assertEqual(result["status"], "accepted")
+        self.assertEqual(
+            _broker_durable_events(self._broker_path, event["event_id"]),
+            [event],
+            "an accepted event must exist in durable storage, byte for byte",
+        )
+        committed = [
+            record
+            for record in _ledger_records(self._ledger_path)
+            if record.get("event_id") == event["event_id"]
+            and record.get("state") == "committed"
+        ]
+        self.assertEqual(len(committed), 1, committed)
+
+
+# ---------------------------------------------------------------------------
+# Process / broker crash matrix
+# ---------------------------------------------------------------------------
+
+
+class TestInfrastructureHealthCrashMatrix(unittest.TestCase):
+    """SIGKILL the real ingest process in every window of the admission.
+
+    For each window the matrix asserts the two failures that matter:
+
+    * **no false success** — no producer is ever answered ``accepted`` or
+      ``duplicate`` for an observation that is not in durable storage;
+    * **no permanent loss** — a retry with the same stable event_id always ends
+      with exactly one durable copy and exactly one committed receipt.
+    """
+
+    def setUp(self):
+        self._storage_dir = tempfile.mkdtemp(prefix="infra-health-crash-")
+        self.addCleanup(shutil.rmtree, self._storage_dir, ignore_errors=True)
+        self._ledger_path = str(
+            Path(self._storage_dir) / INFRASTRUCTURE_HEALTH_LEDGER_FILENAME
+        )
+        self._broker_path = str(Path(self._storage_dir) / _BROKER_FILENAME)
+        # Materialise both durable files before forking so children share them.
+        InfrastructureHealthAdmissionLedger(
+            self._ledger_path, lease_seconds=_CRASH_LEASE_SECONDS
+        )
+        _DurableFileBroker(self._broker_path)
+
+    # -- helpers --
+
+    def _crash_at(self, event: dict, crash_point: str) -> None:
+        context = multiprocessing.get_context("fork")
+        parent_conn, child_conn = context.Pipe(duplex=False)
+        process = context.Process(
+            target=_crash_matrix_child,
+            args=(
+                self._storage_dir,
+                self._ledger_path,
+                self._broker_path,
+                event,
+                crash_point,
+                child_conn,
+            ),
+        )
+        process.start()
+        child_conn.close()
+        try:
+            self.assertTrue(
+                parent_conn.poll(30),
+                f"child did not reach the {crash_point!r} window",
+            )
+            self.assertEqual(parent_conn.recv(), crash_point)
+            os.kill(process.pid, signal.SIGKILL)
+        finally:
+            process.join(30)
+            parent_conn.close()
+        self.assertEqual(process.exitcode, -signal.SIGKILL)
+
+    def _ledger(self) -> InfrastructureHealthAdmissionLedger:
+        return InfrastructureHealthAdmissionLedger(
+            self._ledger_path, lease_seconds=_CRASH_LEASE_SECONDS
+        )
+
+    def _admit(self, event: dict, *, wait_for_lease: bool = False) -> dict:
+        """Run one full admission in a fresh service — the restarted replica."""
+
+        async def run() -> dict:
+            svc = TelemetryIngestService(
+                schema_path=_SCHEMA_PATH,
+                storage_dir=self._storage_dir,
+                buffer=_DurableFileBroker(self._broker_path),
+                infrastructure_health_ledger_path=self._ledger_path,
+                infrastructure_health_lease_seconds=_CRASH_LEASE_SECONDS,
+                batch_size=10_000,
+                batch_interval=3600.0,
+            )
+            await svc.start()
+            try:
+                if wait_for_lease:
+                    await asyncio.sleep(_CRASH_LEASE_SECONDS + 0.3)
+                return await svc.ingest_infrastructure_health(event)
+            finally:
+                await svc.stop(graceful=False)
+
+        return asyncio.run(run())
+
+    def _committed_records(self, event_id: str) -> list[dict]:
+        return [
+            record
+            for record in _ledger_records(self._ledger_path)
+            if record.get("event_id") == event_id
+            and record.get("state") == "committed"
+        ]
+
+    # -- 1. crash before the durable put --
+
+    def test_crash_before_durable_put_never_reports_success_and_loses_nothing(self):
+        event = _infra_event("infra-crash-before-put-001")
+        self._crash_at(event, _CRASH_BEFORE_PUT)
+
+        self.assertEqual(
+            _broker_durable_events(self._broker_path, event["event_id"]),
+            [],
+            "nothing reached the broker, so nothing may look admitted",
+        )
+        ledger = self._ledger()
+        self.assertEqual(ledger.state_of(event["event_id"]), "reserved")
+        self.assertFalse(ledger.is_committed(event["event_id"]))
+
+        blocked = self._admit(event)
+        self.assertEqual(blocked["status"], "rejected")
+        self.assertEqual(blocked["code"], "INFRA_ADMISSION_IN_FLIGHT")
+
+        recovered = self._admit(event, wait_for_lease=True)
+        self.assertEqual(recovered["status"], "accepted")
+        self.assertEqual(
+            _broker_durable_events(self._broker_path, event["event_id"]), [event]
+        )
+        self.assertEqual(len(self._committed_records(event["event_id"])), 1)
+
+    # -- 2. crash after the durable put, before the commit --
+
+    def test_crash_after_durable_put_before_commit_keeps_the_event(self):
+        event = _infra_event("infra-crash-after-put-001")
+        self._crash_at(event, _CRASH_AFTER_DURABLE_PUT)
+
+        self.assertEqual(
+            _broker_retained_events(self._broker_path, event["event_id"]),
+            [event],
+            "the fsync'd event must survive the SIGKILL",
+        )
+        ledger = self._ledger()
+        self.assertEqual(ledger.state_of(event["event_id"]), "reserved")
+        self.assertFalse(
+            ledger.is_committed(event["event_id"]),
+            "an uncommitted admission must not answer later retries as duplicates",
+        )
+
+        blocked = self._admit(event)
+        self.assertEqual(blocked["status"], "rejected")
+        self.assertEqual(blocked["code"], "INFRA_ADMISSION_IN_FLIGHT")
+
+        recovered = self._admit(event, wait_for_lease=True)
+        self.assertEqual(recovered["status"], "accepted")
+        # At-least-once delivery may leave a second broker copy; both are the
+        # same immutable event, and the canonical write path deduplicates by
+        # event_id, so exactly one admission is recorded.
+        copies = _broker_durable_events(self._broker_path, event["event_id"])
+        self.assertGreaterEqual(len(copies), 1)
+        self.assertTrue(all(copy == event for copy in copies), copies)
+        self.assertEqual(len(self._committed_records(event["event_id"])), 1)
+
+    # -- 3. crash after the commit --
+
+    def test_crash_after_commit_answers_retries_with_a_truthful_duplicate(self):
+        """The reviewer's scenario, now unreachable with a volatile buffer.
+
+        The producer never sees the 202 because the process died; it retries and
+        is told ``duplicate``. That answer is only honest because the event is
+        still in durable storage after the crash.
+        """
+        event = _infra_event("infra-crash-after-commit-001")
+        self._crash_at(event, _CRASH_AFTER_COMMIT)
+
+        ledger = self._ledger()
+        self.assertTrue(ledger.is_committed(event["event_id"]))
+        self.assertEqual(
+            _broker_retained_events(self._broker_path, event["event_id"]),
+            [event],
+            "a committed receipt is only truthful if the event outlived the crash",
+        )
+
+        retried = self._admit(event)
+        self.assertEqual(retried["status"], "duplicate")
+        self.assertEqual(len(self._committed_records(event["event_id"])), 1)
+        self.assertEqual(
+            _broker_durable_events(self._broker_path, event["event_id"]),
+            [event],
+            "an idempotent retry must not enqueue a second copy",
+        )
+
+    # -- 4. restart replay --
+
+    def test_restart_replay_after_a_committed_admission_is_idempotent(self):
+        event = _infra_event("infra-crash-restart-replay-001")
+
+        admitted = self._admit(event)
+        self.assertEqual(admitted["status"], "accepted")
+
+        # Two further cold starts over the same durable files: fresh process
+        # state, empty in-memory dedup, same answer.
+        for _ in range(2):
+            replayed = self._admit(event)
+            self.assertEqual(replayed["status"], "duplicate")
+            self.assertEqual(replayed["fingerprint"], admitted["fingerprint"])
+
+        self.assertEqual(len(self._committed_records(event["event_id"])), 1)
+        self.assertEqual(
+            _broker_durable_events(self._broker_path, event["event_id"]), [event]
+        )
+
+    # -- 5. replica concurrency --
+
+    def test_concurrent_replica_processes_produce_one_durable_admission(self):
+        event = _infra_event("infra-crash-replica-race-001")
+        context = multiprocessing.get_context("fork")
+        replica_count = 4
+        barrier = context.Barrier(replica_count)
+        processes = []
+        connections = []
+        for _ in range(replica_count):
+            parent_conn, child_conn = context.Pipe(duplex=False)
+            process = context.Process(
+                target=_crash_matrix_replica,
+                args=(
+                    self._storage_dir,
+                    self._ledger_path,
+                    self._broker_path,
+                    event,
+                    barrier,
+                    child_conn,
+                ),
+            )
+            process.start()
+            child_conn.close()
+            processes.append(process)
+            connections.append(parent_conn)
+
+        outcomes = []
+        try:
+            for connection in connections:
+                self.assertTrue(
+                    connection.poll(60),
+                    "replica process did not report an admission outcome",
+                )
+                outcomes.append(connection.recv())
+        finally:
+            for process in processes:
+                process.join(60)
+            for connection in connections:
+                connection.close()
+
+        statuses = [outcome["status"] for outcome in outcomes]
+        self.assertEqual(
+            statuses.count("accepted"),
+            1,
+            f"exactly one replica may admit the event, got {outcomes}",
+        )
+        for outcome in outcomes:
+            if outcome["status"] == "accepted":
+                continue
+            if outcome["status"] == "duplicate":
+                # Only reachable once the winner's receipt is durable.
+                continue
+            self.assertEqual(outcome["status"], "rejected", outcome)
+            self.assertEqual(outcome["code"], "INFRA_ADMISSION_IN_FLIGHT", outcome)
+
+        self.assertEqual(
+            _broker_durable_events(self._broker_path, event["event_id"]),
+            [event],
+            "losing replicas must not enqueue their own copy",
+        )
+        self.assertEqual(len(self._committed_records(event["event_id"])), 1)
 
 
 if __name__ == "__main__":

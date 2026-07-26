@@ -33,9 +33,11 @@ POST  /api/v1/telemetry/infrastructure-health
     already holds a durable receipt, 409 INFRA_EVENT_ID_CONFLICT when an
     event_id is reused for different content, 400 on contract violation, and
     503 when the schema or ledger is unavailable (INFRA_SCHEMA_UNAVAILABLE,
-    INFRA_LEDGER_UNCONFIGURED), the buffer is full (INFRA_BUFFER_OVERFLOW), or
-    no durable receipt exists yet because another attempt holds the reservation
-    (INFRA_ADMISSION_IN_FLIGHT, INFRA_ADMISSION_FENCED).
+    INFRA_LEDGER_UNCONFIGURED), the deployment has no durable broker behind the
+    route (INFRA_BUFFER_NOT_DURABLE), the buffer is full
+    (INFRA_BUFFER_OVERFLOW), or no durable receipt exists yet because another
+    attempt holds the reservation (INFRA_ADMISSION_IN_FLIGHT,
+    INFRA_ADMISSION_FENCED).
 
     Producers must treat every 503 as "retry with the same event_id": it means
     the observation is not durable yet, so retrying is what makes delivery
@@ -715,8 +717,14 @@ def _telemetry_metrics() -> dict[str, Any]:
         "infrastructure_health_conflicts": infrastructure_stats.get("conflicts", 0),
         "infrastructure_health_in_flight_rejections": infrastructure_stats.get("in_flight_rejections", 0),
         "infrastructure_health_fenced_rejections": infrastructure_stats.get("fenced_rejections", 0),
+        "infrastructure_health_non_durable_rejections": infrastructure_stats.get(
+            "non_durable_rejections", 0
+        ),
         "infrastructure_health_rejected": infrastructure_stats.get("rejected", 0),
         "infrastructure_health_schema_loaded": 1 if infrastructure_stats.get("schema_loaded") else 0,
+        # 0 means this deployment cannot admit infrastructure health at all: the
+        # route fails closed until a durable broker is configured behind it.
+        "infrastructure_health_buffer_durable": 1 if infrastructure_stats.get("buffer_durable") else 0,
         "infrastructure_health_ledger_committed_ids": infrastructure_ledger.get("committed_event_ids", 0),
         "infrastructure_health_ledger_open_reservations": infrastructure_ledger.get("open_reservations", 0),
         "infrastructure_health_ledger_recoverable_reservations": infrastructure_ledger.get(
@@ -984,6 +992,10 @@ _INFRASTRUCTURE_HEALTH_ERROR_STATUS = {
     "INFRA_EVENT_ID_CONFLICT": 409,
     "INFRA_SCHEMA_UNAVAILABLE": 503,
     "INFRA_LEDGER_UNCONFIGURED": 503,
+    # The deployment has no durable broker behind this route, so nothing may be
+    # admitted: a volatile enqueue would be erased by the next crash while the
+    # admission ledger kept answering retries as an already-delivered duplicate.
+    "INFRA_BUFFER_NOT_DURABLE": 503,
     "INFRA_BUFFER_OVERFLOW": 503,
     # Retryable: no durable receipt exists yet, so the producer must try again
     # rather than treat the observation as delivered.
