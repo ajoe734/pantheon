@@ -10,10 +10,20 @@
 #
 # Refuses to push if the local task branch is not ahead of origin/dev or
 # if the branch name doesn't follow the task/<TASK-ID> convention.
-# Adds `--auto --merge` so the PR completes automatically when the dev
-# branch protection's required status checks (Commit trailers / Runtime
-# mirror guard / Smoke acceptance) turn green. Do not run
-# `scripts/ai-status.sh done` until GitHub reports the PR merged.
+#
+# Merge authority comes from the canonical task contract, never from this
+# helper. `scripts/git/task_review_merge_gate.py` resolves the policy:
+#
+#   review_before_merge (default, and forced for any task with an independent
+#     reviewer) -- the PR is opened with auto-merge OFF. The exact assigned
+#     reviewer approves the exact PR head, then
+#     `scripts/git/auto_integrator.py --execute --task-id <TASK-ID>` merges it.
+#
+#   merge_then_review -- only when the canonical row declares it and requires
+#     no independent review. `--auto --merge` is enabled as before so CI green
+#     completes the PR.
+#
+# Do not run `scripts/ai-status.sh done` until GitHub reports the PR merged.
 
 set -euo pipefail
 
@@ -83,14 +93,24 @@ if [[ -z "$CUSTOM_BODY" && -z "$CUSTOM_BODY_FILE" ]]; then
   git log --format='%b' "origin/${DEV_BRANCH}..HEAD" > "$CUSTOM_BODY_FILE"
 fi
 
+# Canonical merge policy. Any failure of the gate resolves to the gated
+# default: this helper never widens merge authority on a broken read.
+MERGE_POLICY=$(python3 scripts/git/task_review_merge_gate.py policy "$TASK_ID" 2>/dev/null | head -1 || true)
+if [[ "$MERGE_POLICY" != "merge_then_review" ]]; then
+  MERGE_POLICY="review_before_merge"
+fi
+echo "→ canonical merge policy: $MERGE_POLICY"
+
 echo "→ open PR $TASK_BRANCH → $DEV_BRANCH"
 PR_ARGS=(
   pr create
   --base "$DEV_BRANCH"
   --head "$TASK_BRANCH"
   --title "$CUSTOM_TITLE"
-  --label auto-merge
 )
+if [[ "$MERGE_POLICY" == "merge_then_review" ]]; then
+  PR_ARGS+=(--label auto-merge)
+fi
 if [[ -n "$CUSTOM_BODY_FILE" ]]; then
   PR_ARGS+=(--body-file "$CUSTOM_BODY_FILE")
 else
@@ -98,12 +118,27 @@ else
 fi
 gh "${PR_ARGS[@]}"
 
-echo "→ enable auto-merge"
-gh pr merge "$TASK_BRANCH" --auto --merge
+if [[ "$MERGE_POLICY" == "merge_then_review" ]]; then
+  echo "→ enable auto-merge (canonical contract permits merge-then-review)"
+  gh pr merge "$TASK_BRANCH" --auto --merge
+else
+  # Fail closed against a stale auto-merge request left on this head by an
+  # earlier run or by a hand-edited PR.
+  echo "→ auto-merge withheld until the assigned reviewer approves this exact head"
+  gh pr merge "$TASK_BRANCH" --disable-auto >/dev/null 2>&1 || true
+fi
 
 PR_URL=$(gh pr view "$TASK_BRANCH" --json url -q '.url' 2>/dev/null || echo "")
-echo "✓ task $TASK_ID PR is open with auto-merge enabled"
+if [[ "$MERGE_POLICY" == "merge_then_review" ]]; then
+  echo "✓ task $TASK_ID PR is open with auto-merge enabled"
+else
+  echo "✓ task $TASK_ID PR is open with auto-merge disabled (review before merge)"
+fi
 if [[ -n "$PR_URL" ]]; then
   echo "  $PR_URL"
+fi
+if [[ "$MERGE_POLICY" != "merge_then_review" ]]; then
+  echo "  next: assigned reviewer approves this exact head, then"
+  echo "        python3 scripts/git/auto_integrator.py --execute --task-id $TASK_ID"
 fi
 echo "  (wait for the PR to merge before running scripts/ai-status.sh done)"
