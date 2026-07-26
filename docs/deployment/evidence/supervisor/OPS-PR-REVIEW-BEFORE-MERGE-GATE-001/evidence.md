@@ -50,9 +50,9 @@ Section 1 of `prefix-reproduction.txt` replays the pre-fix helper against a
 synthetic repository whose canonical row is `in_progress` with an independent
 reviewer, and shows it enabling `--auto --merge` anyway.
 
-### 1.1 Five more live regressions the same evening
+### 1.1 Seven more live regressions the same evening
 
-The first three were all the same failure through the same entry point. Five
+The first three were all the same failure through the same entry point. Seven
 later events, each reported by Human/Ops on PR #4218, showed the gate needed
 to cover more than that:
 
@@ -62,17 +62,22 @@ to cover more than that:
 | #4222 | `OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001` | auto-merge at 21:54:25Z | 21:55:32Z → `55b17612e` | Enabling auto-merge *is* the grant; 67 s later it was irreversible |
 | #4225 | `OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001` | auto-merge at 22:42:46Z | — (Human/Ops disabled it by hand) | Only human intervention inside the CI window prevented the merge |
 | #4225 | same | none (request already revoked) | 23:01:39Z → `8d1b50779` | The blocked auto-merge became a direct merge by the same credential |
+| #4226 | same | auto-merge at 23:06:04Z | 23:07:09Z → `1cf27337e` | Third unreviewed merge on one task branch; PR history changes nothing |
 | #4227 | `SUP-COMMAND-RUNTIME-REFRESH-001` | auto-merge at 23:10:54Z | 23:14:41Z → `e376955ff` | The request outlived its head and landed a different commit |
+| #4230 | `OPS-CI-PR-TRAILER-RANGE-001` | auto-merge at 23:33:20Z | 23:34:22Z → `643181a06` | Every required check green; green CI is not canonical review |
 
-Every one of these merges reports `reviews=[]`, `mergedBy: ajoe734`, and a
-canonical task row still `in_progress` with reviewer `Codex2`.
+Every one of these merges reports `reviews=[]`, an empty `reviewDecision`,
+`mergedBy: ajoe734`, and a canonical task row still `in_progress` with
+reviewer `Codex2`.
 
 Three things follow, and they are what this second pass adds:
 
-1. **GitHub identity cannot stand in for reviewer identity.** All Pantheon
-   agents push through the single `ajoe734` account, so `mergedBy` and any
-   GitHub approving review are unusable as review evidence. Only the
-   canonical `review_approved` record from the assigned reviewer counts.
+1. **Nothing GitHub knows can stand in for canonical review.** All Pantheon
+   agents push through the single `ajoe734` account, so `mergedBy`, the
+   account that enabled auto-merge, and any GitHub approving review are
+   unusable as review evidence. Green CI is not review either — #4230 merged
+   with all three required checks `SUCCESS`. Only the canonical
+   `review_approved` record from the assigned reviewer counts.
 2. **An auto-merge request survives a head change.** #4227 is the exact
    shape: enabled at 23:10:54Z, head replaced at 23:13:21Z, and GitHub merged
    the *newer* head at 23:14:41Z. The commit that landed was never the commit
@@ -92,7 +97,26 @@ explicit `do not merge` / `changes required` marker now revokes, the same as a
 `reopen` or `blocker`. This signal can only ever block a merge, never unlock
 one, so its failure direction is safe.
 
-Section 4 of `prefix-reproduction.txt` replays all five from recorded state.
+### 1.2 Coverage per merge entry point
+
+| Entry point | What denies it | Proven by |
+|-------------|----------------|-----------|
+| `task_finalize.sh` | gate call before PR creation; no auto-merge label, request on the head revoked | `TaskFinalizeShellTests::test_gated_task_pr_is_opened_without_any_auto_merge` |
+| `safe_pr.sh` | same gate call before `gh pr merge --auto --merge` | `prefix-reproduction.txt` §1–§2 |
+| `auto_integrator.py` | gate runs before the CI probe; merges only with `--match-head-commit`, never `--auto` | `IntegratorGateTests` |
+| auto-merge **creation** (CLI, UI, or API) | `allow_auto_merge` is `False` for every gated task in every state, approved included | `::test_the_shared_credential_cannot_enable_auto_merge`, `::test_an_approved_task_never_unlocks_auto_merge_creation` |
+| auto-merge **finalization** by GitHub | a request enabled before the current head is refused outright | `::test_pr_4227_shape_is_refused_even_when_this_head_is_approved` |
+| direct `gh pr merge` / merge API | the decision reads no PR-side identity, review, or check state at all | `::test_the_shared_credential_cannot_finalize_a_merge`, `::test_pr_4217_direct_merge_without_any_auto_merge_request`, `::test_pr_4225_direct_merge_by_the_same_credential_is_refused` |
+
+One honest limit: whoever holds the GitHub credential can still press merge
+outside every Pantheon helper. No repository-side gate can prevent that. What
+this task delivers is that no Pantheon tooling grants merge authority, that a
+standing grant is revoked rather than left armed, and that the canonical state
+at merge time is auditable afterwards. Closing the hole entirely would require
+branch protection to demand a review, which is a config change this task is
+explicitly forbidden to make.
+
+Section 4 of `prefix-reproduction.txt` replays all seven from recorded state.
 
 ## 2. The gate
 
@@ -207,19 +231,20 @@ and block, instead of silently resolving to the first row returned by GitHub.
 | 6 | Focused workflow tests cover branch, commit, push, PR, checks, independent review, merge, and evidence archive | pass | `validation.txt` |
 
 AC5 is met as written and then extended: `LiveMergeGovernanceRegressionTests`
-covers the five later live regressions (#4217, #4222, #4225 auto-merge enable,
-#4225 direct merge, #4227) under the same data-only convention. The full map
-of PR → entry point → fixture is the `live_regressions` table in
-`evidence.json`.
+covers the seven later live regressions (#4217, #4222, #4225 auto-merge enable,
+#4225 direct merge, #4226, #4227, #4230) under the same data-only convention.
+The full map of PR → entry point → fixture is the `live_regressions` table in
+`evidence.json`, and the per-entry-point controls are
+`merge_entry_point_coverage`.
 
 ## 5. Validation
 
 See `validation.txt` for the captured transcript.
 
 ```
-python3 scripts/git/test_task_review_merge_gate.py     Ran 53 tests - OK
+python3 scripts/git/test_task_review_merge_gate.py     Ran 59 tests - OK
 python3 scripts/git/test_auto_integrator.py            Ran  9 tests - OK
-python3 scripts/git/test_git_workflow_helpers.py       Ran 34 tests - OK
+python3 scripts/git/test_git_workflow_helpers.py       Ran 52 tests - OK
 python3 scripts/git/test_task_pr_triage.py             Ran 24 tests - OK
 python3 scripts/git/test_index_safety.py               Ran 17 tests - OK
 bash -n scripts/git/task_finalize.sh scripts/git/safe_pr.sh   syntax ok
@@ -228,7 +253,7 @@ bash -n scripts/git/task_finalize.sh scripts/git/safe_pr.sh   syntax ok
 The pre-fix reproduction is `prefix-reproduction.txt`; its §1 shows the old
 helper enabling auto-merge on an unreviewed task and §2 shows the new helper
 refusing on the identical fixture. §3 replays PRs #4212/#4213/#4214 and §4
-replays the five later live regressions.
+replays the seven later live regressions.
 
 ## 6. Residual risks
 

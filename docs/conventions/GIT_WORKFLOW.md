@@ -146,13 +146,17 @@ head change after approval, an approval by anyone other than the assigned
 reviewer, missing canonical state, and two open PRs on one task branch all
 fail closed.
 
-Four further rules come from the 2026-07-26 live regressions on PRs #4217,
-#4222, #4225 and #4227:
+Five further rules come from the 2026-07-26 live regressions on PRs #4217,
+#4222, #4225, #4226, #4227 and #4230:
 
 - **Every entry point, not just `--auto`.** #4217 landed through a plain
   `gh pr merge` with no auto-merge request at all. Merge authority is denied
   from canonical task state regardless of which GitHub call would perform
   the merge.
+- **Green CI is not review.** #4230 merged with all three required checks
+  `SUCCESS` and `reviewDecision` empty. CI proves the delivery builds; the
+  canonical `review_approved` record from the assigned reviewer is the only
+  thing that proves it was reviewed.
 - **An auto-merge request is itself the grant.** #4222 enabled auto-merge
   and merged 67 seconds later. Enabling it is what the gate refuses; waiting
   until merge time is too late.
@@ -168,10 +172,18 @@ Four further rules come from the 2026-07-26 live regressions on PRs #4217,
   policy.
 
 All Pantheon agents push through one GitHub account, so a GitHub approving
-review and the identity that pressed merge prove nothing about independent
-review. Only the canonical reviewer's `review_approved` record does. An
-explicit `do not merge` / `changes required` note in the activity audit
-revokes a standing approval, the same as a `reopen` or `blocker`.
+review, the identity that pressed merge, and the identity that enabled
+auto-merge prove nothing about independent review. Only the canonical
+reviewer's `review_approved` record does. An explicit `do not merge` /
+`changes required` note in the activity audit revokes a standing approval,
+the same as a `reopen` or `blocker`.
+
+The gate binds every repository path to merge: `task_finalize.sh`,
+`safe_pr.sh`, `auto_integrator.py`, auto-merge creation, and auto-merge
+finalization. It cannot stop a human holding the GitHub credential from
+pressing merge in the web UI — that would need branch protection to require
+a review — but no Pantheon tooling grants the authority, and the canonical
+state at merge time stays auditable.
 
 ### 2.4 Lifetime guarantee
 

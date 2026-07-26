@@ -96,6 +96,18 @@
       "summary": "PR #4227 (task/SUP-COMMAND-RUNTIME-REFRESH-001) enabled auto-merge at 2026-07-26T23:10:54Z; the head then moved to 5fb21c80ba21fcdfd9f304d66b57f56362f9dc60 committed at 23:13:21Z, and GitHub merged that newer head at 23:14:41Z as e376955ff8ac3555871932457865ed1fd0beee83 with reviews=[] and the canonical task still in_progress.",
       "live_source": "https://github.com/ajoe734/pantheon/pull/4218#issuecomment-5085863351; gh pr view 4227 --json autoMergeRequest,mergedAt,mergeCommit,reviews; gh api repos/ajoe734/pantheon/commits/5fb21c80ba21fcdfd9f304d66b57f56362f9dc60",
       "root_cause": "An auto-merge request survives a head change. Merge authority granted for one commit was still armed when a different commit became the head, so the delivery that landed was never the delivery the request described. The payload was Stage-1 docs/evidence with the live swap still blocked, which does not waive review-before-merge."
+    },
+    {
+      "id": "OF11",
+      "summary": "PR #4226 (task/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001) enabled auto-merge at 2026-07-26T23:06:04Z on head 4628dc721b0e1b434303fac679c01a9afa05b108 and merged at 23:07:09Z as 1cf27337e9197c8bc0840e466f55019065e3576e with reviewDecision empty and reviews=[]. It was the third unreviewed merge on that one task branch after #4222 and #4225.",
+      "live_source": "gh pr view 4226 --json autoMergeRequest,mergedAt,mergeCommit,reviewDecision,reviews; gh api repos/ajoe734/pantheon/commits/4628dc721b0e1b434303fac679c01a9afa05b108",
+      "root_cause": "Same unconditional auto-merge grant. Nothing about a task branch that has already merged unreviewed twice changed the third attempt's outcome, which is what a gate derived from canonical state rather than PR history has to fix."
+    },
+    {
+      "id": "OF12",
+      "summary": "PR #4230 (task/OPS-CI-PR-TRAILER-RANGE-001) enabled auto-merge at 2026-07-26T23:33:20Z on head 1bb2b839bad3258d7c5fe353e957e6a5fec08545 and merged at 23:34:22Z as 643181a067ec5c344faac0766c69de0d5cfb32eb with every required check green, reviewDecision empty, reviews=[], latestReviews=[], mergedBy ajoe734, while the canonical task was in_progress with reviewer Codex2 since 23:28:46Z.",
+      "live_source": "https://github.com/ajoe734/pantheon/pull/4218#issuecomment-5085938374; gh pr view 4230 --json autoMergeRequest,mergedAt,mergeCommit,reviewDecision,reviews,latestReviews; /home/lupin/pantheon/ai-activity-log.jsonl OPS-CI-PR-TRAILER-RANGE-001 slice",
+      "root_cause": "Green CI was the only thing standing between the push and the merge. CI proves the delivery builds; it is not the independent canonical review the task contract requires, and no GitHub-side signal on a single shared account can supply that."
     }
   ],
   "live_regressions": [
@@ -136,10 +148,55 @@
       "fixture": "LiveMergeGovernanceRegressionTests::test_pr_4225_premature_auto_merge_enable_is_refused, ::test_pr_4225_direct_merge_by_the_same_credential_is_refused"
     },
     {
+      "pr": 4226,
+      "task": "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001",
+      "entry_point": "auto-merge enabled, completed 65s later",
+      "fixture": "LiveMergeGovernanceRegressionTests::test_pr_4226_third_merge_on_one_unapproved_task_branch"
+    },
+    {
       "pr": 4227,
       "task": "SUP-COMMAND-RUNTIME-REFRESH-001",
       "entry_point": "auto-merge request that outlived the head it landed",
       "fixture": "LiveMergeGovernanceRegressionTests::test_pr_4227_auto_merge_creation_and_completion_fail_closed, ::test_pr_4227_auto_merge_request_outlived_the_head_it_landed, ::test_pr_4227_docs_only_payload_claims_do_not_waive_review"
+    },
+    {
+      "pr": 4230,
+      "task": "OPS-CI-PR-TRAILER-RANGE-001",
+      "entry_point": "auto-merge enabled with all required checks green",
+      "fixture": "LiveMergeGovernanceRegressionTests::test_pr_4230_green_ci_is_not_canonical_reviewer_approval, ::test_the_shared_credential_cannot_enable_auto_merge, ::test_the_shared_credential_cannot_finalize_a_merge"
+    }
+  ],
+  "merge_entry_point_coverage": [
+    {
+      "entry_point": "task_finalize.sh",
+      "control": "asks the gate before PR creation; a gated task PR is opened without the auto-merge label and any request on the head is revoked",
+      "proof": "scripts/git/test_task_review_merge_gate.py::TaskFinalizeShellTests::test_gated_task_pr_is_opened_without_any_auto_merge"
+    },
+    {
+      "entry_point": "safe_pr.sh",
+      "control": "same gate call before `gh pr merge --auto --merge`; falls through to `--disable-auto` for a gated task",
+      "proof": "scripts/git/safe_pr.sh lines around the gate call; docs/deployment/evidence/supervisor/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001/prefix-reproduction.txt sections 1 and 2"
+    },
+    {
+      "entry_point": "auto_integrator.py",
+      "control": "gate runs before the CI and merge-state probes; a gated PR merges only with --match-head-commit <approved-oid> and never with --auto, and any standing request is revoked first",
+      "proof": "scripts/git/test_task_review_merge_gate.py::IntegratorGateTests"
+    },
+    {
+      "entry_point": "auto-merge creation (`gh pr merge --auto`, GitHub UI, or API)",
+      "control": "allow_auto_merge is False for every gated task in every state, including an approved exact head; revoke_auto_merge is set whenever a request is standing",
+      "proof": "scripts/git/test_task_review_merge_gate.py::LiveMergeGovernanceRegressionTests::test_the_shared_credential_cannot_enable_auto_merge, ::test_an_approved_task_never_unlocks_auto_merge_creation"
+    },
+    {
+      "entry_point": "auto-merge finalization by GitHub",
+      "control": "a request enabled before the current head is refused outright, so GitHub cannot land a head the request never covered",
+      "proof": "scripts/git/test_task_review_merge_gate.py::LiveMergeGovernanceRegressionTests::test_pr_4227_shape_is_refused_even_when_this_head_is_approved"
+    },
+    {
+      "entry_point": "direct `gh pr merge` / GitHub merge API by the shared credential",
+      "control": "the decision reads no PR-side identity, review, or check state, so the same account that authors, approves and merges cannot satisfy the gate",
+      "proof": "scripts/git/test_task_review_merge_gate.py::LiveMergeGovernanceRegressionTests::test_the_shared_credential_cannot_finalize_a_merge, ::test_pr_4217_direct_merge_without_any_auto_merge_request, ::test_pr_4225_direct_merge_by_the_same_credential_is_refused",
+      "limitation": "A human or agent holding the GitHub credential can still press merge outside every Pantheon helper. The gate cannot prevent that; it denies merge authority to all repository tooling and makes the resulting state auditable. Preventing it entirely needs branch protection to require a review, which is outside this task's no-config-edit scope."
     }
   ],
   "acceptance": [
@@ -196,7 +253,7 @@
       "id": "AC5",
       "statement": "Regression fixtures cover PRs 4212, 4213 and 4214 without impersonating owner or reviewer.",
       "status": "pass",
-      "note": "Extended beyond the canonical statement: the five later live regressions on PRs 4217, 4222, 4225 (auto-merge enable and direct merge) and 4227 are covered by the same data-only convention. See the live_regressions table.",
+      "note": "Extended beyond the canonical statement: the seven later live regressions on PRs 4217, 4222, 4225 (auto-merge enable and direct merge), 4226, 4227 and 4230 are covered by the same data-only convention. See the live_regressions table, and merge_entry_point_coverage for the per-entry-point controls.",
       "evidence_refs": [
         "scripts/git/test_task_review_merge_gate.py::PrematureMergeRegressionTests",
         "scripts/git/test_task_review_merge_gate.py::LiveMergeGovernanceRegressionTests",
@@ -231,7 +288,7 @@
       },
       {
         "command": "python3 scripts/git/test_task_review_merge_gate.py",
-        "conclusion": "Ran 53 tests - OK (38 from the first pass plus 15 covering the five later live regressions)",
+        "conclusion": "Ran 59 tests - OK (38 from the first pass plus 21 covering the seven later live regressions and the shared-credential entry points)",
         "result": "pass"
       },
       {
@@ -241,7 +298,7 @@
       },
       {
         "command": "python3 scripts/git/test_git_workflow_helpers.py",
-        "conclusion": "Ran 34 tests - OK",
+        "conclusion": "Ran 52 tests - OK",
         "result": "pass"
       },
       {

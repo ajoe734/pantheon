@@ -1,26 +1,26 @@
 == python3 scripts/git/test_task_review_merge_gate.py
 ----------------------------------------------------------------------
-Ran 53 tests in 1.209s
+Ran 59 tests in 1.326s
 OK
 
 == python3 scripts/git/test_auto_integrator.py
 ----------------------------------------------------------------------
-Ran 9 tests in 0.008s
+Ran 9 tests in 0.005s
 OK
 
 == python3 scripts/git/test_git_workflow_helpers.py
 ----------------------------------------------------------------------
-Ran 34 tests in 0.380s
+Ran 52 tests in 4.338s
 OK
 
 == python3 scripts/git/test_task_pr_triage.py
 ----------------------------------------------------------------------
-Ran 24 tests in 0.012s
+Ran 24 tests in 0.007s
 OK
 
 == python3 scripts/git/test_index_safety.py
 ----------------------------------------------------------------------
-Ran 17 tests in 5.925s
+Ran 17 tests in 7.063s
 OK
 
 == bash -n helpers

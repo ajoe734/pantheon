@@ -1,11 +1,11 @@
 """Fail-closed proofs for the canonical review-before-merge gate.
 
-The regression fixtures replay eight live 2026-07-26 governance failures from
+The regression fixtures replay ten live 2026-07-26 governance failures from
 recorded canonical state: the premature auto-merges of Pantheon PRs #4212,
-#4213 and #4214, and the five later events on PRs #4217, #4222, #4225
-(auto-merge enable, then direct merge) and #4227. They are data only: no test
-impersonates the owner or the reviewer, and nothing here writes canonical
-status, activity, or GitHub state.
+#4213 and #4214, and the seven later events on PRs #4217, #4222, #4225
+(auto-merge enable, then direct merge), #4226, #4227 and #4230. They are data
+only: no test impersonates the owner or the reviewer, and nothing here writes
+canonical status, activity, or GitHub state.
 """
 
 from __future__ import annotations
@@ -484,7 +484,7 @@ LIVE_NOW = datetime(2026, 7, 27, 0, 0, 0, tzinfo=timezone.utc)
 
 
 class LiveMergeGovernanceRegressionTests(unittest.TestCase):
-    """The five live 2026-07-26 review-before-merge regressions.
+    """The seven live 2026-07-26 review-before-merge regressions.
 
     Every field is recorded state: task rows and audit events come from the
     canonical status root, PR fields from the GitHub API. None of these tests
@@ -495,7 +495,12 @@ class LiveMergeGovernanceRegressionTests(unittest.TestCase):
     | #4217 | direct `gh pr merge`   | none                    |
     | #4222 | auto-merge enable      | enabled after the head  |
     | #4225 | auto-merge enable, then a direct merge by the same credential |
+    | #4226 | auto-merge enable      | enabled after the head  |
     | #4227 | auto-merge enable      | enabled *before* the head it landed |
+    | #4230 | auto-merge enable      | enabled after the head  |
+
+    All seven report ``reviews=[]`` and an empty ``reviewDecision``, and all
+    seven were merged by the one GitHub account every Pantheon agent shares.
     """
 
     OWNER = "Claude"
@@ -931,6 +936,227 @@ class LiveMergeGovernanceRegressionTests(unittest.TestCase):
         self.assertIn("risk=low", claims)
         self.assertIn("docs_only=True", claims)
         self.assertIn("review_waived=True", claims)
+
+    # -- #4226: the third merge on one unapproved task branch ---------------
+
+    PR_4226 = {
+        "number": 4226,
+        "url": "https://github.com/ajoe734/pantheon/pull/4226",
+        "headRefName": f"task/{TASK_4222}",
+        "headRefOid": "4628dc721b0e1b434303fac679c01a9afa05b108",
+        "baseRefName": "dev",
+        "isDraft": False,
+        "state": "MERGED",
+        "mergedAt": "2026-07-26T23:07:09Z",
+        "mergeCommit": {"oid": "1cf27337e9197c8bc0840e466f55019065e3576e"},
+        "mergedBy": {"login": GITHUB_ACTOR},
+        "reviewDecision": "",
+        "autoMergeRequest": {
+            "enabledAt": "2026-07-26T23:06:04Z",
+            "enabledBy": {"login": GITHUB_ACTOR},
+            "mergeMethod": "MERGE",
+        },
+        "reviews": [],
+        "latestReviews": [],
+        "commits": [
+            {
+                "oid": "4628dc721b0e1b434303fac679c01a9afa05b108",
+                "committedDate": "2026-07-26T23:05:49Z",
+            }
+        ],
+    }
+
+    def test_pr_4226_third_merge_on_one_unapproved_task_branch(self) -> None:
+        """#4222, #4225 and #4226 all merged task/OPS-L12-...-IMPORT-001 unreviewed."""
+
+        decision = self._decide(task_id=self.TASK_4222, pr=self.PR_4226)
+
+        self.assertFalse(decision.allow_merge)
+        self.assertFalse(decision.allow_auto_merge)
+        self.assertEqual(decision.reason, "review_not_approved")
+        self.assertTrue(decision.auto_merge_request["present"])
+        self.assertEqual(decision.auto_merge_request["enabled_at"], "2026-07-26T23:06:04Z")
+        self.assertTrue(decision.revoke_auto_merge)
+
+    # -- #4230: green CI standing in for canonical review -------------------
+
+    TASK_4230 = "OPS-CI-PR-TRAILER-RANGE-001"
+
+    PR_4230 = {
+        "number": 4230,
+        "url": "https://github.com/ajoe734/pantheon/pull/4230",
+        "headRefName": f"task/{TASK_4230}",
+        "headRefOid": "1bb2b839bad3258d7c5fe353e957e6a5fec08545",
+        "baseRefName": "dev",
+        "isDraft": False,
+        "state": "MERGED",
+        "mergedAt": "2026-07-26T23:34:22Z",
+        "mergeCommit": {"oid": "643181a067ec5c344faac0766c69de0d5cfb32eb"},
+        "mergedBy": {"login": GITHUB_ACTOR},
+        "reviewDecision": "",
+        "autoMergeRequest": {
+            "enabledAt": "2026-07-26T23:33:20Z",
+            "enabledBy": {"login": GITHUB_ACTOR},
+            "mergeMethod": "MERGE",
+        },
+        "reviews": [],
+        "latestReviews": [],
+        # Every required check was green; that is the entire point.
+        "statusCheckRollup": [
+            {"name": "Commit trailers", "conclusion": "SUCCESS"},
+            {"name": "Runtime mirror guard", "conclusion": "SUCCESS"},
+            {"name": "Smoke acceptance", "conclusion": "SUCCESS"},
+        ],
+        "commits": [
+            {
+                "oid": "1bb2b839bad3258d7c5fe353e957e6a5fec08545",
+                "committedDate": "2026-07-26T23:32:48Z",
+            }
+        ],
+    }
+
+    EVENTS_4230 = (
+        {
+            "ts": "2026-07-26T21:01:44Z",
+            "agent": "Human/Ops",
+            "type": "assign",
+            "task_id": TASK_4230,
+            "message": "Assigned OPS-CI-PR-TRAILER-RANGE-001 to Claude with reviewer Codex2",
+        },
+        {
+            "ts": "2026-07-26T23:28:46Z",
+            "agent": "Claude",
+            "type": "start",
+            "task_id": TASK_4230,
+            "message": "Supervisor auto-started OPS-CI-PR-TRAILER-RANGE-001 after successful dispatch.",
+        },
+    )
+
+    def test_pr_4230_green_ci_is_not_canonical_reviewer_approval(self) -> None:
+        """All three required checks were SUCCESS; the task was in_progress."""
+
+        decision = self._decide(
+            task_id=self.TASK_4230,
+            pr=self.PR_4230,
+            events=self.EVENTS_4230,
+        )
+
+        self.assertFalse(decision.allow_merge)
+        self.assertFalse(decision.allow_auto_merge)
+        self.assertEqual(decision.reason, "review_not_approved")
+        self.assertEqual(decision.contract["status"], "in_progress")
+
+    # -- the shared credential, on both halves of the merge ----------------
+
+    def test_the_shared_credential_cannot_enable_auto_merge(self) -> None:
+        """Creation half: the request #4230 armed at 23:33:20Z is refused."""
+
+        open_form = {
+            **self.PR_4230,
+            "state": "OPEN",
+            "mergedAt": None,
+            "mergeCommit": None,
+            "mergeStateStatus": "CLEAN",
+        }
+
+        decision = self._decide(
+            task_id=self.TASK_4230,
+            pr=open_form,
+            events=self.EVENTS_4230,
+        )
+
+        self.assertFalse(decision.allow_auto_merge)
+        self.assertTrue(decision.revoke_auto_merge)
+        self.assertEqual(decision.auto_merge_request["enabled_by"], self.GITHUB_ACTOR)
+
+    def test_the_shared_credential_cannot_finalize_a_merge(self) -> None:
+        """Finalization half: the same account completing the merge is refused."""
+
+        decision = self._decide(
+            task_id=self.TASK_4230,
+            pr=self.PR_4230,
+            events=self.EVENTS_4230,
+        )
+
+        self.assertFalse(decision.allow_merge)
+        self.assertEqual(self.PR_4230["mergedBy"]["login"], self.GITHUB_ACTOR)
+        self.assertNotEqual(
+            gate.normalize_agent(self.GITHUB_ACTOR),
+            gate.normalize_agent(decision.contract["reviewer"]),
+        )
+
+    def test_an_approved_task_never_unlocks_auto_merge_creation(self) -> None:
+        """Approval unlocks an exact-head merge, never a standing merge grant."""
+
+        decision = self._decide(
+            task_id=self.TASK_4230,
+            pr={
+                **self.PR_4230,
+                "state": "OPEN",
+                "mergedAt": None,
+                "mergeCommit": None,
+                "autoMergeRequest": None,
+            },
+            status="review_approved",
+            events=(
+                *self.EVENTS_4230,
+                {
+                    "ts": "2026-07-26T23:33:00Z",
+                    "agent": self.REVIEWER,
+                    "type": "review_approved",
+                    "task_id": self.TASK_4230,
+                    "message": "Approved head 1bb2b839bad3258d7c5fe353e957e6a5fec08545.",
+                },
+            ),
+        )
+
+        self.assertTrue(decision.allow_merge)
+        self.assertFalse(decision.allow_auto_merge)
+        self.assertEqual(decision.reason, "exact_head_approved")
+
+    def test_a_changes_requested_decision_blocks_the_merge(self) -> None:
+        """Canonical rejection blocks even with a GitHub APPROVED review present."""
+
+        decision = self._decide(
+            task_id=self.TASK_4230,
+            pr={
+                **self.PR_4230,
+                "state": "OPEN",
+                "mergedAt": None,
+                "mergeCommit": None,
+                "autoMergeRequest": None,
+                "reviewDecision": "CHANGES_REQUESTED",
+                "reviews": [
+                    {
+                        "author": {"login": self.GITHUB_ACTOR},
+                        "state": "APPROVED",
+                        "submittedAt": "2026-07-26T23:33:10Z",
+                    }
+                ],
+            },
+            status="review_approved",
+            events=(
+                *self.EVENTS_4230,
+                {
+                    "ts": "2026-07-26T23:33:00Z",
+                    "agent": self.REVIEWER,
+                    "type": "review_approved",
+                    "task_id": self.TASK_4230,
+                    "message": "Approved head 1bb2b839bad3258d7c5fe353e957e6a5fec08545.",
+                },
+                {
+                    "ts": "2026-07-26T23:35:00Z",
+                    "agent": self.REVIEWER,
+                    "type": "reopen",
+                    "task_id": self.TASK_4230,
+                    "message": "Changes required on head 1bb2b839bad3258d7c5fe353e957e6a5fec08545.",
+                },
+            ),
+        )
+
+        self.assertFalse(decision.allow_merge)
+        self.assertFalse(decision.allow_auto_merge)
+        self.assertEqual(decision.reason, "approval_revoked")
 
     def test_a_payload_claim_cannot_downgrade_the_declared_policy(self) -> None:
         contract = gate.contract_from_task_row(

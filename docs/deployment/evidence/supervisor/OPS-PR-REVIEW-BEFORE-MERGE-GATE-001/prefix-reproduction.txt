@@ -32,10 +32,15 @@ Ran 4 tests in 0.001s
 OK
 
 ========================================================================
-SECTION 4 - recorded canonical state of the five later live regressions
-           PRs #4217 / #4222 / #4225 (enable + direct merge) / #4227
+SECTION 4 - recorded canonical state of the seven later live regressions
+           PRs #4217 / #4222 / #4225 (enable + direct merge) / #4226
+           / #4227 / #4230, plus the shared-credential entry points
 ========================================================================
+test_a_changes_requested_decision_blocks_the_merge (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_a_changes_requested_decision_blocks_the_merge)
+Canonical rejection blocks even with a GitHub APPROVED review present. ... ok
 test_a_payload_claim_cannot_downgrade_the_declared_policy (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_a_payload_claim_cannot_downgrade_the_declared_policy) ... ok
+test_an_approved_task_never_unlocks_auto_merge_creation (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_an_approved_task_never_unlocks_auto_merge_creation)
+Approval unlocks an exact-head merge, never a standing merge grant. ... ok
 test_an_ordinary_progress_note_does_not_revoke_an_approval (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_an_ordinary_progress_note_does_not_revoke_an_approval)
 Only an explicit do-not-merge marker revokes; notes are not blanket. ... ok
 test_pr_4217_direct_merge_without_any_auto_merge_request (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_pr_4217_direct_merge_without_any_auto_merge_request)
@@ -53,6 +58,8 @@ test_pr_4225_human_ops_do_not_merge_note_revokes_an_approval (test_task_review_m
 Exact-head do-not-merge notes stood at 22:43:10Z and 22:52:13Z. ... ok
 test_pr_4225_premature_auto_merge_enable_is_refused (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_pr_4225_premature_auto_merge_enable_is_refused)
 Human/Ops disabled this by hand at 22:42:46Z; the gate must do it. ... ok
+test_pr_4226_third_merge_on_one_unapproved_task_branch (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_pr_4226_third_merge_on_one_unapproved_task_branch)
+#4222, #4225 and #4226 all merged task/OPS-L12-...-IMPORT-001 unreviewed. ... ok
 test_pr_4227_auto_merge_creation_and_completion_fail_closed (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_pr_4227_auto_merge_creation_and_completion_fail_closed) ... ok
 test_pr_4227_auto_merge_request_outlived_the_head_it_landed (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_pr_4227_auto_merge_request_outlived_the_head_it_landed)
 Enabled 23:10:54Z, head committed 23:13:21Z, merged 23:14:41Z. ... ok
@@ -60,8 +67,14 @@ test_pr_4227_docs_only_payload_claims_do_not_waive_review (test_task_review_merg
 Stage-1 docs/evidence with the live swap still blocked stays gated. ... ok
 test_pr_4227_shape_is_refused_even_when_this_head_is_approved (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_pr_4227_shape_is_refused_even_when_this_head_is_approved)
 Approving the new head does not legitimise the older merge grant. ... ok
+test_pr_4230_green_ci_is_not_canonical_reviewer_approval (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_pr_4230_green_ci_is_not_canonical_reviewer_approval)
+All three required checks were SUCCESS; the task was in_progress. ... ok
+test_the_shared_credential_cannot_enable_auto_merge (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_the_shared_credential_cannot_enable_auto_merge)
+Creation half: the request #4230 armed at 23:33:20Z is refused. ... ok
+test_the_shared_credential_cannot_finalize_a_merge (test_task_review_merge_gate.LiveMergeGovernanceRegressionTests.test_the_shared_credential_cannot_finalize_a_merge)
+Finalization half: the same account completing the merge is refused. ... ok
 
 ----------------------------------------------------------------------
-Ran 14 tests in 0.005s
+Ran 20 tests in 0.003s
 
 OK

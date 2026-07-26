@@ -35,7 +35,7 @@ regression this module exists to prevent: three task PRs were opened with
 before any reviewer had looked at them.  #4212 was independently rejected
 eight minutes *after* it was already merged.
 
-Five further live regressions from the same evening extend the contract:
+Seven further live regressions from the same evening extend the contract:
 
 * #4217 landed by a plain `gh pr merge` with `autoMergeRequest=null`; the
   gate therefore cannot be an auto-merge-only guard.
@@ -44,14 +44,19 @@ Five further live regressions from the same evening extend the contract:
 * #4225 first attempted a premature auto-merge enable, then landed as a
   direct merge by the owner's own GitHub credential while Human/Ops had
   posted exact-head do-not-merge notes.
+* #4226 was the third unreviewed merge on that one task branch.
 * #4227 shows why an auto-merge *request* is the hazard rather than the
   merge call: auto-merge was enabled at 23:10:54Z, the head then moved at
   23:13:21Z, and GitHub merged the newer, never-reviewed head at 23:14:41Z.
   Its payload was docs-only, which does not waive review-before-merge.
+* #4230 merged with every required check green and `reviewDecision` empty:
+  green CI is not canonical reviewer approval.
 
 Nothing on the PR side unlocks the gate: a GitHub approving review, the
-identity that pressed merge, and any risk or payload claim recorded on the
-task row are all ignored.
+identity that pressed merge or enabled auto-merge, green CI, and any risk
+or payload claim recorded on the task row are all ignored.  Every Pantheon
+agent pushes through one GitHub account, so GitHub-side identity cannot
+distinguish an owner from a reviewer at all.
 """
 
 from __future__ import annotations
