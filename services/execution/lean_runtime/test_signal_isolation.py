@@ -7,6 +7,7 @@ Acceptance coverage:
 """
 from __future__ import annotations
 
+import json
 import unittest
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
@@ -400,5 +401,138 @@ class TestCombinedIsolation(unittest.TestCase):
         self.assertEqual(store.get_dlq()[0]["_dlq_reason"], "runtime_mismatch")
 
 
+# ---------------------------------------------------------------------------
+# Redis claim & visibility timeout tests (B1)
+# ---------------------------------------------------------------------------
+
+class TestRedisPendingSignalStoreClaimVisibility(unittest.TestCase):
+
+    def test_reclaim_expired_inflight_only_reclaims_expired_items(self):
+        import sys
+        from unittest.mock import patch, MagicMock
+        from services.execution.lean_runtime.pending_signal_store import RedisPendingSignalStore
+
+        mock_redis_client = MagicMock()
+        mock_redis = MagicMock()
+        mock_redis.Redis.from_url.return_value = mock_redis_client
+
+        now = 1000.0
+        def _hget(key, field):
+            skey = str(key)
+            if "worker-A" in skey:
+                return str(now - 10.0) # 10s old < 300s timeout
+            if "worker-B" in skey:
+                return str(now - 400.0) # 400s old > 300s timeout
+            return None
+
+        mock_redis_client.hget.side_effect = _hget
+        mock_redis_client.lrange.side_effect = lambda k, s, e: [json.dumps({"signal_id": "sig-1"})]
+        mock_redis_client.lrem.return_value = 1
+        mock_redis_client.scan.side_effect = lambda cursor=0, match="", count=100: (0, ["pantheon:signals:pending:b-001:inflight:worker-A", "pantheon:signals:pending:b-001:inflight:worker-B"])
+
+        with patch.dict(sys.modules, {"redis": mock_redis}):
+            store = RedisPendingSignalStore(
+                "redis://localhost:6379",
+                queue_key="pantheon:signals:pending:b-001",
+                worker_id="worker-A",
+                visibility_timeout_seconds=300,
+            )
+        store._time_fn = lambda: now
+
+        store.reclaim_expired_inflight()
+
+        # worker-A list should NOT be reclaimed (lrem for worker-A not executed)
+        # worker-B list SHOULD be reclaimed
+        calls = mock_redis_client.lrem.call_args_list
+        self.assertEqual(len(calls), 1)
+        self.assertIn("worker-B", calls[0][0][0])
+
+
+# ---------------------------------------------------------------------------
+# Cross-process leader lease tests (B2)
+# ---------------------------------------------------------------------------
+
+class TestLeaderLeaseCrossProcess(unittest.TestCase):
+
+    def test_file_backed_leader_lease_prevents_duplicate_leaders(self):
+        import tempfile
+        import importlib
+        from pathlib import Path
+
+        paper_fleet_reconciler = importlib.import_module("services.execution.runtime-manager.paper_fleet_reconciler")
+        PaperFleetReconciler = paper_fleet_reconciler.PaperFleetReconciler
+
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
+            lease_file = Path(tmp.name)
+
+        try:
+            r1 = PaperFleetReconciler(leader_store=str(lease_file))
+            r2 = PaperFleetReconciler(leader_store=str(lease_file))
+
+            # First reconciler acquires lease
+            self.assertTrue(r1.try_acquire_lease())
+            self.assertTrue(r1.is_leader)
+
+            # Second reconciler fails to acquire lease while active
+            self.assertFalse(r2.try_acquire_lease())
+            self.assertFalse(r2.is_leader)
+        finally:
+            lease_file.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# Execution Error DLQ Routing & 6-Binding Drill (B3)
+# ---------------------------------------------------------------------------
+
+class TestExecutionErrorDLQ(unittest.TestCase):
+
+    def test_execution_error_routes_to_dlq(self):
+        store = InMemoryPendingSignalStore()
+        sig = _signal("exec-err-1", binding_id="b-1", runtime_id="rt-1", capital_pool_id="pool-1")
+        store.enqueue(sig)
+        c = SignalConsumer(store_client=store, binding_id="b-1", runtime_id="rt-1", capital_pool_id="pool-1")
+        algo = _RecordingAlgo()
+
+        with patch("services.execution.lean_runtime.signal_consumer.execute", side_effect=ValueError("Broker error")):
+            c.drain(algo=algo)
+
+        self.assertEqual(store.dlq_depth(), 1)
+        dlq_items = store.get_dlq()
+        self.assertEqual(dlq_items[0]["signal_id"], "exec-err-1")
+        self.assertTrue(any(k in dlq_items[0]["_dlq_reason"] for k in ("execution_error", "unexpected_error")))
+
+
+class TestSixBindingRestartIsolationDrill(unittest.TestCase):
+
+    def test_six_binding_restart_isolation(self):
+        """Simulate 6 bindings being reconciled, ensuring strict key/worker isolation."""
+        bindings = [
+            _signal(f"sig-{i}", binding_id=f"b-00{i}", runtime_id=f"rt-00{i}", capital_pool_id=f"pool-00{i}")
+            for i in range(1, 7)
+        ]
+        stores = {f"b-00{i}": InMemoryPendingSignalStore() for i in range(1, 7)}
+        consumers = {
+            f"b-00{i}": SignalConsumer(
+                store_client=stores[f"b-00{i}"],
+                binding_id=f"b-00{i}",
+                runtime_id=f"rt-00{i}",
+                capital_pool_id=f"pool-00{i}",
+            )
+            for i in range(1, 7)
+        }
+
+        # Enqueue correctly scoped signals
+        for i, sig in enumerate(bindings, 1):
+            stores[f"b-00{i}"].enqueue(sig)
+
+        # Drain each worker
+        with patch("services.execution.lean_runtime.signal_consumer.execute") as mock_exec:
+            for i in range(1, 7):
+                consumers[f"b-00{i}"].drain(algo=_RecordingAlgo())
+
+        self.assertEqual(mock_exec.call_count, 6)
+
+
 if __name__ == "__main__":
     unittest.main()
+

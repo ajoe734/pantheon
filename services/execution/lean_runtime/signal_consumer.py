@@ -520,6 +520,10 @@ class SignalConsumer:
             log.warning(
                 "[%s] No algo instance — dry-run only", signal["signal_id"]
             )
+            if hasattr(self._store, "is_processed") and self._store.is_processed(signal["signal_id"]):
+                log.info("[%s] Signal already processed — skipping", signal["signal_id"])
+                self._ack_signal(signal)
+                return
             self._remember_processed(signal["signal_id"])
             self._ack_signal(signal)
             return

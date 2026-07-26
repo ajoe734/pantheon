@@ -168,6 +168,12 @@ class CapitalBoundaryService:
         self.audit_log_path = audit_log_path
         self.audit_store = audit_store
 
+    def _authorize(self, resource_type: str, operation: str, actor_role: str) -> None:
+        if not is_authorized(resource_type, operation, actor_role):
+            raise PermissionError(
+                f"Role '{actor_role}' is not authorized to execute {operation} on {resource_type}"
+            )
+
     def _reserve_create_idempotency(
         self,
         *,

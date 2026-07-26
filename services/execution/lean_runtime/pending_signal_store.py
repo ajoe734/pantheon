@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -199,6 +200,8 @@ class RedisPendingSignalStore:
         self.reclaim_expired_inflight()
         batch_limit = max(int(limit or self._default_batch_size), 1)
         drained: list[dict[str, Any]] = []
+        ts_key = f"{self._inflight_key}:timestamps"
+        now = time.time()
         for _ in range(batch_limit):
             # Atomic claim: move signal from pending list to worker's in-flight list
             try:
@@ -210,6 +213,8 @@ class RedisPendingSignalStore:
                 break
             try:
                 sig = json.loads(raw)
+                sid = str(sig.get("signal_id") or raw)
+                self._client.hset(ts_key, sid, str(now))
                 drained.append(sig)
             except Exception:
                 # Malformed JSON in queue -> remove from inflight and send to DLQ
@@ -219,12 +224,13 @@ class RedisPendingSignalStore:
 
     def ack(self, signal_or_id: str | dict[str, Any]) -> None:
         """Remove claimed item from in-flight queue after successful execution."""
+        ts_key = f"{self._inflight_key}:timestamps"
         if isinstance(signal_or_id, dict):
             raw = json.dumps(signal_or_id)
             self._client.lrem(self._inflight_key, 0, raw)
-            # Backup matching by signal_id if formatting differs
             sid = str(signal_or_id.get("signal_id", ""))
             if sid:
+                self._client.hdel(ts_key, sid)
                 items = self._client.lrange(self._inflight_key, 0, -1)
                 for item in items:
                     try:
@@ -233,11 +239,15 @@ class RedisPendingSignalStore:
                     except Exception:
                         pass
         elif isinstance(signal_or_id, str):
+            self._client.hdel(ts_key, signal_or_id)
             items = self._client.lrange(self._inflight_key, 0, -1)
             for item in items:
                 try:
                     parsed = json.loads(item)
-                    if item == signal_or_id or parsed.get("signal_id") == signal_or_id:
+                    sid = parsed.get("signal_id")
+                    if item == signal_or_id or sid == signal_or_id:
+                        if sid:
+                            self._client.hdel(ts_key, sid)
                         self._client.lrem(self._inflight_key, 1, item)
                 except Exception:
                     if item == signal_or_id:
@@ -257,22 +267,43 @@ class RedisPendingSignalStore:
 
     def reclaim_expired_inflight(self) -> None:
         """Reclaim expired in-flight entries across workers back to pending queue."""
-        # Simple scan for inflight keys matching prefix
         prefix = f"{self._queue_key}:inflight:"
-        try:
-            keys = self._client.keys(f"{prefix}*")
-            for k in keys:
-                # If key has items and wasn't updated within timeout, return items to pending
-                # Here we safely move all items back if worker is dead or inactive
-                while True:
-                    try:
-                        item = self._client.lmove(k, self._queue_key, "RIGHT", "LEFT")
-                    except Exception:
-                        item = self._client.rpoplpush(k, self._queue_key)
-                    if item is None:
-                        break
-        except Exception:
-            pass
+        now = getattr(self, "_time_fn", time.time)()
+        cursor = 0
+        keys: list[str] = []
+        while True:
+            cursor, match_keys = self._client.scan(cursor=cursor, match=f"{prefix}*", count=100)
+            keys.extend(match_keys)
+            if cursor == 0:
+                break
+
+        for k in keys:
+            if k.endswith(":timestamps"):
+                continue
+            ts_key = f"{k}:timestamps"
+            items = self._client.lrange(k, 0, -1)
+            for item in items:
+                try:
+                    parsed = json.loads(item)
+                    sid = parsed.get("signal_id") or item
+                except Exception:
+                    sid = item
+                
+                claim_time_str = self._client.hget(ts_key, sid)
+                claim_time = float(claim_time_str) if claim_time_str else 0.0
+                
+                # If claim_time is 0 (legacy/missing) and key is self._inflight_key, don't reclaim immediately unless expired
+                # Reclaim if claimed longer ago than visibility_timeout
+                if claim_time > 0 and (now - claim_time) < self._visibility_timeout:
+                    continue
+                if claim_time == 0 and k == self._inflight_key:
+                    continue
+
+                # Expired item: lrem from worker inflight, cleanup ts, and move back to pending
+                rem_cnt = self._client.lrem(k, 1, item)
+                if rem_cnt > 0:
+                    self._client.hdel(ts_key, sid)
+                    self._client.rpush(self._queue_key, item)
 
     def queue_depth(self) -> int:
         return int(self._client.llen(self._queue_key))

@@ -165,6 +165,7 @@ class PaperFleetReconciler:
         performance_state_root: Optional[str] = None,
         monitoring_session_store_path: Optional[str] = None,
         monitoring_heartbeat_stale_after_seconds: Optional[int] = None,
+        leader_store: Optional[Any] = None,
         extra_env: Optional[Dict[str, str]] = None,
     ) -> None:
         self._url = (
@@ -237,7 +238,7 @@ class PaperFleetReconciler:
         # Leader lease state: only one reconciler instance owns the active binding worker set
         self._reconciler_id = f"reconciler-{uuid.uuid4().hex[:8]}"
         self._is_leader = True  # Default standalone True; updated during reconcile cycle when lease manager present
-        self._lease_lock = threading.Lock()
+        self._leader_store = leader_store
 
         self._lock = threading.RLock()
         self._workers: Dict[str, WorkerEntry] = {}
@@ -261,22 +262,75 @@ class PaperFleetReconciler:
         with self._lock:
             return self._is_leader
 
-    def try_acquire_lease(self, leader_store: Dict[str, Any] | None = None) -> bool:
-        """Acquire or renew leader lease. If another instance holds lease, yield leadership."""
+    def try_acquire_lease(self, leader_store: Any | None = None) -> bool:
+        """Acquire or renew leader lease using wall-clock time across processes.
+        
+        Supports Redis client, file path, dict store, or custom object with acquire/renew interface.
+        """
+        store = leader_store if leader_store is not None else self._leader_store
         with self._lock:
-            if leader_store is None:
+            if store is None:
                 self._is_leader = True
                 return True
-            now = time.monotonic()
-            holder = leader_store.get("holder")
-            expires_at = leader_store.get("expires_at", 0)
-            if holder is None or holder == self._reconciler_id or now > expires_at:
-                leader_store["holder"] = self._reconciler_id
-                leader_store["expires_at"] = now + 30.0
-                self._is_leader = True
-                return True
-            self._is_leader = False
-            return False
+            
+            now = time.time()
+            lease_ttl = 30.0
+
+            # 1. Redis client instance
+            if hasattr(store, "set") and hasattr(store, "get"):
+                lease_key = "pantheon:reconciler:leader_lease"
+                current_holder = store.get(lease_key)
+                if isinstance(current_holder, bytes):
+                    current_holder = current_holder.decode("utf-8")
+                
+                if current_holder is None or current_holder == self._reconciler_id:
+                    acquired = store.set(lease_key, self._reconciler_id, px=int(lease_ttl * 1000), nx=(current_holder is None))
+                    if acquired or current_holder == self._reconciler_id:
+                        store.set(lease_key, self._reconciler_id, px=int(lease_ttl * 1000))
+                        self._is_leader = True
+                        return True
+                self._is_leader = False
+                return False
+
+            # 2. File path or str
+            elif isinstance(store, (str, Path)):
+                lease_file = Path(store)
+                try:
+                    data = {}
+                    if lease_file.exists():
+                        try:
+                            data = json.loads(lease_file.read_text(encoding="utf-8"))
+                        except Exception:
+                            data = {}
+                    holder = data.get("holder")
+                    expires_at = float(data.get("expires_at", 0))
+
+                    if holder is None or holder == self._reconciler_id or now > expires_at:
+                        lease_file.write_text(
+                            json.dumps({"holder": self._reconciler_id, "expires_at": now + lease_ttl}),
+                            encoding="utf-8"
+                        )
+                        self._is_leader = True
+                        return True
+                except Exception:
+                    pass
+                self._is_leader = False
+                return False
+
+            # 3. Dict store
+            elif isinstance(store, dict):
+                holder = store.get("holder")
+                expires_at = float(store.get("expires_at", 0))
+                if holder is None or holder == self._reconciler_id or now > expires_at:
+                    store["holder"] = self._reconciler_id
+                    store["expires_at"] = now + lease_ttl
+                    self._is_leader = True
+                    return True
+                self._is_leader = False
+                return False
+
+            self._is_leader = True
+            return True
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -406,7 +460,7 @@ class PaperFleetReconciler:
     def _run_loop(self) -> None:
         while not self._shutdown.is_set():
             try:
-                self.reconcile_once()
+                self.reconcile_once(self._leader_store)
             except Exception as exc:  # noqa: BLE001
                 with self._lock:
                     self._last_error = f"{type(exc).__name__}: {exc}"

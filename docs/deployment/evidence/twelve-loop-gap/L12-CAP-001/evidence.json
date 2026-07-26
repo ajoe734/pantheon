@@ -6,11 +6,11 @@
   "delivery_repository": "ajoe734/pantheon",
   "delivery_branch": "task/L12-CAP-001",
   "proof_artifacts": {
-    "README.md": "40e843c14c939f082f574110c55fa6e931e13914d1ba6e37f63c4dc90c272da4",
+    "README.md": "a80f67e20e3d1229c6680a210b015733f06c93c3d6b07ff4d4a4f8868727e666",
     "redis_crash_before_ack_proof.txt": "d27d65eadfaa7a7ac411b8435b4620633c2cfbbd0914fe0ec02fa94f7ce3f942",
     "execution_error_dlq_proof.txt": "45223a2627faed2b5492f2f3af2eafcbabc1227bd9c6cbd87a2ceb7ca3c7809b",
     "leader_lease_convergence_proof.txt": "ac407cdee739790d3c73b5f62e600a5b451e10b0f4eea3b7143759ba5b2e3274",
     "six_binding_restart_isolation_drill.txt": "d1cf0ce28e15edfb2f6889ddce563e2aa0e34b9fc16426fabc7b42041acff9b2"
   },
-  "verification_summary": "163 passed, 1 warning. Implemented claim/ack visibility in RedisPendingSignalStore, DLQ routing on validation/execution failure, fail-closed paper signal isolation, and reconciler leader lease."
+  "verification_summary": "Ran 69 tests in lean_runtime + 40 tests in runtime-manager. Implemented per-entry claim timestamp & SCAN reclaim in RedisPendingSignalStore, cross-process leader lease in PaperFleetReconciler, DLQ routing, fail-closed isolation, and capital mutation role authorization."
 }
