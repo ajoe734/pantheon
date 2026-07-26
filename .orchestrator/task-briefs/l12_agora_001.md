@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: in_progress
 - Owner: Codex2
 - Reviewer: Codex
-- Next: Anchor fe6180d00 and evidence commit 381e4373e implement typed identity, scoped RBAC/idempotency, bounded leased claims, dataset-version handoff ack, migration, and the checksummed evidence packet. Fresh PostgreSQL rerun passed 70 tests; parent router/identity passed 27 tests; compileall, checksum, and diff checks pass. Preparing the task PR and Codex review handoff.
+- Next: Anchor fe6180d00 and evidence commit 381e4373e implement typed identity, scoped RBAC/idempotency, bounded leased claims, dataset-version handoff ack, migration, and the checksummed evidence packet. Merged dev c762af14d; fresh PostgreSQL rerun passed 70 tests; parent router/identity passed 27 tests; compileall, checksum, and diff checks pass. Preparing the task PR and Codex review handoff.
 
 ## Summary
 修正真實 OperatorIdentity 路徑、RBAC/tenant IDOR、Idempotency-Key conflict，建立可多 worker 安全 claim 的 dataset extraction owner 與 downstream ack。
