@@ -50,8 +50,9 @@ DATABASE_URL=postgresql://pantheon_app:***@localhost:15432/pantheon \
 
 Final combined regression over all six files:
 
-110 passed in 31.26s, then 110 passed in 29.51s after merging current
-`origin/dev` at `2723ddf19`.
+110 passed in 34.57s after merging `origin/dev` at
+`bdbd0a99bf68e6a635d9bd936782c659298b7bb7`; the tested integration head was
+`5b0be9d2c1df8d4b5824bb0d8cf0562637c0c7fd`.
 ```
 
 Hosted deployment and all-loop live drill admission remain owned by
