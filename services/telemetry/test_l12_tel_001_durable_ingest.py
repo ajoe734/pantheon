@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import tempfile
 import unittest
@@ -44,6 +45,7 @@ class _JetStream:
         self.calls = calls
         self.fail_publish = fail_publish
         self.publish_kwargs: dict | None = None
+        self.publish_history: list[dict] = []
 
     async def publish(self, subject: str, payload: bytes, **kwargs):
         self.calls.append("puback" if not self.fail_publish else "publish_failed")
@@ -54,6 +56,7 @@ class _JetStream:
             "payload": json.loads(payload),
             **kwargs,
         }
+        self.publish_history.append(self.publish_kwargs)
         return object()
 
 
@@ -65,6 +68,16 @@ def _event() -> dict:
         "created_at": "2026-07-26T00:00:00Z",
         "deployment_stage": "paper",
     }
+
+
+def _expected_receipt_id(event: dict) -> str:
+    payload = json.dumps(
+        event,
+        separators=(",", ":"),
+        sort_keys=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    return f"sha256:{hashlib.sha256(payload).hexdigest()}"
 
 
 def _started_buffer(
@@ -95,10 +108,46 @@ class DurableIngestReceiptTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             jetstream.publish_kwargs["headers"],
             {
-                "Nats-Msg-Id": "evt-l12-tel-001",
+                "Nats-Msg-Id": _expected_receipt_id(_event()),
                 "Pantheon-Tenant-Id": "tenant-alpha",
             },
         )
+
+    async def test_receipt_id_binds_tenant_and_immutable_payload(self):
+        calls: list[str] = []
+        event = _event()
+        jetstream = _JetStream(calls)
+        buffer = _started_buffer(
+            jetstream=jetstream,
+            subscription=_Subscription(_Message(event, calls)),
+        )
+
+        self.assertTrue(await buffer.put(event))
+        self.assertTrue(await buffer.put(dict(event)))
+        self.assertTrue(
+            await buffer.put(
+                {
+                    **event,
+                    "tenant_id": "tenant-beta",
+                }
+            )
+        )
+        self.assertTrue(
+            await buffer.put(
+                {
+                    **event,
+                    "created_at": "2026-07-26T00:00:01Z",
+                }
+            )
+        )
+
+        receipt_ids = [
+            call["headers"]["Nats-Msg-Id"]
+            for call in jetstream.publish_history
+        ]
+        self.assertEqual(receipt_ids[0], receipt_ids[1])
+        self.assertNotEqual(receipt_ids[0], receipt_ids[2])
+        self.assertNotEqual(receipt_ids[0], receipt_ids[3])
 
     async def test_put_fails_when_durable_puback_is_missing(self):
         calls: list[str] = []

@@ -95,9 +95,22 @@ def _telemetry_auth_env() -> dict[str, str]:
     for runtime_key, telemetry_key in mappings.items():
         if telemetry_key in os.environ:
             env[runtime_key] = os.environ[telemetry_key]
+        else:
+            # Telemetry is an independent authority boundary. Do not inherit a
+            # runtime-manager secret, issuer, role map, or privileged default
+            # merely because both services share the validator implementation.
+            env.pop(runtime_key, None)
     env["PANTHEON_RUNTIME_AUTH_MODE"] = os.getenv(
         "PANTHEON_TELEMETRY_AUTH_MODE",
         "strict",
+    )
+    # The shared validator historically grants ``operator`` to a verified JWT
+    # that omits every role claim. Telemetry must fail closed in that case.
+    # An operator may deliberately configure a telemetry-specific default, but
+    # an unrelated PANTHEON_RUNTIME_DEFAULT_ROLE never crosses this boundary.
+    env["PANTHEON_RUNTIME_DEFAULT_ROLE"] = os.getenv(
+        "PANTHEON_TELEMETRY_DEFAULT_ROLE",
+        "__telemetry_role_required__",
     )
     return env
 
@@ -111,7 +124,6 @@ def _service_context(authorization: str) -> Optional[AuthContext]:
         return None
     allowed = _split_values(
         os.getenv("PANTHEON_TELEMETRY_SERVICE_TENANTS")
-        or os.getenv("PANTHEON_TELEMETRY_ALLOWED_TENANTS")
     )
     return AuthContext(
         actor_id="telemetry-service",
@@ -171,7 +183,7 @@ def _allowed_tenants(context: AuthContext) -> list[str]:
     claims = context.claims if isinstance(context.claims, Mapping) else {}
     for key in _TENANT_CLAIM_KEYS:
         values.extend(_split_values(claims.get(key)))
-    if not values:
+    if not values and context.token_kind != "service":
         values.extend(
             _split_values(os.getenv("PANTHEON_TELEMETRY_ALLOWED_TENANTS"))
         )
