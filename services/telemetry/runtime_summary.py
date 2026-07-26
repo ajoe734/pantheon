@@ -178,9 +178,30 @@ def _binding_effective_boundary(
     return None, None, None
 
 
-def _summary_key(payload: dict[str, Any]) -> Optional[str]:
+def _summary_identity(payload: dict[str, Any]) -> Optional[tuple[str, str]]:
     runtime_id = str(payload.get("runtime_id") or "").strip()
-    return runtime_id or None
+    if not runtime_id:
+        return None
+    tenant_id = str(payload.get("tenant_id") or "").strip()
+    envelope = payload.get("correlation_envelope")
+    envelope_tenant_id = (
+        str(envelope.get("tenant_id") or "").strip()
+        if isinstance(envelope, dict)
+        else ""
+    )
+    if tenant_id and envelope_tenant_id and tenant_id != envelope_tenant_id:
+        return None
+    return tenant_id or envelope_tenant_id, runtime_id
+
+
+def _summary_key(payload: dict[str, Any]) -> Optional[str]:
+    identity = _summary_identity(payload)
+    if identity is None:
+        return None
+    # Persist a collision-safe composite key while keeping the summary payload
+    # and HTTP contract unchanged. Legacy unscoped records remain isolated
+    # under an empty tenant and are never returned to a scoped caller.
+    return json.dumps(identity, separators=(",", ":"), ensure_ascii=False)
 
 
 def _json_safe_object(value: Any) -> Optional[dict[str, Any]]:
@@ -257,9 +278,11 @@ class RuntimeSummaryProjectionStore:
         if stage not in self._VALID_STAGES:
             return None
 
-        runtime_id = _summary_key(event)
-        if not runtime_id:
+        summary_identity = _summary_identity(event)
+        summary_key = _summary_key(event)
+        if summary_identity is None or summary_key is None:
             return None
+        incoming_tenant_id, runtime_id = summary_identity
 
         event_type = str(event.get("event_type") or "").strip()
         event_time = str(event.get("created_at") or utc_now_rfc3339())
@@ -300,13 +323,13 @@ class RuntimeSummaryProjectionStore:
         is_derived_metric_echo = metadata.get("derived_from_threshold_evaluation") is True
 
         with self._lock:
-            current = dict(self._summaries.get(runtime_id, {}))
+            current = dict(self._summaries.get(summary_key, {}))
             existing_binding = str(
                 current.get("binding_id") or current.get("runtime_binding_id") or ""
             ).strip()
             if existing_binding and not binding_id:
                 return self._reject_binding_reclaim(
-                    runtime_id,
+                    summary_key,
                     current,
                     event,
                     candidate_binding_id=binding_id,
@@ -324,7 +347,7 @@ class RuntimeSummaryProjectionStore:
                 )
                 if not accepted:
                     return self._reject_binding_reclaim(
-                        runtime_id,
+                        summary_key,
                         current,
                         event,
                         candidate_binding_id=binding_id,
@@ -411,7 +434,6 @@ class RuntimeSummaryProjectionStore:
                     "projection_updated_at": utc_now_rfc3339(),
                 }
             )
-            incoming_tenant_id = str(event.get("tenant_id") or "").strip()
             if incoming_tenant_id:
                 current["tenant_id"] = incoming_tenant_id
             incoming_environment = str(event.get("environment") or "").strip()
@@ -587,7 +609,7 @@ class RuntimeSummaryProjectionStore:
                 current["total_trades"] = max(int(current.get("total_trades") or 0), executed)
 
             current["health_summary"] = self._health_summary(current)
-            self._summaries[runtime_id] = current
+            self._summaries[summary_key] = current
             self._persist()
             return json.loads(json.dumps(current))
 
@@ -705,7 +727,7 @@ class RuntimeSummaryProjectionStore:
 
     def _reject_binding_reclaim(
         self,
-        runtime_id: str,
+        summary_key: str,
         current: dict[str, Any],
         event: dict[str, Any],
         *,
@@ -734,22 +756,58 @@ class RuntimeSummaryProjectionStore:
             "recorded_at": utc_now_rfc3339(),
         }
         current["projection_diagnostics"] = diagnostics
-        self._summaries[runtime_id] = current
+        self._summaries[summary_key] = current
         self._persist()
         return json.loads(json.dumps(current))
 
-    def get(self, runtime_id: str, *, now: Optional[datetime] = None) -> Optional[dict[str, Any]]:
+    def get(
+        self,
+        runtime_id: str,
+        *,
+        tenant_id: Optional[str] = None,
+        now: Optional[datetime] = None,
+    ) -> Optional[dict[str, Any]]:
         with self._lock:
-            summary = self._summaries.get(str(runtime_id))
-            if not summary:
-                return None
-            return self._apply_staleness(summary, now=now)
+            normalized_runtime_id = str(runtime_id).strip()
+            if tenant_id is not None:
+                key = json.dumps(
+                    (str(tenant_id).strip(), normalized_runtime_id),
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                )
+                summary = self._summaries.get(key)
+                return self._apply_staleness(summary, now=now) if summary else None
 
-    def list(self, *, now: Optional[datetime] = None) -> list[dict[str, Any]]:
+            matches = [
+                summary
+                for summary in self._summaries.values()
+                if str(summary.get("runtime_id") or "").strip() == normalized_runtime_id
+            ]
+            # Unscoped internal callers are retained for compatibility only
+            # when the runtime identity is unambiguous.
+            if len(matches) != 1:
+                return None
+            return self._apply_staleness(matches[0], now=now)
+
+    def list(
+        self,
+        *,
+        tenant_id: Optional[str] = None,
+        now: Optional[datetime] = None,
+    ) -> list[dict[str, Any]]:
         with self._lock:
             return [
                 self._apply_staleness(summary, now=now)
-                for summary in sorted(self._summaries.values(), key=lambda item: str(item.get("runtime_id") or ""))
+                for summary in sorted(
+                    self._summaries.values(),
+                    key=lambda item: (
+                        str(item.get("tenant_id") or ""),
+                        str(item.get("runtime_id") or ""),
+                    ),
+                )
+                if tenant_id is None
+                or str(summary.get("tenant_id") or "").strip()
+                == str(tenant_id).strip()
             ]
 
     def _health_summary(self, summary: dict[str, Any]) -> dict[str, str]:
