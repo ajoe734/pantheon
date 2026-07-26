@@ -461,6 +461,47 @@ class CoordinationWatcherTests(unittest.TestCase):
         self.assertFalse((self.front / ".coordination" / "responses" / response.name).exists())
         self.assertEqual(load_jsonl(Path(self.config["paths"]["event_queue"])), [])
 
+    def test_legacy_frontend_source_is_recorded_without_dispatch(self) -> None:
+        request = (
+            self.pantheon
+            / ".coordination"
+            / "requests"
+            / "F-042-ui-done.yaml"
+        )
+        request.write_text(
+            "\n".join(
+                [
+                    "feature_id: F-042",
+                    "type: ui-done",
+                    "source_repo: ajoe734/front-ai-trading-system",
+                    "source_branch: main",
+                    "source_commit: legacy-sha",
+                    "summary: Legacy frontend completion packet.",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        state: dict[str, object] = {}
+        changed = sync_coordination_files(self.config, state)
+
+        self.assertTrue(changed)
+        feature = state["coordination"]["features"]["F-042"]
+        self.assertEqual(
+            feature["coordination_skip"]["reason"],
+            "legacy_frontend_source",
+        )
+        self.assertEqual(
+            feature["coordination_skip"]["source_repo"],
+            "ajoe734/front-ai-trading-system",
+        )
+        self.assertEqual(
+            feature["coordination_skip"]["replacement_repo"],
+            "ajoe734/execute-plans",
+        )
+        self.assertEqual(load_jsonl(Path(self.config["paths"]["event_queue"])), [])
+
     def test_contract_ready_requires_valid_front_repo_checkout(self) -> None:
         shutil.rmtree(self.front / ".git")
 
