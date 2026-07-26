@@ -10,7 +10,10 @@ ApprovalDecision, or move RuntimeBinding write ownership out of Runtime
 Manager.
 
 The machine-readable receipt is in [`evidence.json`](evidence.json), with its
-digest in [`evidence.sha256`](evidence.sha256).
+digest in [`evidence.sha256`](evidence.sha256). The schema-complete owner
+closeout manifest is in [`closeout/evidence.json`](closeout/evidence.json),
+with its companion digest in
+[`closeout/evidence.sha256`](closeout/evidence.sha256).
 
 ## Delivered boundary
 
