@@ -33,8 +33,8 @@ from services.source_ingestion.controller_state import (
 from services.source_ingestion.distillation_worker import (
     DistillationJob,
     DistillationJobQueue,
+    RegistrySyncRequest,
     RegistrySyncResult,
-    _synthesize_evidence_item,
     make_distillation_worker,
 )
 from services.source_ingestion.pg_store import build_source_evidence_repository
@@ -185,9 +185,7 @@ def _versioned_registry_id(source: SourceRecord, job: DistillationJob) -> str:
 def _build_registry_payload(
     *,
     config: DistillationControllerConfig,
-    source: SourceRecord,
-    seed: Any,
-    job: DistillationJob,
+    request: RegistrySyncRequest,
     registry_id: str,
 ) -> dict[str, Any]:
     from services.research.strategy_spec.production_distillation import (
@@ -197,17 +195,21 @@ def _build_registry_payload(
         StrategySpecConversionService,
     )
 
+    source = request.source
+    job = request.job
     registry_payload: dict[str, Any] | None = None
     try:
         distiller = ProductionStrategySpecDistiller(source_dirs=config.source_dirs)
         distiller._resolve_markdown(source.source_id)
         registry_payload = dict(distiller.distill_registry_payload(source.source_id))
     except Exception:
-        item = _synthesize_evidence_item(source, job.source_digest or None)
+        # Convert from the exact evidence item the seed was materialized from.
+        # Re-synthesizing it here would produce an item id outside the seed's
+        # lineage whenever the worker resolved a different version key.
         conversion = StrategySpecConversionService().convert_seed(
-            seed=seed,
+            seed=request.seed,
             source_records=[source],
-            evidence_items=[item],
+            evidence_items=[request.evidence_item],
             strategy_id=f"strat-{source.source_id}-{job.source_digest[-12:]}",
             title=source.title,
             version="1.0.0",
@@ -233,11 +235,9 @@ def _make_registry_sync(
 ) -> Any:
     """Build the terminal Registry sink used before durable job acknowledgement."""
 
-    def sync(
-        source: SourceRecord,
-        seed: Any,
-        job: DistillationJob,
-    ) -> RegistrySyncResult:
+    def sync(request: RegistrySyncRequest) -> RegistrySyncResult:
+        source = request.source
+        job = request.job
         registry_id = _versioned_registry_id(source, job)
         existing = _get_registry_entry(config.registry_url, registry_id)
         if existing is not None:
@@ -258,9 +258,7 @@ def _make_registry_sync(
 
         payload = _build_registry_payload(
             config=config,
-            source=source,
-            seed=seed,
-            job=job,
+            request=request,
             registry_id=registry_id,
         )
         _register_strategy_spec(config.registry_url, payload)

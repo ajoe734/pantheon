@@ -15,7 +15,10 @@ from services.source_ingestion.distillation_controller import (
     run_controller_tick,
 )
 from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore
-from services.source_ingestion.distillation_worker import DistillationJobQueue
+from services.source_ingestion.distillation_worker import (
+    DistillationJobQueue,
+    source_version_digest,
+)
 
 
 class DummyLoopWriter:
@@ -102,33 +105,41 @@ def test_distillation_controller_tick_success(tmp_path, monkeypatch) -> None:
     state_store.save(state)
     
     writer = DummyLoopWriter()
-    
-    # Mock registry HTTP requests
-    registry_queries = []
-    registry_registrations = []
-    
+
+    # Mock registry HTTP requests. The store is stateful because the sync path
+    # only acknowledges a job after a terminal readback of the write.
+    registry_queries: list[str] = []
+    registry_registrations: list[dict] = []
+    registry_store: dict[str, dict] = {}
+
     def mock_get_registry_entry(url: str, registry_id: str) -> dict | None:
         registry_queries.append(registry_id)
-        return None  # Pretend it is not yet registered
-        
+        return registry_store.get(registry_id)
+
     def mock_register_strategy_spec(url: str, payload: dict) -> dict:
         registry_registrations.append(payload)
-        return {"entry": {"registry_id": payload["registry_id"], "artifact_state": "draft"}}
-        
+        entry = {"registry_id": payload["registry_id"], "artifact_state": "draft"}
+        registry_store[payload["registry_id"]] = {"entry": entry}
+        return {"entry": entry}
+
     monkeypatch.setattr("services.source_ingestion.distillation_controller._get_registry_entry", mock_get_registry_entry)
     monkeypatch.setattr("services.source_ingestion.distillation_controller._register_strategy_spec", mock_register_strategy_spec)
-    
+
     # 2. Run tick
     res = run_controller_tick(config=config, state=state, store=state_store, writer=writer)
-    
+
     # 3. Assertions
     assert res["status"] == "success"
     assert res["reconcile"]["created"] == 1
     assert res["actual"]["synced_count"] == 1
-    assert len(registry_queries) == 1
-    assert registry_queries[0] == "reg-strategy-spec-src-note-test-001"
+
+    digest = source_version_digest(record).removeprefix("sha256:")
+    expected_registry_id = f"reg-strategy-spec-src-note-test-001-{digest[:12]}"
+    # One pre-write probe plus one terminal readback of the same versioned id.
+    assert registry_queries == [expected_registry_id, expected_registry_id]
     assert len(registry_registrations) == 1
-    assert registry_registrations[0]["registry_id"] == "reg-strategy-spec-src-note-test-001"
+    assert registry_registrations[0]["registry_id"] == expected_registry_id
+    assert registry_registrations[0]["source_digest"] == source_version_digest(record)
     assert len(writer.successes) == 1
     assert writer.successes[0]["loop_id"] == "strategy_distillation"
     assert alive_path.exists()

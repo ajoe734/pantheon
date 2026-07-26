@@ -27,6 +27,7 @@ from services.source_ingestion.distillation_worker import (
     _stable_job_id,
     _synthesize_evidence_bundle,
     _synthesize_evidence_item,
+    source_version_digest,
 )
 from services.source_ingestion.strategy_seed_builder import StrategySpecSeedStatus
 from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore
@@ -91,7 +92,10 @@ class TestEnqueueFromSourceRecord:
 
         assert job.status == DistillationJobStatus.PENDING
         assert job.source_id == "src-tw-001"
-        assert job.job_id == _stable_job_id("src-tw-001")
+        # Job identity is per source *version*, not per source id.
+        digest = source_version_digest(source)
+        assert job.source_digest == digest
+        assert job.job_id == _stable_job_id("src-tw-001", digest)
 
     def test_enqueue_twice_returns_same_job(self, tmp_path: Path) -> None:
         worker, queue, _ = _make_worker(tmp_path)
@@ -107,7 +111,7 @@ class TestEnqueueFromSourceRecord:
         worker, _, _ = _make_worker(tmp_path)
         source = _rejected_source()
 
-        with pytest.raises(DistillationError, match="Rejected source"):
+        with pytest.raises(DistillationError, match="Only normalized source"):
             worker.enqueue_from_source_record(source)
 
     def test_run_pending_processes_enqueued_job(self, tmp_path: Path) -> None:

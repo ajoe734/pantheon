@@ -1176,6 +1176,23 @@ class RegistrySyncResult:
     reason: str | None = None
 
 
+@dataclass(frozen=True)
+class RegistrySyncRequest:
+    """Everything a Registry sink needs to publish one distilled source version.
+
+    The evidence item and bundle are the exact objects the seed was
+    materialized from. A sink must not re-synthesize them: the version key the
+    worker resolved is the only one whose ids are inside the seed's lineage.
+    """
+
+    source: SourceRecord
+    seed: Any
+    job: DistillationJob
+    evidence_item: EvidenceItem
+    evidence_bundle: EvidenceBundle
+    version_key: str | None
+
+
 class DistillationWorker:
     """Converts normalized SourceRecords into StrategySpecSeed drafts.
 
@@ -1195,8 +1212,7 @@ class DistillationWorker:
         worker_id: str | None = None,
         lease_seconds: float = 30.0,
         retry_base_seconds: float = 5.0,
-        registry_sync: Callable[[SourceRecord, Any, DistillationJob], RegistrySyncResult]
-        | None = None,
+        registry_sync: Callable[[RegistrySyncRequest], RegistrySyncResult] | None = None,
     ) -> None:
         self._queue = job_queue or DistillationJobQueue()
         self._seed_store = seed_store or StrategySpecSeedStore()
@@ -1435,7 +1451,16 @@ class DistillationWorker:
 
         if self._registry_sync is not None:
             try:
-                registry_result = self._registry_sync(source, result.seed, job)
+                registry_result = self._registry_sync(
+                    RegistrySyncRequest(
+                        source=source,
+                        seed=result.seed,
+                        job=job,
+                        evidence_item=item,
+                        evidence_bundle=bundle,
+                        version_key=version_key,
+                    )
+                )
             except Exception as exc:
                 failure_status = self._queue.mark_retry_or_dead_letter(
                     job,
@@ -1490,8 +1515,7 @@ def make_distillation_worker(
     lease_seconds: float = 30.0,
     retry_base_seconds: float = 5.0,
     max_attempts: int = 3,
-    registry_sync: Callable[[SourceRecord, Any, DistillationJob], RegistrySyncResult]
-    | None = None,
+    registry_sync: Callable[[RegistrySyncRequest], RegistrySyncResult] | None = None,
 ) -> DistillationWorker:
     """Factory for a default-configured DistillationWorker."""
     queue = DistillationJobQueue(
