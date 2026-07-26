@@ -1,0 +1,50 @@
+{
+  "schema_version": "l12_source_bounded_live_proof.v1",
+  "task_id": "L12-SRC-001",
+  "captured_at": "2026-07-26T09:46:33Z",
+  "environment": "task-worktree-dev",
+  "command_posture": {
+    "adapter_allowlist": "TaiwanOfficialMarketDatasetAdapter.records_from_payload",
+    "egress_mode": "allowlist",
+    "allowed_hosts": [
+      "openapi.twse.com.tw"
+    ],
+    "connector_id": "tw-twse-tpex-official-market",
+    "dataset": "tw_price_daily",
+    "venues": [
+      "TWSE"
+    ],
+    "max_records": 3,
+    "timeout_seconds": 10.0,
+    "continuous_crawl": false
+  },
+  "connector_policy": {
+    "policy_ref": "source-ingest://policy/twse-tpex-official-low-rate",
+    "requests_per_minute": 30,
+    "burst": 3,
+    "retry_after_seconds": 60,
+    "concurrency": 1
+  },
+  "result": {
+    "status": "pass",
+    "provider": "TWSE/TPEx",
+    "record_count": 3,
+    "record_statuses": [
+      "normalized"
+    ],
+    "api_endpoints": [
+      "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
+    ],
+    "source_ids": [
+      "tw-official:tw_price_daily:TWSE:00400A:9aea86f251e180dd",
+      "tw-official:tw_price_daily:TWSE:00401A:787bfc7e64404aa7",
+      "tw-official:tw_price_daily:TWSE:00402A:b9255d33ada79fc4"
+    ]
+  },
+  "claims_not_made": [
+    "No hosted-dev deployment claim",
+    "No continuous external crawl claim",
+    "No TPEx host or dataset proof in this bounded run",
+    "No live broker or capital authority"
+  ]
+}
