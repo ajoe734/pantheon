@@ -10,11 +10,16 @@
 #   * the lock is released before the new supervisor is launched, so the new
 #     process never inherits a held lock file descriptor.
 #
-# Usage: swap_supervisor.sh <new_root> <label>
+# Usage: swap-supervisor.sh <new_root> <label> [--discover-only]
+#
+# --discover-only stops after reporting the runtime it would install and the
+# supervisor it would replace, before any mutation. Use it to confirm discovery
+# resolves exactly one live supervisor.
 set -uo pipefail
 
 NEW_ROOT="${1:?new root required}"
 LABEL="${2:?label required}"
+DISCOVER_ONLY="${3:-}"
 LIVE_CONFIG=/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json
 ADMISSION_LOCK=/home/lupin/pantheon/.orchestrator/runtime-admission.lock
 LOG_DIR=/home/lupin/pantheon/.orchestrator/logs
@@ -27,16 +32,30 @@ say() { echo "[swap $(stamp)] $*"; }
 TARGET_SHA="$(git -C "$NEW_ROOT" rev-parse HEAD)" || exit 1
 say "new_root=$NEW_ROOT target_sha=$TARGET_SHA log=$LOG"
 
-mapfile -t OLD_PIDS < <(
+# Match the same shape supervisor.py's own cmdline_is_supervisor_process uses:
+# argv[0] must be a python interpreter running .orchestrator/supervisor.py. A
+# plain substring match also caught the `/bin/bash -c "... supervisor.py ..."`
+# launcher wrapper that started the incumbent, which made discovery report two
+# processes and fail closed.
+supervisor_pids() {
+  local d pid argv0 cmd
   for d in /proc/[0-9]*; do
     pid="${d#/proc/}"
+    [[ -r "$d/cmdline" ]] || continue
+    argv0="$(tr '\0' '\n' <"$d/cmdline" 2>/dev/null | head -1)" || continue
+    case "${argv0##*/}" in
+      python*) ;;
+      *) continue ;;
+    esac
     cmd="$(tr '\0' ' ' <"$d/cmdline" 2>/dev/null)" || continue
     case "$cmd" in
       *worker_runner*) continue ;;
       *supervisor.py*--config*) echo "$pid" ;;
     esac
   done
-)
+}
+
+mapfile -t OLD_PIDS < <(supervisor_pids)
 if [[ "${#OLD_PIDS[@]}" -ne 1 ]]; then
   say "FATAL: expected exactly one live supervisor, found: ${OLD_PIDS[*]:-none}"
   exit 1
@@ -44,6 +63,11 @@ fi
 OLD_PID="${OLD_PIDS[0]}"
 OLD_CWD="$(readlink -f "/proc/$OLD_PID/cwd")"
 say "old_pid=$OLD_PID old_cwd=$OLD_CWD"
+
+if [[ "$DISCOVER_ONLY" == "--discover-only" ]]; then
+  say "discover-only: stopping before the intentional restart declaration"
+  exit 0
+fi
 
 say "recording intentional restart (waits for the in-flight cycle to release the runtime lock)"
 if ! (cd "$NEW_ROOT" && python3 .orchestrator/supervisor_watchdog.py \
@@ -98,16 +122,14 @@ disown 2>/dev/null || true
 
 for _ in $(seq 1 40); do
   sleep 0.5
-  new_pid="$(
-    for d in /proc/[0-9]*; do
-      pid="${d#/proc/}"
-      cmd="$(tr '\0' ' ' <"$d/cmdline" 2>/dev/null)" || continue
-      case "$cmd" in
-        *worker_runner*) continue ;;
-        *supervisor.py*--config*) echo "$pid" ;;
-      esac
-    done | head -1
-  )"
+  new_pid=""
+  while read -r candidate; do
+    [[ -n "$candidate" ]] || continue
+    if [[ "$(readlink -f "/proc/$candidate/cwd" 2>/dev/null)" == "$(readlink -f "$NEW_ROOT")" ]]; then
+      new_pid="$candidate"
+      break
+    fi
+  done < <(supervisor_pids)
   [[ -n "$new_pid" ]] && break
 done
 if [[ -z "${new_pid:-}" ]]; then

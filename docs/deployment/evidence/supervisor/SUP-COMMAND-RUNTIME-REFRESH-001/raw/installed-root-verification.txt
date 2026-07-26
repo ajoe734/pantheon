@@ -211,3 +211,30 @@ degradation from the other side:
   (log timestamps are local; poll_interval_seconds is 30)
 
 The queued `start` did land at 2026-07-26T22:48:46Z once the lock freed.
+
+======================================================================
+10. Handoff script discovery — dry run
+======================================================================
+
+The first version of `handoff/swap-supervisor.sh` matched supervisor processes by
+substring alone, which also caught the `/bin/bash -c "... supervisor.py ..."`
+launcher wrapper (pid 901542) that started the incumbent:
+
+$ for d in /proc/[0-9]*; do ... case "$cmd" in *supervisor.py*--config*) ...
+901542 /home/lupin/pantheon-ci-deploy/dev-root-bdbd0a99bf68
+901543 /home/lupin/pantheon-ci-deploy/dev-root-bdbd0a99bf68
+
+Two matches would have tripped the script's own "expected exactly one live
+supervisor" guard and aborted the operator's run. Discovery now mirrors
+`supervisor.cmdline_is_supervisor_process`: argv[0] must be a python
+interpreter. Verified with the new no-mutation mode, which stops before the
+intentional-restart declaration:
+
+$ bash handoff/swap-supervisor.sh \
+    /home/lupin/pantheon-ci-deploy/dev-root-d054bd49cb48 refresh-d054 --discover-only
+[swap 2026-07-26T23:16:59Z] new_root=/home/lupin/pantheon-ci-deploy/dev-root-d054bd49cb48 target_sha=6578ef968f7e0374b046de0afb5b07ce2f81558e log=/home/lupin/pantheon/.orchestrator/logs/supervisor-refresh-d054-20260726T231659Z.log
+[swap 2026-07-26T23:17:02Z] old_pid=901543 old_cwd=/home/lupin/pantheon-ci-deploy/dev-root-bdbd0a99bf68
+[swap 2026-07-26T23:17:02Z] discover-only: stopping before the intentional restart declaration
+
+The post-launch wait now also resolves the replacement by cwd equality with the
+installed root instead of taking the lowest matching pid.

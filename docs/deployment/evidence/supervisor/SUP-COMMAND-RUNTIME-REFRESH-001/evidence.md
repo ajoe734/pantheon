@@ -196,7 +196,13 @@ one.
 `handoff/swap-supervisor.sh <new_root> <label>` performs the whole handoff and
 fails closed at every step. Its serialization is the point:
 
-1. resolves the live supervisor by `/proc` scan and **requires exactly one**;
+1. resolves the live supervisor by `/proc` scan and **requires exactly one** —
+   matching the same shape as `supervisor.cmdline_is_supervisor_process` (argv[0]
+   must be a python interpreter), because a substring-only match also caught the
+   `/bin/bash -c` launcher wrapper that started the incumbent and tripped the
+   one-supervisor guard. `--discover-only` reports the resolved runtime and pid
+   and exits before any mutation; its dry run is in
+   `raw/installed-root-verification.txt` §10;
 2. records the durable PID-bound intentional-restart declaration first, so a
    watchdog relaunch is not charged to the crash-loop budget — this call blocks
    on the runtime admission lock, which is what serialises the cutover against
@@ -218,6 +224,9 @@ To finish the task:
 
 ```bash
 cd <this evidence dir>
+# optional, no mutation: confirm it resolves one supervisor and the right runtime
+bash handoff/swap-supervisor.sh /home/lupin/pantheon-ci-deploy/dev-root-d054bd49cb48 refresh-d054 --discover-only
+# the handoff itself
 bash handoff/swap-supervisor.sh /home/lupin/pantheon-ci-deploy/dev-root-d054bd49cb48 refresh-d054
 ```
 
