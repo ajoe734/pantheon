@@ -2,7 +2,7 @@
 
 Owner: Codex2
 Reviewer: Codex
-Status: cross-process repair complete; independent re-review required
+Status: review approved; product evidence manifest finalized
 
 ## Outcome
 
@@ -44,6 +44,18 @@ ingest run or SourceRecord.
 - Bounded real-provider drill: exact host `openapi.twse.com.tw`, TWSE only,
   `max_records=3`, timeout 10 seconds, connector concurrency 1; three normalized
   `tw_price_daily` SourceRecords returned.
+- Owner closeout revalidation on 2026-07-26: focused
+  controller/reconciler/scheduler/multiprocessing suite 125 passed.
+
+PR #4144 merged the supervised due-state boundary at
+`77ce7f90927a84f659d86d2ddbf31d00a08a0b86`. PR #4156 merged the
+cross-process repair at `e79b6ee483c352463c8653b094f99377b383fda8`;
+Commit trailers, Runtime mirror guard, and Smoke acceptance passed. Codex
+independently approved the repaired multi-process acceptance on 2026-07-26.
+PR #4163 then merged the owner publication refresh at
+`b7e40ccccc3a2c05c97c43e55d602df0bd15cfa8`. The companion
+`evidence.sha256` binds the schema-normalized product evidence manifest used
+by the governed closeout gate.
 
 The earlier thread-only tests remain as same-process regression coverage and
 are explicitly named `*_threads_*`; they are not the two-worker acceptance

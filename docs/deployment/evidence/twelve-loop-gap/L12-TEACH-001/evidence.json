@@ -4,14 +4,17 @@
   "owner": "Codex2",
   "reviewer": "Codex",
   "status": "ready_for_review",
-  "generated_at": "2026-07-26T10:00:44Z",
+  "generated_at": "2026-07-26T11:37:20Z",
   "scope": {
     "target_repo": "pantheon",
     "merge_target": "dev",
     "service_root": "services/training-session",
     "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-TEACH-001",
     "store_anchor_commit": "5a942db461633dbd755fdf0578c42ad519c516b2",
-    "authority_anchor_commit": "184b5a54d7816e40841a1c52fd2c970d6c0ade36"
+    "authority_anchor_commit": "184b5a54d7816e40841a1c52fd2c970d6c0ade36",
+    "reviewer_hardening_anchor_commit": "cc8592176e62907794e3a8943c13d0bd74524bc6",
+    "original_delivery_pr": 4149,
+    "original_merge_commit": "6636507f274ffcaf4b6d42b1c3cb8adb09dd49f5"
   },
   "inbound_authority": {
     "bearer_verified": true,
@@ -27,10 +30,18 @@
       "service_claim_mismatch",
       "actor_spoof",
       "cross_tenant_read",
+      "missing_role",
+      "wrong_role",
       "missing_mfa",
       "malformed_mfa",
+      "well_formed_unverified_mfa_commit",
+      "well_formed_unverified_mfa_discard",
+      "raw_otp_actor_context_not_verified",
       "strict_verifier_missing"
-    ]
+    ],
+    "missing_role_default_is_privileged": false,
+    "mfa_authority": "verified_jwt_claim",
+    "caller_supplied_six_digit_mfa_is_authoritative": false
   },
   "authoritative_store": {
     "backend": "postgres",
@@ -46,6 +57,10 @@
     ],
     "preview_job_lock": "pg_advisory_xact_lock",
     "replay_lock": "pg_advisory_xact_lock",
+    "session_append_lock": "pg_advisory_xact_lock",
+    "session_event_same_transaction": true,
+    "identical_event_duplicate": "return_durable_prior",
+    "mismatched_event_duplicate": "reject_without_overwrite",
     "persona_target_owner_api_idempotent": true,
     "json_fallback": "development_single_node_only"
   },
@@ -57,6 +72,15 @@
     "terminal_commit_callbacks": 1,
     "both_workers_observed_terminal": true,
     "restart_observed_same_controller_record": true,
+    "concurrent_session_append_events": 2,
+    "durable_session_sequences": [
+      1,
+      2
+    ],
+    "no_lost_session_update": true,
+    "identical_duplicate_returns_durable_prior": true,
+    "mismatched_duplicate_rejected": true,
+    "durable_conflict_rows": 1,
     "test_tables_removed": true,
     "result": "passed"
   },
@@ -80,22 +104,22 @@
   },
   "hosted_terminal_readback": {
     "status": "not_claimed",
-    "reason": "Task branch is not merged or activated; local/fake records are not hosted proof.",
+    "reason": "The reviewer-hardening follow-up is not merged or activated; local/fake records are not hosted proof.",
     "activation_task": "L12-MANIFEST-001",
     "service_boundary_verification_task": "L12-VERIFY-LEARN-001",
     "hosted_acceptance_task": "L12-HOSTED-001"
   },
   "validation": [
     {
-      "command": "PYTHONPATH=services/training-session/tests:services/training-session:. /home/lupin/pantheon/.venv/bin/python -m pytest -q -p no:cacheprovider services/training-session",
-      "result": "123 passed, 1 skipped, 1 warning in 45.04s"
+      "command": "TRAINING_SESSION_TEST_POSTGRES_DSN=<local-dev-dsn> PYTHONPATH=services/training-session/tests:services/training-session:. /home/lupin/pantheon/.venv/bin/python -m pytest -q -p no:cacheprovider services/training-session",
+      "result": "129 passed, 1 warning in 29.71s"
     },
     {
-      "command": "TRAINING_SESSION_TEST_POSTGRES_DSN=<local-dev-dsn> PYTHONPATH=. /home/lupin/pantheon/.venv/bin/python -m pytest -q -p no:cacheprovider services/training-session/tests/test_postgres_event_store.py::test_real_postgres_two_workers_and_restart_observe_one_terminal_commit",
-      "result": "1 passed in 0.94s"
+      "command": "PYTHONPATH=. /home/lupin/pantheon/.venv/bin/python -m py_compile services/training-session/inbound_authority.py services/training-session/main.py services/training-session/store.py services/training-session/tests/test_inbound_authority.py services/training-session/tests/test_postgres_event_store.py",
+      "result": "exit 0"
     },
     {
-      "command": "PYTHONPATH=. /home/lupin/pantheon/.venv/bin/python -m py_compile services/training-session/inbound_authority.py services/training-session/main.py services/training-session/models.py services/training-session/persona_target.py services/training-session/preview_eval_worker.py services/training-session/store.py",
+      "command": "git diff --check",
       "result": "exit 0"
     }
   ],
@@ -106,12 +130,17 @@
     "health_degrades_on_evaluation_or_commit_failure": true,
     "evaluation_failure_performs_no_persona_mutation": true,
     "two_workers_and_restart_produce_one_terminal_commit": true,
+    "strict_jwt_requires_explicit_training_role": true,
+    "commit_discard_require_authoritative_mfa": true,
+    "two_workers_append_without_lost_session_update": true,
+    "event_id_conflicts_preserve_durable_prior": true,
     "implementation_overall": "passed",
     "hosted_proof": "deferred_to_downstream_activation_and_verification"
   },
   "residuals": [
     "Docker Compose/BFF credential forwarding and worker activation are outside this task artifact scope and belong to L12-MANIFEST-001.",
     "A real hosted persona terminal readback must be captured by L12-VERIFY-LEARN-001/L12-HOSTED-001 after the exact merged commit is deployed.",
-    "The full suite warning is the existing Starlette httpx deprecation warning."
+    "The full suite warning is the existing Starlette httpx deprecation warning.",
+    "PR #4149 is merged, but this reviewer-hardening follow-up remains unhosted until its follow-up PR merges and downstream deployment selects it."
   ]
 }

@@ -121,6 +121,65 @@ _NON_VERDICT_REVIEW_KIND_SIGNALS = (
 )
 
 
+def _review_workspace_roots() -> tuple[list[Path], str | None]:
+    """Return trusted roots that may contain a repo-relative review manifest.
+
+    Status commands execute from the immutable command root while delivery
+    evidence is authored in a supervisor-bound task worktree.  The worker
+    runner already validates both workspace environment variables against its
+    lease metadata; this helper additionally rejects conflicting bindings and
+    keeps the command root as the replay/audit fallback.
+    """
+
+    bound_roots: list[Path] = []
+    for env_name in ("PANTHEON_WORKTREE_ROOT", "ORCH_WORKSPACE_PATH"):
+        raw = str(os.environ.get(env_name) or "").strip()
+        if not raw:
+            continue
+        path = Path(raw)
+        if not path.is_absolute():
+            return [], f"{env_name} must be an absolute path"
+        bound_roots.append(path.resolve())
+
+    if len(set(bound_roots)) > 1:
+        return [], "conflicting PANTHEON_WORKTREE_ROOT and ORCH_WORKSPACE_PATH"
+
+    roots = bound_roots[:1]
+    command_root = ROOT.resolve()
+    if command_root not in roots:
+        roots.append(command_root)
+    return roots, None
+
+
+def _resolve_review_file(review_file_path: str) -> tuple[Path | None, str | None]:
+    """Resolve a portable repo-relative review manifest without path escape."""
+
+    relative = Path(review_file_path)
+    if relative.is_absolute():
+        return None, (
+            "product-level closeout review_file must be repo-relative and "
+            f"portable, got absolute path: {review_file_path}"
+        )
+    if not review_file_path or ".." in relative.parts:
+        return None, f"review_file path escapes repository scope: {review_file_path}"
+
+    roots, root_error = _review_workspace_roots()
+    if root_error:
+        return None, root_error
+
+    checked: list[Path] = []
+    for root in roots:
+        candidate = (root / relative).resolve()
+        if not candidate.is_relative_to(root):
+            return None, f"review_file path escapes repository scope: {review_file_path}"
+        checked.append(candidate)
+        if candidate.is_file():
+            return candidate, None
+
+    searched = ", ".join(str(path) for path in checked)
+    return None, f"review_file does not exist: {review_file_path} (searched: {searched})"
+
+
 def _as_lower(value: Any) -> str:
     return str(value or "").strip().lower()
 
@@ -265,10 +324,11 @@ def check_task(task: dict[str, Any]) -> list[str]:
 
     # Deep product evidence manifest checks if review_file is provided and is evidence.json.
     if review_file_path and review_file_path.endswith("evidence.json"):
-        evidence_file = ROOT / review_file_path
-        if not evidence_file.exists():
-            gaps.append(f"review_file does not exist: {review_file_path}")
+        evidence_file, resolve_error = _resolve_review_file(review_file_path)
+        if resolve_error:
+            gaps.append(resolve_error)
             return gaps
+        assert evidence_file is not None
 
         try:
             with open(evidence_file, encoding="utf-8") as fh:
