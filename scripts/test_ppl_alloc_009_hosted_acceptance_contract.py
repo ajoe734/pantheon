@@ -12,7 +12,7 @@ WORKFLOW = (
     / "workflows"
     / "ppl-alloc-009-hosted-acceptance.yml"
 )
-EXPECTED_FRONTEND_SHA = "acd2d6610d01845cd361db3f36266c006ea47ce6"
+EXPECTED_FRONTEND_SHA = "59844bab22006bcc16f5c18ef0543d7657b562a4"
 STALE_HARNESS_SHA = "7492ad7fd0b430df40dd7fe7b6b0d187d8742350"
 
 
