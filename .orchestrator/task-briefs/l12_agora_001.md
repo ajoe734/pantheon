@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Make Agora extraction governed, tenant-safe, and leased
-- Status: in_progress
+- Status: review
 - Owner: Codex2
 - Reviewer: Codex
-- Next: Anchor fe6180d00 and evidence commit 381e4373e implement typed identity, scoped RBAC/idempotency, bounded leased claims, dataset-version handoff ack, migration, and downstream acknowledgement. Merged dev c762af14d; fresh PostgreSQL rerun passed 70 tests and parent identity/router passed 27 tests. Evidence is a schema-valid ProductEvidenceManifest; closeout replay now fails only on the intentionally pending Codex verdict/admission. Preparing the task PR and review handoff.
+- Next: PR #4177 merged as 3998d9d341546209d3c854b6ce716dba2456086c. Fresh origin/dev 902584bef validation: PostgreSQL extraction 70 passed; parent Agora identity/router 27 passed; product-evidence schema, checksum, compileall, and git diff --check passed. Review docs/deployment/evidence/twelve-loop-gap/L12-AGORA-001/evidence.json; read-only closeout replay fails only on ready_for_review admission and the intentionally pending independent reviewer verdict. Please independently verify, record the formal verdict in the checksummed manifest, commit/merge the review evidence, and approve with REVIEW_FILE bound to that manifest.
 
 ## Summary
 修正真實 OperatorIdentity 路徑、RBAC/tenant IDOR、Idempotency-Key conflict，建立可多 worker 安全 claim 的 dataset extraction owner 與 downstream ack。
