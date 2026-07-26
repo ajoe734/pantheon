@@ -396,22 +396,51 @@ def test_json_legacy_raw_key_fallback_requires_exact_tenant(
 ) -> None:
     store_module = _load_worker("l12_rec_json_tenant_fallback", "store.py")
     store = store_module.ReconciliationDriftStore(tmp_path)
-    record = {
-        "drift_report_id": "legacy-report-id",
-        "id": "legacy-report-id",
-        "tenant_id": "tenant-a",
-        "severity": "critical",
-    }
-    store.drift_reports_path.write_text(
-        json.dumps({"legacy-report-id": record}),
-        encoding="utf-8",
-    )
+    cases = [
+        (
+            store.evaluations_path,
+            store.get_evaluation,
+            "evaluation_id",
+            "legacy-evaluation-id",
+        ),
+        (
+            store.alerts_path,
+            store.get_alert_handoff,
+            "alert_id",
+            "legacy-alert-id",
+        ),
+        (
+            store.reconciliation_records_path,
+            store.get_reconciliation_record,
+            "record_id",
+            "legacy-record-id",
+        ),
+        (
+            store.drift_reports_path,
+            store.get_drift_report,
+            "drift_report_id",
+            "legacy-report-id",
+        ),
+        (
+            store.worker_states_path,
+            store.get_worker_state,
+            "state_id",
+            "legacy-state-id",
+        ),
+    ]
 
-    assert (
-        store.get_drift_report("legacy-report-id", tenant_id="tenant-a")
-        == record
-    )
-    assert store.get_drift_report("legacy-report-id", tenant_id="tenant-b") is None
+    for path, getter, id_field, record_id in cases:
+        record = {
+            id_field: record_id,
+            "id": record_id,
+            "tenant_id": "tenant-a",
+        }
+        path.write_text(
+            json.dumps({record_id: record}),
+            encoding="utf-8",
+        )
+        assert getter(record_id, tenant_id="tenant-a") == record
+        assert getter(record_id, tenant_id="tenant-b") is None
 
 
 def test_postgres_legacy_raw_key_fallback_requires_exact_tenant(
@@ -453,19 +482,48 @@ def test_postgres_legacy_raw_key_fallback_requires_exact_tenant(
             dsn="postgresql://unused",
         )
 
-    record = {
-        "drift_report_id": "legacy-report-id",
-        "id": "legacy-report-id",
-        "tenant_id": "tenant-a",
-        "severity": "critical",
-    }
-    store._drift_reports.put("legacy-report-id", record)
+    cases = [
+        (
+            store._evaluation_records,
+            store.get_evaluation,
+            "evaluation_id",
+            "legacy-evaluation-id",
+        ),
+        (
+            store._alert_records,
+            store.get_alert_handoff,
+            "alert_id",
+            "legacy-alert-id",
+        ),
+        (
+            store._reconciliation_records,
+            store.get_reconciliation_record,
+            "record_id",
+            "legacy-record-id",
+        ),
+        (
+            store._drift_reports,
+            store.get_drift_report,
+            "drift_report_id",
+            "legacy-report-id",
+        ),
+        (
+            store._worker_state_records,
+            store.get_worker_state,
+            "state_id",
+            "legacy-state-id",
+        ),
+    ]
 
-    assert (
-        store.get_drift_report("legacy-report-id", tenant_id="tenant-a")
-        == record
-    )
-    assert store.get_drift_report("legacy-report-id", tenant_id="tenant-b") is None
+    for owner_store, getter, id_field, record_id in cases:
+        record = {
+            id_field: record_id,
+            "id": record_id,
+            "tenant_id": "tenant-a",
+        }
+        owner_store.put(record_id, record)
+        assert getter(record_id, tenant_id="tenant-a") == record
+        assert getter(record_id, tenant_id="tenant-b") is None
 
 
 def test_scheduled_response_measures_configured_sla_and_persists_worker_state() -> None:

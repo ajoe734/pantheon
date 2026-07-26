@@ -233,6 +233,21 @@ class ReconciliationDriftStore:
     def _list_records(self, path: Path) -> List[Dict[str, Any]]:
         return list(self._read_map(path).values())
 
+    @staticmethod
+    def _record_matches_tenant(
+        record: Optional[Dict[str, Any]],
+        tenant_id: Optional[str],
+    ) -> Optional[Dict[str, Any]]:
+        if record is None:
+            return None
+        expected_tenant = str(tenant_id or "").strip()
+        if (
+            expected_tenant
+            and str(record.get("tenant_id") or "").strip() != expected_tenant
+        ):
+            return None
+        return record
+
     def _get_record(
         self,
         path: Path,
@@ -247,9 +262,16 @@ class ReconciliationDriftStore:
                 {"tenant_id": tenant_id},
             )
             tenant_record = records.get(storage_id)
+            tenant_record = self._record_matches_tenant(
+                tenant_record,
+                tenant_id,
+            )
             if tenant_record is not None:
                 return tenant_record
-        direct = records.get(record_id)
+        direct = self._record_matches_tenant(
+            records.get(record_id),
+            tenant_id,
+        )
         if direct is not None:
             return direct
         candidates = [
@@ -711,20 +733,40 @@ class PostgresReconciliationDriftStore(ReconciliationDriftStore):
             bootstrap=bootstrap,
         )
 
+    def _get_owner_record(
+        self,
+        owner_store: Any,
+        record_id: str,
+        tenant_id: Optional[str],
+    ) -> Optional[Dict[str, Any]]:
+        storage_id = self._storage_record_id(
+            record_id,
+            {"tenant_id": tenant_id} if tenant_id else {},
+        )
+        record = self._record_matches_tenant(
+            owner_store.get(storage_id),
+            tenant_id,
+        )
+        if record is not None:
+            return record
+        if storage_id != record_id:
+            return self._record_matches_tenant(
+                owner_store.get(record_id),
+                tenant_id,
+            )
+        return None
+
     def list_evaluations(self) -> List[Dict[str, Any]]:
         return self._evaluation_records.list_all()
 
     def get_evaluation(
         self, evaluation_id: str, tenant_id: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
-        storage_id = self._storage_record_id(
+        return self._get_owner_record(
+            self._evaluation_records,
             evaluation_id,
-            {"tenant_id": tenant_id} if tenant_id else {},
+            tenant_id,
         )
-        record = self._evaluation_records.get(storage_id)
-        if record is None and storage_id != evaluation_id:
-            record = self._evaluation_records.get(evaluation_id)
-        return record
 
     def put_evaluation(self, evaluation: Dict[str, Any]) -> Dict[str, Any]:
         record = json.loads(json.dumps(evaluation))
@@ -745,14 +787,11 @@ class PostgresReconciliationDriftStore(ReconciliationDriftStore):
     def get_alert_handoff(
         self, alert_id: str, tenant_id: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
-        storage_id = self._storage_record_id(
+        return self._get_owner_record(
+            self._alert_records,
             alert_id,
-            {"tenant_id": tenant_id} if tenant_id else {},
+            tenant_id,
         )
-        record = self._alert_records.get(storage_id)
-        if record is None and storage_id != alert_id:
-            record = self._alert_records.get(alert_id)
-        return record
 
     def put_alert_handoff(self, alert: Dict[str, Any]) -> Dict[str, Any]:
         record = json.loads(json.dumps(alert))
@@ -770,14 +809,11 @@ class PostgresReconciliationDriftStore(ReconciliationDriftStore):
     def get_reconciliation_record(
         self, record_id: str, tenant_id: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
-        storage_id = self._storage_record_id(
+        return self._get_owner_record(
+            self._reconciliation_records,
             record_id,
-            {"tenant_id": tenant_id} if tenant_id else {},
+            tenant_id,
         )
-        record = self._reconciliation_records.get(storage_id)
-        if record is None and storage_id != record_id:
-            record = self._reconciliation_records.get(record_id)
-        return record
 
     def put_reconciliation_record(self, record: Dict[str, Any]) -> Dict[str, Any]:
         record_id = str(record.get("record_id") or record.get("id") or "").strip()
@@ -797,14 +833,11 @@ class PostgresReconciliationDriftStore(ReconciliationDriftStore):
     def get_drift_report(
         self, report_id: str, tenant_id: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
-        storage_id = self._storage_record_id(
+        return self._get_owner_record(
+            self._drift_reports,
             report_id,
-            {"tenant_id": tenant_id} if tenant_id else {},
+            tenant_id,
         )
-        record = self._drift_reports.get(storage_id)
-        if record is None and storage_id != report_id:
-            record = self._drift_reports.get(report_id)
-        return record
 
     def put_drift_report(self, report: Dict[str, Any]) -> Dict[str, Any]:
         report_id = str(report.get("drift_report_id") or report.get("id") or "").strip()
@@ -824,14 +857,11 @@ class PostgresReconciliationDriftStore(ReconciliationDriftStore):
     def get_worker_state(
         self, state_id: str, tenant_id: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
-        storage_id = self._storage_record_id(
+        return self._get_owner_record(
+            self._worker_state_records,
             state_id,
-            {"tenant_id": tenant_id} if tenant_id else {},
+            tenant_id,
         )
-        record = self._worker_state_records.get(storage_id)
-        if record is None and storage_id != state_id:
-            record = self._worker_state_records.get(state_id)
-        return record
 
     def put_worker_state(self, state: Dict[str, Any]) -> Dict[str, Any]:
         state_id = str(state.get("state_id") or state.get("id") or "").strip()

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -556,6 +557,9 @@ class ConsumerWorkerState:
         self.lease_token: str | None = None
         self.lease_expires_at: str | None = None
         self.load_error: str | None = None
+        self._held_lease_owner: str | None = None
+        self._held_lease_token: str | None = None
+        self._held_lease_seconds: float | None = None
         self.reload()
 
     @contextlib.contextmanager
@@ -624,22 +628,28 @@ class ConsumerWorkerState:
         self.lease_token = payload.get("lease_token")
         self.lease_expires_at = payload.get("lease_expires_at")
 
-    def _read_locked(self) -> None:
+    def _read_document_locked(self) -> dict[str, Any] | None:
         if self.path is None or not self.path.exists():
-            self.load_error = None
-            return
+            return None
+        text = self.path.read_text(encoding="utf-8")
+        if not text.strip():
+            raise ConsumerStateError(f"{self.path}: state file is empty")
+        return self._parse_document(self.path, text)
+
+    def _read_locked(self) -> None:
         try:
-            text = self.path.read_text(encoding="utf-8")
-            if not text.strip():
-                raise ConsumerStateError(f"{self.path}: state file is empty")
-            payload = self._parse_document(self.path, text)
-            self._apply_document(payload)
+            payload = self._read_document_locked()
+            if payload is not None:
+                self._apply_document(payload)
             self.load_error = None
         except (OSError, UnicodeError, TypeError, ValueError, ConsumerStateError) as exc:
             self.load_error = f"{type(exc).__name__}: {exc}"
 
     def reload(self) -> None:
         with self._locked():
+            self._held_lease_owner = None
+            self._held_lease_token = None
+            self._held_lease_seconds = None
             self._read_locked()
 
     def _document(self) -> dict[str, Any]:
@@ -698,7 +708,56 @@ class ConsumerWorkerState:
             )
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._locked():
+            try:
+                canonical = self._read_document_locked()
+            except (
+                OSError,
+                UnicodeError,
+                TypeError,
+                ValueError,
+                ConsumerStateError,
+            ) as exc:
+                self.load_error = f"{type(exc).__name__}: {exc}"
+                raise ConsumerStateError(self.load_error) from exc
+            self._assert_held_lease(canonical)
+            canonical_expiry = _parse_timestamp(
+                canonical.get("lease_expires_at") if canonical else None
+            )
+            if canonical_expiry is None or self._held_lease_seconds is None:
+                raise ConsumerStateError(
+                    "consumer worker lease token has no renewable expiry"
+                )
+            renewed_expiry = datetime.now(timezone.utc) + timedelta(
+                seconds=self._held_lease_seconds
+            )
+            self.lease_owner = self._held_lease_owner
+            self.lease_token = self._held_lease_token
+            self.lease_expires_at = max(
+                canonical_expiry,
+                renewed_expiry,
+            ).isoformat().replace("+00:00", "Z")
             self._write_locked()
+
+    def _assert_held_lease(
+        self,
+        canonical: dict[str, Any] | None,
+        *,
+        worker_id: str | None = None,
+    ) -> None:
+        if (
+            canonical is None
+            or not self._held_lease_owner
+            or not self._held_lease_token
+            or canonical.get("lease_owner") != self._held_lease_owner
+            or canonical.get("lease_token") != self._held_lease_token
+            or (
+                worker_id is not None
+                and worker_id != self._held_lease_owner
+            )
+        ):
+            raise ConsumerStateError(
+                "consumer worker lease token changed or was not acquired"
+            )
 
     def acquire_lease(
         self,
@@ -723,6 +782,9 @@ class ConsumerWorkerState:
                 and expiry is not None
                 and expiry > current
             ):
+                self._held_lease_owner = None
+                self._held_lease_token = None
+                self._held_lease_seconds = None
                 return False
             self.lease_owner = worker_id
             self.lease_token = uuid.uuid4().hex
@@ -730,22 +792,69 @@ class ConsumerWorkerState:
                 current + timedelta(seconds=lease_seconds)
             ).isoformat().replace("+00:00", "Z")
             self._write_locked()
+            self._held_lease_owner = worker_id
+            self._held_lease_token = self.lease_token
+            self._held_lease_seconds = lease_seconds
             return True
 
     def release_lease(self, *, worker_id: str) -> None:
+        if self.path is None:
+            if (
+                self._held_lease_owner != worker_id
+                or not self._held_lease_token
+                or self.lease_token != self._held_lease_token
+            ):
+                raise ConsumerStateError(
+                    "consumer worker lease token changed or was not acquired"
+                )
+            self.lease_owner = None
+            self.lease_token = None
+            self.lease_expires_at = None
+            self._held_lease_owner = None
+            self._held_lease_token = None
+            self._held_lease_seconds = None
+            return
         with self._locked():
-            self._read_locked()
-            if self.load_error:
-                raise ConsumerStateError(self.load_error)
-            if self.lease_owner != worker_id:
-                raise ConsumerStateError("consumer worker lease ownership changed")
+            try:
+                canonical = self._read_document_locked()
+            except (
+                OSError,
+                UnicodeError,
+                TypeError,
+                ValueError,
+                ConsumerStateError,
+            ) as exc:
+                self.load_error = f"{type(exc).__name__}: {exc}"
+                raise ConsumerStateError(self.load_error) from exc
+            self._assert_held_lease(canonical, worker_id=worker_id)
+            self._apply_document(canonical)
             self.lease_owner = None
             self.lease_token = None
             self.lease_expires_at = None
             self._write_locked()
+            self._held_lease_owner = None
+            self._held_lease_token = None
+            self._held_lease_seconds = None
 
     def enqueue(self, event: dict[str, Any], *, observed_at: str) -> bool:
-        key = str(event["event_id"])
+        event_id = str(event["event_id"])
+        envelope = event.get("correlation_envelope")
+        tenant_id = str(
+            event.get("tenant_id")
+            or (
+                envelope.get("tenant_id")
+                if isinstance(envelope, dict)
+                else ""
+            )
+            or ""
+        ).strip()
+        if tenant_id:
+            digest = hashlib.sha256(
+                f"{tenant_id}\0{event_id}".encode("utf-8")
+            ).hexdigest()
+            key = f"tenant-event-{digest}"
+        else:
+            key = event_id
         if key in self.completed or key in self.pending or key in self.dead_letters:
             return False
         self.pending[key] = {
@@ -876,14 +985,25 @@ def run_runtime_summary_consumer_once(
             delivered_count += 1
             drift_report_count += int(response.get("drift_report_count") or 0)
             incident_case_count += int(response.get("incident_case_count") or 0)
-            state.completed[key] = {"completed_at": observed_at, "attempt_count": record["attempt_count"]}
+            state.completed[key] = {
+                "completed_at": observed_at,
+                "attempt_count": record["attempt_count"],
+                "tenant_id": record["event"].get("tenant_id"),
+                "event_id": record["event"].get("event_id"),
+            }
             del state.pending[key]
             state.save()
             break
         if key in state.pending and int(record.get("attempt_count") or 0) >= max_attempts:
             state.dead_letters[key] = dict(record)
             del state.pending[key]
-            delivery_errors.append({"event_id": key, "detail": record.get("last_error")})
+            delivery_errors.append(
+                {
+                    "event_id": record["event"].get("event_id"),
+                    "tenant_id": record["event"].get("tenant_id"),
+                    "detail": record.get("last_error"),
+                }
+            )
             state.save()
 
     if len(state.completed) > 2000:
