@@ -523,6 +523,77 @@ def _find_worker_worktree_lease(
     return None
 
 
+def _declared_lease_workspace_roots(
+    runtime_state: Mapping[str, Any],
+    *,
+    worker: Mapping[str, Any],
+    task_id: str | None,
+    status_root: Path,
+) -> tuple[Path, ...]:
+    """Return the worktree roots the supervisor recorded for this worker run.
+
+    Both sources live in central runtime state, which is written by the
+    supervisor outside every task worktree.  A candidate can rewrite its own
+    environment but not this file, so these paths stay true even when the
+    worker's workspace variables are missing.
+    """
+
+    roots: list[Path] = []
+    raw_workspace = _worker_metadata_value(worker, "workspace_path")
+    if raw_workspace not in (None, ""):
+        roots.append(_metadata_path(raw_workspace, label="worker workspace_path"))
+    lease_match = _find_worker_worktree_lease(
+        runtime_state,
+        worker=worker,
+        task_id=task_id,
+        workspace_root=None,
+        status_root=status_root,
+    )
+    if lease_match is not None:
+        raw_lease_path = lease_match[1].get("path")
+        if raw_lease_path not in (None, ""):
+            roots.append(_metadata_path(raw_lease_path, label="worktree lease path"))
+    ordered: list[Path] = []
+    for root in roots:
+        if root not in ordered:
+            ordered.append(root)
+    return tuple(ordered)
+
+
+def active_lease_workspace_roots() -> tuple[Path, ...]:
+    """Return the canonical candidate-controlled worktrees for this run.
+
+    ``PANTHEON_WORKTREE_ROOT`` / ``ORCH_WORKSPACE_PATH`` cannot be the
+    authority for "which directory is candidate-controlled": the candidate owns
+    its own environment and can simply unset both, which silently removes its
+    worktree from every workspace-scoped boundary while its run lease stays
+    valid.  Consumers that need that boundary — notably the protected closeout
+    verifier's forbidden roots — must ask the supervisor's runtime state
+    instead.  Returns an empty tuple when there is no active run lease.
+    """
+
+    run_id = str(os.environ.get("ORCH_RUN_ID") or "").strip()
+    if not run_id:
+        return ()
+    config = load_config()
+    runtime_state = load_runtime_state_snapshot(config)
+    workers = runtime_state.get("workers", {})
+    worker = workers.get(run_id) if isinstance(workers, Mapping) else None
+    if not isinstance(worker, Mapping):
+        raise RuntimeError(
+            f"active status command lease not found for ORCH_RUN_ID={run_id}"
+        )
+    task_id = str(worker.get("task_id") or "").strip() or str(
+        os.environ.get("ORCH_TASK_ID") or ""
+    ).strip()
+    return _declared_lease_workspace_roots(
+        runtime_state,
+        worker=worker,
+        task_id=task_id or None,
+        status_root=STATUS_ROOT.resolve(),
+    )
+
+
 def normalize_logical_actor(name: str | None) -> str:
     if not name:
         return ""
@@ -627,12 +698,24 @@ def validate_active_status_command_lease(command: str, args: list[str]) -> None:
 
     workspace_root = _worker_workspace_root()
     worker_workspace_raw = _worker_metadata_value(worker, "workspace_path")
-    if workspace_root is not None:
+    if worker_workspace_raw not in (None, ""):
         worker_workspace = _metadata_path(worker_workspace_raw, label="worker workspace_path")
+        # The supervisor recorded which worktree this run owns.  Treating the
+        # environment binding as optional let a candidate unset both workspace
+        # variables and drop out of every workspace-scoped check while its
+        # lease stayed valid, so the canonical value is the authority here and
+        # an absent binding fails closed instead of widening the lease.
+        if workspace_root is None:
+            raise RuntimeError(
+                f"status command workspace binding is required: lease for ORCH_RUN_ID={run_id} "
+                f"owns worktree {worker_workspace} but PANTHEON_WORKTREE_ROOT and "
+                "ORCH_WORKSPACE_PATH are unset"
+            )
         if worker_workspace != workspace_root:
             raise RuntimeError(
                 f"status command workspace mismatch: worker workspace {worker_workspace} != {workspace_root}"
             )
+        workspace_root = worker_workspace
 
     runtime_metadata = status_command_metadata() or {}
     issued_runtime = _worker_status_command_runtime(worker)
@@ -670,8 +753,15 @@ def validate_active_status_command_lease(command: str, args: list[str]) -> None:
         raise RuntimeError(
             f"worktree lease status root mismatch for {lease_key}: {lease_status_root} != {status_root}"
         )
-    if workspace_root is not None:
-        lease_path = _metadata_path(lease.get("path"), label="worktree lease path")
+    raw_lease_path = lease.get("path")
+    if raw_lease_path not in (None, ""):
+        lease_path = _metadata_path(raw_lease_path, label="worktree lease path")
+        if workspace_root is None:
+            raise RuntimeError(
+                f"status command workspace binding is required: worktree lease {lease_key} "
+                f"owns {lease_path} but PANTHEON_WORKTREE_ROOT and ORCH_WORKSPACE_PATH "
+                "are unset"
+            )
         if lease_path != workspace_root:
             raise RuntimeError(
                 f"worktree lease path mismatch for {lease_key}: {lease_path} != {workspace_root}"

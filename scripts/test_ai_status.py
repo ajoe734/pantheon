@@ -447,6 +447,7 @@ class StatusCommandLeaseValidationTests(unittest.TestCase):
         actor: str,
         runtime_state: dict[str, object] | None = None,
         env_task_id: str | None = None,
+        workspace_env: dict[str, str] | None = None,
     ) -> None:
         env = {
             "AI_NAME": actor,
@@ -454,6 +455,8 @@ class StatusCommandLeaseValidationTests(unittest.TestCase):
             "PANTHEON_WORKTREE_ROOT": str(self.workspace),
             "ORCH_WORKSPACE_PATH": str(self.workspace),
         }
+        if workspace_env is not None:
+            env.update(workspace_env)
         if env_task_id is not None:
             env["ORCH_TASK_ID"] = env_task_id
         with (
@@ -537,6 +540,75 @@ class StatusCommandLeaseValidationTests(unittest.TestCase):
                 env_task_id=self.task_id,
                 runtime_state=self._runtime_state(status_root=other_root),
             )
+
+    def test_rejects_erased_workspace_binding_under_valid_run_lease(self) -> None:
+        """Unsetting both workspace variables must not widen a valid lease."""
+
+        for label, overrides in (
+            ("missing", {"PANTHEON_WORKTREE_ROOT": "", "ORCH_WORKSPACE_PATH": ""}),
+            ("blank", {"PANTHEON_WORKTREE_ROOT": "   ", "ORCH_WORKSPACE_PATH": "  "}),
+        ):
+            with self.subTest(binding=label):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "status command workspace binding is required",
+                ):
+                    self._validate(
+                        "progress",
+                        [self.task_id, "erased workspace binding"],
+                        actor="Codex",
+                        env_task_id=self.task_id,
+                        workspace_env=overrides,
+                    )
+
+    def test_rejects_erased_workspace_binding_from_worktree_lease_alone(self) -> None:
+        """The worktree lease path is authoritative even without worker metadata."""
+
+        runtime_state = self._runtime_state()
+        del runtime_state["workers"][self.run_id]["workspace_path"]  # type: ignore[index]
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "status command workspace binding is required",
+        ):
+            self._validate(
+                "progress",
+                [self.task_id, "lease-only workspace authority"],
+                actor="Codex",
+                env_task_id=self.task_id,
+                runtime_state=runtime_state,
+                workspace_env={
+                    "PANTHEON_WORKTREE_ROOT": "",
+                    "ORCH_WORKSPACE_PATH": "",
+                },
+            )
+
+    def test_active_lease_workspace_roots_survive_erased_environment(self) -> None:
+        """The canonical boundary comes from runtime state, not the candidate."""
+
+        env = {
+            "AI_NAME": "Codex",
+            "ORCH_RUN_ID": self.run_id,
+            "ORCH_TASK_ID": self.task_id,
+        }
+        with (
+            mock.patch.dict(os.environ, env, clear=True),
+            mock.patch.object(ai_status, "STATUS_ROOT", self.root),
+            mock.patch.object(ai_status, "STATUS_FILE", self.status_file),
+            mock.patch.object(ai_status, "load_config", return_value={}),
+            mock.patch.object(
+                ai_status,
+                "load_runtime_state_snapshot",
+                return_value=self._runtime_state(),
+            ),
+        ):
+            roots = ai_status.active_lease_workspace_roots()
+
+        self.assertEqual(roots, (self.workspace.resolve(),))
+
+    def test_active_lease_workspace_roots_are_empty_without_run_lease(self) -> None:
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=True):
+            self.assertEqual(ai_status.active_lease_workspace_roots(), ())
 
 
 class StatusRootRoutingTests(unittest.TestCase):
@@ -1369,6 +1441,182 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         task = ai_status.get_task(self.state, "REG-002")
         self.assertEqual(task["status"], "review")
         self.assertNotIn("protected_closeout_verdict", task)
+
+    def test_approve_protected_task_end_to_end_across_split_roots(self) -> None:
+        """Governed reviewer approval with a real Human/Ops verdict.
+
+        The reviewer command runs from the immutable command root while the
+        reviewed manifest exists only in the supervisor-bound task worktree, so
+        nothing in the protected path may assume the central status root holds
+        the artifact.
+        """
+
+        import loop_done_guardrail as guardrail
+
+        module = guardrail._load_product_closeout_module()
+        temp = tempfile.TemporaryDirectory(prefix="split-root-approve-")
+        self.addCleanup(temp.cleanup)
+        temp_root = Path(temp.name)
+        status_root = temp_root / "status-root"
+        status_root.mkdir()
+        worktree_root = temp_root / "task-worktree"
+        manifest_path = worktree_root / "docs" / "evidence" / "closeout.json"
+        manifest_path.parent.mkdir(parents=True)
+        manifest_path.write_text(
+            json.dumps(
+                {
+                    "deployment": {
+                        "environment": "pantheon-lupin-dev",
+                        "identity_admission": {
+                            "target_environment": "pantheon-lupin-dev",
+                            "frontend_sha": "c" * 40,
+                            "bff_sha": "d" * 40,
+                        },
+                    }
+                },
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+
+        protected_root = temp_root / "protected-runtime"
+        protected_root.mkdir()
+        private_key = module.generate_private_key()
+        key_id = "human-ops-key-split-root"
+        policy = module.VerdictPolicy(
+            policy_version="product-closeout-v1",
+            public_keys={key_id: module.public_key_bytes(private_key)},
+        )
+        ledger = module.ProtectedVerdictLedger(protected_root / "verdict-ledger.jsonl")
+        policy_path = protected_root / "verdict-policy.json"
+        policy_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "policy_version": policy.policy_version,
+                    "ledger_path": str(ledger.path),
+                    "public_keys": {
+                        key_id: module.public_key_to_base64(policy.public_keys[key_id])
+                    },
+                    "max_verdict_age_seconds": 3600,
+                    "max_ttl_seconds": 3600,
+                },
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+
+        catalog = json.loads(
+            guardrail._PRODUCT_CLOSEOUT_CATALOG.read_text(encoding="utf-8")
+        )
+        verdict = module.ProductCloseoutVerdictService(
+            ledger=ledger,
+            policy=policy,
+            private_key=private_key,
+            key_id=key_id,
+        ).issue(
+            module.CloseoutBinding(
+                program_id=catalog["program_id"],
+                catalog_sha256=module.canonical_json_sha256(catalog),
+                task_id="L12-CLOSE-001",
+                closeout_manifest_sha256=guardrail._sha256_file(manifest_path),
+                target_environment="pantheon-lupin-dev",
+                frontend_sha="c" * 40,
+                bff_sha="d" * 40,
+            ),
+            module.HumanOpsIdentity(
+                actor_id="ops-human-001",
+                actor_role="ops",
+                authenticated=True,
+                mfa_verified=True,
+            ),
+            decision="approved",
+            ttl_seconds=900,
+        )
+
+        task = self.state["tasks"][0]
+        task["id"] = "L12-CLOSE-001"
+        task["requires_human_ops_signoff"] = True
+        self.state["handoffs"][0]["task_id"] = "L12-CLOSE-001"
+
+        with (
+            mock.patch.object(module, "DEFAULT_PROTECTED_POLICY_PATH", policy_path),
+            mock.patch.dict(
+                os.environ,
+                {
+                    "AI_NAME": "Claude",
+                    "REVIEW_FILE": "docs/evidence/closeout.json",
+                    "PANTHEON_STATUS_ROOT": str(status_root),
+                    "PANTHEON_WORKTREE_ROOT": str(worktree_root),
+                    "ORCH_WORKSPACE_PATH": str(worktree_root),
+                    # The bound worktree under test is the fixture one, so the
+                    # ambient dispatch lease must not also be consulted.
+                    "ORCH_RUN_ID": "",
+                    "PANTHEON_PRODUCT_CLOSEOUT_VERDICT_ID": verdict["verdict_id"],
+                },
+                clear=False,
+            ),
+        ):
+            ai_status.command_approve(
+                self.state,
+                ["L12-CLOSE-001", "Independent protected review passed."],
+            )
+
+        approved = ai_status.get_task(self.state, "L12-CLOSE-001")
+        self.assertEqual(approved["status"], "review_approved")
+        self.assertEqual(approved["review_file"], "docs/evidence/closeout.json")
+        self.assertEqual(
+            approved["protected_closeout_verdict"]["verdict_id"],
+            verdict["verdict_id"],
+        )
+
+    def test_approve_protected_task_rejects_manifest_outside_trusted_roots(
+        self,
+    ) -> None:
+        """A manifest in neither the status root nor the bound worktree fails."""
+
+        temp = tempfile.TemporaryDirectory(prefix="split-root-approve-reject-")
+        self.addCleanup(temp.cleanup)
+        temp_root = Path(temp.name)
+        status_root = temp_root / "status-root"
+        status_root.mkdir()
+        worktree_root = temp_root / "task-worktree"
+        worktree_root.mkdir()
+        untrusted = temp_root / "untrusted"
+        (untrusted / "docs" / "evidence").mkdir(parents=True)
+        (untrusted / "docs" / "evidence" / "closeout.json").write_text(
+            "{}", encoding="utf-8"
+        )
+
+        task = self.state["tasks"][0]
+        task["id"] = "L12-CLOSE-001"
+        task["requires_human_ops_signoff"] = True
+        self.state["handoffs"][0]["task_id"] = "L12-CLOSE-001"
+
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    "AI_NAME": "Claude",
+                    "REVIEW_FILE": "docs/evidence/closeout.json",
+                    "PANTHEON_STATUS_ROOT": str(status_root),
+                    "PANTHEON_WORKTREE_ROOT": str(worktree_root),
+                    "ORCH_WORKSPACE_PATH": str(worktree_root),
+                    "ORCH_RUN_ID": "",
+                    "PANTHEON_PRODUCT_CLOSEOUT_VERDICT_ID": "pclose-absent",
+                },
+                clear=False,
+            ),
+            self.assertRaisesRegex(SystemExit, "missing or not regular"),
+        ):
+            ai_status.command_approve(
+                self.state,
+                ["L12-CLOSE-001", "Manifest outside the trusted roots."],
+            )
+
+        blocked = ai_status.get_task(self.state, "L12-CLOSE-001")
+        self.assertEqual(blocked["status"], "review")
+        self.assertNotIn("protected_closeout_verdict", blocked)
 
     def test_restore_approved_revalidates_protected_verdict(self) -> None:
         task = self.state["tasks"][0]
