@@ -49,6 +49,7 @@ from deploy_authority import (
 
 _CONSUMER_NAME = "deployment-outbox-consumer"
 _TERMINAL_SAGA_STATUSES = {"failed", "aborted"}
+_CLAIM_TOKENS: dict[str, str] = {}
 
 
 class SequenceBlockedError(RuntimeError):
@@ -62,23 +63,62 @@ def _env_int(name: str, default: int, *, minimum: int = 0) -> int:
     return value
 
 
+def _deployment_headers(*, json_body: bool = False) -> dict[str, str]:
+    token = os.getenv("PANTHEON_DEPLOYMENT_SERVICE_TOKEN", "").strip()
+    tenant_id = os.getenv("PANTHEON_DEPLOYMENT_TENANT_ID", "").strip()
+    if not token:
+        raise RuntimeError("PANTHEON_DEPLOYMENT_SERVICE_TOKEN is required")
+    if not tenant_id:
+        raise RuntimeError("PANTHEON_DEPLOYMENT_TENANT_ID is required")
+    headers = {
+        "Accept": "application/json",
+        "Authorization": (
+            token if token.lower().startswith("bearer ") else f"Bearer {token}"
+        ),
+        "X-Tenant-Id": tenant_id,
+    }
+    if json_body:
+        headers["Content-Type"] = "application/json"
+    return headers
+
+
 def fetch_pending_outbox(
     *,
     api_url: str,
+    consumer_name: str = _CONSUMER_NAME,
     timeout_seconds: float = 10.0,
     aggregate_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Return pending records, optionally isolated to one deployment saga."""
-    query = {"status": "pending"}
-    if aggregate_id:
-        query["aggregate_id"] = aggregate_id
-    url = api_url.rstrip("/") + "/api/deployment/outbox?" + urllib.parse.urlencode(query)
+    """Claim pending records, optionally isolated to one deployment saga."""
+    url = api_url.rstrip("/") + "/api/deployment/outbox/claim"
+    payload = json.dumps(
+        {
+            "consumer_name": consumer_name,
+            "lease_seconds": _env_int(
+                "DEPLOYMENT_OUTBOX_CONSUMER_LEASE_SECONDS", 60, minimum=1
+            ),
+            "limit": _env_int(
+                "DEPLOYMENT_OUTBOX_CONSUMER_CLAIM_LIMIT", 25, minimum=1
+            ),
+            "aggregate_id": aggregate_id,
+        }
+    ).encode("utf-8")
     request = urllib.request.Request(
-        url, headers={"Accept": "application/json"}, method="GET"
+        url,
+        data=payload,
+        headers=_deployment_headers(json_body=True),
+        method="POST",
     )
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
         body = response.read().decode("utf-8")
-    return json.loads(body) if body else []
+    records = json.loads(body) if body else []
+    for record in records:
+        event = record.get("event") if isinstance(record, Mapping) else None
+        event_id = str(event.get("event_id") or "") if isinstance(event, Mapping) else ""
+        claim_token = str(record.get("claim_token") or "")
+        if event_id and claim_token:
+            _CLAIM_TOKENS[event_id] = claim_token
+    return records
 
 
 def fetch_applied_inbox(
@@ -98,7 +138,7 @@ def fetch_applied_inbox(
     )
     url = api_url.rstrip("/") + f"/api/deployment/inbox?{query}"
     request = urllib.request.Request(
-        url, headers={"Accept": "application/json"}, method="GET"
+        url, headers=_deployment_headers(), method="GET"
     )
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
         body = response.read().decode("utf-8")
@@ -119,16 +159,24 @@ def consume_event(
     event has already been consumed by this consumer — this is not an error.
     """
     url = api_url.rstrip("/") + f"/api/deployment/outbox/{event_id}/consume"
-    payload = json.dumps({"consumer_name": consumer_name}).encode("utf-8")
+    payload = json.dumps(
+        {
+            "consumer_name": consumer_name,
+            "claim_token": _CLAIM_TOKENS.get(event_id),
+        }
+    ).encode("utf-8")
     request = urllib.request.Request(
         url,
         data=payload,
-        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        headers=_deployment_headers(json_body=True),
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
         body = response.read().decode("utf-8")
-    return json.loads(body) if body else {}
+    receipt = json.loads(body) if body else {}
+    if receipt.get("status") in {"applied", "duplicate"}:
+        _CLAIM_TOKENS.pop(event_id, None)
+    return receipt
 
 
 def record_delivery_failure(
@@ -147,6 +195,7 @@ def record_delivery_failure(
     payload = json.dumps(
         {
             "consumer_name": consumer_name,
+            "claim_token": _CLAIM_TOKENS.get(event_id),
             "reason": reason,
             "retryable": retryable,
             "max_attempts": max_attempts,
@@ -156,12 +205,14 @@ def record_delivery_failure(
     request = urllib.request.Request(
         url,
         data=payload,
-        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        headers=_deployment_headers(json_body=True),
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
         body = response.read().decode("utf-8")
-    return json.loads(body) if body else {}
+    record = json.loads(body) if body else {}
+    _CLAIM_TOKENS.pop(event_id, None)
+    return record
 
 
 def _parse_rfc3339(value: Any) -> datetime | None:
@@ -221,7 +272,7 @@ def _record_failure_best_effort(
 def fetch_saga(*, api_url: str, saga_id: str, timeout_seconds: float = 10.0) -> dict[str, Any]:
     url = api_url.rstrip("/") + f"/api/deployment/sagas/{saga_id}"
     request = urllib.request.Request(
-        url, headers={"Accept": "application/json"}, method="GET"
+        url, headers=_deployment_headers(), method="GET"
     )
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
         body = response.read().decode("utf-8")
@@ -231,7 +282,7 @@ def fetch_saga(*, api_url: str, saga_id: str, timeout_seconds: float = 10.0) -> 
 def fetch_plan(*, api_url: str, plan_id: str, timeout_seconds: float = 10.0) -> dict[str, Any]:
     url = api_url.rstrip("/") + f"/api/deployment/plans/{plan_id}"
     request = urllib.request.Request(
-        url, headers={"Accept": "application/json"}, method="GET"
+        url, headers=_deployment_headers(), method="GET"
     )
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
         body = response.read().decode("utf-8")
@@ -244,7 +295,7 @@ def fetch_projection(
     """Read the joined DEP-003 deployment projection for terminal verification."""
     url = api_url.rstrip("/") + f"/api/deployment/projections/{plan_id}"
     request = urllib.request.Request(
-        url, headers={"Accept": "application/json"}, method="GET"
+        url, headers=_deployment_headers(), method="GET"
     )
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
         body = response.read().decode("utf-8")
@@ -264,7 +315,7 @@ def update_plan_status(
     request = urllib.request.Request(
         url,
         data=payload,
-        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        headers=_deployment_headers(json_body=True),
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
@@ -291,7 +342,7 @@ def finalize_compensation(
     request = urllib.request.Request(
         url,
         data=payload,
-        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        headers=_deployment_headers(json_body=True),
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
@@ -403,7 +454,7 @@ def run_compatibility_check(
     request = urllib.request.Request(
         url,
         data=payload,
-        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        headers=_deployment_headers(json_body=True),
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
@@ -429,7 +480,7 @@ def record_binding_created(
     request = urllib.request.Request(
         url,
         data=payload,
-        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        headers=_deployment_headers(json_body=True),
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
@@ -456,7 +507,7 @@ def record_runtime_active(
     request = urllib.request.Request(
         url,
         data=payload,
-        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        headers=_deployment_headers(json_body=True),
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
@@ -480,7 +531,7 @@ def record_saga_failure(
     request = urllib.request.Request(
         url,
         data=payload,
-        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        headers=_deployment_headers(json_body=True),
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
@@ -1785,6 +1836,7 @@ def run_poll(
     """
     events = fetch_pending_outbox(
         api_url=api_url,
+        consumer_name=consumer_name,
         timeout_seconds=timeout_seconds,
         aggregate_id=aggregate_id,
     )
@@ -1865,6 +1917,32 @@ def run_poll(
 
                 # 2. Fetch plan
                 plan = fetch_plan(api_url=api_url, plan_id=plan_id, timeout_seconds=timeout_seconds)
+                saga_metadata = (
+                    dict(saga.get("metadata"))
+                    if isinstance(saga.get("metadata"), Mapping)
+                    else {}
+                )
+                plan_metadata = (
+                    dict(plan.get("metadata"))
+                    if isinstance(plan.get("metadata"), Mapping)
+                    else {}
+                )
+                configured_tenant_id = os.getenv(
+                    "PANTHEON_DEPLOYMENT_TENANT_ID", ""
+                ).strip()
+                saga_tenant_id = str(saga_metadata.get("tenant_id") or "").strip()
+                plan_tenant_id = str(plan_metadata.get("tenant_id") or "").strip()
+                if not configured_tenant_id:
+                    raise ValueError("PANTHEON_DEPLOYMENT_TENANT_ID is required")
+                if (
+                    saga_tenant_id != configured_tenant_id
+                    or plan_tenant_id != configured_tenant_id
+                ):
+                    raise ValueError(
+                        "Deployment tenant correlation mismatch: "
+                        f"configured={configured_tenant_id!r}, "
+                        f"saga={saga_tenant_id!r}, plan={plan_tenant_id!r}"
+                    )
                 sponsor_persona_id = plan.get("sponsor_persona_id")
                 capital_pool_id = plan.get("capital_pool_id")
                 target_stage = plan.get("target_stage")
@@ -1988,11 +2066,6 @@ def run_poll(
                     continue
 
                 # 4. Construct deploy_context
-                plan_metadata = (
-                    dict(plan.get("metadata"))
-                    if isinstance(plan.get("metadata"), Mapping)
-                    else {}
-                )
                 # Legacy caller assertions are deliberately not propagated as
                 # proof.  Only the exact canonical report can occupy the
                 # attestation slot persisted in RuntimeBinding metadata.
@@ -2039,6 +2112,19 @@ def run_poll(
                         "deployment_saga_id": saga_id,
                         "deployment_outbox_event_id": event_id,
                         "deployment_trace_id": saga.get("trace_id"),
+                        "deployment_correlation_id": (
+                            (
+                                saga_metadata.get("foundation", {}).get(
+                                    "trace_context", {}
+                                )
+                                if isinstance(
+                                    saga_metadata.get("foundation"), Mapping
+                                )
+                                else {}
+                            ).get("correlation_id")
+                            or saga_metadata.get("correlation_id")
+                            or saga.get("trace_id")
+                        ),
                         authority_metadata_key: authority_report,
                     },
                 }
@@ -2584,6 +2670,9 @@ def main() -> int:
         "last_success": None,
         "last_failure": None,
         "last_failure_reason": None,
+        "last_idle_success": None,
+        "last_recovered_at": None,
+        "recovery_count": 0,
         "retry_policy": {
             "max_attempts": max_attempts,
             "retry_delay_seconds": retry_delay_seconds,
@@ -2614,9 +2703,14 @@ def main() -> int:
                 health["last_failure"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                 health["last_failure_reason"] = "; ".join(result["errors"])
             else:
-                if health["status"] != "degraded" or result["consumed"] > 0:
-                    health["status"] = "ok"
-                health["last_success"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                succeeded_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                if health["status"] == "degraded":
+                    health["recovery_count"] += 1
+                    health["last_recovered_at"] = succeeded_at
+                health["status"] = "ok"
+                health["last_success"] = succeeded_at
+                if result["events_found"] == 0:
+                    health["last_idle_success"] = succeeded_at
             if health_file:
                 _write_health(health_file, health)
         except Exception as exc:  # noqa: BLE001
