@@ -16,6 +16,7 @@ from unittest import mock
 
 import supervisor
 import runtime_state
+import common
 
 
 _OLD_ENV = {}
@@ -5643,6 +5644,162 @@ class SupervisorRuntimeAdmissionLockTests(unittest.TestCase):
                     "status": "queued",
                 }
             ],
+        )
+
+    def test_process_queue_builds_full_task_brief_inside_run_once_lock_context(self) -> None:
+        task_id = "OPS-TASK-BRIEF-LOCK-ORDER-TEST"
+        dependency_id = "OPS-TASK-BRIEF-ARCHIVED-DEPENDENCY"
+        task = {
+            "id": task_id,
+            "title": "Generate the complete task brief",
+            "summary_zh": "在 supervisor dispatch 鎖上下文內生成完整 brief。",
+            "phase": "operations",
+            "status": "todo",
+            "owner": "Codex",
+            "reviewer": "Codex2",
+            "depends_on": [dependency_id],
+            "artifacts": [".orchestrator/common.py"],
+            "next": "Use the complete task-scoped context",
+        }
+        self.status_path.write_text(
+            json.dumps({"tasks": [task]}) + "\n",
+            encoding="utf-8",
+        )
+        archive_dir = self.root / "ai-task-archive" / "tasks"
+        archive_dir.mkdir(parents=True)
+        (archive_dir / f"{dependency_id}.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "task_id": dependency_id,
+                    "archived_at": "2026-07-26T00:00:00Z",
+                    "terminal_status": "done",
+                    "terminal_outcome": "completed",
+                    "task": {
+                        "id": dependency_id,
+                        "title": "Archived dependency",
+                        "status": "done",
+                    },
+                    "handoffs": [],
+                    "blockers": [],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        event = {
+            "event_id": "evt-task-brief-lock-order",
+            "task_id": task_id,
+            "target_agent": "codex",
+            "target_display_name": "Codex",
+            "provider": "codex",
+            "reason": "manual_dispatch",
+            "message": "wake",
+        }
+        self.event_queue_path.write_text(
+            json.dumps(event) + "\n",
+            encoding="utf-8",
+        )
+        config = {
+            **self.config,
+            "agents": {
+                "codex": {
+                    "id": "codex",
+                    "display_name": "Codex",
+                    "provider": "codex",
+                    "adapter": "codex",
+                }
+            },
+            "providers": {"codex": {"delivery_mode": "codex"}},
+        }
+        state = {"queue": {"events": {}}, "workers": {}}
+        brief_path = self.root / "task-brief.md"
+        lock_trace_path = self.root / "lock-trace.jsonl"
+        captured_requests: list[supervisor.DeliveryRequest] = []
+        real_build_request = supervisor.build_request
+
+        def build_request_under_task_lock(
+            request_config: dict[str, object],
+            request_event: dict[str, object],
+            **kwargs: object,
+        ) -> supervisor.DeliveryRequest:
+            with supervisor.canonical_task_state_lock_file(
+                self.status_path,
+                shared=True,
+                nonblocking=False,
+            ):
+                request = real_build_request(
+                    request_config,
+                    request_event,
+                    **kwargs,
+                )
+            captured_requests.append(request)
+            return request
+
+        def process_queue_under_nested_runtime_lock(
+            request_config: dict[str, object],
+            **_kwargs: object,
+        ) -> bool:
+            with runtime_state.runtime_state_lock(
+                request_config,
+                shared=True,
+                nonblocking=False,
+            ):
+                return supervisor.process_queue(request_config, state, {})
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "_run_once_locked",
+                side_effect=process_queue_under_nested_runtime_lock,
+            ),
+            mock.patch.object(
+                supervisor,
+                "build_request",
+                side_effect=build_request_under_task_lock,
+            ),
+            mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+            mock.patch.object(supervisor, "select_dispatch_agent_id", return_value=None),
+            mock.patch.object(common, "task_brief_path", return_value=brief_path),
+            mock.patch.object(common, "write_activity_log") as common_activity_log,
+            mock.patch.dict(
+                os.environ,
+                {"PANTHEON_RUNTIME_LOCK_TRACE": str(lock_trace_path)},
+            ),
+        ):
+            changed = supervisor.run_once(config, watch=False)
+
+        self.assertTrue(changed)
+        self.assertEqual(len(captured_requests), 1)
+        self.assertIn(str(brief_path), captured_requests[0].context_files)
+        self.assertNotEqual(
+            captured_requests[0].context_files,
+            ["AI_COLLABORATION_GUIDE.md", "ai-status.json"],
+        )
+        self.assertTrue(brief_path.is_file())
+        rendered = brief_path.read_text(encoding="utf-8")
+        self.assertIn("# Task Brief: OPS-TASK-BRIEF-LOCK-ORDER-TEST", rendered)
+        self.assertIn("- Status: todo", rendered)
+        self.assertIn("- Owner: Codex", rendered)
+        self.assertIn("- Reviewer: Codex2", rendered)
+        self.assertIn("- Next: Use the complete task-scoped context", rendered)
+        self.assertIn(
+            "- OPS-TASK-BRIEF-ARCHIVED-DEPENDENCY: done · Archived dependency",
+            rendered,
+        )
+        self.assertIn("## Artifacts\n- .orchestrator/common.py", rendered)
+        common_activity_log.assert_not_called()
+        lock_trace = [
+            line.split(":", 3)[:2]
+            for line in lock_trace_path.read_text(encoding="utf-8").splitlines()
+        ]
+        self.assertEqual(
+            [entry for entry in lock_trace if entry == ["acquire", "task_state"]],
+            [["acquire", "task_state"]],
+        )
+        self.assertLess(
+            lock_trace.index(["acquire", "runtime_admission"]),
+            lock_trace.index(["acquire", "task_state"]),
         )
 
     def test_waiting_prune_recovers_after_queue_writer_is_killed_before_replace(self) -> None:
