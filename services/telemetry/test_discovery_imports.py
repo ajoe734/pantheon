@@ -369,8 +369,20 @@ class TestRepositoryRootResolutionWithoutPythonPath(unittest.TestCase):
 
     Every child here runs with no ``PYTHONPATH`` key in its environment, so
     nothing injects the repository root on the modules' behalf. The tests split
-    into what genuinely passes that way and the residual that cannot pass without
-    a process-global ``sys.path`` mutation this task refuses to add.
+    into what genuinely passes that way and a residual that does not.
+
+    The two ``fails_only_on_services`` tests record an **unresolved gap** against
+    canonical acceptance criterion 2, which requires dotted and direct-file
+    execution to pass from any working directory. They do not certify that gap as
+    acceptable. Closing it needs the repository to be an installed distribution —
+    proven in
+    ``docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001/AC2_FEASIBILITY_PROOF.md``,
+    which enumerates every mechanism that could put the repository root on
+    ``sys.path`` and demonstrates that only a ``site-packages`` entry qualifies —
+    and that is a packaging decision outside this task's scope, pending a
+    Human/Ops ruling. What these two tests do assert is the narrower invariant
+    that holds in every environment: a failure may name ``services``, never a
+    bare sibling.
     """
 
     def assertNoBareSiblingImportFailure(self, proc: subprocess.CompletedProcess) -> None:
@@ -460,10 +472,11 @@ class TestRepositoryRootResolutionWithoutPythonPath(unittest.TestCase):
         self.assertEqual(total, EXPECTED_REPAIRED_TEST_COUNT)
 
     def test_dotted_unittest_from_foreign_cwd_without_pythonpath_fails_only_on_services(self):
-        # Recorded boundary, not a claimed pass: with the repository root
-        # unreachable, the dotted form must fail on `services` itself. If a future
-        # environment makes the root importable (an installed distribution, a .pth
-        # entry), this passes instead — either way, never a bare sibling.
+        # Unresolved AC2 gap, not a claimed pass: with the repository root
+        # unreachable, the dotted form fails on `services` itself, before this
+        # package's code runs at all. If the repository is ever installed as a
+        # distribution (a site-packages .pth entry), this passes instead and the
+        # gap is closed — either way, the failure is never a bare sibling.
         with tempfile.TemporaryDirectory() as tmp:
             for module in REPAIRED_MODULES:
                 with self.subTest(module=module):
@@ -475,10 +488,13 @@ class TestRepositoryRootResolutionWithoutPythonPath(unittest.TestCase):
                     self.assertNoBareSiblingImportFailure(proc)
 
     def test_direct_file_execution_from_foreign_cwd_fails_only_on_services(self):
-        # Same boundary for `python <abs path>/test_capture.py`: sys.path[0] is
-        # services/telemetry, so the package root is missing. Making this pass
-        # would require the module to edit sys.path at import time, which
-        # test_repaired_modules_do_not_mutate_process_global_sys_path forbids.
+        # Same unresolved AC2 gap for `python <abs path>/test_capture.py`:
+        # sys.path[0] is services/telemetry, so the package root is missing.
+        # Closing it inside the module would need a sys.path or sys.modules edit
+        # at import time, which
+        # test_repaired_modules_do_not_mutate_process_global_sys_path forbids and
+        # which would reintroduce the duplicate-module-identity hazard; an
+        # installed distribution closes it without touching this file.
         with tempfile.TemporaryDirectory() as tmp:
             for module in REPAIRED_MODULES:
                 with self.subTest(module=module):
