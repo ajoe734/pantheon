@@ -5767,13 +5767,22 @@ class SupervisorRuntimeAdmissionLockTests(unittest.TestCase):
         self.assertTrue(changed)
         self.assertEqual(len(captured_requests), 1)
         self.assertIn(str(brief_path), captured_requests[0].context_files)
+        self.assertNotEqual(
+            captured_requests[0].context_files,
+            ["AI_COLLABORATION_GUIDE.md", "ai-status.json"],
+        )
         self.assertTrue(brief_path.is_file())
         rendered = brief_path.read_text(encoding="utf-8")
         self.assertIn("# Task Brief: OPS-TASK-BRIEF-LOCK-ORDER-TEST", rendered)
+        self.assertIn("- Status: todo", rendered)
+        self.assertIn("- Owner: Codex", rendered)
+        self.assertIn("- Reviewer: Codex2", rendered)
+        self.assertIn("- Next: Use the complete task-scoped context", rendered)
         self.assertIn(
             "- OPS-TASK-BRIEF-ARCHIVED-DEPENDENCY: done · Archived dependency",
             rendered,
         )
+        self.assertIn("## Artifacts\n- .orchestrator/common.py", rendered)
         common_activity_log.assert_not_called()
 
     def test_waiting_prune_recovers_after_queue_writer_is_killed_before_replace(self) -> None:
