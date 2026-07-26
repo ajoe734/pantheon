@@ -52,7 +52,7 @@ DEFAULT_LIVE_CONFIG_PATH = Path(
 DEFAULT_COMMAND_ROOT = Path("/home/lupin/pantheon-ci-deploy/dev-root")
 PROGRAM_ID = "pantheon-twelve-loop-gap-2026-07-26"
 AUTO_CREATED_BY = "dispatch_twelve_loop_gap_2026_07_26"
-ALLOWED_FLEET_ACTORS = {"Codex", "Codex2"}
+ALLOWED_FLEET_ACTORS = {"Antigravity", "Claude", "Codex", "Codex2"}
 SUPPORTED_REPOS = {"pantheon", "execute-plans"}
 ALLOWED_TARGET_MATURITY = {
     "contract",
@@ -501,7 +501,9 @@ def validate_catalog(
         if task["status"] != "todo":
             raise DispatchError(f"{task_id}.status must start as todo")
         if task["owner"] not in ALLOWED_FLEET_ACTORS or task["reviewer"] not in ALLOWED_FLEET_ACTORS:
-            raise DispatchError(f"{task_id} owner/reviewer must be Codex or Codex2")
+            raise DispatchError(
+                f"{task_id} owner/reviewer must be an approved fleet actor"
+            )
         if task["owner"] == task["reviewer"]:
             raise DispatchError(f"{task_id} owner and reviewer must be distinct")
         if task["target_repo"] not in SUPPORTED_REPOS:

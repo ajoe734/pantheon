@@ -2761,6 +2761,100 @@ class SidecarTaskTests(unittest.TestCase):
                     ["CATALOG-BFF-003", "Codex", "Claude", "Protected task"],
                 )
 
+    def test_human_ops_can_revise_only_the_catalog_sha_and_assignment(self) -> None:
+        guard = self._artifact_guard(
+            "CATALOG-BFF-004",
+            "services/control-plane/bff/main.py",
+            [],
+        )
+        self.state["tasks"].append(
+            {
+                "id": "CATALOG-BFF-004",
+                "program_id": "test-program",
+                "status": "in_progress",
+                "owner": "Codex",
+                "reviewer": "Claude",
+                "title": "Protected task",
+                "artifacts": ["services/control-plane/bff/main.py"],
+                "target_repo": "pantheon",
+                "artifact_conflict_guard": guard,
+            }
+        )
+        revised = deepcopy(guard)
+        revised["catalog_sha256"] = "b" * 64
+        metadata = {
+            "program_id": "test-program",
+            "catalog_task_contract_sha256": "c" * 64,
+            "artifact_conflict_guard": revised,
+        }
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "AI_NAME": "Human/Ops",
+                "TASK_METADATA_JSON": json.dumps(metadata),
+                "TASK_ASSIGN_CATALOG_REVISION_FROM_SHA": "a" * 64,
+                "TASK_ASSIGN_CATALOG_REVISION_TO_SHA": "b" * 64,
+                "TASK_NEXT": "Preserve current implementation progress.",
+            },
+            clear=False,
+        ):
+            ai_status.command_assign(
+                self.state,
+                ["CATALOG-BFF-004", "Claude", "Codex", "Protected task"],
+            )
+
+        task = ai_status.get_task(self.state, "CATALOG-BFF-004")
+        self.assertEqual(task["status"], "in_progress")
+        self.assertEqual(task["owner"], "Claude")
+        self.assertEqual(task["reviewer"], "Codex")
+        self.assertEqual(task["artifact_conflict_guard"], revised)
+        self.assertEqual(task["catalog_task_contract_sha256"], "c" * 64)
+
+    def test_catalog_revision_rejects_scope_or_allowlist_change(self) -> None:
+        guard = self._artifact_guard(
+            "CATALOG-BFF-005",
+            "services/control-plane/bff/main.py",
+            [],
+        )
+        self.state["tasks"].append(
+            {
+                "id": "CATALOG-BFF-005",
+                "program_id": "test-program",
+                "status": "todo",
+                "owner": "Codex",
+                "reviewer": "Claude",
+                "title": "Protected task",
+                "artifacts": ["services/control-plane/bff/main.py"],
+                "target_repo": "pantheon",
+                "artifact_conflict_guard": guard,
+            }
+        )
+        tampered = deepcopy(guard)
+        tampered["catalog_sha256"] = "b" * 64
+        tampered["allowed_overlap_task_ids"] = ["ROGUE-BFF-001"]
+        metadata = {
+            "program_id": "test-program",
+            "catalog_task_contract_sha256": "c" * 64,
+            "artifact_conflict_guard": tampered,
+        }
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "AI_NAME": "Human/Ops",
+                "TASK_METADATA_JSON": json.dumps(metadata),
+                "TASK_ASSIGN_CATALOG_REVISION_FROM_SHA": "a" * 64,
+                "TASK_ASSIGN_CATALOG_REVISION_TO_SHA": "b" * 64,
+            },
+            clear=False,
+        ):
+            with self.assertRaisesRegex(SystemExit, "cannot change artifact scope"):
+                ai_status.command_assign(
+                    self.state,
+                    ["CATALOG-BFF-005", "Claude", "Codex", "Protected task"],
+                )
+
     def test_display_task_title_marks_sidecar_parent(self) -> None:
         title = ai_status.display_task_title(
             {
@@ -5600,7 +5694,7 @@ class ProgramProofOwnershipTests(unittest.TestCase):
     def setUp(self) -> None:
         _setup_test_isolation(self)
         catalog_sha = (
-            "a7fbbaa560bd7f2d97750b25cd20af69b64d4f522b293689849b0e1b1763717f"
+            "8c7610b0e6bbba31c36cb0ecd1ddce4bf843fc6de89dcaecc4a5e3154af8933d"
         )
         self.state = {
             "agents": [],

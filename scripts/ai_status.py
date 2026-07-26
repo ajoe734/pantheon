@@ -5103,6 +5103,66 @@ def enforce_artifact_conflict_admission(
             )
 
 
+def _catalog_assignment_revision_allows_guard_change(
+    task: Mapping[str, Any],
+    metadata: Mapping[str, Any],
+) -> bool:
+    current_guard = task.get("artifact_conflict_guard")
+    incoming_guard = metadata.get("artifact_conflict_guard")
+    if current_guard == incoming_guard:
+        return True
+
+    from_sha = str(
+        os.environ.get("TASK_ASSIGN_CATALOG_REVISION_FROM_SHA") or ""
+    ).strip()
+    to_sha = str(
+        os.environ.get("TASK_ASSIGN_CATALOG_REVISION_TO_SHA") or ""
+    ).strip()
+    if not from_sha and not to_sha:
+        return False
+    if current_actor() != "Human/Ops":
+        raise SystemExit(
+            "Only Human/Ops can revise a catalog-bound assignment."
+        )
+    if (
+        not re.fullmatch(r"[0-9a-f]{64}", from_sha)
+        or not re.fullmatch(r"[0-9a-f]{64}", to_sha)
+        or from_sha == to_sha
+    ):
+        raise SystemExit("Catalog assignment revision SHA binding is invalid.")
+    if not isinstance(current_guard, dict) or not isinstance(incoming_guard, dict):
+        raise SystemExit("Catalog assignment revision requires both exact guards.")
+    if current_guard.get("catalog_sha256") != from_sha:
+        raise SystemExit("Catalog assignment revision source SHA is not current.")
+    if incoming_guard.get("catalog_sha256") != to_sha:
+        raise SystemExit("Catalog assignment revision target SHA is not exact.")
+
+    current_without_sha = {
+        key: value
+        for key, value in current_guard.items()
+        if key != "catalog_sha256"
+    }
+    incoming_without_sha = {
+        key: value
+        for key, value in incoming_guard.items()
+        if key != "catalog_sha256"
+    }
+    if current_without_sha != incoming_without_sha:
+        raise SystemExit(
+            "Catalog assignment revision cannot change artifact scope or overlap authority."
+        )
+    if task.get("program_id") != metadata.get("program_id"):
+        raise SystemExit("Catalog assignment revision program identity is not exact.")
+    contract_sha = str(
+        metadata.get("catalog_task_contract_sha256") or ""
+    ).strip()
+    if not re.fullmatch(r"[0-9a-f]{64}", contract_sha):
+        raise SystemExit(
+            "Catalog assignment revision task contract digest is invalid."
+        )
+    return True
+
+
 def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
     from wave_guards import WaveGuardError, check_wave_assign
 
@@ -5153,6 +5213,7 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
         and task.get("artifact_conflict_guard") is not None
         and "artifact_conflict_guard" in metadata
         and metadata["artifact_conflict_guard"] != task["artifact_conflict_guard"]
+        and not _catalog_assignment_revision_allows_guard_change(task, metadata)
     ):
         raise SystemExit(
             f"Task {task_id} artifact conflict guard is immutable."

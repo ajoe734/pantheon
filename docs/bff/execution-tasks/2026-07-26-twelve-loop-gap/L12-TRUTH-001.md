@@ -1,6 +1,6 @@
 # L12-TRUTH-001 — Integrate twelve-loop operator truth
 
-Wave 3, lane `operator-truth`, owner `Codex2`, reviewer `Codex`; depends on `L12-CTRL-001`, `L12-MANIFEST-001`, and external overlap owner `PPL-ALLOC-009`.
+Wave 3, lane `operator-truth`, owner `Claude`, reviewer `Antigravity`; depends on `L12-CTRL-001`, `L12-MANIFEST-001`, and external overlap owner `PPL-ALLOC-009`.
 
 Outcome: every loop writes a current canonical record and BFF exposes desired, controller, success/failure, actual state, and provenance without promoting unproved maturity.
 

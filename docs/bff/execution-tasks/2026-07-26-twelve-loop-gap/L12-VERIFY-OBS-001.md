@@ -1,6 +1,6 @@
 # L12-VERIFY-OBS-001 — Prove observability and Evolution
 
-Wave 4, lane `verify-observability`, owner `Codex`, reviewer `Codex2`; depends on Reconciliation, Evolution, BFF Health, and integrated truth.
+Wave 4, lane `verify-observability`, owner `Antigravity`, reviewer `Claude`; depends on Reconciliation, Evolution, BFF Health, and integrated truth.
 
 Outcome: prove runtime anomaly → telemetry → drift → incident → postmortem → EvolutionDecision → real approved action, plus downstream stop → infrastructure incident → recovery.
 

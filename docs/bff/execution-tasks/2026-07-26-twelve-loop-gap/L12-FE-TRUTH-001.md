@@ -1,6 +1,6 @@
 # L12-FE-TRUTH-001 — Render authoritative loop truth
 
-Wave 3, lane `frontend-truth`, owner `Codex`, reviewer `Codex2`; target `execute-plans:dev`, depends on `L12-TRUTH-001` and external overlap owner `PPL-ALLOC-009`.
+Wave 3, lane `frontend-truth`, owner `Antigravity`, reviewer `Claude`; target `execute-plans:dev`, depends on `L12-TRUTH-001` and external overlap owner `PPL-ALLOC-009`.
 
 Outcome: the hosted operator view shows all twelve desired/controller/failure/actual/provenance states and visually distinguishes seed, registry-only, scheduled, stale, and live.
 
