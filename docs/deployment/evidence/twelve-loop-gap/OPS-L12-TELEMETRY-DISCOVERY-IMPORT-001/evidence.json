@@ -1,0 +1,258 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001 owner evidence cut for the twelve-loop verification-hardening lane.",
+    "note": "Owner evidence cut for a test-loading repair. Implementation and owner verification are complete. The independent reviewer verdict from Codex2 is intentionally absent from this cut and is appended to record_log when approval occurs. Delivery fields for the task pull request are recorded in the post-merge re-cut.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Task-scoped changes require a reviewed Pantheon PR; append a record_log entry whenever the accepted evidence cut or formal review state changes.",
+    "recording_mode": "logical_append_only",
+    "redacted": false,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-26T21:55:00Z",
+    "evidence_cut_semantics": "Owner cut recording the repair of the two pre-existing telemetry unittest discovery loader errors, the recovered test counts, and the new regression fence. Cut at anchor commit 80ecb47e887e3078e83191d5998fe098986b1ee9 on task/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001, branched from dev 6445eacd603f0bcfb8893508fbffe341a67dd309. Independent reviewer approval is not asserted by this cut.",
+    "id": "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001",
+    "overall_admission": "pass",
+    "owner": "Claude",
+    "phase": "Twelve-loop verification hardening",
+    "product_level_required": false,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001/evidence.json",
+    "reviewer": "Codex2",
+    "target_environment": "local developer and CI test execution only",
+    "target_maturity": "reconciled",
+    "task_branch": "task/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001",
+    "title": "Eliminate telemetry unittest discovery loader errors"
+  },
+  "authorities": {
+    "actual_state": [
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001/evidence.json — recorded the two loader errors as an out-of-scope residual risk on merged dev f9b6760d6, with baseline counts 197 tests / 2 errors / 1 skip.",
+      "services/telemetry/test_capture.py and services/telemetry/test_feedback_adapter.py at dev 6445eacd6 — byte-identical to their f9b6760d6 versions, both importing package siblings by bare module name.",
+      "services/telemetry/test_discovery_imports.py — new regression fence for the telemetry test-module import contract."
+    ],
+    "desired_state": [
+      ".orchestrator/task-briefs/ops_l12_telemetry_discovery_import_001.md — task brief and acceptance scope.",
+      "AI_COLLABORATION_GUIDE.md — canonical collaboration and layering rules; this task touches only L0-adjacent test-loading surface and asserts no L1 architecture change."
+    ],
+    "task_packet": ".orchestrator/task-briefs/ops_l12_telemetry_discovery_import_001.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Claude (task owner)",
+    "composes_with": [
+      "OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001 — this task closes the two loader errors that task recorded as a residual risk.",
+      "merged dev 6445eacd603f0bcfb8893508fbffe341a67dd309 — branch base."
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "services/telemetry/test_capture.py",
+      "services/telemetry/test_feedback_adapter.py",
+      "services/telemetry/test_discovery_imports.py"
+    ],
+    "not_changing": "services/telemetry/capture.py and services/telemetry/feedback_adapter.py production behavior, the pre-existing sys.path bootstrap inside feedback_adapter.py, telemetry configuration, dependency manifests, and every other services/telemetry test module's assertions.",
+    "owned_layer": "The telemetry test-module import surface: how services/telemetry/test_*.py modules resolve their package siblings under unittest discovery and pytest collection."
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "delivery_state": "on task branch",
+        "note": "Import repair for both modules plus the new regression fence. Committed through scripts/git/worker_commit.py with an explicit --scope and a private index file.",
+        "sha": "80ecb47e887e3078e83191d5998fe098986b1ee9",
+        "subject": "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001: anchor telemetry test import repair"
+      }
+    ],
+    "base_sha": "6445eacd603f0bcfb8893508fbffe341a67dd309",
+    "pull_request": null,
+    "pull_requests": [],
+    "required_checks": [],
+    "delivery_note": "Pull request number, head sha, merge sha, and required-check conclusions are recorded in the post-merge evidence re-cut. This cut asserts implementation and owner verification only."
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "env -u PANTHEON_RUNTIME_MANAGER_URL /home/lupin/pantheon/.venv/bin/python3 -m unittest discover -s services/telemetry -p 'test_*.py' -t . (pre-change, branch base 6445eacd6)",
+        "conclusion": "Ran 197 tests in 11.915s; FAILED (errors=2, skipped=1). The two errors are the loader ModuleNotFoundError for services.telemetry.test_capture and services.telemetry.test_feedback_adapter. This reproduces the recorded f9b6760d6 baseline exactly; git confirms both files are byte-identical between f9b6760d6 and 6445eacd6.",
+        "result": "pass"
+      },
+      {
+        "command": "env -u PANTHEON_RUNTIME_MANAGER_URL /home/lupin/pantheon/.venv/bin/python3 -m unittest discover -s services/telemetry -p 'test_*.py' -t .",
+        "conclusion": "Ran 280 tests in 15.886s; OK (skipped=1). Zero loader errors. Net delta from baseline: 195 real baseline tests + 35 (test_capture) + 40 (test_feedback_adapter) + 10 (test_discovery_imports) = 280; 75 previously-unrun tests recovered, no test lost.",
+        "result": "pass"
+      },
+      {
+        "command": "env -u PANTHEON_RUNTIME_MANAGER_URL /home/lupin/pantheon/.venv/bin/python3 -m unittest discover -s services/telemetry -p 'test_*.py' -t . (second consecutive run)",
+        "conclusion": "Ran 280 tests in 16.151s; OK (skipped=1). Repeated discovery is stable; no import-cache or state carryover between runs.",
+        "result": "pass"
+      },
+      {
+        "command": "env PANTHEON_RUNTIME_MANAGER_URL=http://198.51.100.7:8099 PANTHEON_RUNTIME_MANAGER_TOKEN=ambient-operator-token PANTHEON_RUNTIME_MANAGER_TOKEN_FILE=/nonexistent/ambient-token PANTHEON_RUNTIME_BINDING_STORE_PATH=/nonexistent/ambient/bindings.json INCIDENTS_DATA_DIR=/nonexistent/ambient/incidents /home/lupin/pantheon/.venv/bin/python3 -m unittest discover -s services/telemetry -p 'test_*.py' -t .",
+        "conclusion": "Ran 280 tests in 15.466s; OK (skipped=1). A hostile ambient environment does not change discovery or loading behavior.",
+        "result": "pass"
+      },
+      {
+        "command": "env -u PANTHEON_RUNTIME_MANAGER_URL /home/lupin/pantheon/.venv/bin/python3 -m unittest services.telemetry.test_capture",
+        "conclusion": "Ran 35 tests in 0.321s; OK.",
+        "result": "pass"
+      },
+      {
+        "command": "env -u PANTHEON_RUNTIME_MANAGER_URL /home/lupin/pantheon/.venv/bin/python3 -m unittest services.telemetry.test_feedback_adapter",
+        "conclusion": "Ran 40 tests in 0.332s; OK.",
+        "result": "pass"
+      },
+      {
+        "command": "env -u PANTHEON_RUNTIME_MANAGER_URL /home/lupin/pantheon/.venv/bin/python3 -m unittest services.telemetry.test_discovery_imports",
+        "conclusion": "Ran 10 tests in 3.770s; OK. All ten regression assertions pass on the repaired source.",
+        "result": "pass"
+      },
+      {
+        "command": "cd /tmp && env -u PANTHEON_RUNTIME_MANAGER_URL /home/lupin/pantheon/.venv/bin/python3 -m pytest <abs>/services/telemetry/test_capture.py <abs>/services/telemetry/test_feedback_adapter.py <abs>/services/telemetry/test_discovery_imports.py -q",
+        "conclusion": "85 passed, 14 subtests passed in 12.47s. Direct pytest execution from a foreign working directory succeeds under pytest prepend import mode with no conftest or PYTHONPATH assistance.",
+        "result": "pass"
+      },
+      {
+        "command": "cd /tmp && env -i PATH=/usr/bin:/bin HOME=/tmp PYTHONPATH=<repo root> /home/lupin/pantheon/.venv/bin/python3 -m unittest services.telemetry.test_capture services.telemetry.test_feedback_adapter",
+        "conclusion": "Ran 75 tests in 0.830s; OK. env -i means the only inherited variables are PATH, HOME, and PYTHONPATH set to the repository root: direct proof of no cwd dependence and no reliance on any ambient Pantheon variable.",
+        "result": "pass"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python3 -m compileall -q services/telemetry/test_capture.py services/telemetry/test_feedback_adapter.py services/telemetry/test_discovery_imports.py",
+        "conclusion": "Clean; no syntax diagnostics.",
+        "result": "pass"
+      },
+      {
+        "command": "git checkout HEAD -- services/telemetry/test_capture.py services/telemetry/test_feedback_adapter.py && env -u PANTHEON_RUNTIME_MANAGER_URL /home/lupin/pantheon/.venv/bin/python3 -m unittest services.telemetry.test_discovery_imports (negative control, pre-change source restored, then reverted back)",
+        "conclusion": "Ran 10 tests in 2.447s; FAILED (failures=15). Every one of the ten regression test methods failed against the pre-change bare-module imports, including the AST contract check, the in-process loader check, the repeated-discovery check, the foreign-cwd subprocess check, and the hostile-environment check. The repaired files were then restored and re-verified OK. The regression module fails on the defect it fences rather than passing vacuously.",
+        "result": "pass"
+      },
+      {
+        "command": "git diff --stat f9b6760d6 -- services/telemetry/capture.py services/telemetry/feedback_adapter.py",
+        "conclusion": "Empty. Neither production module changed relative to the dev commit on which the defect was independently reproduced.",
+        "result": "pass"
+      },
+      {
+        "command": "git diff --stat 6445eacd603f0bcfb8893508fbffe341a67dd309 -- .",
+        "conclusion": "services/telemetry/test_capture.py (8 changed), services/telemetry/test_discovery_imports.py (323 added), services/telemetry/test_feedback_adapter.py (4 changed); 3 files changed, 332 insertions(+), 3 deletions(-). No production, configuration, or dependency file is in the task diff.",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-07-26T21:50:00Z",
+    "validated_base_sha": "6445eacd603f0bcfb8893508fbffe341a67dd309",
+    "validated_head_sha": "80ecb47e887e3078e83191d5998fe098986b1ee9",
+    "interpreter": "/home/lupin/pantheon/.venv/bin/python3 (Python 3.12.3)"
+  },
+  "deployment": {
+    "applicable": false,
+    "reason": "Test-loading repair. Nothing is deployed, no runtime surface changes, and no service configuration is touched."
+  },
+  "hosted_readback": {
+    "applicable": false,
+    "reason": "No hosted surface is involved; the delivered artifacts are executed by local and CI test runners only."
+  },
+  "behavioral_proof": {
+    "defect": {
+      "description": "services/telemetry/test_capture.py imported `capture` and services/telemetry/test_feedback_adapter.py imported `feedback_adapter` and `capture` as bare top-level modules. Those names only resolve when sys.path[0] is services/telemetry, so repository-root unittest discovery replaced both modules with unittest.loader._FailedTest placeholders.",
+      "impact": "Two loader errors on every repository-root discovery run, and 75 telemetry tests that never executed while the suite still reported a total. Silent loss of coverage, not merely a red count.",
+      "root_cause": "Bare sibling imports inside a package that has __init__.py at both services/ and services/telemetry/, executed with the repository root rather than the service directory as the first sys.path entry."
+    },
+    "repair": {
+      "description": "Both modules import through services.telemetry.capture and services.telemetry.feedback_adapter. No sys.path bootstrap was added: the package path is sufficient under repository-root unittest discovery, under python -m unittest services.telemetry.<module>, and under pytest prepend import mode, and avoiding the insert avoids a process-global side effect that would leak into other modules loaded in the same discovery run.",
+      "production_behavior_unchanged": "capture.py and feedback_adapter.py are byte-identical to their f9b6760d6 versions. The 75 recovered tests are the modules' own pre-existing assertions, executed unmodified; only the import lines changed."
+    },
+    "regression_fence": {
+      "description": "services/telemetry/test_discovery_imports.py asserts the import contract for the whole package rather than the two specific call sites.",
+      "module": "services/telemetry/test_discovery_imports.py",
+      "recursion_guard": "Child interpreters carry PANTHEON_TELEMETRY_DISCOVERY_IMPORT_CHILD=1; the subprocess-spawning test class skips when that sentinel is set, so a widened discovery pattern cannot fork recursively.",
+      "tests": [
+        "test_no_telemetry_test_module_imports_a_bare_package_sibling — AST scan of every services/telemetry/test_*.py; no import whose root name is a telemetry package sibling. Explicit relative imports remain allowed.",
+        "test_repaired_modules_import_siblings_through_the_package_path — the two repaired modules import via services.telemetry.*.",
+        "test_repaired_modules_do_not_mutate_process_global_sys_path — AST scan; neither repaired module touches sys.path.",
+        "test_repaired_modules_discover_with_zero_loader_errors — in-process TestLoader().discover with top_level_dir at the repository root yields zero _FailedTest and exactly 75 tests.",
+        "test_repeated_discovery_in_one_process_is_stable — repeated discovery in one interpreter gives identical, error-free results.",
+        "test_importing_repaired_modules_leaves_no_bare_sibling_in_sys_modules — no bare capture / feedback_adapter alias is registered, so the duplicate-module-identity hazard is closed too.",
+        "test_repo_root_discovery_of_repaired_modules_reports_no_loader_error — subprocess repository-root discovery under a scrubbed environment.",
+        "test_repaired_modules_run_from_a_foreign_working_directory — both modules run with cwd set to a temporary directory.",
+        "test_repaired_modules_import_under_hostile_ambient_environment — import succeeds with hostile PANTHEON_RUNTIME_MANAGER_* values, INCIDENTS_DATA_DIR, and a nonexistent PYTHONPATH prefix, leaking no sibling alias.",
+        "test_repaired_modules_collect_under_pytest_from_a_foreign_cwd — pytest --collect-only from a foreign cwd collects all 75 tests; skips when pytest is absent."
+      ]
+    },
+    "counts": {
+      "baseline_real_tests": 195,
+      "baseline_reported": "197 tests, 2 errors, 1 skip",
+      "note": "The baseline's 197 included the 2 _FailedTest placeholders, so 195 real tests ran. 195 + 35 + 40 + 10 = 280.",
+      "post_change_reported": "280 tests, 0 errors, 1 skip",
+      "recovered_tests": 75
+    }
+  },
+  "security_and_safety": {
+    "credentials_touched": false,
+    "network_egress_added": false,
+    "notes": "No production code, configuration, credential, or dependency surface is modified. The regression module spawns child interpreters only with an explicitly constructed minimal environment and never inherits the parent process environment.",
+    "production_behavior_changed": false
+  },
+  "acceptance": [
+    {
+      "criterion": "Clean repo-root unittest discovery imports services.telemetry.test_capture and services.telemetry.test_feedback_adapter with zero loader errors",
+      "evidence": "validation.commands[1]: 280 tests, OK (skipped=1); zero _FailedTest entries. validation.commands[6] exercises the same assertion in-process via test_repaired_modules_discover_with_zero_loader_errors.",
+      "status": "met"
+    },
+    {
+      "criterion": "Direct pytest and unittest execution of both files passes without PYTHONPATH cwd dependence or process-global sys.path mutation",
+      "evidence": "validation.commands[7]: pytest from cwd=/tmp, 85 passed. validation.commands[8]: env -i with only PATH, HOME, and PYTHONPATH=<repo root> from cwd=/tmp, 75 tests OK. test_repaired_modules_do_not_mutate_process_global_sys_path asserts by AST that neither repaired module touches sys.path.",
+      "status": "met"
+    },
+    {
+      "criterion": "Pre-change 197 tests 2 errors 1 skip baseline is reproduced and post-change has zero loader errors with no lost tests",
+      "evidence": "validation.commands[0] reproduced 197 / 2 errors / 1 skip on the branch base, whose copies of both files are byte-identical to f9b6760d6. validation.commands[1] gives 280 / 0 errors / 1 skip. behavioral_proof.counts shows 195 + 35 + 40 + 10 = 280, so every baseline test still runs and 75 were recovered.",
+      "status": "met"
+    },
+    {
+      "criterion": "Production capture and feedback adapter behavior is unchanged",
+      "evidence": "validation.commands[11]: git diff --stat against f9b6760d6 for capture.py and feedback_adapter.py is empty. validation.commands[12]: the entire task diff is the three test files. The 75 recovered tests are the modules' own unmodified assertions and all pass.",
+      "status": "met"
+    },
+    {
+      "criterion": "Hostile ambient environment and repeated discovery prove no import cache or environment leakage",
+      "evidence": "validation.commands[3]: full discovery under hostile PANTHEON_RUNTIME_MANAGER_* and INCIDENTS_DATA_DIR values, 280 tests OK. validation.commands[2]: a second consecutive full discovery, 280 tests OK. In-process: test_repeated_discovery_in_one_process_is_stable and test_importing_repaired_modules_leaves_no_bare_sibling_in_sys_modules. Subprocess: test_repaired_modules_import_under_hostile_ambient_environment additionally asserts no bare sibling alias is registered.",
+      "status": "met"
+    },
+    {
+      "criterion": "Branch commit push PR checks independent review merge and evidence archive complete",
+      "evidence": "Anchor commit 80ecb47e8 on task/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001 via scripts/git/worker_commit.py with explicit scope. Pull-request, required-check, independent-review, and merge fields are recorded in the post-merge evidence re-cut and the record_log.",
+      "status": "in_progress"
+    }
+  ],
+  "residual_risks": {
+    "interpreter_provisioning_gap": {
+      "containment": "Under the provisioned /home/lupin/pantheon/.venv interpreter used for every count in this manifest, discovery is clean at 280 tests / 0 errors. The gap is dependency provisioning, not import resolution, and this task does not touch dependency configuration.",
+      "description": "services/telemetry/test_main_routes.py and services/telemetry/test_trade_journal_contracts.py raise loader ModuleNotFoundError for flask and pytest under a bare /usr/bin/python3 interpreter that lacks the service requirements; services/telemetry/test_lineage_write_path.py additionally errors on fastapi there.",
+      "owner": "unassigned; candidate follow-up for the twelve-loop verification-hardening lane"
+    },
+    "pre_existing_skip": {
+      "containment": "Unchanged between the baseline and post-change runs; not introduced or masked by this task.",
+      "description": "One test in the telemetry suite is skipped in every run recorded here.",
+      "owner": "unassigned"
+    }
+  },
+  "integrity": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001/evidence.sha256",
+    "note": "evidence.sha256 pins README.md and evidence.json. It is regenerated whenever either file changes; the manifest does not hash itself.",
+    "verify_command": "cd docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001 && sha256sum -c evidence.sha256"
+  },
+  "record_log": [
+    {
+      "actor": "Claude",
+      "at": "2026-07-26T21:55:00Z",
+      "entry": "Owner evidence cut at anchor commit 80ecb47e887e3078e83191d5998fe098986b1ee9. Baseline 197 tests / 2 errors / 1 skip reproduced on branch base 6445eacd6; post-change 280 tests / 0 errors / 1 skip; 75 previously-unrun tests recovered; negative control against the pre-change source failed all ten regression assertions (15 failures). Independent reviewer verdict from Codex2 not yet recorded."
+    }
+  ]
+}
