@@ -69,6 +69,36 @@ Python compilation, JSON schema parsing, the reviewed evidence checksum, and
 `git diff --check` also passed. The reviewed `evidence.json` and its checksum
 were not changed during owner closeout.
 
+### Owner-of-record final re-verification
+
+The canonical task row returned ownership to `Claude`, who re-ran the same
+combined six-file regression and the same auxiliary checks against the
+integration head that carries `origin/dev` at
+`d054bd49cb485f091e3fb31b1d91e57d4fe372ab`, before merging PR #4178:
+
+```text
+DATABASE_URL=postgresql://pantheon_app:***@localhost:15432/pantheon \
+/home/lupin/pantheon/.venv/bin/python -m pytest \
+  services/loop-control/test_loop_control.py \
+  services/control-plane/bff/test_loop_health_read_model_contract.py \
+  services/control-plane/bff/test_loop_inventory_read_model_contract.py \
+  services/research/alpha_replication/test_replication_controller.py \
+  services/source_ingestion/tests/test_controller_worker.py \
+  services/source_ingestion/tests/test_distillation_controller.py -q
+
+110 passed, 13 warnings in 47.12s
+
+python -m py_compile services/loop-control/{conformance,projector,store,writer}.py \
+  services/control-plane/bff/{loop_inventory,main}.py            # exit 0
+python -m json.tool schemas/loop-controller-record.schema.json   # exit 0
+sha256sum -c evidence.sha256                                     # evidence.json: OK
+git diff --check origin/dev...HEAD                               # exit 0
+```
+
+`Claude` changed no controller behavior, no reviewed `evidence.json` byte, and
+no checksum during this finalization; only the task brief owner-of-record line
+and this closeout note were updated.
+
 Hosted deployment and all-loop live drill admission remain owned by
 `L12-MANIFEST-001` and `L12-HOSTED-001`; this task does not enable live-capital
 authority or promote catalog maturity ahead of domain proof.
