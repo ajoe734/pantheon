@@ -25,7 +25,7 @@
     "current_maturity": "api-only",
     "target_maturity": "reconciled",
     "product_level_required": true,
-    "overall_admission": "ready_for_review",
+    "overall_admission": "review_approved_for_task_pr",
     "evidence_cut_at": "2026-07-26T10:07:02Z"
   },
   "authorities": {
@@ -86,7 +86,8 @@
       }
     ],
     "merge_target": "dev",
-    "publication_state": "pending_independent_review"
+    "reviewed_implementation_sha": "d9bc76c2d9580d7da9130247f428bd7668d8ab57",
+    "publication_state": "review_approved_pending_task_pr"
   },
   "behavioral_proof": {
     "authenticated_tenant_mutations": {
@@ -155,6 +156,20 @@
       }
     ]
   },
+  "independent_review": {
+    "status": "approved",
+    "reviewer": "Codex",
+    "approved_at": "2026-07-26T10:21:43Z",
+    "approved_implementation_sha": "d9bc76c2d9580d7da9130247f428bd7668d8ab57",
+    "owner": "Codex2",
+    "owner_finalized_at": "2026-07-26T10:34:18Z",
+    "owner_validation": {
+      "focused_suite": "166 passed, 1 existing warning",
+      "changed_module_py_compile": "pass",
+      "evidence_checksum": "pass",
+      "git_diff_check": "pass"
+    }
+  },
   "security_and_safety": {
     "rbac": {
       "status": "pass",
@@ -173,8 +188,8 @@
       "proof": "Existing worker acceptance keeps kill/safe-mode containment ahead of rollback compensation."
     },
     "two_person_approval": {
-      "status": "pending_review",
-      "proof": "Owner Codex2 and reviewer Codex are distinct."
+      "status": "pass",
+      "proof": "Independent reviewer Codex approved implementation commit d9bc76c2d9580d7da9130247f428bd7668d8ab57; owner Codex2 accepted the approved state for closeout."
     }
   },
   "acceptance": [

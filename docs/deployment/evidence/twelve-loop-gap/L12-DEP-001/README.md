@@ -1,6 +1,7 @@
 # L12-DEP-001 dispatcher evidence
 
-Status: ready for independent `Codex` review.
+Status: independent `Codex` review approved; accepted by `Codex2` for the
+per-task PR into `dev`.
 
 This packet records the reconciled code, contract, and deterministic behavioral
 proof for the authenticated, tenant-partitioned Deployment saga dispatcher. It
@@ -59,6 +60,13 @@ DEP-003 projection readback before receipt.
 
 The warning is the repository's existing Starlette `TestClient` deprecation
 warning.
+
+Independent reviewer `Codex` approved implementation commit
+`d9bc76c2d9580d7da9130247f428bd7668d8ab57` after reproducing the 166-test
+suite and the changed-module compilation, checksum, diff, and merge-tree
+checks. During owner closeout, `Codex2` re-ran the complete suite with the same
+`166 passed, 1 warning` result, plus changed-module `py_compile`, this packet's
+checksum, and `git diff --check`.
 
 ## Composition boundary
 
