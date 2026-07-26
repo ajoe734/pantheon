@@ -29,9 +29,11 @@ POST  /api/v1/telemetry/infrastructure-health
     Requires a verified service JWT whose claims bind the request tenant and an
     allowlisted producer scope; the deployment-wide permissive auth mode and the
     shared static service token are both refused on this route.
-    Returns 202 on admission and on an idempotent replay of the same event_id,
-    409 when an event_id is reused for different content, 400 on contract
-    violation, 503 when the durable admission ledger or schema is unavailable.
+    Returns 202 on admission and on an idempotent replay of an event_id that
+    already holds a durable receipt, 409 when an event_id is reused for
+    different content, 400 on contract violation, and 503 (retryable) when the
+    schema or ledger is unavailable, the buffer is full, or another attempt
+    holds a live reservation with no durable receipt yet.
 
 POST  /api/v1/telemetry/heartbeats
     Ingest one RuntimeHeartbeat payload and adapt it into a canonical
@@ -141,6 +143,13 @@ TELEMETRY_INFRASTRUCTURE_HEALTH_LEDGER
     TELEMETRY_STORAGE_DIR/infrastructure_health_admissions.jsonl. Point every
     replica at the same shared path so a stable event_id is admitted once
     across restarts and replicas.
+
+TELEMETRY_INFRASTRUCTURE_HEALTH_LEASE_SECONDS
+    Lease held by one infrastructure health admission reservation before another
+    replica may recover it (default 30). Set it above the worst-case durable
+    enqueue latency: a crashed owner's reservation only becomes recoverable once
+    the lease expires, and until then retries are answered as retryable rather
+    than as delivered.
 
 TELEMETRY_BATCH_SIZE
     Max events per write batch (default 500).
@@ -534,6 +543,12 @@ def _build_service(lineage_write_store: LineageReadService | None = None) -> Tel
         heartbeat_stale_after = int(os.getenv("TELEMETRY_RUNTIME_HEARTBEAT_STALE_SECONDS", "90"))
     except ValueError:
         heartbeat_stale_after = 90
+    try:
+        infrastructure_health_lease = float(
+            os.getenv("TELEMETRY_INFRASTRUCTURE_HEALTH_LEASE_SECONDS", "30")
+        )
+    except ValueError:
+        infrastructure_health_lease = 30.0
     replay_dlq_on_start = _env_bool("TELEMETRY_REPLAY_DLQ_ON_START", default=False)
     dlq_replay_tag_filter = os.getenv("TELEMETRY_REPLAY_DLQ_TAG") or None
 
@@ -592,6 +607,7 @@ def _build_service(lineage_write_store: LineageReadService | None = None) -> Tel
             "TELEMETRY_INFRASTRUCTURE_HEALTH_LEDGER"
         )
         or None,
+        infrastructure_health_lease_seconds=infrastructure_health_lease,
     )
 
 
@@ -691,9 +707,15 @@ def _telemetry_metrics() -> dict[str, Any]:
         "infrastructure_health_admitted": infrastructure_stats.get("admitted", 0),
         "infrastructure_health_duplicates": infrastructure_stats.get("duplicates", 0),
         "infrastructure_health_conflicts": infrastructure_stats.get("conflicts", 0),
+        "infrastructure_health_in_flight_rejections": infrastructure_stats.get("in_flight_rejections", 0),
+        "infrastructure_health_fenced_rejections": infrastructure_stats.get("fenced_rejections", 0),
         "infrastructure_health_rejected": infrastructure_stats.get("rejected", 0),
         "infrastructure_health_schema_loaded": 1 if infrastructure_stats.get("schema_loaded") else 0,
-        "infrastructure_health_ledger_event_ids": infrastructure_ledger.get("admitted_event_ids", 0),
+        "infrastructure_health_ledger_committed_ids": infrastructure_ledger.get("committed_event_ids", 0),
+        "infrastructure_health_ledger_open_reservations": infrastructure_ledger.get("open_reservations", 0),
+        "infrastructure_health_ledger_recoverable_reservations": infrastructure_ledger.get(
+            "recoverable_expired_reservations", 0
+        ),
     }
 
 
@@ -957,6 +979,10 @@ _INFRASTRUCTURE_HEALTH_ERROR_STATUS = {
     "INFRA_SCHEMA_UNAVAILABLE": 503,
     "INFRA_LEDGER_UNCONFIGURED": 503,
     "INFRA_BUFFER_OVERFLOW": 503,
+    # Retryable: no durable receipt exists yet, so the producer must try again
+    # rather than treat the observation as delivered.
+    "INFRA_ADMISSION_IN_FLIGHT": 503,
+    "INFRA_ADMISSION_FENCED": 503,
 }
 
 

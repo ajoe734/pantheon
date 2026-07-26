@@ -55,7 +55,9 @@ import logging
 import os
 import threading
 import time
-from datetime import datetime, timezone
+import uuid
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Coroutine, Mapping, Optional, Protocol, runtime_checkable
 
@@ -191,36 +193,68 @@ def infrastructure_health_fingerprint(event: Mapping[str, Any]) -> str:
     return f"sha256:{hashlib.sha256(payload).hexdigest()}"
 
 
+@dataclass(frozen=True)
+class InfrastructureHealthReservation:
+    """Result of one attempt to reserve a stable infrastructure event ID."""
+
+    outcome: str
+    token: Optional[str] = None
+    detail: Optional[str] = None
+
+
 class InfrastructureHealthAdmissionLedger:
-    """Durable, replica-safe admission record keyed by stable event ID.
+    """Durable, replica-safe two-phase admission log keyed by stable event ID.
 
     The in-process dedup set of :class:`TelemetryIngestService` is lost on
     restart and is not shared between replicas, so it cannot by itself make
     admission idempotent for a producer that retries across a redeploy or that
     runs two probe replicas. This ledger is an append-only JSONL file in the
     shared telemetry storage directory, guarded by a POSIX advisory lock so
-    concurrent replicas serialise on the same event_id:
+    concurrent replicas serialise on the same event_id.
 
-    * ``admitted`` — the event_id has been admitted with this fingerprint;
-    * ``released`` — a previously admitted event_id was not durably enqueued
-      after all and may be re-admitted.
+    Admission is deliberately **two-phase**, because a single-phase
+    "record then enqueue" log has a loss window: a second caller arriving
+    between the record and the durable enqueue would be answered as a
+    successful duplicate even though nothing had been persisted yet, and a crash
+    in that window would leave an event_id that was permanently marked admitted
+    and permanently never enqueued.
 
-    Admission is recorded *before* the durable enqueue so two replicas cannot
-    both admit the same event_id; if the enqueue then fails, the reservation is
-    released. That ordering gives at-most-once local admission, and the
-    canonical Postgres write path remains the final idempotency authority via
-    ``ON CONFLICT (event_id)``.
+    Record states:
+
+    * ``reserved`` — one caller holds a leased, fenced claim on the event_id.
+      It carries the owner ``token`` and an ``expires_at`` lease. No caller may
+      be told the event was accepted while the claim is only reserved.
+    * ``committed`` — a durable enqueue receipt exists. Only now is the event_id
+      an idempotent success for every later retry.
+    * ``released`` — the owner's enqueue did not succeed, so the event_id is
+      free to be admitted again.
+
+    ``commit`` and ``release`` are token-scoped, so a slow owner whose lease
+    expired and was taken over by another caller is fenced out and cannot
+    resurrect or cancel someone else's claim. An expired reservation left by a
+    crashed process is recovered by the next caller, which steals the claim with
+    a fresh token.
     """
 
-    STATE_ADMITTED = "admitted"
+    STATE_RESERVED = "reserved"
+    STATE_COMMITTED = "committed"
     STATE_RELEASED = "released"
 
-    def __init__(self, path: str) -> None:
+    OUTCOME_RESERVED = "reserved"
+    OUTCOME_COMMITTED = "committed"
+    OUTCOME_IN_FLIGHT = "in_flight"
+    OUTCOME_CONFLICT = "conflict"
+    OUTCOME_FENCED = "fenced"
+
+    DEFAULT_LEASE_SECONDS = 30.0
+
+    def __init__(self, path: str, *, lease_seconds: float = DEFAULT_LEASE_SECONDS) -> None:
         self._path = Path(path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._path.touch(exist_ok=True)
+        self._lease_seconds = max(0.1, float(lease_seconds))
         self._lock = threading.Lock()
-        self._index: dict[str, str] = {}
+        self._records: dict[str, dict[str, Any]] = {}
         self._offset = 0
         with self._lock:
             self._refresh_locked()
@@ -229,7 +263,41 @@ class InfrastructureHealthAdmissionLedger:
     def path(self) -> str:
         return str(self._path)
 
+    @property
+    def lease_seconds(self) -> float:
+        return self._lease_seconds
+
     # -- internal helpers --
+
+    @staticmethod
+    def _now() -> datetime:
+        return datetime.now(timezone.utc)
+
+    @staticmethod
+    def _stamp(moment: datetime) -> str:
+        return moment.isoformat().replace("+00:00", "Z")
+
+    @classmethod
+    def _parse_stamp(cls, value: Any) -> Optional[datetime]:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
+    @classmethod
+    def _reservation_expired(cls, record: Mapping[str, Any], now: datetime) -> bool:
+        expires_at = cls._parse_stamp(record.get("expires_at"))
+        if expires_at is None:
+            # A reservation without a readable lease cannot be trusted to be
+            # live; treat it as expired so a crashed owner never blocks forever.
+            return True
+        return now >= expires_at
 
     def _refresh_locked(self) -> None:
         """Replay ledger records written since the last read, in order."""
@@ -254,9 +322,9 @@ class InfrastructureHealthAdmissionLedger:
             if not event_id:
                 continue
             if record.get("state") == self.STATE_RELEASED:
-                self._index.pop(event_id, None)
+                self._records.pop(event_id, None)
             else:
-                self._index[event_id] = str(record.get("fingerprint") or "")
+                self._records[event_id] = record
         self._offset += consumed
 
     def _append_locked(self, handle, record: dict[str, Any]) -> None:
@@ -267,86 +335,195 @@ class InfrastructureHealthAdmissionLedger:
         os.fsync(handle.fileno())
         self._offset = handle.tell()
 
+    def _locked_handle(self):
+        handle = self._path.open("r+b")
+        if fcntl is not None:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        return handle
+
+    @staticmethod
+    def _unlock(handle) -> None:
+        try:
+            if fcntl is not None:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            handle.close()
+
     # -- public API --
 
-    def admit(
+    def begin(
         self,
         event_id: str,
         fingerprint: str,
         *,
         attributes: Optional[Mapping[str, Any]] = None,
-    ) -> str:
-        """Reserve *event_id*.
+    ) -> InfrastructureHealthReservation:
+        """Phase one: try to take a leased, fenced claim on *event_id*.
 
-        Returns ``"admitted"`` for a first admission, ``"duplicate"`` when the
-        same event_id was already admitted with identical content, and
-        ``"conflict"`` when the event_id was admitted with different content.
+        Outcomes:
+
+        * ``reserved`` — the caller owns the claim and must follow with
+          :meth:`commit` after a durable enqueue, or :meth:`release`;
+        * ``committed`` — a durable receipt already exists for identical
+          content, so this is a true idempotent duplicate;
+        * ``in_flight`` — another caller holds a live claim and no durable
+          receipt exists yet, so this caller must not be told it succeeded;
+        * ``conflict`` — the event_id is already bound to different content.
         """
         clean_id = str(event_id or "").strip()
         if not clean_id:
             raise ValueError("infrastructure health admission requires an event_id")
+        now = self._now()
         with self._lock:
-            with self._path.open("r+b") as handle:
-                if fcntl is not None:
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-                try:
-                    self._refresh_locked()
-                    existing = self._index.get(clean_id)
-                    if existing is not None:
-                        return "duplicate" if existing == fingerprint else "conflict"
-                    record: dict[str, Any] = {
-                        "event_id": clean_id,
-                        "fingerprint": fingerprint,
-                        "state": self.STATE_ADMITTED,
-                        "admitted_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-                    }
-                    for key, value in (attributes or {}).items():
-                        record.setdefault(str(key), value)
-                    self._append_locked(handle, record)
-                    self._index[clean_id] = fingerprint
-                finally:
-                    if fcntl is not None:
-                        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-        return "admitted"
+            handle = self._locked_handle()
+            try:
+                self._refresh_locked()
+                current = self._records.get(clean_id)
+                if current is not None:
+                    if str(current.get("fingerprint") or "") != fingerprint:
+                        return InfrastructureHealthReservation(
+                            self.OUTCOME_CONFLICT,
+                            detail=f"event_id is bound to state {current.get('state')!r} with different content",
+                        )
+                    if current.get("state") == self.STATE_COMMITTED:
+                        return InfrastructureHealthReservation(self.OUTCOME_COMMITTED)
+                    if not self._reservation_expired(current, now):
+                        return InfrastructureHealthReservation(
+                            self.OUTCOME_IN_FLIGHT,
+                            detail="another admission attempt holds a live reservation",
+                        )
+                token = uuid.uuid4().hex
+                record: dict[str, Any] = {
+                    "event_id": clean_id,
+                    "fingerprint": fingerprint,
+                    "state": self.STATE_RESERVED,
+                    "token": token,
+                    "reserved_at": self._stamp(now),
+                    "expires_at": self._stamp(now + timedelta(seconds=self._lease_seconds)),
+                }
+                if current is not None:
+                    # Recovering a crashed or stalled owner's expired claim.
+                    record["recovered_token"] = current.get("token")
+                for key, value in (attributes or {}).items():
+                    record.setdefault(str(key), value)
+                self._append_locked(handle, record)
+                self._records[clean_id] = record
+                return InfrastructureHealthReservation(self.OUTCOME_RESERVED, token=token)
+            finally:
+                self._unlock(handle)
 
-    def release(self, event_id: str) -> None:
-        """Release a reservation whose durable enqueue did not succeed."""
+    def commit(self, event_id: str, fingerprint: str, token: str) -> str:
+        """Phase two: record the durable receipt for a claim this caller owns.
+
+        Returns ``committed`` when the receipt is now durable — including the
+        case where the current owner already committed identical content —
+        ``conflict`` when the event_id is bound to different content, and
+        ``fenced`` when this caller no longer owns the claim.
+        """
         clean_id = str(event_id or "").strip()
         if not clean_id:
-            return
+            return self.OUTCOME_FENCED
+        now = self._now()
         with self._lock:
-            with self._path.open("r+b") as handle:
-                if fcntl is not None:
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-                try:
-                    self._refresh_locked()
-                    if clean_id not in self._index:
-                        return
-                    self._append_locked(
-                        handle,
-                        {
-                            "event_id": clean_id,
-                            "state": self.STATE_RELEASED,
-                            "released_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-                        },
-                    )
-                    self._index.pop(clean_id, None)
-                finally:
-                    if fcntl is not None:
-                        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            handle = self._locked_handle()
+            try:
+                self._refresh_locked()
+                current = self._records.get(clean_id)
+                if current is None:
+                    return self.OUTCOME_FENCED
+                if str(current.get("fingerprint") or "") != fingerprint:
+                    return self.OUTCOME_CONFLICT
+                if current.get("state") == self.STATE_COMMITTED:
+                    # Someone durably committed identical content. The receipt
+                    # this caller needs already exists, so this is not a loss.
+                    return self.OUTCOME_COMMITTED
+                if str(current.get("token") or "") != str(token or ""):
+                    return self.OUTCOME_FENCED
+                record = {
+                    key: value
+                    for key, value in current.items()
+                    if key not in ("state", "expires_at")
+                }
+                record["state"] = self.STATE_COMMITTED
+                record["committed_at"] = self._stamp(now)
+                self._append_locked(handle, record)
+                self._records[clean_id] = record
+                return self.OUTCOME_COMMITTED
+            finally:
+                self._unlock(handle)
 
-    def is_admitted(self, event_id: str) -> bool:
+    def release(self, event_id: str, token: str) -> bool:
+        """Release a claim this caller owns whose durable enqueue failed."""
+        clean_id = str(event_id or "").strip()
+        if not clean_id:
+            return False
+        with self._lock:
+            handle = self._locked_handle()
+            try:
+                self._refresh_locked()
+                current = self._records.get(clean_id)
+                if current is None:
+                    return False
+                if current.get("state") != self.STATE_RESERVED:
+                    return False
+                if str(current.get("token") or "") != str(token or ""):
+                    # Fenced: the lease was taken over by another caller.
+                    return False
+                self._append_locked(
+                    handle,
+                    {
+                        "event_id": clean_id,
+                        "state": self.STATE_RELEASED,
+                        "token": current.get("token"),
+                        "released_at": self._stamp(self._now()),
+                    },
+                )
+                self._records.pop(clean_id, None)
+                return True
+            finally:
+                self._unlock(handle)
+
+    def is_committed(self, event_id: str) -> bool:
+        """Return whether a durable receipt exists for *event_id*."""
         clean_id = str(event_id or "").strip()
         if not clean_id:
             return False
         with self._lock:
             self._refresh_locked()
-            return clean_id in self._index
+            current = self._records.get(clean_id)
+            return bool(current) and current.get("state") == self.STATE_COMMITTED
 
-    def stats(self) -> dict[str, Any]:
+    def state_of(self, event_id: str) -> Optional[str]:
+        clean_id = str(event_id or "").strip()
+        if not clean_id:
+            return None
         with self._lock:
             self._refresh_locked()
-            return {"path": str(self._path), "admitted_event_ids": len(self._index)}
+            current = self._records.get(clean_id)
+            return None if current is None else str(current.get("state") or "")
+
+    def stats(self) -> dict[str, Any]:
+        now = self._now()
+        with self._lock:
+            self._refresh_locked()
+            committed = 0
+            open_reservations = 0
+            expired_reservations = 0
+            for record in self._records.values():
+                if record.get("state") == self.STATE_COMMITTED:
+                    committed += 1
+                elif record.get("state") == self.STATE_RESERVED:
+                    if self._reservation_expired(record, now):
+                        expired_reservations += 1
+                    else:
+                        open_reservations += 1
+            return {
+                "path": str(self._path),
+                "committed_event_ids": committed,
+                "open_reservations": open_reservations,
+                "recoverable_expired_reservations": expired_reservations,
+                "lease_seconds": self._lease_seconds,
+            }
 
 
 # ---------------------------------------------------------------------------
@@ -564,6 +741,7 @@ class TelemetryIngestService:
         replay_dlq_on_start: bool = False,
         dlq_replay_tag_filter: Optional[str] = None,
         infrastructure_health_ledger_path: Optional[str] = None,
+        infrastructure_health_lease_seconds: Optional[float] = None,
     ):
         """
         Parameters
@@ -626,6 +804,11 @@ class TelemetryIngestService:
             to ``<storage_dir>/infrastructure_health_admissions.jsonl``. When no
             path can be resolved, infrastructure health ingestion fails closed
             rather than admitting events it cannot deduplicate durably.
+        infrastructure_health_lease_seconds : float, optional
+            Lease held by one infrastructure health admission reservation before
+            another caller may recover it. It must exceed the worst-case durable
+            enqueue latency; a crashed owner's claim becomes recoverable only
+            after it expires.
         """
         # Schema
         self._schema: Optional[dict[str, Any]] = schema
@@ -704,7 +887,14 @@ class TelemetryIngestService:
         self._infrastructure_health_ledger: Optional[InfrastructureHealthAdmissionLedger] = None
         if ledger_path:
             try:
-                self._infrastructure_health_ledger = InfrastructureHealthAdmissionLedger(ledger_path)
+                self._infrastructure_health_ledger = InfrastructureHealthAdmissionLedger(
+                    ledger_path,
+                    lease_seconds=(
+                        infrastructure_health_lease_seconds
+                        if infrastructure_health_lease_seconds is not None
+                        else InfrastructureHealthAdmissionLedger.DEFAULT_LEASE_SECONDS
+                    ),
+                )
             except OSError as exc:
                 log.error(
                     "Infrastructure health admission ledger unavailable at %s: %s",
@@ -719,6 +909,8 @@ class TelemetryIngestService:
         self._infrastructure_health_admitted = 0
         self._infrastructure_health_duplicates = 0
         self._infrastructure_health_conflicts = 0
+        self._infrastructure_health_in_flight = 0
+        self._infrastructure_health_fenced = 0
         self._infrastructure_health_rejected = 0
 
         # State
@@ -1196,10 +1388,14 @@ class TelemetryIngestService:
            spoof trading binding identity.
         3. Validate against the authoritative non-trading schema. Fail closed
            when that schema or its validator is unavailable.
-        4. Reserve the stable event_id in the durable admission ledger, which
-           makes admission idempotent across retries, restarts, and replicas.
-        5. Enqueue for durable persistence; release the reservation if the
-           enqueue does not succeed.
+        4. Take a leased, fenced reservation on the stable event_id in the
+           durable admission ledger. A live reservation held by another attempt
+           is answered as retryable, never as success.
+        5. Enqueue for durable persistence, then commit the reservation. A
+           failed enqueue releases it so the producer's retry still works.
+
+        Only a committed reservation — one backed by a durable enqueue receipt —
+        makes a later retry an idempotent ``duplicate``.
 
         Returns a result dict with ``status`` of ``accepted``, ``duplicate``, or
         ``rejected``; rejections carry a stable ``code``.
@@ -1271,7 +1467,7 @@ class TelemetryIngestService:
 
         fingerprint = infrastructure_health_fingerprint(event)
         component = event.get("component") if isinstance(event.get("component"), dict) else {}
-        outcome = ledger.admit(
+        reservation = ledger.begin(
             event_id,
             fingerprint,
             attributes={
@@ -1281,14 +1477,16 @@ class TelemetryIngestService:
                 "created_at": event.get("created_at"),
             },
         )
-        if outcome == "conflict":
+        if reservation.outcome == ledger.OUTCOME_CONFLICT:
             self._infrastructure_health_conflicts += 1
             return self._reject_infrastructure_health(
                 event,
                 "INFRA_EVENT_ID_CONFLICT",
-                f"event_id {event_id!r} was already admitted with different content",
+                f"event_id {event_id!r} is already bound to different content",
             )
-        if outcome == "duplicate":
+        if reservation.outcome == ledger.OUTCOME_COMMITTED:
+            # A durable receipt already exists for identical content, so this is
+            # a true idempotent duplicate rather than an optimistic success.
             self._infrastructure_health_duplicates += 1
             log.debug("Infrastructure health admission skipped (duplicate): %s", event_id)
             return {
@@ -1296,18 +1494,62 @@ class TelemetryIngestService:
                 "event_id": event_id,
                 "fingerprint": fingerprint,
             }
+        if reservation.outcome == ledger.OUTCOME_IN_FLIGHT:
+            # Another attempt holds a live reservation and nothing is durable
+            # yet. Answering "accepted" here would be a false success that stops
+            # the producer from retrying an event that may never be persisted.
+            self._infrastructure_health_in_flight += 1
+            return self._reject_infrastructure_health(
+                event,
+                "INFRA_ADMISSION_IN_FLIGHT",
+                (
+                    f"event_id {event_id!r} is being admitted by another attempt and has no "
+                    "durable receipt yet; retry"
+                ),
+                dead_letter=False,
+            )
 
-        enqueued = await self._buffer.put(event, timeout=timeout)
+        token = reservation.token or ""
+        try:
+            enqueued = await self._buffer.put(event, timeout=timeout)
+        except BaseException:
+            # Never strand the reservation on cancellation or a buffer error.
+            ledger.release(event_id, token)
+            raise
         if not enqueued:
             # The reservation must not outlive a failed enqueue, otherwise the
             # producer's retry would be answered as an already-admitted event
             # that was never persisted.
-            ledger.release(event_id)
+            ledger.release(event_id, token)
             return self._reject_infrastructure_health(
                 event,
                 "INFRA_BUFFER_OVERFLOW",
                 "Buffer full — infrastructure health event was not durably enqueued",
                 tag=TAG_BUFFER_OVERFLOW,
+            )
+
+        commit_outcome = ledger.commit(event_id, fingerprint, token)
+        if commit_outcome == ledger.OUTCOME_CONFLICT:
+            self._infrastructure_health_conflicts += 1
+            return self._reject_infrastructure_health(
+                event,
+                "INFRA_EVENT_ID_CONFLICT",
+                f"event_id {event_id!r} is already bound to different content",
+            )
+        if commit_outcome != ledger.OUTCOME_COMMITTED:
+            # This attempt's lease expired and another caller took the claim over.
+            # The event is durably enqueued, but this attempt cannot own the
+            # admission record, so report a retryable failure rather than a
+            # success it cannot prove.
+            self._infrastructure_health_fenced += 1
+            return self._reject_infrastructure_health(
+                event,
+                "INFRA_ADMISSION_FENCED",
+                (
+                    f"reservation for event_id {event_id!r} expired and was taken over by "
+                    "another admission attempt; retry"
+                ),
+                dead_letter=False,
             )
 
         self._seen_event_ids[event_id] = copy.deepcopy(event)
@@ -1331,10 +1573,15 @@ class TelemetryIngestService:
             "admitted": self._infrastructure_health_admitted,
             "duplicates": self._infrastructure_health_duplicates,
             "conflicts": self._infrastructure_health_conflicts,
+            "in_flight_rejections": self._infrastructure_health_in_flight,
+            "fenced_rejections": self._infrastructure_health_fenced,
             "rejected": self._infrastructure_health_rejected,
             "ledger": ledger.stats() if ledger is not None else {
                 "path": None,
-                "admitted_event_ids": 0,
+                "committed_event_ids": 0,
+                "open_reservations": 0,
+                "recoverable_expired_reservations": 0,
+                "lease_seconds": None,
             },
         }
 

@@ -26,9 +26,11 @@ import json
 import multiprocessing
 import os
 import shutil
+import signal
 import sys
 import tempfile
 import threading
+import time
 import types
 import unittest
 from pathlib import Path
@@ -65,6 +67,10 @@ _STRICT_ENV = {
     "PANTHEON_TELEMETRY_JWT_SECRET": _JWT_SECRET,
     "PANTHEON_TELEMETRY_INFRA_PRODUCERS": _PRODUCER,
 }
+
+# Short enough to observe reservation recovery inside a test, long enough that a
+# healthy admission never races its own lease.
+_CRASH_LEASE_SECONDS = 2.0
 
 _KNOWN_BINDING_ID = "infra-authority-binding-001"
 _KNOWN_BINDING = types.SimpleNamespace(
@@ -166,17 +172,86 @@ def _ledger_records(path: str) -> list[dict]:
 
 
 def _replica_admit(ledger_path: str, event: dict, barrier, connection) -> None:
-    """Child-process replica: admit one event through a shared ledger."""
+    """Child-process replica: run one full two-phase admission of *event*.
+
+    Reports the terminal outcome so the parent can prove that at most one
+    replica ever reaches a committed receipt and that the losers are told to
+    retry rather than told they succeeded.
+    """
     ledger = InfrastructureHealthAdmissionLedger(ledger_path)
     fingerprint = infrastructure_health_fingerprint(event)
     if barrier is not None:
         barrier.wait(timeout=30)
     try:
-        outcome = ledger.admit(event["event_id"], fingerprint)
+        reservation = ledger.begin(event["event_id"], fingerprint)
+        if reservation.outcome != ledger.OUTCOME_RESERVED:
+            outcome = reservation.outcome
+        else:
+            # Stand in for the durable enqueue receipt.
+            outcome = ledger.commit(event["event_id"], fingerprint, reservation.token)
     except Exception as exc:  # noqa: BLE001
         outcome = f"error:{exc}"
     connection.send(outcome)
     connection.close()
+
+
+def _replica_reserve_then_hang(ledger_path: str, event: dict, connection) -> None:
+    """Child-process replica: reserve, report, then hang until SIGKILL.
+
+    This reproduces a crash in the window between the durable reservation and
+    the durable enqueue, so the parent can prove the claim is recoverable rather
+    than a permanently stuck admission.
+    """
+    ledger = InfrastructureHealthAdmissionLedger(ledger_path, lease_seconds=_CRASH_LEASE_SECONDS)
+    reservation = ledger.begin(
+        event["event_id"], infrastructure_health_fingerprint(event)
+    )
+    connection.send(reservation.outcome)
+    connection.close()
+    while True:  # pragma: no cover - the parent SIGKILLs this process
+        time.sleep(0.2)
+
+
+def _service_reserve_then_hang(
+    storage_dir: str,
+    ledger_path: str,
+    event: dict,
+    connection,
+) -> None:
+    """Child-process replica: crash inside the real ingest path mid-admission.
+
+    The service is fully real; only the durable enqueue is made to hang, which
+    is exactly the window the two-phase reservation has to survive.
+    """
+
+    async def run() -> None:
+        svc = TelemetryIngestService(
+            schema_path=_SCHEMA_PATH,
+            storage_dir=storage_dir,
+            buffer_backend="memory",
+            infrastructure_health_ledger_path=ledger_path,
+            infrastructure_health_lease_seconds=_CRASH_LEASE_SECONDS,
+        )
+        await svc.start()
+
+        stalled = asyncio.Event()
+
+        async def _hang(_event, timeout=None):
+            stalled.set()
+            await asyncio.Event().wait()
+            return True
+
+        svc._buffer.put = _hang  # type: ignore[assignment]
+
+        async def _notify() -> None:
+            await stalled.wait()
+            connection.send("reserved")
+            connection.close()
+
+        asyncio.ensure_future(_notify())
+        await svc.ingest_infrastructure_health(event)
+
+    asyncio.run(run())
 
 
 # ---------------------------------------------------------------------------
@@ -310,13 +385,17 @@ class TestInfrastructureHealthRoute(unittest.TestCase):
         ):
             self.assertNotIn(field, stored)
 
-        # The admission is durable on disk, not only in process memory.
-        admitted_ids = {
-            record["event_id"]
+        # The admission is durable on disk, not only in process memory, and the
+        # committed receipt is preceded by its own leased reservation.
+        states = [
+            record.get("state")
             for record in _ledger_records(self._ledger_path)
-            if record.get("state") == "admitted"
-        }
-        self.assertIn("infra-valid-001", admitted_ids)
+            if record.get("event_id") == "infra-valid-001"
+        ]
+        self.assertEqual(states, ["reserved", "committed"])
+        self.assertTrue(
+            self._svc._infrastructure_health_ledger.is_committed("infra-valid-001")
+        )
 
     def test_infrastructure_health_is_not_projected_as_runtime_state(self):
         self._post(_infra_event("infra-no-runtime-projection-001"), token=_service_token())
@@ -331,9 +410,9 @@ class TestInfrastructureHealthRoute(unittest.TestCase):
     def test_missing_token_is_rejected(self):
         response = self._post(_infra_event("infra-missing-token-001"), token=None)
         self.assertEqual(response.status_code, 401)
-        self.assertFalse(self._svc._infrastructure_health_ledger.is_admitted(
-            "infra-missing-token-001"
-        ))
+        self.assertIsNone(
+            self._svc._infrastructure_health_ledger.state_of("infra-missing-token-001")
+        )
 
     def test_permissive_deployment_mode_does_not_weaken_this_route(self):
         """A permissive telemetry rollout must not open the infra channel."""
@@ -609,12 +688,14 @@ class TestInfrastructureHealthRoute(unittest.TestCase):
         self.assertEqual(after["admitted"], before["admitted"] + 1)
         self.assertEqual(after["duplicates"], before["duplicates"] + 2)
 
-        admitted = [
-            record
+        # One reservation and one committed receipt for the first admission; the
+        # two replays append nothing.
+        states = [
+            record.get("state")
             for record in _ledger_records(self._ledger_path)
             if record.get("event_id") == "infra-duplicate-001"
         ]
-        self.assertEqual(len(admitted), 1, "replay must not append a second record")
+        self.assertEqual(states, ["reserved", "committed"], states)
 
     def test_event_id_reuse_with_different_content_is_a_conflict(self):
         first = self._post(_infra_event("infra-conflict-001"), token=_service_token())
@@ -759,24 +840,202 @@ class TestInfrastructureHealthReplicaAdmission(unittest.TestCase):
                 connection.close()
 
         self.assertEqual(
-            outcomes.count("admitted"),
+            outcomes.count("committed"),
             1,
-            f"exactly one replica must admit the event_id, got {outcomes}",
+            f"exactly one replica may reach a committed receipt, got {outcomes}",
         )
-        self.assertEqual(outcomes.count("duplicate"), replica_count - 1, outcomes)
+        self.assertEqual(
+            sorted(set(outcomes) - {"committed"}),
+            ["in_flight"],
+            f"every losing replica must be told to retry, got {outcomes}",
+        )
 
-        admitted_records = [
+        committed_records = [
             record
             for record in _ledger_records(self._ledger_path)
-            if record.get("state") == "admitted"
+            if record.get("state") == "committed"
         ]
-        self.assertEqual(len(admitted_records), 1, admitted_records)
+        self.assertEqual(len(committed_records), 1, committed_records)
+
+    def test_concurrent_admission_loser_is_not_told_it_succeeded(self):
+        """The loss window the reviewer found: a duplicate before any receipt.
+
+        While replica A holds a live reservation and is still inside its durable
+        enqueue, replica B must not be answered as an accepted duplicate — at
+        that moment nothing has been persisted, and A may still fail.
+        """
+        event = _infra_event("infra-inflight-001")
+
+        async def run() -> tuple[dict, dict, dict]:
+            replica_a = self._service()
+            replica_b = self._service()
+            await replica_a.start()
+            await replica_b.start()
+            try:
+                inside_enqueue = asyncio.Event()
+                release_enqueue = asyncio.Event()
+                original_put = replica_a._buffer.put
+
+                async def _stalled_put(pending, timeout=None):
+                    inside_enqueue.set()
+                    await release_enqueue.wait()
+                    return await original_put(pending, timeout=timeout)
+
+                replica_a._buffer.put = _stalled_put  # type: ignore[assignment]
+                a_task = asyncio.ensure_future(
+                    replica_a.ingest_infrastructure_health(event)
+                )
+                await asyncio.wait_for(inside_enqueue.wait(), timeout=5)
+
+                # A is reserved but has no durable receipt yet.
+                contender = await replica_b.ingest_infrastructure_health(event)
+
+                release_enqueue.set()
+                admitted = await asyncio.wait_for(a_task, timeout=5)
+                after_receipt = await replica_b.ingest_infrastructure_health(event)
+                return contender, admitted, after_receipt
+            finally:
+                await replica_a.stop()
+                await replica_b.stop()
+
+        contender, admitted, after_receipt = asyncio.run(run())
+        self.assertEqual(contender["status"], "rejected")
+        self.assertEqual(contender["code"], "INFRA_ADMISSION_IN_FLIGHT")
+        self.assertEqual(admitted["status"], "accepted")
+        # Only once a durable receipt exists is the replay an idempotent success.
+        self.assertEqual(after_receipt["status"], "duplicate")
+
+    def test_crash_between_reservation_and_enqueue_is_recoverable(self):
+        """SIGKILL inside the real ingest path must not strand the event_id."""
+        event = _infra_event("infra-crash-recovery-001")
+        InfrastructureHealthAdmissionLedger(
+            self._ledger_path, lease_seconds=_CRASH_LEASE_SECONDS
+        )
+
+        context = multiprocessing.get_context("fork")
+        parent_conn, child_conn = context.Pipe(duplex=False)
+        process = context.Process(
+            target=_service_reserve_then_hang,
+            args=(self._storage_dir, self._ledger_path, event, child_conn),
+        )
+        process.start()
+        child_conn.close()
+        try:
+            self.assertTrue(
+                parent_conn.poll(30),
+                "child did not reach the durable enqueue window",
+            )
+            self.assertEqual(parent_conn.recv(), "reserved")
+            os.kill(process.pid, signal.SIGKILL)
+        finally:
+            process.join(30)
+            parent_conn.close()
+        self.assertEqual(process.exitcode, -signal.SIGKILL)
+
+        ledger = InfrastructureHealthAdmissionLedger(
+            self._ledger_path, lease_seconds=_CRASH_LEASE_SECONDS
+        )
+        # The crashed owner left a reservation and no receipt: the event is not a
+        # success, and no other caller may claim it while the lease is live.
+        self.assertEqual(ledger.state_of(event["event_id"]), "reserved")
+        self.assertFalse(ledger.is_committed(event["event_id"]))
+
+        async def retry() -> tuple[dict, dict]:
+            svc = TelemetryIngestService(
+                schema_path=_SCHEMA_PATH,
+                storage_dir=self._storage_dir,
+                buffer_backend="memory",
+                infrastructure_health_ledger_path=self._ledger_path,
+                infrastructure_health_lease_seconds=_CRASH_LEASE_SECONDS,
+            )
+            await svc.start()
+            try:
+                blocked = await svc.ingest_infrastructure_health(event)
+                await asyncio.sleep(_CRASH_LEASE_SECONDS + 0.3)
+                recovered = await svc.ingest_infrastructure_health(event)
+                return blocked, recovered
+            finally:
+                await svc.stop()
+
+        blocked, recovered = asyncio.run(retry())
+        self.assertEqual(blocked["status"], "rejected")
+        self.assertEqual(blocked["code"], "INFRA_ADMISSION_IN_FLIGHT")
+        self.assertEqual(
+            recovered["status"],
+            "accepted",
+            "an expired reservation from a crashed replica must be recoverable",
+        )
+        self.assertTrue(ledger.is_committed(event["event_id"]))
+
+    def test_fenced_owner_cannot_commit_or_release_a_recovered_reservation(self):
+        """A stalled owner must not resurrect or cancel a stolen claim."""
+        event = _infra_event("infra-fencing-001")
+        fingerprint = infrastructure_health_fingerprint(event)
+        ledger = InfrastructureHealthAdmissionLedger(
+            self._ledger_path, lease_seconds=0.2
+        )
+
+        stalled = ledger.begin(event["event_id"], fingerprint)
+        self.assertEqual(stalled.outcome, "reserved")
+        time.sleep(0.35)
+
+        recovered = ledger.begin(event["event_id"], fingerprint)
+        self.assertEqual(recovered.outcome, "reserved")
+        self.assertNotEqual(recovered.token, stalled.token)
+
+        self.assertFalse(
+            ledger.release(event["event_id"], stalled.token),
+            "the fenced owner must not release the recovered reservation",
+        )
+        self.assertEqual(
+            ledger.commit(event["event_id"], fingerprint, stalled.token),
+            "fenced",
+            "the fenced owner must not commit the recovered reservation",
+        )
+        self.assertEqual(
+            ledger.commit(event["event_id"], fingerprint, recovered.token),
+            "committed",
+        )
+        # Once the receipt is durable, even the fenced owner sees a real success
+        # rather than a phantom failure, because the content is identical.
+        self.assertEqual(
+            ledger.commit(event["event_id"], fingerprint, stalled.token),
+            "committed",
+        )
+
+    def test_reservation_is_released_when_the_enqueue_is_cancelled(self):
+        event = _infra_event("infra-cancelled-001")
+
+        async def run() -> str | None:
+            svc = self._service()
+            await svc.start()
+            try:
+                async def _never(pending, timeout=None):
+                    await asyncio.Event().wait()
+                    return True
+
+                svc._buffer.put = _never  # type: ignore[assignment]
+                task = asyncio.ensure_future(
+                    svc.ingest_infrastructure_health(event)
+                )
+                await asyncio.sleep(0.2)
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+                return svc._infrastructure_health_ledger.state_of(event["event_id"])
+            finally:
+                await svc.stop()
+
+        self.assertIsNone(
+            asyncio.run(run()),
+            "a cancelled admission must not leave a reservation behind",
+        )
 
     def test_failed_enqueue_releases_the_reservation_for_retry(self):
         """A reservation must never outlive an enqueue that did not happen."""
         event = _infra_event("infra-release-001")
 
-        async def run() -> tuple[dict, dict, bool]:
+        async def run() -> tuple[dict, dict, str | None]:
             svc = self._service()
             await svc.start()
             try:
@@ -786,19 +1045,17 @@ class TestInfrastructureHealthReplicaAdmission(unittest.TestCase):
                 original_put = svc._buffer.put
                 svc._buffer.put = _full_buffer  # type: ignore[assignment]
                 overflowed = await svc.ingest_infrastructure_health(event)
-                released = not svc._infrastructure_health_ledger.is_admitted(
-                    event["event_id"]
-                )
+                state = svc._infrastructure_health_ledger.state_of(event["event_id"])
                 svc._buffer.put = original_put  # type: ignore[assignment]
                 retried = await svc.ingest_infrastructure_health(event)
-                return overflowed, retried, released
+                return overflowed, retried, state
             finally:
                 await svc.stop()
 
-        overflowed, retried, released = asyncio.run(run())
+        overflowed, retried, state = asyncio.run(run())
         self.assertEqual(overflowed["status"], "rejected")
         self.assertEqual(overflowed["code"], "INFRA_BUFFER_OVERFLOW")
-        self.assertTrue(released)
+        self.assertIsNone(state, "the reservation must be released, not left open")
         self.assertEqual(retried["status"], "accepted")
 
     def test_ingestion_fails_closed_without_a_durable_ledger(self):
