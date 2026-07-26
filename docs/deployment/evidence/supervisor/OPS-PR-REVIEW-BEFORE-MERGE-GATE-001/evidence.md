@@ -50,6 +50,50 @@ Section 1 of `prefix-reproduction.txt` replays the pre-fix helper against a
 synthetic repository whose canonical row is `in_progress` with an independent
 reviewer, and shows it enabling `--auto --merge` anyway.
 
+### 1.1 Five more live regressions the same evening
+
+The first three were all the same failure through the same entry point. Five
+later events, each reported by Human/Ops on PR #4218, showed the gate needed
+to cover more than that:
+
+| PR | Task | Merge grant | Merged | What it proved |
+|----|------|-------------|--------|----------------|
+| #4217 | `OPS-CI-PR-TRAILER-RANGE-001` | none (`autoMergeRequest=null`) | 21:43:27Z → `71aea154b` | An auto-merge-only guard misses the plain `gh pr merge` path |
+| #4222 | `OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001` | auto-merge at 21:54:25Z | 21:55:32Z → `55b17612e` | Enabling auto-merge *is* the grant; 67 s later it was irreversible |
+| #4225 | `OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001` | auto-merge at 22:42:46Z | — (Human/Ops disabled it by hand) | Only human intervention inside the CI window prevented the merge |
+| #4225 | same | none (request already revoked) | 23:01:39Z → `8d1b50779` | The blocked auto-merge became a direct merge by the same credential |
+| #4227 | `SUP-COMMAND-RUNTIME-REFRESH-001` | auto-merge at 23:10:54Z | 23:14:41Z → `e376955ff` | The request outlived its head and landed a different commit |
+
+Every one of these merges reports `reviews=[]`, `mergedBy: ajoe734`, and a
+canonical task row still `in_progress` with reviewer `Codex2`.
+
+Three things follow, and they are what this second pass adds:
+
+1. **GitHub identity cannot stand in for reviewer identity.** All Pantheon
+   agents push through the single `ajoe734` account, so `mergedBy` and any
+   GitHub approving review are unusable as review evidence. Only the
+   canonical `review_approved` record from the assigned reviewer counts.
+2. **An auto-merge request survives a head change.** #4227 is the exact
+   shape: enabled at 23:10:54Z, head replaced at 23:13:21Z, and GitHub merged
+   the *newer* head at 23:14:41Z. The commit that landed was never the commit
+   the request described. A gated PR now revokes any standing request before
+   its exact-head merge, and refuses an approved head outright while a
+   request that predates it is armed.
+3. **Payload risk waives nothing.** #4227 was Stage-1 docs and evidence with
+   the live swap still blocked — accurate, and irrelevant. `risk`, `payload`,
+   `docs_only`, `review_waived` and their siblings are now read only so the
+   decision can report them as *ignored claims*; none of them reaches policy
+   resolution.
+
+A fourth, smaller gap: the Human/Ops do-not-merge instructions standing
+against #4225 at 22:43:10Z and 22:52:13Z were recorded as `note` events, which
+the first pass did not treat as revoking an approval. A note carrying an
+explicit `do not merge` / `changes required` marker now revokes, the same as a
+`reopen` or `blocker`. This signal can only ever block a merge, never unlock
+one, so its failure direction is safe.
+
+Section 4 of `prefix-reproduction.txt` replays all five from recorded state.
+
 ## 2. The gate
 
 `scripts/git/task_review_merge_gate.py` is the single canonical authority. It
@@ -71,6 +115,7 @@ Nothing in the PR, no label, and no helper flag can open it.
 | the row declares `merge_policy: merge_then_review` **and** requires no independent review | `merge_then_review` — preserved unchanged |
 | the row declares `merge_policy: merge_then_review` but *does* require independent review | `review_before_merge` — the declaration is not honoured |
 | task row missing, unreadable, unknown declaration, or any gate error | `review_before_merge` |
+| the row claims low risk, a docs-only payload, or an outright review waiver | `review_before_merge` — the claim is recorded in `contract.ignored_waiver_claims` and never consulted |
 
 `scripts/ai_status.py::command_assign` refuses `reviewer == owner`, so in
 practice every assigned Pantheon task is gated, and a merge-then-review
@@ -87,7 +132,8 @@ For a gated task the gate opens only when **all** of the following hold:
 3. the event's `agent` equals the canonical `reviewer` (case-insensitive
    identity comparison, no renaming);
 4. no `reopen`, `blocker`, or `assign` event follows that approval — reviewer
-   rejection and reviewer rebinding both revoke it;
+   rejection and reviewer rebinding both revoke it — and no `note` carrying an
+   explicit `do not merge` / `changes required` marker follows it either;
 5. the PR head is the exact `task/<TASK-ID>` branch, the base is `dev`, the PR
    is not a draft, and the head oid is a resolvable 40-hex sha;
 6. if the row declares `github.head_sha`, the PR head equals it exactly;
@@ -95,10 +141,19 @@ For a gated task the gate opens only when **all** of the following hold:
    pushed after approval is a head nobody reviewed;
 8. the approval timestamp is not in the future beyond a 120 s skew allowance;
 9. for an already-merged PR, `mergedAt` is not earlier than the approval — a
-   late approval cannot retroactively bless a premature merge.
+   late approval cannot retroactively bless a premature merge;
+10. no auto-merge request is armed that was enabled *before* the current head
+    was committed — merge authority granted for a commit that is no longer the
+    head is what landed PR #4227.
 
 Anything else, including an unreadable status file or an unparseable
 timestamp, resolves to *do not merge, do not enable auto-merge*.
+
+Every decision, allowed or blocked, also carries an `auto_merge_request`
+summary (`present`, `enabled_at`, `enabled_by`, `outlived_head`) and sets
+`revoke_auto_merge` whenever a request is standing on a gated PR — on the
+approved path too, because a gated PR lands through an explicit
+`--match-head-commit` merge and a leftover request would arm the next push.
 
 ## 3. What each helper now does
 
@@ -151,12 +206,18 @@ and block, instead of silently resolving to the first row returned by GitHub.
 | 5 | Regression fixtures cover PRs #4212, #4213 and #4214 without impersonating owner or reviewer | pass | `PrematureMergeRegressionTests` (recorded state replayed as data only) |
 | 6 | Focused workflow tests cover branch, commit, push, PR, checks, independent review, merge, and evidence archive | pass | `validation.txt` |
 
+AC5 is met as written and then extended: `LiveMergeGovernanceRegressionTests`
+covers the five later live regressions (#4217, #4222, #4225 auto-merge enable,
+#4225 direct merge, #4227) under the same data-only convention. The full map
+of PR → entry point → fixture is the `live_regressions` table in
+`evidence.json`.
+
 ## 5. Validation
 
 See `validation.txt` for the captured transcript.
 
 ```
-python3 scripts/git/test_task_review_merge_gate.py     Ran 38 tests - OK
+python3 scripts/git/test_task_review_merge_gate.py     Ran 53 tests - OK
 python3 scripts/git/test_auto_integrator.py            Ran  9 tests - OK
 python3 scripts/git/test_git_workflow_helpers.py       Ran 34 tests - OK
 python3 scripts/git/test_task_pr_triage.py             Ran 24 tests - OK
@@ -166,7 +227,8 @@ bash -n scripts/git/task_finalize.sh scripts/git/safe_pr.sh   syntax ok
 
 The pre-fix reproduction is `prefix-reproduction.txt`; its §1 shows the old
 helper enabling auto-merge on an unreviewed task and §2 shows the new helper
-refusing on the identical fixture.
+refusing on the identical fixture. §3 replays PRs #4212/#4213/#4214 and §4
+replays the five later live regressions.
 
 ## 6. Residual risks
 
@@ -188,6 +250,20 @@ audit gap into a merge stall; the recovery is a fresh reviewer approval.
 merge even when owner and reviewer are unchanged. This is deliberate — the
 2026-07-26 timeline includes a post-merge reviewer rebinding — and the recovery
 is one reviewer re-approval.
+
+**Do-not-merge notes are matched on message text.** A `note` whose message
+contains `do not merge`, `changes required`, `rejects`, `rejected`, or
+`revert` now revokes a standing approval, so a note that merely quotes one of
+those phrases will also revoke. The signal only ever blocks, never unlocks, and
+the recovery is the same single re-approval as any other revocation. It exists
+because the #4225 and #4222 do-not-merge instructions were filed as notes
+rather than as `reopen` or `blocker` events.
+
+**Revoking auto-merge costs an integrator call.** A gated PR now gets
+`gh pr merge <n> --disable-auto` before its exact-head merge, and an approved
+head whose auto-merge request predates it is refused outright. The extra call
+is idempotent; the refusal costs one integrator cycle, after which no request
+remains and the approved head merges.
 
 **The gate reads canonical state, not GitHub reviews.** Pantheon reviewers are
 agents that approve through `scripts/ai-status.sh approve`, and all task PRs are

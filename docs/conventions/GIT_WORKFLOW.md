@@ -146,6 +146,33 @@ head change after approval, an approval by anyone other than the assigned
 reviewer, missing canonical state, and two open PRs on one task branch all
 fail closed.
 
+Four further rules come from the 2026-07-26 live regressions on PRs #4217,
+#4222, #4225 and #4227:
+
+- **Every entry point, not just `--auto`.** #4217 landed through a plain
+  `gh pr merge` with no auto-merge request at all. Merge authority is denied
+  from canonical task state regardless of which GitHub call would perform
+  the merge.
+- **An auto-merge request is itself the grant.** #4222 enabled auto-merge
+  and merged 67 seconds later. Enabling it is what the gate refuses; waiting
+  until merge time is too late.
+- **An auto-merge request must never outlive its head.** #4227 enabled
+  auto-merge at 23:10:54Z, the head moved at 23:13:21Z, and GitHub merged
+  that newer head at 23:14:41Z. A gated PR therefore has any standing
+  auto-merge request revoked before its exact-head merge, and an approved
+  head is refused outright while a request that predates it is still armed.
+- **Risk and payload claims waive nothing.** #4227 was Stage-1
+  docs-and-evidence only with the live swap still blocked. A `risk`,
+  `payload`, `docs_only`, or `review_waived` field on the task row is
+  recorded in the decision as an *ignored* claim; it never changes the
+  policy.
+
+All Pantheon agents push through one GitHub account, so a GitHub approving
+review and the identity that pressed merge prove nothing about independent
+review. Only the canonical reviewer's `review_approved` record does. An
+explicit `do not merge` / `changes required` note in the activity audit
+revokes a standing approval, the same as a `reopen` or `blocker`.
+
 ### 2.4 Lifetime guarantee
 
 A `task/<TASK-ID>` PR should reach merge within 24 h. A task PR that

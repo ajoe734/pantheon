@@ -66,6 +66,80 @@
       "id": "OF5",
       "summary": "Two open PRs on one task branch resolved to the first row returned by GitHub.",
       "root_cause": "fetch_pr_for_task took listing[0] without checking for ambiguity, so a second open PR could supply a different head than the approved one."
+    },
+    {
+      "id": "OF6",
+      "summary": "PR #4217 (task/OPS-CI-PR-TRAILER-RANGE-001) merged at 2026-07-26T21:43:27Z as 71aea154b8a1ab6e652e02018f47c57f26513de0 with autoMergeRequest=null, reviews=[], mergedBy ajoe734, while the canonical task was in_progress with reviewer Codex2.",
+      "live_source": "gh pr view 4217 --json mergedAt,mergeCommit,mergedBy,autoMergeRequest,reviews,headRefOid; gh api repos/ajoe734/pantheon/commits/1e968f302e3b27285d78df0a42dfac2a24a80831",
+      "root_cause": "A gate that only refuses `--auto` leaves the plain `gh pr merge` entry point open. Merge authority has to be denied from canonical task state, independently of which GitHub call performs the merge."
+    },
+    {
+      "id": "OF7",
+      "summary": "PR #4222 (task/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001) enabled auto-merge at 2026-07-26T21:54:25Z and merged 67 seconds later at 21:55:32Z with reviews=[]; reviewer Codex2 rejected the merged tree at 22:15:44Z, twenty minutes after it landed.",
+      "live_source": "gh pr view 4222 --json autoMergeRequest,mergedAt,mergeCommit,reviews; /home/lupin/pantheon/ai-activity-log.jsonl OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001 slice (reopen at 22:15:44Z)",
+      "root_cause": "Enabling auto-merge is itself the grant of merge authority. Deferring the check to merge time leaves GitHub holding an unconditional promise to merge."
+    },
+    {
+      "id": "OF8",
+      "summary": "PR #4225 (same task) had auto-merge enabled at 2026-07-26T22:42:46Z on head 3c2d883700afc3e92568a013bb8e11ec8539031b while the canonical task was in_progress and unapproved. Human/Ops disabled it by hand before checks completed.",
+      "live_source": "https://github.com/ajoe734/pantheon/pull/4218#issuecomment-5085760093",
+      "root_cause": "Same as OF7; the only reason no unauthorized merge occurred is that a human intervened inside the CI window."
+    },
+    {
+      "id": "OF9",
+      "summary": "The OF8 attempt escalated: PR #4225 head 3c2d883700afc3e92568a013bb8e11ec8539031b merged at 2026-07-26T23:01:39Z as 8d1b5077996a2d27aafb83ff5756f0290d0e90bc, mergedBy ajoe734, autoMergeRequest=null, reviews=[], while Human/Ops exact-head do-not-merge notes stood at 22:43:10Z and 22:52:13Z.",
+      "live_source": "https://github.com/ajoe734/pantheon/pull/4218#issuecomment-5085835878; gh pr view 4225 --json mergedAt,mergeCommit,mergedBy,autoMergeRequest,reviews",
+      "root_cause": "All Pantheon agents share one GitHub account, so GitHub-side identity cannot distinguish owner from reviewer. Only canonical task state can, and an explicit do-not-merge instruction in the audit was not treated as revoking an approval."
+    },
+    {
+      "id": "OF10",
+      "summary": "PR #4227 (task/SUP-COMMAND-RUNTIME-REFRESH-001) enabled auto-merge at 2026-07-26T23:10:54Z; the head then moved to 5fb21c80ba21fcdfd9f304d66b57f56362f9dc60 committed at 23:13:21Z, and GitHub merged that newer head at 23:14:41Z as e376955ff8ac3555871932457865ed1fd0beee83 with reviews=[] and the canonical task still in_progress.",
+      "live_source": "https://github.com/ajoe734/pantheon/pull/4218#issuecomment-5085863351; gh pr view 4227 --json autoMergeRequest,mergedAt,mergeCommit,reviews; gh api repos/ajoe734/pantheon/commits/5fb21c80ba21fcdfd9f304d66b57f56362f9dc60",
+      "root_cause": "An auto-merge request survives a head change. Merge authority granted for one commit was still armed when a different commit became the head, so the delivery that landed was never the delivery the request described. The payload was Stage-1 docs/evidence with the live swap still blocked, which does not waive review-before-merge."
+    }
+  ],
+  "live_regressions": [
+    {
+      "pr": 4212,
+      "task": "SUP-WORKER-TRUTH-RECONCILE-001",
+      "entry_point": "auto-merge enabled at PR open",
+      "fixture": "PrematureMergeRegressionTests::test_pr_4212_supervisor_worker_truth_reconcile"
+    },
+    {
+      "pr": 4213,
+      "task": "OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001",
+      "entry_point": "auto-merge enabled at PR open",
+      "fixture": "PrematureMergeRegressionTests::test_pr_4213_telemetry_lineage_test_isolation"
+    },
+    {
+      "pr": 4214,
+      "task": "OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001",
+      "entry_point": "auto-merge enabled at PR open",
+      "fixture": "PrematureMergeRegressionTests::test_pr_4214_telemetry_lineage_test_isolation_followup"
+    },
+    {
+      "pr": 4217,
+      "task": "OPS-CI-PR-TRAILER-RANGE-001",
+      "entry_point": "direct gh pr merge, autoMergeRequest=null",
+      "fixture": "LiveMergeGovernanceRegressionTests::test_pr_4217_direct_merge_without_any_auto_merge_request"
+    },
+    {
+      "pr": 4222,
+      "task": "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001",
+      "entry_point": "auto-merge enabled, completed 67s later",
+      "fixture": "LiveMergeGovernanceRegressionTests::test_pr_4222_auto_merge_enable_and_completion_both_fail_closed"
+    },
+    {
+      "pr": 4225,
+      "task": "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001",
+      "entry_point": "auto-merge enable attempt, then a direct merge by the same credential",
+      "fixture": "LiveMergeGovernanceRegressionTests::test_pr_4225_premature_auto_merge_enable_is_refused, ::test_pr_4225_direct_merge_by_the_same_credential_is_refused"
+    },
+    {
+      "pr": 4227,
+      "task": "SUP-COMMAND-RUNTIME-REFRESH-001",
+      "entry_point": "auto-merge request that outlived the head it landed",
+      "fixture": "LiveMergeGovernanceRegressionTests::test_pr_4227_auto_merge_creation_and_completion_fail_closed, ::test_pr_4227_auto_merge_request_outlived_the_head_it_landed, ::test_pr_4227_docs_only_payload_claims_do_not_waive_review"
     }
   ],
   "acceptance": [
@@ -76,6 +150,9 @@
       "evidence_refs": [
         "scripts/git/test_task_review_merge_gate.py::TaskFinalizeShellTests::test_gated_task_pr_is_opened_without_any_auto_merge",
         "scripts/git/test_task_review_merge_gate.py::IntegratorGateTests::test_unapproved_gated_pr_is_never_merged_and_auto_merge_is_revoked",
+        "scripts/git/test_task_review_merge_gate.py::IntegratorGateTests::test_approved_gated_pr_revokes_a_standing_auto_merge_request_first",
+        "scripts/git/test_task_review_merge_gate.py::LiveMergeGovernanceRegressionTests::test_pr_4227_auto_merge_creation_and_completion_fail_closed",
+        "scripts/git/test_task_review_merge_gate.py::LiveMergeGovernanceRegressionTests::test_pr_4227_docs_only_payload_claims_do_not_waive_review",
         "docs/deployment/evidence/supervisor/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001/prefix-reproduction.txt sections 1 and 2"
       ]
     },
@@ -119,8 +196,10 @@
       "id": "AC5",
       "statement": "Regression fixtures cover PRs 4212, 4213 and 4214 without impersonating owner or reviewer.",
       "status": "pass",
+      "note": "Extended beyond the canonical statement: the five later live regressions on PRs 4217, 4222, 4225 (auto-merge enable and direct merge) and 4227 are covered by the same data-only convention. See the live_regressions table.",
       "evidence_refs": [
         "scripts/git/test_task_review_merge_gate.py::PrematureMergeRegressionTests",
+        "scripts/git/test_task_review_merge_gate.py::LiveMergeGovernanceRegressionTests",
         "docs/deployment/evidence/supervisor/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001/prefix-reproduction.txt section 3"
       ]
     },
@@ -152,7 +231,7 @@
       },
       {
         "command": "python3 scripts/git/test_task_review_merge_gate.py",
-        "conclusion": "Ran 38 tests - OK",
+        "conclusion": "Ran 53 tests - OK (38 from the first pass plus 15 covering the five later live regressions)",
         "result": "pass"
       },
       {
@@ -204,6 +283,20 @@
       "description": "An `assign` event after an approval revokes it even when owner and reviewer are unchanged.",
       "containment": "Deliberate: the 2026-07-26 timeline includes a post-merge reviewer rebinding. Recovery is one reviewer re-approval.",
       "recheck_trigger": "Repeated approval_revoked blocks caused by no-op reassignments."
+    },
+    "do_not_merge_note_matching": {
+      "severity": "low",
+      "blocking_for_this_task": false,
+      "description": "A `note` event whose message contains do not merge, changes required, rejects, rejected, or revert now revokes a standing approval. The match is on message text, so an unrelated note that quotes one of those phrases will also revoke.",
+      "containment": "The signal only ever blocks; it can never unlock a merge. A false positive costs one reviewer re-approval, which is the same recovery as any other revocation. It exists because the #4225 and #4222 do-not-merge instructions were recorded as notes rather than as reopen or blocker events.",
+      "recheck_trigger": "approval_revoked with revocation_type note:do_not_merge on a task whose reviewer did not intend to reject."
+    },
+    "auto_merge_request_revocation": {
+      "severity": "low",
+      "blocking_for_this_task": false,
+      "description": "A gated PR now has any standing auto-merge request revoked before the exact-head merge, and an approved head is refused outright when the request predates it. The integrator therefore issues an extra `gh pr merge <n> --disable-auto` call on the approved path.",
+      "containment": "The extra call is idempotent and already used on the blocked path. Refusing the outlived-request case costs one integrator cycle: the next pass sees no request and merges the approved head.",
+      "recheck_trigger": "An approved PR blocked twice in a row with auto_merge_request_outlived_head, which would mean the revocation is not taking effect."
     },
     "canonical_state_trust": {
       "severity": "low",

@@ -24,7 +24,9 @@ or unblock task
   For a task whose canonical contract requires independent review the
   integrator merges only the exact reviewer-approved head, never enables
   GitHub auto-merge, never force-pushes a rebase over the reviewed head, and
-  revokes an auto-merge request it finds on an unapproved gated PR.
+  revokes an auto-merge request it finds on a gated PR — including on the
+  approved path, since a standing request would outlive the merge and arm the
+  next push (the PR #4227 shape).
 - Two open PRs claiming the same task branch fail closed instead of resolving
   to the first row.
 - If the open PR is already gone because GitHub merged it before the status
@@ -57,9 +59,10 @@ For each eligible task, capped by `max_tasks_per_run`:
     auto-merge so CI can re-run. A gated task branch is never pushed; if it
     needs a refreshed head the result is `waiting` and the owner must rebase
     and obtain a new approval for the new head.
-12. If no push was needed and the PR is still mergeable, run `gh pr merge`,
-    with `--match-head-commit <approved-oid>` for a gated task so a
-    concurrent finalize cannot slip a different head into the merge.
+12. If no push was needed and the PR is still mergeable, revoke any standing
+    auto-merge request on a gated PR, then run `gh pr merge`, with
+    `--match-head-commit <approved-oid>` for a gated task so a concurrent
+    finalize cannot slip a different head into the merge.
 13. After merge, run `scripts/ai_status.py done` as the task owner so the normal
     delivery gate archives the task.
 
