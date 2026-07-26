@@ -356,27 +356,66 @@ def _ledger_records(path: str) -> list[dict]:
     ]
 
 
-def _replica_admit(ledger_path: str, event: dict, barrier, connection) -> None:
+# Roles a racing replica can legitimately end up in. The distinction matters:
+# the ledger answers the literal word "committed" both to the one reservation
+# owner that writes the receipt and to a replica that began after that receipt
+# was already durable. Only the first is an admission; the second is an
+# idempotent duplicate, and a barrier cannot prevent it — it lines the replicas
+# up at the start, it does not stop the OS from scheduling one of them late.
+_ROLE_COMMIT_OWNER = "commit_owner"
+_ROLE_POST_RECEIPT_DUPLICATE = "post_receipt_duplicate"
+_ROLE_IN_FLIGHT = "in_flight"
+_LOSER_ROLES = frozenset({_ROLE_POST_RECEIPT_DUPLICATE, _ROLE_IN_FLIGHT})
+
+
+def _replica_admit(
+    ledger_path: str, broker_path: str, event: dict, barrier, connection
+) -> None:
     """Child-process replica: run one full two-phase admission of *event*.
 
-    Reports the terminal outcome so the parent can prove that at most one
-    replica ever reaches a committed receipt and that the losers are told to
-    retry rather than told they succeeded.
+    Reports a structured outcome rather than the bare ledger word, so the parent
+    can name the single reservation owner that produced the durable receipt and
+    separate it from replicas that legitimately observed that receipt afterwards.
+
+    The owner follows the real ingest ordering: durable enqueue receipt first,
+    then commit. A loser never enqueues, so the durable log is also a proof that
+    exactly one admission happened.
     """
-    ledger = InfrastructureHealthAdmissionLedger(ledger_path)
-    fingerprint = infrastructure_health_fingerprint(event)
-    if barrier is not None:
-        barrier.wait(timeout=30)
+    report: dict[str, Any] = {
+        "role": None,
+        "begin": None,
+        "commit": None,
+        "token": None,
+        "durable_put": False,
+    }
     try:
+        ledger = InfrastructureHealthAdmissionLedger(ledger_path)
+        broker = _DurableFileBroker(broker_path)
+        fingerprint = infrastructure_health_fingerprint(event)
+        if barrier is not None:
+            barrier.wait(timeout=30)
         reservation = ledger.begin(event["event_id"], fingerprint)
-        if reservation.outcome != ledger.OUTCOME_RESERVED:
-            outcome = reservation.outcome
+        report["begin"] = reservation.outcome
+        if reservation.outcome == ledger.OUTCOME_RESERVED:
+            report["token"] = reservation.token
+            report["durable_put"] = asyncio.run(broker.put(event))
+            report["commit"] = ledger.commit(
+                event["event_id"], fingerprint, reservation.token
+            )
+            report["role"] = (
+                _ROLE_COMMIT_OWNER
+                if report["commit"] == ledger.OUTCOME_COMMITTED
+                else f"owner_{report['commit']}"
+            )
+        elif reservation.outcome == ledger.OUTCOME_COMMITTED:
+            report["role"] = _ROLE_POST_RECEIPT_DUPLICATE
+        elif reservation.outcome == ledger.OUTCOME_IN_FLIGHT:
+            report["role"] = _ROLE_IN_FLIGHT
         else:
-            # Stand in for the durable enqueue receipt.
-            outcome = ledger.commit(event["event_id"], fingerprint, reservation.token)
+            report["role"] = f"unexpected_{reservation.outcome}"
     except Exception as exc:  # noqa: BLE001
-        outcome = f"error:{exc}"
-    connection.send(outcome)
+        report["role"] = f"error:{exc}"
+    connection.send(report)
     connection.close()
 
 
@@ -883,6 +922,54 @@ class TestInfrastructureHealthRoute(unittest.TestCase):
             "INFRA_BINDING_FIELD_FORBIDDEN",
         )
 
+    def test_binding_evidence_nested_past_the_old_depth_cap_is_rejected(self):
+        """Adversarial: the scan used to stop at depth 8 and answer "clean".
+
+        ``metadata`` is ``additionalProperties: true`` by contract, so the
+        standalone schema accepts arbitrary producer context at arbitrary depth.
+        That makes the ingest-path scan the only gate on RuntimeBinding evidence,
+        and a gate that stops looking at some depth is not a gate: before this
+        repair a ``binding_id`` nested at depth 10 was admitted.
+        """
+        deep: dict = {"binding_id": _KNOWN_BINDING_ID}
+        for _ in range(64):
+            deep = {"nested": deep}
+        event = _infra_event("infra-binding-deep-spoof-001", metadata=deep)
+
+        # The schema is not the thing rejecting this — prove that first, so the
+        # test cannot pass for the wrong reason if the scan regresses again.
+        import jsonschema as _jsonschema
+
+        _jsonschema.validate(
+            instance=event,
+            schema=self._svc._infrastructure_health_schema,
+        )
+
+        response = self._post(event, token=_service_token())
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.get_json()["error"]["code"],
+            "INFRA_BINDING_FIELD_FORBIDDEN",
+        )
+        self.assertIsNotNone(
+            self._dlq_reason("infra-binding-deep-spoof-001", TAG_BINDING_MISMATCH)
+        )
+
+    def test_binding_evidence_deep_inside_lists_is_rejected(self):
+        """The same depth escape through alternating list/object nesting."""
+        deep: Any = {"runtime_id": "lean-worker-1"}
+        for index in range(24):
+            deep = [deep] if index % 2 else {"nested": deep}
+        response = self._post(
+            _infra_event("infra-binding-deep-list-spoof-001", metadata={"probe": deep}),
+            token=_service_token(),
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.get_json()["error"]["code"],
+            "INFRA_BINDING_FIELD_FORBIDDEN",
+        )
+
     def test_unknown_contract_fields_are_rejected(self):
         response = self._post(
             _infra_event("infra-unknown-field-001", infrastructure_probe=True),
@@ -1051,6 +1138,58 @@ class TestInfrastructureHealthRoute(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
+class TestForbiddenBindingFieldScan(unittest.TestCase):
+    """The RuntimeBinding evidence scan itself, at depths no producer reaches.
+
+    The contract stated in the schema, in the ingest docstring, and in the
+    evidence README is that RuntimeBinding evidence is rejected *anywhere* in an
+    infrastructure health event. These assert the scan actually honours that
+    rather than falling back to "found nothing" once a payload gets deep enough.
+    """
+
+    _scan = staticmethod(TelemetryIngestService._forbidden_binding_fields)
+
+    def test_evidence_field_is_found_just_past_the_old_depth_cap(self):
+        payload: Any = {"binding_id": "b-1"}
+        for _ in range(10):
+            payload = {"nested": payload}
+        self.assertEqual(self._scan({"metadata": payload}), ["binding_id"])
+
+    def test_evidence_field_is_found_at_a_depth_recursion_could_not_reach(self):
+        """No RecursionError, and no silent miss, at 5000 levels of nesting."""
+        payload: Any = {"capital_pool_id": "pool-alpha"}
+        for _ in range(5000):
+            payload = {"nested": [payload]}
+        self.assertEqual(self._scan(payload), ["capital_pool_id"])
+
+    def test_every_evidence_field_is_reported_across_mixed_containers(self):
+        payload = {
+            "metadata": {
+                "a": [{"deep": {"binding_id": "b-1"}}],
+                "b": ({"runtime_id": "r-1"},),
+                "c": [[[[[[[[[[{"plan_id": "p-1"}]]]]]]]]]],
+            }
+        }
+        self.assertEqual(
+            sorted(set(self._scan(payload))),
+            ["binding_id", "plan_id", "runtime_id"],
+        )
+
+    def test_a_clean_payload_is_reported_clean(self):
+        self.assertEqual(self._scan(_infra_event("infra-scan-clean-001")), [])
+
+    def test_a_self_referential_payload_terminates_and_still_reports(self):
+        """A reused or cyclic container must not hang the scan or hide a field."""
+        loop: dict[str, Any] = {"artifact_id": "artifact-123"}
+        loop["self"] = loop
+        shared = {"deployment_stage": "paper"}
+        payload = {"metadata": {"loop": loop, "x": shared, "y": shared}}
+        self.assertEqual(
+            sorted(set(self._scan(payload))),
+            ["artifact_id", "deployment_stage"],
+        )
+
+
 class TestInfrastructureHealthReplicaAdmission(unittest.TestCase):
     """Two telemetry replicas sharing one storage volume admit an ID once."""
 
@@ -1113,60 +1252,169 @@ class TestInfrastructureHealthReplicaAdmission(unittest.TestCase):
         self.assertEqual(result["status"], "rejected")
         self.assertEqual(result["code"], "INFRA_EVENT_ID_CONFLICT")
 
-    def test_concurrent_replica_processes_admit_exactly_once(self):
-        """Cross-process proof: the ledger lock serialises real replicas."""
-        event = _infra_event("infra-replica-race-001")
+    def _race_replicas(
+        self, event: dict, replica_count: int, *, synchronized: bool = True
+    ) -> list[dict]:
+        """Fork *replica_count* real processes onto one event_id and collect them.
+
+        ``synchronized`` releases every replica from a shared barrier, which is
+        the closest a test can get to a simultaneous start. Without it the
+        replicas simply run, which is how a stage that must observe an already
+        durable receipt is set up deterministically.
+        """
         # Materialise the ledger before forking children so every replica opens
         # the same file rather than racing on its creation.
         InfrastructureHealthAdmissionLedger(self._ledger_path)
 
         context = multiprocessing.get_context("fork")
-        replica_count = 4
-        barrier = context.Barrier(replica_count)
+        barrier = context.Barrier(replica_count) if synchronized else None
         processes = []
         connections = []
         for _ in range(replica_count):
             parent_conn, child_conn = context.Pipe(duplex=False)
             process = context.Process(
                 target=_replica_admit,
-                args=(self._ledger_path, event, barrier, child_conn),
+                args=(
+                    self._ledger_path,
+                    self._broker_path,
+                    event,
+                    barrier,
+                    child_conn,
+                ),
             )
             process.start()
             child_conn.close()
             processes.append(process)
             connections.append(parent_conn)
 
-        outcomes = []
+        reports = []
         try:
             for connection in connections:
                 self.assertTrue(
                     connection.poll(30),
                     "replica process did not report an admission outcome",
                 )
-                outcomes.append(connection.recv())
+                reports.append(connection.recv())
         finally:
             for process in processes:
                 process.join(30)
             for connection in connections:
                 connection.close()
+        return reports
 
+    def test_concurrent_replica_processes_admit_exactly_once(self):
+        """Cross-process proof: the ledger lock serialises real replicas.
+
+        What is asserted is the *owner*, not the ledger word. A losing replica
+        may report either ``in_flight`` (the winner still held a live reservation
+        when it looked) or ``post_receipt_duplicate`` (the winner had already
+        published its durable receipt) — both are truthful and both are outside
+        the caller's control, so keying on the string ``committed`` conflated the
+        one admission with every later idempotent read of it.
+
+        The race is repeated over independent event IDs so a single favourable
+        interleaving cannot stand in for stability.
+        """
+        replica_count = 4
+        for round_index in range(8):
+            event = _infra_event(f"infra-replica-race-{round_index:03d}")
+            event_id = event["event_id"]
+            reports = self._race_replicas(event, replica_count)
+            detail = f"round {round_index}: {reports}"
+
+            owners = [
+                report for report in reports if report["role"] == _ROLE_COMMIT_OWNER
+            ]
+            self.assertEqual(
+                len(owners),
+                1,
+                f"exactly one replica may own the admission — {detail}",
+            )
+            owner = owners[0]
+            self.assertTrue(
+                owner["durable_put"],
+                f"the owner must hold a durable enqueue receipt — {detail}",
+            )
+
+            for report in reports:
+                if report is owner:
+                    continue
+                self.assertIn(
+                    report["role"],
+                    _LOSER_ROLES,
+                    f"a losing replica must be told to retry or told duplicate — {detail}",
+                )
+                self.assertFalse(
+                    report["durable_put"],
+                    f"a losing replica must not enqueue its own copy — {detail}",
+                )
+                if report["role"] == _ROLE_POST_RECEIPT_DUPLICATE:
+                    # Only reachable because a durable receipt already existed.
+                    self.assertEqual(report["begin"], "committed", detail)
+
+            # Exactly one committed ledger receipt, and it is the owner's.
+            committed_records = [
+                record
+                for record in _ledger_records(self._ledger_path)
+                if record.get("state") == "committed"
+                and record.get("event_id") == event_id
+            ]
+            self.assertEqual(len(committed_records), 1, f"{committed_records} — {detail}")
+            self.assertEqual(
+                committed_records[0].get("token"),
+                owner["token"],
+                f"the single receipt must be owned by the single owner — {detail}",
+            )
+
+            # Exactly one durable admission of the event.
+            self.assertEqual(
+                _broker_durable_events(self._broker_path, event_id),
+                [event],
+                f"exactly one durable copy of the event may exist — {detail}",
+            )
+
+    def test_replica_that_begins_after_the_receipt_is_a_duplicate_not_an_owner(self):
+        """Deterministic cover for the interleaving that made the race flaky.
+
+        Under load the OS can schedule a barriered replica so late that the
+        winner's durable receipt already exists by the time it calls ``begin``.
+        The ledger then answers it with the same word — ``committed`` — that the
+        winner's own ``commit`` returned. That replica is an idempotent duplicate
+        and must never be counted as a second admission. Staging the replicas
+        makes that interleaving certain instead of load-dependent, so the
+        classification is proven rather than hoped for.
+        """
+        event = _infra_event("infra-replica-post-receipt-001")
+        event_id = event["event_id"]
+
+        owners = self._race_replicas(event, 1, synchronized=False)
+        self.assertEqual([report["role"] for report in owners], [_ROLE_COMMIT_OWNER], owners)
+        owner = owners[0]
+
+        later = self._race_replicas(event, 3, synchronized=False)
         self.assertEqual(
-            outcomes.count("committed"),
-            1,
-            f"exactly one replica may reach a committed receipt, got {outcomes}",
+            [report["role"] for report in later],
+            [_ROLE_POST_RECEIPT_DUPLICATE] * 3,
+            later,
         )
-        self.assertEqual(
-            sorted(set(outcomes) - {"committed"}),
-            ["in_flight"],
-            f"every losing replica must be told to retry, got {outcomes}",
-        )
+        for report in later:
+            self.assertEqual(report["begin"], "committed", report)
+            self.assertIsNone(report["token"], report)
+            self.assertFalse(report["durable_put"], report)
 
         committed_records = [
             record
             for record in _ledger_records(self._ledger_path)
             if record.get("state") == "committed"
+            and record.get("event_id") == event_id
         ]
         self.assertEqual(len(committed_records), 1, committed_records)
+        self.assertEqual(committed_records[0].get("token"), owner["token"])
+        self.assertEqual(
+            _broker_durable_events(self._broker_path, event_id),
+            [event],
+            "a post-receipt duplicate must not add a second durable copy",
+        )
 
     def test_concurrent_admission_loser_is_not_told_it_succeeded(self):
         """The loss window the reviewer found: a duplicate before any receipt.

@@ -1339,23 +1339,40 @@ class TelemetryIngestService:
     # -- Non-trading infrastructure health admission --
 
     @staticmethod
-    def _forbidden_binding_fields(value: Any, depth: int = 0) -> list[str]:
-        """Return every RuntimeBinding evidence key present at any depth."""
-        if depth > 8:
-            return []
+    def _forbidden_binding_fields(value: Any) -> list[str]:
+        """Return every RuntimeBinding evidence key present at any depth.
+
+        "At any depth" is literal. The traversal is iterative over an explicit
+        stack, so it has no depth ceiling of its own and cannot exhaust the
+        interpreter stack on a deeply nested payload. An earlier revision
+        recursed and gave up past depth 8 by returning no findings, which made
+        the contract false in the one direction that matters: a ``binding_id``
+        nested deeper than the cap was silently admitted rather than rejected.
+        A scan that cannot see the whole payload must never answer "clean".
+
+        Containers are tracked by identity so a payload that reuses or
+        self-references an object terminates instead of looping. Re-visiting is
+        skipped only after that object's keys have already been collected, so
+        the returned key set is unaffected.
+        """
         found: list[str] = []
-        if isinstance(value, Mapping):
-            for key, item in value.items():
-                if str(key) in RUNTIME_BINDING_EVIDENCE_FIELDS:
-                    found.append(str(key))
-                found.extend(
-                    TelemetryIngestService._forbidden_binding_fields(item, depth + 1)
-                )
-        elif isinstance(value, (list, tuple)):
-            for item in value:
-                found.extend(
-                    TelemetryIngestService._forbidden_binding_fields(item, depth + 1)
-                )
+        visited: set[int] = set()
+        stack: list[Any] = [value]
+        while stack:
+            current = stack.pop()
+            if isinstance(current, Mapping):
+                if id(current) in visited:
+                    continue
+                visited.add(id(current))
+                for key, item in current.items():
+                    if str(key) in RUNTIME_BINDING_EVIDENCE_FIELDS:
+                        found.append(str(key))
+                    stack.append(item)
+            elif isinstance(current, (list, tuple, set, frozenset)):
+                if id(current) in visited:
+                    continue
+                visited.add(id(current))
+                stack.extend(current)
         return found
 
     def _buffer_durability_defect(self) -> Optional[str]:
