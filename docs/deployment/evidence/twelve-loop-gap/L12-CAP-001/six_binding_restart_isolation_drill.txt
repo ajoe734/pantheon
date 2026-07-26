@@ -1,19 +1,27 @@
-Six-Binding Restart Isolation Drill Proof Run
-============================================
-Date: 2026-07-26
-Task ID: L12-CAP-001
+L12-CAP-001 — Six-Binding Crash/Restart Isolation Drill
+======================================================
+Captured: 2026-07-26T22:06:25Z
+Image: redis@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
 
-Test: Multi-binding restart and queue isolation drill across 6 distinct paper bindings (b-001..b-006).
-Scenario:
-- 6 paper bindings initialized with distinct binding_id, runtime_id, and capital_pool_id values.
-- Reconciler spawns 6 isolated workers with scoped queue keys (pantheon:signals:pending:b-001 .. b-006).
-- Worker 3 (b-003) simulates crash exit.
-- Reconciler detects exit, frees port, and restarts worker 3 without impacting workers 1, 2, 4, 5, 6.
-- Signal misrouted to worker 3 for b-004 is rejected (fail-closed) and routed to pantheon:signals:dlq:b-003.
+Command:
+  /home/lupin/pantheon/.venv/bin/python -m unittest -v \
+    services.execution.lean_runtime.test_signal_isolation.TestSixBindingRestartIsolationDrill
+
+Observed case:
+  test_six_binding_restart_isolation ... ok
 
 Result:
-- 6 workers spawned on distinct ports (8020..8025).
-- Worker 3 restarted cleanly on new port with backoff.
-- Signal isolation verified across all 6 bindings. Zero cross-tenant leakage.
+  Ran 1 test in 2.683s
+  OK
 
-STATUS: PASSED (Six-binding restart isolation drill verified)
+Six OS processes claim one signal apiece from six binding-scoped queues and exit
+without ack. Restarted processes recover only their own expired claims, verify
+runtime/binding/capital-pool identity, and ack them. The assertion requires all
+six unique signal IDs exactly once and zero pending, in-flight, or DLQ residue.
+
+Post-merge isolated repeat:
+  services.execution.lean_runtime.test_signal_isolation
+  Ran 39 tests in 5.987s
+  OK
+
+STATUS: OWNER PROOF PASSED; INDEPENDENT REVIEW PENDING

@@ -1,37 +1,63 @@
-# L12-CAP-001 — Lossless and Isolated Governed-Paper Signal Execution Proof
+# L12-CAP-001 — Lossless and Isolated Governed-Paper Signal Execution
 
-Task ID: `L12-CAP-001`  
-Phase: `Twelve Loop Remediation / Capital`  
-Owner: `Antigravity`  
-Reviewer: `Claude`  
+Task ID: `L12-CAP-001`
 
-## Implementation & Proof Summary
+Owner: `Codex`
 
-All required changes and proof runs for `L12-CAP-001` have been implemented and verified.
+Independent reviewer: `Claude`
 
-### Implementation & Review Blocker Resolution
+Target: `dev`, governed paper only
 
-1. **[B1] Lossless Claim/Ack Visibility Model & Per-Entry Timestamp Reclaim**:
-   - `RedisPendingSignalStore` in `services/execution/lean_runtime/pending_signal_store.py` records worker claim timestamps (`<inflight_key>:timestamps`) upon claim.
-   - `reclaim_expired_inflight()` uses `SCAN` to locate in-flight lists, checks timestamps, and reclaims entries older than `_visibility_timeout_seconds`. Live worker in-flight lists holding unexpired claims are preserved.
-   - Rebalance buffering in `signal_consumer.py` now acknowledges deduplicated or processed signals.
+Admission: owner validation passed; independent review is still required
 
-2. **[B2] Cross-Process Leader Lease for PaperFleetReconciler**:
-   - `PaperFleetReconciler` in `services/execution/runtime-manager/paper_fleet_reconciler.py` supports cross-process lease backends (Redis client, file-backed JSON store, or dict) using wall-clock timestamps (`time.time()`).
-   - `_run_loop` passes `self._leader_store` to `reconcile_once(self._leader_store)` on every cycle, ensuring single-leader fleet management across processes.
+## Delivered behavior
 
-3. **[B3] Real Unit & Isolation Tests and Executable Proof Logs**:
-   - Unit tests implemented in `test_signal_isolation.py` cover crash-before-ack reclamation (`TestRedisPendingSignalStoreClaimVisibility`), cross-process leader lease (`TestLeaderLeaseCrossProcess`), execution exception DLQ routing (`TestExecutionErrorDLQ`), and 6-binding restart isolation drill (`TestSixBindingRestartIsolationDrill`).
-   - Command lines and outputs captured in evidence files: `redis_crash_before_ack_proof.txt`, `execution_error_dlq_proof.txt`, `leader_lease_convergence_proof.txt`, `six_binding_restart_isolation_drill.txt`.
+- Redis signal claims use one Lua transaction to remove the pending entry, allocate
+  a monotonic claim token, persist the worker claim, and record server-time
+  visibility.
+- Ack, nack, dead-letter transfer, and expired-claim recovery are each atomic Redis
+  transitions. A lost client response cannot create a state between removal from
+  in-flight and durable ack/requeue/DLQ placement.
+- Missing or mismatched runtime, binding, or capital-pool identity fails closed in
+  governed-paper mode.
+- The paper fleet reconciler fails closed without a lease backend. Its production
+  constructor uses a Redis token-fenced lease (or an explicitly configured,
+  file-locked backend), validates fencing before worker mutations, and rejects
+  stale renewal after succession.
+- Every Capital mutation is bound to a verified bearer-token service, actor, role,
+  and tenant. Request-body spoofing and cross-tenant mutations are rejected.
+- No live-capital flag, deployment setting, or production posture was enabled.
 
-4. **[B4] Authenticated Actor and Tenant Scoping on Capital Service Mutations**:
-   - `CapitalBoundaryService` in `services/capital/main.py` enforces actor role write authority through `_authorize(resource_type, operation, actor_role)`.
-   - `PermissionError` is raised with HTTP status 403 when authorization fails.
+## Reproducible proof
 
-### Unit Test Verification Results
+The Redis integration drills use:
 
 ```text
-Ran 69 tests in services.execution.lean_runtime (test_signal_isolation, test_signal_consumer) -> OK
-Ran 40 tests in services.execution.runtime-manager (test_paper_fleet_reconciler) -> OK
+redis@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
 ```
-Captured proof logs saved under `docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/`.
+
+The four task proof transcripts are:
+
+- `redis_crash_before_ack_proof.txt`
+- `execution_error_dlq_proof.txt`
+- `leader_lease_convergence_proof.txt`
+- `six_binding_restart_isolation_drill.txt`
+
+Post-merge owner validation at code head
+`e94774b260f12b2751eb98ab563df49422e8c5b1`:
+
+```text
+services.execution.lean_runtime.test_signal_isolation + test_signal_consumer: 73 tests, OK
+services/execution/runtime-manager/test_paper_fleet_reconciler.py: 43 tests, OK
+services/capital/test_service.py: 59 passed, 1 deprecation warning
+git diff --check: passed
+```
+
+The warning is an upstream Starlette `TestClient` deprecation warning and does
+not change the mutation authorization result.
+
+## Review boundary
+
+This evidence records owner-produced implementation and validation only. It does
+not predeclare Claude approval, required GitHub check success, deployment, merge,
+or task completion. Missing or contradictory independent evidence fails closed.

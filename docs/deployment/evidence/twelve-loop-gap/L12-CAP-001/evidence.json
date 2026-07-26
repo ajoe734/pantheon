@@ -1,16 +1,375 @@
 {
-  "task_id": "L12-CAP-001",
-  "owner": "Antigravity",
-  "reviewer": "Claude",
-  "status": "review",
-  "delivery_repository": "ajoe734/pantheon",
-  "delivery_branch": "task/L12-CAP-001",
-  "proof_artifacts": {
-    "README.md": "a80f67e20e3d1229c6680a210b015733f06c93c3d6b07ff4d4a4f8868727e666",
-    "redis_crash_before_ack_proof.txt": "d27d65eadfaa7a7ac411b8435b4620633c2cfbbd0914fe0ec02fa94f7ce3f942",
-    "execution_error_dlq_proof.txt": "45223a2627faed2b5492f2f3af2eafcbabc1227bd9c6cbd87a2ceb7ca3c7809b",
-    "leader_lease_convergence_proof.txt": "ac407cdee739790d3c73b5f62e600a5b451e10b0f4eea3b7143759ba5b2e3274",
-    "six_binding_restart_isolation_drill.txt": "d1cf0ce28e15edfb2f6889ddce563e2aa0e34b9fc16426fabc7b42041acff9b2"
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "L12-CAP-001 product-level independent-review handoff.",
+    "note": "Owner evidence over the atomic Redis repair, token-fenced reconciler lease, real Redis crash drills, and authenticated Capital mutation boundary.",
+    "status": "formalized"
   },
-  "verification_summary": "Ran 69 tests in lean_runtime + 40 tests in runtime-manager. Implemented per-entry claim timestamp & SCAN reclaim in RedisPendingSignalStore, cross-process leader lease in PaperFleetReconciler, DLQ routing, fail-closed isolation, and capital mutation role authorization."
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Changes require a task-scoped commit and PR; append a record_log entry when the accepted evidence cut changes.",
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-26T22:27:51Z",
+    "evidence_cut_semantics": "Owner validation over the repaired implementation replayed on dev 6578ef968f7e0374b046de0afb5b07ce2f81558e; no independent approval, CI success, merge, deployment, or done state is claimed.",
+    "id": "L12-CAP-001",
+    "overall_admission": "owner_validation_passed_pending_independent_review",
+    "owner": "Codex",
+    "phase": "Twelve Loop Remediation / Capital",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/evidence.json",
+    "reviewer": "Claude",
+    "target_environment": "dev integration",
+    "target_maturity": "governed-paper product proof",
+    "task_branch": "task/L12-CAP-001",
+    "title": "Make governed-paper signal execution lossless and strictly isolated"
+  },
+  "authorities": {
+    "actual_state": [
+      "binding-scoped Redis pending, in-flight, visibility, processed, and DLQ state",
+      "paper fleet reconciler worker registry and fenced leadership",
+      "Capital service mutation state"
+    ],
+    "desired_state": [
+      "runtime binding and capital-pool identity carried by each governed-paper signal",
+      "authenticated service, actor, role, and tenant claims"
+    ],
+    "task_packet": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-CAP-001.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Codex for atomic signal transitions, fenced paper-fleet leadership, Capital mutation inbound authority, and task evidence",
+    "composes_with": [
+      "Claude independent review of PR #4203",
+      "Pantheon dev Branch CI Gate",
+      "later shared runtime activation owned outside this task"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/evidence.sha256",
+      "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/execution_error_dlq_proof.txt",
+      "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/leader_lease_convergence_proof.txt",
+      "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/redis_crash_before_ack_proof.txt",
+      "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/six_binding_restart_isolation_drill.txt"
+    ],
+    "implementation_changed_files": [
+      "services/capital/inbound_authority.py",
+      "services/capital/main.py",
+      "services/capital/test_service.py",
+      "services/execution/lean_runtime/pending_signal_store.py",
+      "services/execution/lean_runtime/signal_consumer.py",
+      "services/execution/lean_runtime/test_signal_consumer.py",
+      "services/execution/lean_runtime/test_signal_isolation.py",
+      "services/execution/runtime-manager/paper_fleet_reconciler.py",
+      "services/execution/runtime-manager/test_paper_fleet_reconciler.py"
+    ],
+    "not_changing": "Live-capital enablement, deployment configuration, broker credentials, hosted runtime activation, or canonical supervisor state files.",
+    "owned_layer": "Governed-paper signal durability and isolation, token-fenced paper-fleet reconciliation, Capital mutation inbound identity binding, and reproducible product evidence"
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "delivery_state": "superseded_by_atomic_repair",
+        "note": "Original implementation retained as branch history; independent review rejected its multi-command Redis and unfenced lease behavior.",
+        "sha": "6821ae378744fae63bcb8539beb20cb2e96d83da",
+        "subject": "L12-CAP-001: implement lossless signal execution and leader lease"
+      },
+      {
+        "delivery_state": "superseded_by_atomic_repair",
+        "note": "First blocker response retained as history; later anchors replace its remaining failure windows.",
+        "sha": "b6d6d9f68f406967a290842dc6eb984b26a3338b",
+        "subject": "L12-CAP-001: resolve signal durability review blockers"
+      },
+      {
+        "delivery_state": "owner_validated_pending_independent_review",
+        "sha": "e4b87134299e2c633a74664efec7aac4b8c08f98",
+        "subject": "L12-CAP-001: anchor atomic execution and fenced lease"
+      },
+      {
+        "delivery_state": "owner_validated_pending_independent_review",
+        "sha": "e94774b260f12b2751eb98ab563df49422e8c5b1",
+        "subject": "L12-CAP-001: anchor Redis drills and capital authority"
+      }
+    ],
+    "required_checks": []
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python -m unittest services.execution.lean_runtime.test_signal_isolation services.execution.lean_runtime.test_signal_consumer",
+        "conclusion": "73 tests passed in 5.925s, including disposable real-Redis atomic transition and six-process restart drills",
+        "result": "pass"
+      },
+      {
+        "command": "PYTHONPATH=<repo-root> /home/lupin/pantheon/.venv/bin/python -m unittest test_paper_fleet_reconciler.py",
+        "conclusion": "43 tests passed in 3.329s, including real-Redis two-process fencing",
+        "result": "pass"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python -m pytest services/capital/test_service.py -q",
+        "conclusion": "59 passed in 16.93s; one non-blocking Starlette TestClient deprecation warning",
+        "result": "pass"
+      },
+      {
+        "command": "python3 -m py_compile <task-owned Python implementation and tests>; git diff --check",
+        "conclusion": "exit 0",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-07-26T22:27:51Z",
+    "validated_base_sha": "6578ef968f7e0374b046de0afb5b07ce2f81558e",
+    "validated_head_sha": "e94774b260f12b2751eb98ab563df49422e8c5b1"
+  },
+  "deployment": {
+    "applicable": false,
+    "canonical_root_deploy": {
+      "conclusion": "not_applicable",
+      "reason": "This task owns repository behavior and dev integration evidence, not shared runtime activation."
+    },
+    "environment": "dev integration",
+    "identity_admission": {
+      "reason": "No hosted or live-capital identity is claimed; governed-paper code paths and local real-Redis integration are the task boundary.",
+      "status": "not_applicable"
+    },
+    "public_bff_base_url": "not_applicable_internal_execution_and_capital_services",
+    "publish_cut": {
+      "conclusion": "not_applicable",
+      "reason": "No hosted publication is claimed."
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "reason": "Shared runtime deployment is outside this task and no hosted behavior is claimed.",
+      "status": "not_applicable"
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "proof": [
+        "A unique monotonic claim token identifies the currently owned copy; stale local tokens are discarded when Redis no longer contains the claim.",
+        "Processed signal identity remains durable and successful claims are acknowledged only after execution or an accepted fail-closed outcome."
+      ],
+      "status": "owner_pass_pending_independent_review"
+    },
+    "failure_and_degraded_behavior": {
+      "proof": [
+        "Claim, ack, nack, DLQ transfer, and expired reclaim use atomic Lua state transitions.",
+        "A crash-before-ack signal becomes reclaimable after its visibility deadline, while a live unexpired claim cannot be stolen.",
+        "Validation and execution exceptions are durably dead-lettered; a failed DLQ transfer does not mark the signal processed."
+      ],
+      "status": "owner_pass_pending_independent_review"
+    },
+    "request_receipt_downstream_correlation": {
+      "proof": [
+        "Binding, runtime, and capital-pool identity is checked before execution and retained in binding-scoped pending, claim, and DLQ state.",
+        "Capital mutation bodies are rebound to verified service, actor, role, and tenant claims before endpoint logic executes."
+      ],
+      "status": "owner_pass_pending_independent_review"
+    },
+    "restart_and_recovery": {
+      "proof": [
+        "Six crashed OS processes recover exactly their own six binding-scoped Redis claims after restart, with no pending, in-flight, or DLQ residue.",
+        "Two spawned reconcilers converge to one Redis-fenced leader; after expiry the successor receives a higher token and the stale predecessor cannot renew."
+      ],
+      "status": "owner_pass_pending_independent_review"
+    },
+    "rollback_or_compensation": {
+      "proof": [
+        "Nack atomically returns an owned claim to pending; terminal failure atomically transfers it to the scoped DLQ.",
+        "Leader demotion stops local worker mutations, and every worker spawn or termination requires current fence validation."
+      ],
+      "status": "owner_pass_pending_independent_review"
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "proof": "Only the task worktree, disposable Redis containers, and local dev-integration tests were exercised.",
+      "status": "pass"
+    },
+    "hosted_frontend": {
+      "status": "not_applicable"
+    },
+    "mfa": {
+      "status": "not_applicable"
+    },
+    "no_live_capital": {
+      "proof": "The diff contains no deployment or live-capital enablement change; mutation tests exercise local governed authorization only.",
+      "status": "pass"
+    },
+    "rbac": {
+      "proof": "Capital mutation verbs require an allowed service and verified role; body actor and role spoofing are rejected.",
+      "status": "owner_pass_pending_independent_review"
+    },
+    "tenant_isolation": {
+      "proof": "Signal queues and DLQs are binding scoped, signal runtime/binding/capital-pool mismatches fail closed, and Capital tenant claims must match mutation bodies.",
+      "status": "owner_pass_pending_independent_review"
+    },
+    "two_person_approval": {
+      "proof": "Owner Codex prepared this cut and handed the same PR and evidence file to distinct reviewer Claude; no reviewer verdict is predeclared.",
+      "status": "pending"
+    }
+  },
+  "acceptance": [
+    {
+      "blocking_until": "Claude independently validates the repaired PR tip.",
+      "evidence_refs": [
+        "services/execution/lean_runtime/pending_signal_store.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/redis_crash_before_ack_proof.txt"
+      ],
+      "id": "AC1",
+      "statement": "An accepted signal remains recoverable until execution acknowledgement.",
+      "status": "owner_pass_pending_independent_review"
+    },
+    {
+      "blocking_until": "Claude independently validates the repaired PR tip.",
+      "evidence_refs": [
+        "services/execution/lean_runtime/signal_consumer.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/execution_error_dlq_proof.txt"
+      ],
+      "id": "AC2",
+      "statement": "Crash, validation failure, and execution exception produce a recoverable requeue or durable DLQ outcome.",
+      "status": "owner_pass_pending_independent_review"
+    },
+    {
+      "blocking_until": "Claude independently validates the repaired PR tip.",
+      "evidence_refs": [
+        "services/execution/lean_runtime/test_signal_isolation.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/six_binding_restart_isolation_drill.txt"
+      ],
+      "id": "AC3",
+      "statement": "Missing or mismatched binding, runtime, or capital-pool identity is rejected in governed-paper mode.",
+      "status": "owner_pass_pending_independent_review"
+    },
+    {
+      "blocking_until": "Claude independently validates the repaired PR tip.",
+      "evidence_refs": [
+        "services/execution/runtime-manager/paper_fleet_reconciler.py",
+        "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/leader_lease_convergence_proof.txt"
+      ],
+      "id": "AC4",
+      "statement": "Exactly one token-fenced fleet reconciler leader may mutate the worker fleet.",
+      "status": "owner_pass_pending_independent_review"
+    },
+    {
+      "blocking_until": "Claude independently validates the repaired PR tip.",
+      "evidence_refs": [
+        "services/capital/inbound_authority.py",
+        "services/capital/test_service.py#test_capital_mutations_bind_verified_actor_role_and_tenant"
+      ],
+      "id": "AC5",
+      "statement": "Capital mutations authenticate actor and tenant, while live capital remains disabled.",
+      "status": "owner_pass_pending_independent_review"
+    }
+  ],
+  "residual_risks": {
+    "independent_review": {
+      "blocking_for_this_task": true,
+      "containment": "Task remains outside review_approved and done; manifest explicitly avoids an approval claim.",
+      "description": "Claude has not yet recorded an independent verdict over the repaired branch tip.",
+      "expiry": "When Claude records an independent verdict for the repaired PR tip.",
+      "owner": "Claude",
+      "recheck_trigger": "After the owner evidence commit is pushed to PR #4203.",
+      "severity": "high"
+    },
+    "branch_ci": {
+      "blocking_for_this_task": true,
+      "containment": "The previous rejected head checks are not reused; the repaired head must run fresh required checks.",
+      "description": "Required GitHub checks for the repaired PR tip are not yet available.",
+      "expiry": "When required checks for the repaired PR head conclude successfully.",
+      "owner": "Codex",
+      "recheck_trigger": "After pushing the evidence commit.",
+      "severity": "high"
+    },
+    "hosted_activation": {
+      "blocking_for_this_task": false,
+      "containment": "No hosted or live-capital behavior is claimed, and production constructors fail closed without their authority backends.",
+      "description": "Shared runtime activation and hosted multi-service verification remain outside this repository-owned task slice.",
+      "expiry": "When the twelve-loop manifest and hosted verification tasks complete.",
+      "owner": "twelve-loop runtime activation",
+      "recheck_trigger": "Before activating this implementation in a shared environment.",
+      "severity": "medium"
+    },
+    "testclient_deprecation": {
+      "blocking_for_this_task": false,
+      "containment": "The warning does not affect authorization assertions or response outcomes.",
+      "description": "Capital tests emit the pre-existing Starlette httpx TestClient deprecation warning.",
+      "expiry": "When the repository migrates to the supported TestClient dependency.",
+      "owner": "Capital service maintainers",
+      "recheck_trigger": "On the next Starlette or httpx dependency upgrade.",
+      "severity": "informational"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/redis_crash_before_ack_proof.txt",
+      "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/execution_error_dlq_proof.txt",
+      "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/leader_lease_convergence_proof.txt",
+      "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/six_binding_restart_isolation_drill.txt"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/evidence.json",
+    "normalized_hosted_readback": {
+      "hosted_activation_claimed": false,
+      "independent_review_claimed": false,
+      "live_capital_enabled": false,
+      "owner_validation_complete": true
+    },
+    "self_hash_omitted": true,
+    "self_hash_reason": "The companion checksum contains the manifest digest and avoids recursive self-hashing.",
+    "source_artifact_sha256_by_epoch": {
+      "owner_readme_2026_07_26": "50f62db0c43cb45960d645832cd38a4244c95edaa0a21c1951d9804239b8bcc7",
+      "atomic_redis_proof_2026_07_26": "55ff7b8569b6162e76fa8b7364ffe188f59575ebf187d32ef8a6e2bdfde11c7b",
+      "execution_dlq_proof_2026_07_26": "199ce58f009757fef61cf85d6a4a516f461949a12f9f425b36ae17a39ba6d432",
+      "fenced_leader_proof_2026_07_26": "70c6af21102ca13131ffa4fb632b50250415b25fd54bc4673e836378a3fae6c1",
+      "six_binding_proof_2026_07_26": "433fd44d38da0e2029fafd48eac049aac830940b6d23837b24ceeb804c039c87"
+    }
+  },
+  "record_log": [
+    {
+      "actor": "Codex",
+      "kind": "atomic_execution_anchor",
+      "recorded_at": "2026-07-26T21:34:36Z",
+      "reference": "task/L12-CAP-001",
+      "sequence": 1,
+      "sha": "e4b87134299e2c633a74664efec7aac4b8c08f98",
+      "status": "recorded"
+    },
+    {
+      "actor": "Codex",
+      "kind": "redis_drill_and_capital_authority_anchor",
+      "recorded_at": "2026-07-26T21:54:13Z",
+      "reference": "task/L12-CAP-001",
+      "sequence": 2,
+      "sha": "e94774b260f12b2751eb98ab563df49422e8c5b1",
+      "status": "recorded"
+    },
+    {
+      "actor": "Codex",
+      "kind": "dev_replay_and_owner_validation",
+      "recorded_at": "2026-07-26T22:27:51Z",
+      "reference": "origin/dev@6578ef968f7e0374b046de0afb5b07ce2f81558e",
+      "sequence": 3,
+      "sha": "e94774b260f12b2751eb98ab563df49422e8c5b1",
+      "status": "passed"
+    },
+    {
+      "actor": "Codex",
+      "kind": "owner_evidence_ready",
+      "recorded_at": "2026-07-26T22:27:51Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4203",
+      "sequence": 4,
+      "status": "pending_independent_review"
+    }
+  ]
 }
