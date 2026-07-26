@@ -18,6 +18,7 @@ import os
 import sys
 import time
 import tempfile
+import uuid
 from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock, patch, AsyncMock
 
@@ -731,8 +732,9 @@ class TestRealServiceIngestAndIncidentsIntegration:
         finally:
             tel_main._svc = old_svc
 
-    def test_real_incidents_app_open_and_status_resolution(self):
+    def test_real_incidents_app_open_and_status_resolution(self, monkeypatch):
         """Verify real FastAPI incidents app handles create (201/409) and status transition (200)."""
+        monkeypatch.setenv("PANTHEON_RUNTIME_MANAGER_URL", "http://runtime-manager.test:8080")
         from fastapi.testclient import TestClient
         import services.incidents.main as inc_main
 
