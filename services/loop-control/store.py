@@ -67,6 +67,14 @@ def _json_list(value: Any) -> List[Any]:
     return []
 
 
+def _json_default(value: Any) -> str:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    raise TypeError(
+        f"Object of type {value.__class__.__name__} is not JSON serializable"
+    )
+
+
 def _as_utc(value: Any) -> Optional[datetime]:
     if isinstance(value, datetime):
         parsed = value
@@ -223,11 +231,14 @@ class LoopControllerStore:
         *,
         now: datetime,
     ) -> Dict[str, Any]:
-        current = (
-            LoopControllerStore._normalize_row(existing)
-            if existing is not None
-            else LoopControllerStore._empty_record(incoming)
-        )
+        if existing is not None:
+            normalized_existing = LoopControllerStore._normalize_row(existing)
+            current = {
+                field: normalized_existing.get(field)
+                for field in CONTROLLER_RECORD_FIELDS
+            }
+        else:
+            current = LoopControllerStore._empty_record(incoming)
         active_lease = (
             _as_utc(current.get("lease_expires_at")) is not None
             and _as_utc(current.get("lease_expires_at")) > now
@@ -428,7 +439,7 @@ class LoopControllerStore:
                     json.dumps(merged["evidence_refs"]),
                     merged["truth_level"],
                     merged["lease_expires_at"],
-                    json.dumps(persisted_payload),
+                    json.dumps(persisted_payload, default=_json_default),
                 )
                 return self._normalize_row(row)
         finally:
