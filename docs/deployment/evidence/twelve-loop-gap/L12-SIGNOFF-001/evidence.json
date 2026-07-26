@@ -1,0 +1,330 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "L12-SIGNOFF-001 protected product-closeout admission.",
+    "note": "Owner evidence for the protected Human/Ops verdict implementation. The formal Codex2 reviewer verdict is intentionally absent until independent approval occurs.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Task-scoped evidence changes require a reviewed Pantheon PR; append a record_log entry whenever the accepted cut or formal review state changes.",
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-26T13:08:12Z",
+    "evidence_cut_semantics": "Owner evidence over three protected-verdict anchors after merging origin/dev at 0916ea8d44bf1aa3171187a6f3900568080387b5. Implementation and owner acceptance proof are complete; independent reviewer approval is not asserted by this cut.",
+    "id": "L12-SIGNOFF-001",
+    "overall_admission": "pass_owner_evidence_ready",
+    "owner": "Codex",
+    "phase": "Twelve Loop Remediation / Protected Closeout Authority",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.json",
+    "reviewer": "Codex2",
+    "target_environment": "dev integration",
+    "target_maturity": "product-level",
+    "task_branch": "task/L12-SIGNOFF-001",
+    "title": "Install protected Human-Ops closeout verdict enforcement"
+  },
+  "authorities": {
+    "actual_state": [
+      "protected verdict ledger",
+      "transition-time guard decision",
+      "revocation and nonce state"
+    ],
+    "desired_state": [
+      "catalog-bound completion authority",
+      "authorized Human-Ops verdict request"
+    ],
+    "task_packet": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-SIGNOFF-001.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "The product closeout verdict service owns signed issuance, revocation, consumption, and ledger state; ai_status owns guarded task lifecycle mutation.",
+    "composes_with": [
+      "PR #4173 governed live-journal mutation guard",
+      "L12-BFF-001 application route composition",
+      "L12-MANIFEST-001 external policy, ledger, and deployment configuration",
+      "L12-CLOSE-001 protected program closeout"
+    ],
+    "evidence_changed_files": [
+      ".orchestrator/task-briefs/l12_signoff_001.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "services/control-plane/governance/product_closeout_verdict.py",
+      "services/control-plane/governance/product_closeout_verdict.schema.json",
+      "services/control-plane/governance/test_product_closeout_verdict.py",
+      "services/control-plane/bff/product_closeout_verdict.py",
+      "services/control-plane/bff/test_product_closeout_verdict.py",
+      "scripts/loop_done_guardrail.py",
+      "scripts/test_loop_done_guardrail.py",
+      "scripts/ai_status.py",
+      "scripts/test_ai_status.py"
+    ],
+    "not_changing": "BFF application router mounting, live Human/Ops policy or private-key provisioning, deployment manifests, hosted activation, capital authority, or the issuance of an actual Human/Ops verdict.",
+    "owned_layer": "Protected closeout verdict schema and ledger, authenticated BFF issuance boundary, and fail-closed review-approved/done transition enforcement"
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "delivery_state": "pushed_to_task_branch",
+        "sha": "195df06a239292acef62e820fc15d17fd2fc3c6d",
+        "subject": "L12-SIGNOFF-001: anchor protected verdict core"
+      },
+      {
+        "delivery_state": "pushed_to_task_branch",
+        "sha": "3168a11f15bd58a6859438606258abfbf5696dfd",
+        "subject": "L12-SIGNOFF-001: anchor recovered verdict tests"
+      },
+      {
+        "delivery_state": "pushed_to_task_branch",
+        "sha": "1866661ce84f439d96733cf4befcc261b4362333",
+        "subject": "L12-SIGNOFF-001: anchor protected transition recovery"
+      }
+    ],
+    "required_checks": []
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/pytest -q services/control-plane/governance/test_product_closeout_verdict.py services/control-plane/bff/test_product_closeout_verdict.py scripts/test_loop_done_guardrail.py scripts/test_ai_status.py",
+        "conclusion": "236 tests passed with 23 passing subtests and one known Starlette PendingDeprecationWarning after merging current origin/dev.",
+        "result": "pass"
+      },
+      {
+        "command": "PATH=/home/lupin/pantheon/.venv/bin:$PATH PYTHON=/home/lupin/pantheon/.venv/bin/python scripts/run-acceptance.sh smoke",
+        "conclusion": "Stage-0 validation and smoke baseline passed, including data-plane, promotion-gate, governance-saga, runtime-binding, telemetry, lineage, and BFF checks.",
+        "result": "pass"
+      },
+      {
+        "command": "python3 -m py_compile services/control-plane/governance/product_closeout_verdict.py services/control-plane/bff/product_closeout_verdict.py scripts/loop_done_guardrail.py scripts/ai_status.py",
+        "conclusion": "exit 0",
+        "result": "pass"
+      },
+      {
+        "command": "git diff --check",
+        "conclusion": "exit 0",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-07-26T13:04:25Z",
+    "validated_base_sha": "0916ea8d44bf1aa3171187a6f3900568080387b5",
+    "validated_head_sha": "47b78c0f348eb6ad87df569289427175251f2d97"
+  },
+  "deployment": {
+    "applicable": false,
+    "canonical_root_deploy": {
+      "reason": "This task installs the closeout authority and transition guard; root BFF route composition and protected policy provisioning remain delegated to L12-BFF-001 and L12-MANIFEST-001.",
+      "status": "not_applicable"
+    },
+    "environment": "dev integration",
+    "identity_admission": {
+      "proof": "Every verdict request binds the canonical catalog digest, task, closeout manifest, target environment, frontend SHA, and backend SHA before signing and again before consumption.",
+      "status": "pass"
+    },
+    "public_bff_base_url": "not_applicable_no_hosted_activation_claim",
+    "publish_cut": {
+      "reason": "No hosted publish or service restart is part of this task-scoped implementation.",
+      "status": "not_applicable"
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "environment": "task worktree and dev-integration test process",
+      "hosted_activation_claimed": false,
+      "observed_at": "2026-07-26T13:04:25Z",
+      "status": "pass",
+      "terminal_readback": "The protected verdict implementation and transition guards passed focused and full smoke acceptance before external route and policy activation."
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "proof": [
+        "Issuance serializes task decisions with an exclusive ledger lock and nonce uniqueness; concurrent accepted and rejected decisions admit exactly one durable verdict.",
+        "Consumption derives a deterministic idempotency key for the same logical transition retry while rejecting a distinct attempt as replay."
+      ],
+      "status": "pass"
+    },
+    "failure_and_degraded_behavior": {
+      "proof": [
+        "Missing or invalid policy, caller-controlled policy substitution, unauthorized role, fleet actor identity, missing MFA, rejected decision, revoked verdict, expiry, staleness, signature tamper, binding mismatch, unsafe path, and ledger symlink all fail closed.",
+        "Deleting mutable loop_ids or non_goals cannot remove the canonical protected-closeout audit."
+      ],
+      "status": "pass"
+    },
+    "request_receipt_downstream_correlation": {
+      "proof": [
+        "Canonical JSON signing binds catalog digest, task ID, closeout manifest SHA, target environment, frontend deployment SHA, backend deployment SHA, decision, issuer, key ID, nonce, issuance time, and expiry.",
+        "Task state records the consumed ledger record ID, verdict digest, and idempotency key; the closeout guard compares all three with the authoritative consumption record."
+      ],
+      "status": "pass"
+    },
+    "restart_and_recovery": {
+      "proof": [
+        "A new ProductCloseoutVerdictService instance reloads the external fsynced JSONL ledger and preserves issued, revoked, nonce, and consumed state across process restart.",
+        "The same terminal operation can retry after restart using its deterministic idempotency key, and a consumed verdict remains auditable after issuance TTL at the recorded consumption time."
+      ],
+      "status": "pass"
+    },
+    "rollback_or_compensation": {
+      "proof": [
+        "An authorized Human/Ops actor can revoke an unconsumed verdict; a consumed verdict cannot be revoked or reused.",
+        "A later exact valid verdict can supersede an expired or revoked task reference without weakening validation of the replacement."
+      ],
+      "status": "pass"
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "proof": "The repository contains no live key, policy, ledger, credential, or verdict; absent protected external configuration fails closed.",
+      "status": "pass"
+    },
+    "hosted_frontend": {
+      "status": "not_applicable"
+    },
+    "mfa": {
+      "proof": "The BFF and governance layers require the authenticated MFA value to be exactly true before issuance or revocation.",
+      "status": "pass"
+    },
+    "no_live_capital": {
+      "proof": "The implementation controls task closeout only and grants no broker, allocation, deployment, runtime-control, or capital mutation authority.",
+      "status": "pass"
+    },
+    "rbac": {
+      "proof": "Only configured Human/Ops roles can issue or revoke, and known fleet identities are denied independently of claimed role.",
+      "status": "pass"
+    },
+    "tenant_isolation": {
+      "proof": "The closeout verdict is a global program-control record rather than tenant data; tenant isolation is outside this task's data boundary.",
+      "status": "not_applicable"
+    },
+    "two_person_approval": {
+      "proof": "Owner Codex and reviewer Codex2 are distinct. Owner evidence does not count as the formal reviewer verdict; the guard requires an approved Codex2 record before done.",
+      "status": "pass"
+    }
+  },
+  "acceptance": [
+    {
+      "evidence_refs": [
+        "services/control-plane/bff/product_closeout_verdict.py",
+        "services/control-plane/governance/product_closeout_verdict.py",
+        "services/control-plane/bff/test_product_closeout_verdict.py"
+      ],
+      "id": "AC1",
+      "statement": "Only an authenticated authorized Human or Ops actor can issue the final verdict.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/control-plane/governance/product_closeout_verdict.schema.json",
+        "services/control-plane/governance/product_closeout_verdict.py",
+        "services/control-plane/governance/test_product_closeout_verdict.py"
+      ],
+      "id": "AC2",
+      "statement": "The verdict binds the exact program catalog, task, closeout manifest, target, frontend, and backend identities.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "scripts/loop_done_guardrail.py",
+        "scripts/ai_status.py",
+        "scripts/test_loop_done_guardrail.py",
+        "scripts/test_ai_status.py"
+      ],
+      "id": "AC3",
+      "statement": "Review-approved and done transitions fail closed for missing, rejected, revoked, replayed, stale, expired, tampered, unconsumed, or mismatched verdicts.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/control-plane/governance/product_closeout_verdict.py",
+        "services/control-plane/bff/product_closeout_verdict.py",
+        "services/control-plane/governance/test_product_closeout_verdict.py",
+        "scripts/test_loop_done_guardrail.py"
+      ],
+      "id": "AC4",
+      "statement": "Fleet workers and candidate-controlled files or task metadata cannot self-sign or bypass protected authority.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/control-plane/governance/test_product_closeout_verdict.py",
+        "services/control-plane/bff/test_product_closeout_verdict.py",
+        "scripts/test_loop_done_guardrail.py",
+        "scripts/test_ai_status.py"
+      ],
+      "id": "AC5",
+      "statement": "Tamper, replay, wrong-role, wrong-task, wrong-SHA, expiry, revocation, concurrent-decision, direct-state-edit, and alternate-transition negatives pass.",
+      "status": "pass"
+    }
+  ],
+  "residual_risks": {
+    "external_activation": {
+      "blocking_for_this_task": false,
+      "containment": "Missing router composition, policy, key, or ledger configuration leaves protected closeout transitions fail closed; no permissive repository default exists.",
+      "description": "Live BFF route mounting and protected Human/Ops policy and ledger provisioning remain downstream integration responsibilities.",
+      "expiry": "When L12-BFF-001 and L12-MANIFEST-001 activate and validate the route and protected configuration.",
+      "owner": "L12-BFF-001 and L12-MANIFEST-001",
+      "recheck_trigger": "Before dev or hosted closeout activation.",
+      "severity": "medium"
+    },
+    "independent_review": {
+      "blocking_for_this_task": false,
+      "containment": "The owner admission is explicitly non-final and the governed closeout guard still requires a distinct approved Codex2 record.",
+      "description": "Codex2 independent review has not yet been asserted in this owner evidence cut.",
+      "expiry": "At formal Codex2 approval or changes-requested verdict.",
+      "owner": "Codex2",
+      "recheck_trigger": "Immediately after PR and evidence handoff.",
+      "severity": "informational"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.json",
+    "normalized_hosted_readback": {
+      "hosted_activation_claimed": false,
+      "focused_tests_passed": 236,
+      "focused_subtests_passed": 23,
+      "smoke_acceptance_passed": true
+    },
+    "self_hash_omitted": true,
+    "self_hash_reason": "The companion checksum file contains the manifest digest and avoids recursive self-hashing.",
+    "source_artifact_sha256_by_epoch": {
+      "2026-07-26-owner-evidence": {
+        "catalog_canonical_json": "a7fbbaa560bd7f2d97750b25cd20af69b64d4f522b293689849b0e1b1763717f",
+        "services/control-plane/governance/product_closeout_verdict.py": "b67a7c448d8b333e8d73f0c836942e02fe4bfc65261cf360536337c0bc309c9d",
+        "services/control-plane/governance/product_closeout_verdict.schema.json": "8ce0069cb1b5598388596935a55b1fe6e7e8eb3626dd606e0aa91ee9ac3b58b6",
+        "services/control-plane/governance/test_product_closeout_verdict.py": "ed0ccf26238e100452a4e2fa7ad02cfe1eb85428f4f97b373a431b764e0f3bfd",
+        "services/control-plane/bff/product_closeout_verdict.py": "7686ecdb87ad5034394dcdfcfe18981190a1945473e88790708e4eb2843e775b",
+        "services/control-plane/bff/test_product_closeout_verdict.py": "aaab37a70ab5b6046aa9574838d6f1db6fd8b2c3dbfd26eec87dbf2bb97a358e",
+        "scripts/loop_done_guardrail.py": "51af9d0a92202ba6edf4dad92ea84643760708c8c9fdbbb8d48e191b720573bc",
+        "scripts/test_loop_done_guardrail.py": "6582aa323f2b428253340583d57a084885c05eeaf02a816dbf5cd21e3410632c",
+        "scripts/ai_status.py": "979c7149da6f201f09c7aabac3882de2108246e137af4ab4e44d901eb3dc866a",
+        "scripts/test_ai_status.py": "7fd38502dc5714f2fd3988751228aa7d2ef1f2b0825a774f944280ecbdb046ab"
+      }
+    }
+  },
+  "record_log": [
+    {
+      "actor": "Codex",
+      "kind": "owner_evidence_ready",
+      "recorded_at": "2026-07-26T13:08:12Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.json",
+      "sequence": 1,
+      "sha": "47b78c0f348eb6ad87df569289427175251f2d97",
+      "status": "pass"
+    }
+  ]
+}
