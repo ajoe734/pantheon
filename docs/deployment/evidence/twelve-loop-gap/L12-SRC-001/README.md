@@ -2,7 +2,7 @@
 
 Owner: Codex2
 Reviewer: Codex
-Status: review approved; owner closeout publication finalized
+Status: review approved; product evidence manifest finalized
 
 ## Outcome
 
@@ -52,6 +52,10 @@ PR #4144 merged the supervised due-state boundary at
 cross-process repair at `e79b6ee483c352463c8653b094f99377b383fda8`;
 Commit trailers, Runtime mirror guard, and Smoke acceptance passed. Codex
 independently approved the repaired multi-process acceptance on 2026-07-26.
+PR #4163 then merged the owner publication refresh at
+`b7e40ccccc3a2c05c97c43e55d602df0bd15cfa8`. The companion
+`evidence.sha256` binds the schema-normalized product evidence manifest used
+by the governed closeout gate.
 
 The earlier thread-only tests remain as same-process regression coverage and
 are explicitly named `*_threads_*`; they are not the two-worker acceptance
