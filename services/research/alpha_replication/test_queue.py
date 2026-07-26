@@ -128,8 +128,10 @@ def test_claim_lease_expires_and_stale_token_cannot_ack(tmp_path) -> None:
             "tenant-a",
             first["strategy_spec_id"],
             claim_token=first["claim_token"],
-            task_id="etask-stale",
-            run_id="erun-stale",
+            authority_task_id="rtask-stale",
+            authority_run_id="rrun-stale",
+            experiment_task_id="etask-stale",
+            experiment_run_id="erun-stale",
             now=NOW + timedelta(seconds=32),
         )
         is False
@@ -138,13 +140,17 @@ def test_claim_lease_expires_and_stale_token_cannot_ack(tmp_path) -> None:
         "tenant-a",
         reclaimed["strategy_spec_id"],
         claim_token=reclaimed["claim_token"],
-        task_id="etask-current",
-        run_id="erun-current",
+        authority_task_id="rtask-current",
+        authority_run_id="rrun-current",
+        experiment_task_id="etask-current",
+        experiment_run_id="erun-current",
         now=NOW + timedelta(seconds=32),
     )
 
     entry = queue.list_all()[0]
     assert entry["status"] == "completed"
+    assert entry["authority_task_id"] == "rtask-current"
+    assert entry["authority_run_ids"] == ["rrun-current"]
     assert entry["experiment_task_id"] == "etask-current"
     assert entry["experiment_run_ids"] == ["erun-current"]
 
@@ -227,6 +233,65 @@ def test_failures_reach_dlq_and_replay_is_idempotent_and_tenant_scoped(tmp_path)
     assert replayed["status"] == "pending"
     assert replayed["attempt_count"] == 0
     assert replayed["replay_count"] == 1
+    assert replayed["consumed_replay_ids"] == ["replay-alpha-001"]
+
+
+def test_replay_id_aba_reuse_is_always_a_noop_after_restart(tmp_path) -> None:
+    queue = AlphaReplicationQueue(tmp_path)
+    payload = _approved_spec()
+    queue.enqueue(payload, now=NOW)
+
+    def fail_to_dlq(at: datetime) -> None:
+        claim = _claim(queue, now=at)
+        assert queue.mark_failed(
+            "tenant-a",
+            claim["strategy_spec_id"],
+            claim_token=claim["claim_token"],
+            error="operator replay regression",
+            max_retries=1,
+            now=at + timedelta(seconds=1),
+        )
+        assert queue.list_all()[0]["status"] == "dlq"
+
+    fail_to_dlq(NOW + timedelta(minutes=1))
+    assert queue.replay_dlq(
+        "tenant-a",
+        payload["strategy_spec_id"],
+        replay_id="replay-A",
+        replayed_by="operator-a",
+        reason="first repair",
+        now=NOW + timedelta(minutes=2),
+    )
+
+    fail_to_dlq(NOW + timedelta(minutes=3))
+    assert queue.replay_dlq(
+        "tenant-a",
+        payload["strategy_spec_id"],
+        replay_id="replay-B",
+        replayed_by="operator-b",
+        reason="second repair",
+        now=NOW + timedelta(minutes=4),
+    )
+
+    fail_to_dlq(NOW + timedelta(minutes=5))
+    restarted = AlphaReplicationQueue(tmp_path)
+    assert (
+        restarted.replay_dlq(
+            "tenant-a",
+            payload["strategy_spec_id"],
+            replay_id="replay-A",
+            replayed_by="operator-a",
+            reason="stale ABA retry",
+            now=NOW + timedelta(minutes=6),
+        )
+        is False
+    )
+
+    entry = restarted.list_all()[0]
+    assert entry["status"] == "dlq"
+    assert entry["last_replay_id"] == "replay-B"
+    assert entry["consumed_replay_ids"] == ["replay-A", "replay-B"]
+    assert entry["replay_count"] == 2
 
 
 def test_queue_state_survives_process_restart(tmp_path) -> None:
