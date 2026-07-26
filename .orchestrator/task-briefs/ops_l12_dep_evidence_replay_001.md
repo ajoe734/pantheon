@@ -57,14 +57,16 @@ all validation below is re-run on the corrected shape.
 
 ## Validation
 
-Global evidence-root replay, baseline taken in a detached worktree at the
-pre-change `HEAD` (`d54e1510a`) and compared to the post-change tree via
-`--audit-json`:
+All numbers below are re-cut at the merged head, after `origin/dev`
+(`51c1e9fc3`) was merged into this branch. That merge brought in a
+`scripts/loop_done_guardrail.py` change and two re-cut sibling packets, so the
+baseline was re-taken in a detached worktree at `origin/dev` rather than reused
+from the earlier run.
 
 ```text
 python3 scripts/loop_done_guardrail.py --evidence-root docs/deployment/evidence
-before: {'passed': 13, 'failed': 18, 'scanned': 31}
-after : {'passed': 13, 'failed': 17, 'scanned': 30}
+before (origin/dev 51c1e9fc3): {'passed': 14, 'failed': 18, 'scanned': 32}
+after  (task head):            {'passed': 14, 'failed': 17, 'scanned': 31}
 
 audit result-set delta over the full record
 (task_id, manifest, owner, reviewer, overall_admission, result, gap_count, gaps)
@@ -78,7 +80,7 @@ only-before: 1  docs/deployment/evidence/twelve-loop-gap/L12-DEP-001/evidence.js
                'missing reviewer verdict: no approved formal reviewer verdict
                 recorded in record_log']
 only-after : 0
-excluded_manifests: identical (15 entries, unchanged)
+excluded_manifests: identical
 ```
 
 L12-DEP-001 now resolves to exactly one replay source and it passes:
@@ -115,7 +117,7 @@ git merge-base --is-ancestor 22e9e319e origin/dev   # exit 0
 
 /home/lupin/pantheon/.venv/bin/pytest -q \
   scripts/test_loop_done_guardrail.py scripts/test_ai_status.py
-207 passed, 23 subtests passed in 30.12s
+213 passed, 31 subtests passed in 34.00s
 
 git diff --check HEAD                   # exit 0
 ```
