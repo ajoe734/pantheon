@@ -5289,8 +5289,10 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"Unknown task: {task_id}")
     owner = canonical_agent_name(task.get("owner"))
     reviewer = canonical_agent_name(task.get("reviewer"))
-    if actor not in {owner, reviewer}:
-        raise SystemExit(f"Only the owner ({owner}) or reviewer ({reviewer}) can reopen {task_id}")
+    if actor not in {owner, reviewer, "Human/Ops"}:
+        raise SystemExit(
+            f"Only the owner ({owner}), reviewer ({reviewer}), or Human/Ops can reopen {task_id}"
+        )
     timestamp = iso_now()
     task["status"] = "in_progress"
     task["last_update"] = timestamp
