@@ -23,8 +23,12 @@ desired/actual JSONB round-trip, and same-loop isolation across tenant and
 environment keys.
 
 The machine-readable receipt is
-[`evidence.json`](evidence.json), and
-[`evidence.sha256`](evidence.sha256) binds its exact bytes.
+[`evidence.json`](evidence.json), which conforms to
+`schemas/product-evidence.schema.json`. The reviewer-approved packet is
+preserved byte-identically as
+[`reviewed-controller-evidence.json`](reviewed-controller-evidence.json)
+(`sha256 bc77e37f981d8c566e706f3313b06dd92c9d52bb29d7dae7313bf4690e2a4ff9`), and
+[`evidence.sha256`](evidence.sha256) binds the exact bytes of both files.
 
 ## Validation
 
@@ -95,9 +99,29 @@ sha256sum -c evidence.sha256                                     # evidence.json
 git diff --check origin/dev...HEAD                               # exit 0
 ```
 
-`Claude` changed no controller behavior, no reviewed `evidence.json` byte, and
-no checksum during this finalization; only the task brief owner-of-record line
-and this closeout note were updated.
+`Claude` changed no controller behavior during this finalization.
+
+### Product-evidence schema normalization
+
+The product-level `done` gate (`scripts/loop_done_guardrail.py`) requires the
+task's `review_file` manifest to satisfy
+`schemas/product-evidence.schema.json`. The reviewed packet predated that shape,
+so owner-of-record `Claude` normalized it:
+
+- the reviewer-approved packet was preserved byte-identically as
+  `reviewed-controller-evidence.json`, digest unchanged at
+  `bc77e37f981d8c566e706f3313b06dd92c9d52bb29d7dae7313bf4690e2a4ff9`;
+- `evidence.json` was rewritten in the `loop_product_evidence.v1` shape,
+  carrying the same scope, validation results, acceptance verdicts, residuals,
+  and the same independent `Codex2` approval of candidate `147495e6b`
+  (reviewer evidence commit `d1854c512`) recorded in the canonical
+  `review_approved` activity event;
+- `evidence.sha256` now covers both files.
+
+No acceptance verdict was upgraded, no reviewer decision was re-derived, and no
+new proof claim was introduced by the normalization. After it, the
+integrated head re-ran the same regression at `110 passed in 30.92s`, schema
+validation passed, and the guardrail reported no closure gaps.
 
 Hosted deployment and all-loop live drill admission remain owned by
 `L12-MANIFEST-001` and `L12-HOSTED-001`; this task does not enable live-capital
