@@ -550,8 +550,7 @@ class SignalConsumer:
         except Exception as exc:
             log.exception("Unexpected execution error for signal %s: %s",
                           signal.get("signal_id"), exc)
-            if self._enqueue_dlq(signal, f"unexpected_error: {exc}"):
-                self._remember_processed(signal["signal_id"])
+            self._enqueue_dlq(signal, f"unexpected_error: {exc}")
 
     def _record_execution_error_noop(self, signal: dict, algo: Any | None, exc: Exception) -> None:
         reason = _execution_error_reason(exc)

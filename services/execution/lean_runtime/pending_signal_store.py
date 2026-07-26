@@ -24,7 +24,6 @@ from __future__ import annotations
 import json
 import os
 import sys
-import time
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -385,12 +384,16 @@ return moved
         else:
             signal_id = str(signal_or_id).strip()
             raw = str(signal_or_id)
-        candidates = self._claim_tokens_by_signal_id.get(signal_id) or []
-        if candidates:
-            return candidates[0]
-        raw_candidates = self._claim_tokens_by_raw.get(raw) or []
-        if raw_candidates:
-            return raw_candidates[0]
+        candidates = list(self._claim_tokens_by_signal_id.get(signal_id) or [])
+        for token in candidates:
+            if self._client.hexists(self._inflight_key, token):
+                return token
+            self._forget_claim(token)
+        raw_candidates = list(self._claim_tokens_by_raw.get(raw) or [])
+        for token in raw_candidates:
+            if self._client.hexists(self._inflight_key, token):
+                return token
+            self._forget_claim(token)
 
         # A caller may acknowledge after rebuilding its local consumer object.
         # Resolve that claim from the worker-scoped durable hash, then perform

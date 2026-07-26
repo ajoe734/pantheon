@@ -8,7 +8,13 @@ Acceptance coverage:
 from __future__ import annotations
 
 import json
+import multiprocessing
+import shutil
+import socket
+import subprocess
+import time
 import unittest
+import uuid
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
@@ -19,6 +25,116 @@ from services.execution.lean_runtime.pending_signal_store import (
     BINDING_DLQ_KEY_PREFIX,
     BINDING_QUEUE_KEY_PREFIX,
 )
+
+
+def _redis_claim_process(
+    redis_url: str,
+    queue_key: str,
+    worker_id: str,
+    result_queue,
+    *,
+    acknowledge: bool,
+) -> None:
+    """Claim one signal in a fresh process, optionally acknowledge it."""
+    from services.execution.lean_runtime.pending_signal_store import (
+        RedisPendingSignalStore,
+    )
+
+    store = RedisPendingSignalStore(
+        redis_url,
+        queue_key=queue_key,
+        worker_id=worker_id,
+        visibility_timeout_seconds=0.25,
+    )
+    claimed = store.get_pending(limit=1)
+    result_queue.put(
+        {
+            "worker_id": worker_id,
+            "signal_ids": [item["signal_id"] for item in claimed],
+            "inflight_depth": store.inflight_depth(),
+        }
+    )
+    if acknowledge and claimed:
+        store.ack(claimed[0])
+
+
+class _RealRedisDockerTestCase(unittest.TestCase):
+    """Own a disposable real Redis 7 container for crash-boundary tests."""
+
+    redis_url = ""
+    _container_name = ""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        super().setUpClass()
+        if shutil.which("docker") is None:
+            raise unittest.SkipTest("docker is required for real Redis proof")
+        probe = subprocess.run(
+            ["docker", "info"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if probe.returncode != 0:
+            raise unittest.SkipTest("docker daemon is unavailable for real Redis proof")
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = int(sock.getsockname()[1])
+        cls._container_name = f"l12-cap-redis-{uuid.uuid4().hex[:10]}"
+        started = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "-d",
+                "--name",
+                cls._container_name,
+                "-p",
+                f"127.0.0.1:{port}:6379",
+                "redis:7-alpine",
+                "redis-server",
+                "--save",
+                "",
+                "--appendonly",
+                "no",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if started.returncode != 0:
+            raise unittest.SkipTest(f"could not start Redis container: {started.stderr}")
+        cls.redis_url = f"redis://127.0.0.1:{port}/15"
+        import redis
+
+        client = redis.Redis.from_url(cls.redis_url, decode_responses=True)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            try:
+                if client.ping():
+                    return
+            except Exception:
+                time.sleep(0.05)
+        cls.tearDownClass()
+        raise RuntimeError("real Redis container did not become ready")
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        if cls._container_name:
+            subprocess.run(
+                ["docker", "rm", "-f", cls._container_name],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            cls._container_name = ""
+        super().tearDownClass()
+
+    def setUp(self) -> None:
+        import redis
+
+        self.redis = redis.Redis.from_url(self.redis_url, decode_responses=True)
+        self.redis.flushdb()
 
 
 def _signal(
@@ -271,7 +387,12 @@ class TestDLQRouting(unittest.TestCase):
         algo = _RecordingAlgo()
         # Should not raise; DLQ write is best-effort
         c.drain(algo=algo)
-        self.assertIn("s-dlq-err", c._processed_signal_ids)
+        self.assertNotIn(
+            "s-dlq-err",
+            c._processed_signal_ids,
+            "failed durable DLQ transfer must remain replayable",
+        )
+        self.assertEqual(store.inflight_depth(), 1)
         self.assertEqual(algo.noops[0]["noop_reason"], "runtime_mismatch")
 
     def test_store_without_enqueue_dlq_works_fine(self):
@@ -405,47 +526,155 @@ class TestCombinedIsolation(unittest.TestCase):
 # Redis claim & visibility timeout tests (B1)
 # ---------------------------------------------------------------------------
 
-class TestRedisPendingSignalStoreClaimVisibility(unittest.TestCase):
+class TestRedisPendingSignalStoreClaimVisibility(_RealRedisDockerTestCase):
 
-    def test_reclaim_expired_inflight_only_reclaims_expired_items(self):
-        import sys
-        from unittest.mock import patch, MagicMock
-        from services.execution.lean_runtime.pending_signal_store import RedisPendingSignalStore
+    def _store(self, worker_id: str, *, binding_id: str = "b-001"):
+        from services.execution.lean_runtime.pending_signal_store import (
+            RedisPendingSignalStore,
+            binding_queue_key,
+        )
 
-        mock_redis_client = MagicMock()
-        mock_redis = MagicMock()
-        mock_redis.Redis.from_url.return_value = mock_redis_client
+        return RedisPendingSignalStore(
+            self.redis_url,
+            queue_key=binding_queue_key(binding_id),
+            worker_id=worker_id,
+            visibility_timeout_seconds=0.25,
+        )
 
-        now = 1000.0
-        def _hget(key, field):
-            skey = str(key)
-            if "worker-A" in skey:
-                return str(now - 10.0) # 10s old < 300s timeout
-            if "worker-B" in skey:
-                return str(now - 400.0) # 400s old > 300s timeout
-            return None
+    def test_live_claim_is_not_stolen_then_crash_claim_is_recovered(self):
+        signal = _signal(
+            "sig-crash-001",
+            binding_id="b-001",
+            runtime_id="rt-001",
+            capital_pool_id="pool-001",
+        )
+        worker_a = self._store("worker-A")
+        worker_b = self._store("worker-B")
+        worker_a.enqueue(signal)
 
-        mock_redis_client.hget.side_effect = _hget
-        mock_redis_client.lrange.side_effect = lambda k, s, e: [json.dumps({"signal_id": "sig-1"})]
-        mock_redis_client.lrem.return_value = 1
-        mock_redis_client.scan.side_effect = lambda cursor=0, match="", count=100: (0, ["pantheon:signals:pending:b-001:inflight:worker-A", "pantheon:signals:pending:b-001:inflight:worker-B"])
+        claimed_a = worker_a.get_pending(limit=1)
+        self.assertEqual([item["signal_id"] for item in claimed_a], ["sig-crash-001"])
+        self.assertEqual(worker_a.inflight_depth(), 1)
+        self.assertEqual(worker_b.get_pending(limit=1), [])
 
-        with patch.dict(sys.modules, {"redis": mock_redis}):
-            store = RedisPendingSignalStore(
-                "redis://localhost:6379",
-                queue_key="pantheon:signals:pending:b-001",
-                worker_id="worker-A",
-                visibility_timeout_seconds=300,
-            )
-        store._time_fn = lambda: now
+        # Simulate worker-A crashing without ack.  A new worker can reclaim only
+        # after Redis server time crosses the visibility deadline.
+        time.sleep(0.3)
+        claimed_b = worker_b.get_pending(limit=1)
+        self.assertEqual([item["signal_id"] for item in claimed_b], ["sig-crash-001"])
+        self.assertEqual(worker_a.inflight_depth(), 0)
+        worker_b.ack(claimed_b[0])
+        self.assertEqual(worker_b.inflight_depth(), 0)
+        self.assertEqual(worker_b.queue_depth(), 0)
 
-        store.reclaim_expired_inflight()
+    def test_claim_response_loss_remains_recoverable(self):
+        signal = _signal(
+            "sig-response-loss",
+            binding_id="b-001",
+            runtime_id="rt-001",
+            capital_pool_id="pool-001",
+        )
+        worker_a = self._store("worker-A")
+        worker_a.enqueue(signal)
+        real_client = worker_a._client
 
-        # worker-A list should NOT be reclaimed (lrem for worker-A not executed)
-        # worker-B list SHOULD be reclaimed
-        calls = mock_redis_client.lrem.call_args_list
-        self.assertEqual(len(calls), 1)
-        self.assertIn("worker-B", calls[0][0][0])
+        class _RaiseAfterClaim:
+            def __init__(self):
+                self.raised = False
+
+            def __getattr__(self, name):
+                return getattr(real_client, name)
+
+            def eval(self, script, *args):
+                result = real_client.eval(script, *args)
+                if script == worker_a._CLAIM_LUA and not self.raised:
+                    self.raised = True
+                    raise ConnectionError("simulated response loss after atomic claim")
+                return result
+
+        worker_a._client = _RaiseAfterClaim()
+        with self.assertRaises(ConnectionError):
+            worker_a.get_pending(limit=1)
+        self.assertEqual(worker_a.queue_depth(), 0)
+        self.assertEqual(worker_a.inflight_depth(), 1)
+
+        time.sleep(0.3)
+        worker_b = self._store("worker-B")
+        recovered = worker_b.get_pending(limit=1)
+        self.assertEqual([item["signal_id"] for item in recovered], ["sig-response-loss"])
+
+    def test_nack_and_dlq_are_atomic_claim_transfers(self):
+        worker = self._store("worker-A")
+        first = _signal(
+            "sig-nack",
+            binding_id="b-001",
+            runtime_id="rt-001",
+            capital_pool_id="pool-001",
+        )
+        worker.enqueue(first)
+        claimed = worker.get_pending(limit=1)
+        worker.nack_requeue(claimed[0])
+        self.assertEqual(worker.inflight_depth(), 0)
+        self.assertEqual(worker.queue_depth(), 1)
+
+        reclaimed = worker.get_pending(limit=1)
+        worker.enqueue_dlq({**reclaimed[0], "_dlq_reason": "forced-test"})
+        self.assertEqual(worker.inflight_depth(), 0)
+        self.assertEqual(worker.queue_depth(), 0)
+        self.assertEqual(worker.dlq_depth(), 1)
+
+    def test_ack_nack_and_dlq_response_loss_has_no_signal_loss_window(self):
+        worker = self._store("worker-A")
+        real_client = worker._client
+
+        class _RaiseAfterScript:
+            def __init__(self, target_script):
+                self.target_script = target_script
+                self.raised = False
+
+            def __getattr__(self, name):
+                return getattr(real_client, name)
+
+            def eval(self, script, *args):
+                result = real_client.eval(script, *args)
+                if script == self.target_script and not self.raised:
+                    self.raised = True
+                    raise ConnectionError("simulated response loss after atomic transition")
+                return result
+
+        ack_signal = _signal(
+            "sig-ack-response-loss",
+            binding_id="b-001",
+            runtime_id="rt-001",
+            capital_pool_id="pool-001",
+        )
+        worker.enqueue(ack_signal)
+        ack_claim = worker.get_pending(limit=1)[0]
+        worker._client = _RaiseAfterScript(worker._ACK_LUA)
+        with self.assertRaises(ConnectionError):
+            worker.ack(ack_claim)
+        worker._client = real_client
+        self.assertEqual(worker.inflight_depth(), 0)
+        self.assertEqual(worker.queue_depth(), 0)
+
+        nack_signal = {**ack_signal, "signal_id": "sig-nack-response-loss"}
+        worker.enqueue(nack_signal)
+        nack_claim = worker.get_pending(limit=1)[0]
+        worker._client = _RaiseAfterScript(worker._TRANSFER_LUA)
+        with self.assertRaises(ConnectionError):
+            worker.nack_requeue(nack_claim)
+        worker._client = real_client
+        self.assertEqual(worker.inflight_depth(), 0)
+        self.assertEqual(worker.queue_depth(), 1)
+
+        dlq_claim = worker.get_pending(limit=1)[0]
+        worker._client = _RaiseAfterScript(worker._TRANSFER_LUA)
+        with self.assertRaises(ConnectionError):
+            worker.enqueue_dlq({**dlq_claim, "_dlq_reason": "response-loss"})
+        worker._client = real_client
+        self.assertEqual(worker.inflight_depth(), 0)
+        self.assertEqual(worker.queue_depth(), 0)
+        self.assertEqual(worker.dlq_depth(), 1)
 
 
 # ---------------------------------------------------------------------------
@@ -484,7 +713,7 @@ class TestLeaderLeaseCrossProcess(unittest.TestCase):
 # Execution Error DLQ Routing & 6-Binding Drill (B3)
 # ---------------------------------------------------------------------------
 
-class TestExecutionErrorDLQ(unittest.TestCase):
+class TestExecutionErrorDLQ(_RealRedisDockerTestCase):
 
     def test_execution_error_routes_to_dlq(self):
         store = InMemoryPendingSignalStore()
@@ -501,38 +730,116 @@ class TestExecutionErrorDLQ(unittest.TestCase):
         self.assertEqual(dlq_items[0]["signal_id"], "exec-err-1")
         self.assertTrue(any(k in dlq_items[0]["_dlq_reason"] for k in ("execution_error", "unexpected_error")))
 
+    def test_execution_error_atomically_moves_real_redis_claim_to_dlq(self):
+        from services.execution.lean_runtime.pending_signal_store import (
+            RedisPendingSignalStore,
+            binding_queue_key,
+        )
 
-class TestSixBindingRestartIsolationDrill(unittest.TestCase):
+        store = RedisPendingSignalStore(
+            self.redis_url,
+            queue_key=binding_queue_key("b-real-dlq"),
+            worker_id="worker-real-dlq",
+            visibility_timeout_seconds=5,
+        )
+        store.enqueue(
+            _signal(
+                "exec-err-real",
+                binding_id="b-real-dlq",
+                runtime_id="rt-real-dlq",
+                capital_pool_id="pool-real-dlq",
+            )
+        )
+        consumer = SignalConsumer(
+            store_client=store,
+            binding_id="b-real-dlq",
+            runtime_id="rt-real-dlq",
+            capital_pool_id="pool-real-dlq",
+        )
+        with patch(
+            "services.execution.lean_runtime.signal_consumer.execute",
+            side_effect=ValueError("simulated broker exception"),
+        ):
+            consumer.drain(algo=_RecordingAlgo())
+
+        self.assertEqual(store.inflight_depth(), 0)
+        self.assertEqual(store.queue_depth(), 0)
+        self.assertEqual(store.dlq_depth(), 1)
+        dlq_payload = json.loads(self.redis.lindex(store._dlq_key, 0))
+        self.assertEqual(dlq_payload["signal_id"], "exec-err-real")
+        self.assertIn("unexpected_error", dlq_payload["_dlq_reason"])
+
+
+class TestSixBindingRestartIsolationDrill(_RealRedisDockerTestCase):
 
     def test_six_binding_restart_isolation(self):
-        """Simulate 6 bindings being reconciled, ensuring strict key/worker isolation."""
-        bindings = [
-            _signal(f"sig-{i}", binding_id=f"b-00{i}", runtime_id=f"rt-00{i}", capital_pool_id=f"pool-00{i}")
-            for i in range(1, 7)
-        ]
-        stores = {f"b-00{i}": InMemoryPendingSignalStore() for i in range(1, 7)}
-        consumers = {
-            f"b-00{i}": SignalConsumer(
-                store_client=stores[f"b-00{i}"],
-                binding_id=f"b-00{i}",
-                runtime_id=f"rt-00{i}",
-                capital_pool_id=f"pool-00{i}",
+        """Six crashed processes recover only their own Redis binding queue."""
+        from services.execution.lean_runtime.pending_signal_store import (
+            RedisPendingSignalStore,
+            binding_queue_key,
+        )
+
+        context = multiprocessing.get_context("spawn")
+        result_queue = context.Queue()
+        crash_processes = []
+        for index in range(1, 7):
+            binding_id = f"b-00{index}"
+            store = RedisPendingSignalStore(
+                self.redis_url,
+                queue_key=binding_queue_key(binding_id),
+                worker_id="producer",
+                visibility_timeout_seconds=0.25,
             )
-            for i in range(1, 7)
-        }
+            store.enqueue(
+                _signal(
+                    f"sig-{index}",
+                    binding_id=binding_id,
+                    runtime_id=f"rt-00{index}",
+                    capital_pool_id=f"pool-00{index}",
+                )
+            )
+            process = context.Process(
+                target=_redis_claim_process,
+                args=(
+                    self.redis_url,
+                    binding_queue_key(binding_id),
+                    f"crashed-worker-{index}",
+                    result_queue,
+                ),
+                kwargs={"acknowledge": False},
+            )
+            process.start()
+            crash_processes.append(process)
 
-        # Enqueue correctly scoped signals
-        for i, sig in enumerate(bindings, 1):
-            stores[f"b-00{i}"].enqueue(sig)
+        for process in crash_processes:
+            process.join(timeout=10)
+            self.assertEqual(process.exitcode, 0)
+        crashed = [result_queue.get(timeout=2) for _ in range(6)]
+        self.assertEqual(
+            {item["signal_ids"][0] for item in crashed},
+            {f"sig-{index}" for index in range(1, 7)},
+        )
 
-        # Drain each worker
-        with patch("services.execution.lean_runtime.signal_consumer.execute") as mock_exec:
-            for i in range(1, 7):
-                consumers[f"b-00{i}"].drain(algo=_RecordingAlgo())
+        time.sleep(0.3)
+        recovered_by_binding = {}
+        for index in range(1, 7):
+            binding_id = f"b-00{index}"
+            restarted = RedisPendingSignalStore(
+                self.redis_url,
+                queue_key=binding_queue_key(binding_id),
+                worker_id=f"restarted-worker-{index}",
+                visibility_timeout_seconds=0.25,
+            )
+            recovered = restarted.get_pending(limit=1)
+            recovered_by_binding[binding_id] = [item["signal_id"] for item in recovered]
+            self.assertEqual(
+                recovered_by_binding[binding_id],
+                [f"sig-{index}"],
+            )
+            restarted.ack(recovered[0])
 
-        self.assertEqual(mock_exec.call_count, 6)
+        self.assertEqual(len(recovered_by_binding), 6)
 
 
 if __name__ == "__main__":
     unittest.main()
-
