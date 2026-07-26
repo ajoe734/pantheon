@@ -5993,6 +5993,260 @@ def command_archive_correct_review_file(
     )
 
 
+def _normalized_repo_relative_json_path(raw: str, *, label: str) -> str:
+    value = str(raw or "").strip().replace("\\", "/")
+    path = PurePosixPath(value)
+    if (
+        not value
+        or path.is_absolute()
+        or any(part in {"", ".", ".."} for part in path.parts)
+        or path.suffix != ".json"
+    ):
+        raise SystemExit(f"{label} must be a normalized repository-relative JSON path")
+    return path.as_posix()
+
+
+def _active_task_ancestors(
+    state: Mapping[str, Any],
+    task_id: str,
+    *,
+    visiting: set[str] | None = None,
+) -> set[str]:
+    tasks = {
+        str(task.get("id") or ""): task
+        for task in state.get("tasks", [])
+        if isinstance(task, Mapping) and str(task.get("id") or "")
+    }
+    if task_id not in tasks:
+        raise SystemExit(f"Proof ownership references inactive task: {task_id}")
+    visiting = set(visiting or ())
+    if task_id in visiting:
+        raise SystemExit(f"Proof ownership dependency cycle includes {task_id}")
+    visiting.add(task_id)
+    ancestors: set[str] = set()
+    for dependency_id in tasks[task_id].get("depends_on", []) or []:
+        dependency_id = str(dependency_id or "").strip()
+        if not dependency_id:
+            continue
+        ancestors.add(dependency_id)
+        if dependency_id in tasks:
+            ancestors.update(
+                _active_task_ancestors(
+                    state,
+                    dependency_id,
+                    visiting=visiting,
+                )
+            )
+    return ancestors
+
+
+def validate_active_proof_ownership(
+    state: dict[str, Any],
+    task_id: str,
+    proof_ownership_file: str,
+) -> dict[str, Any]:
+    normalized = _normalized_repo_relative_json_path(
+        proof_ownership_file,
+        label="proof ownership file",
+    )
+    candidate = ROOT / normalized
+    symlink_component = _first_symlink_component(candidate)
+    if symlink_component is not None:
+        raise SystemExit(
+            f"Proof ownership file cannot include a symlink component: "
+            f"{symlink_component}"
+        )
+    try:
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(ROOT.resolve(strict=True))
+    except (FileNotFoundError, ValueError) as exc:
+        raise SystemExit(
+            f"Proof ownership file must be inside the command root: {normalized}"
+        ) from exc
+    if not resolved.is_file():
+        raise SystemExit(f"Proof ownership file must be a regular file: {normalized}")
+    try:
+        payload = json.loads(resolved.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(
+            f"Proof ownership file is not readable JSON: {normalized}: {exc}"
+        ) from exc
+    required = {
+        "schema_version",
+        "program_id",
+        "base_catalog_sha256",
+        "generated_at",
+        "delegations",
+    }
+    if not isinstance(payload, dict) or set(payload) != required:
+        raise SystemExit("Proof ownership root contract is not exact")
+    if payload.get("schema_version") != 1:
+        raise SystemExit("Proof ownership schema_version must be 1")
+    program_id = str(payload.get("program_id") or "").strip()
+    base_catalog_sha256 = str(payload.get("base_catalog_sha256") or "").strip()
+    if not program_id or not re.fullmatch(r"[0-9a-f]{64}", base_catalog_sha256):
+        raise SystemExit("Proof ownership identity is invalid")
+
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown active task: {task_id}")
+    guard = _validated_artifact_conflict_guard(task)
+    if (
+        str(task.get("program_id") or "").strip() != program_id
+        or guard is None
+        or guard["program_id"] != program_id
+        or guard["catalog_sha256"] != base_catalog_sha256
+    ):
+        raise SystemExit(
+            f"Proof ownership base catalog does not match active task {task_id}"
+        )
+
+    raw_delegations = payload.get("delegations")
+    if not isinstance(raw_delegations, list) or not raw_delegations:
+        raise SystemExit("Proof ownership delegations must be a non-empty list")
+    delegation_fields = {
+        "source_task_id",
+        "proof",
+        "owner_task_id",
+        "final_witness_task_id",
+        "reason",
+    }
+    task_delegations: list[dict[str, str]] = []
+    identities: set[tuple[str, str]] = set()
+    for index, raw in enumerate(raw_delegations):
+        if not isinstance(raw, dict) or set(raw) != delegation_fields:
+            raise SystemExit(
+                f"Proof ownership delegation {index} contract is not exact"
+            )
+        delegation = {
+            key: str(raw.get(key) or "").strip()
+            for key in sorted(delegation_fields)
+        }
+        if any(not value for value in delegation.values()):
+            raise SystemExit(
+                f"Proof ownership delegation {index} contains an empty field"
+            )
+        identity = (
+            delegation["source_task_id"],
+            delegation["proof"],
+        )
+        if identity in identities:
+            raise SystemExit("Proof ownership contains a duplicate delegation")
+        identities.add(identity)
+        if delegation["source_task_id"] != task_id:
+            continue
+        if delegation["proof"] not in (task.get("proof_required") or []):
+            raise SystemExit(
+                f"Delegated proof is not required by active task {task_id}"
+            )
+        owner_id = delegation["owner_task_id"]
+        witness_id = delegation["final_witness_task_id"]
+        if task_id not in _active_task_ancestors(state, owner_id):
+            raise SystemExit(
+                f"Proof owner {owner_id} is not a descendant of {task_id}"
+            )
+        if (
+            owner_id != witness_id
+            and owner_id not in _active_task_ancestors(state, witness_id)
+        ):
+            raise SystemExit(
+                f"Proof witness {witness_id} is not a descendant of {owner_id}"
+            )
+        task_delegations.append(delegation)
+    if not task_delegations:
+        raise SystemExit(
+            f"Proof ownership file has no delegation for active task {task_id}"
+        )
+
+    return {
+        "schema_version": 1,
+        "program_id": program_id,
+        "base_catalog_sha256": base_catalog_sha256,
+        "proof_ownership_file": normalized,
+        "proof_ownership_sha256": hashlib.sha256(resolved.read_bytes()).hexdigest(),
+        "delegations": task_delegations,
+    }
+
+
+def command_attach_proof_ownership(
+    state: dict[str, Any],
+    args: list[str],
+) -> None:
+    if len(args) < 3:
+        raise SystemExit(
+            "Usage: attach_proof_ownership "
+            "<task-id> <repo-relative-proof-ownership-file> <reason>"
+        )
+    task_id, proof_ownership_file, reason = args[0], args[1], args[2]
+    actor = current_actor()
+    ensure_agent(actor)
+    if actor != "Human/Ops":
+        raise SystemExit(
+            "Only Human/Ops can attach program proof ownership"
+        )
+    context = validate_active_proof_ownership(
+        state,
+        task_id,
+        proof_ownership_file,
+    )
+    task = get_task(state, task_id)
+    assert task is not None
+    immutable = {
+        key: context[key]
+        for key in (
+            "schema_version",
+            "program_id",
+            "base_catalog_sha256",
+            "proof_ownership_file",
+            "proof_ownership_sha256",
+            "delegations",
+        )
+    }
+    existing = task.get("proof_ownership")
+    if existing is not None:
+        existing_immutable = {
+            key: existing.get(key)
+            for key in immutable
+        } if isinstance(existing, dict) else {}
+        if existing_immutable != immutable:
+            raise SystemExit(
+                f"Active task {task_id} already has different proof ownership"
+            )
+    timestamp = iso_now()
+    task["proof_ownership"] = {
+        **immutable,
+        "attached_by": actor,
+        "attached_at": (
+            existing.get("attached_at")
+            if isinstance(existing, dict) and existing.get("attached_at")
+            else timestamp
+        ),
+        "reason": reason,
+    }
+    task["last_update"] = timestamp
+    task["next"] = (
+        f"{reason} Delegated proof remains required from "
+        + ", ".join(
+            delegation["owner_task_id"]
+            for delegation in context["delegations"]
+        )
+        + "; current task review must not claim that delegated proof as locally or "
+        "hosted-complete."
+    )
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": actor,
+            "type": "program_proof_ownership_attached",
+            "task_id": task_id,
+            "message": reason,
+            "proof_ownership_file": context["proof_ownership_file"],
+            "proof_ownership_sha256": context["proof_ownership_sha256"],
+            "delegations": context["delegations"],
+        }
+    )
+
+
 def command_prompt(state: dict[str, Any], _args: list[str]) -> None:
     print(build_onboarding_prompt(state))
 
@@ -6140,6 +6394,7 @@ def main(argv: list[str]) -> int:
         "approve": command_approve,
         "archive_migrate": command_archive_migrate,
         "archive_correct_review_file": command_archive_correct_review_file,
+        "attach_proof_ownership": command_attach_proof_ownership,
         "sync": command_sync,
         "wave": command_wave,
     }

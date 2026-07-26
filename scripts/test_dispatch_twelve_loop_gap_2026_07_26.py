@@ -19,6 +19,7 @@ CATALOG = (
     / "2026-07-26-twelve-loop-gap"
     / "tasks.json"
 )
+PROOF_OWNERSHIP = CATALOG.with_name("proof-ownership.json")
 SPEC = importlib.util.spec_from_file_location("dispatch_twelve_loop_gap", SCRIPT)
 assert SPEC and SPEC.loader
 module = importlib.util.module_from_spec(SPEC)
@@ -28,6 +29,10 @@ from rewrite.task_state_store import append_state_commit
 
 def catalog() -> dict:
     return json.loads(CATALOG.read_text(encoding="utf-8"))
+
+
+def proof_ownership() -> dict:
+    return json.loads(PROOF_OWNERSHIP.read_text(encoding="utf-8"))
 
 
 def external_task() -> dict:
@@ -82,6 +87,61 @@ def test_canonical_catalog_is_valid_and_has_unique_sink() -> None:
     assert len(tasks) == 25
     assert tasks[-1]["id"] == "L12-CLOSE-001"
     assert set(tasks[-1]["loop_ids"]) == module.CANONICAL_LOOP_IDS
+
+
+def test_proof_ownership_is_bound_to_catalog_and_forward_dag() -> None:
+    payload = catalog()
+    tasks = module.validate_catalog(payload)
+
+    delegations = module.validate_proof_ownership(
+        proof_ownership(),
+        catalog=payload,
+        tasks=tasks,
+    )
+
+    assert delegations == proof_ownership()["delegations"]
+    assert delegations[0]["source_task_id"] == "L12-TEACH-001"
+    assert delegations[0]["owner_task_id"] == "L12-VERIFY-LEARN-001"
+    assert delegations[0]["final_witness_task_id"] == "L12-HOSTED-001"
+
+
+def test_proof_ownership_rejects_wrong_catalog_digest() -> None:
+    payload = catalog()
+    overlay = proof_ownership()
+    overlay["base_catalog_sha256"] = "0" * 64
+
+    with pytest.raises(module.DispatchError, match="base catalog digest"):
+        module.validate_proof_ownership(
+            overlay,
+            catalog=payload,
+            tasks=module.validate_catalog(payload),
+        )
+
+
+def test_proof_ownership_rejects_backward_or_unrelated_owner() -> None:
+    payload = catalog()
+    overlay = proof_ownership()
+    overlay["delegations"][0]["owner_task_id"] = "L12-FLEET-001"
+
+    with pytest.raises(module.DispatchError, match="descendant"):
+        module.validate_proof_ownership(
+            overlay,
+            catalog=payload,
+            tasks=module.validate_catalog(payload),
+        )
+
+
+def test_proof_ownership_rejects_non_catalog_proof() -> None:
+    payload = catalog()
+    overlay = proof_ownership()
+    overlay["delegations"][0]["proof"] = "invented proof"
+
+    with pytest.raises(module.DispatchError, match="exact source proof"):
+        module.validate_proof_ownership(
+            overlay,
+            catalog=payload,
+            tasks=module.validate_catalog(payload),
+        )
 
 
 def test_human_task_cards_mirror_assignment_header() -> None:
@@ -140,6 +200,8 @@ def test_validate_only_cli() -> None:
     body = json.loads(result.stdout)
     assert body["status"] == "valid"
     assert body["task_count"] == 25
+    assert body["proof_delegation_count"] == 1
+    assert len(body["proof_ownership_sha256"]) == 64
 
 
 def test_rejects_owner_reviewer_match() -> None:
