@@ -23,6 +23,8 @@ def _task_payload(**overrides: object) -> dict:
         "task_id": "etask-20260516-001",
         "strategy_id": "strat-lightgbm-alpha-v1",
         "strategy_spec_version": "1.0.0",
+        "tenant_id": "tenant-research-a",
+        "strategy_spec_id": "reg-strategy-spec-lightgbm-1.0.0",
         "requested_by": "persona-researcher",
         "task_type": "backtest",
         "backend_id": "vectorbt",
@@ -54,6 +56,8 @@ def _run_payload(**overrides: object) -> dict:
         "task_id": "etask-20260516-001",
         "strategy_id": "strat-lightgbm-alpha-v1",
         "strategy_spec_version": "1.0.0",
+        "tenant_id": "tenant-research-a",
+        "strategy_spec_id": "reg-strategy-spec-lightgbm-1.0.0",
         "backend_id": "vectorbt",
         "runtime_env": "research",
         "status": "completed",
@@ -91,6 +95,8 @@ class TestExperimentContracts(unittest.TestCase):
 
         self.assertEqual(task.strategy_id, "strat-lightgbm-alpha-v1")
         self.assertEqual(task.strategy_spec_version, "1.0.0")
+        self.assertEqual(task.tenant_id, "tenant-research-a")
+        self.assertEqual(task.strategy_spec_id, "reg-strategy-spec-lightgbm-1.0.0")
         self.assertEqual(task.dataset_version_id, "dataset-tw-equities-daily-2026q1-v3")
         self.assertEqual(task.to_dict(), payload)
         validate_experiment_task_payload(task.to_dict())
@@ -117,6 +123,12 @@ class TestExperimentContracts(unittest.TestCase):
         with self.assertRaisesRegex(ExperimentValidationError, "backend_id"):
             ExperimentTask.from_dict(_task_payload(backend_id=None))
 
+    def test_tenant_and_canonical_strategy_spec_id_must_be_bound_together(self) -> None:
+        with self.assertRaisesRegex(ExperimentValidationError, "provided together"):
+            ExperimentTask.from_dict(_task_payload(strategy_spec_id=None))
+        with self.assertRaisesRegex(ExperimentValidationError, "provided together"):
+            ExperimentRun.from_dict(_run_payload(tenant_id=None))
+
     def test_task_rejects_unknown_top_level_fields(self) -> None:
         payload = _task_payload()
         payload["unexpected"] = True
@@ -132,6 +144,8 @@ class TestExperimentContracts(unittest.TestCase):
 
         self.assertEqual(run.task_id, "etask-20260516-001")
         self.assertEqual(run.strategy_spec_version, "1.0.0")
+        self.assertEqual(run.tenant_id, "tenant-research-a")
+        self.assertEqual(run.strategy_spec_id, "reg-strategy-spec-lightgbm-1.0.0")
         self.assertEqual(run.dataset_version_id, "dataset-tw-equities-daily-2026q1-v3")
         self.assertEqual(run.code_version, "git:abcdef123456")
         self.assertEqual(run.to_dict(), payload)
@@ -183,6 +197,12 @@ class TestExperimentContracts(unittest.TestCase):
         self.assertIn(
             "run.strategy_spec_version must match task.strategy_spec_version",
             validate_experiment_run_against_task(mismatched_version, task),
+        )
+
+        mismatched_tenant = ExperimentRun.from_dict(_run_payload(tenant_id="tenant-other"))
+        self.assertIn(
+            "run.tenant_id must match task.tenant_id",
+            validate_experiment_run_against_task(mismatched_tenant, task),
         )
 
     def test_run_rejects_execution_runtime_envs(self) -> None:
