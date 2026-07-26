@@ -1198,6 +1198,70 @@ class TestLeaderLease(unittest.TestCase):
         self.assertFalse(reconciler.is_leader)
         self.assertIn("not configured", reconciler.snapshot()["last_error"])
 
+    def test_blocked_spawn_expiry_terminates_stale_leader_child(self) -> None:
+        from paper_fleet_reconciler import (
+            InMemoryFencedLeaderStore,
+            PaperFleetReconciler,
+        )
+
+        shared_store = InMemoryFencedLeaderStore()
+        spawn_entered = threading.Event()
+        release_spawn = threading.Event()
+        stale_process = _FakeProcess(pid=1201)
+        successor_process = _FakeProcess(pid=1202)
+
+        class _BlockedReconciler(PaperFleetReconciler):
+            def _fetch_fleet_state(self):
+                return ([_make_binding("b-blocked-spawn")], set())
+
+            def _spawn(self, binding_id, port, env):  # noqa: ANN001
+                spawn_entered.set()
+                release_spawn.wait(timeout=5)
+                return stale_process
+
+        class _SuccessorReconciler(PaperFleetReconciler):
+            def _fetch_fleet_state(self):
+                return ([_make_binding("b-blocked-spawn")], set())
+
+            def _spawn(self, binding_id, port, env):  # noqa: ANN001
+                return successor_process
+
+        stale = _BlockedReconciler(
+            leader_store=shared_store,
+            leader_lease_ttl_seconds=0.1,
+            reconciler_id="reconciler-stale",
+            drain_timeout_seconds=0.1,
+        )
+        successor = _SuccessorReconciler(
+            leader_store=shared_store,
+            leader_lease_ttl_seconds=0.1,
+            reconciler_id="reconciler-successor",
+            drain_timeout_seconds=0.1,
+        )
+        stale_result: dict[str, Any] = {}
+
+        def _run_stale() -> None:
+            stale_result["snapshot"] = stale.reconcile_once()
+
+        stale_thread = threading.Thread(target=_run_stale)
+        stale_thread.start()
+        self.assertTrue(spawn_entered.wait(timeout=2))
+        stale_token = stale._fence_token
+
+        time.sleep(0.15)
+        successor_snapshot = successor.reconcile_once()
+        self.assertGreater(successor._fence_token, stale_token)
+        self.assertEqual(successor_snapshot["worker_count"], 1)
+
+        release_spawn.set()
+        stale_thread.join(timeout=2)
+        self.assertFalse(stale_thread.is_alive())
+        self.assertFalse(stale.is_leader)
+        self.assertEqual(stale_result["snapshot"]["worker_count"], 0)
+        self.assertTrue(stale_process.terminated or stale_process.killed)
+        self.assertFalse(successor_process.terminated)
+        self.assertIn("fence expired", stale.snapshot()["last_error"])
+
 
 class TestRedisFencedLeaderLease(_RealRedisDockerTestCase):
     def _store(self):

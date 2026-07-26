@@ -90,6 +90,10 @@ class SignalConsumer:
         Pull all pending signals from store, validate, and execute.
         Call from LEAN scheduled event or OnData().
         """
+        # Keep live rebalance claims from becoming visible to another worker.
+        # A claim that already expired is removed from the local buffer and
+        # left for durable reclaim instead of executing from a stale copy.
+        self._renew_rebalance_claims()
         try:
             raw_signals: list[dict] = self._store.get_pending()
         except Exception as exc:
@@ -493,6 +497,41 @@ class SignalConsumer:
         run_id = signal["run_id"]
         self._rebalance_buffer[run_id]["signals"].append(signal)
 
+    def _renew_rebalance_claims(self) -> None:
+        renew = getattr(self._store, "renew_claim", None)
+        if not callable(renew):
+            return
+        for run_id, batch in list(self._rebalance_buffer.items()):
+            retained = [
+                signal
+                for signal in batch["signals"]
+                if self._renew_execution_claim(signal)
+            ]
+            if retained:
+                batch["signals"] = retained
+            else:
+                del self._rebalance_buffer[run_id]
+
+    def _renew_execution_claim(self, signal: dict) -> bool:
+        renew = getattr(self._store, "renew_claim", None)
+        if not callable(renew):
+            return True
+        try:
+            renewed = bool(renew(signal))
+        except Exception as exc:  # noqa: BLE001 - ambiguous ownership fails closed
+            log.error(
+                "[%s] Claim renewal failed; refusing execution: %s",
+                signal.get("signal_id", "<unknown>"),
+                exc,
+            )
+            return False
+        if not renewed:
+            log.warning(
+                "[%s] Claim expired or was reclaimed; refusing stale execution",
+                signal.get("signal_id", "<unknown>"),
+            )
+        return renewed
+
     def _tick_rebalance_buffer(self, algo: Any | None) -> None:
         completed: list[str] = []
         for run_id, batch in self._rebalance_buffer.items():
@@ -526,14 +565,27 @@ class SignalConsumer:
     # ------------------------------------------------------------------
 
     def _execute_one(self, signal: dict, algo: Any | None) -> None:
+        # Fence the actual side-effect boundary, not just the earlier claim
+        # loop.  Buffered signals may outlive their original visibility lease.
+        if not self._renew_execution_claim(signal):
+            return
+        if self._is_duplicate(signal):
+            self._record_filtered_signal_noop(
+                signal,
+                algo,
+                "duplicate_signal_id",
+                extra_metadata={
+                    "duplicate_signal_id": signal["signal_id"],
+                    "idempotent_replay": True,
+                    "execution_boundary_recheck": True,
+                },
+            )
+            self._ack_signal(signal)
+            return
         if algo is None:
             log.warning(
                 "[%s] No algo instance — dry-run only", signal["signal_id"]
             )
-            if hasattr(self._store, "is_processed") and self._store.is_processed(signal["signal_id"]):
-                log.info("[%s] Signal already processed — skipping", signal["signal_id"])
-                self._ack_signal(signal)
-                return
             self._remember_processed(signal["signal_id"])
             self._ack_signal(signal)
             return

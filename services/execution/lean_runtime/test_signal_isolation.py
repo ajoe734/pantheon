@@ -567,6 +567,50 @@ class TestRedisPendingSignalStoreClaimVisibility(_RealRedisDockerTestCase):
         self.assertEqual(worker_b.inflight_depth(), 0)
         self.assertEqual(worker_b.queue_depth(), 0)
 
+    def test_slow_rebalance_buffer_cannot_execute_after_claim_reclaim(self):
+        signal = _signal(
+            "sig-slow-buffer",
+            binding_id="b-001",
+            runtime_id="rt-001",
+            capital_pool_id="pool-001",
+        )
+        signal["run_id"] = "run-slow-buffer"
+        worker_a = self._store("worker-A")
+        worker_b = self._store("worker-B")
+        worker_a.enqueue(signal)
+        consumer_a = SignalConsumer(
+            store_client=worker_a,
+            rebalance_timeout_bars=3,
+            binding_id="b-001",
+            runtime_id="rt-001",
+            capital_pool_id="pool-001",
+        )
+        consumer_b = SignalConsumer(
+            store_client=worker_b,
+            rebalance_timeout_bars=1,
+            binding_id="b-001",
+            runtime_id="rt-001",
+            capital_pool_id="pool-001",
+        )
+
+        with patch("services.execution.lean_runtime.signal_consumer.execute") as mock_execute:
+            consumer_a.drain(algo=_RecordingAlgo())
+            self.assertEqual(mock_execute.call_count, 0)
+
+            time.sleep(0.3)
+            consumer_b.drain(algo=_RecordingAlgo())
+            self.assertEqual(mock_execute.call_count, 1)
+
+            # worker-A still has the original buffered Python object, but its
+            # claim token was reclaimed and acknowledged by worker-B.
+            consumer_a.flush_rebalance("run-slow-buffer", algo=_RecordingAlgo())
+
+        self.assertEqual(mock_execute.call_count, 1)
+        self.assertEqual(worker_a.inflight_depth(), 0)
+        self.assertEqual(worker_b.inflight_depth(), 0)
+        self.assertEqual(worker_a.queue_depth(), 0)
+        self.assertTrue(worker_a.is_processed("sig-slow-buffer"))
+
     def test_claim_response_loss_remains_recoverable(self):
         signal = _signal(
             "sig-response-loss",

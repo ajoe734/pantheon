@@ -734,7 +734,11 @@ class PaperFleetReconciler:
                 # Start workers for new or dead-but-desired active bindings
                 for binding_id, binding in desired.items():
                     if binding_id not in self._workers:
-                        self._start_worker(binding)
+                        if not self._start_worker(binding):
+                            self._demote_and_stop_workers()
+                            self._cycle_count += 1
+                            self._last_reconcile_at = _iso_now()
+                            return self._snapshot()
                     elif self._workers[binding_id].status == "dead":
                         entry = self._workers[binding_id]
                         # SIGKILL (exit 137) signals an infrastructure disruption
@@ -751,10 +755,14 @@ class PaperFleetReconciler:
                                 or time.monotonic() >= entry.dead_at + backoff
                             )
                             if ready:
-                                self._start_worker(
+                                if not self._start_worker(
                                     binding,
                                     restart_count=effective_restarts + 1,
-                                )
+                                ):
+                                    self._demote_and_stop_workers()
+                                    self._cycle_count += 1
+                                    self._last_reconcile_at = _iso_now()
+                                    return self._snapshot()
                         else:
                             log.warning(
                                 "binding %s: restart cap reached (%d), not restarting",
@@ -855,7 +863,7 @@ class PaperFleetReconciler:
 
     def _start_worker(
         self, binding: Dict[str, Any], restart_count: int = 0
-    ) -> None:
+    ) -> bool:
         self._require_current_fence()
         binding_id = binding["binding_id"]
         port = self._allocate_port()
@@ -889,7 +897,35 @@ class PaperFleetReconciler:
                 status="dead",
                 fence_token=self._fence_token,
             )
-            return
+            return self._has_current_fence()
+
+        # Spawning is outside the leader store transaction and can block past
+        # the lease deadline.  Validate the exact fence again before exposing
+        # the child in the worker registry.  A stale leader must compensate by
+        # terminating the unregistered child it just created.
+        if not self._has_current_fence():
+            if process.poll() is None:
+                try:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=self._drain_timeout)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=5)
+                except OSError:
+                    pass
+            self._free_port(port)
+            self._end_monitoring_session(
+                monitoring_session_id,
+                reason="spawn_fence_lost",
+                error="leader fence expired while worker spawn was in progress",
+            )
+            self._is_leader = False
+            self._last_error = (
+                f"leader fence expired while spawning worker for binding {binding_id}"
+            )
+            log.error(self._last_error)
+            return False
 
         entry = WorkerEntry(
             binding_id=binding_id,
@@ -911,6 +947,7 @@ class PaperFleetReconciler:
             port,
             restart_count,
         )
+        return True
 
     def _spawn(
         self, binding_id: str, port: int, env: Dict[str, str]

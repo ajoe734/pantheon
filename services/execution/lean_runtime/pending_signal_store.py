@@ -67,6 +67,9 @@ class PendingSignalStore(Protocol):
     def nack_requeue(self, signal_or_id: str | dict[str, Any]) -> None:
         """Nack a failed signal to return it back to pending queue."""
 
+    def renew_claim(self, signal_or_id: str | dict[str, Any]) -> bool:
+        """Extend a live claim and return false when ownership already expired."""
+
     def queue_depth(self) -> int:
         """Return the current pending queue depth."""
 
@@ -118,6 +121,10 @@ class InMemoryPendingSignalStore:
             sig = self._inflight.pop(sid, None) or signal_or_id
         if sig:
             self._pending.append(sig)
+
+    def renew_claim(self, signal_or_id: str | dict[str, Any]) -> bool:
+        sid = signal_or_id if isinstance(signal_or_id, str) else str(signal_or_id.get("signal_id", ""))
+        return sid in self._inflight
 
     def queue_depth(self) -> int:
         return len(self._pending)
@@ -174,6 +181,22 @@ return {raw, token, tostring(claimed_at)}
 local removed = redis.call('HDEL', KEYS[1], ARGV[1])
 redis.call('ZREM', KEYS[2], ARGV[1])
 return removed
+"""
+
+    _RENEW_LUA = """
+local raw = redis.call('HGET', KEYS[1], ARGV[1])
+local claimed_at = redis.call('ZSCORE', KEYS[2], ARGV[1])
+if not raw or not claimed_at then
+  return 0
+end
+local server_time = redis.call('TIME')
+local now = tonumber(server_time[1]) + (tonumber(server_time[2]) / 1000000)
+local cutoff = now - tonumber(ARGV[2])
+if tonumber(claimed_at) <= cutoff then
+  return 0
+end
+redis.call('ZADD', KEYS[2], now, ARGV[1])
+return 1
 """
 
     _TRANSFER_LUA = """
@@ -314,6 +337,33 @@ return moved
         if token is None:
             return
         self._transfer_claim(token, self._queue_key)
+
+    def renew_claim(self, signal_or_id: str | dict[str, Any]) -> bool:
+        """Renew only an unexpired worker-scoped claim using Redis server time.
+
+        An expired token cannot be revived, even when its payload has not yet
+        been reclaimed.  This makes a false result a fencing decision: callers
+        must not execute the stale local copy.
+        """
+        token = self._claim_token_for(signal_or_id)
+        if token is None:
+            return False
+        renewed = bool(
+            int(
+                self._client.eval(
+                    self._RENEW_LUA,
+                    2,
+                    self._inflight_key,
+                    self._visibility_key,
+                    token,
+                    self._visibility_timeout,
+                )
+                or 0
+            )
+        )
+        if not renewed:
+            self._forget_claim(token)
+        return renewed
 
     def reclaim_expired_inflight(self) -> int:
         """Reclaim expired in-flight entries across workers back to pending queue."""
