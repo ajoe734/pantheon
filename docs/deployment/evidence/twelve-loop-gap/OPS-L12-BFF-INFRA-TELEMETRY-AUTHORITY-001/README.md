@@ -1,9 +1,13 @@
 # OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001 evidence
 
-Status: third owner cut, ready for independent `Antigravity` re-review.
+Status: fourth owner cut, ready for independent `Codex2` re-review.
 
-`Antigravity` has rejected two earlier cuts, and both rejections are recorded in
-`evidence.json` `record_log` (sequences 2 and 4).
+The canonical reviewer for this task is now `Codex2`. `Antigravity` was the
+reviewer for the first three cuts and rejected two of them; both rejections stay
+in `evidence.json` `record_log` (sequences 2 and 4) as the historical review
+trail, and the reassignment itself is recorded at sequence 6. No `Antigravity`
+verdict is restated as a `Codex2` verdict, and no approval has been recorded by
+either reviewer.
 
 The first cut (head `796c6e5e3`) had a single-phase admission ledger with a loss
 window: a second caller arriving between the durable `admitted` record and the
@@ -19,8 +23,18 @@ erase the only copy of the event while the committed receipt made every later
 retry an idempotent `duplicate` — a permanent loss with no error anywhere. The
 repair is [§ Durability is proven, not assumed](#durability-is-proven-not-assumed):
 admission now fails closed unless the configured buffer is a durable broker,
-and this cut's readback runs against a **real NATS JetStream** file-storage work
+and the readback runs against a **real NATS JetStream** file-storage work
 queue rather than a memory buffer.
+
+The fourth cut changes no implementation byte. It exists because PR #4211 was
+`BEHIND` `dev` and its `Branch CI Gate` failed `Commit trailers` on `0410a89f0`
+— an already-merged `dev` commit belonging to
+`OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001` whose squash subject is 79 chars.
+The pre-fix workflow anchored the scan range at the synthetic merge commit, so
+the PR was red on somebody else's history. Merging current `dev` both cleared
+that range and picked up the `OPS-CI-PR-TRAILER-RANGE-001` repair. That merge is
+the validated head, and every validation command was rerun against it — see
+[§ Head binding](#head-binding).
 
 This packet proves that telemetry now owns an authoritative, strict-auth,
 non-trading contract for infrastructure health, so control-plane health
@@ -125,12 +139,36 @@ approval.**
 
 `record_log` contains both `Antigravity` `changes_requested` decisions — on the
 first cut and on the second — but **no approval**, and `AC6` remains
-`pending_reviewer`. After a governed
-`Antigravity` approval, owner closeout must append the actual verdict to
-`record_log`, populate
-`implementation_delivery.required_checks` and the merged PR record, refresh this
-README and the companion checksum, merge that update through the task PR, and
-only then run `done`.
+`pending_reviewer`. `AC6` is judged against `Codex2`, the canonical reviewer on
+the task row; the canonical acceptance row still reads `Antigravity` because it
+was written before the reassignment, and that is recorded in `AC6`
+`blocking_until` rather than silently rewritten. After a governed `Codex2`
+approval, owner closeout must append the actual verdict to `record_log`, record
+the merged PR number, merge sha, and merge time, refresh this README and the
+companion checksum, merge that update through the task PR, and only then run
+`done`.
+
+<a id="head-binding"></a>
+
+### Head binding
+
+`validation.validated_head_sha` is `cca84df53`, the merge of `dev` `6578ef968`
+into the task branch, and all three required checks are green on it — `Commit
+trailers`, `Runtime mirror guard`, and `Smoke acceptance`, on both the
+`pull_request` and `push` events. Both runs are recorded under
+`implementation_delivery.required_checks`.
+
+The commit that carries this manifest lands after the validated head and becomes
+the final PR head, so its own `Branch CI Gate` run cannot be named inside the
+manifest that commit creates. That run is the branch-protection merge gate and
+is visible on PR #4211. What makes the binding hold anyway is that the commit
+touches documentation only:
+`integrity.source_artifact_sha256_by_epoch.implementation_files_at_validated_head`
+records the `sha256` of each of the five implementation files at the validated
+head, and re-running `git show <final-head>:<path> | sha256sum` must reproduce
+them exactly. The same digests hold at head `28b13a16d`, which is why the
+runtime readback and the three mutation controls taken there are carried forward
+verbatim rather than re-executed: they probe bytes that have not changed.
 
 ## Proof
 
@@ -197,9 +235,20 @@ only then run `done`.
   The suite returned to green after each restore, so the repair is proven by
   tests that fail without it rather than by assertions that were already true.
 
-Exact commands and their conclusions, including the two pre-existing baseline
-residuals that reproduce identically on base commit `0d0b015c9`, are recorded in
-`evidence.json` under `validation.commands`.
+Exact commands and their conclusions are recorded in `evidence.json` under
+`validation.commands`. On the validated head the full telemetry suite is clean —
+`335 passed, 1 skipped, 29 subtests passed`, no failures. The
+missing-`PANTHEON_RUNTIME_MANAGER_URL` failure that the third cut carried as a
+documented environment residual is gone, because the `dev` sync brought in the
+test-owned isolation fixture from
+`OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001`.
+
+One residual remains, outside telemetry: the cross-service regression set fails
+`test_p0_paper_operating_loop_smoke.py::MinimumPaperOperatingLoopSmokeTest::test_deployment_plan_to_runtime_binding_to_bff_runtime_status`
+on `PermissionError: [Errno 13] Permission denied: '/data'` while the paper
+runtime tries to create `/data/runtime/lifecycle-outbox`. That path is an
+unwritable host directory on this machine, telemetry admission never creates or
+consults it, and no frame of the failure touches this task's files.
 
 Scope of the readback: it ran without `TELEMETRY_DB_DSN`, so the canonical sink
 behind the broker was the in-process dev sink and the batch interval was raised

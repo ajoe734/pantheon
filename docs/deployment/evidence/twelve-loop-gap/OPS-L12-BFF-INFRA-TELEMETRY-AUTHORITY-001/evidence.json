@@ -51,12 +51,12 @@
       "status": "pass"
     },
     {
-      "blocking_until": "The task PR is merged into dev with green checks and Antigravity records an independent review verdict.",
+      "blocking_until": "The task PR is merged into dev with green checks and Codex2 records an independent review verdict. The canonical acceptance row still names Antigravity because it was written before the reviewer reassignment; Codex2 is the canonical reviewer on the task row and is the identity this criterion is judged against.",
       "evidence_refs": [
         "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/evidence.json"
       ],
       "id": "AC6",
-      "statement": "The task is delivered by PR to dev with green checks and independent Antigravity review.",
+      "statement": "The task is delivered by PR to dev with green checks and independent Codex2 review.",
       "status": "pending_reviewer"
     }
   ],
@@ -184,26 +184,75 @@
     "anchor_commits": [
       {
         "delivery_state": "on_task_branch_pending_pr",
+        "note": "First cut: schema, strict-auth admission, single-phase ledger.",
         "sha": "0b6ac76800514fd4a842cd34079f51e91622aabb",
         "subject": "OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001: anchor infra authority"
       },
       {
         "delivery_state": "on_task_branch_pending_pr",
+        "note": "Two-phase fenced reservation repairing the first reviewed loss window.",
         "sha": "2f723037e10c9d4a4f290f3e4729d187f4aea5d8",
         "subject": "OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001: fence infra admission"
       },
       {
         "delivery_state": "on_task_branch_pending_pr",
+        "note": "Client retry contract for the 503 admission answers.",
         "sha": "0d0b015c9",
         "subject": "OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001: state infra retry contract"
       },
       {
         "delivery_state": "on_task_branch_pending_pr",
+        "note": "Durability gate plus crash matrix, repairing the second reviewed defect. Last commit to touch implementation files.",
         "sha": "28b13a16d0af770f7825edf75014b4a2b8ae9b46",
         "subject": "OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001: anchor durable admission gate"
+      },
+      {
+        "delivery_state": "on_task_branch_pending_pr",
+        "note": "Third evidence cut. Documentation only.",
+        "sha": "4e24e895f59853391d269270673f57b9248964eb",
+        "subject": "OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001: re-cut durability evidence"
+      },
+      {
+        "delivery_state": "on_task_branch_pending_pr",
+        "note": "Merge of dev 6578ef968f7e0374b046de0afb5b07ce2f81558e into the task branch. Clears the BEHIND state and the Commit trailers failure inherited from an already-merged dev commit. No conflict and no task file touched; this is the validated head.",
+        "sha": "cca84df537d274d8c71c4ac999eeb8907a3dd4cf",
+        "subject": "Merge remote-tracking branch 'origin/dev' into task/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001"
       }
     ],
-    "required_checks": []
+    "pull_request": {
+      "base": "dev",
+      "head_sha": "cca84df537d274d8c71c4ac999eeb8907a3dd4cf",
+      "number": 4211,
+      "url": "https://github.com/ajoe734/pantheon/pull/4211"
+    },
+    "required_checks": [
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "cca84df537d274d8c71c4ac999eeb8907a3dd4cf",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30222836610,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30222836610",
+        "workflow": "Branch CI Gate"
+      },
+      {
+        "conclusion": "success",
+        "event": "push",
+        "head_sha": "cca84df537d274d8c71c4ac999eeb8907a3dd4cf",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30222834932,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30222834932",
+        "workflow": "Branch CI Gate"
+      }
+    ]
   },
   "integrity": {
     "algorithm": "sha256",
@@ -236,7 +285,18 @@
     "self_hash_omitted": true,
     "self_hash_reason": "The companion checksum file contains the manifest digest and avoids recursive self-hashing.",
     "source_artifact_sha256_by_epoch": {
-      "current_runtime_readback_2026_07_26_durable_broker": "9c464d0f44934fa8582e610ba554eb34d30efccceac78763a6f1e723fe4ed017"
+      "current_runtime_readback_2026_07_26_durable_broker": "9c464d0f44934fa8582e610ba554eb34d30efccceac78763a6f1e723fe4ed017",
+      "implementation_files_at_validated_head": {
+        "files": {
+          "services/telemetry/auth.py": "05401dfafa4f933c8000e239ff663e28f69c2ebbf5bbb0328e46d0af0829e93f",
+          "services/telemetry/ingest_svc.py": "addd58054d30d5cd4ed12674289d82dd27c52c2d6609d6689a46ea359de07707",
+          "services/telemetry/main.py": "40f121c03786f40ee8985ddd13c18873291c97b65c1d755d2e57ffa7679b2d5d",
+          "services/telemetry/telemetry_event.schema.json": "5576f861a0aacbbb3e1057079f26e6b6d8e9e1c48a97c6897df791eb7008c04a",
+          "services/telemetry/test_infrastructure_health_ingest.py": "ebd51b1924aad4b920fc973ec3d8505c0b3ae71766a9609efc082d33189f16f9"
+        },
+        "head_sha": "cca84df537d274d8c71c4ac999eeb8907a3dd4cf",
+        "note": "sha256 of each implementation file's content at the validated head. Reproduce with: git show <head>:<path> | sha256sum. These digests are identical at head 28b13a16d, so the dev sync and both evidence cuts after it changed no implementation byte."
+      }
     }
   },
   "record_log": [
@@ -285,6 +345,25 @@
       "reference": "https://github.com/ajoe734/pantheon/pull/4211",
       "sequence": 5,
       "sha": "28b13a16d0af770f7825edf75014b4a2b8ae9b46",
+      "status": "pass"
+    },
+    {
+      "actor": "Supervisor",
+      "kind": "task_reassigned",
+      "note": "Canonical reviewer reassigned from Antigravity to Codex2 on the task row. Owner unchanged. The two Antigravity changes_requested decisions at sequences 2 and 4 stay as the historical review trail and are not restated under the new reviewer.",
+      "recorded_at": "2026-07-26T21:34:43Z",
+      "reference": "OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001",
+      "sequence": 6,
+      "status": "recorded"
+    },
+    {
+      "actor": "Claude",
+      "kind": "owner_evidence_ready",
+      "note": "Fourth cut. Task branch synced to dev 6578ef968f7e0374b046de0afb5b07ce2f81558e, clearing BEHIND and the Commit trailers failure that came from an already-merged dev commit. All three required checks green on the validated head. Focused and full telemetry validation rerun on that head, with the full telemetry suite now clean because the dev sync brought in the lineage test isolation fixture. Reviewer identity restated as Codex2. No implementation byte changed since head 28b13a16d. All three required checks are green on the validated head cca84df537d274d8c71c4ac999eeb8907a3dd4cf, on both the pull_request and push events, and are recorded in implementation_delivery.required_checks. The documentation-only commit that carries this manifest becomes the final PR head after it, and its own Branch CI Gate run cannot be named inside the manifest that commit creates; that run is the branch-protection merge gate and is visible on PR #4211. Because the commit changes no implementation file, the digests under integrity.source_artifact_sha256_by_epoch.implementation_files_at_validated_head are reproducible at the final head, which is what binds these check results to the head under review. The merged PR number, merge sha, and merge time are recorded in the post-merge closeout.",
+      "recorded_at": "2026-07-26T22:19:00Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4211",
+      "sequence": 7,
+      "sha": "cca84df537d274d8c71c4ac999eeb8907a3dd4cf",
       "status": "pass"
     }
   ],
@@ -347,7 +426,7 @@
   "schema_status": {
     "formal_schema_owner": "LOOP-PROD-002",
     "formalization_trigger": "Owner evidence cut for the telemetry-side infrastructure health authority required by L12-BFF-001.",
-    "note": "Owner implementation and acceptance proof are complete. No reviewer verdict is asserted; the formal Antigravity decision must be appended to record_log before closeout.",
+    "note": "Owner implementation and acceptance proof are complete. No reviewer verdict is asserted; the formal Codex2 decision must be appended to record_log before closeout.",
     "status": "formalized"
   },
   "schema_version": "loop_product_evidence.v1",
@@ -399,14 +478,14 @@
       "status": "pass"
     },
     "two_person_approval": {
-      "proof": "Owner Claude and reviewer Antigravity are distinct. No reviewer verdict is asserted by this cut; the formal Antigravity decision must be appended to record_log before closeout.",
+      "proof": "Owner Claude and reviewer Codex2 are distinct. The reviewer was reassigned from Antigravity to Codex2 while this task was in progress; both reviewers are distinct from the owner, so two-person separation held across the reassignment. No reviewer verdict is asserted by this cut; the formal Codex2 decision must be appended to record_log before closeout.",
       "status": "pass"
     }
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-26T20:40:00Z",
-    "evidence_cut_semantics": "Third owner cut over task branch head 28b13a16d0af770f7825edf75014b4a2b8ae9b46, cut from dev 5b8addf628c09f88ff8199080ab68429dbe7b531, after Antigravity rejected the second cut (head 0d0b015c9) because admission committed a durable ledger receipt behind a volatile in-memory buffer, so a crash could erase the only copy of an event while every later retry was answered as a duplicate. It asserts implementation and owner acceptance only; independent reviewer approval is not claimed.",
+    "evidence_cut_at": "2026-07-26T22:19:00Z",
+    "evidence_cut_semantics": "Fourth owner cut, over task head cca84df537d274d8c71c4ac999eeb8907a3dd4cf, which merges current dev 6578ef968f7e0374b046de0afb5b07ce2f81558e into the task branch. It supersedes the third cut (head 28b13a16d) for three reasons and changes no implementation byte relative to it. First, PR #4211 was BEHIND dev and its Branch CI Gate failed Commit trailers on 0410a89f0, an already-merged dev commit from OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001 whose squash subject is 79 chars; the failure came from the pre-fix workflow anchoring the scan range at the synthetic merge commit, and syncing to dev both cleared the range and picked up the OPS-CI-PR-TRAILER-RANGE-001 repair. Second, the canonical reviewer was reassigned from Antigravity to Codex2, so the reviewer identity is restated here while both Antigravity changes_requested decisions stay in record_log as the historical review trail. Third, the previous validation was pinned to head 2f723037e, which predated the durability repair, so every command was rerun against this head. It asserts implementation and owner acceptance only; independent reviewer approval is not claimed.",
     "id": "OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001",
     "overall_admission": "pass_owner_evidence_ready",
     "owner": "Claude",
@@ -414,7 +493,7 @@
     "product_level_required": true,
     "repository": "ajoe734/pantheon",
     "review_file": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/evidence.json",
-    "reviewer": "Antigravity",
+    "reviewer": "Codex2",
     "target_environment": "dev integration and bounded local nonprod telemetry",
     "target_maturity": "reconciled",
     "task_branch": "task/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001",
@@ -424,22 +503,22 @@
     "commands": [
       {
         "command": "/home/lupin/pantheon/.venv/bin/python -m pytest services/telemetry/test_infrastructure_health_ingest.py -q",
-        "conclusion": "44 real strict-auth route, replica, durability-authority, and crash-matrix tests passed. Beyond the previous 33, the cut adds: volatile-buffer admission fails closed before any reservation; a volatile deployment leaves no committed receipt to lie with; no environment variable can enable volatile admission; the strict-auth route answers 503 INFRA_BUFFER_NOT_DURABLE with buffer_durable=0 in metrics; a backend that degrades before the commit is refused with its reservation released; an accepted event is present in durable storage byte for byte; and a process/broker crash matrix covering crash before put, after durable put before commit, after commit, restart replay, and four-process replica concurrency.",
+        "conclusion": "44 passed in 26.38s. The focused suite covers the strict-auth route, replica concurrency, the durability authority, and the process/broker crash matrix: volatile-buffer admission fails closed before any reservation; a volatile deployment leaves no committed receipt to lie with; no environment variable can enable volatile admission; the route answers 503 INFRA_BUFFER_NOT_DURABLE with buffer_durable=0 in metrics; a backend that degrades before the commit is refused with its reservation released; an accepted event is present in durable storage byte for byte; and crashes before the put, after the durable put but before the commit, and after the commit, plus restart replay and four-process replica concurrency, produce no false success and no permanent loss.",
         "result": "pass"
       },
       {
         "command": "/home/lupin/pantheon/.venv/bin/python -m pytest services/telemetry -q",
-        "conclusion": "320 passed, 1 skipped, 15 subtests passed, and one failure in services/telemetry/test_lineage_write_path.py::TestLiveLineageWritePathFullStackHTTPRoute::test_ingest_then_consume_threshold_route_201_then_replay_200 that reproduces identically on the unmodified base commit 0d0b015c9 because it requires PANTHEON_RUNTIME_MANAGER_URL in the host environment. No frame of that failure touches this task's files.",
-        "result": "pass_with_nonblocking_baseline_residual"
+        "conclusion": "335 passed, 1 skipped, 29 subtests passed in 106.15s, with no failures. The missing-PANTHEON_RUNTIME_MANAGER_URL failure in test_lineage_write_path.py that the third cut recorded as a documented environment residual is gone: syncing to dev 6578ef968f7e0374b046de0afb5b07ce2f81558e picked up the test-owned isolation fixture from OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001, so this cut carries no residual in the telemetry suite at all.",
+        "result": "pass"
       },
       {
         "command": "/home/lupin/pantheon/.venv/bin/python -m pytest tests/telemetry/test_ingest_load_10x.py services/control-plane/bff/test_p0_paper_operating_loop_smoke.py scripts/test_seed_tj_e2e_012_hosted_scenarios.py -q",
-        "conclusion": "11 passed and one pre-existing failure in test_p0_paper_operating_loop_smoke.py::MinimumPaperOperatingLoopSmokeTest::test_deployment_plan_to_runtime_binding_to_bff_runtime_status, which reproduces identically on base commit 0d0b015c9 and fails on an unwritable /data/runtime lifecycle-outbox path in this host, not on telemetry admission.",
+        "conclusion": "11 passed and one pre-existing failure in test_p0_paper_operating_loop_smoke.py::MinimumPaperOperatingLoopSmokeTest::test_deployment_plan_to_runtime_binding_to_bff_runtime_status. It fails inside the paper runtime lifecycle telemetry outbox on PermissionError: [Errno 13] Permission denied: '/data' while creating /data/runtime/lifecycle-outbox, so the assertion that trips is a null paper_state.last_heartbeat_at. The path is an unwritable host directory on this machine, is not created or consulted by telemetry admission, and no frame touches this task's files.",
         "result": "pass_with_nonblocking_baseline_residual"
       },
       {
         "command": "Runtime readback against the running Flask telemetry service over real HTTP, backed by the local NATS JetStream server on nats://127.0.0.1:14222 with a task-scoped file-storage work-queue stream, plus a second service instance booted with TELEMETRY_BUFFER_BACKEND=memory",
-        "conclusion": "Recorded in current-runtime-readback.json. The durable deployment admitted once, deduplicated the retry, survived SIGKILL with the admitted event still in the JetStream stream, and answered the post-restart replay as a duplicate. The volatile deployment refused every admission with 503 INFRA_BUFFER_NOT_DURABLE and wrote zero ledger records.",
+        "conclusion": "Recorded in current-runtime-readback.json. The durable deployment admitted once, deduplicated the retry, survived SIGKILL with the admitted event still in the JetStream stream, and answered the post-restart replay as a duplicate. The volatile deployment refused every admission with 503 INFRA_BUFFER_NOT_DURABLE and wrote zero ledger records. The readback was taken on head 28b13a16d and is carried forward unchanged: the dev sync altered no implementation byte, which integrity.source_artifact_sha256_by_epoch makes checkable, and the file's digest is unchanged in evidence.sha256.",
         "result": "pass"
       },
       {
@@ -458,23 +537,13 @@
         "result": "pass"
       },
       {
-        "command": "/home/lupin/pantheon/.venv/bin/python services/telemetry/smoke_test_ingest.py",
-        "conclusion": "ALL SMOKE TESTS PASSED",
-        "result": "pass"
-      },
-      {
-        "command": "python3 -m compileall -q services/telemetry",
-        "conclusion": "exit 0",
-        "result": "pass"
-      },
-      {
-        "command": "python3 -m json.tool services/telemetry/telemetry_event.schema.json",
-        "conclusion": "exit 0",
+        "command": "Head binding: git show <path> at cca84df537d274d8c71c4ac999eeb8907a3dd4cf | sha256sum for every entry in scope.implementation_changed_files",
+        "conclusion": "The five digests are recorded under integrity.source_artifact_sha256_by_epoch.implementation_files_at_validated_head. The only commit after the validated head is this evidence commit, which touches documentation and the task brief only, so re-running the same five hashes at the final PR head must reproduce these digests exactly. That is what makes the validated head binding hold for the head the reviewer actually reads. The same identity is why the three mutation controls and the runtime readback, which were executed on head 28b13a16d, are carried forward verbatim instead of re-executed: they probe implementation bytes this cut did not touch.",
         "result": "pass"
       }
     ],
-    "validated_at": "2026-07-26T19:41:00Z",
-    "validated_base_sha": "5b8addf628c09f88ff8199080ab68429dbe7b531",
-    "validated_head_sha": "2f723037e10c9d4a4f290f3e4729d187f4aea5d8"
+    "validated_at": "2026-07-26T22:19:00Z",
+    "validated_base_sha": "6578ef968f7e0374b046de0afb5b07ce2f81558e",
+    "validated_head_sha": "cca84df537d274d8c71c4ac999eeb8907a3dd4cf"
   }
 }
