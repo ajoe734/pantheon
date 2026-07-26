@@ -1490,6 +1490,248 @@ class TestProtectedHumanOpsCloseoutGuard(unittest.TestCase):
             replacement["verdict_id"],
         )
 
+    def _human_ops(self):
+        return self.module.HumanOpsIdentity(
+            actor_id="ops-human-001",
+            actor_role="ops",
+            authenticated=True,
+            mfa_verified=True,
+        )
+
+    def _rehome_ledger_under(self, directory: Path) -> Path:
+        """Point the protected policy at a ledger inside ``directory``.
+
+        The policy file itself stays external; only the ledger moves, which is
+        the configuration the independent reviewer probed.
+        """
+
+        directory.mkdir(parents=True, exist_ok=True)
+        ledger_path = directory / "verdict-ledger.jsonl"
+        self.ledger = self.module.ProtectedVerdictLedger(ledger_path)
+        self.issuer = self.module.ProductCloseoutVerdictService(
+            ledger=self.ledger,
+            policy=self.policy,
+            private_key=self.private_key,
+            key_id=self.key_id,
+        )
+        policy_document = json.loads(self.policy_path.read_text(encoding="utf-8"))
+        policy_document["ledger_path"] = str(ledger_path)
+        self.policy_path.write_text(
+            json.dumps(policy_document), encoding="utf-8"
+        )
+        return ledger_path
+
+    def _revoke(self, verdict_id: str) -> None:
+        self.module.ProductCloseoutVerdictService(
+            ledger=self.ledger,
+            policy=self.policy,
+            private_key=self.private_key,
+            key_id=self.key_id,
+        ).revoke(
+            verdict_id,
+            self._human_ops(),
+            reason="independent review withdrew the approval",
+        )
+
+    def _truncate_ledger_to_issue_record(self) -> None:
+        """Drop every ledger row after the signed issue record.
+
+        The ledger is a hash chain, so any prefix of it is still internally
+        consistent.  A candidate that can write the file can therefore erase a
+        revocation or a consumption without breaking verification: only the
+        location of the file keeps this out of reach.
+        """
+
+        rows = self.ledger.path.read_text(encoding="utf-8").splitlines()
+        issue_rows = [
+            row for row in rows if json.loads(row).get("record_type") == "issued"
+        ]
+        self.assertEqual(len(issue_rows), 1, rows)
+        self.ledger.path.write_text(issue_rows[0] + "\n", encoding="utf-8")
+
+    def test_forbidden_roots_cover_every_split_root_binding(self) -> None:
+        worktree_root = self.temp_root / "task-worktree"
+        worktree_root.mkdir()
+        bound_env = {
+            **self.env,
+            "PANTHEON_WORKTREE_ROOT": str(worktree_root),
+            "ORCH_WORKSPACE_PATH": str(worktree_root),
+        }
+
+        with mock.patch.dict(os.environ, bound_env, clear=False):
+            forbidden = guardrail._protected_forbidden_roots()
+
+        self.assertIn(worktree_root.resolve(), forbidden)
+        self.assertIn(guardrail.ROOT.resolve(), forbidden)
+        self.assertIn(self.status_root.resolve(), forbidden)
+
+    def test_ledger_inside_bound_worktree_is_rejected(self) -> None:
+        """A candidate-writable ledger is refused under either worker binding."""
+
+        worktree_root = self.temp_root / "task-worktree"
+        self._rehome_ledger_under(worktree_root / "state")
+        verdict = self._issue()
+
+        # Control: with no worker binding the same ledger location verifies,
+        # so the rejections below come from the authority boundary and not
+        # from an unrelated failure in the fixture.
+        with mock.patch.dict(os.environ, self.env, clear=False):
+            accepted = guardrail.validate_protected_closeout_transition(
+                self.task,
+                transition="review_approved",
+            )
+        self.assertEqual(accepted["verdict_id"], verdict["verdict_id"])
+
+        for env_name in ("PANTHEON_WORKTREE_ROOT", "ORCH_WORKSPACE_PATH"):
+            with self.subTest(binding=env_name):
+                bound_env = {**self.env, env_name: str(worktree_root)}
+                with (
+                    mock.patch.dict(os.environ, bound_env, clear=False),
+                    self.assertRaisesRegex(
+                        Exception, "outside candidate-controlled root"
+                    ),
+                ):
+                    guardrail.validate_protected_closeout_transition(
+                        self.task,
+                        transition="review_approved",
+                    )
+
+    def test_policy_inside_bound_worktree_is_rejected(self) -> None:
+        worktree_root = self.temp_root / "task-worktree"
+        planted_policy = worktree_root / "verdict-policy.json"
+        planted_policy.parent.mkdir(parents=True, exist_ok=True)
+        planted_policy.write_text(
+            self.policy_path.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        self._issue()
+
+        for env_name in ("PANTHEON_WORKTREE_ROOT", "ORCH_WORKSPACE_PATH"):
+            with self.subTest(binding=env_name):
+                bound_env = {**self.env, env_name: str(worktree_root)}
+                with (
+                    mock.patch.dict(os.environ, bound_env, clear=False),
+                    self.assertRaisesRegex(
+                        Exception, "outside candidate-controlled root"
+                    ),
+                ):
+                    guardrail.validate_protected_closeout_transition(
+                        self.task,
+                        transition="review_approved",
+                        policy_path=planted_policy,
+                    )
+
+    def test_candidate_tail_truncation_cannot_restore_revoked_verdict(self) -> None:
+        """The reviewer's probe: truncation resurrects an approval, so the
+        ledger must never be reachable from a candidate-controlled root."""
+
+        worktree_root = self.temp_root / "task-worktree"
+        self._rehome_ledger_under(worktree_root / "state")
+        verdict = self._issue()
+        unbound_env = dict(self.env)
+
+        with mock.patch.dict(os.environ, unbound_env, clear=False):
+            guardrail.validate_protected_closeout_transition(
+                self.task,
+                transition="review_approved",
+            )
+
+        self._revoke(verdict["verdict_id"])
+        with (
+            mock.patch.dict(os.environ, unbound_env, clear=False),
+            self.assertRaisesRegex(Exception, "revoked"),
+        ):
+            guardrail.validate_protected_closeout_transition(
+                self.task,
+                transition="review_approved",
+            )
+
+        # Signature and hash-chain checks cannot see a removed suffix, so
+        # write access to the ledger alone is enough to undo the revocation.
+        self._truncate_ledger_to_issue_record()
+        with mock.patch.dict(os.environ, unbound_env, clear=False):
+            restored = guardrail.validate_protected_closeout_transition(
+                self.task,
+                transition="review_approved",
+            )
+        self.assertEqual(restored["verdict_id"], verdict["verdict_id"])
+
+        # Binding the worktree removes that write access from the trust model:
+        # the configuration is refused before any verdict is read.
+        for env_name in ("PANTHEON_WORKTREE_ROOT", "ORCH_WORKSPACE_PATH"):
+            with self.subTest(binding=env_name):
+                bound_env = {**self.env, env_name: str(worktree_root)}
+                with (
+                    mock.patch.dict(os.environ, bound_env, clear=False),
+                    self.assertRaisesRegex(
+                        Exception, "outside candidate-controlled root"
+                    ),
+                ):
+                    guardrail.validate_protected_closeout_transition(
+                        self.task,
+                        transition="review_approved",
+                    )
+
+    def test_candidate_tail_truncation_cannot_restore_consumed_verdict(self) -> None:
+        worktree_root = self.temp_root / "task-worktree"
+        self._rehome_ledger_under(worktree_root / "state")
+        self._issue()
+        unbound_env = dict(self.env)
+
+        with mock.patch.dict(os.environ, unbound_env, clear=False):
+            consumed = guardrail.validate_protected_closeout_transition(
+                self.task,
+                transition="done",
+                consume=True,
+                transition_actor="Codex",
+            )
+        self.assertIn("consumption_record_id", consumed)
+
+        self._truncate_ledger_to_issue_record()
+        bound_env = {**self.env, "PANTHEON_WORKTREE_ROOT": str(worktree_root)}
+        with (
+            mock.patch.dict(os.environ, bound_env, clear=False),
+            self.assertRaisesRegex(Exception, "outside candidate-controlled root"),
+        ):
+            guardrail.validate_protected_closeout_transition(
+                self.task,
+                transition="review_approved",
+            )
+
+    def test_untrustworthy_binding_fails_before_policy_or_ledger_access(self) -> None:
+        """Binding validation must not be reached only via manifest lookup."""
+
+        self._issue()
+        missing_policy = self.protected_root / "missing-default-policy.json"
+        broken_bindings = (
+            (
+                {
+                    "PANTHEON_WORKTREE_ROOT": str(self.temp_root / "task-worktree"),
+                    "ORCH_WORKSPACE_PATH": str(self.temp_root / "other-worktree"),
+                },
+                "conflicting",
+            ),
+            ({"PANTHEON_WORKTREE_ROOT": "relative/task-worktree"}, "must be an absolute path"),
+        )
+
+        for overrides, expected in broken_bindings:
+            with self.subTest(binding=expected):
+                with (
+                    mock.patch.object(
+                        self.module,
+                        "DEFAULT_PROTECTED_POLICY_PATH",
+                        missing_policy,
+                    ),
+                    mock.patch.dict(
+                        os.environ, {**self.env, **overrides}, clear=False
+                    ),
+                    self.assertRaisesRegex(RuntimeError, expected),
+                ):
+                    guardrail.validate_protected_closeout_transition(
+                        self.task,
+                        transition="review_approved",
+                    )
+
 
 if __name__ == "__main__":
     unittest.main()
