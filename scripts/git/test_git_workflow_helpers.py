@@ -98,7 +98,7 @@ class CheckCommitTrailersTests(unittest.TestCase):
 
 
 class ResolveCommitTrailerRangeTests(unittest.TestCase):
-    def test_uses_explicit_base_when_it_is_available_and_ancestor(self) -> None:
+    def test_uses_explicit_base_when_the_integration_target_is_unavailable(self) -> None:
         rev_range = resolve_range.resolve_commit_range(
             event="push",
             base_sha="base",
@@ -111,6 +111,35 @@ class ResolveCommitTrailerRangeTests(unittest.TestCase):
         )
         self.assertEqual(rev_range, "base..head")
 
+    def test_task_push_measures_against_dev_not_the_previous_branch_tip(self) -> None:
+        # Shape of failed run 30219364096 on task/SUP-WORKER-TRUTH-RECONCILE-001:
+        # `before` is a real ancestor, but the push also carried the dev commits
+        # the worker merged in while syncing the branch.
+        rev_range = resolve_range.resolve_commit_range(
+            event="push",
+            base_sha="previous-branch-tip",
+            head_sha="head",
+            ref_name="task/SUP-WORKER-TRUTH-RECONCILE-001",
+            pr_base_ref="",
+            commit_exists=lambda rev: rev in {"previous-branch-tip", "head", "origin/dev"},
+            is_ancestor=lambda base, head: True,
+            merge_base=lambda ref, head: "dev-base",
+        )
+        self.assertEqual(rev_range, "origin/dev..head")
+
+    def test_hotfix_push_measures_against_dev_as_well(self) -> None:
+        rev_range = resolve_range.resolve_commit_range(
+            event="push",
+            base_sha="previous-branch-tip",
+            head_sha="head",
+            ref_name="hotfix/urgent",
+            pr_base_ref="",
+            commit_exists=lambda rev: rev in {"previous-branch-tip", "head", "origin/dev"},
+            is_ancestor=lambda base, head: True,
+            merge_base=lambda ref, head: "dev-base",
+        )
+        self.assertEqual(rev_range, "origin/dev..head")
+
     def test_falls_back_to_origin_dev_when_force_push_before_sha_is_missing(self) -> None:
         rev_range = resolve_range.resolve_commit_range(
             event="push",
@@ -122,20 +151,47 @@ class ResolveCommitTrailerRangeTests(unittest.TestCase):
             is_ancestor=lambda base, head: False,
             merge_base=lambda ref, head: "dev-base" if ref == "origin/dev" else None,
         )
-        self.assertEqual(rev_range, "dev-base..head")
+        self.assertEqual(rev_range, "origin/dev..head")
 
-    def test_ignores_available_before_sha_when_it_is_not_an_ancestor(self) -> None:
+    def test_task_push_falls_back_to_the_merge_base_without_a_remote_tracking_ref(self) -> None:
         rev_range = resolve_range.resolve_commit_range(
             event="push",
             base_sha="rewritten-before",
             head_sha="head",
             ref_name="task/example",
             pr_base_ref="",
-            commit_exists=lambda rev: rev in {"rewritten-before", "head", "origin/dev", "dev-base"},
+            commit_exists=lambda rev: rev in {"rewritten-before", "head", "dev-base"},
             is_ancestor=lambda base, head: False,
             merge_base=lambda ref, head: "dev-base" if ref == "origin/dev" else None,
         )
         self.assertEqual(rev_range, "dev-base..head")
+
+    def test_publish_push_keeps_measuring_from_the_previous_branch_tip(self) -> None:
+        rev_range = resolve_range.resolve_commit_range(
+            event="push",
+            base_sha="previous-publish-tip",
+            head_sha="head",
+            ref_name="publish/v2026.07.20.0",
+            pr_base_ref="",
+            commit_exists=lambda rev: rev
+            in {"previous-publish-tip", "head", "origin/master", "origin/dev"},
+            is_ancestor=lambda base, head: True,
+            merge_base=lambda ref, head: "master-base",
+        )
+        self.assertEqual(rev_range, "previous-publish-tip..head")
+
+    def test_dev_push_keeps_measuring_from_the_previous_branch_tip(self) -> None:
+        rev_range = resolve_range.resolve_commit_range(
+            event="push",
+            base_sha="previous-dev-tip",
+            head_sha="head",
+            ref_name="dev",
+            pr_base_ref="",
+            commit_exists=lambda rev: rev in {"previous-dev-tip", "head", "origin/dev"},
+            is_ancestor=lambda base, head: True,
+            merge_base=lambda ref, head: "dev-base",
+        )
+        self.assertEqual(rev_range, "previous-dev-tip..head")
 
     def test_pull_request_excludes_base_branch_and_ignores_synthetic_merge(self) -> None:
         # Shape of failed run 30219467575 on PR #4211: the event carries a
@@ -368,7 +424,7 @@ class PullRequestTrailerRangeLiveRegressionTests(unittest.TestCase):
 
         # Concurrent-dev-advance shape: a task branch that merged dev back in.
         self._git(repo, "checkout", "-b", "task/MERGED-DEV-001", base)
-        self._commit(
+        heads["merged_dev_before"] = self._commit(
             repo,
             "merged.txt",
             self._task_message("MERGED-DEV-001", "own one layer"),
@@ -462,6 +518,33 @@ class PullRequestTrailerRangeLiveRegressionTests(unittest.TestCase):
             rev_range = self._pr_range(repo, heads, "merged_dev", "9002")
             code, shas = self._scan(repo, rev_range)
             self.assertNotIn(heads["dev_bad"], shas)
+            self.assertEqual(code, 0)
+
+    def test_old_push_contract_reproduces_the_4215_contamination(self) -> None:
+        # Run 30219364096: `before..github.sha` on a task branch that had just
+        # synced dev in, so dev commit 0410a89f was inside the pushed range.
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, heads = self._build_repo(tmp)
+            stale_range = f"{heads['merged_dev_before']}..{heads['merged_dev']}"
+            code, shas = self._scan(repo, stale_range)
+            self.assertIn(heads["dev_bad"], shas)
+            self.assertEqual(code, 1)
+
+    def test_repaired_push_range_drops_the_synced_dev_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, heads = self._build_repo(tmp)
+            rev_range = self._resolve(
+                repo,
+                event="push",
+                base_sha=heads["merged_dev_before"],
+                head_sha=heads["merged_dev"],
+                ref_name="task/MERGED-DEV-001",
+                pr_base_ref="",
+            )
+            self.assertEqual(rev_range, f"origin/dev..{heads['merged_dev']}")
+            code, shas = self._scan(repo, rev_range)
+            self.assertNotIn(heads["dev_bad"], shas)
+            self.assertIn(heads["merged_dev_before"], shas)
             self.assertEqual(code, 0)
 
     def test_stale_base_sha_alone_would_still_admit_the_merged_dev_commit(self) -> None:

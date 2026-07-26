@@ -15,10 +15,20 @@ The ``push`` and ``pull_request`` shapes are deliberately different.
     base branch keeps integration-base history and the synthetic merge commit
     out of the scan no matter how far the base moves afterwards.
 
-``push``
-    ``github.event.before`` is the previous branch tip. It disappears after a
-    force-push or rebase and is the all-zero SHA for a new branch, so fall
-    back to the merge base with the branch's integration target.
+``push`` on ``task/**`` / ``hotfix/**``
+    ``github.event.before`` is the previous branch tip, so any commit the
+    worker pulled in when syncing the branch with its integration target is
+    inside ``before..github.sha`` even though the branch does not own it. Run
+    30219364096 rejected the same dev commit ``0410a89f`` on
+    ``task/SUP-WORKER-TRUTH-RECONCILE-001`` for exactly that reason. Work
+    branches are therefore measured against their integration target, which
+    also survives force-push, rebase and a brand-new branch without special
+    cases.
+
+``push`` on ``dev`` / ``master`` / ``publish/**`` / ``promote/**``
+    These are the integration branches themselves; keep measuring them from
+    ``before``, falling back to the merge base with their own target when
+    ``before`` is missing, all-zero, or was rewritten.
 
 Both shapes fail closed. An unusable head or an unresolvable base is an
 error; it never degrades into a silently narrower or wider range.
@@ -63,6 +73,12 @@ def git_merge_base(ref: str, head: str) -> str | None:
         return None
     sha = proc.stdout.strip()
     return sha or None
+
+
+def is_work_branch(ref_name: str) -> bool:
+    """True for branches that carry task-owned commits and nothing else."""
+
+    return ref_name.startswith(("task/", "hotfix/"))
 
 
 def push_fallback_base_refs(ref_name: str) -> list[str]:
@@ -133,6 +149,14 @@ def resolve_push_range(
     head = head_sha or "HEAD"
     if not commit_exists(head):
         raise ValueError(f"head commit is not available: {head}")
+
+    # A work branch owns exactly the commits its integration target does not
+    # already have. Measuring from `before` instead re-scans whatever the
+    # worker merged in when it synced the branch with dev.
+    if is_work_branch(ref_name):
+        for ref in push_fallback_base_refs(ref_name):
+            if commit_exists(ref):
+                return f"{ref}..{head}"
 
     base = (base_sha or "").strip()
     if base and base != ZERO_SHA and commit_exists(base) and is_ancestor(base, head):
