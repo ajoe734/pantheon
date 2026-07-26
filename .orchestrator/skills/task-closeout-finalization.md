@@ -12,9 +12,55 @@ Only the task owner may move a `review_approved` task to `done`. The
 owner is responsible for making the approved state durable, auditable,
 and publish-ready before running `scripts/ai-status.sh done`.
 
+## Review Evidence Manifest Rule
+
+Product-level and loop tasks fail closed at `done` unless the canonical task
+row records a task-scoped review evidence manifest in `review_file`. Chat
+feedback, a green PR, and a reviewer approval message do not replace this
+field.
+
+The preferred path is for the reviewer to bind the already committed evidence
+manifest during approval:
+
+```bash
+AI_NAME=<Reviewer> \
+REVIEW_FILE=<repo-relative-task-evidence-path> \
+"$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" approve \
+  "$TASK" "<specific independent review evidence>"
+```
+
+Before owner closeout, inspect the canonical row through the governed command
+root, not the worktree's possibly stale `ai-status.json`:
+
+```bash
+"$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" show "$TASK"
+```
+
+If the reviewer approved without recording `review_file`, the owner may bind
+the same already committed and reviewed manifest while running `done`. This is
+an explicit path supported by `scripts/ai_status.py`; it is not permission to
+invent new evidence, replace the reviewed artifact, or edit generated status
+files:
+
+```bash
+AI_NAME=<Owner> \
+REVIEW_FILE=<repo-relative-task-evidence-path> \
+"$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" done \
+  "$TASK" "<checkpoint message>"
+```
+
+For the twelve-loop delivery, the normal manifest is
+`docs/deployment/evidence/twelve-loop-gap/<TASK-ID>/evidence.json`. Confirm the
+selected file is present in the merged task PR and contains the independent
+review decision before using it.
+
 ## Required Closeout Checklist
 
 1. Re-read the task brief, reviewer approval, and touched artifacts.
+   - Run the governed `show` command above and confirm `review_file` names the
+     committed, reviewed task evidence manifest.
+   - If `review_file` is absent, select the exact reviewed manifest now and
+     carry it in `REVIEW_FILE` on the final `done` command.
 2. Confirm the approved scope is still true in the current worktree.
 3. Update task-specific records when needed: review notes, acceptance
    packet, handoff packet, evidence note, or narrow docs that describe
@@ -35,9 +81,12 @@ and publish-ready before running `scripts/ai-status.sh done`.
      those files into the closeout commit.
 7. Create the task PR (see § Per-Task PR Flow below) whenever the task
    changed repo files, then wait for it to merge into the target branch.
-8. Run `AI_NAME=<Owner> ./scripts/ai-status.sh done <task-id> "<checkpoint message>"`
-   only after the PR is merged. An open PR, auto-merge enabled, or green
-   checks are not sufficient.
+8. Run
+   `AI_NAME=<Owner> REVIEW_FILE=<evidence-path> "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" done <task-id> "<checkpoint message>"`
+   only after the PR is merged when the canonical row does not already contain
+   `review_file`. If it is already present, omit `REVIEW_FILE` and preserve the
+   reviewer-bound path. An open PR, auto-merge enabled, or green checks are not
+   sufficient.
 
 ## Per-Task PR Flow (mandatory)
 
@@ -63,8 +112,13 @@ python3 scripts/git/worker_commit.py \
 # 3. Push and open PR with auto-merge.
 ./scripts/git/task_finalize.sh "$TASK"
 
-# 4. Wait until GitHub reports the PR merged into dev, then run done.
-AI_NAME=<Owner> ./scripts/ai-status.sh done "$TASK" "<checkpoint message>"
+# 4. Wait until GitHub reports the PR merged into dev, inspect the canonical
+#    row, then run done with the reviewed evidence manifest when needed.
+"$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" show "$TASK"
+AI_NAME=<Owner> \
+REVIEW_FILE=<repo-relative-task-evidence-path> \
+"$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" done \
+  "$TASK" "<checkpoint message>"
 ```
 
 On an authoritative Phase-6 deployment, Supervisor-issued commands receive the

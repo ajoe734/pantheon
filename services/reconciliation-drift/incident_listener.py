@@ -261,11 +261,36 @@ def post_incident_trigger(
     incident: dict[str, Any],
     timeout_seconds: float = 30.0,
 ) -> dict[str, Any]:
-    payload = json.dumps({"incident": incident}).encode("utf-8")
+    delivered_incident = dict(incident)
+    envelope = delivered_incident.get("correlation_envelope")
+    tenant_id = str(
+        delivered_incident.get("tenant_id")
+        or (
+            envelope.get("tenant_id")
+            if isinstance(envelope, dict)
+            else ""
+        )
+        or os.getenv("PANTHEON_TENANT_ID")
+        or ""
+    ).strip()
+    if tenant_id:
+        delivered_incident["tenant_id"] = tenant_id
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    if tenant_id:
+        headers["X-Tenant-Id"] = tenant_id
+    auth_token = os.getenv("RECONCILIATION_DRIFT_AUTH_TOKEN", "")
+    if auth_token:
+        headers["Authorization"] = f"Bearer {auth_token}"
+    payload = json.dumps(
+        {
+            "tenant_id": tenant_id or None,
+            "incident": delivered_incident,
+        }
+    ).encode("utf-8")
     request = urllib.request.Request(
         reconciliation_url.rstrip("/") + "/api/reconciliation-drift/incident-triggers/consume",
         data=payload,
-        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:  # noqa: S310

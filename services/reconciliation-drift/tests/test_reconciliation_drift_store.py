@@ -5,7 +5,9 @@ import importlib.util
 import json
 import multiprocessing
 import subprocess
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -436,3 +438,242 @@ def test_json_store_treats_unrecoverable_map_as_fail_closed_error(tmp_path: Path
         store.put_alert_handoff({"alert_id": "alert-a", "status": "sent"})
 
     assert store.alerts_path.read_bytes() == original
+
+
+def test_work_claim_allows_only_one_owner_and_keeps_completed_receipt(
+    tmp_path: Path,
+) -> None:
+    module = _load_store_module()
+    store = module.ReconciliationDriftStore(tmp_path)
+    now = datetime(2026, 7, 26, 10, 0, tzinfo=timezone.utc)
+
+    first = store.claim_work(
+        tenant_id="tenant-a",
+        work_type="scheduled_reconcile",
+        window_id="2026-07-26T10:00:00Z/PT5M",
+        owner_id="scheduler-a",
+        lease_seconds=60,
+        now=now,
+    )
+    competing = store.claim_work(
+        tenant_id="tenant-a",
+        work_type="scheduled_reconcile",
+        window_id="2026-07-26T10:00:00Z/PT5M",
+        owner_id="scheduler-b",
+        lease_seconds=60,
+        now=now,
+    )
+
+    assert first["acquired"] is True
+    assert competing["acquired"] is False
+    assert competing["reason"] == "lease_active"
+    assert competing["claim"]["owner_id"] == "scheduler-a"
+
+    completed = store.complete_work(
+        claim_id=first["claim"]["claim_id"],
+        lease_token=first["claim"]["lease_token"],
+        result={"status": "ok", "evaluation_ids": ["eval-a"]},
+        now=now + timedelta(seconds=2),
+    )
+    duplicate = store.claim_work(
+        tenant_id="tenant-a",
+        work_type="scheduled_reconcile",
+        window_id="2026-07-26T10:00:00Z/PT5M",
+        owner_id="scheduler-b",
+        lease_seconds=60,
+        now=now + timedelta(seconds=3),
+    )
+
+    assert completed["status"] == "completed"
+    assert completed["result"]["evaluation_ids"] == ["eval-a"]
+    assert duplicate["acquired"] is False
+    assert duplicate["reason"] == "completed"
+    assert duplicate["claim"]["result"] == completed["result"]
+
+
+def test_expired_or_failed_work_claim_can_recover_but_old_owner_cannot_finish(
+    tmp_path: Path,
+) -> None:
+    module = _load_store_module()
+    store = module.ReconciliationDriftStore(tmp_path)
+    now = datetime(2026, 7, 26, 10, 0, tzinfo=timezone.utc)
+    first = store.claim_work(
+        tenant_id="tenant-a",
+        work_type="telemetry_consume",
+        window_id="evt-001",
+        owner_id="consumer-a",
+        lease_seconds=10,
+        now=now,
+    )
+    recovered = store.claim_work(
+        tenant_id="tenant-a",
+        work_type="telemetry_consume",
+        window_id="evt-001",
+        owner_id="consumer-b",
+        lease_seconds=10,
+        now=now + timedelta(seconds=11),
+    )
+
+    assert recovered["acquired"] is True
+    assert recovered["reason"] == "recovered"
+    assert recovered["claim"]["attempt_count"] == 2
+    with pytest.raises(module.ReconciliationStoreError, match="lease lost"):
+        store.complete_work(
+            claim_id=first["claim"]["claim_id"],
+            lease_token=first["claim"]["lease_token"],
+            result={"status": "ok"},
+            now=now + timedelta(seconds=12),
+        )
+
+    store.fail_work(
+        claim_id=recovered["claim"]["claim_id"],
+        lease_token=recovered["claim"]["lease_token"],
+        error="dependency timeout",
+        result={"status": "failure"},
+        now=now + timedelta(seconds=12),
+    )
+    retry = store.claim_work(
+        tenant_id="tenant-a",
+        work_type="telemetry_consume",
+        window_id="evt-001",
+        owner_id="consumer-c",
+        lease_seconds=10,
+        now=now + timedelta(seconds=12),
+    )
+    assert retry["acquired"] is True
+    assert retry["claim"]["attempt_count"] == 3
+
+
+def test_work_claim_identity_is_tenant_scoped_and_corruption_fails_closed(
+    tmp_path: Path,
+) -> None:
+    module = _load_store_module()
+    store = module.ReconciliationDriftStore(tmp_path)
+    now = datetime(2026, 7, 26, 10, 0, tzinfo=timezone.utc)
+    tenant_a = store.claim_work(
+        tenant_id="tenant-a",
+        work_type="scheduled_reconcile",
+        window_id="window-1",
+        owner_id="worker-a",
+        lease_seconds=30,
+        now=now,
+    )
+    tenant_b = store.claim_work(
+        tenant_id="tenant-b",
+        work_type="scheduled_reconcile",
+        window_id="window-1",
+        owner_id="worker-b",
+        lease_seconds=30,
+        now=now,
+    )
+    assert tenant_a["claim"]["claim_id"] != tenant_b["claim"]["claim_id"]
+
+    original = b'{"broken":'
+    store.work_claims_path.write_bytes(original)
+    with pytest.raises(module.ReconciliationStoreError):
+        store.claim_work(
+            tenant_id="tenant-c",
+            work_type="scheduled_reconcile",
+            window_id="window-1",
+            owner_id="worker-c",
+            lease_seconds=30,
+            now=now,
+        )
+    assert store.work_claims_path.read_bytes() == original
+
+
+def test_tenant_records_with_same_external_id_do_not_overwrite_each_other(
+    tmp_path: Path,
+) -> None:
+    module = _load_store_module()
+    store = module.ReconciliationDriftStore(tmp_path)
+    tenant_a = store.put_drift_report(
+        {
+            "drift_report_id": "shared-report-id",
+            "tenant_id": "tenant-a",
+            "severity": "medium",
+        }
+    )
+    tenant_b = store.put_drift_report(
+        {
+            "drift_report_id": "shared-report-id",
+            "tenant_id": "tenant-b",
+            "severity": "critical",
+        }
+    )
+
+    assert (
+        store.get_drift_report("shared-report-id", tenant_id="tenant-a")
+        == tenant_a
+    )
+    assert (
+        store.get_drift_report("shared-report-id", tenant_id="tenant-b")
+        == tenant_b
+    )
+    assert len(store.list_drift_reports()) == 2
+
+
+def test_postgres_store_owns_records_reports_worker_state_and_work_claims(
+    tmp_path: Path,
+) -> None:
+    module = _load_store_module()
+
+    class FakeOwnerStore:
+        tables: dict[str, dict[str, dict]] = {}
+
+        def __init__(self, *, table, **_kwargs):
+            self.records = self.tables.setdefault(table, {})
+
+        def list_all(self):
+            return list(self.records.values())
+
+        def get(self, record_id):
+            value = self.records.get(record_id)
+            return dict(value) if value is not None else None
+
+        def put(self, record_id, payload):
+            self.records[record_id] = dict(payload)
+
+        def compare_and_set(self, record_id, expected, payload):
+            current = self.records.get(record_id)
+            if current != expected:
+                return False, dict(current) if current is not None else None
+            self.records[record_id] = dict(payload)
+            return True, dict(payload)
+
+    FakeOwnerStore.tables = {}
+    with mock.patch.object(module, "PostgresJsonOwnerStore", FakeOwnerStore):
+        store = module.PostgresReconciliationDriftStore(
+            tmp_path,
+            dsn="postgresql://unused",
+        )
+
+    record = store.put_reconciliation_record(
+        {"record_id": "record-1", "tenant_id": "tenant-a"}
+    )
+    report = store.put_drift_report(
+        {"drift_report_id": "report-1", "tenant_id": "tenant-a"}
+    )
+    state = store.put_worker_state(
+        {"state_id": "state-1", "tenant_id": "tenant-a", "status": "healthy"}
+    )
+    claim = store.claim_work(
+        tenant_id="tenant-a",
+        work_type="scheduled_reconcile",
+        window_id="window-1",
+        owner_id="worker-a",
+        lease_seconds=30,
+        now=datetime(2026, 7, 26, 10, 0, tzinfo=timezone.utc),
+    )
+
+    assert (
+        store.get_reconciliation_record("record-1", tenant_id="tenant-a")
+        == record
+    )
+    assert store.get_drift_report("report-1", tenant_id="tenant-a") == report
+    assert store.get_worker_state("state-1", tenant_id="tenant-a") == state
+    assert claim["acquired"] is True
+    assert not store.reconciliation_records_path.exists()
+    assert not store.drift_reports_path.exists()
+    assert not store.worker_states_path.exists()
+    assert not store.work_claims_path.exists()
