@@ -1,7 +1,7 @@
 # L12-SRC-001 source due-state reconciliation evidence
 
-Owner: Codex2  
-Reviewer: Codex  
+Owner: Codex2
+Reviewer: Codex
 Status: implementation complete; independent review required
 
 ## Outcome
