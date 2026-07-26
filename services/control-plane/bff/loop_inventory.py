@@ -755,19 +755,74 @@ def _project_downstream_actual_state(
         or health_record.get("downstream_status")
     )
     if downstream:
+        checked_at = downstream.get("checked_at") or downstream.get("captured_at")
+        authoritative = bool(
+            checked_at
+            and health_source in _ACCEPTED_RUNTIME_HEALTH_SOURCES
+            and str(downstream.get("status") or "").strip().lower()
+            not in {"", "unknown", "unobserved"}
+        )
         return {
-            "status": downstream.get("status") or "unknown",
+            "status": downstream.get("status") if authoritative else "unobserved",
             "source": downstream.get("source") or health_source,
+            "authoritative": authoritative,
+            "reported_status": downstream.get("status"),
             "summary": downstream.get("summary") or downstream.get("message"),
-            "checked_at": downstream.get("checked_at") or downstream.get("captured_at"),
+            "checked_at": checked_at if authoritative else None,
             "sources": deepcopy(downstream.get("sources") or []),
+            "query": downstream.get("query") or actual_state.get("query"),
         }
     return {
-        "status": actual_state.get("query_status") or "unknown",
+        "status": "unobserved",
         "source": "registry_metadata",
+        "authoritative": False,
+        "reported_status": actual_state.get("query_status"),
         "summary": actual_state.get("query"),
         "checked_at": None,
         "sources": deepcopy(actual_state.get("sources") or []),
+        "query": actual_state.get("query"),
+    }
+
+
+def _project_desired_state_presence(
+    desired_state: Dict[str, Any],
+    health_record: Dict[str, Any],
+    health_source: str,
+) -> Dict[str, Any]:
+    observed = _dict_or_empty(health_record.get("desired_state_presence"))
+    checked_at = observed.get("checked_at") or observed.get("captured_at")
+    if observed:
+        present = observed.get("present")
+        authoritative = bool(
+            isinstance(present, bool)
+            and checked_at
+            and health_source in _ACCEPTED_RUNTIME_HEALTH_SOURCES
+        )
+        return {
+            "status": (
+                ("present" if present else "absent")
+                if authoritative
+                else "configured_unobserved"
+            ),
+            "present": present if authoritative else None,
+            "authoritative": authoritative,
+            "source": observed.get("source") or health_source,
+            "summary": observed.get("summary"),
+            "checked_at": checked_at if authoritative else None,
+            "sources": deepcopy(observed.get("sources") or []),
+            "query": observed.get("query") or desired_state.get("query"),
+        }
+    return {
+        "status": (
+            "declared_unobserved" if desired_state.get("query") else "missing"
+        ),
+        "present": None,
+        "authoritative": False,
+        "source": "registry_metadata",
+        "summary": desired_state.get("query"),
+        "checked_at": None,
+        "sources": deepcopy(desired_state.get("sources") or []),
+        "query": desired_state.get("query"),
     }
 
 
@@ -858,6 +913,7 @@ def _project_loop_health(
     loop_id = str(projected.get("loop_id") or "")
     maturity = projected.get("maturity") if isinstance(projected.get("maturity"), dict) else {}
     controller = projected.get("controller") if isinstance(projected.get("controller"), dict) else {}
+    desired_state = projected.get("desired_state") if isinstance(projected.get("desired_state"), dict) else {}
     actual_state = projected.get("actual_state") if isinstance(projected.get("actual_state"), dict) else {}
     evidence_profile = projected.get("evidence") if isinstance(projected.get("evidence"), dict) else {}
     evidence_packet = _project_evidence_packet(
@@ -881,6 +937,11 @@ def _project_loop_health(
                 health_record,
                 event_key="last_failure",
                 fallback_source=health_source,
+            ),
+            "desired_state_presence": _project_desired_state_presence(
+                desired_state,
+                health_record,
+                health_source,
             ),
             "downstream_actual_state": _project_downstream_actual_state(actual_state, health_record, health_source),
             "evidence_packet": evidence_packet,
