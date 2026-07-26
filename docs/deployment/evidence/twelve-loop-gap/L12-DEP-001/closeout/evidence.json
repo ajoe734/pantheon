@@ -24,7 +24,7 @@
     "phase": "Twelve Loop Remediation / Deployment",
     "product_level_required": true,
     "repository": "ajoe734/pantheon",
-    "review_file": "/tmp/pantheon-worker-worktrees/pantheon/l12-dep-001/docs/deployment/evidence/twelve-loop-gap/L12-DEP-001/closeout/evidence.json",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-DEP-001/closeout/evidence.json",
     "reviewer": "Codex",
     "target_environment": "dev",
     "target_maturity": "reconciled",
