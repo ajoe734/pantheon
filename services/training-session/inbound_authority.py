@@ -7,7 +7,12 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Sequence
 
-from services.runtime_auth_inbound import AuthContext, AuthError, validate_request_auth
+from services.runtime_auth_inbound import (
+    AuthContext,
+    AuthError,
+    has_claim_bound_mfa,
+    validate_request_auth,
+)
 
 
 _AUTHORITY_CONTEXT: ContextVar[Optional["TrainingInboundAuthority"]] = ContextVar(
@@ -193,7 +198,6 @@ def _auth_env() -> dict[str, str]:
             or os.getenv("PANTHEON_RUNTIME_MFA_REQUIRED")
             or "true"
         ),
-        "PANTHEON_RUNTIME_DEFAULT_ROLE": "training-service",
     }
 
 
@@ -315,16 +319,27 @@ def authenticate_training_request(
     required_roles = tuple(
         _csv(os.getenv("TRAINING_SESSION_ALLOWED_ROLES", "training-service"))
     )
+    auth_env = _auth_env()
     try:
         context: AuthContext = validate_request_auth(
             authorization=authorization,
             mfa_header=mfa_token,
             required_roles=required_roles,
             mfa_required=mfa_required,
-            env=_auth_env(),
+            env=auth_env,
         )
     except AuthError as exc:
         raise TrainingInboundAuthorityError(exc.code, exc.message, exc.status_code) from exc
+    if (
+        mfa_required
+        and auth_env["PANTHEON_RUNTIME_MFA_REQUIRED"].lower() == "true"
+        and not has_claim_bound_mfa(context, env=auth_env)
+    ):
+        raise TrainingInboundAuthorityError(
+            "MFA_NOT_VERIFIED",
+            "Verified caller token does not contain authoritative MFA proof",
+            401,
+        )
 
     bound_services = _claim_strings(context.claims, _SERVICE_CLAIMS)
     if context.token_kind == "structured":

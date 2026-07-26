@@ -27,15 +27,17 @@ def _token(
     service: str = "control-plane-bff",
     tenants: list[str] | None = None,
     mfa: bool = False,
+    role: str | None = "training-service",
 ) -> str:
     claims = {
         "sub": service,
         "service": service,
-        "roles": ["training-service"],
         "tenant_ids": tenants or ["tenant-a"],
         "delegated_actor_id": "operator-a",
         "exp": time.time() + 3600,
     }
+    if role is not None:
+        claims["roles"] = [role]
     if mfa:
         claims["amr"] = ["pwd", "mfa"]
     return encode_jwt_hs256(claims, secret=SECRET)
@@ -83,6 +85,28 @@ def test_teaching_mutation_requires_bearer_service_and_tenant(monkeypatch) -> No
     assert missing_tenant.json()["error"]["code"] == "TENANT_REQUIRED"
     assert wrong_service.status_code == 403
     assert wrong_service.json()["error"]["code"] == "ACTOR_SERVICE_MISMATCH"
+
+
+def test_strict_jwt_requires_explicit_authorized_training_role(monkeypatch) -> None:
+    module = _load_service_module()
+    _configure_strict(monkeypatch)
+    client = TestClient(module.app)
+
+    missing_role = client.post(
+        "/api/training/sessions",
+        json={"persona_id": "persona-a", "objective": "secure teaching"},
+        headers=_headers(token=_token(role=None)),
+    )
+    wrong_role = client.post(
+        "/api/training/sessions",
+        json={"persona_id": "persona-a", "objective": "secure teaching"},
+        headers=_headers(token=_token(role="viewer")),
+    )
+
+    assert missing_role.status_code == 403
+    assert missing_role.json()["error"]["code"] == "AUTH_FORBIDDEN"
+    assert wrong_role.status_code == 403
+    assert wrong_role.json()["error"]["code"] == "AUTH_FORBIDDEN"
 
 
 def test_teaching_records_are_bound_to_verified_tenant_and_service(monkeypatch) -> None:
@@ -151,6 +175,15 @@ def test_replay_commit_requires_verified_mfa_before_route_execution(monkeypatch)
             "Idempotency-Key": "commit-2",
         },
     )
+    well_formed_unverified_mfa = client.post(
+        "/api/training/replays/not-visible/commit",
+        json={},
+        headers={
+            **_headers(token=_token(mfa=False)),
+            "X-MFA-Token": "123456",
+            "Idempotency-Key": "commit-unverified",
+        },
+    )
     verified_mfa = client.post(
         "/api/training/replays/not-visible/commit",
         json={},
@@ -164,6 +197,8 @@ def test_replay_commit_requires_verified_mfa_before_route_execution(monkeypatch)
     assert without_mfa.json()["error"]["code"] == "MFA_REQUIRED"
     assert malformed_mfa.status_code == 400
     assert malformed_mfa.json()["error"]["code"] == "MFA_VALIDATION_FAILED"
+    assert well_formed_unverified_mfa.status_code == 401
+    assert well_formed_unverified_mfa.json()["error"]["code"] == "MFA_NOT_VERIFIED"
     # Auth/MFA passed, so the normal resource boundary is now reached.
     assert verified_mfa.status_code == 404
     readiness = client.get("/readyz")
@@ -171,6 +206,25 @@ def test_replay_commit_requires_verified_mfa_before_route_execution(monkeypatch)
     failures = readiness.json()["dependencies"]["functional"]["failures"]
     assert failures[-1]["operation"] == "persona_commit"
     assert failures[-1]["status"] == "failed"
+
+
+def test_commit_and_discard_reject_well_formed_but_unverified_mfa(monkeypatch) -> None:
+    module = _load_service_module()
+    _configure_strict(monkeypatch)
+    client = TestClient(module.app)
+
+    for decision in ("commit", "discard"):
+        response = client.post(
+            f"/api/training/replays/not-visible/{decision}",
+            json={},
+            headers={
+                **_headers(token=_token(mfa=False)),
+                "X-MFA-Token": "654321",
+                "Idempotency-Key": f"{decision}-unverified",
+            },
+        )
+        assert response.status_code == 401
+        assert response.json()["error"]["code"] == "MFA_NOT_VERIFIED"
 
 
 def test_readiness_degrades_when_strict_inbound_verifier_is_missing(monkeypatch) -> None:

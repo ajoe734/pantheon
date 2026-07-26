@@ -612,47 +612,45 @@ def get_session(session_id: str) -> Dict[str, Any]:
 
 @app.post("/api/training/sessions/{session_id}/events", status_code=201)
 def append_event(session_id: str, body: AppendEventBody) -> Dict[str, Any]:
-    session = store.get_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="training session not found")
-    _require_tenant_record(session, "training session not found")
-    if str(session.get("status") or "").lower() != "active":
-        raise HTTPException(status_code=409, detail="training session is not active")
     timestamp = body.emitted_at or utc_now()
-    events = session.setdefault("events", [])
-    event_id = _next_event_id(timestamp, events, session_id)
-    sequence_number = max((int(event.get("sequence_number") or 0) for event in events), default=0) + 1
-    event = _build_teaching_event(
-        session_id=session_id,
-        tenant_id=_tenant_id_for(session),
-        event_id=event_id,
-        event_type=body.event_type,
-        actor=_trusted_actor_id(body.actor),
-        actor_type=(
-            body.actor_type
-            if _request_authority().token_kind == "test-disabled"
-            else ("user" if _request_authority().delegated_actor_id else "service")
-        ),
-        actor_label=body.actor_label,
-        message_body=body.message_body,
-        summary=body.summary,
-        timestamp=timestamp,
-        sequence_number=sequence_number,
-        outcome_signal=body.outcome_signal,
-        evidence_ref=body.evidence_ref,
-        patch_delta=body.patch_delta,
-        eval_ref=body.eval_ref,
-        artifact_refs=body.artifact_refs,
-        payload=body.payload,
-        correlation_id=body.correlation_id,
-    )
-    events.append(event)
-    if body.outcome_signal:
-        outcomes = session.setdefault("outcomes", [])
-        if body.outcome_signal not in outcomes:
-            outcomes.append(body.outcome_signal)
-    store.put_session(session)
-    store.append_event(event)
+    def build_event(session: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        if not session:
+            raise HTTPException(status_code=404, detail="training session not found")
+        _require_tenant_record(session, "training session not found")
+        if str(session.get("status") or "").lower() != "active":
+            raise HTTPException(status_code=409, detail="training session is not active")
+        events = session.get("events") if isinstance(session.get("events"), list) else []
+        event_id = _next_event_id(timestamp, events, session_id)
+        sequence_number = (
+            max((int(event.get("sequence_number") or 0) for event in events), default=0)
+            + 1
+        )
+        return _build_teaching_event(
+            session_id=session_id,
+            tenant_id=_tenant_id_for(session),
+            event_id=event_id,
+            event_type=body.event_type,
+            actor=_trusted_actor_id(body.actor),
+            actor_type=(
+                body.actor_type
+                if _request_authority().token_kind == "test-disabled"
+                else ("user" if _request_authority().delegated_actor_id else "service")
+            ),
+            actor_label=body.actor_label,
+            message_body=body.message_body,
+            summary=body.summary,
+            timestamp=timestamp,
+            sequence_number=sequence_number,
+            outcome_signal=body.outcome_signal,
+            evidence_ref=body.evidence_ref,
+            patch_delta=body.patch_delta,
+            eval_ref=body.eval_ref,
+            artifact_refs=body.artifact_refs,
+            payload=body.payload,
+            correlation_id=body.correlation_id,
+        )
+
+    session, event = store.append_session_event(session_id, build_event)
     return {"accepted_at": timestamp, "event": event, "session": session}
 
 
@@ -997,32 +995,43 @@ def _append_training_event(
     payload: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     session_id = str(session.get("session_id") or session.get("id") or "").strip()
-    events = session.setdefault("events", [])
-    event = _build_teaching_event(
-        session_id=session_id,
-        tenant_id=_tenant_id_for(session),
-        event_id=_next_event_id(timestamp, events, session_id),
-        event_type=event_type,
-        actor=actor,
-        actor_type=actor_type,
-        actor_label=actor_label,
-        summary=summary,
-        timestamp=timestamp,
-        sequence_number=max((int(item.get("sequence_number") or 0) for item in events), default=0) + 1,
-        outcome_signal=outcome_signal,
-        evidence_ref=evidence_ref,
-        patch_delta=patch_delta,
-        eval_ref=eval_ref,
-        artifact_refs=artifact_refs,
-        payload=payload,
-    )
-    events.append(event)
-    if outcome_signal:
-        outcomes = session.setdefault("outcomes", [])
-        if outcome_signal not in outcomes:
-            outcomes.append(outcome_signal)
-    store.put_session(_teaching_session_contract(session))
-    store.append_event(event)
+    def build_event(authoritative: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        if not authoritative:
+            raise HTTPException(status_code=404, detail="training session not found")
+        _require_tenant_record(authoritative, "training session not found")
+        events = (
+            authoritative.get("events")
+            if isinstance(authoritative.get("events"), list)
+            else []
+        )
+        return _build_teaching_event(
+            session_id=session_id,
+            tenant_id=_tenant_id_for(authoritative),
+            event_id=_next_event_id(timestamp, events, session_id),
+            event_type=event_type,
+            actor=actor,
+            actor_type=actor_type,
+            actor_label=actor_label,
+            summary=summary,
+            timestamp=timestamp,
+            sequence_number=(
+                max(
+                    (int(item.get("sequence_number") or 0) for item in events),
+                    default=0,
+                )
+                + 1
+            ),
+            outcome_signal=outcome_signal,
+            evidence_ref=evidence_ref,
+            patch_delta=patch_delta,
+            eval_ref=eval_ref,
+            artifact_refs=artifact_refs,
+            payload=payload,
+        )
+
+    stored_session, event = store.append_session_event(session_id, build_event)
+    session.clear()
+    session.update(stored_session)
     return event
 
 

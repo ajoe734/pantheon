@@ -20,6 +20,43 @@ def _quote_pg_identifier(identifier: str) -> str:
     return ".".join(f'"{part}"' for part in parts)
 
 
+def _copy_record(record: Dict[str, Any]) -> Dict[str, Any]:
+    return json.loads(json.dumps(record))
+
+
+def _append_event_to_session(
+    session: Dict[str, Any],
+    event: Dict[str, Any],
+) -> Dict[str, Any]:
+    record = _copy_record(session)
+    durable_event = _copy_record(event)
+    session_id = str(record.get("session_id") or record.get("id") or "").strip()
+    event_session_id = str(durable_event.get("session_id") or "").strip()
+    if not session_id or event_session_id != session_id:
+        raise ValueError("event.session_id must match session.session_id")
+    tenant_id = str(record.get("tenant_id") or "").strip()
+    if not tenant_id or str(durable_event.get("tenant_id") or "").strip() != tenant_id:
+        raise ValueError("event.tenant_id must match session.tenant_id")
+    event_id = str(durable_event.get("event_id") or "").strip()
+    if not event_id:
+        raise ValueError("event_id is required")
+
+    events = record.setdefault("events", [])
+    for prior in events:
+        if not isinstance(prior, dict) or prior.get("event_id") != event_id:
+            continue
+        if prior != durable_event:
+            raise ValueError(f"event_id conflict in session: {event_id}")
+        return record
+    events.append(durable_event)
+    outcome_signal = durable_event.get("outcome_signal")
+    if outcome_signal:
+        outcomes = record.setdefault("outcomes", [])
+        if outcome_signal not in outcomes:
+            outcomes.append(outcome_signal)
+    return record
+
+
 class PostgresTrainingSessionEventStore:
     def __init__(self, dsn: str, table: str = "training_session.teaching_events", bootstrap: bool = True) -> None:
         if not dsn:
@@ -56,32 +93,69 @@ class PostgresTrainingSessionEventStore:
                 """
             )
 
-    def append_event(self, event: Dict[str, Any]) -> Dict[str, Any]:
-        record = json.loads(json.dumps(event))
+    @staticmethod
+    def _fetch_one(cursor: Any) -> Any:
+        if hasattr(cursor, "fetchone"):
+            return cursor.fetchone()
+        rows = cursor.fetchall()
+        return rows[0] if rows else None
+
+    @staticmethod
+    def _row_payload(row: Any) -> Optional[Dict[str, Any]]:
+        if row is None:
+            return None
+        payload = row[0] if isinstance(row, tuple) else row.get("payload")
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        return dict(payload) if isinstance(payload, dict) else None
+
+    def _append_event_with_connection(
+        self,
+        conn: Any,
+        event: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        record = _copy_record(event)
         session_id = str(record.get("session_id") or "").strip()
         event_id = str(record.get("event_id") or "").strip()
         if not session_id:
             raise ValueError("session_id is required")
         if not event_id:
             raise ValueError("event_id is required")
-        with self._connect() as conn:
-            conn.execute(
-                f"""
-                INSERT INTO {self.table}
-                    (event_id, session_id, event_type, sequence_number, emitted_at, payload)
-                VALUES (%s, %s, %s, %s, %s, %s::jsonb)
-                ON CONFLICT (event_id) DO NOTHING
-                """,
-                (
-                    event_id,
-                    session_id,
-                    record.get("event_type"),
-                    record.get("sequence_number"),
-                    record.get("emitted_at") or record.get("created_at"),
-                    json.dumps(record, ensure_ascii=True, sort_keys=True),
-                ),
+        cursor = conn.execute(
+            f"""
+            INSERT INTO {self.table}
+                (event_id, session_id, event_type, sequence_number, emitted_at, payload)
+            VALUES (%s, %s, %s, %s, %s, %s::jsonb)
+            ON CONFLICT (event_id) DO NOTHING
+            RETURNING payload
+            """,
+            (
+                event_id,
+                session_id,
+                record.get("event_type"),
+                record.get("sequence_number"),
+                record.get("emitted_at") or record.get("created_at"),
+                json.dumps(record, ensure_ascii=True, sort_keys=True),
+            ),
+        )
+        durable = self._row_payload(self._fetch_one(cursor))
+        if durable is None:
+            # A separate statement gets a fresh READ COMMITTED snapshot after
+            # waiting on a concurrent unique-key insert.
+            cursor = conn.execute(
+                f"SELECT payload FROM {self.table} WHERE event_id = %s",
+                (event_id,),
             )
-        return record
+            durable = self._row_payload(self._fetch_one(cursor))
+        if durable is None:
+            raise RuntimeError(f"durable event readback missing: {event_id}")
+        if durable != record:
+            raise ValueError(f"event_id conflict: {event_id}")
+        return durable
+
+    def append_event(self, event: Dict[str, Any]) -> Dict[str, Any]:
+        with self._connect() as conn:
+            return self._append_event_with_connection(conn, event)
 
     def list_event_log(self, session_id: Optional[str] = None) -> List[Dict[str, Any]]:
         params: tuple[Any, ...] = ()
@@ -323,6 +397,57 @@ class PostgresTrainingSessionStore:
     def append_event(self, event: Dict[str, Any]) -> Dict[str, Any]:
         return self.event_store.append_event(event)
 
+    def append_session_event(
+        self,
+        session_id: str,
+        event_factory: Callable[[Optional[Dict[str, Any]]], Dict[str, Any]],
+    ) -> tuple[Dict[str, Any], Dict[str, Any]]:
+        clean_id = str(session_id or "").strip()
+        if not clean_id:
+            raise ValueError("session_id is required")
+        lock_ref = f"training-session:session:{clean_id}"
+        with self._connect() as conn:
+            conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (lock_ref,))
+            cursor = conn.execute(
+                f"""
+                SELECT payload
+                FROM {self.records_table}
+                WHERE record_kind = %s AND record_id = %s
+                FOR UPDATE
+                """,
+                ("session", clean_id),
+            )
+            existing = self._row_payload(self._fetch_one(cursor))
+            candidate_event = event_factory(
+                _copy_record(existing) if existing is not None else None
+            )
+            if existing is None:
+                raise ValueError(f"training session not found: {clean_id}")
+            durable_event = self.event_store._append_event_with_connection(
+                conn,
+                candidate_event,
+            )
+            record = _append_event_to_session(existing, durable_event)
+            _, tenant_id = self._record("session", clean_id, record)
+            conn.execute(
+                f"""
+                INSERT INTO {self.records_table}
+                    (record_kind, record_id, tenant_id, payload, updated_at)
+                VALUES (%s, %s, %s, %s::jsonb, now())
+                ON CONFLICT (record_kind, record_id) DO UPDATE SET
+                    tenant_id = EXCLUDED.tenant_id,
+                    payload = EXCLUDED.payload,
+                    updated_at = now()
+                """,
+                (
+                    "session",
+                    clean_id,
+                    tenant_id,
+                    json.dumps(record, ensure_ascii=True, sort_keys=True),
+                ),
+            )
+        return record, durable_event
+
     def list_event_log(self, session_id: Optional[str] = None) -> List[Dict[str, Any]]:
         return self.event_store.list_event_log(session_id)
 
@@ -513,24 +638,55 @@ class TrainingSessionStore:
     def append_event(self, event: Dict[str, Any]) -> Dict[str, Any]:
         if self.event_store is not None:
             return self.event_store.append_event(event)
-        record = json.loads(json.dumps(event))
+        record = _copy_record(event)
         if not str(record.get("session_id") or "").strip():
             raise ValueError("session_id is required")
         if not str(record.get("event_id") or "").strip():
             raise ValueError("event_id is required")
         with self._file_lock(self.events_path, exclusive=True):
-            existing = self._read_jsonl_unlocked(self.events_path)
-            for prior in existing:
-                if prior.get("event_id") == record.get("event_id"):
-                    if prior != record:
-                        raise ValueError(f"event_id conflict: {record['event_id']}")
-                    return prior
-            with self.events_path.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps(record, ensure_ascii=True, sort_keys=True))
-                handle.write("\n")
-                handle.flush()
-                os.fsync(handle.fileno())
+            return self._append_jsonl_event_unlocked(record)
+
+    def _append_jsonl_event_unlocked(self, record: Dict[str, Any]) -> Dict[str, Any]:
+        existing = self._read_jsonl_unlocked(self.events_path)
+        for prior in existing:
+            if prior.get("event_id") == record.get("event_id"):
+                if prior != record:
+                    raise ValueError(f"event_id conflict: {record['event_id']}")
+                return prior
+        with self.events_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=True, sort_keys=True))
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
         return record
+
+    def append_session_event(
+        self,
+        session_id: str,
+        event_factory: Callable[[Optional[Dict[str, Any]]], Dict[str, Any]],
+    ) -> tuple[Dict[str, Any], Dict[str, Any]]:
+        clean_id = str(session_id or "").strip()
+        if not clean_id:
+            raise ValueError("session_id is required")
+        with self._file_lock(self.sessions_path, exclusive=True):
+            records = self._read_map_unlocked(self.sessions_path)
+            existing = records.get(clean_id)
+            candidate_event = event_factory(
+                _copy_record(existing) if existing is not None else None
+            )
+            if existing is None:
+                raise ValueError(f"training session not found: {clean_id}")
+            if self.event_store is not None:
+                durable_event = self.event_store.append_event(candidate_event)
+            else:
+                with self._file_lock(self.events_path, exclusive=True):
+                    durable_event = self._append_jsonl_event_unlocked(
+                        _copy_record(candidate_event)
+                    )
+            record = _append_event_to_session(existing, durable_event)
+            records[clean_id] = record
+            self._write_map_unlocked(self.sessions_path, records)
+        return record, durable_event
 
     def list_event_log(self, session_id: Optional[str] = None) -> List[Dict[str, Any]]:
         if self.event_store is not None:
