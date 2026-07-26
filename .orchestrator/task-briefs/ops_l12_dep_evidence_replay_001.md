@@ -21,27 +21,39 @@ the top-level file was the pre-PR reviewed dispatcher receipt, whose
 `overall_admission` of `review_approved_for_task_pr` made it a permanently
 failing duplicate replay source.
 
-The cleanup renames the stale source out of the discovery glob without changing
-a byte of either manifest:
+The cleanup deletes the stale source, edits nothing inside either manifest, and
+touches only paths the immutable `artifact_conflict_guard` already declares:
 
-- `docs/deployment/evidence/twelve-loop-gap/L12-DEP-001/evidence.json` →
-  `.../reviewed-dispatcher-receipt.json`
-  (sha256 `6405c222a4ba405a11c9b1a09de9c2b006f831c94ad8495b4d0402b8a146f263`,
-  unchanged — this is the digest the closeout manifest records as
-  `integrity.source_artifact_sha256_by_epoch.reviewed_dispatcher_receipt`).
-- `.../evidence.sha256` → `.../reviewed-dispatcher-receipt.sha256`, with only the
-  filename label on its single digest line updated so `sha256sum -c` still
-  verifies.
-- `.../L12-DEP-001/README.md` gains a `Replay-source layout` section recording the
-  historical→current path mapping, because `closeout/evidence.json` is immutable
-  and still cites the historical paths.
+- delete `docs/deployment/evidence/twelve-loop-gap/L12-DEP-001/evidence.json`
+- delete `docs/deployment/evidence/twelve-loop-gap/L12-DEP-001/evidence.sha256`
+- update `docs/deployment/evidence/twelve-loop-gap/L12-DEP-001/README.md` with a
+  `Replay-source layout` section
 
-`docs/deployment/evidence/twelve-loop-gap/L12-DEP-001/closeout/evidence.json` and
-`closeout/evidence.sha256` are untouched (`git status` shows no modification).
-No new `evidence.json` is added anywhere by this task, so the global replay
-source set only shrinks. Hosted activation labels are untouched:
-`L12-MANIFEST-001` still owns runtime wiring and `L12-HOSTED-001` still owns
-hosted proof.
+`closeout/evidence.json` and `closeout/evidence.sha256` are untouched — they do
+not appear in `git status` at any point in this task — and their digest still
+verifies. No new `evidence.json` is added anywhere, so the global replay source
+set only shrinks. Hosted activation labels are untouched: `L12-MANIFEST-001`
+still owns runtime wiring and `L12-HOSTED-001` still owns hosted proof.
+
+The deleted receipt stays auditable in merged `dev` history at
+`22e9e319ef340b2822d7382ad49890ca09207110`
+(`git show <sha>:docs/.../L12-DEP-001/evidence.json | sha256sum` reproduces
+`6405c222a4ba405a11c9b1a09de9c2b006f831c94ad8495b4d0402b8a146f263`, the digest
+the closeout manifest records as
+`integrity.source_artifact_sha256_by_epoch.reviewed_dispatcher_receipt`; that
+commit is an ancestor of `origin/dev`). The README records that the immutable
+closeout manifest still cites the removed paths and must be resolved against
+merged history.
+
+### Scope correction
+
+The first commit on this branch (`943d3d899`) renamed the two files to
+`reviewed-dispatcher-receipt.json` / `.sha256` instead of deleting them. An
+independent scope audit rejected that shape: those are new paths outside the
+task's declared `artifact_conflict_guard.artifact_scope`. The follow-up commit
+deletes them, leaving the branch's net diff against `dev` as two deletions plus
+the owned README edit. Nothing in this correction touches closeout evidence, and
+all validation below is re-run on the corrected shape.
 
 ## Validation
 
@@ -94,15 +106,22 @@ classification: valid_closure
 Checksums and focused regressions:
 
 ```text
-sha256sum -c reviewed-dispatcher-receipt.sha256   # reviewed-dispatcher-receipt.json: OK
-sha256sum -c closeout/evidence.sha256             # evidence.json: OK
+sha256sum -c closeout/evidence.sha256   # evidence.json: OK
+
+git show 22e9e319ef340b2822d7382ad49890ca09207110:\
+docs/deployment/evidence/twelve-loop-gap/L12-DEP-001/evidence.json | sha256sum
+6405c222a4ba405a11c9b1a09de9c2b006f831c94ad8495b4d0402b8a146f263  -
+git merge-base --is-ancestor 22e9e319e origin/dev   # exit 0
 
 /home/lupin/pantheon/.venv/bin/pytest -q \
   scripts/test_loop_done_guardrail.py scripts/test_ai_status.py
-207 passed, 23 subtests passed in 33.18s
+207 passed, 23 subtests passed in 30.12s
 
-git diff --check HEAD                             # exit 0
+git diff --check HEAD                   # exit 0
 ```
+
+After the correction the L12-DEP-001 packet contains exactly three files:
+`README.md`, `closeout/evidence.json`, and `closeout/evidence.sha256`.
 
 `loop_done_guardrail.requires_protected_closeout_verdict` and
 `is_loop_autopilot_task` are both false for this task id, so its own `done`

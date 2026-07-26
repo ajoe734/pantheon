@@ -14,35 +14,33 @@ The single closeout manifest for this task is
 [`closeout/evidence.sha256`](closeout/evidence.sha256). It is the path recorded
 as the archived `review_file` for `L12-DEP-001`.
 
-The superseded pre-PR receipt that the reviewer approved is preserved
-byte-for-byte in
-[`reviewed-dispatcher-receipt.json`](reviewed-dispatcher-receipt.json), with its
-digest in
-[`reviewed-dispatcher-receipt.sha256`](reviewed-dispatcher-receipt.sha256).
-
 ## Replay-source layout
 
 `scripts/loop_done_guardrail.py --evidence-root` discovers replay sources by
-globbing for files named `evidence.json`, so the packet must expose exactly one
-of them. `OPS-L12-DEP-EVIDENCE-REPLAY-001` renamed the top-level receipt out of
-that discovery glob; it was never a closeout manifest, and its
-`overall_admission` of `review_approved_for_task_pr` made it a permanently
-failing duplicate replay source for `L12-DEP-001`.
+globbing for files named `evidence.json`, so this packet must expose exactly one
+of them. It previously carried two: `closeout/evidence.json` and a top-level
+`evidence.json`.
 
-The rename changed no bytes of either manifest:
+The top-level file was the pre-PR dispatcher receipt that `Codex` reviewed. It
+was never a closeout manifest — its `overall_admission` was
+`review_approved_for_task_pr` — so it failed every replay of `L12-DEP-001` and
+was superseded in full by `closeout/evidence.json`.
+`OPS-L12-DEP-EVIDENCE-REPLAY-001` removed it, together with its companion
+`evidence.sha256`, so that the global evidence-root replay resolves `L12-DEP-001`
+to one accepted source and zero failing ones.
 
-| Historical path | Current path | sha256 |
-| --- | --- | --- |
-| `.../L12-DEP-001/evidence.json` | `.../L12-DEP-001/reviewed-dispatcher-receipt.json` | `6405c222a4ba405a11c9b1a09de9c2b006f831c94ad8495b4d0402b8a146f263` |
-| `.../L12-DEP-001/evidence.sha256` | `.../L12-DEP-001/reviewed-dispatcher-receipt.sha256` | (companion digest file) |
+Nothing was rewritten to achieve that: `closeout/evidence.json` and
+`closeout/evidence.sha256` are byte-for-byte unchanged, and the deleted files
+were removed rather than edited. The removed content stays auditable in merged
+`dev` history at commit `22e9e319ef340b2822d7382ad49890ca09207110`, and the
+closeout manifest still records its digest as
+`integrity.source_artifact_sha256_by_epoch.reviewed_dispatcher_receipt`
+(`6405c222a4ba405a11c9b1a09de9c2b006f831c94ad8495b4d0402b8a146f263`).
 
-`closeout/evidence.json` is immutable and still cites the historical paths in
-`integrity.checksum_coverage`, `scope.evidence_changed_files`, and the
-`record_log` sequence-1 `owner_evidence_ready` reference. Read those through the
-mapping above; the recorded
-`integrity.source_artifact_sha256_by_epoch.reviewed_dispatcher_receipt` digest
-still verifies against the renamed file. The same applies to the
-`evidence_policy.checksum_file` field inside the receipt itself.
+Because `closeout/evidence.json` is immutable, it still cites the removed paths
+in `integrity.checksum_coverage`, `scope.evidence_changed_files`, and the
+`record_log` sequence-1 `owner_evidence_ready` reference. Resolve those against
+merged history, not the working tree.
 
 ## Delivered boundary
 
