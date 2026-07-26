@@ -1,0 +1,501 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "L12-CTRL-001 product-level review-file admission gate.",
+    "note": "Owner-of-record normalization of the already reviewed controller delivery into schemas/product-evidence.schema.json. No controller behavior, validation result, or reviewer decision was re-derived; the reviewer-approved manifest is preserved byte-identically at reviewed-controller-evidence.json and referenced from integrity.source_artifact_sha256_by_epoch.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/L12-CTRL-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Task-scoped changes require a reviewed Pantheon PR; append a record_log entry whenever the accepted evidence cut or formal review state changes.",
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-26T15:39:00Z",
+    "evidence_cut_semantics": "Owner-of-record closeout cut. Codex2 approved candidate 147495e6bb323f15e004909ee9e48f454a325e7b on PR #4178 while the task branch was still behind dev; canonical ownership then returned to Claude, who merged current dev, re-ran the identical reviewed regression on each integrated head, and normalized the reviewed packet into the product-evidence schema without altering controller behavior or the reviewed decision. PR #4178 then went BEHIND again while dev advanced to 9f9749153d252c42d52b464bb93d6ca805a888ad, so this final cut re-integrates that dev head at fb034b201a9d8ac0acacab5c5804e7df832a078c and re-runs the identical six-file regression and auxiliary checks there.",
+    "id": "L12-CTRL-001",
+    "overall_admission": "pass",
+    "owner": "Claude",
+    "phase": "Twelve Loop Remediation / Controller Foundation",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-CTRL-001/evidence.json",
+    "reviewer": "Codex2",
+    "target_environment": "dev integration plus the active local Pantheon Postgres controller store on localhost:15432",
+    "target_maturity": "reconciled",
+    "task_branch": "task/L12-CTRL-001",
+    "title": "Harden canonical loop controller truth"
+  },
+  "authorities": {
+    "actual_state": [
+      "loop_controller_records",
+      "domain terminal actual-state query"
+    ],
+    "desired_state": [
+      "loop catalog controller contract",
+      "domain desired-state query"
+    ],
+    "task_packet": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-CTRL-001.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "The loop-control store owns every write to loop_controller_records under the (tenant_id, environment, loop_id) identity key; the BFF is a read-only projector of that record plus the loop catalog.",
+    "composes_with": [
+      "L12-FLEET-001 fleet lane assignment",
+      "L12-BFF-001 loop-health read model",
+      "L12-TRUTH-001 desired/actual truth semantics",
+      "PPL-ALLOC-009 allocation controller reuse",
+      "L12-MANIFEST-001 runtime composition",
+      "L12-HOSTED-001 hosted all-loop admission"
+    ],
+    "evidence_changed_files": [
+      ".orchestrator/task-briefs/l12_ctrl_001.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-CTRL-001/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-CTRL-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-CTRL-001/evidence.sha256",
+      "docs/deployment/evidence/twelve-loop-gap/L12-CTRL-001/reviewed-controller-evidence.json"
+    ],
+    "implementation_changed_files": [
+      "schemas/loop-controller-record.schema.json",
+      "services/control-plane/bff/loop_inventory.py",
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/test_loop_health_read_model_contract.py",
+      "services/control-plane/bff/test_loop_inventory_read_model_contract.py",
+      "services/loop-control/__init__.py",
+      "services/loop-control/conformance.py",
+      "services/loop-control/projector.py",
+      "services/loop-control/store.py",
+      "services/loop-control/test_loop_control.py",
+      "services/loop-control/writer.py"
+    ],
+    "not_changing": "Domain loop business behavior, fail-closed catalog admission, catalog maturity promotion, hosted deployment, approval gates, or live-capital authority.",
+    "owned_layer": "Canonical loop-controller record schema, fenced Postgres partial-update store, shared writer and conformance SDK, desired/actual projection, and tenant-scoped BFF loop truth reads."
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "delivery_state": "on_task_branch_pending_pr_4178_merge",
+        "sha": "19e864d8fc670f2c504936e2b4a14bfcafc73cbb",
+        "subject": "L12-CTRL-001: anchor fenced controller truth"
+      },
+      {
+        "delivery_state": "on_task_branch_pending_pr_4178_merge",
+        "sha": "d731b7a8b995efe75056b85fc7f9d7921a4fc6b3",
+        "subject": "L12-CTRL-001: anchor durable record boundary"
+      },
+      {
+        "delivery_state": "on_task_branch_pending_pr_4178_merge",
+        "sha": "9f1caa445933062c91a3432b87dd53f5add94e30",
+        "subject": "L12-CTRL-001: anchor scoped controller proof"
+      },
+      {
+        "delivery_state": "on_task_branch_pending_pr_4178_merge",
+        "sha": "c98cbf2debeb6fcfd08ec7ace9a61f1122c4cc0b",
+        "subject": "L12-CTRL-001: publish controller acceptance evidence"
+      },
+      {
+        "delivery_state": "on_task_branch_pending_pr_4178_merge",
+        "sha": "147495e6bb323f15e004909ee9e48f454a325e7b",
+        "note": "Exact candidate independently reviewed and approved by Codex2.",
+        "subject": "L12-CTRL-001: refresh current controller proof"
+      },
+      {
+        "delivery_state": "on_task_branch_pending_pr_4178_merge",
+        "sha": "d1854c512eef24de21b0f859a9f7a07f6d4d9dee",
+        "note": "Reviewer evidence commit cited by the canonical review_approved event.",
+        "subject": "L12-CTRL-001: record independent controller review"
+      },
+      {
+        "delivery_state": "on_task_branch_pending_pr_4178_merge",
+        "sha": "8ce38f77f0dcb7ec0d21485da332d68282bb1daa",
+        "subject": "L12-CTRL-001: finalize reviewed controller delivery"
+      },
+      {
+        "delivery_state": "on_task_branch_pending_pr_4178_merge",
+        "sha": "02c1aa6e63f65a3da1b46fb6917ad00618dda1fd",
+        "subject": "L12-CTRL-001: record owner-of-record closeout"
+      },
+      {
+        "delivery_state": "on_task_branch_pending_pr_4178_merge",
+        "sha": "e75a7aedc584e48520d0bcf61d7ec33bb8cfdc0a",
+        "note": "Carries origin/dev 6ec0b1365d698ab1c31eae6fd61d062967e57ad7; superseded as the validated head by fb034b201a9d8ac0acacab5c5804e7df832a078c.",
+        "subject": "Merge remote-tracking branch 'origin/dev' into task/L12-CTRL-001"
+      },
+      {
+        "delivery_state": "on_task_branch_pending_pr_4178_merge",
+        "sha": "ff615e815dc8c21d657b99e5ca7d4893d5ba91e5",
+        "note": "Required checks passed 6/6 on this head before dev advanced again.",
+        "subject": "L12-CTRL-001: normalize product closeout evidence"
+      },
+      {
+        "delivery_state": "on_task_branch_pending_pr_4178_merge",
+        "sha": "fb034b201a9d8ac0acacab5c5804e7df832a078c",
+        "note": "Final integration head validated by this evidence cut; carries origin/dev 9f9749153d252c42d52b464bb93d6ca805a888ad, which added the L12-SIGNOFF-001 protected closeout verdict service and the extended done guardrail.",
+        "subject": "Merge remote-tracking branch 'origin/dev' into task/L12-CTRL-001"
+      }
+    ],
+    "pull_request": {
+      "base": "dev",
+      "head_sha": "fb034b201a9d8ac0acacab5c5804e7df832a078c",
+      "note": "Required checks passed 6/6 on head ff615e815dc8c21d657b99e5ca7d4893d5ba91e5; GitHub then reported the PR BEHIND because dev advanced to 9f9749153d252c42d52b464bb93d6ca805a888ad, so this evidence cut plus the dev re-integration above are the final commits pushed before merge and re-run the same required checks. Auto-merge remains enabled. merge_sha is intentionally absent because the owner records this cut before GitHub completes the merge; scripts/ai-status.sh done independently verifies that the task head is an ancestor of origin/dev.",
+      "number": 4178,
+      "url": "https://github.com/ajoe734/pantheon/pull/4178"
+    },
+    "required_checks": [
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "02c1aa6e63f65a3da1b46fb6917ad00618dda1fd",
+        "run_id": 30206970341,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30206970341",
+        "workflow": "Branch CI Gate / Commit trailers"
+      },
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "02c1aa6e63f65a3da1b46fb6917ad00618dda1fd",
+        "run_id": 30206970341,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30206970341",
+        "workflow": "Branch CI Gate / Runtime mirror guard"
+      },
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "02c1aa6e63f65a3da1b46fb6917ad00618dda1fd",
+        "run_id": 30206970341,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30206970341",
+        "workflow": "Branch CI Gate / Smoke acceptance"
+      },
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "ff615e815dc8c21d657b99e5ca7d4893d5ba91e5",
+        "run_id": 30207695216,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30207695216",
+        "workflow": "Branch CI Gate / Commit trailers"
+      },
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "ff615e815dc8c21d657b99e5ca7d4893d5ba91e5",
+        "run_id": 30207695216,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30207695216",
+        "workflow": "Branch CI Gate / Runtime mirror guard"
+      },
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "ff615e815dc8c21d657b99e5ca7d4893d5ba91e5",
+        "run_id": 30207695216,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30207695216",
+        "workflow": "Branch CI Gate / Smoke acceptance"
+      }
+    ]
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "DATABASE_URL=postgresql://pantheon_app:***@localhost:15432/pantheon /home/lupin/pantheon/.venv/bin/python -m pytest services/loop-control/test_loop_control.py services/control-plane/bff/test_loop_health_read_model_contract.py services/control-plane/bff/test_loop_inventory_read_model_contract.py services/research/alpha_replication/test_replication_controller.py services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_distillation_controller.py -q",
+        "conclusion": "110 passed, 13 warnings in 50.67s on final integration head fb034b201a9d8ac0acacab5c5804e7df832a078c; the same six-file suite returned 110 passed at 30.92s on integration head e75a7aedc584e48520d0bcf61d7ec33bb8cfdc0a, 110 passed at 47.12s on the head before it, and 110 passed at 35.96s during Codex2's independent review.",
+        "result": "pass"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python -m py_compile services/loop-control/conformance.py services/loop-control/projector.py services/loop-control/store.py services/loop-control/writer.py services/control-plane/bff/loop_inventory.py services/control-plane/bff/main.py",
+        "conclusion": "exit 0",
+        "result": "pass"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python -m json.tool schemas/loop-controller-record.schema.json",
+        "conclusion": "exit 0",
+        "result": "pass"
+      },
+      {
+        "command": "(cd docs/deployment/evidence/twelve-loop-gap/L12-CTRL-001 && sha256sum -c evidence.sha256)",
+        "conclusion": "evidence.json and reviewed-controller-evidence.json digests match; reviewed-controller-evidence.json is byte-identical to the reviewer-approved manifest at bc77e37f981d8c566e706f3313b06dd92c9d52bb29d7dae7313bf4690e2a4ff9.",
+        "result": "pass"
+      },
+      {
+        "command": "git diff --check origin/dev...HEAD",
+        "conclusion": "exit 0",
+        "result": "pass"
+      },
+      {
+        "command": "python3 jsonschema validation of this manifest against schemas/product-evidence.schema.json plus scripts/loop_done_guardrail.py --task-id L12-CTRL-001",
+        "conclusion": "Schema validation passed and the guardrail reported no closure gaps for the canonical task row. Re-run on the final integration head against the extended guardrail that origin/dev 9f9749153d252c42d52b464bb93d6ca805a888ad introduced: `[OK] L12-CTRL-001 (status=review_approved)`, 1/1 loop task passed. requires_human_ops_signoff is false for this task, so no protected closeout verdict applies.",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-07-26T15:39:00Z",
+    "validated_base_sha": "9f9749153d252c42d52b464bb93d6ca805a888ad",
+    "validated_head_sha": "fb034b201a9d8ac0acacab5c5804e7df832a078c"
+  },
+  "deployment": {
+    "applicable": false,
+    "canonical_root_deploy": {
+      "reason": "No service deployment or supervisor restart is part of L12-CTRL-001; runtime composition remains delegated to L12-MANIFEST-001.",
+      "status": "not_applicable"
+    },
+    "environment": "dev integration",
+    "identity_admission": {
+      "proof": "Both loop-health routes derive tenant scope from verified JWT claims and environment scope from verified claims or the exact deployed PANTHEON_ENV; a missing tenant returns 403 tenant_scope, a cross-tenant request returns 403 tenant_scope, and a cross-environment request returns 403 environment_scope.",
+      "status": "pass"
+    },
+    "public_bff_base_url": "not_applicable_no_hosted_activation_in_this_lane",
+    "publish_cut": {
+      "reason": "Hosted all-loop drill admission remains delegated to L12-HOSTED-001.",
+      "status": "not_applicable"
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "artifact": "services/loop-control/test_loop_control.py",
+      "canonical_loop_count": 12,
+      "conformant_loop_count": 12,
+      "environment": "active local Pantheon Postgres controller store on localhost:15432",
+      "hosted_activation_claimed": false,
+      "observed_at": "2026-07-26T15:39:00Z",
+      "status": "pass",
+      "terminal_readback": "Controller records were written and read back through the real Postgres store rather than a fake: concurrent success/failure/heartbeat/backlog writers were replayed against the live database, fenced-lease renewal and stale-generation rejection were observed after takeover, desired/actual JSONB observations round-tripped with source and checked_at intact, and same-loop rows stayed isolated across tenant and environment keys. No hosted deployment readback is claimed by this lane."
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "proof": [
+        "One controller identity is the composite (tenant_id, environment, loop_id); a repeated write for the same identity merges into the current row inside a transaction-scoped advisory lock plus current-row FOR UPDATE and a single UPSERT, so a duplicate observation cannot create a second row or resurrect a stale snapshot.",
+        "evidence_refs is a stable deduplicating union and truth_level advances by monotonic rank, so replaying the same evidence reference or a lower truth level is a no-op rather than a regression."
+      ],
+      "status": "pass"
+    },
+    "failure_and_degraded_behavior": {
+      "proof": [
+        "test_concurrent_partial_updates_preserve_monotonic_fields shows that interleaved success, failure, heartbeat, and backlog writers cannot lose a newer field: monotonic event timestamps never move backwards and independent fields are preserved.",
+        "test_projector_reports_later_failure_as_unhealthy and test_projector_does_not_manufacture_evidence_or_healthy_expired_lease keep a later failure and an expired lease visible as unhealthy instead of degrading into a false healthy claim; test_loop_health_registry_only_lists_all_loops_without_live_claim keeps a catalog-only loop from reporting live truth."
+      ],
+      "status": "pass"
+    },
+    "request_receipt_downstream_correlation": {
+      "proof": [
+        "Desired-state presence and downstream actual state are persisted only as explicit observations carrying source and checked_at; test_projector_stale_heartbeat_and_query_text_do_not_manufacture_actual_state confirms that query text alone stays unobserved and non-authoritative.",
+        "test_loop_health_service_store_overlays_controller_health_and_events and test_loop_health_rejects_runtime_record_from_wrong_controller_identity show that the BFF correlates a projected loop only with the controller record whose identity matches the authenticated lookup key, and discards a store result whose tenant_id or environment differs."
+      ],
+      "status": "pass"
+    },
+    "restart_and_recovery": {
+      "proof": [
+        "test_normal_writes_renew_fence_and_stale_generation_is_rejected exercises real controller-generation replacement against the live Postgres store: every normal write renews a future generation-specific lease, an expired lease is taken over under the same serialized transaction key with a rotated opaque lease_token, and the previous generation's writes are rejected afterwards, so a controller that restarts or is replaced cannot corrupt the record it no longer owns.",
+        "test_lease_safety_and_stale_heartbeats and test_store_crud_and_validation reload persisted controller rows from Postgres after the writing session ends and recover the exact identity, lease, timestamp, and observation fields."
+      ],
+      "status": "pass"
+    },
+    "rollback_or_compensation": {
+      "proof": [
+        "Each controller update is a single Postgres transaction holding the identity advisory lock, so a failed merge rolls back completely and leaves the previously durable record as the authoritative truth; no partially applied controller state is published.",
+        "This lane grants no deployment, allocation, runtime-control, catalog-maturity, or live-capital mutation authority, so no compensating financial action exists to perform."
+      ],
+      "status": "pass"
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "proof": "Only merged Pantheon dev integration and the bounded local Postgres controller store were exercised. Environment scope comes from verified claims or the exact deployed PANTHEON_ENV, and a cross-environment lookup returns 403 environment_scope; hosted activation is not claimed.",
+      "status": "pass"
+    },
+    "hosted_frontend": {
+      "status": "not_applicable"
+    },
+    "mfa": {
+      "proof": "This control-plane read and controller-store lane changes no interactive operator authentication or MFA policy.",
+      "status": "not_applicable"
+    },
+    "no_live_capital": {
+      "proof": "The controller record, its projector, and the loop-health reads carry no broker, allocation, or capital authority, and no live-capital path was enabled or widened.",
+      "status": "pass"
+    },
+    "rbac": {
+      "proof": "Loop truth reads require a verified identity; an unauthenticated or tenant-less request fails closed with 403 tenant_scope rather than falling back to an environment default, and no new write authority was granted to the read plane.",
+      "status": "pass"
+    },
+    "tenant_isolation": {
+      "proof": "test_loop_health_database_lookup_uses_authenticated_tenant_and_environment plus test_store_isolates_same_loop_by_tenant_and_environment show exact tenant_id and environment filtering for both Postgres and file-fallback records, an explicit X-Tenant-Id must remain within the allowed tenant claims, and the BFF discards any store result whose returned scope differs from the authenticated lookup key.",
+      "status": "pass"
+    },
+    "two_person_approval": {
+      "proof": "Owner and reviewer remain distinct: Codex2 independently reviewed and approved candidate 147495e6bb323f15e004909ee9e48f454a325e7b with reviewer evidence commit d1854c512eef24de21b0f859a9f7a07f6d4d9dee, and owner-of-record Claude performed closeout without re-approving its own work.",
+      "status": "pass"
+    }
+  },
+  "acceptance": [
+    {
+      "evidence_refs": [
+        "services/loop-control/store.py",
+        "services/loop-control/test_loop_control.py#test_concurrent_partial_updates_preserve_monotonic_fields"
+      ],
+      "id": "AC1",
+      "statement": "Concurrent success, failure, heartbeat, and backlog updates cannot lose newer fields.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/loop-control/store.py",
+        "services/loop-control/writer.py",
+        "services/loop-control/test_loop_control.py#test_normal_writes_renew_fence_and_stale_generation_is_rejected",
+        "services/loop-control/test_loop_control.py#test_lease_safety_and_stale_heartbeats"
+      ],
+      "id": "AC2",
+      "statement": "Normal writes renew fenced leases and stale writers are rejected.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/loop-control/projector.py",
+        "services/control-plane/bff/loop_inventory.py",
+        "services/loop-control/test_loop_control.py#test_projector_stale_heartbeat_and_query_text_do_not_manufacture_actual_state",
+        "services/control-plane/bff/test_loop_health_read_model_contract.py#test_loop_health_service_store_overlays_controller_health_and_events"
+      ],
+      "id": "AC3",
+      "statement": "The BFF projects desired-state presence and authoritative downstream actual state as explicit observations, never from query text alone.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/control-plane/bff/main.py",
+        "services/control-plane/bff/test_loop_health_read_model_contract.py#test_loop_health_database_lookup_uses_authenticated_tenant_and_environment",
+        "services/loop-control/test_loop_control.py#test_store_isolates_same_loop_by_tenant_and_environment"
+      ],
+      "id": "AC4",
+      "statement": "Controller truth lookup is scoped by authenticated tenant and environment.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/loop-control/conformance.py",
+        "schemas/loop-controller-record.schema.json",
+        "services/loop-control/test_loop_control.py#test_all_twelve_loops_share_the_complete_controller_contract"
+      ],
+      "id": "AC5",
+      "statement": "A reusable conformance suite covers all required controller fields for all twelve canonical loops.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "docs/deployment/evidence/twelve-loop-gap/L12-CTRL-001/reviewed-controller-evidence.json",
+        "docs/deployment/evidence/twelve-loop-gap/L12-CTRL-001/README.md"
+      ],
+      "id": "AC6",
+      "statement": "The independent reviewer decision is durable, cites the exact reviewed candidate, and is preserved unchanged through owner closeout.",
+      "status": "pass"
+    }
+  ],
+  "residual_risks": {
+    "hosted_activation": {
+      "blocking_for_this_task": false,
+      "containment": "This packet proves the candidate against the active local Pantheon Postgres service and claims no hosted deployment; hosted admission stays fail-closed until its owning lane admits it.",
+      "description": "Hosted deployment and all-loop live drill admission intentionally remain downstream responsibilities.",
+      "expiry": "When L12-MANIFEST-001 and L12-HOSTED-001 complete.",
+      "owner": "L12-MANIFEST-001 and L12-HOSTED-001",
+      "recheck_trigger": "Before hosted all-loop controller activation.",
+      "severity": "medium"
+    },
+    "domain_authority_queries": {
+      "blocking_for_this_task": false,
+      "containment": "The shared contract requires an explicit source and checked_at for every desired and actual observation, so a loop that has not implemented its authority query projects as unobserved rather than as false truth.",
+      "description": "Domain-specific desired-state and actual-state authority queries remain owned by each individual loop implementation task.",
+      "expiry": "When each loop lane lands its own authority query.",
+      "owner": "Individual loop implementation tasks",
+      "recheck_trigger": "When a loop lane adds or changes its desired/actual authority query.",
+      "severity": "medium"
+    },
+    "catalog_maturity_gate": {
+      "blocking_for_this_task": false,
+      "containment": "Catalog admission stays fail-closed and this task promotes no maturity level; current_maturity remains contract until downstream domain and hosted evidence are admitted.",
+      "description": "Catalog maturity for the twelve loops is not advanced by this controller foundation.",
+      "expiry": "When downstream domain and hosted evidence are admitted.",
+      "owner": "Twelve-loop program catalog owner",
+      "recheck_trigger": "Before any catalog maturity promotion for these loop ids.",
+      "severity": "informational"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-CTRL-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-CTRL-001/reviewed-controller-evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/twelve-loop-gap/L12-CTRL-001/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/twelve-loop-gap/L12-CTRL-001/evidence.json",
+    "normalized_hosted_readback": {
+      "canonical_loop_count": 12,
+      "conformant_loop_count": 12,
+      "focused_regression_passed": 110,
+      "hosted_activation_claimed": false,
+      "pr_4178_merged_to_dev": false,
+      "required_checks_passed": 6
+    },
+    "self_hash_omitted": true,
+    "self_hash_reason": "The companion checksum file contains the manifest digest and avoids recursive self-hashing.",
+    "source_artifact_sha256_by_epoch": {
+      "reviewed_controller_evidence_2026_07_26": "bc77e37f981d8c566e706f3313b06dd92c9d52bb29d7dae7313bf4690e2a4ff9"
+    }
+  },
+  "record_log": [
+    {
+      "actor": "Codex",
+      "kind": "owner_evidence_ready",
+      "recorded_at": "2026-07-26T12:52:38Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/L12-CTRL-001/reviewed-controller-evidence.json",
+      "sequence": 1,
+      "sha": "147495e6bb323f15e004909ee9e48f454a325e7b",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "independent_review_approved",
+      "recorded_at": "2026-07-26T13:13:00Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/L12-CTRL-001/reviewed-controller-evidence.json",
+      "sequence": 2,
+      "sha": "d1854c512eef24de21b0f859a9f7a07f6d4d9dee",
+      "status": "approved"
+    },
+    {
+      "actor": "Codex",
+      "kind": "owner_closeout_gate",
+      "recorded_at": "2026-07-26T14:26:17Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/L12-CTRL-001/README.md",
+      "sequence": 3,
+      "sha": "8ce38f77f0dcb7ec0d21485da332d68282bb1daa",
+      "status": "pass"
+    },
+    {
+      "actor": "Claude",
+      "kind": "owner_closeout_gate",
+      "recorded_at": "2026-07-26T14:50:00Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/L12-CTRL-001/README.md",
+      "sequence": 4,
+      "sha": "02c1aa6e63f65a3da1b46fb6917ad00618dda1fd",
+      "status": "pass"
+    },
+    {
+      "actor": "Claude",
+      "kind": "owner_evidence_schema_normalization",
+      "recorded_at": "2026-07-26T15:06:30Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/L12-CTRL-001/evidence.json",
+      "sequence": 5,
+      "sha": "e75a7aedc584e48520d0bcf61d7ec33bb8cfdc0a",
+      "status": "pass"
+    },
+    {
+      "actor": "Claude",
+      "kind": "owner_closeout_gate",
+      "recorded_at": "2026-07-26T15:39:00Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/L12-CTRL-001/evidence.json",
+      "sequence": 6,
+      "sha": "fb034b201a9d8ac0acacab5c5804e7df832a078c",
+      "status": "pass"
+    }
+  ]
+}

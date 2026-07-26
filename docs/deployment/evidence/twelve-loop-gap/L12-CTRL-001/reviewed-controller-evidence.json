@@ -1,0 +1,188 @@
+{
+  "schema_version": 1,
+  "task_id": "L12-CTRL-001",
+  "owner": "Codex",
+  "reviewer": "Codex2",
+  "status": "review_approved",
+  "generated_at": "2026-07-26T12:52:38Z",
+  "scope": {
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/L12-CTRL-001",
+    "base_sha": "c762af14d56d141c59efc31b255c3814ef4378b3",
+    "integration_base_sha": "bdbd0a99bf68e6a635d9bd936782c659298b7bb7",
+    "integration_head_sha": "5b0be9d2c1df8d4b5824bb0d8cf0562637c0c7fd",
+    "candidate_sha": "9f1caa445933062c91a3432b87dd53f5add94e30",
+    "implementation_anchor_commits": [
+      "19e864d8fc670f2c504936e2b4a14bfcafc73cbb",
+      "d731b7a8b995efe75056b85fc7f9d7921a4fc6b3",
+      "9f1caa445933062c91a3432b87dd53f5add94e30"
+    ],
+    "owned_layer": "Canonical loop-controller record schema, fenced Postgres partial-update store, shared writer and conformance SDK, desired/actual projection, and tenant-scoped BFF loop truth reads.",
+    "not_changing": "Domain loop business behavior, catalog maturity admission, hosted deployment, or live-capital authority.",
+    "composes_with": [
+      "L12-FLEET-001",
+      "L12-BFF-001",
+      "L12-TRUTH-001",
+      "L12-MANIFEST-001",
+      "L12-HOSTED-001"
+    ]
+  },
+  "controller_contract": {
+    "identity_key": [
+      "tenant_id",
+      "environment",
+      "loop_id"
+    ],
+    "canonical_loop_count": 12,
+    "transaction_boundary": "Postgres transaction-scoped advisory lock plus current-row FOR UPDATE and one UPSERT",
+    "partial_merge": {
+      "monotonic_timestamps": [
+        "last_heartbeat_at",
+        "last_tick_at",
+        "last_success_at",
+        "last_failure_at",
+        "last_repair_at"
+      ],
+      "independent_fields_preserved": [
+        "backlog",
+        "lag",
+        "dlq_count",
+        "desired_state",
+        "downstream_actual_state",
+        "evidence_refs",
+        "payload"
+      ],
+      "evidence_refs": "stable deduplicating union",
+      "truth_level": "monotonic rank"
+    },
+    "lease": {
+      "fence": "opaque generation-specific lease_token persisted with the controller record",
+      "renewal": "every heartbeat, tick, success, failure, and repair write supplies a future lease_expires_at",
+      "active_foreign_or_stale_generation": "rejected",
+      "expired_lease_takeover": "permitted under the same serialized transaction key",
+      "old_generation_after_takeover": "rejected"
+    },
+    "desired_actual_truth": {
+      "desired_state_required_observation_fields": [
+        "present",
+        "source",
+        "checked_at"
+      ],
+      "downstream_actual_required_observation_fields": [
+        "status",
+        "source",
+        "checked_at"
+      ],
+      "query_text_without_observation": "unobserved and non-authoritative",
+      "jsonb_datetime_round_trip": "passed"
+    }
+  },
+  "bff_scope": {
+    "routes": [
+      "GET /bff/v5/loop-health",
+      "GET /bff/v5/loop-health/{loop_id}"
+    ],
+    "tenant_source": "verified JWT tenant claims; an explicit X-Tenant-Id must remain within allowed tenant claims",
+    "environment_source": "verified environment claims when present, otherwise exact PANTHEON_ENV deployment scope",
+    "missing_tenant": "403 tenant_scope",
+    "cross_tenant": "403 tenant_scope",
+    "cross_environment": "403 environment_scope",
+    "store_filter": "exact tenant_id and environment for Postgres and file fallback records",
+    "defense_in_depth": "BFF discards a store result whose returned tenant_id or environment differs from the authenticated lookup key"
+  },
+  "validation": [
+    {
+      "command": "PATH=/home/lupin/pantheon/.venv/bin:$PATH DATABASE_URL=postgresql://pantheon_app:***@localhost:15432/pantheon TELEMETRY_DB_DSN=postgresql://pantheon_app:***@localhost:15432/pantheon bash scripts/db_migrate.sh",
+      "result": "13 of 13 migrations passed"
+    },
+    {
+      "command": "DATABASE_URL=postgresql://pantheon_app:***@localhost:15432/pantheon /home/lupin/pantheon/.venv/bin/python -m pytest services/loop-control/test_loop_control.py -q",
+      "result": "22 passed in 8.02s"
+    },
+    {
+      "command": "/home/lupin/pantheon/.venv/bin/python -m pytest services/control-plane/bff/test_loop_health_read_model_contract.py services/control-plane/bff/test_loop_inventory_read_model_contract.py -q",
+      "result": "19 passed in 19.81s"
+    },
+    {
+      "command": "/home/lupin/pantheon/.venv/bin/python -m pytest services/research/alpha_replication/test_replication_controller.py services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_distillation_controller.py -q",
+      "result": "69 passed in 11.09s"
+    },
+    {
+      "command": "DATABASE_URL=postgresql://pantheon_app:***@localhost:15432/pantheon /home/lupin/pantheon/.venv/bin/python -m pytest services/loop-control/test_loop_control.py services/control-plane/bff/test_loop_health_read_model_contract.py services/control-plane/bff/test_loop_inventory_read_model_contract.py services/research/alpha_replication/test_replication_controller.py services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_distillation_controller.py -q",
+      "result": "110 passed in 34.57s after merging origin/dev bdbd0a99bf68e6a635d9bd936782c659298b7bb7; tested integration head 5b0be9d2c1df8d4b5824bb0d8cf0562637c0c7fd"
+    }
+  ],
+  "acceptance": {
+    "concurrent_success_failure_heartbeat_and_backlog_preserve_fields": "pass",
+    "normal_writes_renew_fenced_lease": "pass",
+    "stale_generation_rejected_after_takeover": "pass",
+    "desired_presence_and_downstream_actual_are_explicit_authoritative_observations": "pass",
+    "authenticated_tenant_and_environment_scope": "pass",
+    "all_twelve_loops_share_complete_conformance_contract": "pass",
+    "overall": "passed"
+  },
+  "independent_review": {
+    "status": "approved",
+    "reviewer": "Codex2",
+    "reviewed_at": "2026-07-26T13:13:00Z",
+    "reviewed_candidate_sha": "147495e6bb323f15e004909ee9e48f454a325e7b",
+    "pull_request": {
+      "number": 4178,
+      "url": "https://github.com/ajoe734/pantheon/pull/4178",
+      "state_at_review": "OPEN",
+      "merge_state_at_review": "BEHIND",
+      "required_check_runs": {
+        "successful": 6,
+        "failed": 0,
+        "names": [
+          "Commit trailers",
+          "Runtime mirror guard",
+          "Smoke acceptance"
+        ]
+      },
+      "merge_evidence": "Not yet applicable at reviewer approval; owner closeout must refresh the task branch against current dev, preserve this reviewed decision, and merge PR #4178 before done."
+    },
+    "validation": [
+      {
+        "command": "DATABASE_URL=postgresql://pantheon_app:***@localhost:15432/pantheon /home/lupin/pantheon/.venv/bin/python -m pytest services/loop-control/test_loop_control.py services/control-plane/bff/test_loop_health_read_model_contract.py services/control-plane/bff/test_loop_inventory_read_model_contract.py services/research/alpha_replication/test_replication_controller.py services/source_ingestion/tests/test_controller_worker.py services/source_ingestion/tests/test_distillation_controller.py -q",
+        "result": "110 passed, 13 warnings in 35.96s"
+      },
+      {
+        "command": "DATABASE_URL=postgresql://pantheon_app:***@localhost:15432/pantheon /home/lupin/pantheon/.venv/bin/python -m pytest -q <concurrent-partial-update, fenced-generation, tenant-environment-isolation, twelve-loop-conformance, strict-BFF-scope cases>",
+        "result": "16 passed, 7 warnings in 7.94s"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python -m py_compile services/loop-control/conformance.py services/loop-control/projector.py services/loop-control/store.py services/loop-control/writer.py services/control-plane/bff/loop_inventory.py services/control-plane/bff/main.py",
+        "result": "exit 0"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python -m json.tool schemas/loop-controller-record.schema.json",
+        "result": "exit 0"
+      },
+      {
+        "command": "sha256sum -c evidence.sha256; git diff --check bdbd0a99bf68e6a635d9bd936782c659298b7bb7..147495e6bb323f15e004909ee9e48f454a325e7b",
+        "result": "passed before recording this review decision"
+      }
+    ],
+    "acceptance": {
+      "lost_update_protection": "pass: transaction-scoped key lock, current-row FOR UPDATE, partial merge, monotonic event timestamps, stable evidence union, and independent Postgres concurrency replay",
+      "fenced_lease": "pass: every normal writer call supplies a future lease, matching generation renews, expired takeover rotates the opaque token, and the prior generation is rejected",
+      "desired_actual_projection": "pass: query declarations remain unobserved while explicit source-and-time observations project as authoritative",
+      "tenant_environment_projection": "pass: verified identity claims select tenant, deployment or verified claims select environment, and both Postgres and fallback records are exact-scope filtered",
+      "all_twelve_loop_conformance": "pass: every canonical loop id satisfies the complete shared field contract"
+    },
+    "findings": [],
+    "boundary_confirmation": "No domain business behavior, catalog maturity admission, hosted deployment, live-capital authority, or approval gate was broadened by this candidate."
+  },
+  "deployment": {
+    "applicable_in_this_lane": false,
+    "reason": "L12-MANIFEST-001 owns runtime composition and L12-HOSTED-001 owns current hosted all-loop drill admission."
+  },
+  "residuals": [
+    "This packet proves the candidate against the active local Pantheon Postgres service; it does not claim current hosted deployment.",
+    "Domain-specific desired and actual authority queries remain owned by each loop implementation task.",
+    "Catalog maturity remains fail-closed until downstream domain and hosted evidence are admitted."
+  ],
+  "checksum_file": "docs/deployment/evidence/twelve-loop-gap/L12-CTRL-001/evidence.sha256"
+}
