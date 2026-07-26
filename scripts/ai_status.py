@@ -405,6 +405,7 @@ TASK_ID_COMMAND_ARG_INDEX: dict[str, int] = {
     "reconcile_merged_done": 0,
     "supersede": 0,
     "approve": 0,
+    "archive_correct_review_file": 0,
 }
 ACTIVE_WORKER_LEASE_STATUSES = {
     "running",
@@ -1326,9 +1327,29 @@ def default_state() -> dict[str, Any]:
     }
 
 
+def _validate_task_state_projection_binding(store_mode: str) -> None:
+    """Reject a journal transaction whose projection was rebound in-process.
+
+    Background workers inherit the live task-state journal environment so that
+    governed status commands can reach the canonical coordination root. Unit
+    tests and helper processes sometimes override ``STATUS_FILE`` directly.
+    Without this binding check, such a helper can append fixture state to the
+    inherited live journal even though its intended projection is temporary.
+    """
+
+    expected = (STATUS_ROOT / "ai-status.json").expanduser().absolute()
+    actual = STATUS_FILE.expanduser().absolute()
+    if actual != expected:
+        raise RuntimeError(
+            f"{store_mode} task-state projection binding mismatch: "
+            f"STATUS_FILE {actual} != STATUS_ROOT projection {expected}"
+        )
+
+
 def load_state() -> dict[str, Any]:
     store_mode = str(os.environ.get(TASK_STATE_STORE_MODE_ENV) or "").strip().lower()
     if store_mode == "authoritative":
+        _validate_task_state_projection_binding(store_mode)
         event_path = _task_state_event_path(store_mode)
         events = load_events(event_path)
         if not events:
@@ -1650,6 +1671,7 @@ def recent_helper_claims(limit: int = 8, max_scan_lines: int = 5000) -> list[dic
 def save_state(state: dict[str, Any]) -> None:
     store_mode = str(os.environ.get(TASK_STATE_STORE_MODE_ENV) or "").strip().lower()
     if store_mode == "authoritative":
+        _validate_task_state_projection_binding(store_mode)
         event_path = _task_state_event_path(store_mode)
         source = (
             str(os.environ.get("ORCH_RUN_ID") or "").strip()
@@ -1685,6 +1707,7 @@ def _append_task_state_shadow(state: dict[str, Any]) -> None:
     if str(os.environ.get(TASK_STATE_STORE_MODE_ENV) or "").strip().lower() != "shadow":
         return
     try:
+        _validate_task_state_projection_binding("shadow")
         event_path = _task_state_event_path("shadow")
         source = (
             str(os.environ.get("ORCH_RUN_ID") or "").strip()
@@ -5872,6 +5895,104 @@ def command_archive_migrate(state: dict[str, Any], _args: list[str]) -> None:
     )
 
 
+def validate_archive_review_file_target(task_id: str, review_file: str) -> tuple[str, str]:
+    normalized = task_archive_module.normalize_archive_review_file(review_file)
+    candidate = ROOT / normalized
+    symlink_component = _first_symlink_component(candidate)
+    if symlink_component is not None:
+        raise SystemExit(
+            f"Archive review_file target cannot include a symlink component: "
+            f"{symlink_component}"
+        )
+    try:
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(ROOT.resolve(strict=True))
+    except (FileNotFoundError, ValueError) as exc:
+        raise SystemExit(
+            f"Archive review_file target must be a regular file inside the command root: "
+            f"{normalized}"
+        ) from exc
+    if not resolved.is_file():
+        raise SystemExit(
+            f"Archive review_file target must be a regular file: {normalized}"
+        )
+    try:
+        evidence = json.loads(resolved.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(
+            f"Archive review_file target is not readable JSON: {normalized}: {exc}"
+        ) from exc
+    evidence_task = evidence.get("task") if isinstance(evidence, dict) else None
+    if not isinstance(evidence_task, dict):
+        raise SystemExit(
+            f"Archive review_file target is missing a task object: {normalized}"
+        )
+    if str(evidence_task.get("id") or "").strip() != task_id:
+        raise SystemExit(
+            f"Archive review_file target task.id does not match {task_id}: {normalized}"
+        )
+    if str(evidence_task.get("review_file") or "").strip() != normalized:
+        raise SystemExit(
+            f"Archive review_file target task.review_file does not match {normalized}"
+        )
+
+    snapshot = task_archive_module.load_archived_snapshot(task_id)
+    if snapshot is None:
+        raise SystemExit(f"Unknown archived task: {task_id}")
+    candidate_task = deepcopy(snapshot["task"])
+    candidate_task["review_file"] = normalized
+    try:
+        validate_loop_completion_claim(candidate_task)
+    except SystemExit as exc:
+        raise SystemExit(
+            f"Archive review_file target fails loop completion validation: {exc}"
+        ) from exc
+    return normalized, hashlib.sha256(resolved.read_bytes()).hexdigest()
+
+
+def command_archive_correct_review_file(
+    state: dict[str, Any],
+    args: list[str],
+) -> None:
+    if len(args) < 3:
+        raise SystemExit(
+            "Usage: archive_correct_review_file "
+            "<task-id> <repo-relative-review-file> <reason>"
+        )
+    task_id, review_file, reason = args[0], args[1], args[2]
+    actor = current_actor()
+    ensure_agent(actor)
+    if actor != "Human/Ops":
+        raise SystemExit(
+            "Only Human/Ops can correct an archived task review_file"
+        )
+    if get_task(state, task_id) is not None:
+        raise SystemExit(
+            f"Cannot correct archive review_file while {task_id} is active"
+        )
+    normalized, digest = validate_archive_review_file_target(task_id, review_file)
+    corrected = task_archive_module.correct_archived_task_review_file(
+        task_id,
+        normalized,
+        actor=actor,
+        reason=reason,
+        evidence_sha256=digest,
+        canonical_lock_held=True,
+    )
+    context = corrected["correction_context"]
+    append_log(
+        {
+            "ts": context["corrected_at"],
+            "agent": actor,
+            "type": "archive_review_file_corrected",
+            "task_id": task_id,
+            "message": reason,
+            "review_file": normalized,
+            "evidence_sha256": digest,
+        }
+    )
+
+
 def command_prompt(state: dict[str, Any], _args: list[str]) -> None:
     print(build_onboarding_prompt(state))
 
@@ -6018,6 +6139,7 @@ def main(argv: list[str]) -> int:
         "supersede": command_supersede,
         "approve": command_approve,
         "archive_migrate": command_archive_migrate,
+        "archive_correct_review_file": command_archive_correct_review_file,
         "sync": command_sync,
         "wave": command_wave,
     }
