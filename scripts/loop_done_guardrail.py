@@ -23,6 +23,7 @@ Examples:
 """
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import sys
@@ -119,6 +120,280 @@ _NON_VERDICT_REVIEW_KIND_SIGNALS = (
     "owner_evidence_ready",
     "owner_closeout_gate",
 )
+
+_PRODUCT_CLOSEOUT_CATALOG = (
+    ROOT
+    / "docs"
+    / "bff"
+    / "execution-tasks"
+    / "2026-07-26-twelve-loop-gap"
+    / "tasks.json"
+)
+_PRODUCT_CLOSEOUT_TEST_POLICY_ENV = "PANTHEON_PRODUCT_CLOSEOUT_TEST_POLICY_PATH"
+_PRODUCT_CLOSEOUT_ALLOW_TEST_CONFIG_ENV = (
+    "PANTHEON_PRODUCT_CLOSEOUT_ALLOW_TEST_CONFIG"
+)
+_PRODUCT_CLOSEOUT_VERDICT_ID_ENV = "PANTHEON_PRODUCT_CLOSEOUT_VERDICT_ID"
+
+
+def _load_product_closeout_module() -> Any:
+    module_name = "_pantheon_loop_guard_product_closeout_verdict"
+    existing = sys.modules.get(module_name)
+    if existing is not None:
+        return existing
+    module_path = (
+        ROOT
+        / "services"
+        / "control-plane"
+        / "governance"
+        / "product_closeout_verdict.py"
+    )
+    spec = importlib.util.spec_from_file_location(module_name, module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(
+            f"cannot load protected closeout verdict module: {module_path}"
+        )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _status_root() -> Path:
+    raw = str(os.environ.get("PANTHEON_STATUS_ROOT") or "").strip()
+    return Path(raw).expanduser().resolve() if raw else ROOT
+
+
+def _safe_status_artifact(relative_path: str) -> Path:
+    root = _status_root()
+    candidate = (root / relative_path).absolute()
+    try:
+        candidate.relative_to(root.absolute())
+    except ValueError as exc:
+        raise RuntimeError("closeout review_file escapes PANTHEON_STATUS_ROOT") from exc
+    cursor = Path(candidate.anchor)
+    for part in candidate.parts[1:]:
+        cursor /= part
+        if cursor.is_symlink():
+            raise RuntimeError(
+                f"closeout review_file cannot contain a symlink: {cursor}"
+            )
+        if not cursor.exists():
+            break
+    if not candidate.is_file() or candidate.is_symlink():
+        raise RuntimeError(
+            f"closeout review_file is missing or not regular: {relative_path}"
+        )
+    return candidate
+
+
+def _protected_policy_path(module: Any) -> Path:
+    test_path = str(
+        os.environ.get(_PRODUCT_CLOSEOUT_TEST_POLICY_ENV) or ""
+    ).strip()
+    allow_test = (
+        str(os.environ.get(_PRODUCT_CLOSEOUT_ALLOW_TEST_CONFIG_ENV) or "")
+        .strip()
+        .lower()
+        in {"1", "true", "yes"}
+    )
+    if test_path:
+        if not allow_test:
+            raise RuntimeError(
+                f"{_PRODUCT_CLOSEOUT_TEST_POLICY_ENV} is test-only and requires "
+                f"{_PRODUCT_CLOSEOUT_ALLOW_TEST_CONFIG_ENV}=1"
+            )
+        return Path(test_path)
+    return Path(module.DEFAULT_PROTECTED_POLICY_PATH)
+
+
+def _load_product_closeout_binding(task: dict[str, Any], module: Any) -> Any:
+    if not _PRODUCT_CLOSEOUT_CATALOG.is_file():
+        raise RuntimeError(
+            f"protected closeout catalog is missing: {_PRODUCT_CLOSEOUT_CATALOG}"
+        )
+    try:
+        catalog = json.loads(_PRODUCT_CLOSEOUT_CATALOG.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("cannot read protected closeout catalog") from exc
+    if not isinstance(catalog, dict):
+        raise RuntimeError("protected closeout catalog root must be an object")
+    authority = catalog.get("completion_authority")
+    if not isinstance(authority, dict):
+        raise RuntimeError("catalog completion_authority is missing")
+    expected_fields = list(module.VERDICT_BINDING_FIELDS)
+    if authority.get("verdict_binding_fields") != expected_fields:
+        raise RuntimeError(
+            "catalog verdict binding fields do not match the installed verifier"
+        )
+    if authority.get("requires_protected_human_ops_verdict") is not True:
+        raise RuntimeError("catalog does not require protected Human/Ops verdicts")
+
+    task_id = str(task.get("id") or "").strip()
+    protected_task_ids = authority.get("required_human_ops_signoff_task_ids")
+    if not isinstance(protected_task_ids, list) or task_id not in protected_task_ids:
+        raise RuntimeError(
+            f"task {task_id or '?'} is not a catalog-authorized Human/Ops sink"
+        )
+    catalog_task = next(
+        (
+            item
+            for item in catalog.get("tasks") or []
+            if isinstance(item, dict) and item.get("id") == task_id
+        ),
+        None,
+    )
+    if (
+        not isinstance(catalog_task, dict)
+        or catalog_task.get("requires_human_ops_signoff") is not True
+    ):
+        raise RuntimeError(
+            f"catalog task {task_id or '?'} does not require Human/Ops signoff"
+        )
+
+    review_file = str(task.get("review_file") or "").strip()
+    if not review_file:
+        raise RuntimeError(
+            "protected closeout requires a review_file evidence manifest"
+        )
+    if Path(review_file).is_absolute():
+        raise RuntimeError("protected closeout review_file must be repository-relative")
+    manifest_path = _safe_status_artifact(review_file)
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("cannot read protected closeout evidence manifest") from exc
+    if not isinstance(manifest, dict):
+        raise RuntimeError("protected closeout evidence manifest must be an object")
+    deployment = manifest.get("deployment")
+    if not isinstance(deployment, dict):
+        raise RuntimeError("closeout manifest deployment identity is missing")
+    identity = deployment.get("identity_admission")
+    if not isinstance(identity, dict):
+        raise RuntimeError("closeout manifest deployment.identity_admission is missing")
+    target_environment = str(
+        identity.get("target_environment") or deployment.get("environment") or ""
+    ).strip()
+    deployment_environment = str(deployment.get("environment") or "").strip()
+    if (
+        identity.get("target_environment")
+        and deployment_environment
+        and target_environment != deployment_environment
+    ):
+        raise RuntimeError("closeout manifest target environment is internally inconsistent")
+
+    return module.CloseoutBinding(
+        program_id=str(catalog.get("program_id") or ""),
+        catalog_sha256=module.canonical_json_sha256(catalog),
+        task_id=task_id,
+        closeout_manifest_sha256=_sha256_file(manifest_path),
+        target_environment=target_environment,
+        frontend_sha=str(identity.get("frontend_sha") or ""),
+        bff_sha=str(identity.get("bff_sha") or ""),
+    )
+
+
+def validate_protected_closeout_transition(
+    task: dict[str, Any],
+    *,
+    transition: str,
+    consume: bool = False,
+    transition_actor: str = "",
+) -> dict[str, Any] | None:
+    """Verify the protected verdict for a guarded task transition.
+
+    ``review_approved`` and the pre-commit ``done`` check require an
+    unconsumed verdict.  A completed ``done`` record must have exactly one
+    matching consumption.  Only ``done`` may atomically append that
+    consumption.
+    """
+
+    if task.get("requires_human_ops_signoff") is not True:
+        return None
+    if transition not in {"review_approved", "done"}:
+        raise RuntimeError(f"unsupported protected closeout transition: {transition}")
+    if consume and transition != "done":
+        raise RuntimeError("protected verdict consumption is only valid for done")
+
+    module = _load_product_closeout_module()
+    binding = _load_product_closeout_binding(task, module)
+    task_ref = task.get("protected_closeout_verdict")
+    if task_ref is None:
+        task_ref = {}
+    if not isinstance(task_ref, dict):
+        raise RuntimeError("protected_closeout_verdict task reference must be an object")
+    task_verdict_id = str(task_ref.get("verdict_id") or "").strip()
+    environment_verdict_id = str(
+        os.environ.get(_PRODUCT_CLOSEOUT_VERDICT_ID_ENV) or ""
+    ).strip()
+    if (
+        task_verdict_id
+        and environment_verdict_id
+        and task_verdict_id != environment_verdict_id
+    ):
+        raise RuntimeError(
+            "protected verdict ID conflicts with the governed task reference"
+        )
+    verdict_id = environment_verdict_id or task_verdict_id
+    if not verdict_id:
+        raise RuntimeError(
+            f"protected closeout requires {_PRODUCT_CLOSEOUT_VERDICT_ID_ENV} "
+            "or a prior governed verdict reference"
+        )
+
+    status_root = _status_root()
+    forbidden_roots = tuple({ROOT.absolute(), status_root.absolute()})
+    service = module.load_verifier_service(
+        policy_path=_protected_policy_path(module),
+        forbidden_roots=forbidden_roots,
+    )
+    if consume:
+        consumption = service.consume(
+            verdict_id,
+            expected_binding=binding,
+            transition="done",
+            transition_actor=transition_actor,
+        )
+        verdict = service.verify(
+            verdict_id,
+            expected_binding=binding,
+            consumption_state="consumed",
+        )
+    else:
+        consumption = None
+        consumption_state = (
+            "consumed"
+            if transition == "done" and task.get("status") == "done"
+            else "unconsumed"
+        )
+        verdict = service.verify(
+            verdict_id,
+            expected_binding=binding,
+            consumption_state=consumption_state,
+        )
+
+    if task_ref.get("ledger_entry_id") and (
+        task_ref.get("ledger_entry_id") != verdict.get("ledger_entry_id")
+    ):
+        raise RuntimeError("protected verdict ledger entry reference mismatch")
+    if task_ref.get("verifier_capability_sha256") and (
+        task_ref.get("verifier_capability_sha256")
+        != verdict.get("verifier_capability_sha256")
+    ):
+        raise RuntimeError("protected verifier capability reference mismatch")
+    result = {
+        "verdict_id": verdict["verdict_id"],
+        "ledger_entry_id": verdict["ledger_entry_id"],
+        "verifier_capability_sha256": verdict["verifier_capability_sha256"],
+        "policy_version": verdict["policy_version"],
+        "key_id": verdict["key_id"],
+        "decision": verdict["decision"],
+    }
+    if consumption is not None:
+        result["consumption_record_id"] = consumption["record_id"]
+    elif task_ref.get("consumption_record_id"):
+        result["consumption_record_id"] = task_ref["consumption_record_id"]
+    return result
 
 
 def _as_lower(value: Any) -> str:
@@ -225,6 +500,20 @@ def check_task(task: dict[str, Any]) -> list[str]:
     proof_required: list[str] = task.get("proof_required") or []
     review_file_path = str(task.get("review_file") or "").strip()
     product_level_required = bool(task.get("product_level_required"))
+
+    if task.get("requires_human_ops_signoff") is True:
+        try:
+            validate_protected_closeout_transition(
+                task,
+                transition=(
+                    "done" if task.get("status") == "done" else "review_approved"
+                ),
+            )
+        except Exception as exc:
+            gaps.append(
+                "protected Human/Ops closeout verdict rejected: "
+                f"{type(exc).__name__}: {exc}"
+            )
 
     # Gap 1: panel-only closure prohibited but no review_file.
     if "No panel-only closure" in non_goals and not review_file_path:
