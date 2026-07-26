@@ -1,0 +1,366 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "L12-DIST-001 product-level review-file admission gate.",
+    "note": "Owner implementation and acceptance cut over PR #4193. The formal independent reviewer verdict is intentionally absent until Antigravity approves.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/L12-DIST-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Task-scoped changes require a reviewed Pantheon PR; append a record_log entry whenever the accepted evidence cut or formal review state changes.",
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-26T15:10:26Z",
+    "evidence_cut_semantics": "Owner implementation and acceptance evidence over PR #4193 at head 0ecc331e924f5ca4b2482891d0e2bd8c003c60ad. Implementation and owner acceptance are complete; independent reviewer approval is not asserted by this cut.",
+    "id": "L12-DIST-001",
+    "overall_admission": "pass",
+    "owner": "Claude",
+    "phase": "Twelve Loop Remediation / Distillation",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-DIST-001/evidence.json",
+    "reviewer": "Antigravity",
+    "target_environment": "dev integration with a real in-process registry service over real HTTP",
+    "target_maturity": "reconciled",
+    "task_branch": "task/L12-DIST-001",
+    "title": "Make source-to-draft distillation transactional and replayable"
+  },
+  "authorities": {
+    "actual_state": [
+      "StrategySpec mutable draft",
+      "Registry terminal readback",
+      "distillation DLQ"
+    ],
+    "desired_state": [
+      "normalized versioned SourceRecord"
+    ],
+    "task_packet": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-DIST-001.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Distillation worker for the versioned source ledger, outbox/inbox, lease fencing, retry/DLQ, and the Registry sink that acknowledges only after terminal readback",
+    "composes_with": [
+      "L12-SRC-001 normalized SourceRecord contract",
+      "services/registry StrategySpec facade",
+      "services/research/strategy_spec seed conversion"
+    ],
+    "evidence_changed_files": [
+      ".orchestrator/task-briefs/l12_dist_001.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-DIST-001/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-DIST-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-DIST-001/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "services/source_ingestion/distillation_controller.py",
+      "services/source_ingestion/distillation_worker.py",
+      "services/source_ingestion/registry/jsonl_store.py",
+      "services/source_ingestion/tests/test_distillation_controller.py",
+      "services/source_ingestion/tests/test_distillation_worker.py",
+      "services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py"
+    ],
+    "not_changing": "Seed materialization semantics, the Registry HTTP contract, the source ingestion controller surface owned by L12-SRC-001, canonical architecture policy, hosted deployment admission, and live-capital authority.",
+    "owned_layer": "Source-to-draft distillation: versioned source admission, durable outbox/inbox and dead-letter ledger, lease fencing across processes, truthful degraded Registry delivery, and read-modify-write safety of the shared JSONL registry store"
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "delivery_state": "open_in_pr_4193",
+        "sha": "79f4bb8384a03eeef4ee41feb17c2957b57b24c6",
+        "subject": "L12-DIST-001: anchor transactional distillation ledger"
+      },
+      {
+        "delivery_state": "open_in_pr_4193",
+        "sha": "3ba200056dc80b39aef4e3b365fe891da32ffab4",
+        "subject": "L12-DIST-001: recover preempted controller WIP"
+      },
+      {
+        "delivery_state": "open_in_pr_4193",
+        "sha": "047eb520ba8a3953a5125e562e692aef020e20ce",
+        "subject": "L12-DIST-001: anchor registry sync lineage contract"
+      },
+      {
+        "delivery_state": "open_in_pr_4193",
+        "sha": "879a778ed967f9b2ef73f1d3f625ff8ace259f26",
+        "subject": "L12-DIST-001: anchor transactional acceptance proof"
+      }
+    ],
+    "pull_request": {
+      "base": "dev",
+      "head_sha": "0ecc331e924f5ca4b2482891d0e2bd8c003c60ad",
+      "number": 4193,
+      "url": "https://github.com/ajoe734/pantheon/pull/4193"
+    },
+    "required_checks": [
+      {
+        "conclusion": "pending",
+        "event": "pull_request",
+        "head_sha": "0ecc331e924f5ca4b2482891d0e2bd8c003c60ad",
+        "jobs": {
+          "Commit trailers": "pending",
+          "Runtime mirror guard": "pending",
+          "Smoke acceptance": "pending"
+        },
+        "url": "https://github.com/ajoe734/pantheon/pull/4193/checks",
+        "workflow": "Branch CI Gate"
+      }
+    ]
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python3 -m pytest services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py -q",
+        "conclusion": "22 passed. One class per acceptance criterion, including the real-HTTP registry service proof and the two-process concurrency proof.",
+        "result": "pass"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python3 -m pytest services/source_ingestion -q",
+        "conclusion": "752 passed, 2 skipped.",
+        "result": "pass"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python3 -m pytest services/registry services/research/strategy_spec -q",
+        "conclusion": "229 passed. Regression cover for the shared JsonlRegistryStore lease and the seed conversion path.",
+        "result": "pass"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python3 -m pytest 'services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestConcurrentWorkers::test_two_processes_produce_one_terminal_draft_per_source' -q (repeated 3x)",
+        "conclusion": "1 passed on each of three consecutive runs; the two-process proof is stable.",
+        "result": "pass"
+      },
+      {
+        "command": "Negative control: same two-process scenario with exclusive_file_lock stubbed to a no-op, 40 sources, 3 runs",
+        "conclusion": "39, 39, and 38 of 40 seeds persisted, with both processes reporting real work (20/20, 20/20, 18/22). Confirms the concurrency proof is not vacuous and that the lease is load bearing.",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-07-26T15:10:26Z",
+    "validated_base_sha": "6ec0b1365d698ab1c31eae6fd61d062967e57ad7",
+    "validated_head_sha": "0ecc331e924f5ca4b2482891d0e2bd8c003c60ad"
+  },
+  "deployment": {
+    "applicable": false,
+    "canonical_root_deploy": {
+      "reason": "No service deployment or restart is part of L12-DIST-001; root distillation wiring and hosted admission remain outside this slice.",
+      "status": "not_applicable"
+    },
+    "environment": "dev integration",
+    "identity_admission": {
+      "proof": "Only normalized SourceRecord versions are admitted to the ledger; a rejected record is refused and leaves no outbox row. Job identity is the content digest of the normalized version, and a contradicting payload under the same identity aborts the whole admission transaction.",
+      "status": "pass"
+    },
+    "public_bff_base_url": "not_applicable_internal_distillation_worker",
+    "publish_cut": {
+      "reason": "Hosted admission remains delegated to L12-HOSTED-001.",
+      "status": "not_applicable"
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "environment": "real services/registry FastAPI app served over real HTTP on a loopback port",
+      "hosted_activation_claimed": false,
+      "observed_at": "2026-07-26T15:10:26Z",
+      "registry_entry_readback_http": 200,
+      "registry_entries_written": 1,
+      "status": "pass",
+      "terminal_readback": "A full controller tick drove a normalized SourceRecord through the real registry service. The registered entry was read back over HTTP at artifact_state draft, and metadata.distillation retained source_id, source_digest, and source_event_version across the round trip.",
+      "test_ref": "services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestRealSourceToRegistryService"
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "proof": [
+        "Job identity is the SHA-256 content digest of the normalized source version, so admitting the same content twice returns one job and one committed version row.",
+        "Run-local correlation fields (ingest_run_id, source_ingest_run_id, trace_id) are excluded from the digest, so an identical re-crawl in a later run resolves to the committed version instead of creating a second job or failing admission.",
+        "Revised content produces a distinct digest, a distinct job, and a distinct versioned Registry draft; two revisions of one source yielded exactly two Registry entries.",
+        "Repeated controller ticks after terminal success perform no further Registry write and leave one job and one seed."
+      ],
+      "status": "pass"
+    },
+    "failure_and_degraded_behavior": {
+      "proof": [
+        "A Registry write failure raises DistillationControllerError at stage registry_sync; the controller records a failure tick and no success, and consecutive_failures increments.",
+        "The failed job is parked as retry_wait with a backoff next_attempt_at and the failure reason, rather than being acknowledged.",
+        "After the attempt budget is exhausted the job becomes dead_letter and a durable dead-letter row retains the committed payload, so it stays redrivable.",
+        "A real connection failure against a port with nothing listening produces the same truthful degraded outcome as the simulated outage."
+      ],
+      "status": "pass"
+    },
+    "request_receipt_downstream_correlation": {
+      "proof": [
+        "A job is acknowledged only after a terminal Registry readback; the write response alone never completes the job.",
+        "The source snapshot is committed in the same transaction as the outbox event, so replay reads the exact version the event meant rather than a later in-memory revision.",
+        "metadata.distillation carries source_id, source_digest, source_event_version, and distillation_job_id into the Registry entry, preserving source-to-draft lineage.",
+        "The Registry sink receives the exact evidence item and bundle the seed was materialized from, keeping the registered artifact inside the StrategySpecSeed lineage."
+      ],
+      "status": "pass"
+    },
+    "restart_and_recovery": {
+      "proof": [
+        "A worker that claims a job and dies before reaching the Registry leaves an expired lease; the lease is recovered to pending and a later tick replays it to exactly one terminal draft with exactly one Registry write.",
+        "A Registry write that lands while its acknowledgement is lost is replayed by versioned readback: the second pass reaches done with no second Registry entry, one job, and one seed.",
+        "A completion presented with a stale lease token is rejected, so a resurrected worker cannot overwrite the outcome of the worker that superseded it.",
+        "Recovery is exercised through the real lease ledger and real spawned OS processes, and the replay outcome is asserted from the persisted ledger rather than from an in-test substitute."
+      ],
+      "status": "pass"
+    },
+    "rollback_or_compensation": {
+      "proof": [
+        "Admission is a single BEGIN IMMEDIATE transaction: a contradicting payload under an existing version identity rolls back, leaving the committed version and outbox unchanged.",
+        "Exhausted delivery compensates into a durable dead-letter table that retains the committed payload and supports operator redispatch, which clears the dead letter with redrive attribution.",
+        "Registry artifacts in approved or retired state are never mutated; the job is marked skipped instead.",
+        "This slice grants no broker, deployment, runtime-control, or live-capital mutation authority."
+      ],
+      "status": "pass"
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "proof": "Only merged Pantheon dev integration, focused service acceptance, and a bounded loopback registry service were exercised. No external network egress, no hosted activation, and no real provider crawl are claimed.",
+      "status": "pass"
+    },
+    "hosted_frontend": {
+      "status": "not_applicable"
+    },
+    "mfa": {
+      "proof": "This internal worker lane changes no interactive operator authentication or MFA policy.",
+      "status": "not_applicable"
+    },
+    "no_live_capital": {
+      "proof": "Distillation produces reviewable StrategySpec drafts only. It has no broker or capital authority and no live-capital path was enabled.",
+      "status": "pass"
+    },
+    "rbac": {
+      "proof": "No authorization surface is added or relaxed. Registry writes continue to go through the existing StrategySpec facade, and the approval gate is unchanged.",
+      "status": "not_applicable"
+    },
+    "tenant_isolation": {
+      "proof": "The distillation ledger is keyed by source identity within a single service-owned store; this slice introduces no cross-tenant read or write path.",
+      "status": "not_applicable"
+    },
+    "two_person_approval": {
+      "proof": "Owner Claude and reviewer Antigravity are distinct. The formal independent approval must be appended to record_log after review and before done.",
+      "status": "pass"
+    }
+  },
+  "acceptance": [
+    {
+      "evidence_refs": [
+        "services/source_ingestion/distillation_worker.py",
+        "services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestVersionedAdmission"
+      ],
+      "id": "AC1",
+      "statement": "A committed normalized SourceRecord transactionally enqueues exactly one versioned distillation job.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/source_ingestion/distillation_worker.py",
+        "services/source_ingestion/registry/jsonl_store.py",
+        "services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestConcurrentWorkers"
+      ],
+      "id": "AC2",
+      "statement": "Concurrent workers claim under an exclusive lease, and duplicate or revised content is resolved by source digest.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/source_ingestion/distillation_controller.py",
+        "services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestRegistryFailureIsTruthful"
+      ],
+      "id": "AC3",
+      "statement": "Registry failure records controller failure plus a durable retry or dead letter, and is never recorded as success.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/source_ingestion/distillation_controller.py",
+        "services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestApprovedArtifactsAreImmutable"
+      ],
+      "id": "AC4",
+      "statement": "Approved immutable artifacts remain unchanged, including when approval lands between the probe and the terminal readback.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/source_ingestion/distillation_worker.py",
+        "services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestCrashReplay"
+      ],
+      "id": "AC5",
+      "statement": "A crash before or after the Registry write replays to exactly one terminal draft.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestRealSourceToRegistryService",
+        "docs/deployment/evidence/twelve-loop-gap/L12-DIST-001/README.md"
+      ],
+      "id": "AC6",
+      "statement": "The packet's four required proofs are met, including a real source-to-Registry service test over real HTTP and a genuine two-process concurrency test.",
+      "status": "pass"
+    }
+  ],
+  "residual_risks": {
+    "jsonl_seed_store_tier": {
+      "blocking_for_this_task": false,
+      "containment": "Read-modify-write mutations now hold a cross-process flock lease, proven by a negative control that loses seeds without it. The job ledger itself is already SQLite-transactional.",
+      "description": "The StrategySpecSeed draft store remains a dev-tier JSONL file rather than Postgres, so it relies on a filesystem lease rather than database transactions.",
+      "expiry": "When the seed store is migrated to the shared Postgres tier.",
+      "owner": "Source ingestion storage lane",
+      "recheck_trigger": "Before running distillation workers across hosts that do not share a filesystem.",
+      "severity": "medium"
+    },
+    "registry_sink_single_writer": {
+      "blocking_for_this_task": false,
+      "containment": "Registry identity is the versioned registry_id, so a concurrent duplicate write is resolved by readback into already_terminal rather than a second draft.",
+      "description": "Two workers processing two versions of the same source can call the Registry concurrently; ordering between versions is not serialized.",
+      "expiry": "When per-source ordering is required by a downstream consumer.",
+      "owner": "L12-DIST-001 follow-up",
+      "recheck_trigger": "If a consumer begins depending on strict per-source version ordering of Registry drafts.",
+      "severity": "low"
+    },
+    "hosted_activation": {
+      "blocking_for_this_task": false,
+      "containment": "The task-owned acceptance is fail closed and does not claim hosted behavior.",
+      "description": "Hosted deployment of the distillation controller remains a downstream responsibility.",
+      "expiry": "When L12-HOSTED-001 completes.",
+      "owner": "L12-HOSTED-001",
+      "recheck_trigger": "Before hosted distillation activation.",
+      "severity": "informational"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-DIST-001/evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/twelve-loop-gap/L12-DIST-001/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/twelve-loop-gap/L12-DIST-001/evidence.json",
+    "normalized_hosted_readback": {
+      "hosted_activation_claimed": false,
+      "pr_4193_merged_to_dev": false,
+      "real_registry_service_http_proof": true,
+      "registry_entry_readback_http": 200,
+      "two_process_concurrency_proof": true
+    },
+    "self_hash_omitted": true,
+    "self_hash_reason": "The companion checksum file contains the manifest digest and avoids recursive self-hashing.",
+    "source_artifact_sha256_by_epoch": {}
+  },
+  "record_log": [
+    {
+      "actor": "Claude",
+      "kind": "owner_evidence_ready",
+      "recorded_at": "2026-07-26T15:10:26Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4193",
+      "sequence": 1,
+      "sha": "0ecc331e924f5ca4b2482891d0e2bd8c003c60ad",
+      "status": "pass"
+    }
+  ]
+}
