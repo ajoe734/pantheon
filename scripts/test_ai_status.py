@@ -2071,6 +2071,159 @@ class ArchiveWorkflowTests(unittest.TestCase):
         archive_task = self.state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY]["snapshots"][0]["task"]
         self.assertEqual(archive_task["id"], "REG-100")
 
+    def _write_modern_archive_with_absolute_review_file(
+        self,
+        *,
+        task_id: str = "REG-100",
+        target: str = "docs/evidence/REG-100/evidence.json",
+    ) -> tuple[Path, str]:
+        task = deepcopy(self.state["tasks"][0])
+        task["id"] = task_id
+        task["review_file"] = (
+            f"/tmp/pantheon-worker-worktrees/pantheon/"
+            f"{task_id.lower()}/{target}"
+        )
+        snapshot = {
+            "version": 1,
+            "task_id": task_id,
+            "archived_at": "2026-04-14T02:01:00Z",
+            "terminal_status": "done",
+            "terminal_outcome": "completed",
+            "task": task,
+            "handoffs": [],
+            "blockers": [],
+        }
+        path = task_archive.archive_task_path(task_id)
+        path.write_text(json.dumps(snapshot) + "\n", encoding="utf-8")
+        return path, target
+
+    def test_archive_review_file_correction_is_durable_and_idempotent(self) -> None:
+        path, target = self._write_modern_archive_with_absolute_review_file()
+        digest = "a" * 64
+
+        corrected = task_archive.correct_archived_task_review_file(
+            "REG-100",
+            target,
+            actor="Human/Ops",
+            reason="Replace disposable worker path with merged evidence path.",
+            evidence_sha256=digest,
+            corrected_at="2026-04-14T03:00:00Z",
+        )
+        replayed = task_archive.correct_archived_task_review_file(
+            "REG-100",
+            target,
+            actor="Human/Ops",
+            reason="Replace disposable worker path with merged evidence path.",
+            evidence_sha256=digest,
+        )
+
+        self.assertEqual(corrected, replayed)
+        self.assertEqual(corrected["task"]["review_file"], target)
+        self.assertEqual(
+            corrected["correction_context"],
+            {
+                "version": 1,
+                "corrected_at": "2026-04-14T03:00:00Z",
+                "actor": "Human/Ops",
+                "reason": "Replace disposable worker path with merged evidence path.",
+                "field": "task.review_file",
+                "from": (
+                    "/tmp/pantheon-worker-worktrees/pantheon/"
+                    "reg-100/docs/evidence/REG-100/evidence.json"
+                ),
+                "to": target,
+                "evidence_sha256": digest,
+            },
+        )
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8")), corrected)
+        self.assertTrue(task_archive.is_valid_modern_contract(corrected))
+
+    def test_archive_review_file_correction_rejects_unsafe_sources_and_targets(self) -> None:
+        path, target = self._write_modern_archive_with_absolute_review_file()
+        digest = "b" * 64
+        with self.assertRaisesRegex(RuntimeError, "repository-relative"):
+            task_archive.correct_archived_task_review_file(
+                "REG-100",
+                "../evidence.json",
+                actor="Human/Ops",
+                reason="unsafe target",
+                evidence_sha256=digest,
+            )
+
+        snapshot = json.loads(path.read_text(encoding="utf-8"))
+        snapshot["task"]["review_file"] = f"/tmp/untrusted/{target}"
+        path.write_text(json.dumps(snapshot) + "\n", encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "disposable worker path"):
+            task_archive.correct_archived_task_review_file(
+                "REG-100",
+                target,
+                actor="Human/Ops",
+                reason="unsafe source",
+                evidence_sha256=digest,
+            )
+
+    def test_archive_review_file_command_is_human_ops_only_and_rejects_active_task(
+        self,
+    ) -> None:
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
+            with self.assertRaisesRegex(SystemExit, "Only Human/Ops"):
+                ai_status.command_archive_correct_review_file(
+                    self.state,
+                    ["REG-100", "docs/evidence/REG-100/evidence.json", "reason"],
+                )
+
+        with mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False):
+            with self.assertRaisesRegex(SystemExit, "while REG-100 is active"):
+                ai_status.command_archive_correct_review_file(
+                    self.state,
+                    ["REG-100", "docs/evidence/REG-100/evidence.json", "reason"],
+                )
+
+    def test_archive_review_file_command_validates_and_records_correction(self) -> None:
+        self.state["tasks"] = [self.state["tasks"][1]]
+        corrected = {
+            "correction_context": {"corrected_at": "2026-04-14T03:00:00Z"}
+        }
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False),
+            mock.patch.object(
+                ai_status,
+                "validate_archive_review_file_target",
+                return_value=("docs/evidence/REG-100/evidence.json", "c" * 64),
+            ) as validate_target,
+            mock.patch.object(
+                task_archive,
+                "correct_archived_task_review_file",
+                return_value=corrected,
+            ) as correct_archive,
+            mock.patch.object(ai_status, "append_log") as append_log,
+        ):
+            ai_status.command_archive_correct_review_file(
+                self.state,
+                [
+                    "REG-100",
+                    "docs/evidence/REG-100/evidence.json",
+                    "Durable governed correction.",
+                ],
+            )
+
+        validate_target.assert_called_once_with(
+            "REG-100", "docs/evidence/REG-100/evidence.json"
+        )
+        correct_archive.assert_called_once_with(
+            "REG-100",
+            "docs/evidence/REG-100/evidence.json",
+            actor="Human/Ops",
+            reason="Durable governed correction.",
+            evidence_sha256="c" * 64,
+            canonical_lock_held=True,
+        )
+        append_log.assert_called_once()
+        self.assertEqual(
+            append_log.call_args.args[0]["type"],
+            "archive_review_file_corrected",
+        )
+
     def test_prune_archived_active_tasks_removes_duplicate_active_rows(self) -> None:
         terminal = deepcopy(self.state["tasks"][0])
         related_handoffs = deepcopy(self.state["handoffs"])
