@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Reconcile supervisor worker truth without config mutation
-- Status: in_progress
+- Status: review_approved
 - Owner: Claude
 - Reviewer: Codex2
-- Next: Independent rejection after PR #4212 merge 8703d1f5d: valid allowed-warning/auth-probe repairs landed, but ownerless reconciliation is unsafe and task acceptance remains open. Current merged code treats any old Task-ID trailer on dev plus any latest completed owner-dispatch worker as evidence for the current in_progress delivery; it neither binds the merge commit/PR head to that exact terminal worker nor verifies worker target identity equals the current canonical owner. A reopened or reassigned task can be falsely moved to review. Continue the same canonical task with a follow-up PR from current dev: exact worker-delivery/PR-head/merge ancestry and timestamp binding, current-owner identity binding, fail-closed absent linkage, and negative tests for reopened same ID, reassigned owner, stale terminal worker plus new work, deleted branch/unpushed work, and older-only merged Task-ID commits. Codex2 must formally review before approval. Do not load this merged runtime into live supervisor until the follow-up is merged; no config edit.
+- Next: Independent review passed: PR #4215 head aa70767538baefc1a331b5e7ef51a0cad903c6b9 merged to dev as 6445eacd603f0bcfb8893508fbffe341a67dd309 with all visible trailer/runtime-mirror/smoke checks successful. Verified current-owner identity, observed commit progress, full delivery head, dispatch-time trailer, exact merge ancestry, squash PR metadata, branch movement, and all lookup/git ambiguity gates fail closed. Independent focused run: 65/65 OK; full supervisor: 399/399 OK; live real-repo probes bind PR #4213 as squash_pr_metadata and PR #4212 as merge_ancestry while wrong-head and post-merge dispatch return None. Rewrite suite matches evidence at 95/97 with only the two pre-existing missing-pytest import errors. No config or hand-edited task-board change; reviewed manifest is merged at docs/deployment/evidence/supervisor/SUP-WORKER-TRUTH-RECONCILE-001/evidence.json.
 
 ## Summary
 修正 supervisor 對 terminal worker outcome、allowed_warning、provider fresh probe 與 ownerless in_progress 的 authoritative reconciliation；不得直接改 config 或手改 task board。
@@ -80,6 +80,49 @@ re-run against the real repository and real GitHub metadata resolves PR #4213 as
 head and a post-merge dispatch both returning `None`.
 
 Delivery: PR #4215.
+
+## Owner Closeout Record (Claude, 2026-07-26)
+
+Independent review by Codex2 passed and the delivery is merged. Closeout is a
+records-and-verification pass only: no supervisor logic, test, evidence, or
+config file was changed after approval.
+
+Merge state confirmed from this worktree against a freshly fetched `origin/dev`:
+
+- task branch head `aa70767538baefc1a331b5e7ef51a0cad903c6b9` is an ancestor of
+  `origin/dev`
+- PR #4215 merge commit `6445eacd603f0bcfb8893508fbffe341a67dd309` is on `dev`
+- the reviewed manifest
+  `docs/deployment/evidence/supervisor/SUP-WORKER-TRUTH-RECONCILE-001/evidence.json`
+  is tracked on `origin/dev` alongside `evidence.md` and
+  `prefix-reproduction.txt`, and is already bound as `review_file` on the
+  canonical task row, so no new `REVIEW_FILE` binding is introduced at `done`
+
+Closeout verification re-run in this worktree:
+
+```bash
+cd .orchestrator
+python3 -m unittest test_supervisor                      # 399 tests, OK
+python3 -m unittest -v \
+  test_supervisor.AllowedRateLimitNoticeTests \
+  test_supervisor.FreshAuthProbeLaneHoldTests \
+  test_supervisor.OwnerlessInProgressReconciliationTests \
+  test_supervisor.MergedDeliveryEvidenceTests \
+  test_supervisor.SquashMergedDeliveryEvidenceTests \
+  test_supervisor.MergedPullRequestLookupTests \
+  test_supervisor.WorkerDeliveryIdentityTests            # 65 tests, OK
+```
+
+Both counts match the reviewer's recorded evidence (65/65 focused, 399/399
+full). The round-2 record above cites 55 focused tests because it was written
+before the squash-shape classes landed mid-round; the delivered and reviewed
+focused count is 65.
+
+Generated dashboard mirrors (`dashboard-bundle.json`,
+`docs-site/dashboard-bundle.json`) and empty
+`.orchestrator/assistant-dev-packets/` lock files are rewritten as a side effect
+of running the supervisor suite. They are not task-owned output and were
+reverted rather than folded into the closeout commit.
 
 ## Coordination Root
 - Auto workers inherit `PANTHEON_STATUS_ROOT`, `PANTHEON_COMMAND_ROOT`, and `PANTHEON_COMMAND_RUNTIME_SHA` from the supervisor.
