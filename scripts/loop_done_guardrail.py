@@ -23,6 +23,7 @@ Examples:
 """
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import sys
@@ -119,6 +120,333 @@ _NON_VERDICT_REVIEW_KIND_SIGNALS = (
     "owner_evidence_ready",
     "owner_closeout_gate",
 )
+
+_PRODUCT_CLOSEOUT_CATALOG = (
+    ROOT
+    / "docs"
+    / "bff"
+    / "execution-tasks"
+    / "2026-07-26-twelve-loop-gap"
+    / "tasks.json"
+)
+_PRODUCT_CLOSEOUT_VERDICT_ID_ENV = "PANTHEON_PRODUCT_CLOSEOUT_VERDICT_ID"
+_PRODUCT_CLOSEOUT_FINAL_TASK_ID = "L12-CLOSE-001"
+
+
+def _load_product_closeout_module() -> Any:
+    module_name = "_pantheon_loop_guard_product_closeout_verdict"
+    existing = sys.modules.get(module_name)
+    if existing is not None:
+        return existing
+    module_path = (
+        ROOT
+        / "services"
+        / "control-plane"
+        / "governance"
+        / "product_closeout_verdict.py"
+    )
+    spec = importlib.util.spec_from_file_location(module_name, module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(
+            f"cannot load protected closeout verdict module: {module_path}"
+        )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _status_root() -> Path:
+    raw = str(os.environ.get("PANTHEON_STATUS_ROOT") or "").strip()
+    return Path(raw).expanduser().resolve() if raw else ROOT
+
+
+def _safe_status_artifact(relative_path: str) -> Path:
+    relative = Path(relative_path)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise RuntimeError(
+            "closeout review_file must be a repository-relative path "
+            "without parent traversal"
+        )
+    root = _status_root().absolute()
+    candidate = (root / relative).absolute()
+    try:
+        candidate.relative_to(root.absolute())
+    except ValueError as exc:
+        raise RuntimeError("closeout review_file escapes PANTHEON_STATUS_ROOT") from exc
+    cursor = Path(candidate.anchor)
+    for part in candidate.parts[1:]:
+        cursor /= part
+        if cursor.is_symlink():
+            raise RuntimeError(
+                f"closeout review_file cannot contain a symlink: {cursor}"
+            )
+        if not cursor.exists():
+            break
+    if not candidate.is_file() or candidate.is_symlink():
+        raise RuntimeError(
+            f"closeout review_file is missing or not regular: {relative_path}"
+        )
+    return candidate
+
+
+def _protected_policy_path(
+    module: Any,
+    explicit_policy_path: Path | str | None = None,
+) -> Path:
+    """Resolve verifier policy without accepting caller-controlled env overrides."""
+
+    if explicit_policy_path is not None:
+        return Path(explicit_policy_path)
+    return Path(module.DEFAULT_PROTECTED_POLICY_PATH)
+
+
+def _load_product_closeout_binding(task: dict[str, Any], module: Any) -> Any:
+    if not _PRODUCT_CLOSEOUT_CATALOG.is_file():
+        raise RuntimeError(
+            f"protected closeout catalog is missing: {_PRODUCT_CLOSEOUT_CATALOG}"
+        )
+    try:
+        catalog = json.loads(_PRODUCT_CLOSEOUT_CATALOG.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("cannot read protected closeout catalog") from exc
+    if not isinstance(catalog, dict):
+        raise RuntimeError("protected closeout catalog root must be an object")
+    authority = catalog.get("completion_authority")
+    if not isinstance(authority, dict):
+        raise RuntimeError("catalog completion_authority is missing")
+    expected_fields = list(module.VERDICT_BINDING_FIELDS)
+    if authority.get("verdict_binding_fields") != expected_fields:
+        raise RuntimeError(
+            "catalog verdict binding fields do not match the installed verifier"
+        )
+    if authority.get("requires_protected_human_ops_verdict") is not True:
+        raise RuntimeError("catalog does not require protected Human/Ops verdicts")
+
+    task_id = str(task.get("id") or "").strip()
+    protected_task_ids = authority.get("required_human_ops_signoff_task_ids")
+    if not isinstance(protected_task_ids, list) or task_id not in protected_task_ids:
+        raise RuntimeError(
+            f"task {task_id or '?'} is not a catalog-authorized Human/Ops sink"
+        )
+    catalog_task = next(
+        (
+            item
+            for item in catalog.get("tasks") or []
+            if isinstance(item, dict) and item.get("id") == task_id
+        ),
+        None,
+    )
+    if (
+        not isinstance(catalog_task, dict)
+        or catalog_task.get("requires_human_ops_signoff") is not True
+    ):
+        raise RuntimeError(
+            f"catalog task {task_id or '?'} does not require Human/Ops signoff"
+        )
+
+    review_file = str(task.get("review_file") or "").strip()
+    if not review_file:
+        raise RuntimeError(
+            "protected closeout requires a review_file evidence manifest"
+        )
+    if Path(review_file).is_absolute():
+        raise RuntimeError("protected closeout review_file must be repository-relative")
+    manifest_path = _safe_status_artifact(review_file)
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("cannot read protected closeout evidence manifest") from exc
+    if not isinstance(manifest, dict):
+        raise RuntimeError("protected closeout evidence manifest must be an object")
+    deployment = manifest.get("deployment")
+    if not isinstance(deployment, dict):
+        raise RuntimeError("closeout manifest deployment identity is missing")
+    identity = deployment.get("identity_admission")
+    if not isinstance(identity, dict):
+        raise RuntimeError("closeout manifest deployment.identity_admission is missing")
+    target_environment = str(
+        identity.get("target_environment") or deployment.get("environment") or ""
+    ).strip()
+    deployment_environment = str(deployment.get("environment") or "").strip()
+    if (
+        identity.get("target_environment")
+        and deployment_environment
+        and target_environment != deployment_environment
+    ):
+        raise RuntimeError("closeout manifest target environment is internally inconsistent")
+
+    return module.CloseoutBinding(
+        program_id=str(catalog.get("program_id") or ""),
+        catalog_sha256=module.canonical_json_sha256(catalog),
+        task_id=task_id,
+        closeout_manifest_sha256=_sha256_file(manifest_path),
+        target_environment=target_environment,
+        frontend_sha=str(identity.get("frontend_sha") or ""),
+        bff_sha=str(identity.get("bff_sha") or ""),
+    )
+
+
+def requires_protected_closeout_verdict(task: dict[str, Any]) -> bool:
+    """Return canonical protection truth; mutable task metadata cannot disable it."""
+
+    task_id = str(task.get("id") or "").strip()
+    if task.get("requires_human_ops_signoff") is True:
+        return True
+    if task_id == _PRODUCT_CLOSEOUT_FINAL_TASK_ID:
+        return True
+    try:
+        catalog = json.loads(_PRODUCT_CLOSEOUT_CATALOG.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(catalog, dict):
+        return False
+    authority = catalog.get("completion_authority")
+    if not isinstance(authority, dict):
+        return False
+    protected_ids = authority.get("required_human_ops_signoff_task_ids")
+    return isinstance(protected_ids, list) and task_id in protected_ids
+
+
+def validate_protected_closeout_transition(
+    task: dict[str, Any],
+    *,
+    transition: str,
+    consume: bool = False,
+    transition_actor: str = "",
+    policy_path: Path | str | None = None,
+) -> dict[str, Any] | None:
+    """Verify the protected verdict for a guarded task transition.
+
+    ``review_approved`` and the pre-commit ``done`` check require an
+    unconsumed verdict.  A completed ``done`` record must have exactly one
+    matching consumption.  Only ``done`` may atomically append that
+    consumption.
+    """
+
+    if not requires_protected_closeout_verdict(task):
+        return None
+    if transition not in {"review_approved", "done"}:
+        raise RuntimeError(f"unsupported protected closeout transition: {transition}")
+    if consume and transition != "done":
+        raise RuntimeError("protected verdict consumption is only valid for done")
+
+    module = _load_product_closeout_module()
+    binding = _load_product_closeout_binding(task, module)
+    task_ref = task.get("protected_closeout_verdict")
+    if task_ref is None:
+        task_ref = {}
+    if not isinstance(task_ref, dict):
+        raise RuntimeError("protected_closeout_verdict task reference must be an object")
+    task_verdict_id = str(task_ref.get("verdict_id") or "").strip()
+    environment_verdict_id = str(
+        os.environ.get(_PRODUCT_CLOSEOUT_VERDICT_ID_ENV) or ""
+    ).strip()
+    verdict_id = environment_verdict_id or task_verdict_id
+    if not verdict_id:
+        raise RuntimeError(
+            f"protected closeout requires {_PRODUCT_CLOSEOUT_VERDICT_ID_ENV} "
+            "or a prior governed verdict reference"
+        )
+
+    status_root = _status_root()
+    forbidden_roots = tuple({ROOT.absolute(), status_root.absolute()})
+    service = module.load_verifier_service(
+        policy_path=_protected_policy_path(module, policy_path),
+        forbidden_roots=forbidden_roots,
+    )
+    consumption_idempotency_key = module.canonical_json_sha256(
+        {
+            "schema_version": 1,
+            "verdict_id": verdict_id,
+            "binding": binding.to_dict(),
+            "transition": "done",
+        }
+    )
+    consumption_state = (
+        "consumed"
+        if consume
+        or (transition == "done" and task.get("status") == "done")
+        else "unconsumed"
+    )
+    if consume:
+        consumption = service.consume(
+            verdict_id,
+            expected_binding=binding,
+            transition="done",
+            transition_actor=transition_actor,
+            idempotency_key=consumption_idempotency_key,
+        )
+        verdict = service.verify(
+            verdict_id,
+            expected_binding=binding,
+            consumption_state="consumed",
+        )
+    else:
+        consumption = None
+        verdict = service.verify(
+            verdict_id,
+            expected_binding=binding,
+            consumption_state=consumption_state,
+        )
+
+    reference_matches_verdict = (
+        not task_verdict_id or task_verdict_id == verdict_id
+    )
+    if reference_matches_verdict:
+        if task_ref.get("ledger_entry_id") and (
+            task_ref.get("ledger_entry_id") != verdict.get("ledger_entry_id")
+        ):
+            raise RuntimeError("protected verdict ledger entry reference mismatch")
+        if task_ref.get("verifier_capability_sha256") and (
+            task_ref.get("verifier_capability_sha256")
+            != verdict.get("verifier_capability_sha256")
+        ):
+            raise RuntimeError("protected verifier capability reference mismatch")
+
+    actual_consumption = consumption
+    if consumption_state == "consumed" and actual_consumption is None:
+        actual_consumption = service.consumption_record(verdict_id)
+    if consumption_state == "unconsumed" and (
+        task_ref.get("consumption_record_id")
+        or task_ref.get("consumption_record_hash")
+        or task_ref.get("consumption_idempotency_key")
+    ):
+        raise RuntimeError(
+            "unconsumed protected verdict cannot carry consumption references"
+        )
+    if actual_consumption is not None and reference_matches_verdict:
+        expected_consumption_refs = {
+            "consumption_record_id": actual_consumption["record_id"],
+            "consumption_record_hash": actual_consumption["record_hash"],
+            "consumption_idempotency_key": actual_consumption["idempotency_key"],
+        }
+        for field, expected_value in expected_consumption_refs.items():
+            if task_ref.get(field) and task_ref[field] != expected_value:
+                raise RuntimeError(
+                    f"protected verdict {field} reference mismatch"
+                )
+    result = {
+        "verdict_id": verdict["verdict_id"],
+        "ledger_entry_id": verdict["ledger_entry_id"],
+        "verifier_capability_sha256": verdict["verifier_capability_sha256"],
+        "policy_version": verdict["policy_version"],
+        "key_id": verdict["key_id"],
+        "decision": verdict["decision"],
+    }
+    if task_verdict_id and task_verdict_id != verdict_id:
+        result["superseded_verdict_id"] = task_verdict_id
+    if actual_consumption is not None:
+        result.update(
+            {
+                "consumption_record_id": actual_consumption["record_id"],
+                "consumption_record_hash": actual_consumption["record_hash"],
+                "consumption_idempotency_key": actual_consumption[
+                    "idempotency_key"
+                ],
+            }
+        )
+    return result
 
 
 def _review_workspace_roots() -> tuple[list[Path], str | None]:
@@ -276,10 +604,26 @@ def check_task(task: dict[str, Any]) -> list[str]:
 
     An empty list means the task passes all guardrail checks.
     """
-    if not is_loop_autopilot_task(task):
-        return []
-
     gaps: list[str] = []
+    if requires_protected_closeout_verdict(task):
+        try:
+            validate_protected_closeout_transition(
+                task,
+                transition=(
+                    "done" if task.get("status") == "done" else "review_approved"
+                ),
+            )
+        except Exception as exc:
+            gaps.append(
+                "protected Human/Ops closeout verdict rejected: "
+                f"{type(exc).__name__}: {exc}"
+            )
+
+    # Protection truth comes from the canonical sink/catalog and must still be
+    # audited if mutable task metadata such as loop_ids or non_goals is removed.
+    if not is_loop_autopilot_task(task):
+        return gaps
+
     non_goals: set[str] = set(task.get("non_goals") or [])
     proof_required: list[str] = task.get("proof_required") or []
     review_file_path = str(task.get("review_file") or "").strip()
