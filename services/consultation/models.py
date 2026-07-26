@@ -271,6 +271,7 @@ class ConsultParticipant(BaseModel):
 
 class ConsultRequest(BaseModel):
     request_id: str = Field(min_length=1)
+    tenant_id: str = Field(default="default", min_length=1)
     request_type: ConsultRequestType
     requested_by: ActorRef
     from_persona_id: Optional[str] = None
@@ -319,6 +320,7 @@ class ConsultEvidenceAttachment(BaseModel):
 
 class CreateConsultRequest(BaseModel):
     request_id: Optional[str] = Field(default=None, min_length=1)
+    tenant_id: Optional[str] = Field(default=None, min_length=1)
     request_type: ConsultRequestType
     requested_by: ActorRef
     from_persona_id: Optional[str] = None
@@ -346,6 +348,12 @@ class CreateGateHandoffRequest(BaseModel):
     evidence_refs: List[str] = Field(default_factory=list)
     trace_id: str = Field(min_length=1)
     initiated_by: Optional[ActorRef] = None
+    idempotency_key: Optional[str] = Field(default=None, min_length=1)
+
+
+class AcknowledgeGateHandoffRequest(BaseModel):
+    consumer_ref: str = Field(min_length=1)
+    acknowledged_at: Optional[str] = None
 
 
 class CancelConsultRequestRequest(BaseModel):
@@ -365,6 +373,7 @@ class AttachEvidenceRequest(BaseModel):
     evidence_ref: EvidenceRef
     attached_by: ActorRef
     trace_id: str
+    idempotency_key: Optional[str] = Field(default=None, min_length=1)
 
 
 class AssignParticipantRequest(BaseModel):
@@ -373,6 +382,7 @@ class AssignParticipantRequest(BaseModel):
     role: ParticipantRole
     trace_id: str = Field(min_length=1)
     initiated_by: Optional[ActorRef] = None
+    idempotency_key: Optional[str] = Field(default=None, min_length=1)
 
 
 class SubmitMemoRequest(BaseModel):
@@ -385,6 +395,7 @@ class SubmitMemoRequest(BaseModel):
     recommendation: Recommendation
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
     trace_id: str = Field(min_length=1)
+    idempotency_key: Optional[str] = Field(default=None, min_length=1)
 
 
 class PostTranscriptEventRequest(BaseModel):
@@ -393,3 +404,4 @@ class PostTranscriptEventRequest(BaseModel):
     actor: ActorRef
     content: Dict[str, Any]
     evidence_refs: List[str] = Field(default_factory=list)
+    idempotency_key: Optional[str] = Field(default=None, min_length=1)
