@@ -162,8 +162,11 @@ class AlphaReplicationQueue:
                 "claim_generation": 0,
                 "reclaimed_count": 0,
                 "replay_count": 0,
+                "consumed_replay_ids": [],
                 "last_revalidation_at": None,
                 "last_revalidation_status": None,
+                "authority_task_id": None,
+                "authority_run_ids": [],
                 "experiment_task_id": None,
                 "experiment_run_ids": [],
             }
@@ -260,8 +263,10 @@ class AlphaReplicationQueue:
         strategy_spec_id: str,
         *,
         claim_token: str,
-        task_id: str,
-        run_id: str,
+        authority_task_id: str,
+        authority_run_id: str,
+        experiment_task_id: str,
+        experiment_run_id: str,
         status: str = "completed",
         now: datetime | None = None,
     ) -> bool:
@@ -277,12 +282,24 @@ class AlphaReplicationQueue:
             entry["last_revalidation_at"] = _utc_now(current)
             entry["last_revalidation_status"] = _require_text(status, "status")
             entry["revalidation_count"] = int(entry.get("revalidation_count") or 0) + 1
-            entry["experiment_task_id"] = _require_text(task_id, "task_id")
-            run_ids = list(entry.get("experiment_run_ids") or [])
-            authoritative_run_id = _require_text(run_id, "run_id")
-            if authoritative_run_id not in run_ids:
-                run_ids.append(authoritative_run_id)
-            entry["experiment_run_ids"] = run_ids
+            entry["authority_task_id"] = _require_text(
+                authority_task_id,
+                "authority_task_id",
+            )
+            authority_run_ids = list(entry.get("authority_run_ids") or [])
+            resolvable_run_id = _require_text(authority_run_id, "authority_run_id")
+            if resolvable_run_id not in authority_run_ids:
+                authority_run_ids.append(resolvable_run_id)
+            entry["authority_run_ids"] = authority_run_ids
+            entry["experiment_task_id"] = _require_text(
+                experiment_task_id,
+                "experiment_task_id",
+            )
+            experiment_run_ids = list(entry.get("experiment_run_ids") or [])
+            domain_run_id = _require_text(experiment_run_id, "experiment_run_id")
+            if domain_run_id not in experiment_run_ids:
+                experiment_run_ids.append(domain_run_id)
+            entry["experiment_run_ids"] = experiment_run_ids
             entry["status"] = "completed"
             self._clear_claim(entry)
             self._rewrite_durable(entries)
@@ -296,6 +313,8 @@ class AlphaReplicationQueue:
         claim_token: str,
         error: str,
         max_retries: int = 3,
+        authority_task_id: str | None = None,
+        authority_run_id: str | None = None,
         task_id: str | None = None,
         run_id: str | None = None,
         now: datetime | None = None,
@@ -317,6 +336,20 @@ class AlphaReplicationQueue:
             entry["last_revalidation_status"] = "failed"
             entry["failure_reason"] = _require_text(error, "error")[:2000]
             entry["status"] = "dlq" if attempt_count >= max_retries else "pending"
+            if authority_task_id:
+                entry["authority_task_id"] = _require_text(
+                    authority_task_id,
+                    "authority_task_id",
+                )
+            if authority_run_id:
+                authority_run_ids = list(entry.get("authority_run_ids") or [])
+                resolvable_run_id = _require_text(
+                    authority_run_id,
+                    "authority_run_id",
+                )
+                if resolvable_run_id not in authority_run_ids:
+                    authority_run_ids.append(resolvable_run_id)
+                entry["authority_run_ids"] = authority_run_ids
             if task_id:
                 entry["experiment_task_id"] = _require_text(task_id, "task_id")
             if run_id:
@@ -347,7 +380,18 @@ class AlphaReplicationQueue:
             entry = self._find(entries, tenant_id, strategy_spec_id)
             if entry is None:
                 return False
-            if entry.get("last_replay_id") == replay_key:
+            consumed_replay_ids = [
+                str(value)
+                for value in list(entry.get("consumed_replay_ids") or [])
+                if str(value).strip()
+            ]
+            legacy_last_replay_id = str(entry.get("last_replay_id") or "").strip()
+            if (
+                legacy_last_replay_id
+                and legacy_last_replay_id not in consumed_replay_ids
+            ):
+                consumed_replay_ids.append(legacy_last_replay_id)
+            if replay_key in consumed_replay_ids:
                 return False
             if entry.get("status") != "dlq":
                 return False
@@ -360,6 +404,8 @@ class AlphaReplicationQueue:
             entry["last_replayed_by"] = _require_text(replayed_by, "replayed_by")
             entry["last_replay_reason"] = _require_text(reason, "reason")
             entry["replay_count"] = int(entry.get("replay_count") or 0) + 1
+            consumed_replay_ids.append(replay_key)
+            entry["consumed_replay_ids"] = consumed_replay_ids
             self._rewrite_durable(entries)
             return True
 

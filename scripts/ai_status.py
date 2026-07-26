@@ -405,6 +405,7 @@ TASK_ID_COMMAND_ARG_INDEX: dict[str, int] = {
     "reconcile_merged_done": 0,
     "supersede": 0,
     "approve": 0,
+    "archive_correct_review_file": 0,
 }
 ACTIVE_WORKER_LEASE_STATUSES = {
     "running",
@@ -5951,6 +5952,104 @@ def command_archive_migrate(state: dict[str, Any], _args: list[str]) -> None:
     )
 
 
+def validate_archive_review_file_target(task_id: str, review_file: str) -> tuple[str, str]:
+    normalized = task_archive_module.normalize_archive_review_file(review_file)
+    candidate = ROOT / normalized
+    symlink_component = _first_symlink_component(candidate)
+    if symlink_component is not None:
+        raise SystemExit(
+            f"Archive review_file target cannot include a symlink component: "
+            f"{symlink_component}"
+        )
+    try:
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(ROOT.resolve(strict=True))
+    except (FileNotFoundError, ValueError) as exc:
+        raise SystemExit(
+            f"Archive review_file target must be a regular file inside the command root: "
+            f"{normalized}"
+        ) from exc
+    if not resolved.is_file():
+        raise SystemExit(
+            f"Archive review_file target must be a regular file: {normalized}"
+        )
+    try:
+        evidence = json.loads(resolved.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(
+            f"Archive review_file target is not readable JSON: {normalized}: {exc}"
+        ) from exc
+    evidence_task = evidence.get("task") if isinstance(evidence, dict) else None
+    if not isinstance(evidence_task, dict):
+        raise SystemExit(
+            f"Archive review_file target is missing a task object: {normalized}"
+        )
+    if str(evidence_task.get("id") or "").strip() != task_id:
+        raise SystemExit(
+            f"Archive review_file target task.id does not match {task_id}: {normalized}"
+        )
+    if str(evidence_task.get("review_file") or "").strip() != normalized:
+        raise SystemExit(
+            f"Archive review_file target task.review_file does not match {normalized}"
+        )
+
+    snapshot = task_archive_module.load_archived_snapshot(task_id)
+    if snapshot is None:
+        raise SystemExit(f"Unknown archived task: {task_id}")
+    candidate_task = deepcopy(snapshot["task"])
+    candidate_task["review_file"] = normalized
+    try:
+        validate_loop_completion_claim(candidate_task)
+    except SystemExit as exc:
+        raise SystemExit(
+            f"Archive review_file target fails loop completion validation: {exc}"
+        ) from exc
+    return normalized, hashlib.sha256(resolved.read_bytes()).hexdigest()
+
+
+def command_archive_correct_review_file(
+    state: dict[str, Any],
+    args: list[str],
+) -> None:
+    if len(args) < 3:
+        raise SystemExit(
+            "Usage: archive_correct_review_file "
+            "<task-id> <repo-relative-review-file> <reason>"
+        )
+    task_id, review_file, reason = args[0], args[1], args[2]
+    actor = current_actor()
+    ensure_agent(actor)
+    if actor != "Human/Ops":
+        raise SystemExit(
+            "Only Human/Ops can correct an archived task review_file"
+        )
+    if get_task(state, task_id) is not None:
+        raise SystemExit(
+            f"Cannot correct archive review_file while {task_id} is active"
+        )
+    normalized, digest = validate_archive_review_file_target(task_id, review_file)
+    corrected = task_archive_module.correct_archived_task_review_file(
+        task_id,
+        normalized,
+        actor=actor,
+        reason=reason,
+        evidence_sha256=digest,
+        canonical_lock_held=True,
+    )
+    context = corrected["correction_context"]
+    append_log(
+        {
+            "ts": context["corrected_at"],
+            "agent": actor,
+            "type": "archive_review_file_corrected",
+            "task_id": task_id,
+            "message": reason,
+            "review_file": normalized,
+            "evidence_sha256": digest,
+        }
+    )
+
+
 def command_prompt(state: dict[str, Any], _args: list[str]) -> None:
     print(build_onboarding_prompt(state))
 
@@ -6097,6 +6196,7 @@ def main(argv: list[str]) -> int:
         "supersede": command_supersede,
         "approve": command_approve,
         "archive_migrate": command_archive_migrate,
+        "archive_correct_review_file": command_archive_correct_review_file,
         "sync": command_sync,
         "wave": command_wave,
     }

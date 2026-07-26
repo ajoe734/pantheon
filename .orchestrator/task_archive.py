@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
+from contextlib import nullcontext
 from copy import deepcopy
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
 from urllib.parse import quote
 
@@ -32,6 +34,8 @@ TERMINAL_STATUS_DONE = "done"
 TERMINAL_OUTCOME_COMPLETED = "completed"
 TERMINAL_OUTCOME_SUPERSEDED = "superseded"
 DEFAULT_RECENT_LIMIT = 20
+ARCHIVE_CORRECTION_VERSION = 1
+WORKER_WORKTREE_PREFIX = "/tmp/pantheon-worker-worktrees/pantheon"
 
 
 def iso_now() -> str:
@@ -102,6 +106,54 @@ def write_json(path: Path, payload: Any) -> None:
 
 def normalize_task_id(task_id: str | None) -> str:
     return str(task_id or "").strip()
+
+
+def normalize_archive_review_file(review_file: str | None) -> str:
+    raw = str(review_file or "").strip()
+    path = PurePosixPath(raw)
+    if (
+        not raw
+        or path.is_absolute()
+        or "\\" in raw
+        or raw != path.as_posix()
+        or any(part in {"", ".", ".."} for part in path.parts)
+    ):
+        raise RuntimeError(
+            "archive review_file correction must be a normalized repository-relative path"
+        )
+    return raw
+
+
+def validate_archive_correction_context(value: Any) -> dict[str, Any]:
+    expected_keys = {
+        "version",
+        "corrected_at",
+        "actor",
+        "reason",
+        "field",
+        "from",
+        "to",
+        "evidence_sha256",
+    }
+    if not isinstance(value, dict) or set(value) != expected_keys:
+        raise RuntimeError("archive correction_context schema is not exact")
+    if value.get("version") != ARCHIVE_CORRECTION_VERSION:
+        raise RuntimeError("archive correction_context version is invalid")
+    if not str(value.get("corrected_at") or "").strip():
+        raise RuntimeError("archive correction_context corrected_at is required")
+    if not str(value.get("actor") or "").strip():
+        raise RuntimeError("archive correction_context actor is required")
+    if not str(value.get("reason") or "").strip():
+        raise RuntimeError("archive correction_context reason is required")
+    if value.get("field") != "task.review_file":
+        raise RuntimeError("archive correction_context field is invalid")
+    if not Path(str(value.get("from") or "")).is_absolute():
+        raise RuntimeError("archive correction_context source must be absolute")
+    normalize_archive_review_file(value.get("to"))
+    digest = str(value.get("evidence_sha256") or "").strip()
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise RuntimeError("archive correction_context evidence_sha256 is invalid")
+    return value
 
 
 def task_status(task: dict[str, Any] | None) -> str:
@@ -302,6 +354,105 @@ def load_archived_snapshot(task_id: str | None) -> dict[str, Any] | None:
     return validate_archive_snapshot(snapshot, filename_task_id=normalized)
 
 
+def correct_archived_task_review_file(
+    task_id: str,
+    review_file: str,
+    *,
+    actor: str,
+    reason: str,
+    evidence_sha256: str,
+    corrected_at: str | None = None,
+    canonical_lock_held: bool = False,
+) -> dict[str, Any]:
+    normalized_task_id = normalize_task_id(task_id)
+    target = normalize_archive_review_file(review_file)
+    actor = str(actor or "").strip()
+    reason = str(reason or "").strip()
+    digest = str(evidence_sha256 or "").strip()
+    if not normalized_task_id:
+        raise RuntimeError("archive correction task_id is required")
+    if not actor or not reason:
+        raise RuntimeError("archive correction actor and reason are required")
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise RuntimeError("archive correction evidence_sha256 is invalid")
+
+    path = archive_task_path(normalized_task_id)
+    lock_context = (
+        nullcontext()
+        if canonical_lock_held
+        else canonical_task_state_lock_file(
+            STATUS_FILE,
+            shared=False,
+            nonblocking=False,
+        )
+    )
+    with lock_context:
+        try:
+            snapshot = json.loads(read_task_archive_file_safe(path))
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                f"archive snapshot is missing for {normalized_task_id}"
+            ) from exc
+        validate_archive_snapshot(snapshot, filename_task_id=normalized_task_id)
+        if not is_valid_modern_contract(snapshot):
+            raise RuntimeError(
+                f"archive correction requires a modern snapshot for {normalized_task_id}"
+            )
+
+        task = snapshot["task"]
+        current = str(task.get("review_file") or "").strip()
+        existing_context = snapshot.get("correction_context")
+        if current == target:
+            context = validate_archive_correction_context(existing_context)
+            if (
+                context.get("to") != target
+                or context.get("evidence_sha256") != digest
+            ):
+                raise RuntimeError(
+                    f"archive correction replay conflicts for {normalized_task_id}"
+                )
+            return deepcopy(snapshot)
+        if existing_context is not None:
+            raise RuntimeError(
+                f"archive snapshot already has a different correction for {normalized_task_id}"
+            )
+
+        task_slug = re.sub(r"[^a-z0-9]+", "-", normalized_task_id.lower()).strip("-")
+        expected_prefix = f"{WORKER_WORKTREE_PREFIX}/{task_slug}/"
+        if (
+            not Path(current).is_absolute()
+            or not current.startswith(expected_prefix)
+            or not current.endswith(f"/{target}")
+        ):
+            raise RuntimeError(
+                f"archive review_file source is not the expected disposable worker path for {normalized_task_id}"
+            )
+
+        corrected = deepcopy(snapshot)
+        corrected["task"]["review_file"] = target
+        corrected["correction_context"] = {
+            "version": ARCHIVE_CORRECTION_VERSION,
+            "corrected_at": corrected_at or iso_now(),
+            "actor": actor,
+            "reason": reason,
+            "field": "task.review_file",
+            "from": current,
+            "to": target,
+            "evidence_sha256": digest,
+        }
+        if not is_valid_modern_contract(corrected):
+            raise RuntimeError(
+                f"corrected archive snapshot is invalid for {normalized_task_id}"
+            )
+        durable_write_json(path, corrected)
+        readback = json.loads(read_task_archive_file_safe(path))
+        if _canonical_json_sha256(readback) != _canonical_json_sha256(corrected):
+            raise RuntimeError(
+                f"archive correction readback mismatch for {normalized_task_id}"
+            )
+        return deepcopy(corrected)
+
+
 def load_archived_task(task_id: str | None) -> dict[str, Any] | None:
     snapshot = load_archived_snapshot(task_id)
     if not snapshot:
@@ -423,6 +574,11 @@ def is_valid_modern_contract(snapshot: Any) -> bool:
         return False
     if not str(snapshot.get("archived_at") or "").strip():
         return False
+    if "correction_context" in snapshot:
+        try:
+            validate_archive_correction_context(snapshot["correction_context"])
+        except RuntimeError:
+            return False
     return True
 
 
@@ -484,7 +640,7 @@ def _is_status_archive_snapshot_valid(snapshot: Any) -> bool:
     if not (expected <= keys <= allowed):
         return False
     task = snapshot.get("task")
-    return bool(
+    valid = bool(
         snapshot.get("version") == 1
         and snapshot.get("terminal_status") == "done"
         and str(snapshot.get("task_id") or "").strip()
@@ -496,6 +652,14 @@ def _is_status_archive_snapshot_valid(snapshot: Any) -> bool:
         and isinstance(snapshot.get("handoffs"), list)
         and isinstance(snapshot.get("blockers"), list)
     )
+    if not valid:
+        return False
+    if "correction_context" in snapshot:
+        try:
+            validate_archive_correction_context(snapshot["correction_context"])
+        except RuntimeError:
+            return False
+    return True
 
 
 def validate_status_archive_outbox(value: Any) -> dict[str, Any]:

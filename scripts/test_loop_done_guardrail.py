@@ -2,6 +2,7 @@
 """Unit tests for loop_done_guardrail and the validate_loop_completion_claim gate in ai_status."""
 from __future__ import annotations
 
+import copy
 import importlib
 import json
 import os
@@ -498,6 +499,51 @@ class TestDeepEvidenceChecks(unittest.TestCase):
     def test_valid_evidence_passes(self):
         gaps = guardrail.check_task(self.default_task)
         self.assertEqual(gaps, [])
+
+    def test_relative_manifest_resolves_from_bound_worker_workspace(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            relative_path = Path(
+                "docs/deployment/evidence/twelve-loop-gap/"
+                "LOOP-AUTO-TEST/evidence.json"
+            )
+            full_path = workspace / relative_path
+            full_path.parent.mkdir(parents=True)
+            evidence = copy.deepcopy(DEFAULT_VALID_EVIDENCE)
+            evidence["task"]["review_file"] = str(relative_path)
+            full_path.write_text(json.dumps(evidence), encoding="utf-8")
+            task = dict(self.default_task)
+            task["review_file"] = str(relative_path)
+
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "PANTHEON_WORKTREE_ROOT": str(workspace),
+                    "ORCH_WORKSPACE_PATH": str(workspace),
+                },
+                clear=False,
+            ):
+                gaps = guardrail.check_task(task)
+
+        self.assertEqual(gaps, [])
+
+    def test_absolute_product_manifest_path_is_rejected_as_nonportable(self):
+        task = dict(self.default_task)
+        task["review_file"] = str(self.full_path.resolve())
+        gaps = guardrail.check_task(task)
+        self.assertTrue(
+            any("must be repo-relative and portable" in gap for gap in gaps),
+            gaps,
+        )
+
+    def test_parent_traversal_review_file_is_rejected(self):
+        task = dict(self.default_task)
+        task["review_file"] = "../evidence.json"
+        gaps = guardrail.check_task(task)
+        self.assertTrue(
+            any("escapes repository scope" in gap for gap in gaps),
+            gaps,
+        )
 
     def test_invalid_schema_fails(self):
         data = DEFAULT_VALID_EVIDENCE.copy()

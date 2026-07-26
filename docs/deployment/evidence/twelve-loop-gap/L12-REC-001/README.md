@@ -1,7 +1,7 @@
 # L12-REC-001 reconciliation durability evidence
 
-Status: independent review approved by `Codex2` for PR #4150 at
-`ba5090aa558455aabd2afe39a30cf22be077b32e`; owner closeout is in progress.
+Status: independent review approved by `Codex2`; PR #4150 merged to `dev` as
+`917d281ae10b0426dae0667cf452b2d64263777f`; product closeout is packaged.
 
 This packet proves the repository implementation and focused product tests for
 durable, tenant-scoped reconciliation windows. It does not claim that the
@@ -10,7 +10,10 @@ runtime or emergency-control state, and does not replace the later
 `L12-MANIFEST-001` / hosted verification tasks.
 
 The machine-readable receipt is in [`evidence.json`](evidence.json), with its
-digest in [`evidence.sha256`](evidence.sha256).
+digest in [`evidence.sha256`](evidence.sha256). The schema-governed product
+closeout manifest is in [`closeout/evidence.json`](closeout/evidence.json),
+with its digest in
+[`closeout/evidence.sha256`](closeout/evidence.sha256).
 
 ## Delivered authority
 

@@ -209,6 +209,23 @@ def run_controller_tick(
             "enqueued_new": enqueued_count,
             "processed": tick_result.get("processed", 0),
             "created_run_ids": tick_result.get("created_run_ids", []),
+            "created_authority_task_ids": tick_result.get(
+                "created_authority_task_ids",
+                [],
+            ),
+            "created_authority_run_ids": tick_result.get(
+                "created_authority_run_ids",
+                [],
+            ),
+            "created_experiment_task_ids": tick_result.get(
+                "created_experiment_task_ids",
+                [],
+            ),
+            "created_experiment_run_ids": tick_result.get(
+                "created_experiment_run_ids",
+                [],
+            ),
+            "authority_receipts": tick_result.get("authority_receipts", []),
             "errors": tick_result.get("errors", []),
             "dispatch_mode": tick_result.get("dispatch_mode"),
         }
@@ -238,10 +255,19 @@ def run_controller_tick(
         if writer:
             try:
                 import asyncio
-                evidence_refs = [
-                    f"research-authority://experiment-runs/{run_id}"
-                    for run_id in tick_result.get("created_run_ids", [])
-                ]
+                evidence_refs: list[str] = []
+                for receipt in tick_result.get("authority_receipts", []):
+                    task_ref = (
+                        "research-authority://experiment-tasks/"
+                        f"{receipt['authority_task_id']}"
+                    )
+                    run_ref = (
+                        "research-authority://experiment-runs/"
+                        f"{receipt['authority_run_id']}"
+                    )
+                    for evidence_ref in (task_ref, run_ref):
+                        if evidence_ref not in evidence_refs:
+                            evidence_refs.append(evidence_ref)
                 
                 asyncio.run(writer.record_success(
                     loop_id=loop_id,

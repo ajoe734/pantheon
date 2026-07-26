@@ -1,6 +1,7 @@
 # L12-ALPHA-001 authoritative Alpha replication evidence
 
-Status: ready for independent `Codex2` review.
+Status: independently reviewed, merged to `dev`, and packaged for owner
+closeout.
 
 This packet proves the implementation boundary required by `L12-ALPHA-001`:
 an approved immutable StrategySpec is rechecked by its canonical registry ID,
@@ -15,7 +16,7 @@ The current implementation keeps production activation disabled and fails
 closed for stub, manual-execution, paper, canary, live, and production worker
 modes.
 
-The machine-readable review receipt is [`evidence.json`](evidence.json), with
+The formal product-evidence manifest is [`evidence.json`](evidence.json), with
 its digest in [`evidence.sha256`](evidence.sha256).
 
 ## Delivery identity
@@ -24,13 +25,31 @@ its digest in [`evidence.sha256`](evidence.sha256).
 - Owner: `Codex`
 - Reviewer: `Codex2`
 - Branch: `task/L12-ALPHA-001`
-- Base: `1827cce2e9d6c31f7b57ec4400f3c5d1b3bede29`
+- Review-fix base: `cb02a06cd2b87502c0f808ae3bf2123556035802`
 - Tenant/authority foundation:
   `0c018d4bc4a962a878c0d2742bfcc9f5e484306b`
 - Authoritative worker/controller:
   `95dd93fddd8811a2fc11a03ca81eeaf6d482686b`
 - Authority receipt correlation:
   `d1d2405122918a3f5c63f5b6cfbd6b2e5284c9a8`
+- Replay/receipt review fixes:
+  `288c21eadbfa9995bf50a3d54ab3307cdbf055bc`
+- Reviewer-approved fix tip:
+  `03264cb0eaebd2bf9d2ddcf002096e57fa731c57`
+- Initial delivery: PR
+  [#4147](https://github.com/ajoe734/pantheon/pull/4147), merged as
+  `dd9d83722b24598a623692c2b6ca8b80f159fe04`
+- Review fixes and owner closeout: PR
+  [#4161](https://github.com/ajoe734/pantheon/pull/4161), merged as
+  `cba34f5bd37ebb8056a9317f4a7e6b062c6111e4`
+
+## Independent review approval
+
+`Codex2` approved the reviewer-fix tip after independently rerunning the
+60-test scoped suite and 15-case acceptance subset. The fix tip's Commit
+trailers, Runtime mirror guard, and Smoke acceptance checks all completed
+successfully. Owner closeout reran the same suites and the integrity checks
+below before publication.
 
 ## Acceptance proof
 
@@ -38,9 +57,10 @@ its digest in [`evidence.sha256`](evidence.sha256).
 | --- | --- |
 | Approved reviewed immutable input only | Queue admission requires `approved`, checksum, approval decision, approver, and approval time. The worker re-fetches the exact registry ID and compares every immutable review binding before evaluation. |
 | Canonical ID and tenant key | Queue identity is exactly `(tenant_id, strategy_spec_id)`; strategy family and version are lineage only. Tenant mismatch and same-ID cross-tenant tests pass. |
-| Expiry, reclaim, and replay | Claims carry expiry, fencing token, and generation. Expired work returns to pending, stale tokens cannot acknowledge, bounded failures enter DLQ, and replay IDs are idempotent. |
-| Non-stub research authority | The adapter persists nested schema-backed ExperimentTask and ExperimentRun payloads through the existing FastAPI research service routes, completes the run, and reads both records back. The producer backend is `replication_gate`; the outer `manual` adapter is only the service's persistence transport. |
-| Deterministic duplicate/restart/failure behavior | Duplicate discovery converges to one queue record, authority idempotency converges repeated writes, a crash after authority write reuses the same attempt/run identity, and one operator replay creates one new generation. |
+| Expiry, reclaim, and replay | Claims carry expiry, fencing token, and generation. Expired work returns to pending, stale tokens cannot acknowledge, bounded failures enter DLQ, and every consumed replay ID remains durable in its tenant/spec record. An A-B-A replay after process restart is always a no-op. |
+| Non-stub research authority | The adapter persists nested schema-backed ExperimentTask and ExperimentRun payloads through the existing FastAPI research service routes, completes the run, and reads both records back. Queue acknowledgement keeps domain IDs for lineage and separately records the resolvable authority task/run IDs. The producer backend is `replication_gate`; the outer `manual` adapter is only the service's persistence transport. |
+| Deterministic duplicate/restart/failure behavior | Duplicate discovery converges to one queue record, authority idempotency converges repeated writes, a crash after authority write reuses the same attempt/run identity, and each new operator replay creates one new generation while any previously consumed replay ID is rejected. |
+| Resolvable controller evidence | Worker receipts carry both domain and authority identities. Controller reconcile state and loop evidence use the authority identities, and a real FastAPI test derives GET paths from every emitted task/run ref and receives `200` for both. |
 
 ## Exact validation
 
@@ -50,11 +70,11 @@ PYTHONPATH=/tmp/l12-alpha-pydeps:. python3 -m pytest -q -p no:cacheprovider \
   services/research/experiment_orchestrator \
   services/research/experiments \
   services/research/tests/test_research_orchestrator_http_service.py
-58 passed, 11 warnings in 13.54s
+60 passed, 11 warnings in 13.19s
 
 PYTHONPATH=/tmp/l12-alpha-pydeps:. python3 -m pytest -q -p no:cacheprovider \
-  <13 approved/tenant/lease/DLQ/crash/service-boundary cases>
-13 passed, 1 warning in 3.11s
+  <15 approved/tenant/lease/DLQ/ABA/crash/authority-ref cases>
+15 passed, 1 warning in 4.42s
 
 python3 -m py_compile \
   services/research/alpha_replication/queue.py \
