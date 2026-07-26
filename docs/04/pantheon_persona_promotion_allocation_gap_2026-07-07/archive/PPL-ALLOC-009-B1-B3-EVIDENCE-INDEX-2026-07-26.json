@@ -2,11 +2,23 @@
   "schema_version": "pantheon.ppl-alloc-009.closeout-evidence-index.v1",
   "task_id": "PPL-ALLOC-009",
   "captured_at": "2026-07-26T08:36:22.092Z",
-  "owner_disposition": "b1_b3_complete_b5_pending_independent_reviewer",
+  "owner_disposition": "review_approved_ready_for_owner_finalization",
   "acceptance": {
     "B1": "passed_governed_paper_only_chain",
     "B3": "passed_exact_pair_desktop_and_393px_mobile",
-    "B5": "pending_claude2_decision"
+    "B5": "passed_claude2_ia_supersession_accept"
+  },
+  "reviewer_decision": {
+    "reviewer": "Claude2",
+    "decided_at": "2026-07-26T10:48:28Z",
+    "task_status": "review_approved",
+    "B5": {
+      "decision": "accept",
+      "disposition": "canonical_rankings_governance_decisions_and_performance_centers_supersede_original_primary_workbench_contract",
+      "reopened_ui_task": false,
+      "verified_frontend_commit": "6a8d2d9b4f725056735eefd7165ef47b52cda53d",
+      "governing_route_matrix": "docs/04/pantheon_management_performance_ranking_ia_gap_2026-07-11/archive/ROUTE_MIGRATION_MATRIX.md"
+    }
   },
   "hosted_acceptance": {
     "repository": "ajoe734/pantheon",
@@ -228,10 +240,11 @@
   },
   "residual_risks": [
     {
-      "risk": "independent B5 IA decision is not yet recorded",
-      "owner": "Claude2",
-      "blocking": true,
-      "expiry": null
+      "risk": "the emergency-actions to governance-decisions capital-tab mapping exists in the accepted frontend route manifest but is not listed in the governing route matrix Primary Pages table",
+      "owner": "MGMT-PERF-IA lane",
+      "blocking": false,
+      "expiry": null,
+      "mitigation": "track as a documentation follow-up in the owning IA lane; the accepted runtime mapping and PPL-ALLOC-009 B5 disposition are unaffected"
     },
     {
       "risk": "full GitHub artifact retention is 90 days",

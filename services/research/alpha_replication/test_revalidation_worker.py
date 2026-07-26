@@ -284,6 +284,21 @@ def test_approved_spec_creates_authoritative_task_and_completed_run(tmp_path) ->
     assert run.tenant_id == task.tenant_id
     assert run.strategy_spec_id == task.strategy_spec_id
     assert run.metadata["production_activation"] == "disabled"
+    authority_task_id = f"rtask:{task.task_id}"
+    authority_run_id = f"rrun:{run.run_id}"
+    assert result["created_run_ids"] == [authority_run_id]
+    assert result["created_authority_task_ids"] == [authority_task_id]
+    assert result["created_authority_run_ids"] == [authority_run_id]
+    assert result["created_experiment_task_ids"] == [task.task_id]
+    assert result["created_experiment_run_ids"] == [run.run_id]
+    assert result["authority_receipts"] == [
+        {
+            "authority_task_id": authority_task_id,
+            "authority_run_id": authority_run_id,
+            "experiment_task_id": task.task_id,
+            "experiment_run_id": run.run_id,
+        }
+    ]
     assert worker.list_runs(
         tenant_id=payload["tenant_id"],
         strategy_spec_id=payload["strategy_spec_id"],
@@ -291,6 +306,8 @@ def test_approved_spec_creates_authoritative_task_and_completed_run(tmp_path) ->
 
     queued = queue.list_all()[0]
     assert queued["status"] == "completed"
+    assert queued["authority_task_id"] == authority_task_id
+    assert queued["authority_run_ids"] == [authority_run_id]
     assert queued["experiment_task_id"] == task.task_id
     assert queued["experiment_run_ids"] == [run.run_id]
 
@@ -462,7 +479,10 @@ def test_authority_failure_is_retryable_and_never_creates_local_run_truth(tmp_pa
     assert failed["created_run_ids"] == []
     assert "research authority unavailable" in failed["errors"][0]["error"]
     assert not (tmp_path / "alpha_revalidation_runs.jsonl").exists()
-    assert queue.list_all()[0]["status"] == "pending"
+    failed_entry = queue.list_all()[0]
+    assert failed_entry["status"] == "pending"
+    assert failed_entry["authority_task_id"].startswith("rtask:")
+    assert failed_entry["authority_run_ids"] == []
 
     authority.fail_run_write = False
     recovered = _run_with_registry(worker, _registry_entry(payload))

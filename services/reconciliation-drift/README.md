@@ -32,6 +32,59 @@ Set the worker interval, bounded retry count, and backoff with the
 replay pass. Container restart policy is `unless-stopped`, and consumer/listener
 state survives process replacement.
 
+## Durable windows, SLA, and storage authority
+
+The scheduler derives one deterministic window ID from tenant plus the
+configured observation interval. The service atomically leases that window
+before reading telemetry. A concurrent scheduler receives `status=deferred`;
+an ambiguous transport retry uses the same window, and a completed window is
+served from its durable receipt without repeating incident dispatch.
+
+Configure the contract with:
+
+```text
+RECONCILIATION_DRIFT_SCHEDULER_WINDOW_SECONDS=300
+RECONCILIATION_DRIFT_SCHEDULED_SLA_SECONDS=60
+RECONCILIATION_DRIFT_SCHEDULER_TIMEOUT_SECONDS=90
+RECONCILIATION_DRIFT_SCHEDULER_LEASE_SECONDS=180
+RECONCILIATION_DRIFT_CONSUMER_LEASE_SECONDS=120
+```
+
+The scheduler rejects a timeout shorter than its SLA. Every response reports
+`duration_seconds`, `sla_seconds`, `within_sla`, and `sla_status`. Failed or
+expired claims can be recovered; an old lease token cannot complete work after
+another worker owns it.
+
+With `RECONCILIATION_DRIFT_STORE_BACKEND=postgres`, all service-owned
+evaluations, alerts, ReconciliationRecords, DriftReports, logical-window
+claims, and worker checkpoints use Postgres owner tables. JSON mode uses
+atomic replace, fsync, and cross-process locking for the same records. Tenant
+identity is part of the storage key, so two tenants may safely use the same
+external record/report ID.
+
+Consumer retry/DLQ state is atomically checkpointed around delivery attempts.
+Two consumer processes sharing the state authority cannot both hold its lease.
+Malformed, truncated, duplicate-key, non-standard-constant, or unsupported
+state fails closed and is never overwritten as an empty state.
+
+## Tenant authentication
+
+Hosted/internal deployments enable tenant authentication with:
+
+```text
+RECONCILIATION_DRIFT_AUTH_MODE=token
+RECONCILIATION_DRIFT_AUTH_TOKEN=<secret reference value>
+PANTHEON_TENANT_ID=<tenant>
+```
+
+All `/api/reconciliation-drift/*` calls then require a matching bearer token
+and `X-Tenant-Id`. Tenant identity carried by telemetry, correlation
+envelopes, scheduled summaries, or incident triggers must match the
+authenticated tenant. Reads are tenant-filtered, and cross-tenant record IDs
+resolve only inside the authenticated scope. `disabled` is the explicit local
+compatibility mode; production persistence does not implicitly disable tenant
+authentication.
+
 Fixtures remain available only as an explicit local test input:
 
 ```bash
