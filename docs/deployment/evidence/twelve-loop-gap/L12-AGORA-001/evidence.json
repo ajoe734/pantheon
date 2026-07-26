@@ -20,7 +20,7 @@
     "evidence_cut_semantics": "Independent reviewer evidence after PR #4177 merged as 3998d9d341546209d3c854b6ce716dba2456086c and the implementation was revalidated on dev integration tip 902584bef7448b92cbf0686fd9c655481763b2bd. No hosted deployment, maturity promotion, or runtime authority is claimed.",
     "id": "L12-AGORA-001",
     "overall_admission": "review_approved",
-    "owner": "Codex2",
+    "owner": "Antigravity",
     "phase": "Twelve Loop Remediation / Agora",
     "product_level_required": true,
     "repository": "ajoe734/pantheon",
