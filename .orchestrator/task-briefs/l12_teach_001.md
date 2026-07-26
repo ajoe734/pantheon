@@ -5,9 +5,9 @@ Generated in the worker workspace because the supervisor root did not have a tas
 ## Task
 - Title: Make Persona Teaching authenticated, tenant-safe, and HA
 - Status: review_approved
-- Owner: Antigravity
+- Owner: Claude
 - Reviewer: Codex
-- Next: Auto-reassigned ownership from Claude to Antigravity after repeated Claude terminal: {"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","resetsAt":1785153600,"rateLimitType":"seven_day","utilization":0.79,"isUsingOverage":false,"surpassedThres
+- Next: Auto-reassigned L12-TEACH-001 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Claude.
 
 ## Summary
 為 teaching API/worker 加 inbound authority 與 tenant，將 session/job/replay 移入 authoritative store，讓 functional health 與真正 eval/commit 結果一致。
