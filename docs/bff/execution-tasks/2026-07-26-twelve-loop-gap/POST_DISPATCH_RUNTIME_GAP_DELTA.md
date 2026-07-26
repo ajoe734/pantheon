@@ -1,6 +1,6 @@
 # Twelve-Loop Post-Dispatch Runtime Gap Delta
 
-Document Version: `4.0.0`
+Document Version: `5.0.0`
 Date: `2026-07-26`
 Task ID: `OPS-L12-RUNTIME-GAP-DELTA-001`
 Owner: `Claude`
@@ -21,12 +21,16 @@ Program: `pantheon-twelve-loop-gap-2026-07-26`
 - `docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/ROUND3_ACCEPTANCE_EVIDENCE_AUDIT.md`
 - `docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/tasks.json`（25-task catalog）
 
-本版（v4.0.0）取代 v1.0.0（已由 PR #4200 合併進 `dev`）、v2.0.0、v3.0.0 的內容主張。
-v1–v3 由 owner `Antigravity` 撰寫：v1.0.0 於 journal seq 1685 由 `Human/Ops` 獨立否決，
-v2.0.0 與 v3.0.0 由當時的 reviewer `Claude` 判為事實錯誤且未進入 PR。journal seq 1943
-（`2026-07-26T21:12:08Z`，`Human/Ops`）將本 task 改派為 owner `Claude` / reviewer
-`Codex2`；本版由新 owner 依 §2 的 authoritative 來源重新查證後重寫。v1–v3 中被推翻的
-具體主張逐條列於 §7。
+本版（v5.0.0）取代 v1.0.0（已由 PR #4200 合併進 `dev`）、v2.0.0、v3.0.0 與 v4.0.0 的
+內容主張。v1–v3 由 owner `Antigravity` 撰寫：v1.0.0 於 journal seq 1685 由 `Human/Ops`
+獨立否決，v2.0.0 與 v3.0.0 由當時的 reviewer `Claude` 判為事實錯誤且未進入 PR。
+journal seq 1943（`2026-07-26T21:12:08Z`，`Human/Ops`）將本 task 改派為 owner `Claude` /
+reviewer `Codex2`。v4.0.0 由新 owner 交付於 PR `#4221`，但被 `Human/Ops` 再次否決：
+canonical 事實取自已過期的 journal seq 1952 快照、`L12-CAP-001` 仍記為
+`Antigravity`/`Claude`/`blocked`、evidence `record_log` 帶有未來時間戳、且
+`validation.validated_head_sha` 綁定的 commit 不涵蓋當時實際交付的 bytes。v5.0.0 依 §2
+來源全面重新查證，並改以**內容摘要（content digest）**而非 commit sha 綁定交付 bytes。
+v1–v4 中被推翻的具體主張逐條列於 §7。
 
 本文件**不宣稱**十二循環已完成、已 hosted 啟用、或本 task 已完成。
 
@@ -38,13 +42,14 @@ v2.0.0 與 v3.0.0 由當時的 reviewer `Claude` 判為事實錯誤且未進入 
 
 | 來源 | 路徑 / 位置 | 用途 |
 | :--- | :--- | :--- |
-| Task-state journal | `/home/lupin/pantheon-ci-deploy/runtime/task-state-events.jsonl`（append-only，seq 1..1952） | 非終態任務消失／復原事實 |
+| Task-state journal | `/home/lupin/pantheon-ci-deploy/runtime/task-state-events.jsonl`（append-only，本版查證截止於 seq 2014，`2026-07-26T22:13:08Z`） | 非終態任務消失／復原事實 |
 | Loop catalog registry | `docs/deployment/loop-catalog.registry.json`（`global-loop-catalog-2026-07-13`, `loop_catalog.v2`） | 十二循環 controller / maturity / evidence 現況 |
 | BFF loop read model | `services/control-plane/bff/loop_inventory.py` | 何種 evidence 才會被接受為 live proof |
 | Runtime manifest | `docker-compose.yml`（66 services） | worker 是否被 default 啟動、restart/health/volume 設定 |
 | Hosted deploy path | `scripts/deploy_nonprod_vm.sh` | `COMPOSE_PROFILES` 預設集合 |
 | Hosted acceptance evidence | `ajoe734/execute-plans` run `30192435033` artifact `controller/accepted-deployment.json`、`controller/evidence.jsonl` | 現役 FE/BFF 身分與 accept 時間 |
-| Canonical task rows | `$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh show <task>`；journal seq 1952 state | owner / reviewer / status |
+| Canonical task rows | `$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh show <task>`；journal seq 2014 state | owner / reviewer / status |
+| Archived task rows | `/home/lupin/pantheon/ai-task-archive/tasks/<TASK-ID>.json` | 已歸檔 `done` 任務的 owner / reviewer |
 | PR 狀態 | `gh pr view <n> --repo ajoe734/pantheon` | 只引用查得到且狀態相符的 PR |
 | Live command runtime | `$PANTHEON_COMMAND_ROOT`（`PANTHEON_COMMAND_RUNTIME_SHA=bdbd0a99bf68e6a635d9bd936782c659298b7bb7`） | merged 與 installed 的落差 |
 
@@ -101,7 +106,8 @@ seq 1645 的基線是 **23 total / 20 nonterminal / 16 L12**（不是 22，也�
 
 ### 3.4 全 journal 空快照普查
 
-在 seq 1..1952 的全量掃描中，`state.tasks` 為空的提交共 **9 筆**：
+在 seq 1..2014 的全量掃描中，`state.tasks` 為空的提交共 **9 筆**（v4.0.0 掃描到 seq 1952
+時同為 9 筆；本版把掃描邊界推進到 2014 後計數不變）：
 
 | Seq | committed_at (UTC) | source |
 | ---: | :--- | :--- |
@@ -129,13 +135,21 @@ seq 1685 是 Human/Ops 對本 task v1.0.0 交付的獨立否決；seq 1687 是�
 由 worker session 發出的 handoff。1687 沒有推翻 1685：本 task 於本文件寫作時仍為
 `in_progress`，並已改派 owner `Claude` / reviewer `Codex2`。
 
-### 3.6 目前狀態（seq 1952）
+### 3.6 目前狀態（seq 2014）
 
-`2026-07-26T21:19:49Z`，`Human/Ops`：**31 total / 28 nonterminal / 15 L12**。
+`2026-07-26T22:13:08Z`，source `claude1-1-20260726T215414Z-7744df11`：
+**30 total / 26 nonterminal / 15 L12**。
 
-25-task catalog 中已歸檔為 `done` 的 10 個：`L12-FLEET-001`、`L12-CTRL-001`、
-`L12-TEL-001`、`L12-REC-001`、`L12-SRC-001`、`L12-ALPHA-001`、`L12-AGORA-001`、
-`L12-CONS-001`、`L12-DEP-001`、`L12-TEACH-001`。仍在板上的 15 個見 §5 / §6。
+v4.0.0 引用的是 seq 1952（`2026-07-26T21:19:49Z`，31 / 28 / 15）。該快照在 v4.0.0 送審
+時已過期，因此本版把所有 canonical owner / reviewer / status 事實一律重新取自 seq 2014。
+
+25-task catalog 中已歸檔為 `done` 的 10 個（狀態逐一由 `ai-task-archive/tasks/*.json`
+複核）：`L12-FLEET-001`（`Codex`/`Codex2`）、`L12-CTRL-001`（`Claude`/`Codex2`）、
+`L12-TEL-001`（`Antigravity`/`Codex`）、`L12-REC-001`（`Codex`/`Codex2`）、
+`L12-SRC-001`（`Codex2`/`Codex`）、`L12-ALPHA-001`（`Codex`/`Codex2`）、
+`L12-AGORA-001`（`Antigravity`/`Codex`）、`L12-CONS-001`（`Codex`/`Codex2`）、
+`L12-DEP-001`（`Codex2`/`Codex`）、`L12-TEACH-001`（`Claude`/`Codex`）。
+仍在板上的 15 個見 §5 / §6。
 
 ---
 
@@ -189,7 +203,8 @@ evidence 目錄。上述現役 FE/BFF pair 是 **PPL-ALLOC-009 的 hosted accept
 
 每個 gap 都列出：現象與可驗證證據、影響、canonical task、owner、reviewer、acceptance
 條文、PR、tests、仍缺證據。`PR: none` 表示該 task 目前確實沒有對應 PR，不以任何未查證
-的 PR 編號填補。所有 owner/reviewer 取自 journal seq 1952 的 canonical row。
+的 PR 編號填補。所有 owner/reviewer/status 取自 journal seq 2014 的 canonical row
+（`2026-07-26T22:13:08Z`）；已歸檔任務取自 `ai-task-archive/tasks/*.json`。
 
 ### Gap 1 — Scheduler：必要排程 worker 不在預設啟動集合（`scheduler`）
 
@@ -296,11 +311,13 @@ evidence 目錄。上述現役 FE/BFF pair 是 **PPL-ALLOC-009 的 hosted accept
   啟動，但 `paper-signal-producer`、`reconciliation-drift-consumer`、
   `reconciliation-drift-scheduler`、`reconciliation-drift-incident-listener` **均無
   healthcheck**；實際執行 paper 訂單的 `pantheon-paper-runtime` 位於 profile
-  `static-paper-runtime`，不在任何 deploy 預設集合中。canonical row 顯示
-  `L12-CAP-001` 目前為 **`blocked`**；registry 中 `capital_pool_execution` 的
+  `static-paper-runtime`，不在任何 deploy 預設集合中。canonical row（seq 2014）顯示
+  `L12-CAP-001` 目前為 owner `Codex` / reviewer `Claude` / status **`in_progress`**
+  （`last_update` `2026-07-26T21:58:01Z`）；registry 中 `capital_pool_execution` 的
   `maturity.current` 為 `manual`、`proven_live_evidence` 為 `historical`（非 `present`）。
-- **Evidence-only closeout 的圍堵結果**：canonical row（`last_update`
-  `2026-07-26T18:40:07Z`）記載對 PR `#4203` head `5dbc956` 的獨立稽核結論：
+- **Evidence-only closeout 的圍堵結果**：稍早的 canonical row（`last_update`
+  `2026-07-26T18:40:07Z`，當時 status 為 `blocked`）記載對 PR `#4203` head `5dbc956`
+  的獨立稽核結論：
   production `get_reconciler()` 以 `leader_store=None` 建構 `PaperFleetReconciler`，
   等於每個 replica 都預設為 leader；file lease 是無鎖的 read/overwrite，其所謂
   cross-process 測試實際上是同一 process 內依序呼叫兩個物件；Redis lease 使用
@@ -309,20 +326,27 @@ evidence 目錄。上述現役 FE/BFF pair 是 **PPL-ALLOC-009 的 hosted accept
   被 reclaim 略過；ack / nack-requeue / DLQ 皆為多命令非原子路徑；six-binding drill
   只用 `InMemoryPendingSignalStore` 與 mock execution，未證明 Redis 或
   process/container restart。這證實 CAP 先前的 evidence-only closeout 主張不成立，
-  圍堵有效（task 維持 `blocked`）。
+  圍堵有效。
+- **圍堵之後的進展（本版更正）**：`L12-CAP-001` 已不再是 `blocked`。canonical row 於
+  `2026-07-26T21:58:01Z` 記為 owner `Codex` / reviewer `Claude` / `in_progress`，其
+  `next` 欄位記載 anchor `baf573278` 使 Redis claim/ack/nack/DLQ/reclaim 成為單一命令
+  原子操作，並加入 fail-closed、token-fenced 的 Redis/file reconciler lease production
+  wiring；真實 Redis 多 process crash/restart 證明、capital actor/tenant 授權與 evidence
+  recut 仍在進行中，且未變更 config 或 live-capital 設定。**狀態改變的是治理層，不是
+  證據層**：下列「仍缺證據」在 `#4203` 收斂並取得獨立審查前依然全部成立。
 - **影響**：`L12-VERIFY-RUNTIME-001` acceptance 第 1 條（immutable approved artifact →
   一個 RuntimeBinding 與一個 paper worker）與第 5 條（order/fill/position/heartbeat 與
-  BFF stage 真值共用權威 correlation）在 CAP 解除 blocked 之前無法取證。
+  BFF stage 真值共用權威 correlation）在 `L12-CAP-001` 取得上述缺漏證據之前無法取證。
 - **Canonical task**：`L12-VERIFY-RUNTIME-001`（wave 4）；前置為 `L12-CAP-001`
 - **Owner / Reviewer**：`L12-VERIFY-RUNTIME-001` = `Claude` / `Antigravity`（`todo`）；
-  `L12-CAP-001` = `Antigravity` / `Claude`（`blocked`）
+  `L12-CAP-001` = `Codex` / `Claude`（`in_progress`）
 - **Acceptance**：`Immutable approved artifact reaches one RuntimeBinding and one paper worker`；`Order fill position heartbeat and BFF stage truth share authoritative correlation`
 - **PR**：`#4194`（merged 2026-07-26T15:18:50Z）、`#4196`（merged 2026-07-26T15:53:05Z）
   為 `L12-CAP-001` 的已合併 evidence anchor；`#4203`（**open**，branch `task/L12-CAP-001`，
   head `5dbc95673c4390f7ae140a89b8fe88b95cf81059`）
   `L12-CAP-001: resolve review blockers for lossless signal execution & leader lease`
-  是目前解除 blocked 的路徑，但其 **Commit trailers 檢查為 fail、mergeStateStatus 為
-  `BEHIND`**（`gh pr checks 4193/4203` 實測）。
+  是目前的收斂路徑，但其 **Commit trailers 檢查為 fail、mergeStateStatus 為
+  `BEHIND`**（`gh pr checks 4203` / `gh pr view 4203`，2026-07-26T22:10Z 實測仍為紅）。
 - **Tests**：`services/control-plane/governance/test_product_closeout_verdict.py`
 - **仍缺證據**：原子化的 claim / timestamp / ack / nack / DLQ（Lua 或等價 durable
   consumer-group 交易）；接入 production constructor 的 fenced leader 取得與續約；
@@ -392,8 +416,11 @@ evidence 目錄。上述現役 FE/BFF pair 是 **PPL-ALLOC-009 的 hosted accept
 - **Owner / Reviewer**：`L12-VERIFY-OBS-001` = `Antigravity` / `Claude`（`todo`）；
   `L12-BFF-001` = `Antigravity` / `Claude`（`in_progress`）
 - **Acceptance**：`BFF downstream stop and recovery emits accepted infrastructure telemetry and resolves one incident`
-- **PR**：`#4211`（**open**）`OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001: prove infra health authority`
-  是目前唯一在飛的相關交付（該 task 狀態 `review`，owner `Claude` / reviewer `Codex2`）。
+- **PR**：`#4211`（**open**，head `4e24e895f59853391d269270673f57b9248964eb`，
+  mergeStateStatus `BEHIND`，merge-ref 的 Commit trailers 檢查為 fail）
+  `OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001: prove infra health authority`
+  是目前唯一在飛的相關交付（該 task 於 seq 2014 為狀態 `in_progress`，
+  owner `Claude` / reviewer `Codex2`；v4.0.0 誤記為 `review`）。
 - **Tests**：`services/control-plane/bff/test_loop_health_read_model_contract.py`；
   `services/control-plane/bff/test_bff_downstream_health_monitor.py`（稽核記錄 56 passed / 2 failed）
 - **仍缺證據**：9 個常駐 worker 的 healthcheck 補齊；durable 共享的 probe/outbox/incident
@@ -415,7 +442,7 @@ evidence 目錄。上述現役 FE/BFF pair 是 **PPL-ALLOC-009 的 hosted accept
   wave 3–5 task 的 runtime 交付內容尚未依修訂後的擁有權重新排程。
 - **影響**：wave 3–5 的 12 個 dependency（`L12-MANIFEST-001` 的 `depends_on` 涵蓋全部
   12 個 loop 實作 task）中已有 10 個 `done`、2 個未完成（`L12-DIST-001` `in_progress`、
-  `L12-CAP-001` `blocked`），`L12-MANIFEST-001` 仍為 `todo` 而未被啟動。
+  `L12-CAP-001` `in_progress`），`L12-MANIFEST-001` 仍為 `todo` 而未被啟動。
 - **Canonical task**：`L12-MANIFEST-001`（wave 3）
 - **Owner / Reviewer**：`Antigravity` / `Claude`（status `todo`）
 - **Acceptance**：`Compose config and local stack health pass with no duplicate legacy workers`
@@ -423,7 +450,10 @@ evidence 目錄。上述現役 FE/BFF pair 是 **PPL-ALLOC-009 的 hosted accept
   `L12-MANIFEST-001` 本身無 PR）
 - **Tests**：`scripts/test_dispatch_twelve_loop_gap_2026_07_26.py`
 - **仍缺證據**：修訂後 owner 對 `L12-MANIFEST-001` 的啟動紀錄；`L12-DIST-001` 與
-  `L12-CAP-001` 兩個未完成 dependency 的收斂路徑。
+  `L12-CAP-001` 兩個未完成 dependency 的收斂路徑。另註：`assignment-revision-1.json`
+  把未完成 task 的實作 owner 收攏到 Antigravity / Claude 系，但 `L12-CAP-001` 於
+  `2026-07-26T21:58:01Z` 的 canonical owner 為 `Codex`，代表修訂後的擁有權在
+  runtime 端已再度分歧，需由 `L12-MANIFEST-001` 一併對齊。
 
 ### Gap 10 — Recurrence：非終態清空的防護已合併但未安裝（`recurrence`）
 
@@ -512,7 +542,7 @@ evidence 目錄。上述現役 FE/BFF pair 是 **PPL-ALLOC-009 的 hosted accept
 | 3 | imitation | `L12-VERIFY-LEARN-001` | Antigravity | Claude | todo | none | real-dataset gated candidate |
 | 4 | alpha persona | `L12-VERIFY-KNOW-001` | Claude | Antigravity | todo | none | persona→ExperimentRun 完整鏈 |
 | 5 | consultation | `L12-VERIFY-LEARN-001` | Antigravity | Claude | todo | none | executor 形態裁決 + memo/handoff |
-| 6 | capital reconciliation | `L12-VERIFY-RUNTIME-001` | Claude | Antigravity | todo | #4194, #4196 (CAP, merged); #4203 (open) | paper sleeve 實測 + CAP 解除 blocked |
+| 6 | capital reconciliation | `L12-VERIFY-RUNTIME-001` | Claude | Antigravity | todo | #4194, #4196 (CAP, merged); #4203 (open, trailers fail, BEHIND) | paper sleeve 實測 + CAP 原子化／fenced lease 的真實 Redis 證明 |
 | 7 | evolution | `L12-VERIFY-OBS-001` | Antigravity | Claude | todo | none | worker health/graceful-stop + 下游終態 |
 | 8 | storage healthcheck | `L12-VERIFY-OBS-001` | Antigravity | Claude | todo | #4211 (open) | 9 個 worker healthcheck + incident 收斂 |
 | 9 | revision | `L12-MANIFEST-001` | Antigravity | Claude | todo | #4184, #4187, #4188, #4189 (merged) | 修訂後啟動紀錄 + 2 個未完成 dependency |
@@ -520,16 +550,22 @@ evidence 目錄。上述現役 FE/BFF pair 是 **PPL-ALLOC-009 的 hosted accept
 | 11 | hosted | `L12-HOSTED-001` | Claude | Antigravity | todo | none | 十二循環 hosted manifest + 12 筆 controller record |
 | 12 | distillation identity / trailer | `L12-DIST-001` → `L12-MANIFEST-001` | Claude | Antigravity | in_progress | #4193 (open, trailers fail, BEHIND) | expiry-boundary 迴歸 + 穩定 materialization identity |
 
-支援型 task（非本文件擁有，僅記錄依存關係）：`L12-IMIT-001`（todo）、
-`L12-CAP-001`（blocked）、`L12-EVO-001`（in_progress）、`L12-BFF-001`（in_progress）、
-`L12-DIST-001`（in_progress）、`L12-SIGNOFF-001`（in_progress）、
-`OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001`（in_progress）、
-`SUP-COMMAND-RUNTIME-REFRESH-001`（todo）、
-`OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001`（review）。
+支援型 task（非本文件擁有，僅記錄依存關係；狀態取自 journal seq 2014）：
+`L12-IMIT-001`（`Antigravity`/`Claude`，todo）、
+`L12-CAP-001`（`Codex`/`Claude`，in_progress）、
+`L12-EVO-001`（`Claude`/`Antigravity`，in_progress）、
+`L12-BFF-001`（`Antigravity`/`Claude`，in_progress）、
+`L12-DIST-001`（`Claude`/`Antigravity`，in_progress）、
+`L12-SIGNOFF-001`（`Claude`/`Codex2`，in_progress）、
+`OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001`（`Claude`/`Codex2`，in_progress）、
+`SUP-COMMAND-RUNTIME-REFRESH-001`（`Claude`/`Codex2`，todo）、
+`OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001`（`Claude`/`Codex2`，in_progress）。
 
 ---
 
-## 7. Corrections To v1.0.0 – v3.0.0
+## 7. Corrections To v1.0.0 – v4.0.0
+
+### 7.1 對 v1.0.0 – v3.0.0 的更正
 
 本版明確推翻前三版下列主張（v1.0.0 已由 PR #4200 合併進 `dev`，故必須在此更正）：
 
@@ -553,6 +589,59 @@ evidence 目錄。上述現役 FE/BFF pair 是 **PPL-ALLOC-009 的 hosted accept
 7. **Owner / Reviewer**：前版標示 owner `Antigravity` / reviewer `Claude`。canonical row
    目前為 owner `Claude` / reviewer `Codex2`。
 
+### 7.2 對 v4.0.0 的更正
+
+v4.0.0 由本 task 的新 owner 交付於 PR `#4221`，並被 `Human/Ops` 於
+`2026-07-26T21:49Z` 的稽核再次否決。以下四項為被否決的具體缺陷與本版的修正：
+
+1. **過期的 canonical 快照**：v4.0.0 的所有 owner / reviewer / status 取自 journal
+   seq 1952（`2026-07-26T21:19:49Z`）。該快照在送審時已被後續事件取代。本版改以
+   seq 2014（`2026-07-26T22:13:08Z`）為準，並在 §2 / §3.6 / §5 前言明載查證邊界。
+2. **`L12-CAP-001` 事實錯誤**：v4.0.0 記為 owner `Antigravity` / reviewer `Claude` /
+   status `blocked`。canonical row 於 `2026-07-26T21:58:01Z` 實為 owner `Codex` /
+   reviewer `Claude` / status `in_progress`（§5 Gap 6、§5 Gap 9、§6）。連帶更正
+   `OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001` 由 `review` 更正為 `in_progress`
+   （§5 Gap 8、§6）。
+3. **未來時間戳**：v4.0.0 的 evidence `record_log` sequence 7 記載
+   `recorded_at 2026-07-26T22:00:00Z`，晚於當時的稽核時點，屬於尚未發生的事實主張。
+   本版把所有 `record_log` 時間戳改為可由 git commit 時間或 GitHub check run
+   `completed_at` 逐筆核對的實測值，並由 §7.3 的驗證器拒絕任何未來時間戳。
+4. **head 綁定不涵蓋交付 bytes**：v4.0.0 送出的 PR head 為
+   `0bb6d7ffbef956a57f3a3b300056f77088837f2a`，但 `validation.validated_head_sha`
+   只寫到 `5c39428dda1d3c1e42fa926aa5f320467e1b8324`。由於 `0bb6d7f` 本身又改動了
+   `evidence.json` 與 checksum，該綁定無法涵蓋當時實際交付的 bytes。這是 commit sha
+   綁定的結構性缺陷，不是筆誤——任何「先寫 sha、再改檔」的順序都會複現它。
+
+### 7.3 交付 bytes 的非循環綁定規則（本版新增）
+
+commit sha 無法在 commit 之前得知，因此把交付 bytes 綁在 commit sha 上必然循環：
+要嘛 sha 過期（v4.0.0 的情形），要嘛需要再一個 commit 去追記，而那個 commit 又會使
+綁定再次過期。本版改用**內容摘要鏈**：
+
+1. `POST_DISPATCH_RUNTIME_GAP_DELTA.md`（本文件）、
+   `scripts/validate_twelve_loop_gap_evidence.py`、
+   `scripts/test_validate_twelve_loop_gap_evidence.py` 三個檔案在 evidence 產出**之前**
+   定稿，其 sha256 逐一記入 `evidence.json` 的
+   `integrity.source_artifact_sha256_by_epoch`。
+2. `validation.validated_head_sha` 記錄的不是 commit sha，而是
+   `content-digest:sha256:<digest>`；`<digest>` 為上述檔案清單
+   （`"<sha256>  <path>\n"` 依 path 排序後串接）的 sha256。
+3. `evidence.json` 自身的 bytes 由 companion `evidence.sha256` 封存——manifest 不能包含
+   自己的雜湊，因此這一環由外部檔案承擔，鏈路仍不循環。
+4. `.orchestrator/task-briefs/ops_l12_runtime_gap_delta_001.md` **刻意排除**於綁定之外：
+   它由 supervisor 於每次派工重新產生，納入綁定會產生與交付無關的失效。
+
+驗證器 `scripts/validate_twelve_loop_gap_evidence.py` 對這份 evidence 執行四條
+**fail-closed 拒絕規則**，並由 `scripts/test_validate_twelve_loop_gap_evidence.py`
+以迴歸測試逐條覆蓋：
+
+| 規則 | 拒絕條件 | 對應的 v4.0.0 缺陷 |
+| :--- | :--- | :--- |
+| `future_timestamp` | `task.evidence_cut_at`、`validation.validated_at`、`hosted_readback.pre_deploy.observed_at` 或任一 `record_log[].recorded_at` 晚於檢查時點 | §7.2 第 3 項 |
+| `head_binding` | `validated_head_sha` 為裸 40-hex commit sha，或 `content-digest` 摘要與重算結果不符，或被綁定檔案的 sha256 與 `source_artifact_sha256_by_epoch` 不符 | §7.2 第 4 項 |
+| `record_log_ordering` | `record_log` 的 `sequence` 非嚴格遞增，或 `recorded_at` 相對前一筆倒退 | §7.2 第 3 項的一般化 |
+| `checks_bound_to_commits` | `implementation_delivery.required_checks[].head_sha` 未出現在 `anchor_commits[].sha` | §7.2 第 4 項的一般化 |
+
 ---
 
 ## 8. Operational Boundaries
@@ -567,6 +656,11 @@ evidence 目錄。上述現役 FE/BFF pair 是 **PPL-ALLOC-009 的 hosted accept
 >   （§5 Gap 10 為具體反例）。
 > - **Task Completion**：本文件本身不構成 `OPS-L12-RUNTIME-GAP-DELTA-001` 的完成宣告；
 >   該 task 需經 reviewer `Codex2` 獨立審查後由 owner 收尾。
+> - **Auto-Merge**：PR `#4221` 的 auto-merge 由 `Human/Ops` 關閉，本版**不重新啟用**。
+>   合併時機由 reviewer `Codex2` 的獨立審查決定，不由 owner 端的自動化決定。
+> - **Snapshot Freshness**：§3.6 的 canonical 計數是 seq 2014 的時點快照。journal 持續
+>   append，審查時的最新 sequence 只會更大；本文件的主張綁定在載明的 sequence 與時間戳
+>   上，不宣稱「此後未再變動」。
 
 ---
 
