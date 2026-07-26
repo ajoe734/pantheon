@@ -17,7 +17,7 @@
   "task": {
     "base_branch": "dev",
     "evidence_cut_at": "2026-07-26T21:40:00Z",
-    "evidence_cut_semantics": "Owner evidence cut v4.0.0. Supersedes the v1.0.0 content merged by PR #4200 and the unreviewed v2.0.0/v3.0.0 recuts, which were squashed off the task branch because commit cd989a6645d4fb8aba479a879abd35b439ef1749 carried an 86-character subject and failed the required Commit trailers gate on PR #4221. A superseded commit subject cannot be repaired by a follow-up commit, so the branch was squashed onto dev tip 6445eacd603f0bcfb8893508fbffe341a67dd309 per the anchor-commit squash clause in .orchestrator/skills/task-closeout-finalization.md and pushed with --force-with-lease; backup ref backup/OPS-L12-RUNTIME-GAP-DELTA-001-pre-squash preserves the pre-squash tip c6fccc5cc92b9065f7fb8420e913b3b52b57731f. Every journal count, PR reference, and hosted identity in this cut was re-derived from the authoritative sources listed under authorities.",
+    "evidence_cut_semantics": "Owner evidence cut v4.0.0. Supersedes the v1.0.0 content merged by PR #4200 and the unreviewed v2.0.0/v3.0.0 recuts, which were squashed off the task branch because commit cd989a6645d4fb8aba479a879abd35b439ef1749 carried an 86-character subject and failed the required Commit trailers gate on PR #4221. A superseded commit subject cannot be repaired by a follow-up commit, so the branch was squashed onto dev tip 6445eacd603f0bcfb8893508fbffe341a67dd309 per the anchor-commit squash clause in .orchestrator/skills/task-closeout-finalization.md and pushed with --force-with-lease; backup ref backup/OPS-L12-RUNTIME-GAP-DELTA-001-pre-squash preserves the pre-squash tip c6fccc5cc92b9065f7fb8420e913b3b52b57731f. The squashed delivery commit is 5c39428dda1d3c1e42fa926aa5f320467e1b8324. Every journal count, PR reference, and hosted identity in this cut was re-derived from the authoritative sources listed under authorities.",
     "id": "OPS-L12-RUNTIME-GAP-DELTA-001",
     "overall_admission": "in_progress",
     "owner": "Claude",
@@ -89,12 +89,37 @@
         "subject": "OPS-L12-RUNTIME-GAP-DELTA-001: anchor reassigned task brief"
       },
       {
-        "delivery_state": "current_task_branch_delivery_recorded_in_follow_up_evidence_recut",
-        "sha": "6445eacd603f0bcfb8893508fbffe341a67dd309",
-        "subject": "task/OPS-L12-RUNTIME-GAP-DELTA-001 squashed onto this dev tip; the delivered commit sha is recorded by the follow-up evidence recut on PR #4221"
+        "delivery_state": "squashed_delivery_commit_on_task_branch_pr_4221",
+        "sha": "5c39428dda1d3c1e42fa926aa5f320467e1b8324",
+        "subject": "OPS-L12-RUNTIME-GAP-DELTA-001: recut v4 post-dispatch gap delta"
       }
     ],
-    "required_checks": []
+    "required_checks": [
+      {
+        "workflow": "Commit trailers",
+        "event": "pull_request",
+        "conclusion": "success",
+        "head_sha": "5c39428dda1d3c1e42fa926aa5f320467e1b8324",
+        "run_id": 30221671216,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30221671216"
+      },
+      {
+        "workflow": "Runtime mirror guard",
+        "event": "pull_request",
+        "conclusion": "success",
+        "head_sha": "5c39428dda1d3c1e42fa926aa5f320467e1b8324",
+        "run_id": 30221671216,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30221671216"
+      },
+      {
+        "workflow": "Smoke acceptance",
+        "event": "pull_request",
+        "conclusion": "success",
+        "head_sha": "5c39428dda1d3c1e42fa926aa5f320467e1b8324",
+        "run_id": 30221671216,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30221671216"
+      }
+    ]
   },
   "validation": {
     "commands": [
@@ -131,7 +156,7 @@
     ],
     "validated_at": "2026-07-26T21:40:00Z",
     "validated_base_sha": "6445eacd603f0bcfb8893508fbffe341a67dd309",
-    "validated_head_sha": "6445eacd603f0bcfb8893508fbffe341a67dd309"
+    "validated_head_sha": "5c39428dda1d3c1e42fa926aa5f320467e1b8324"
   },
   "deployment": {
     "applicable": false,
@@ -402,6 +427,15 @@
       "reference": "PR #4221 required check 'Commit trailers' failed on cd989a6645d4fb8aba479a879abd35b439ef1749 (subject 86 chars)",
       "sequence": 6,
       "sha": "6445eacd603f0bcfb8893508fbffe341a67dd309",
+      "status": "in_progress"
+    },
+    {
+      "actor": "Claude",
+      "kind": "required_checks_recorded_after_squash",
+      "recorded_at": "2026-07-26T22:00:00Z",
+      "reference": "PR #4221 head 5c39428dda1d3c1e42fa926aa5f320467e1b8324: Commit trailers, Runtime mirror guard and Smoke acceptance all pass",
+      "sequence": 7,
+      "sha": "5c39428dda1d3c1e42fa926aa5f320467e1b8324",
       "status": "in_progress"
     }
   ]
