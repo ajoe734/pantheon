@@ -101,4 +101,3 @@ exit 0
 
 The single skipped test in the full suite is the same opt-in real-Postgres
 test; it passed separately with the local dev DSN.
-
