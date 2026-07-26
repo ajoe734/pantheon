@@ -11417,6 +11417,90 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
         self.assertIn("quota group claude_account_shared", reason or "")
 
 
+class AgentDispatchLoadTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.config = {
+            "agents": {
+                "codex2_2": {
+                    "id": "codex2_2",
+                    "display_name": "Codex2",
+                    "provider": "codex2-2",
+                },
+            },
+        }
+
+    def test_active_worker_queue_event_is_counted_once(self) -> None:
+        state = {
+            "workers": {
+                "run-active": {
+                    "status": "running",
+                    "agent_id": "codex2_2",
+                    "queue_event_id": "evt-active",
+                    "request_snapshot": {"reason": "owned_finalize_dispatch"},
+                },
+            },
+            "queue": {
+                "events": {
+                    "evt-active": {"status": "started"},
+                    "evt-pending": {"status": "queued"},
+                },
+            },
+        }
+        queued_events = [
+            {
+                "event_id": "evt-active",
+                "target_display_name": "Codex2",
+                "reason": "owned_finalize_dispatch",
+            },
+            {
+                "event_id": "evt-pending",
+                "target_display_name": "Codex2",
+                "reason": "owned_in_progress_dispatch",
+            },
+        ]
+
+        with mock.patch.object(supervisor, "load_event_queue", return_value=queued_events):
+            loads = supervisor.agent_dispatch_loads(self.config, state, {"running"})
+
+        self.assertEqual(
+            loads,
+            {
+                "Codex2": [
+                    supervisor.dispatch_reason_priority("owned_finalize_dispatch"),
+                    supervisor.dispatch_reason_priority("owned_in_progress_dispatch"),
+                ],
+            },
+        )
+
+    def test_queue_event_remains_fallback_when_worker_reason_is_missing(self) -> None:
+        state = {
+            "workers": {
+                "run-active": {
+                    "status": "running",
+                    "agent_id": "codex2_2",
+                    "queue_event_id": "evt-active",
+                    "request_snapshot": {},
+                },
+            },
+            "queue": {"events": {"evt-active": {"status": "started"}}},
+        }
+        queued_events = [
+            {
+                "event_id": "evt-active",
+                "target_display_name": "Codex2",
+                "reason": "owned_in_progress_dispatch",
+            },
+        ]
+
+        with mock.patch.object(supervisor, "load_event_queue", return_value=queued_events):
+            loads = supervisor.agent_dispatch_loads(self.config, state, {"running"})
+
+        self.assertEqual(
+            loads,
+            {"Codex2": [supervisor.dispatch_reason_priority("owned_in_progress_dispatch")]},
+        )
+
+
 class MaxConcurrentWorkersCapTests(unittest.TestCase):
     def _base_config(self) -> dict:
         return {
