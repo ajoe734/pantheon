@@ -57,11 +57,11 @@ log = logging.getLogger(__name__)
 # Sentinel probe identity (non-trading)
 # ---------------------------------------------------------------------------
 
-_SENTINEL_BINDING_ID = "bff-health-probe"
+_SENTINEL_BINDING_ID = "00000000-0000-4000-8000-0000000000b1"
 _SENTINEL_RUNTIME_ID = "bff-health-monitor"
 _SENTINEL_CAPITAL_POOL_ID = "bff-control-plane"
 _SENTINEL_ARTIFACT_ID = "bff-operator"
-_SENTINEL_ARTIFACT_VERSION = "0"
+_SENTINEL_ARTIFACT_VERSION = "0.1.0"
 _SENTINEL_PLAN_ID = "bff-health-probe"
 _SENTINEL_PCB_ID = "bff-health-probe"
 _SENTINEL_STAGE = "paper"
@@ -382,9 +382,9 @@ class DownstreamHealthMonitor:
             "plan_id": _SENTINEL_PLAN_ID,
             "persona_capital_binding_id": _SENTINEL_PCB_ID,
             "target": {
-                "id": _SENTINEL_BINDING_ID,
-                "name": result.target_name,
-                "kind": "downstream_service",
+                "strategy_id": f"bff-health-{result.target_name}",
+                "registry_id": _SENTINEL_BINDING_ID,
+                "artifact_version": _SENTINEL_ARTIFACT_VERSION,
             },
             "metrics": {
                 "probe_ok": 1 if result.ok else 0,
