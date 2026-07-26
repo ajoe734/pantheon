@@ -112,9 +112,10 @@
         "docs/deployment/evidence/supervisor/OPS-CI-PR-TRAILER-RANGE-001/live-range-reproduction.txt",
         "scripts/git/test_git_workflow_helpers.py::PullRequestTrailerRangeLiveRegressionTests::test_old_range_contract_reproduces_the_dev_commit_contamination",
         "scripts/git/test_git_workflow_helpers.py::PullRequestTrailerRangeLiveRegressionTests::test_old_push_contract_reproduces_the_4215_contamination",
-        "scripts/git/test_git_workflow_helpers.py::PullRequestTrailerRangeLiveRegressionTests::test_repaired_push_range_drops_the_synced_dev_commit"
+        "scripts/git/test_git_workflow_helpers.py::PullRequestTrailerRangeLiveRegressionTests::test_repaired_push_range_drops_the_synced_dev_commit",
+        "post_merge_confirmation (production counterpart, 40 live runs after the PR #4217 merge)"
       ],
-      "detail": "Replayed against real objects in an isolated clone with refs/remotes/origin/dev restored to 0410a89f0, the dev tip both runs saw. Old contracts reproduce exit 1 on 0410a89f0 for both PRs; the repaired contracts return exit 0 for both, and each task head is scanned alone. Ancestry is recorded too: 0410a89f0 is not reachable from PR #4211's head but is reachable from its synthetic merge, and is reachable from PR #4215's pushed head."
+      "detail": "Replayed against real objects in an isolated clone with refs/remotes/origin/dev restored to 0410a89f0, the dev tip both runs saw. Old contracts reproduce exit 1 on 0410a89f0 for both PRs; the repaired contracts return exit 0 for both, and each task head is scanned alone. Ancestry is recorded too: 0410a89f0 is not reachable from PR #4211's head but is reachable from its synthetic merge, and is reachable from PR #4215's pushed head. Confirmed in production after merge: see post_merge_confirmation, where 0410a89f0 is still on dev and is rejected zero times across 40 runs on six task branches."
     },
     {
       "id": "AC5",
@@ -132,9 +133,11 @@
       "statement": "Focused unit and workflow tests, branch, commit, push, PR checks, independent review, merge and evidence archive complete.",
       "status": "pending_reviewer",
       "evidence_refs": [
-        "python3 -m unittest scripts.git.test_git_workflow_helpers (52 passed)"
+        "python3 -m unittest scripts.git.test_git_workflow_helpers (52 passed)",
+        "delivery (PR #4217 merged into dev at 2026-07-26T21:43:27Z, all three checks pass)",
+        "post_merge_confirmation (40 live runs, 36 success, 4 true-positive failures)"
       ],
-      "detail": "Unit, workflow-contract and live-git regression tests pass locally, and this task's own PR exercises the repaired pull_request path against dev. Independent review by Codex2 and the merge into dev are not asserted here."
+      "detail": "Unit, workflow-contract and live-git regression tests pass. Branch, commit, push and PR checks are complete: PR #4217 merged into dev with Commit trailers, Runtime mirror guard and Smoke acceptance all green, and its own Commit trailers job ran under the repaired resolver. Independent review by Codex2 is the one remaining item and is not asserted here."
     }
   ],
   "verification": [
@@ -157,8 +160,83 @@
     {
       "command": "isolated clone with refs/remotes/origin/dev reset to 0410a89f0, old vs repaired ranges for PR #4211 and PR #4215",
       "result": "old: exit 1 on 0410a89f0 for both; repaired: exit 0 for both, scanning only the owning task's commits"
+    },
+    {
+      "command": "post-merge audit of every branch-ci.yml run created between the PR #4217 merge (2026-07-26T21:43:27Z) and 2026-07-26T23:19:29Z, reading the resolved range and rejected commits out of each Commit trailers job log",
+      "result": "40 runs (22 push, 18 pull_request) across dev and six task branches: 36 success, 4 failure; all four failures are one true positive on a branch-owned 81-char subject, and 0410a89f0 is rejected zero times"
     }
   ],
+  "delivery": {
+    "repository": "ajoe734/pantheon",
+    "pull_request": 4217,
+    "pull_request_url": "https://github.com/ajoe734/pantheon/pull/4217",
+    "state": "MERGED",
+    "base_branch": "dev",
+    "head_commit": "1e968f302e3b27285d78df0a42dfac2a24a80831",
+    "merge_commit": "71aea154b8a1ab6e652e02018f47c57f26513de0",
+    "merged_at": "2026-07-26T21:43:27Z",
+    "checks": "Commit trailers, Runtime mirror guard and Smoke acceptance all pass; the Commit trailers job on PR #4217 already ran under the repaired resolver because a pull_request workflow runs the workflow file from the PR merge ref"
+  },
+  "post_merge_confirmation": {
+    "note": "Live fleet behaviour after the delivery landed, not a replay. This is the production counterpart of the AC4 reproduction.",
+    "window": {
+      "from": "2026-07-26T21:43:27Z",
+      "to": "2026-07-26T23:19:29Z",
+      "runs": 40,
+      "push_runs": 22,
+      "pull_request_runs": 18,
+      "success": 36,
+      "failure": 4,
+      "branches": [
+        "dev",
+        "task/L12-CAP-001",
+        "task/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001",
+        "task/OPS-L12-RUNTIME-GAP-DELTA-001",
+        "task/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001",
+        "task/OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001",
+        "task/SUP-COMMAND-RUNTIME-REFRESH-001"
+      ]
+    },
+    "observed_ranges": [
+      {
+        "shape": "pull_request",
+        "run": 30224958034,
+        "resolved": "origin/dev..1ea220c43ac7ba20a95f0cdda34aaf3d0caa5784",
+        "matches_contract": "<base branch>..<pull_request.head.sha>"
+      },
+      {
+        "shape": "push on task/**",
+        "run": 30224956120,
+        "resolved": "origin/dev..1ea220c43ac7ba20a95f0cdda34aaf3d0caa5784",
+        "matches_contract": "<integration target>..<github.sha>"
+      },
+      {
+        "shape": "push on dev",
+        "run": 30224998589,
+        "resolved": "e376955ff8ac3555871932457865ed1fd0beee83..3ac69ff7f82e92577bec042a8bcef8f482a22122",
+        "matches_contract": "unchanged: github.event.before..head, confirming AC3 in production"
+      }
+    ],
+    "original_blocker": {
+      "commit": "0410a89f0",
+      "subject_length": 79,
+      "still_on_dev": true,
+      "rejections_in_window": 0,
+      "detail": "The commit was never rewritten or reverted; the range was fixed instead. It is rejected zero times across all 40 runs, including on the six task branches that were cut before it landed and would have inherited it under the old contract."
+    },
+    "failures": {
+      "count": 4,
+      "runs": [30222792583, 30222793958, 30222823409, 30222825355],
+      "branch": "task/L12-CAP-001",
+      "rejected_commit": "5dbc95673c4390f7ae140a89b8fe88b95cf81059",
+      "rejected_subject": "L12-CAP-001: resolve review blockers for lossless signal execution & leader lease",
+      "rejected_subject_length": 81,
+      "branch_owned": true,
+      "ancestor_of_origin_dev": false,
+      "classification": "true positive",
+      "detail": "Live counterpart of test_repaired_range_still_fails_a_malformed_task_head: narrowing the range removed the false failures without removing the true ones. The branch passed at 22:29 once its own subject was fixed. No run in the window failed on a commit its branch did not own."
+    }
+  },
   "residual_risk": [
     {
       "id": "RR1",
@@ -184,6 +262,14 @@
       "decision": "evidence_ready",
       "summary": "Both contamination shapes reproduced against real objects and repaired: the pull_request range is anchored on pull_request.head.sha instead of the synthetic merge commit, and the work-branch push range is anchored on the integration target instead of the previous branch tip. No trailer rule was weakened.",
       "pending": "Independent review by Codex2 and merge into dev."
+    },
+    {
+      "sequence": 2,
+      "actor": "Claude",
+      "role": "owner",
+      "decision": "post_merge_confirmed",
+      "summary": "Task was preempted before review and restarted. The delivery had already merged as PR #4217, so this record adds production confirmation rather than new code: across the 40 branch-ci runs in the 96 minutes after the merge, both repaired shapes resolve exactly as specified, dev pushes still measure from github.event.before, 0410a89f0 remains on dev and is rejected zero times, and the only four failures are one true positive on a branch-owned 81-char subject. Nothing in the repair or the scope boundary changed.",
+      "pending": "Independent review by Codex2, then owner closeout."
     }
   ]
 }
