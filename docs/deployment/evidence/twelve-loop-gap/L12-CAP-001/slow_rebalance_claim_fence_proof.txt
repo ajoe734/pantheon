@@ -1,0 +1,25 @@
+L12-CAP-001 slow rebalance claim-fence proof
+Recorded at: 2026-07-26T23:07:08Z
+Branch: task/L12-CAP-001
+Implementation head: da77966f29e7eb9adea286f1dde04dfa138f1f88
+
+Command:
+/tmp/l12-cap-001-venv/bin/python -m unittest -v services.execution.lean_runtime.test_signal_isolation.TestRedisPendingSignalStoreClaimVisibility.test_slow_rebalance_buffer_cannot_execute_after_claim_reclaim
+
+Observed output:
+test_slow_rebalance_buffer_cannot_execute_after_claim_reclaim (services.execution.lean_runtime.test_signal_isolation.TestRedisPendingSignalStoreClaimVisibility.test_slow_rebalance_buffer_cannot_execute_after_claim_reclaim) ... run_id run-slow-buffer: rebalance timeout after 1 bars with 1 signal(s) — executing partial batch
+[sig-slow-buffer] Claim expired or was reclaimed; refusing stale execution
+ok
+
+----------------------------------------------------------------------
+Ran 1 test in 1.900s
+
+OK
+
+Assertions exercised:
+- worker-A claims and buffers sig-slow-buffer without executing it;
+- after the 0.25-second visibility lease expires, worker-B atomically
+  reclaims, executes, marks processed, and acknowledges the signal;
+- worker-A then flushes its stale Python buffer, but Redis claim renewal
+  fails at the execution boundary and executor call count remains exactly 1;
+- pending, worker-A inflight, worker-B inflight, and DLQ residue are all zero.
