@@ -23,7 +23,10 @@ def _emit_json(stream: Any, payload: Mapping[str, Any]) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Drain assistant DevTaskPacket inbox through scripts/ai_status.py assign."
+        description=(
+            "Drain assistant DevTaskPacket inbox through the installed "
+            "governed status runtime."
+        )
     )
     parser.add_argument("--repo-root", help="Pantheon repo root that owns .orchestrator and ai-status.json.")
     parser.add_argument("--inbox-dir", help="Inbox directory. Defaults to .orchestrator/assistant-dev-packets.")

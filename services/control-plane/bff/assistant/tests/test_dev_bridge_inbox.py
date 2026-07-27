@@ -81,7 +81,8 @@ def test_queue_and_drain_packet_inbox_materializes_tasks(tmp_path: Path, monkeyp
         "Claude",
         "Materialize queued assistant task",
     ]
-    assert record["ai_name"] == "management-ai"
+    assert record["ai_name"] == "Human/Ops"
+    assert record["auto_worker_markers"] == {}
     bridge = record["metadata"]["dev_bridge"]
     assert bridge["packet_id"] == "pkt_inbox_live"
     assert bridge["conversation_id"] == "mgmt-nl-inbox"
