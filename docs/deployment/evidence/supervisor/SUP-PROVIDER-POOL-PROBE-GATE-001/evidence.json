@@ -5,7 +5,7 @@
     "title": "provider pool probe gate and root coherence",
     "phase": "Control-plane",
     "owner": "Claude2",
-    "reviewer": "Codex2",
+    "reviewer": "Claude",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/SUP-PROVIDER-POOL-PROBE-GATE-001",

@@ -8,4 +8,4 @@ $ (cd .orchestrator && "$PANTHEON_PY" -m pytest -q test_provider_permissions.py 
 ........................................................................ [ 86%]
 ........................................................................ [ 98%]
 ........                                                                 [100%]
-574 passed, 10 subtests passed in 72.67s (0:01:12)
+574 passed, 10 subtests passed in 67.72s (0:01:07)
