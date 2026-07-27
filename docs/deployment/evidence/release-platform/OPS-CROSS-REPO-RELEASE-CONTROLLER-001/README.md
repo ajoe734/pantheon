@@ -101,5 +101,11 @@ post-merge release candidate, not an intermediate repair deployment.
 Owner: Codex2
 Reviewer: Codex
 
-Independent exact-head review and both repository PR/merge identities are
-recorded in `evidence.json` before the governed task closeout.
+Codex independently approved Pantheon
+`b25b269956dc24eab3a2fc12b76bf731810c143f` and execute-plans
+`1081deb765c5313731ae5813ee6f3d618e7103cd`. Pantheon PR #4268 merged as
+`b854c2bdeba672d107314c51c7588455be96221e`; execute-plans PR #558 merged
+as `f24c26330c7fb5afe6c2f1c735ea5fb06b3d87ef`. The exact reviewer
+decision, required GitHub contexts, temporary last-pusher protection
+reconciliation, restored protection settings, owner validation, and both
+repository merge identities are recorded in `evidence.json`.
