@@ -2,22 +2,22 @@
   "schema_version": "loop_product_evidence.v1",
   "schema_status": {
     "formal_schema_owner": "LOOP-PROD-002",
-    "formalization_trigger": "OPS-L12-RUNTIME-GAP-DELTA-001 v6.0.0 recut after the third Human/Ops rejection, of PR #4221 head 5a9ed0c9957529467fce0b7afa0338546987ee4b. The v5 cut quoted mutable PR facts that had already advanced, and its required checks covered only the rejected v4 heads 5c39428 and 0bb6d7f, so no check proved the delivered bytes.",
+    "formalization_trigger": "OPS-L12-RUNTIME-GAP-DELTA-001 v7.0.0 recut after Codex2's rejection of PR #4221 head b3f8edad0b5ac078ada3dd791b8166dbaf58cf9e. All seven v6 rules read only the manifest's own description of the delivery receipt, so substituting the rejected v4 commit 5c39428 and resealing the companion checksum passed every rule while git objects contradicted the receipt. Rule receipt_commit_artifacts now verifies the receipt commit's tree offline.",
     "note": "Machine-readable evidence manifest for the Layer 4 post-dispatch runtime gap delta. Records journal facts, hosted identity, and twelve post-dispatch gaps mapped to MANIFEST, TRUTH, VERIFY, and HOSTED tasks. Claims no hosted activation and no task completion. Delivered bytes are bound by content digest, not by a commit sha.",
     "status": "formalized"
   },
   "evidence_policy": {
     "checksum_file": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-RUNTIME-GAP-DELTA-001/evidence.sha256",
     "missing_or_contradicted_proof_fails_closed": true,
-    "mutation_rule": "Task-scoped evidence changes require a Pantheon task commit and independent reviewer verification by Codex2. Any change to a bound artifact requires an evidence recut: a new delivery receipt commit carrying only the bound artifacts, green required checks on that receipt head, then an evidence-only commit that records the receipt. scripts/validate_twelve_loop_gap_evidence.py must return zero rejections over all seven rules before handoff.",
+    "mutation_rule": "Task-scoped evidence changes require a Pantheon task commit and independent reviewer verification by Codex2. Any change to a bound artifact requires an evidence recut: a new delivery receipt commit carrying only the bound artifacts, green required checks on that receipt head, then an evidence-only commit that records the receipt. scripts/validate_twelve_loop_gap_evidence.py must return zero rejections over all eight rules before handoff, including receipt_commit_artifacts, which reads the receipt commit out of the local git object store and fails closed when a bound path is absent, a blob sha256 disagrees, or git cannot answer.",
     "recording_mode": "logical_append_only",
     "redacted": true,
     "self_hashing": false
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-26T23:01:37Z",
-    "evidence_cut_semantics": "Owner evidence cut v6.0.0. Supersedes v1.0.0 (merged by PR #4200), the unreviewed v2.0.0/v3.0.0 recuts, v4.0.0 (commits 5c39428dda1d3c1e42fa926aa5f320467e1b8324 and 0bb6d7ffbef956a57f3a3b300056f77088837f2a), and v5.0.0 (head 5a9ed0c9957529467fce0b7afa0338546987ee4b), each rejected by Human/Ops. Every mutable GitHub fact in this cut is recorded as a point-in-time observation bound to an exact head and observed_at, never as the cut's current truth; the cut instant orders the record_log and does not re-assert those observations. The delivered bytes are bound by content digest over the three artifacts finalized in delivery receipt commit 20ba1af92688b27b25aa88d5094dd06eeaad2e90, whose required checks are recorded below; the evidence pair is deliberately outside that digest so this commit cannot invalidate it.",
+    "evidence_cut_at": "2026-07-27T00:35:01Z",
+    "evidence_cut_semantics": "Owner evidence cut v7.0.0. Supersedes v1.0.0 (merged by PR #4200), the unreviewed v2.0.0/v3.0.0 recuts, v4.0.0 (commits 5c39428dda1d3c1e42fa926aa5f320467e1b8324 and 0bb6d7ffbef956a57f3a3b300056f77088837f2a), v5.0.0 (head 5a9ed0c9957529467fce0b7afa0338546987ee4b), and v6.0.0 (head b3f8edad0b5ac078ada3dd791b8166dbaf58cf9e). The first four were rejected by Human/Ops; v6.0.0 was rejected by reviewer Codex2 because every rule read the manifest's own description of the delivery receipt rather than the receipt itself. Every mutable GitHub fact in this cut is recorded as a point-in-time observation bound to an exact head and observed_at, never as the cut's current truth. The delivered bytes are bound by content digest over the three artifacts finalized in delivery receipt commit 63d4d60372741af77943f24c2833db0c15e2e051, whose required checks are recorded below and whose tree is verified offline by rule receipt_commit_artifacts; the evidence pair is deliberately outside that digest so this commit cannot invalidate it.",
     "id": "OPS-L12-RUNTIME-GAP-DELTA-001",
     "overall_admission": "in_progress",
     "owner": "Claude",
@@ -130,10 +130,40 @@
       {
         "sha": "20ba1af92688b27b25aa88d5094dd06eeaad2e90",
         "subject": "OPS-L12-RUNTIME-GAP-DELTA-001: bind delivery receipt and observations",
-        "delivery_state": "v6_delivery_receipt_head",
+        "delivery_state": "superseded_v6_delivery_receipt_rejected_by_codex2",
+        "note": "v6.0.0 delivery receipt. Rejected because all seven v6 rules read only the manifest's own description of the receipt, so substituting the rejected v4 commit 5c39428dda1d3c1e42fa926aa5f320467e1b8324 for this one and resealing evidence.sha256 still passed every rule. Rule receipt_commit_artifacts closes that by reading git objects."
+      },
+      {
+        "sha": "a9af5f3363c2769ce98fabe89c593f3ad95859ee",
+        "subject": "OPS-L12-RUNTIME-GAP-DELTA-001: record v6 delivery receipt evidence",
+        "delivery_state": "superseded_v6_evidence_commit",
+        "note": "The v6 evidence-only commit. Changed evidence.json and evidence.sha256 only, both outside the content digest."
+      },
+      {
+        "sha": "b3f8edad0b5ac078ada3dd791b8166dbaf58cf9e",
+        "subject": "Merge remote-tracking branch 'origin/dev' into task/OPS-L12-RUNTIME-GAP-DELTA-001",
+        "delivery_state": "superseded_v6_delivery_head_rejected_by_codex2",
+        "note": "The exact head Codex2 rejected: a dev-refresh merge over the v6 evidence commit. Rejected for the receipt-substitution hole, not for anything in this merge."
+      },
+      {
+        "sha": "d663ee07f7f7837ae9a9f0daa244c6e00a77885f",
+        "subject": "OPS-L12-RUNTIME-GAP-DELTA-001: verify receipt against git objects",
+        "delivery_state": "superseded_v7_first_delivery_receipt",
+        "note": "First v7 receipt. Its three required checks were green (run 30227335753, 2026-07-27T00:23:46Z-00:24:35Z), but cutting the evidence against it surfaced a stale hardcoded check instant in the validator regression suite, so the two scripts were fixed and the receipt advanced. Its delta document bytes are identical to the current receipt's."
+      },
+      {
+        "sha": "d84c4111b0fe5f4402f9a6362721fa5c9b5ee85d",
+        "subject": "OPS-L12-RUNTIME-GAP-DELTA-001: derive the late check instant",
+        "delivery_state": "superseded_v7_second_delivery_receipt",
+        "note": "Second v7 receipt. Three required checks green (run 30227526217, 2026-07-27T00:28:59Z-00:29:46Z). Superseded because replaying the exact 5c39428 substitution through the CLI showed the receipt rule was deciding path absence from git cat-file error message substrings rather than from ls-tree membership."
+      },
+      {
+        "sha": "63d4d60372741af77943f24c2833db0c15e2e051",
+        "subject": "OPS-L12-RUNTIME-GAP-DELTA-001: read tree membership from ls-tree",
+        "delivery_state": "v7_delivery_receipt_head",
         "receipt_role": "current_delivery_receipt",
-        "bound_content_digest": "content-digest:sha256:82f143ad9ad36d7e105d2f8c820bc96b5f75388d6331e9808015cbf3c4922c4d",
-        "note": "Delivery receipt per section 7.5 of the delta document. This commit changed only the three digest-bound artifacts, so the bytes its required checks passed are byte-identical at the final PR head; the follow-up evidence commit touches only evidence.json and evidence.sha256, which are outside the content digest."
+        "bound_content_digest": "content-digest:sha256:54f55535871c4574e4343513a0f92074144b14468c3c0afe5266ac96c19f04d3",
+        "note": "Delivery receipt per section 7.5 of the delta document. Carries only the three digest-bound artifacts, so the bytes its required checks passed are byte-identical at the final PR head; the follow-up evidence commit touches only evidence.json and evidence.sha256, which are outside the content digest. Unlike every earlier receipt this one is verifiable offline: rule receipt_commit_artifacts reads each bound path out of this commit's tree and compares blob sha256 against integrity.source_artifact_sha256_by_epoch."
       }
     ],
     "required_checks": [
@@ -217,6 +247,33 @@
         "head_sha": "20ba1af92688b27b25aa88d5094dd06eeaad2e90",
         "run_id": 30224192311,
         "url": "https://github.com/ajoe734/pantheon/actions/runs/30224192311"
+      },
+      {
+        "workflow": "Commit trailers",
+        "event": "pull_request",
+        "conclusion": "success",
+        "completed_at": "2026-07-27T00:33:29Z",
+        "head_sha": "63d4d60372741af77943f24c2833db0c15e2e051",
+        "run_id": 30227691455,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30227691455"
+      },
+      {
+        "workflow": "Runtime mirror guard",
+        "event": "pull_request",
+        "conclusion": "success",
+        "completed_at": "2026-07-27T00:33:24Z",
+        "head_sha": "63d4d60372741af77943f24c2833db0c15e2e051",
+        "run_id": 30227691455,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30227691455"
+      },
+      {
+        "workflow": "Smoke acceptance",
+        "event": "pull_request",
+        "conclusion": "success",
+        "completed_at": "2026-07-27T00:34:14Z",
+        "head_sha": "63d4d60372741af77943f24c2833db0c15e2e051",
+        "run_id": 30227691455,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30227691455"
       }
     ]
   },
@@ -325,11 +382,68 @@
             "observed_at": "2026-07-26T22:59:25Z"
           }
         ]
+      },
+      {
+        "command": "python3 scripts/validate_twelve_loop_gap_evidence.py docs/deployment/evidence/twelve-loop-gap/OPS-L12-RUNTIME-GAP-DELTA-001/evidence.json --json  # 8 rules",
+        "result": "pass",
+        "note": "Eight fail-closed rules, zero rejections. The eighth, receipt_commit_artifacts, reads the receipt commit out of the local git object store."
+      },
+      {
+        "command": "python3 scripts/validate_twelve_loop_gap_evidence.py docs/deployment/evidence/twelve-loop-gap/OPS-L12-RUNTIME-GAP-DELTA-001/evidence.json --repo-root <staged copy with receipt_role moved to 5c39428 and evidence.sha256 resealed> --git-root . --json",
+        "result": "pass_reproduces_codex2_rejection",
+        "note": "Replay of the exact v6 rejection shape. Under the v6 rule set this substitution reported zero rejections; under v7 the only rejecting rule is receipt_commit_artifacts, which reports both the delta document digest conflict (9ac925e0... at 5c39428 versus the bound value) and the two validator scripts absent from that commit's tree."
+      },
+      {
+        "command": "python3 -m pytest scripts/test_validate_twelve_loop_gap_evidence.py scripts/test_dispatch_twelve_loop_gap_2026_07_26.py -q",
+        "result": "pass",
+        "note": "60 tests: 28 validator regressions (23 from v6 plus 5 covering receipt_commit_artifacts) and 32 dispatcher tests."
+      },
+      {
+        "command": "python3 scripts/dispatch_twelve_loop_gap_2026_07_26.py --validate-only",
+        "result": "pass",
+        "note": "status=valid, task_count=25, catalog_sha256=8c7610b0e6bbba31c36cb0ecd1ddce4bf843fc6de89dcaecc4a5e3154af8933d. The 25-task catalog is unchanged by this task."
+      },
+      {
+        "command": "gh pr view 4221 --repo ajoe734/pantheon --json headRefOid,autoMergeRequest,mergeStateStatus",
+        "result": "pass",
+        "observed_at": "2026-07-27T00:34:46Z",
+        "observations": [
+          {
+            "subject": "PR #4221 head at the v7 evidence cut",
+            "head_sha": "63d4d60372741af77943f24c2833db0c15e2e051",
+            "observed_at": "2026-07-27T00:34:46Z",
+            "value": "mergeStateStatus=CLEAN; autoMergeRequest=null"
+          },
+          {
+            "subject": "PR #4221 auto-merge remains disabled",
+            "head_sha": "63d4d60372741af77943f24c2833db0c15e2e051",
+            "observed_at": "2026-07-27T00:34:46Z",
+            "value": "autoMergeRequest is null; task_finalize.sh was not called"
+          }
+        ]
+      },
+      {
+        "command": "gh api repos/ajoe734/pantheon/commits/63d4d60372741af77943f24c2833db0c15e2e051/check-runs",
+        "result": "pass",
+        "observed_at": "2026-07-27T00:34:46Z",
+        "observations": [
+          {
+            "subject": "all three required workflows success on the v7 delivery receipt head",
+            "head_sha": "63d4d60372741af77943f24c2833db0c15e2e051",
+            "observed_at": "2026-07-27T00:34:46Z",
+            "value": "Commit trailers success 2026-07-27T00:33:29Z run 30227691455; Runtime mirror guard success 2026-07-27T00:33:24Z run 30227691455; Smoke acceptance success 2026-07-27T00:34:14Z run 30227691455"
+          }
+        ]
+      },
+      {
+        "command": "git cat-file blob 5c39428dda1d3c1e42fa926aa5f320467e1b8324:docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/POST_DISPATCH_RUNTIME_GAP_DELTA.md | sha256sum; git cat-file -e 5c39428dda1d3c1e42fa926aa5f320467e1b8324:scripts/validate_twelve_loop_gap_evidence.py",
+        "result": "pass_confirms_codex2_finding",
+        "note": "Offline git-object confirmation of Codex2's finding, independent of any manifest field: the rejected v4 commit carries the delta document at 9ac925e0c66a3c48a916b7b3c97fbac580034ee96f7e3f53e1e0a42c4093a5d3 and its tree contains neither validator script (cat-file -e exits non-zero for both)."
       }
     ],
-    "validated_at": "2026-07-26T23:01:37Z",
-    "validated_base_sha": "6578ef968f7e0374b046de0afb5b07ce2f81558e",
-    "validated_head_sha": "content-digest:sha256:82f143ad9ad36d7e105d2f8c820bc96b5f75388d6331e9808015cbf3c4922c4d"
+    "validated_at": "2026-07-27T00:35:01Z",
+    "validated_base_sha": "643181a067ec5c344faac0766c69de0d5cfb32eb",
+    "validated_head_sha": "content-digest:sha256:54f55535871c4574e4343513a0f92074144b14468c3c0afe5266ac96c19f04d3"
   },
   "deployment": {
     "applicable": false,
@@ -589,11 +703,11 @@
       "twelve_loop_hosted_proof": "0_of_12"
     },
     "self_hash_omitted": true,
-    "self_hash_reason": "Companion checksum file records the manifest digest; the manifest cannot contain its own hash. This is why validated_head_sha binds artifacts finalized before the manifest rather than the manifest or its commit, and why the delivery receipt is a separate earlier commit whose checks cover those artifacts.",
+    "self_hash_reason": "Companion checksum file records the manifest digest; the manifest cannot contain its own hash. This is why validated_head_sha binds artifacts finalized before the manifest rather than the manifest or its commit, and why the delivery receipt is a separate earlier commit whose checks cover those artifacts. As of v7.0.0 the receipt is not merely declared: rule receipt_commit_artifacts reads the receipt commit out of the local git object store and requires every bound path to exist there with a matching blob sha256.",
     "source_artifact_sha256_by_epoch": {
-      "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/POST_DISPATCH_RUNTIME_GAP_DELTA.md@v6.0.0": "4f2f7735513f52fabc6a5679202be6f1c1dd521b6ad639b99dfc618a3b7944bc",
-      "scripts/validate_twelve_loop_gap_evidence.py@v6.0.0": "38ba94e4ef2249bfeb0af314b50d914d3aba8c3414c47ee8928c7c086404c151",
-      "scripts/test_validate_twelve_loop_gap_evidence.py@v6.0.0": "aa498b1a3f51c0350ed73bfb97b3b63621773ea77e280907b4eea21e73602486"
+      "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/POST_DISPATCH_RUNTIME_GAP_DELTA.md@v7.0.0": "dbfa69f745db95708f7f34304738882cf1ed851d801a4497390e882f0b589c2f",
+      "scripts/validate_twelve_loop_gap_evidence.py@v7.0.0": "b11f8602af52dbaa04cca6d09b4322aff69a9770d390493089ca6733ae31b979",
+      "scripts/test_validate_twelve_loop_gap_evidence.py@v7.0.0": "cd8f5226e79bc372026a99749091f5f396291a84cab6c875a4f5346302d4fb86"
     }
   },
   "record_log": [
@@ -765,6 +879,57 @@
       "kind": "owner_evidence_recut_v6",
       "status": "in_progress",
       "reference": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-RUNTIME-GAP-DELTA-001/evidence.json; head bound as a content digest over the three artifacts finalized in the delivery receipt commit, and that receipt recorded with its green required checks"
+    },
+    {
+      "sequence": 20,
+      "recorded_at": "2026-07-27T00:00:00Z",
+      "actor": "Codex2",
+      "kind": "reviewer_rejection_of_v6_delivery",
+      "sha": "b3f8edad0b5ac078ada3dd791b8166dbaf58cf9e",
+      "status": "in_progress",
+      "reference": "Independent review of PR #4221 head b3f8edad. All seven v6 rules pass, but moving current_delivery_receipt/bound_content_digest to 5c39428dda1d3c1e42fa926aa5f320467e1b8324, marking it live, and resealing the companion checksum also passes all seven, while git objects contradict that receipt."
+    },
+    {
+      "sequence": 21,
+      "recorded_at": "2026-07-27T00:13:26Z",
+      "actor": "task-state journal",
+      "kind": "canonical_snapshot_advanced",
+      "status": "in_progress",
+      "reference": "journal sequence 2142, 2026-07-27T00:13:26Z, source claude1-2-20260727T000651Z-b1a3fcd8: 31 total / 28 nonterminal / 15 L12"
+    },
+    {
+      "sequence": 22,
+      "recorded_at": "2026-07-27T00:19:48Z",
+      "actor": "Claude",
+      "kind": "owner_pr_observations_recut",
+      "status": "in_progress",
+      "reference": "Section 5.0 PR observations re-read at 2026-07-27T00:19:46Z-00:19:48Z, each bound to an exact head: #4193 192c1fbab, #4203 945f47dce, #4211 8c4d72729, #4221 b3f8edad"
+    },
+    {
+      "sequence": 23,
+      "recorded_at": "2026-07-27T00:33:02Z",
+      "actor": "Claude",
+      "kind": "owner_v7_delivery_receipt_commit",
+      "sha": "63d4d60372741af77943f24c2833db0c15e2e051",
+      "status": "in_progress",
+      "reference": "git committer date of 63d4d60372741af77943f24c2833db0c15e2e051; carries only the three digest-bound artifacts, so its checks cover the exact bytes validated_head_sha names, and rule receipt_commit_artifacts can verify that offline from this commit's tree"
+    },
+    {
+      "sequence": 24,
+      "recorded_at": "2026-07-27T00:34:14Z",
+      "actor": "GitHub Actions",
+      "kind": "required_checks_green_on_v7_delivery_receipt",
+      "sha": "63d4d60372741af77943f24c2833db0c15e2e051",
+      "status": "success",
+      "reference": "Commit trailers 2026-07-27T00:33:29Z run 30227691455; Runtime mirror guard 2026-07-27T00:33:24Z run 30227691455; Smoke acceptance 2026-07-27T00:34:14Z run 30227691455"
+    },
+    {
+      "sequence": 25,
+      "recorded_at": "2026-07-27T00:35:01Z",
+      "actor": "Claude",
+      "kind": "owner_evidence_recut_v7",
+      "status": "in_progress",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-RUNTIME-GAP-DELTA-001/evidence.json; adds rule receipt_commit_artifacts so the delivery receipt is proven from git objects rather than asserted by the manifest, and rebinds the head digest to the v7.0.0 artifacts"
     }
   ]
 }
