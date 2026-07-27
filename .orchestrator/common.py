@@ -4787,14 +4787,38 @@ def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None
 
     if not task_id:
         return None
-    status = load_status(config)
-    tasks = status.get("tasks", []) or []
-    task = next((item for item in tasks if str(item.get("id") or "").strip() == task_id), None)
-    if task is None:
-        return None
-    resolver = TaskResolver(tasks)
-    deps = [resolver.get(dep_id) for dep_id in (task.get("depends_on") or [])]
-    deps = [item for item in deps if item]
+    status_path = config_path(config, "status_file", "ai-status.json")
+    with canonical_task_state_lock_file(
+        status_path,
+        shared=True,
+        nonblocking=False,
+    ):
+        status = load_status(config)
+        tasks = status.get("tasks", []) or []
+        task = next(
+            (
+                item
+                for item in tasks
+                if str(item.get("id") or "").strip() == task_id
+            ),
+            None,
+        )
+        if task is None:
+            return None
+        # Bind archive lookup to the same status root and task-state lock as the
+        # active snapshot. The supervisor may already hold this exact lock while
+        # building a dispatch event; falling back to task_archive's import-time
+        # root would acquire a peer task_state plane and violate canonical order.
+        resolver = TaskResolver(tasks, status_root=status_path.parent)
+        deps = [resolver.get(dep_id) for dep_id in (task.get("depends_on") or [])]
+        deps = [item for item in deps if item]
+        dependency_lines = [
+            (
+                f"- {dep.get('id')}: {resolver.dependency_status(dep.get('id'))} · "
+                f"{compact_whitespace(dep.get('title') or dep.get('summary_zh') or '-')}"
+            )
+            for dep in deps
+        ]
     planning_state = load_json(PLANNING_STATE_PATH, default={}) or {}
     planning_active = str(planning_state.get("status") or "") in {"active", "human_required", "accepted"}
     source_ref = task.get("source_ref") if isinstance(task.get("source_ref"), dict) else {}
@@ -4822,11 +4846,8 @@ def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None
         "",
         "## Dependencies",
     ]
-    if deps:
-        body.extend(
-            f"- {dep.get('id')}: {resolver.dependency_status(dep.get('id'))} · {compact_whitespace(dep.get('title') or dep.get('summary_zh') or '-')}"
-            for dep in deps
-        )
+    if dependency_lines:
+        body.extend(dependency_lines)
     else:
         body.append("- none")
     body.extend(["", "## Artifacts"])

@@ -24,6 +24,22 @@ _TENANT_CLAIM_KEYS = (
     "tenantId",
 )
 
+# Claims that may carry the infrastructure-health producer scope of a service
+# JWT. The scope is an allowlist of producer identities the caller may emit as;
+# it is intersected with the deployment allowlist, never unioned with it.
+_PRODUCER_CLAIM_KEYS = (
+    "allowed_producers",
+    "allowedProducers",
+    "telemetry_producers",
+    "telemetryProducers",
+    "producers",
+    "producer",
+)
+
+# Infrastructure health is a machine-to-machine channel. Human operator and
+# admin roles are deliberately not accepted here.
+_INFRASTRUCTURE_HEALTH_ROLES = ("service",)
+
 
 @dataclass(frozen=True)
 class TelemetryAuthority:
@@ -31,6 +47,9 @@ class TelemetryAuthority:
     roles: frozenset[str]
     tenant_id: str
     token_kind: str
+    # Only populated for the infrastructure health authority: the producer
+    # identities this caller is allowed to emit as on this deployment.
+    allowed_producers: frozenset[str] = frozenset()
 
 
 class TelemetryAuthorityError(ValueError):
@@ -265,4 +284,180 @@ def bind_event_tenant(
             403,
         )
     normalized["tenant_id"] = tenant_id
+    return normalized
+
+
+# ---------------------------------------------------------------------------
+# Infrastructure health authority (OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001)
+# ---------------------------------------------------------------------------
+#
+# Infrastructure health telemetry is non-trading: it carries no RuntimeBinding
+# and therefore cannot be validated against the authoritative binding store.
+# Its only admission authority is the caller's identity, so that identity is
+# held to a stricter standard than the rest of the telemetry surface:
+#
+#   * a verified service JWT is always required, even when the deployment runs
+#     the rest of telemetry in permissive mode;
+#   * the tenant must be bound by the token's own claims — the deployment-wide
+#     PANTHEON_TELEMETRY_ALLOWED_TENANTS fallback does not apply here;
+#   * the producer identity must be inside both the deployment allowlist and
+#     the token's producer scope, and wildcards are refused on both sides.
+
+
+def _infrastructure_auth_env() -> dict[str, str]:
+    """Telemetry JWT settings pinned to strict mode for this channel."""
+
+    env = _telemetry_auth_env()
+    # A permissive telemetry rollout must never turn the non-trading
+    # infrastructure channel into an unauthenticated ingest sink.
+    env["PANTHEON_RUNTIME_AUTH_MODE"] = "strict"
+    return env
+
+
+def _token_tenants(context: AuthContext) -> list[str]:
+    claims = context.claims if isinstance(context.claims, Mapping) else {}
+    values: list[str] = []
+    for key in _TENANT_CLAIM_KEYS:
+        values.extend(_split_values(claims.get(key)))
+    return _dedupe(values)
+
+
+def _token_producers(context: AuthContext) -> list[str]:
+    claims = context.claims if isinstance(context.claims, Mapping) else {}
+    values: list[str] = []
+    for key in _PRODUCER_CLAIM_KEYS:
+        values.extend(_split_values(claims.get(key)))
+    return _dedupe(values)
+
+
+def configured_infrastructure_producers() -> list[str]:
+    """Deployment-side allowlist of admissible infrastructure producers."""
+
+    return _dedupe(_split_values(os.getenv("PANTHEON_TELEMETRY_INFRA_PRODUCERS")))
+
+
+def resolve_infrastructure_health_authority() -> TelemetryAuthority:
+    """Authenticate one infrastructure health request and bind its scope."""
+
+    authorization = request.headers.get("Authorization", "")
+    try:
+        context = validate_request_auth(
+            authorization=authorization,
+            mfa_header=request.headers.get("X-MFA-Token", ""),
+            required_roles=_INFRASTRUCTURE_HEALTH_ROLES,
+            env=_infrastructure_auth_env(),
+        )
+    except AuthError as exc:
+        raise TelemetryAuthorityError(
+            exc.code,
+            exc.message,
+            exc.status_code,
+        ) from exc
+
+    if context.token_kind != "jwt":
+        raise TelemetryAuthorityError(
+            "INFRA_SERVICE_JWT_REQUIRED",
+            "Infrastructure health ingestion requires a verified service JWT",
+            401,
+        )
+
+    tenant_id = _requested_tenant_id()
+    token_tenants = _token_tenants(context)
+    if not token_tenants:
+        raise TelemetryAuthorityError(
+            "TENANT_SCOPE_UNCONFIGURED",
+            "Infrastructure health service token carries no tenant authority",
+            403,
+        )
+    if "*" in token_tenants:
+        raise TelemetryAuthorityError(
+            "TENANT_SCOPE_UNBOUNDED",
+            "Infrastructure health service token must bind explicit tenants",
+            403,
+        )
+    if tenant_id not in token_tenants:
+        raise TelemetryAuthorityError(
+            "TENANT_FORBIDDEN",
+            f"Caller is not authorized for tenant {tenant_id!r}",
+            403,
+        )
+
+    configured = configured_infrastructure_producers()
+    token_producers = _token_producers(context)
+    if not configured or not token_producers:
+        raise TelemetryAuthorityError(
+            "PRODUCER_SCOPE_UNCONFIGURED",
+            "Infrastructure health ingestion requires an allowlisted producer scope",
+            403,
+        )
+    if "*" in configured or "*" in token_producers:
+        raise TelemetryAuthorityError(
+            "PRODUCER_SCOPE_UNBOUNDED",
+            "Infrastructure health producer scope must be an explicit allowlist",
+            403,
+        )
+    allowed_producers = frozenset(configured).intersection(token_producers)
+    if not allowed_producers:
+        raise TelemetryAuthorityError(
+            "PRODUCER_FORBIDDEN",
+            "Service token producer scope is not allowlisted on this deployment",
+            403,
+        )
+
+    return TelemetryAuthority(
+        actor_id=context.actor_id,
+        roles=context.roles,
+        tenant_id=tenant_id,
+        token_kind=context.token_kind,
+        allowed_producers=allowed_producers,
+    )
+
+
+def require_infrastructure_health_authority():
+    """Authenticate one infrastructure health route under strict service auth."""
+
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            try:
+                authority = resolve_infrastructure_health_authority()
+            except TelemetryAuthorityError as exc:
+                payload, status = exc.as_response()
+                return jsonify(payload), status
+            request._telemetry_authority = authority  # type: ignore[attr-defined]
+            return func(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
+
+
+def request_authority() -> TelemetryAuthority:
+    authority = getattr(request, "_telemetry_authority", None)
+    if not isinstance(authority, TelemetryAuthority):
+        raise RuntimeError("Telemetry route authority was not resolved")
+    return authority
+
+
+def bind_event_producer(
+    event: Mapping[str, Any],
+    authority: TelemetryAuthority,
+) -> dict[str, Any]:
+    """Return a detached event whose producer is proven by the caller's scope."""
+
+    normalized = dict(event)
+    producer = str(normalized.get("producer") or "").strip()
+    if not producer:
+        raise TelemetryAuthorityError(
+            "PRODUCER_REQUIRED",
+            "Infrastructure health event must declare its producer",
+            400,
+        )
+    if producer not in authority.allowed_producers:
+        raise TelemetryAuthorityError(
+            "PRODUCER_FORBIDDEN",
+            f"Caller is not authorized to emit as producer {producer!r}",
+            403,
+        )
+    normalized["producer"] = producer
     return normalized

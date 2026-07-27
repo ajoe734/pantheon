@@ -59,3 +59,30 @@ def test_verifier_requires_configured_event_log(capsys) -> None:
     payload = json.loads(capsys.readouterr().out)
     assert result == 3
     assert "not configured" in payload["error"]
+
+
+def test_verifier_reports_parity_after_rejected_nonterminal_drop(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    import pytest
+    from rewrite.task_state_store import TaskStateStoreError
+
+    status = {"tasks": [{"id": "STATE-003", "status": "in_progress"}]}
+    status_file = tmp_path / "ai-status.json"
+    event_log = tmp_path / "events.jsonl"
+    status_file.write_text(json.dumps(status), encoding="utf-8")
+    append_state_commit(event_log, status, source="test")
+
+    with pytest.raises(TaskStateStoreError, match="nonterminal drop rejected"):
+        append_state_commit(event_log, {"tasks": []}, source="test")
+
+    result = verifier.main(
+        ["--event-log", str(event_log), "--status-file", str(status_file), "--json"]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert result == 0
+    assert payload["ok"] is True
+    assert payload["event_count"] == 1
+
