@@ -180,6 +180,11 @@
         "delivery_state": "current_repair_pr_4273",
         "sha": "f6d340ff018cc178bcf2023b7fae00cde77ebb2c",
         "subject": "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001: align owner evidence"
+      },
+      {
+        "delivery_state": "current_repair_pr_4273_prior_owner_recut",
+        "sha": "141d06ec5d1aa5b0ea7d1b7bdc148ad28060a443",
+        "subject": "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001: recut Codex review evidence"
       }
     ],
     "pull_requests": [
@@ -217,7 +222,7 @@
       },
       {
         "base": "dev",
-        "head_sha": "f6d340ff018cc178bcf2023b7fae00cde77ebb2c",
+        "head_sha": "141d06ec5d1aa5b0ea7d1b7bdc148ad28060a443",
         "merge_sha": "",
         "merged_at": "",
         "number": 4273,
@@ -306,6 +311,34 @@
         "run_id": 30301062560,
         "url": "https://github.com/ajoe734/pantheon/actions/runs/30301062560",
         "workflow": "Branch CI Gate"
+      },
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "141d06ec5d1aa5b0ea7d1b7bdc148ad28060a443",
+        "jobs": {
+          "Commit trailers": "success",
+          "Python packaging provision": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30302858562,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30302858562",
+        "workflow": "Branch CI Gate"
+      },
+      {
+        "conclusion": "success",
+        "event": "push",
+        "head_sha": "141d06ec5d1aa5b0ea7d1b7bdc148ad28060a443",
+        "jobs": {
+          "Commit trailers": "success",
+          "Python packaging provision": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30302856984,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30302856984",
+        "workflow": "Branch CI Gate"
       }
     ]
   },
@@ -336,6 +369,12 @@
         "services/telemetry/test_feedback_adapter.py": "27eb6e9eedc4f68a466efe2c57c2596ccadfacdc52ac954a53f90b9d6cc97278"
       },
       "f6d340ff018cc178bcf2023b7fae00cde77ebb2c": {
+        "scripts/test_ops_l12_telemetry_discovery_import_evidence.py": "0f8ee48cf5e1713ec4d73fe0ebe7d5caf2ed96009cb91d2638f7733051121dc0",
+        "services/telemetry/test_capture.py": "04e7903747f6f00f1c62a64de9f86431b9a6521943c7d719006e01539dad2b96",
+        "services/telemetry/test_discovery_imports.py": "1b7e67880c881ccb3f338b0237d95f0cb5adf58ecb4b38cb3bcdad645e7dc0c1",
+        "services/telemetry/test_feedback_adapter.py": "27eb6e9eedc4f68a466efe2c57c2596ccadfacdc52ac954a53f90b9d6cc97278"
+      },
+      "141d06ec5d1aa5b0ea7d1b7bdc148ad28060a443": {
         "scripts/test_ops_l12_telemetry_discovery_import_evidence.py": "0f8ee48cf5e1713ec4d73fe0ebe7d5caf2ed96009cb91d2638f7733051121dc0",
         "services/telemetry/test_capture.py": "04e7903747f6f00f1c62a64de9f86431b9a6521943c7d719006e01539dad2b96",
         "services/telemetry/test_discovery_imports.py": "1b7e67880c881ccb3f338b0237d95f0cb5adf58ecb4b38cb3bcdad645e7dc0c1",
@@ -480,15 +519,23 @@
       "reference": "PR #4273 head f6d340ff018cc178bcf2023b7fae00cde77ebb2c",
       "sequence": 17,
       "status": "ready_for_independent_review"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "owner_reassignment_adopted",
+      "recorded_at": "2026-07-27T20:38:21Z",
+      "reference": "governed task row and PR #4273 head 141d06ec5d1aa5b0ea7d1b7bdc148ad28060a443",
+      "sequence": 18,
+      "status": "ready_for_independent_review"
     }
   ],
   "residual_risks": {
     "current_cut_delivery_binding_pending": {
       "blocking_for_this_task": false,
-      "containment": "AC6 is explicitly pending; the reviewer appends the exact-head decision and the owner closes only after the PR is merged. This cut binds PR #4273 head f6d340ff018cc178bcf2023b7fae00cde77ebb2c and its green checks, while the commit carrying these updated bytes necessarily needs a fresh exact-head review after push.",
+      "containment": "AC6 is explicitly pending; the reviewer appends the exact-head decision and the owner closes only after the PR is merged. This cut binds PR #4273 head 141d06ec5d1aa5b0ea7d1b7bdc148ad28060a443 and its green checks, while the commit carrying these updated bytes necessarily needs a fresh exact-head review after push.",
       "description": "A manifest cannot contain the merge SHA of the PR that first carries its own bytes.",
       "expiry": "Owner closeout after Codex review and merge.",
-      "owner": "Claude",
+      "owner": "Codex2",
       "recheck_trigger": "Current task PR review or merge",
       "severity": "low"
     },
@@ -528,7 +575,7 @@
   },
   "schema_version": "loop_product_evidence.v1",
   "scope": {
-    "authoritative_write_owner": "Claude owns this task's telemetry test-import evidence and regression gate; Claude does not own telemetry runtime behavior or packaging implementation.",
+    "authoritative_write_owner": "Codex2 owns this task's telemetry test-import evidence and regression gate after architecture-level reassignment; prior owner Claude retains historical delivery and validation attribution. Codex2 does not own telemetry runtime behavior or packaging implementation.",
     "composes_with": [
       "OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001 residual loader-error finding",
       "OPS-L12-PYTHON-PACKAGING-PROVISION-001 governed distribution and worker bootstrap",
@@ -580,11 +627,11 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-27T20:22:13Z",
-    "evidence_cut_semantics": "Claude is the canonical task owner and Codex is the current independent reviewer. Human/Ops re-cut this evidence after Codex review reopened PR #4273 for stale reviewer and delivery bindings: current-task artifacts still named Codex2, while Codex2 is only the historical packaging-dependency reviewer. This cut changes only task evidence, its fail-closed gate, the AC2 decision record, and the task brief. It preserves the earlier task delivery through PR #4226, preserves the reviewed packaging dependency through PR #4232, and binds the current repair PR #4273 at head f6d340ff018cc178bcf2023b7fae00cde77ebb2c with green push and pull_request checks. The independent Codex decision for this repaired cut remains pending.",
+    "evidence_cut_at": "2026-07-27T20:44:24Z",
+    "evidence_cut_semantics": "Codex2 is the canonical task owner after architecture-level reassignment from quota-paused Claude, and Codex is the current independent reviewer. This cut adopts only the current owner-bearing task evidence and gate: it preserves Claude's historical implementation and validation attribution, and separately preserves Codex2 as the historical reviewer of the completed packaging dependency. It binds repair PR #4273 at observed head 141d06ec5d1aa5b0ea7d1b7bdc148ad28060a443 with green push and pull_request checks. The independent Codex decision for the owner-adoption head remains pending.",
     "id": "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001",
     "overall_admission": "ready_for_independent_review",
-    "owner": "Claude",
+    "owner": "Codex2",
     "phase": "Twelve-loop verification hardening",
     "product_level_required": false,
     "repository": "ajoe734/pantheon",
@@ -629,7 +676,7 @@
       },
       {
         "command": "/home/lupin/pantheon/.venv/bin/python3 -m unittest discover -s services/telemetry -p 'test_*.py' -t . -q",
-        "conclusion": "Ran 342 tests in 51.471s; OK (skipped=1). Zero loader errors.",
+        "conclusion": "Owner-adoption rerun: 342 tests in 47.317s; OK (skipped=1). Zero loader errors.",
         "result": "pass"
       },
       {
@@ -639,7 +686,7 @@
       },
       {
         "command": "/home/lupin/pantheon/.venv/bin/python3 -m unittest scripts.test_ops_l12_telemetry_discovery_import_evidence",
-        "conclusion": "Ran 12 tests; OK. The task evidence gate passes schema, timestamp, owner/reviewer, dependency closure, command-reference bounds, and checksum checks.",
+        "conclusion": "Owner-adoption rerun: 13 tests in 0.108s; OK. The task evidence gate passes schema, timestamp, owner/reviewer, dependency closure, command-reference bounds, and checksum checks.",
         "result": "pass"
       },
       {
@@ -673,13 +720,13 @@
         "result": "pass"
       },
       {
-        "command": "AI_NAME=Claude $PANTHEON_COMMAND_ROOT/scripts/ai-status.sh show OPS-L12-PYTHON-PACKAGING-PROVISION-001; task gate test_dependency_manifest_closes_the_packaging_precondition",
+        "command": "AI_NAME=Codex2 $PANTHEON_COMMAND_ROOT/scripts/ai-status.sh show OPS-L12-PYTHON-PACKAGING-PROVISION-001; task gate test_dependency_manifest_closes_the_packaging_precondition",
         "conclusion": "The governed archive reports terminal done, merge 3802799f81778c93728d9dbbe4028289f153c718, review_file bound, and Codex2 approval; the current task gate confirms the committed dependency manifest records review_approved AC3 pass. The dependency's whole historical gate is not reused here because its source-digest assertion intentionally compares its branch-ci.yml epoch with the current tree, and branch-ci.yml changed after that task closed.",
         "result": "pass"
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest -q services/telemetry",
-        "conclusion": "353 passed, 1 skipped, 3 warnings, and 35 subtests passed in 100.07s.",
+        "conclusion": "Owner-adoption rerun: 353 passed, 1 skipped, 3 warnings, and 35 subtests passed in 92.84s.",
         "result": "pass"
       },
       {
@@ -699,12 +746,12 @@
       },
       {
         "command": "gh pr view 4273 --repo ajoe734/pantheon --json headRefOid,statusCheckRollup,reviewDecision,mergeStateStatus",
-        "conclusion": "PR #4273 was at head f6d340ff018cc178bcf2023b7fae00cde77ebb2c; required push and pull_request Branch CI Gate runs 30301062560 and 30301066804 were success; reviewDecision remained REVIEW_REQUIRED and mergeStateStatus BLOCKED pending fresh Codex review.",
+        "conclusion": "PR #4273 was at head 141d06ec5d1aa5b0ea7d1b7bdc148ad28060a443; required push and pull_request Branch CI Gate runs 30302856984 and 30302858562 were success; reviewDecision remained REVIEW_REQUIRED and mergeStateStatus BLOCKED pending fresh Codex review.",
         "result": "pass"
       }
     ],
-    "validated_at": "2026-07-27T20:22:13Z",
+    "validated_at": "2026-07-27T20:44:24Z",
     "validated_base_sha": "b81edf76dfc14087dd7d5e3a6599448cb9d0bb09",
-    "validated_head_sha": "f6d340ff018cc178bcf2023b7fae00cde77ebb2c"
+    "validated_head_sha": "141d06ec5d1aa5b0ea7d1b7bdc148ad28060a443"
   }
 }

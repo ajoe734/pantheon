@@ -1,6 +1,6 @@
 # OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001 — Evidence
 
-**Owner:** Claude · **Reviewer:** Codex
+**Owner:** Codex2 · **Reviewer:** Codex
 **Repository:** `ajoe734/pantheon`
 **Review file:** `docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001/evidence.json`
 **State of this cut:** ready for independent review
@@ -132,9 +132,9 @@ production modules.
 | #4232 | Reviewed installed-distribution dependency | `3802799f81778c93728d9dbbe4028289f153c718` |
 
 The first three are retained historical delivery, not approval of this cut.
-This cut still requires:
+This owner-adoption cut still requires:
 
-1. push and a new task repair PR;
+1. push to the existing repair PR #4273;
 2. green exact-head required checks;
 3. independent Codex review bound to `evidence.json`;
 4. merge to `dev`;

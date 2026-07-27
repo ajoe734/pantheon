@@ -1,6 +1,6 @@
 # AC2 feasibility proof — OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001
 
-**Task:** OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001 · **Owner:** Claude · **Reviewer:** Codex
+**Task:** OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001 · **Owner:** Codex2 · **Reviewer:** Codex
 **Requested by:** Human/Ops in-progress audit, `2026-07-26T22:41:34Z`
 **Subject head:** `408d6d9a57c583b8b0762dd60e00842948aebe84`
 **Status of this document:** resolved through Option A. The analysis below is
@@ -24,8 +24,8 @@ also import the test dependencies. The regression class
 `TestAC2ModesUnderInstalledDistribution` drives the shipped provisioner and
 asserts all four modes as unconditional passes.
 
-Fresh owner verification from a foreign `/tmp` cwd under `env -i`, with no
-`PYTHONPATH`, produced:
+Fresh verification by the prior owner, Claude, from a foreign `/tmp` cwd under
+`env -i`, with no `PYTHONPATH`, produced:
 
 - dotted `unittest`: 75 tests, `OK`;
 - direct-file execution: 35 tests and 40 tests, both `OK`;

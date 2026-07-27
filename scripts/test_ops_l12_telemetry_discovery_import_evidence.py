@@ -54,12 +54,12 @@ PACKAGING_MANIFEST_PATH = (
 )
 
 TASK_ID = "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001"
-OWNER = "Claude"
+OWNER = "Codex2"
 REVIEWER = "Codex"
 PACKAGING_TASK_ID = "OPS-L12-PYTHON-PACKAGING-PROVISION-001"
 PACKAGING_REVIEWER = "Codex2"
 CURRENT_PR_NUMBER = 4273
-CURRENT_PR_HEAD_SHA = "f6d340ff018cc178bcf2023b7fae00cde77ebb2c"
+CURRENT_PR_HEAD_SHA = "141d06ec5d1aa5b0ea7d1b7bdc148ad28060a443"
 COMMAND_REF = re.compile(r"^validation\.commands\[(\d+)\]$")
 
 # Every manifest location that carries a wall-clock timestamp. A future value in
