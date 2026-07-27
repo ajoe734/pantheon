@@ -9,6 +9,8 @@ latency while preserving journal, lease, and process-identity safety.
 | Reviewer | Codex2 |
 | Branch | `task/SUP-TASK-STATE-LOCK-LATENCY-001` |
 | Candidate | `2abc735b024917d0cd1e03784ca1e27040540341` |
+| Implementation PR | [#4263](https://github.com/ajoe734/pantheon/pull/4263) |
+| Merge commit | `52aa8a623e68336e1965d7241950cb3c22f0c827` |
 | Review state | Pending fresh independent review |
 
 ## Incident and root cause
@@ -156,6 +158,7 @@ Key regressions cover:
 - Generated dashboard test artifacts and two empty test lock sidecars were
   removed before staging.
 
-Implementation, benchmark, and owner validation are complete. A fresh PR,
-required checks, Codex2 independent review, merge, and owner closeout are still
-required; this evidence does not claim review approval.
+Implementation PR #4263 merged to `dev` after Commit trailers, Runtime mirror
+guard, Python packaging provision, and Smoke acceptance passed. Benchmark and
+owner validation are complete. Fresh Codex2 independent review and owner
+closeout are still required; this evidence does not claim review approval.
