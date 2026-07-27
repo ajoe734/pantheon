@@ -5,7 +5,7 @@
   "owner": "Codex2",
   "reviewer": "Codex",
   "status": "review",
-  "generated_at": "2026-07-27T18:01:47Z",
+  "generated_at": "2026-07-27T18:08:43Z",
   "source_packet_id": "pkt_pantheon_batch_architecture_20260727_supervisor_autodrain_001",
   "scope": {
     "owned": [
@@ -31,11 +31,13 @@
     "pantheon": {
       "slug": "ajoe734/pantheon",
       "base_branch": "dev",
+      "base_commit": "a6966b13d84430387da9c3a33fcf224c841bc5c6",
       "task_branch": "task/OPS-CROSS-REPO-RELEASE-CONTROLLER-001",
       "anchor_commits": [
-        "f6cac33f9dbdee6ea797dc50b981dcfbe61f0302",
-        "30a4bcbced5085d964b86ad21e2a83e65fc99274",
-        "d1bbb1493eace47b9778e0e137ba8d33ae0ca511"
+        "0f5264ae6dac21de123fd4380f46545342a59479",
+        "c4dfbeee39d559c195ed3db155ea9c2392bdea1f",
+        "9c0b6fcd9c7cbf722584d96d1c495cd918b919d3",
+        "cf96362373991277b2c1bd389f9ac7fbe40fd825"
       ],
       "review_head": null,
       "pr": null,
@@ -44,6 +46,7 @@
     "execute_plans": {
       "slug": "ajoe734/execute-plans",
       "base_branch": "dev",
+      "base_commit": "cbc16830a096077f978b4efe499dd8fa85f166f2",
       "task_branch": "task/OPS-CROSS-REPO-RELEASE-CONTROLLER-001",
       "anchor_commits": [
         "3aba30b1b07f45134416cb439216152b4c7b5e65",
@@ -104,7 +107,49 @@
       "evidence": "Populated after exact-head independent review and both dev merges."
     }
   ],
-  "validation": [],
+  "validation": [
+    {
+      "repository": "ajoe734/pantheon",
+      "command": ".venv-pantheon/bin/python3 -m pytest -q <18 workflow/deploy contract modules>",
+      "status": "passed",
+      "result": "149 passed in 31.48s after rebasing onto Pantheon dev a6966b13d84430387da9c3a33fcf224c841bc5c6."
+    },
+    {
+      "repository": "ajoe734/pantheon",
+      "command": "actionlint nonprod-deploy.yml; shellcheck and bash -n compensation helper; py_compile controller and compatibility Python; parse workflow YAML and evidence JSON; git diff --check",
+      "status": "passed",
+      "result": "Workflow-aware expressions, shell, Python, YAML, JSON, and whitespace checks passed."
+    },
+    {
+      "repository": "ajoe734/execute-plans",
+      "command": "npx vitest run src/test/release-candidate.test.ts src/test/paired-release-workflow.test.ts src/test/deploy-safe-defaults.test.ts; npm run typecheck",
+      "status": "passed",
+      "result": "58 tests passed and TypeScript typecheck passed."
+    },
+    {
+      "repository": "ajoe734/execute-plans",
+      "command": "VITE_GCP_IDENTITY_API_KEY=<format-valid non-secret test value> VITE_GCP_IDENTITY_PROJECT_ID=test-project VITE_GCP_IDENTITY_AUTH_DOMAIN=test.invalid npm run build",
+      "status": "passed",
+      "result": "Production build completed in 66 seconds; existing Rollup circular-chunk, CSS syntax, stale browserslist, and chunk-size warnings remained non-fatal."
+    },
+    {
+      "repository": "ajoe734/execute-plans",
+      "command": "actionlint pantheon-integration-gate.yml pantheon-dev-fe-deploy.yml with existing SC2034, SC2016, and custom self-hosted label diagnostics ignored",
+      "status": "passed",
+      "result": "No new workflow expression, event, permission, or shell diagnostics remained."
+    },
+    {
+      "repository": "cross-repo",
+      "command": "git diff prohibited-file checks and repository-boundary checks in both task worktrees",
+      "status": "passed",
+      "result": "Pantheon docker-compose.yml and deploy_nonprod_vm.sh are unchanged; execute-plans deploy-dev-vm.sh is unchanged; Pantheon tracks no execute-plans source subtree."
+    }
+  ],
+  "validation_notes": [
+    "The first local frontend build used a deliberately non-secret but format-invalid API-key placeholder and failed closed at public Identity Platform validation. The recorded rerun used the repository's format-valid non-secret test fixture value and passed.",
+    "Latest actionlint reports only pre-existing execute-plans diagnostics SC2034, SC2016, and custom self-hosted runner labels; git blame binds those lines to earlier commits, not this task.",
+    "No hosted release was dispatched because intermediate deployment is explicitly forbidden; post-merge delivery must be one intentional exact-pair controller run."
+  ],
   "safety": {
     "hosted_deployment_run": false,
     "vm_mutation": false,
