@@ -1,0 +1,27 @@
+L12-CAP-001 — Atomic Redis Claim/Transition and Crash Recovery Proof
+===================================================================
+Captured: 2026-07-26T22:06:25Z
+Image: redis@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
+
+Command:
+  /home/lupin/pantheon/.venv/bin/python -m unittest -v \
+    services.execution.lean_runtime.test_signal_isolation.TestRedisPendingSignalStoreClaimVisibility
+
+Observed cases:
+  test_ack_nack_and_dlq_response_loss_has_no_signal_loss_window ... ok
+  test_claim_response_loss_remains_recoverable ... ok
+  test_live_claim_is_not_stolen_then_crash_claim_is_recovered ... ok
+  test_nack_and_dlq_are_atomic_claim_transfers ... ok
+
+Result:
+  Ran 4 tests in 6.471s
+  OK
+
+The disposable real Redis instance proves:
+  - claim atomically moves pending -> tokenized worker claim + visibility ZSET;
+  - an unexpired live claim is not reclaimed;
+  - a crash-before-ack claim is recovered after its visibility deadline;
+  - ack, nack, and DLQ response loss leaves either the complete old state or the
+    complete new state, never an unowned signal-loss window.
+
+STATUS: OWNER PROOF PASSED; INDEPENDENT REVIEW PENDING

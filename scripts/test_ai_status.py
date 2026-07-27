@@ -25,7 +25,20 @@ from canonical_writer_guard import assert_isolated_legacy_write_target
 from rewrite.task_state_store import load_events, verify_projection
 
 
+REVIEW_BINDING_ENV_KEYS = (
+    "REVIEW_PR",
+    "REVIEW_HEAD_SHA",
+    "REVIEW_BASE",
+    "REVIEW_HEAD_BRANCH",
+)
+
+
 def _setup_test_isolation(test_case):
+    test_case._inherited_review_binding_env = {
+        key: os.environ.pop(key)
+        for key in REVIEW_BINDING_ENV_KEYS
+        if key in os.environ
+    }
     test_case._test_temp_dir = tempfile.TemporaryDirectory(prefix="ai-status-test-")
     test_case._test_root = Path(test_case._test_temp_dir.name)
     test_case._test_status_file = test_case._test_root / "ai-status.json"
@@ -57,6 +70,10 @@ def _setup_test_isolation(test_case):
 
 
 def _teardown_test_isolation(test_case):
+    for key in REVIEW_BINDING_ENV_KEYS:
+        os.environ.pop(key, None)
+    os.environ.update(test_case._inherited_review_binding_env)
+
     paths = test_case._orig_paths
     ai_status.STATUS_ROOT = paths["STATUS_ROOT"]
     ai_status.STATUS_FILE = paths["STATUS_FILE"]
@@ -1383,6 +1400,129 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(pending[0]["to"], "Codex")
         self.assertIn("finalize", pending[0]["message"].lower())
 
+    def _approval_events(self) -> list[dict]:
+        lines = self._test_log_file.read_text(encoding="utf-8").splitlines()
+        return [
+            json.loads(line)
+            for line in lines
+            if line.strip() and json.loads(line).get("type") == "review_approved"
+        ]
+
+    def test_approve_records_the_reviewed_pr_head_binding(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {
+                "AI_NAME": "Claude",
+                "REVIEW_PR": "#4218",
+                "REVIEW_HEAD_SHA": "B" * 40,
+            },
+            clear=False,
+        ):
+            ai_status.command_approve(
+                self.state,
+                ["REG-002", "Approved the exact head."],
+            )
+
+        expected = {
+            "pr": 4218,
+            "head_sha": "b" * 40,
+            "head_branch": "task/REG-002",
+            "base": "dev",
+        }
+        task = ai_status.get_task(self.state, "REG-002")
+        self.assertEqual(task["review_binding"], expected)
+        events = self._approval_events()
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["review_binding"], expected)
+
+    def test_approve_without_a_binding_warns_but_still_approves(self) -> None:
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
+            ai_status.command_approve(self.state, ["REG-002", "Approved."])
+
+        task = ai_status.get_task(self.state, "REG-002")
+        self.assertEqual(task["status"], "review_approved")
+        self.assertNotIn("review_binding", task)
+        self.assertNotIn("review_binding", self._approval_events()[0])
+
+    def test_fixture_clears_inherited_review_inputs_for_no_binding_approval(
+        self,
+    ) -> None:
+        inherited = {
+            "REVIEW_PR": "4254",
+            "REVIEW_HEAD_SHA": "a" * 40,
+            "REVIEW_BASE": "inherited-base",
+            "REVIEW_HEAD_BRANCH": "task/inherited-head",
+        }
+        nested_fixture = unittest.TestCase()
+
+        with mock.patch.dict(os.environ, inherited, clear=False):
+            _setup_test_isolation(nested_fixture)
+            try:
+                self.assertTrue(
+                    all(key not in os.environ for key in REVIEW_BINDING_ENV_KEYS)
+                )
+                state = deepcopy(self.state)
+                with mock.patch.dict(
+                    os.environ,
+                    {"AI_NAME": "Claude"},
+                    clear=False,
+                ):
+                    ai_status.command_approve(
+                        state,
+                        ["REG-002", "Approved without a PR binding."],
+                    )
+
+                task = ai_status.get_task(state, "REG-002")
+                self.assertEqual(task["status"], "review_approved")
+                self.assertNotIn("review_binding", task)
+                events = [
+                    json.loads(line)
+                    for line in nested_fixture._test_log_file.read_text(
+                        encoding="utf-8"
+                    ).splitlines()
+                    if line.strip()
+                ]
+                self.assertNotIn("review_binding", events[-1])
+            finally:
+                _teardown_test_isolation(nested_fixture)
+
+            self.assertEqual(
+                {key: os.environ.get(key) for key in REVIEW_BINDING_ENV_KEYS},
+                inherited,
+            )
+
+    def test_approve_refuses_an_abbreviated_head_sha(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {
+                "AI_NAME": "Claude",
+                "REVIEW_PR": "4218",
+                "REVIEW_HEAD_SHA": "190bf7fe8",
+            },
+            clear=False,
+        ):
+            with self.assertRaisesRegex(SystemExit, "40-hex"):
+                ai_status.command_approve(
+                    self.state,
+                    ["REG-002", "Approved."],
+                )
+
+        self.assertEqual(ai_status.get_task(self.state, "REG-002")["status"], "review")
+
+    def test_approve_refuses_a_head_sha_without_a_pr_number(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {"AI_NAME": "Claude", "REVIEW_HEAD_SHA": "b" * 40},
+            clear=False,
+        ):
+            with self.assertRaisesRegex(SystemExit, "REVIEW_PR"):
+                ai_status.command_approve(
+                    self.state,
+                    ["REG-002", "Approved."],
+                )
+
+        self.assertEqual(ai_status.get_task(self.state, "REG-002")["status"], "review")
+
     def test_approve_protected_task_verifies_before_review_approved(self) -> None:
         self.state["tasks"][0]["requires_human_ops_signoff"] = True
         verdict_ref = {
@@ -2546,6 +2686,43 @@ class ArchiveWorkflowTests(unittest.TestCase):
         self.assertTrue(self.state["blockers"])
         archive_task = self.state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY]["snapshots"][0]["task"]
         self.assertEqual(archive_task["id"], "REG-100")
+
+    def test_archive_migrate_normalizes_only_missing_legacy_done_outcome(self) -> None:
+        legacy = self.state["tasks"][0]
+        legacy.pop("terminal_outcome")
+
+        ai_status.command_archive_migrate(self.state, [])
+
+        snapshot = self.state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY]["snapshots"][0]
+        self.assertEqual(snapshot["terminal_outcome"], "completed")
+        self.assertNotIn("terminal_outcome", snapshot["task"])
+        self.assertTrue(ai_status._status_archive_snapshot_is_valid(snapshot))
+
+    def test_archive_migrate_rejects_present_invalid_terminal_outcome(self) -> None:
+        invalid_outcomes = (None, "", "failed", "COMPLETED")
+        for invalid_outcome in invalid_outcomes:
+            with self.subTest(terminal_outcome=invalid_outcome):
+                state = deepcopy(self.state)
+                state["tasks"][0]["terminal_outcome"] = invalid_outcome
+
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "terminal task has invalid archive outcome: REG-100",
+                ):
+                    ai_status.command_archive_migrate(state, [])
+
+                self.assertNotIn(ai_status.STATUS_ARCHIVE_OUTBOX_KEY, state)
+
+    def test_archive_migrate_preserves_canonical_superseded_outcome(self) -> None:
+        superseded = self.state["tasks"][0]
+        superseded["terminal_outcome"] = "superseded"
+        superseded["superseded_by"] = "REG-101"
+
+        ai_status.command_archive_migrate(self.state, [])
+
+        snapshot = self.state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY]["snapshots"][0]
+        self.assertEqual(snapshot["terminal_outcome"], "superseded")
+        self.assertEqual(snapshot["task"]["terminal_outcome"], "superseded")
 
     def _write_modern_archive_with_absolute_review_file(
         self,
@@ -5543,6 +5720,77 @@ class CanonicalTaskStateAndActivityRecoveryTests(unittest.TestCase):
             process.join(timeout=5)
             self.fail("status outbox recovery process timed out")
         self.assertEqual(process.exitcode, 0)
+
+    def test_legacy_done_archive_replay_and_recovery_are_exact_and_idempotent(
+        self,
+    ) -> None:
+        state = self._fixture_state()
+        terminal = state["tasks"][0]
+        terminal["status"] = "done"
+        terminal.pop("terminal_outcome", None)
+        archive_dir = self.root / "ai-task-archive"
+        archive_path = archive_dir / "tasks" / "LOCK-ONE.json"
+        with (
+            mock.patch.object(ai_status, "STATUS_FILE", self.status_file),
+            mock.patch.object(task_archive, "STATUS_ROOT", self.root),
+            mock.patch.object(task_archive, "STATUS_FILE", self.status_file),
+            mock.patch.object(task_archive, "ARCHIVE_DIR", archive_dir),
+            mock.patch.object(
+                task_archive,
+                "ARCHIVE_TASKS_DIR",
+                archive_dir / "tasks",
+            ),
+            mock.patch.object(
+                task_archive,
+                "ARCHIVE_INDEX_FILE",
+                archive_dir / "index.json",
+            ),
+        ):
+            first = ai_status.archive_terminal_task_from_state(
+                state,
+                terminal,
+                archived_at="2026-07-14T00:03:00Z",
+            )
+            pending = deepcopy(state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY])
+            replay = ai_status.archive_terminal_task_from_state(
+                state,
+                terminal,
+                archived_at="2026-07-14T00:03:00Z",
+            )
+
+            self.assertEqual(replay, first)
+            self.assertEqual(state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY], pending)
+            self.assertEqual(first["terminal_outcome"], "completed")
+            self.assertNotIn("terminal_outcome", first["task"])
+            self.assertEqual(
+                pending["transaction_id"],
+                "ai-status-archive-tx-"
+                + ai_status._canonical_json_sha256(pending["snapshots"]),
+            )
+
+            pending_state = deepcopy(state)
+            archive_bytes = None
+            for recovery_attempt in range(2):
+                with self.subTest(recovery_attempt=recovery_attempt):
+                    replay_state = deepcopy(pending_state)
+                    self._write_state(replay_state)
+                    self.assertTrue(
+                        ai_status.recover_status_archive_outbox(replay_state)
+                    )
+                    self.assertIsNone(
+                        replay_state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY]
+                    )
+                    self.assertIsNone(
+                        ai_status.get_task(replay_state, "LOCK-ONE")
+                    )
+                    current_bytes = archive_path.read_bytes()
+                    if archive_bytes is None:
+                        archive_bytes = current_bytes
+                    self.assertEqual(current_bytes, archive_bytes)
+                    self.assertEqual(
+                        json.loads(current_bytes),
+                        first,
+                    )
 
     def test_concurrent_task_mutations_are_serialized_without_lost_update(self) -> None:
         self._write_state(self._fixture_state())

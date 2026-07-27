@@ -9,7 +9,9 @@ or with unittest discovery:
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import subprocess
@@ -96,7 +98,7 @@ class CheckCommitTrailersTests(unittest.TestCase):
 
 
 class ResolveCommitTrailerRangeTests(unittest.TestCase):
-    def test_uses_explicit_base_when_it_is_available_and_ancestor(self) -> None:
+    def test_uses_explicit_base_when_the_integration_target_is_unavailable(self) -> None:
         rev_range = resolve_range.resolve_commit_range(
             event="push",
             base_sha="base",
@@ -109,6 +111,35 @@ class ResolveCommitTrailerRangeTests(unittest.TestCase):
         )
         self.assertEqual(rev_range, "base..head")
 
+    def test_task_push_measures_against_dev_not_the_previous_branch_tip(self) -> None:
+        # Shape of failed run 30219364096 on task/SUP-WORKER-TRUTH-RECONCILE-001:
+        # `before` is a real ancestor, but the push also carried the dev commits
+        # the worker merged in while syncing the branch.
+        rev_range = resolve_range.resolve_commit_range(
+            event="push",
+            base_sha="previous-branch-tip",
+            head_sha="head",
+            ref_name="task/SUP-WORKER-TRUTH-RECONCILE-001",
+            pr_base_ref="",
+            commit_exists=lambda rev: rev in {"previous-branch-tip", "head", "origin/dev"},
+            is_ancestor=lambda base, head: True,
+            merge_base=lambda ref, head: "dev-base",
+        )
+        self.assertEqual(rev_range, "origin/dev..head")
+
+    def test_hotfix_push_measures_against_dev_as_well(self) -> None:
+        rev_range = resolve_range.resolve_commit_range(
+            event="push",
+            base_sha="previous-branch-tip",
+            head_sha="head",
+            ref_name="hotfix/urgent",
+            pr_base_ref="",
+            commit_exists=lambda rev: rev in {"previous-branch-tip", "head", "origin/dev"},
+            is_ancestor=lambda base, head: True,
+            merge_base=lambda ref, head: "dev-base",
+        )
+        self.assertEqual(rev_range, "origin/dev..head")
+
     def test_falls_back_to_origin_dev_when_force_push_before_sha_is_missing(self) -> None:
         rev_range = resolve_range.resolve_commit_range(
             event="push",
@@ -120,33 +151,157 @@ class ResolveCommitTrailerRangeTests(unittest.TestCase):
             is_ancestor=lambda base, head: False,
             merge_base=lambda ref, head: "dev-base" if ref == "origin/dev" else None,
         )
-        self.assertEqual(rev_range, "dev-base..head")
+        self.assertEqual(rev_range, "origin/dev..head")
 
-    def test_ignores_available_before_sha_when_it_is_not_an_ancestor(self) -> None:
+    def test_task_push_falls_back_to_the_merge_base_without_a_remote_tracking_ref(self) -> None:
         rev_range = resolve_range.resolve_commit_range(
             event="push",
             base_sha="rewritten-before",
             head_sha="head",
             ref_name="task/example",
             pr_base_ref="",
-            commit_exists=lambda rev: rev in {"rewritten-before", "head", "origin/dev", "dev-base"},
+            commit_exists=lambda rev: rev in {"rewritten-before", "head", "dev-base"},
             is_ancestor=lambda base, head: False,
             merge_base=lambda ref, head: "dev-base" if ref == "origin/dev" else None,
         )
         self.assertEqual(rev_range, "dev-base..head")
 
-    def test_pull_request_uses_base_ref_merge_base_when_base_sha_is_unavailable(self) -> None:
+    def test_publish_push_keeps_measuring_from_the_previous_branch_tip(self) -> None:
+        rev_range = resolve_range.resolve_commit_range(
+            event="push",
+            base_sha="previous-publish-tip",
+            head_sha="head",
+            ref_name="publish/v2026.07.20.0",
+            pr_base_ref="",
+            commit_exists=lambda rev: rev
+            in {"previous-publish-tip", "head", "origin/master", "origin/dev"},
+            is_ancestor=lambda base, head: True,
+            merge_base=lambda ref, head: "master-base",
+        )
+        self.assertEqual(rev_range, "previous-publish-tip..head")
+
+    def test_dev_push_keeps_measuring_from_the_previous_branch_tip(self) -> None:
+        rev_range = resolve_range.resolve_commit_range(
+            event="push",
+            base_sha="previous-dev-tip",
+            head_sha="head",
+            ref_name="dev",
+            pr_base_ref="",
+            commit_exists=lambda rev: rev in {"previous-dev-tip", "head", "origin/dev"},
+            is_ancestor=lambda base, head: True,
+            merge_base=lambda ref, head: "dev-base",
+        )
+        self.assertEqual(rev_range, "previous-dev-tip..head")
+
+    def test_pull_request_excludes_base_branch_and_ignores_synthetic_merge(self) -> None:
+        # Shape of failed run 30219467575 on PR #4211: the event carries a
+        # stale base.sha and github.sha is the synthetic merge commit that
+        # already contains dev commits owned by other tasks.
         rev_range = resolve_range.resolve_commit_range(
             event="pull_request",
-            base_sha="missing-base",
-            head_sha="head",
-            ref_name="123/merge",
+            base_sha="stale-dev-tip",
+            head_sha="synthetic-merge",
+            ref_name="4211/merge",
             pr_base_ref="dev",
-            commit_exists=lambda rev: rev in {"head", "origin/dev", "dev-base"},
+            pr_head_sha="pr-head",
+            commit_exists=lambda rev: rev
+            in {"pr-head", "synthetic-merge", "stale-dev-tip", "origin/dev"},
             is_ancestor=lambda base, head: False,
-            merge_base=lambda ref, head: "dev-base" if ref == "origin/dev" else None,
+            merge_base=lambda ref, head: "fork-point",
         )
-        self.assertEqual(rev_range, "dev-base..head")
+        self.assertEqual(rev_range, "origin/dev..pr-head")
+        self.assertNotIn("synthetic-merge", rev_range)
+
+    def test_pull_request_falls_back_to_base_sha_when_base_ref_is_unavailable(self) -> None:
+        rev_range = resolve_range.resolve_commit_range(
+            event="pull_request",
+            base_sha="base-sha",
+            head_sha="synthetic-merge",
+            ref_name="4211/merge",
+            pr_base_ref="dev",
+            pr_head_sha="pr-head",
+            commit_exists=lambda rev: rev in {"pr-head", "base-sha", "synthetic-merge"},
+            is_ancestor=lambda base, head: False,
+            merge_base=lambda ref, head: None,
+        )
+        self.assertEqual(rev_range, "base-sha..pr-head")
+
+    def test_pull_request_fails_closed_without_a_pr_head_sha(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            resolve_range.resolve_commit_range(
+                event="pull_request",
+                base_sha="base-sha",
+                head_sha="synthetic-merge",
+                ref_name="4211/merge",
+                pr_base_ref="dev",
+                pr_head_sha="",
+                commit_exists=lambda rev: True,
+                is_ancestor=lambda base, head: True,
+                merge_base=lambda ref, head: "fork-point",
+            )
+        self.assertIn("synthetic merge commit", str(ctx.exception))
+
+    def test_pull_request_fails_closed_when_the_head_object_is_missing(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            resolve_range.resolve_commit_range(
+                event="pull_request",
+                base_sha="base-sha",
+                head_sha="synthetic-merge",
+                ref_name="4211/merge",
+                pr_base_ref="dev",
+                pr_head_sha="force-pushed-away",
+                commit_exists=lambda rev: rev in {"base-sha", "origin/dev"},
+                is_ancestor=lambda base, head: False,
+                merge_base=lambda ref, head: "fork-point",
+            )
+        self.assertIn("head commit is not available", str(ctx.exception))
+
+    def test_pull_request_fails_closed_when_no_base_candidate_resolves(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            resolve_range.resolve_commit_range(
+                event="pull_request",
+                base_sha=resolve_range.ZERO_SHA,
+                head_sha="synthetic-merge",
+                ref_name="4211/merge",
+                pr_base_ref="dev",
+                pr_head_sha="pr-head",
+                commit_exists=lambda rev: rev == "pr-head",
+                is_ancestor=lambda base, head: False,
+                merge_base=lambda ref, head: None,
+            )
+        self.assertIn("base is not available", str(ctx.exception))
+
+    def test_pull_request_never_falls_back_to_the_head_parent(self) -> None:
+        # head^ would be a base-branch commit on a synthetic merge and the
+        # fork point on a real head; neither is an acceptable silent default.
+        with self.assertRaises(ValueError):
+            resolve_range.resolve_commit_range(
+                event="pull_request",
+                base_sha="",
+                head_sha="synthetic-merge",
+                ref_name="4211/merge",
+                pr_base_ref="",
+                pr_head_sha="pr-head",
+                commit_exists=lambda rev: rev in {"pr-head", "pr-head^"},
+                is_ancestor=lambda base, head: False,
+                merge_base=lambda ref, head: None,
+            )
+
+    def test_publish_push_still_measures_against_master_first(self) -> None:
+        rev_range = resolve_range.resolve_commit_range(
+            event="push",
+            base_sha=resolve_range.ZERO_SHA,
+            head_sha="head",
+            ref_name="publish/v2026.07.20.0",
+            pr_base_ref="",
+            commit_exists=lambda rev: rev in {"head", "origin/master", "origin/dev"},
+            is_ancestor=lambda base, head: False,
+            merge_base=lambda ref, head: {
+                "origin/master": "master-base",
+                "origin/dev": "dev-base",
+            }.get(ref),
+        )
+        self.assertEqual(rev_range, "master-base..head")
 
     def test_dev_push_without_usable_base_checks_head_parent(self) -> None:
         rev_range = resolve_range.resolve_commit_range(
@@ -173,6 +328,240 @@ class ResolveCommitTrailerRangeTests(unittest.TestCase):
             merge_base=lambda ref, head: None,
         )
         self.assertEqual(rev_range, "head")
+
+
+class PullRequestTrailerRangeLiveRegressionTests(unittest.TestCase):
+    """End-to-end regression on a real git repo shaped like PR #4211 / #4215.
+
+    dev carries ``DEV_BAD``, a squash-merge commit owned by another task whose
+    subject is 79 chars. Both task branches were cut *before* it landed, so it
+    is not reachable from either PR head -- yet the old contract scanned
+    ``base.sha..github.sha`` where ``github.sha`` is the synthetic merge
+    commit, which does contain it.
+    """
+
+    # 79 chars, mirroring dev commit 0410a89f0.
+    DEV_BAD_SUBJECT = (
+        "OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001: record isolation evidence (#4213)"
+    )
+
+    def _git(self, repo: Path, *args: str, check: bool = True):
+        return subprocess.run(
+            ["git", *args], cwd=repo, check=check, capture_output=True, text=True
+        )
+
+    def _rev(self, repo: Path, rev: str = "HEAD") -> str:
+        return self._git(repo, "rev-parse", rev).stdout.strip()
+
+    def _commit(self, repo: Path, name: str, message: str) -> str:
+        (repo / name).write_text(f"{name}\n")
+        self._git(repo, "add", name)
+        self._git(repo, "commit", "-m", message)
+        return self._rev(repo)
+
+    @staticmethod
+    def _task_message(task_id: str, summary: str, *, reviewer: str = "Codex2") -> str:
+        return (
+            f"{task_id}: {summary}\n\n"
+            "Body.\n\n"
+            "LLM-Agent: Claude\n"
+            f"Task-ID: {task_id}\n"
+            f"Reviewer: {reviewer}\n"
+        )
+
+    def _build_repo(self, tmp: str) -> tuple[Path, dict[str, str]]:
+        repo = Path(tmp)
+        self._git(repo, "init", "-b", "dev")
+        self._git(repo, "config", "user.name", "fixture")
+        self._git(repo, "config", "user.email", "fixture@example.invalid")
+
+        self._commit(repo, "root.txt", "Initial commit")
+        # The integration base recorded in pull_request.base.sha.
+        base = self._commit(
+            repo,
+            "base.txt",
+            "Merge pull request #4210 from ajoe734/task/L12-SIGNOFF-001",
+        )
+
+        heads: dict[str, str] = {"base": base}
+        branches = {
+            "pr4211": (
+                "task/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001",
+                self._task_message(
+                    "OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001", "anchor infra authority"
+                ),
+            ),
+            "pr4215": (
+                "task/SUP-WORKER-TRUTH-RECONCILE-001",
+                self._task_message(
+                    "SUP-WORKER-TRUTH-RECONCILE-001", "reconcile worker truth"
+                ),
+            ),
+        }
+        for key, (branch, message) in branches.items():
+            self._git(repo, "checkout", "-b", branch, base)
+            heads[key] = self._commit(repo, f"{key}.txt", message)
+
+        # A genuinely malformed task head: no Reviewer trailer.
+        self._git(repo, "checkout", "-b", "task/BROKEN-001", base)
+        heads["broken"] = self._commit(
+            repo,
+            "broken.txt",
+            "BROKEN-001: land without a reviewer\n\nLLM-Agent: Claude\nTask-ID: BROKEN-001\n",
+        )
+
+        # dev advances with another task's already-merged, overlong commit.
+        self._git(repo, "checkout", "dev")
+        heads["dev_bad"] = self._commit(
+            repo,
+            "isolation.txt",
+            self.DEV_BAD_SUBJECT
+            + "\n\nLLM-Agent: Codex2\nTask-ID: OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001\n"
+            "Reviewer: Claude\n",
+        )
+        # actions/checkout with fetch-depth: 0 provides this remote-tracking ref.
+        self._git(repo, "update-ref", "refs/remotes/origin/dev", heads["dev_bad"])
+
+        # Concurrent-dev-advance shape: a task branch that merged dev back in.
+        self._git(repo, "checkout", "-b", "task/MERGED-DEV-001", base)
+        heads["merged_dev_before"] = self._commit(
+            repo,
+            "merged.txt",
+            self._task_message("MERGED-DEV-001", "own one layer"),
+        )
+        self._git(repo, "merge", "--no-ff", heads["dev_bad"], "-m", "Merge dev into task")
+        heads["merged_dev"] = self._rev(repo)
+
+        # GitHub's synthetic refs/pull/N/merge commits.
+        for key in ("pr4211", "pr4215", "broken", "merged_dev"):
+            self._git(repo, "checkout", "-B", f"synthetic/{key}", heads["dev_bad"])
+            self._git(
+                repo,
+                "merge",
+                "--no-ff",
+                heads[key],
+                "-m",
+                f"Merge {heads[key]} into dev",
+                check=False,
+            )
+            heads[f"synthetic_{key}"] = self._rev(repo)
+
+        self._git(repo, "checkout", "dev")
+        return repo, heads
+
+    def _resolve(self, repo: Path, **kwargs) -> str:
+        with mock.patch.object(resolve_range, "ROOT", repo):
+            return resolve_range.resolve_commit_range(**kwargs)
+
+    def _scan(self, repo: Path, rev_range: str) -> tuple[int, list[str]]:
+        """Run the real trailer gate over a range; return (exit code, shas)."""
+        argv = ["check_commit_trailers.py", "--range", rev_range, "--skip-merge"]
+        with (
+            mock.patch.object(check_trailers, "ROOT", repo),
+            mock.patch.object(check_trailers, "CONFIG_FILE", repo / "no-config.json"),
+            mock.patch.dict(os.environ, {"PANTHEON_TRAILER_CHECK_DISABLED": "0"}),
+            mock.patch.object(sys, "argv", argv),
+        ):
+            shas = [sha for sha, _ in check_trailers.collect_messages_from_range(rev_range)]
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                code = check_trailers.main()
+        return code, shas
+
+    def _pr_range(self, repo: Path, heads: dict[str, str], key: str, number: str) -> str:
+        return self._resolve(
+            repo,
+            event="pull_request",
+            base_sha=heads["base"],
+            head_sha=heads[f"synthetic_{key}"],
+            ref_name=f"{number}/merge",
+            pr_base_ref="dev",
+            pr_head_sha=heads[key],
+        )
+
+    def test_old_range_contract_reproduces_the_dev_commit_contamination(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, heads = self._build_repo(tmp)
+            for key in ("pr4211", "pr4215"):
+                stale_range = f"{heads['base']}..{heads[f'synthetic_{key}']}"
+                code, shas = self._scan(repo, stale_range)
+                self.assertIn(
+                    heads["dev_bad"],
+                    shas,
+                    f"{key}: expected the stale contract to scan the dev commit",
+                )
+                self.assertEqual(code, 1, f"{key}: expected the stale contract to fail")
+
+    def test_repaired_range_judges_both_task_heads_independently(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, heads = self._build_repo(tmp)
+            for key, number in (("pr4211", "4211"), ("pr4215", "4215")):
+                rev_range = self._pr_range(repo, heads, key, number)
+                self.assertEqual(rev_range, f"origin/dev..{heads[key]}")
+                code, shas = self._scan(repo, rev_range)
+                self.assertEqual(shas, [heads[key]], f"{key}: scanned {shas}")
+                self.assertNotIn(heads["dev_bad"], shas)
+                self.assertNotIn(heads[f"synthetic_{key}"], shas)
+                self.assertEqual(code, 0, f"{key}: expected the task head to pass")
+
+    def test_repaired_range_still_fails_a_malformed_task_head(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, heads = self._build_repo(tmp)
+            rev_range = self._pr_range(repo, heads, "broken", "9001")
+            code, shas = self._scan(repo, rev_range)
+            self.assertEqual(shas, [heads["broken"]])
+            self.assertEqual(code, 1)
+
+    def test_concurrent_dev_advance_merged_into_the_task_branch_is_excluded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, heads = self._build_repo(tmp)
+            rev_range = self._pr_range(repo, heads, "merged_dev", "9002")
+            code, shas = self._scan(repo, rev_range)
+            self.assertNotIn(heads["dev_bad"], shas)
+            self.assertEqual(code, 0)
+
+    def test_old_push_contract_reproduces_the_4215_contamination(self) -> None:
+        # Run 30219364096: `before..github.sha` on a task branch that had just
+        # synced dev in, so dev commit 0410a89f was inside the pushed range.
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, heads = self._build_repo(tmp)
+            stale_range = f"{heads['merged_dev_before']}..{heads['merged_dev']}"
+            code, shas = self._scan(repo, stale_range)
+            self.assertIn(heads["dev_bad"], shas)
+            self.assertEqual(code, 1)
+
+    def test_repaired_push_range_drops_the_synced_dev_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, heads = self._build_repo(tmp)
+            rev_range = self._resolve(
+                repo,
+                event="push",
+                base_sha=heads["merged_dev_before"],
+                head_sha=heads["merged_dev"],
+                ref_name="task/MERGED-DEV-001",
+                pr_base_ref="",
+            )
+            self.assertEqual(rev_range, f"origin/dev..{heads['merged_dev']}")
+            code, shas = self._scan(repo, rev_range)
+            self.assertNotIn(heads["dev_bad"], shas)
+            self.assertIn(heads["merged_dev_before"], shas)
+            self.assertEqual(code, 0)
+
+    def test_stale_base_sha_alone_would_still_admit_the_merged_dev_commit(self) -> None:
+        # Documents why the live base tip is preferred over base.sha.
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, heads = self._build_repo(tmp)
+            _code, shas = self._scan(
+                repo, f"{heads['base']}..{heads['merged_dev']}"
+            )
+            self.assertIn(heads["dev_bad"], shas)
+
+    def test_workflow_passes_the_pr_head_sha_and_never_the_synthetic_merge(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "branch-ci.yml").read_text()
+        self.assertIn("PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}", workflow)
+        self.assertIn('--pr-head-sha "$PR_HEAD_SHA"', workflow)
+        self.assertIn('--range "$RANGE"', workflow)
+        self.assertNotIn('--range "${{ steps.range.outputs.range }}"', workflow)
 
 
 class PublishPromoteTests(unittest.TestCase):
@@ -281,6 +670,56 @@ class PublishPromoteTests(unittest.TestCase):
         self.assertEqual(dispositions["v2024.07.10.0"]["disposition"], "superseded")
         self.assertEqual(dispositions["v2024.07.10.0"]["superseded_by"], "v2025.07.10.0")
         self.assertEqual(dispositions["v2025.07.10.0"]["disposition"], "eligible")
+
+    def test_discover_repairs_only_maximal_existing_pr_with_missing_checks(self) -> None:
+        now = datetime.now(timezone.utc)
+        older = now.replace(year=now.year - 2)
+        newer = now.replace(year=now.year - 1)
+        existing = {
+            "promote/v2024.07.10.0": {
+                "number": 40,
+                "statusCheckRollup": [],
+            },
+            "promote/v2025.07.10.0": {
+                "number": 41,
+                "statusCheckRollup": [],
+            },
+        }
+        cands = self._discover(
+            [("v2024.07.10.0", older), ("v2025.07.10.0", newer)],
+            ancestor=lambda left, right: left.endswith("v2024.07.10.0")
+            and right.endswith("v2025.07.10.0"),
+            existing=existing,
+        )
+        dispositions = {c["version"]: c for c in cands}
+        self.assertEqual(dispositions["v2024.07.10.0"]["disposition"], "superseded")
+        self.assertEqual(dispositions["v2025.07.10.0"]["disposition"], "ci_repair")
+        self.assertEqual(
+            dispositions["v2025.07.10.0"]["missing_required_checks"],
+            ["Commit trailers", "Runtime mirror guard", "Smoke acceptance"],
+        )
+
+    def test_discover_leaves_existing_pr_with_required_checks_untouched(self) -> None:
+        old = datetime.now(timezone.utc).replace(year=2025)
+        checks = [
+            {"name": name}
+            for name in (
+                "Commit trailers",
+                "Runtime mirror guard",
+                "Smoke acceptance",
+            )
+        ]
+        cands = self._discover(
+            [("v2025.07.10.0", old)],
+            existing={
+                "promote/v2025.07.10.0": {
+                    "number": 41,
+                    "statusCheckRollup": checks,
+                }
+            },
+        )
+        self.assertEqual(cands[0]["disposition"], "existing_pr")
+        self.assertEqual(cands[0]["missing_required_checks"], [])
 
     def test_discover_reports_content_conflict(self) -> None:
         old = datetime.now(timezone.utc).replace(year=2024)
@@ -397,9 +836,24 @@ class PublishPromoteTests(unittest.TestCase):
         with (
             mock.patch.object(publish_promote, "run_git") as run_git,
             mock.patch.object(publish_promote, "publish_ref_matches_tag", return_value=True),
-            mock.patch.object(publish_promote, "find_open_promote_pr", return_value=(None, None)),
+            mock.patch.object(
+                publish_promote,
+                "find_open_promote_pr",
+                side_effect=[
+                    (None, None),
+                    (
+                        {
+                            "number": 42,
+                            "headRefOid": "a" * 40,
+                            "statusCheckRollup": [],
+                        },
+                        None,
+                    ),
+                ],
+            ),
             mock.patch.object(publish_promote.subprocess, "run") as run,
         ):
+            run_git.side_effect = lambda *args: "a" * 40 if args == ("rev-parse", "HEAD") else ""
             result = publish_promote.open_candidate(candidate, self.SETTINGS)
 
         self.assertEqual(result["disposition"], "pr_opened")
@@ -411,6 +865,21 @@ class PublishPromoteTests(unittest.TestCase):
         self.assertIn(["gh", "pr", "merge", "promote/v2026.20.0", "--auto", "--merge"], commands)
         self.assertIn(
             ["gh", "pr", "edit", "promote/v2026.20.0", "--add-label", "auto-promote"],
+            commands,
+        )
+        self.assertIn(
+            [
+                "gh",
+                "workflow",
+                "run",
+                "branch-ci.yml",
+                "--ref",
+                "promote/v2026.20.0",
+                "-f",
+                f"expected_head_sha={'a' * 40}",
+                "-f",
+                "promote_pr_number=42",
+            ],
             commands,
         )
 
@@ -429,12 +898,89 @@ class PublishPromoteTests(unittest.TestCase):
             mock.patch.object(
                 publish_promote,
                 "find_open_promote_pr",
-                return_value=({"number": 42, "url": "https://example.invalid/42"}, None),
+                return_value=(
+                    {
+                        "number": 42,
+                        "url": "https://example.invalid/42",
+                        "headRefOid": "b" * 40,
+                        "statusCheckRollup": [
+                            {"name": "Commit trailers"},
+                            {"name": "Runtime mirror guard"},
+                            {"name": "Smoke acceptance"},
+                        ],
+                    },
+                    None,
+                ),
             ),
+            mock.patch.object(publish_promote.subprocess, "run") as run,
         ):
             result = publish_promote.open_candidate(candidate, self.SETTINGS)
         self.assertEqual(result["disposition"], "existing_pr")
         self.assertFalse(any(call.args[0] == "push" for call in run_git.call_args_list))
+        self.assertFalse(run.called)
+
+    def test_open_candidate_repairs_existing_pr_with_zero_checks(self) -> None:
+        candidate = {
+            "version": "v2026.20.0",
+            "publish_branch": "publish/v2026.20.0",
+            "age_days": 1.25,
+            "blockers": [],
+            "promote_branch": "promote/v2026.20.0",
+            "promotion_mode": "clean_merge",
+        }
+        with (
+            mock.patch.object(publish_promote, "run_git"),
+            mock.patch.object(publish_promote, "publish_ref_matches_tag", return_value=True),
+            mock.patch.object(
+                publish_promote,
+                "find_open_promote_pr",
+                return_value=(
+                    {
+                        "number": 42,
+                        "url": "https://example.invalid/42",
+                        "headRefOid": "c" * 40,
+                        "statusCheckRollup": [],
+                    },
+                    None,
+                ),
+            ),
+            mock.patch.object(publish_promote.subprocess, "run") as run,
+        ):
+            result = publish_promote.open_candidate(candidate, self.SETTINGS)
+        self.assertEqual(result["disposition"], "ci_dispatched")
+        self.assertEqual(result["head_sha"], "c" * 40)
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertIn(
+            [
+                "gh",
+                "workflow",
+                "run",
+                "branch-ci.yml",
+                "--ref",
+                "promote/v2026.20.0",
+                "-f",
+                f"expected_head_sha={'c' * 40}",
+                "-f",
+                "promote_pr_number=42",
+            ],
+            commands,
+        )
+        self.assertIn(
+            ["gh", "pr", "merge", "promote/v2026.20.0", "--auto", "--merge"],
+            commands,
+        )
+
+    def test_branch_ci_exposes_exact_head_promote_dispatch(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "branch-ci.yml").read_text()
+        publish_workflow = (
+            ROOT / ".github" / "workflows" / "publish-promote.yml"
+        ).read_text()
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn("expected_head_sha:", workflow)
+        self.assertEqual(workflow.count("Validate explicit promote dispatch"), 2)
+        self.assertIn('[[ "$REF_NAME" != promote/* ]]', workflow)
+        self.assertIn('[[ "$HEAD_SHA" != "$EXPECTED_HEAD_SHA" ]]', workflow)
+        self.assertIn("actions: write", publish_workflow)
 
     def test_open_prs_continues_after_candidate_conflict(self) -> None:
         candidates = [{"version": "v1"}, {"version": "v2"}]

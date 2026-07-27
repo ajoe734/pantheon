@@ -33,6 +33,22 @@ def _config(tmpdir: str, *, enabled: bool = True, fallback: str = "Claude Sonnet
     }
 
 
+def _slot_config(tmpdir: str, *, fallback: str = "Claude Sonnet 4.6 (Thinking)") -> dict:
+    """Mirror the live fleet topology: dash-keyed per-slot providers sharing one account."""
+    rotation = {"enabled": True, "primary": "", "fallback": fallback, "cooldown_seconds": 900}
+    providers: dict = {
+        "antigravity": {"adapter": "antigravity", "account": "antigravity", "model_rotation": dict(rotation)},
+        "antigravity2": {"adapter": "antigravity", "account": "antigravity2", "model_rotation": dict(rotation)},
+    }
+    for slot in ("antigravity1-1", "antigravity1-2", "antigravity1-3", "antigravity1-4"):
+        providers[slot] = {
+            "adapter": "antigravity",
+            "account": "antigravity",
+            "model_rotation": dict(rotation),
+        }
+    return {"paths": {"state_file": str(Path(tmpdir) / "state.json")}, "providers": providers}
+
+
 class ModelRotationModuleTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -92,6 +108,36 @@ class ModelRotationModuleTests(unittest.TestCase):
             "Claude Sonnet 4.6 (Thinking)",
         )
 
+    def test_slot_provider_resolves_with_normalized_id(self) -> None:
+        # The supervisor failure path passes normalize_agent_id() form (underscores)
+        # while the config keys dispatch slots with dashes; both must resolve.
+        cfg = _slot_config(self._tmp.name)
+        self.assertTrue(model_rotation.rotation_enabled(cfg, "antigravity1-4"))
+        self.assertTrue(model_rotation.rotation_enabled(cfg, "antigravity1_4"))
+        key, entry = model_rotation.resolve_provider_entry(cfg, "antigravity1_4")
+        self.assertEqual(key, "antigravity1-4")
+        self.assertTrue(entry.get("model_rotation", {}).get("enabled"))
+        self.assertFalse(model_rotation.rotation_enabled(cfg, "unknown-provider"))
+
+    def test_cooldown_is_shared_across_slots_on_same_account(self) -> None:
+        cfg = _slot_config(self._tmp.name)
+        model_rotation.cool_slot(cfg, "antigravity1_4", model_rotation.SLOT_PRIMARY, now=self.now)
+        # Every sibling slot (and the base provider) sees the cooldown, in either id form.
+        for pid in ("antigravity1-1", "antigravity1-2", "antigravity1_3", "antigravity", "antigravity1-4"):
+            self.assertEqual(
+                model_rotation.active_slot(cfg, pid, now=self.now),
+                model_rotation.SLOT_FALLBACK,
+                pid,
+            )
+        # State is keyed by the shared account, not the individual slot.
+        data = json.loads(model_rotation.cooldown_file_path(cfg).read_text(encoding="utf-8"))
+        self.assertEqual(list(data.keys()), ["antigravity"])
+        # A different account stays isolated.
+        self.assertEqual(
+            model_rotation.active_slot(cfg, "antigravity2", now=self.now),
+            model_rotation.SLOT_PRIMARY,
+        )
+
     def test_corrupt_cooldown_file_is_ignored(self) -> None:
         model_rotation.cooldown_file_path(self.config).write_text("not json", encoding="utf-8")
         self.assertEqual(
@@ -149,6 +195,21 @@ class SupervisorRotationHelperTests(unittest.TestCase):
             self.config, self.state, "antigravity", "quota_terminal", "hit your limit", now=self.now
         )
         self.assertEqual(outcome, "exhausted")
+
+    def test_slot_provider_quota_failure_rotates_instead_of_pausing(self) -> None:
+        # Regression for 2026-07-26: a quota_terminal failure on a dash-keyed dispatch
+        # slot returned "disabled" (provider lookup missed after normalization) and the
+        # whole provider was paused instead of switching to the fallback model.
+        cfg = _slot_config(self._tmp.name)
+        outcome = supervisor.maybe_rotate_provider_model(
+            cfg, self.state, "antigravity1-4", "quota_terminal", "Individual quota reached", now=self.now
+        )
+        self.assertEqual(outcome, "rotated")
+        # The next dispatch on ANY slot of the same account picks the fallback model.
+        self.assertEqual(
+            model_rotation.active_slot(cfg, "antigravity1-1", now=self.now),
+            model_rotation.SLOT_FALLBACK,
+        )
 
     def test_retry_parent_does_not_reprocess_stale_quota_failure(self) -> None:
         for status in ("retry_backoff", "retried"):

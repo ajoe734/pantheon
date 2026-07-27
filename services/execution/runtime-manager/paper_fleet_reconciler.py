@@ -53,6 +53,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+import fcntl
+
 _HERE = Path(__file__).resolve().parent
 _REPO_ROOT = _HERE.parents[2]
 _DEFAULT_WORKER_SCRIPT = str(
@@ -120,6 +122,317 @@ def _binding_persona_id(binding: Dict[str, Any]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Durable, fenced leader lease
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class FencedLease:
+    acquired: bool
+    token: int
+    expires_at_ms: int
+
+
+class RedisFencedLeaderStore:
+    """Atomic Redis leader lease with a monotonically increasing fence token."""
+
+    kind = "redis_fenced_leader_store"
+
+    _ACQUIRE_OR_RENEW_LUA = """
+local clock = redis.call('TIME')
+local now_ms = (tonumber(clock[1]) * 1000) + math.floor(tonumber(clock[2]) / 1000)
+local holder = redis.call('HGET', KEYS[1], 'holder')
+local token = tonumber(redis.call('HGET', KEYS[1], 'token') or '0')
+local expires_at_ms = tonumber(redis.call('HGET', KEYS[1], 'expires_at_ms') or '0')
+local requested_token = tonumber(ARGV[2] or '0')
+local ttl_ms = tonumber(ARGV[3])
+
+if holder == ARGV[1] and token == requested_token and expires_at_ms > now_ms then
+  expires_at_ms = now_ms + ttl_ms
+  redis.call('HSET', KEYS[1], 'expires_at_ms', expires_at_ms)
+  redis.call('PEXPIRE', KEYS[1], ttl_ms * 2)
+  return {1, token, expires_at_ms}
+end
+
+if (not holder) or expires_at_ms <= now_ms then
+  token = redis.call('INCR', KEYS[2])
+  expires_at_ms = now_ms + ttl_ms
+  redis.call(
+    'HSET', KEYS[1],
+    'holder', ARGV[1],
+    'token', token,
+    'expires_at_ms', expires_at_ms
+  )
+  redis.call('PEXPIRE', KEYS[1], ttl_ms * 2)
+  return {1, token, expires_at_ms}
+end
+
+return {0, token, expires_at_ms}
+"""
+
+    _VALIDATE_LUA = """
+local clock = redis.call('TIME')
+local now_ms = (tonumber(clock[1]) * 1000) + math.floor(tonumber(clock[2]) / 1000)
+local holder = redis.call('HGET', KEYS[1], 'holder')
+local token = tonumber(redis.call('HGET', KEYS[1], 'token') or '0')
+local expires_at_ms = tonumber(redis.call('HGET', KEYS[1], 'expires_at_ms') or '0')
+if holder == ARGV[1] and token == tonumber(ARGV[2]) and expires_at_ms > now_ms then
+  return 1
+end
+return 0
+"""
+
+    _RELEASE_LUA = """
+local holder = redis.call('HGET', KEYS[1], 'holder')
+local token = tonumber(redis.call('HGET', KEYS[1], 'token') or '0')
+if holder == ARGV[1] and token == tonumber(ARGV[2]) then
+  redis.call('DEL', KEYS[1])
+  return 1
+end
+return 0
+"""
+
+    def __init__(
+        self,
+        client: Any,
+        *,
+        lease_key: str = "pantheon:paper-fleet-reconciler:leader",
+    ) -> None:
+        self._client = client
+        self._lease_key = lease_key
+        self._counter_key = f"{lease_key}:fence-counter"
+
+    def acquire_or_renew(
+        self,
+        holder: str,
+        current_token: int,
+        ttl_seconds: float,
+    ) -> FencedLease:
+        result = self._client.eval(
+            self._ACQUIRE_OR_RENEW_LUA,
+            2,
+            self._lease_key,
+            self._counter_key,
+            holder,
+            int(current_token),
+            max(int(ttl_seconds * 1000), 100),
+        )
+        return FencedLease(
+            acquired=bool(int(result[0])),
+            token=int(result[1]),
+            expires_at_ms=int(result[2]),
+        )
+
+    def validate(self, holder: str, token: int) -> bool:
+        return bool(
+            int(
+                self._client.eval(
+                    self._VALIDATE_LUA,
+                    1,
+                    self._lease_key,
+                    holder,
+                    int(token),
+                )
+            )
+        )
+
+    def release(self, holder: str, token: int) -> bool:
+        return bool(
+            int(
+                self._client.eval(
+                    self._RELEASE_LUA,
+                    1,
+                    self._lease_key,
+                    holder,
+                    int(token),
+                )
+            )
+        )
+
+
+class FileFencedLeaderStore:
+    """Process-safe file lease for single-host deployments and tests."""
+
+    kind = "file_fenced_leader_store"
+
+    def __init__(self, path: str | Path) -> None:
+        self._path = Path(path)
+        self._lock_path = self._path.with_name(f"{self._path.name}.lock")
+
+    def _read(self) -> Dict[str, Any]:
+        try:
+            payload = json.loads(self._path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def _write(self, payload: Dict[str, Any]) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self._path.with_name(
+            f".{self._path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+        )
+        with temporary.open("w", encoding="utf-8") as handle:
+            json.dump(payload, handle, sort_keys=True)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, self._path)
+
+    def _locked(self):
+        self._lock_path.parent.mkdir(parents=True, exist_ok=True)
+        handle = self._lock_path.open("a+", encoding="utf-8")
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        return handle
+
+    def acquire_or_renew(
+        self,
+        holder: str,
+        current_token: int,
+        ttl_seconds: float,
+    ) -> FencedLease:
+        lock_handle = self._locked()
+        try:
+            now_ms = int(time.time() * 1000)
+            data = self._read()
+            stored_holder = str(data.get("holder") or "")
+            stored_token = int(data.get("token") or 0)
+            expires_at_ms = int(data.get("expires_at_ms") or 0)
+            if (
+                stored_holder == holder
+                and stored_token == int(current_token)
+                and expires_at_ms > now_ms
+            ):
+                expires_at_ms = now_ms + max(int(ttl_seconds * 1000), 100)
+                self._write(
+                    {
+                        "holder": holder,
+                        "token": stored_token,
+                        "expires_at_ms": expires_at_ms,
+                    }
+                )
+                return FencedLease(True, stored_token, expires_at_ms)
+            if not stored_holder or expires_at_ms <= now_ms:
+                next_token = stored_token + 1
+                expires_at_ms = now_ms + max(int(ttl_seconds * 1000), 100)
+                self._write(
+                    {
+                        "holder": holder,
+                        "token": next_token,
+                        "expires_at_ms": expires_at_ms,
+                    }
+                )
+                return FencedLease(True, next_token, expires_at_ms)
+            return FencedLease(False, stored_token, expires_at_ms)
+        finally:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+            lock_handle.close()
+
+    def validate(self, holder: str, token: int) -> bool:
+        lock_handle = self._locked()
+        try:
+            data = self._read()
+            return (
+                str(data.get("holder") or "") == holder
+                and int(data.get("token") or 0) == int(token)
+                and int(data.get("expires_at_ms") or 0) > int(time.time() * 1000)
+            )
+        finally:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+            lock_handle.close()
+
+    def release(self, holder: str, token: int) -> bool:
+        lock_handle = self._locked()
+        try:
+            data = self._read()
+            if (
+                str(data.get("holder") or "") != holder
+                or int(data.get("token") or 0) != int(token)
+            ):
+                return False
+            self._write(
+                {
+                    "holder": "",
+                    "token": int(token),
+                    "expires_at_ms": 0,
+                }
+            )
+            return True
+        finally:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+            lock_handle.close()
+
+
+class InMemoryFencedLeaderStore:
+    """Thread-safe unit-test backend; production uses Redis or a locked file."""
+
+    kind = "memory_fenced_leader_store"
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._state: Dict[str, Any] = {}
+
+    def acquire_or_renew(
+        self,
+        holder: str,
+        current_token: int,
+        ttl_seconds: float,
+    ) -> FencedLease:
+        with self._lock:
+            now_ms = int(time.time() * 1000)
+            stored_holder = str(self._state.get("holder") or "")
+            stored_token = int(self._state.get("token") or 0)
+            expires_at_ms = int(self._state.get("expires_at_ms") or 0)
+            if (
+                stored_holder == holder
+                and stored_token == int(current_token)
+                and expires_at_ms > now_ms
+            ):
+                expires_at_ms = now_ms + max(int(ttl_seconds * 1000), 100)
+                self._state["expires_at_ms"] = expires_at_ms
+                return FencedLease(True, stored_token, expires_at_ms)
+            if not stored_holder or expires_at_ms <= now_ms:
+                stored_token += 1
+                expires_at_ms = now_ms + max(int(ttl_seconds * 1000), 100)
+                self._state = {
+                    "holder": holder,
+                    "token": stored_token,
+                    "expires_at_ms": expires_at_ms,
+                }
+                return FencedLease(True, stored_token, expires_at_ms)
+            return FencedLease(False, stored_token, expires_at_ms)
+
+    def validate(self, holder: str, token: int) -> bool:
+        with self._lock:
+            return (
+                str(self._state.get("holder") or "") == holder
+                and int(self._state.get("token") or 0) == int(token)
+                and int(self._state.get("expires_at_ms") or 0)
+                > int(time.time() * 1000)
+            )
+
+    def release(self, holder: str, token: int) -> bool:
+        with self._lock:
+            if (
+                str(self._state.get("holder") or "") != holder
+                or int(self._state.get("token") or 0) != int(token)
+            ):
+                return False
+            self._state["holder"] = ""
+            self._state["expires_at_ms"] = 0
+            return True
+
+
+def _coerce_leader_store(store: Any | None) -> Any | None:
+    if store is None:
+        return None
+    if all(hasattr(store, method) for method in ("acquire_or_renew", "validate", "release")):
+        return store
+    if isinstance(store, (str, Path)):
+        return FileFencedLeaderStore(store)
+    if hasattr(store, "eval"):
+        return RedisFencedLeaderStore(store)
+    raise TypeError("leader_store must be a fenced Redis/file lease backend")
+
+
+# ---------------------------------------------------------------------------
 # Worker entry
 # ---------------------------------------------------------------------------
 
@@ -139,6 +452,7 @@ class WorkerEntry:
     dead_at: Optional[float] = None  # time.monotonic() when process last exited
     last_heartbeat_at: Optional[str] = None
     heartbeat_status: Optional[str] = None
+    fence_token: Optional[int] = None
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +479,9 @@ class PaperFleetReconciler:
         performance_state_root: Optional[str] = None,
         monitoring_session_store_path: Optional[str] = None,
         monitoring_heartbeat_stale_after_seconds: Optional[int] = None,
+        leader_store: Optional[Any] = None,
+        leader_lease_ttl_seconds: Optional[float] = None,
+        reconciler_id: Optional[str] = None,
         extra_env: Optional[Dict[str, str]] = None,
     ) -> None:
         self._url = (
@@ -234,6 +551,24 @@ class PaperFleetReconciler:
         self._monitoring_heartbeat_stale_after = max(int(stale_after), 1)
         self._extra_env: Dict[str, str] = dict(extra_env or {})
 
+        # Leader ownership fails closed until a durable backend grants a
+        # monotonically fenced lease.  Unit tests opt into the explicit
+        # InMemoryFencedLeaderStore; the production singleton always uses Redis
+        # (or an explicitly configured locked file backend).
+        self._reconciler_id = reconciler_id or f"reconciler-{uuid.uuid4().hex[:8]}"
+        self._is_leader = False
+        self._leader_store = _coerce_leader_store(leader_store)
+        self._leader_lease_ttl = max(
+            float(
+                leader_lease_ttl_seconds
+                if leader_lease_ttl_seconds is not None
+                else _as_float(os.getenv("RECONCILER_LEADER_LEASE_TTL_SECONDS"), 30.0)
+            ),
+            0.1,
+        )
+        self._fence_token = 0
+        self._lease_expires_at_ms = 0
+
         self._lock = threading.RLock()
         self._workers: Dict[str, WorkerEntry] = {}
         self._monitoring_sessions: Dict[str, Dict[str, Any]] = {}
@@ -246,6 +581,64 @@ class PaperFleetReconciler:
         self._last_error: Optional[str] = None
         self._monitoring_last_error: Optional[str] = None
         self._load_monitoring_sessions()
+
+    @property
+    def reconciler_id(self) -> str:
+        return self._reconciler_id
+
+    @property
+    def is_leader(self) -> bool:
+        with self._lock:
+            return self._is_leader
+
+    def try_acquire_lease(self, leader_store: Any | None = None) -> bool:
+        """Atomically acquire or renew the reconciler's token-fenced lease."""
+        with self._lock:
+            if leader_store is not None:
+                self._leader_store = _coerce_leader_store(leader_store)
+            store = self._leader_store
+            if store is None:
+                self._is_leader = False
+                self._last_error = "durable fenced leader store is not configured"
+                return False
+            try:
+                lease = store.acquire_or_renew(
+                    self._reconciler_id,
+                    self._fence_token,
+                    self._leader_lease_ttl,
+                )
+            except Exception as exc:  # noqa: BLE001 - lease failure must fail closed
+                self._is_leader = False
+                self._last_error = f"leader lease unavailable: {type(exc).__name__}: {exc}"
+                return False
+            self._is_leader = bool(lease.acquired)
+            if self._is_leader:
+                self._fence_token = int(lease.token)
+                self._lease_expires_at_ms = int(lease.expires_at_ms)
+            return self._is_leader
+
+    def _has_current_fence(self) -> bool:
+        store = self._leader_store
+        if store is None or not self._is_leader or self._fence_token <= 0:
+            return False
+        try:
+            return bool(store.validate(self._reconciler_id, self._fence_token))
+        except Exception:  # noqa: BLE001 - any ambiguity fails closed
+            return False
+
+    def _require_current_fence(self) -> None:
+        if not self.try_acquire_lease():
+            raise RuntimeError("reconciler lost fenced leader ownership")
+
+    def _demote_and_stop_workers(self) -> None:
+        with self._lock:
+            self._is_leader = False
+            for binding_id in list(self._workers):
+                self._terminate_worker(
+                    binding_id,
+                    reason="reconciler lost fenced leader lease",
+                    enforce_fence=False,
+                )
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -267,14 +660,32 @@ class PaperFleetReconciler:
             self._reconcile_thread.join(timeout=max(self._drain_timeout, 5.0))
         with self._lock:
             for binding_id in list(self._workers):
-                self._terminate_worker(binding_id, reason="reconciler shutdown")
+                self._terminate_worker(
+                    binding_id,
+                    reason="reconciler shutdown",
+                    enforce_fence=False,
+                )
+            if self._leader_store is not None and self._fence_token > 0:
+                try:
+                    self._leader_store.release(
+                        self._reconciler_id,
+                        self._fence_token,
+                    )
+                except Exception:  # noqa: BLE001 - expiry remains the failover path
+                    pass
+            self._is_leader = False
 
     # ------------------------------------------------------------------
     # Reconcile
     # ------------------------------------------------------------------
 
-    def reconcile_once(self) -> Dict[str, Any]:
+    def reconcile_once(self, leader_store: Any | None = None) -> Dict[str, Any]:
         """Run one reconcile cycle. Returns a snapshot of the fleet state."""
+        if not self.try_acquire_lease(leader_store):
+            log.info("reconciler %s is follower; skipping worker spawn cycle", self._reconciler_id)
+            self._demote_and_stop_workers()
+            return self.snapshot()
+
         fleet = self._fetch_fleet_state()
         # fleet is None when the fetch failed — must not evict existing workers
         # in that case, since we have no reliable picture of desired state.
@@ -286,6 +697,9 @@ class PaperFleetReconciler:
             if bindings is not None
             else None
         )
+        if not self._has_current_fence():
+            self._demote_and_stop_workers()
+            return self.snapshot()
 
         with self._lock:
             # Poll live processes for exit — always run, even on fetch failure
@@ -320,7 +734,11 @@ class PaperFleetReconciler:
                 # Start workers for new or dead-but-desired active bindings
                 for binding_id, binding in desired.items():
                     if binding_id not in self._workers:
-                        self._start_worker(binding)
+                        if not self._start_worker(binding):
+                            self._demote_and_stop_workers()
+                            self._cycle_count += 1
+                            self._last_reconcile_at = _iso_now()
+                            return self._snapshot()
                     elif self._workers[binding_id].status == "dead":
                         entry = self._workers[binding_id]
                         # SIGKILL (exit 137) signals an infrastructure disruption
@@ -337,10 +755,14 @@ class PaperFleetReconciler:
                                 or time.monotonic() >= entry.dead_at + backoff
                             )
                             if ready:
-                                self._start_worker(
+                                if not self._start_worker(
                                     binding,
                                     restart_count=effective_restarts + 1,
-                                )
+                                ):
+                                    self._demote_and_stop_workers()
+                                    self._cycle_count += 1
+                                    self._last_reconcile_at = _iso_now()
+                                    return self._snapshot()
                         else:
                             log.warning(
                                 "binding %s: restart cap reached (%d), not restarting",
@@ -371,7 +793,7 @@ class PaperFleetReconciler:
     def _run_loop(self) -> None:
         while not self._shutdown.is_set():
             try:
-                self.reconcile_once()
+                self.reconcile_once(self._leader_store)
             except Exception as exc:  # noqa: BLE001
                 with self._lock:
                     self._last_error = f"{type(exc).__name__}: {exc}"
@@ -408,6 +830,8 @@ class PaperFleetReconciler:
                 "PANTHEON_PERSONA_CAPITAL_BINDING_ID": str(
                     binding.get("persona_capital_binding_id") or ""
                 ),
+                "PANTHEON_RECONCILER_ID": self._reconciler_id,
+                "PANTHEON_RECONCILER_FENCE_TOKEN": str(self._fence_token),
             }
         )
         persona_id = _binding_persona_id(binding)
@@ -439,7 +863,8 @@ class PaperFleetReconciler:
 
     def _start_worker(
         self, binding: Dict[str, Any], restart_count: int = 0
-    ) -> None:
+    ) -> bool:
+        self._require_current_fence()
         binding_id = binding["binding_id"]
         port = self._allocate_port()
         env = self._build_worker_env(binding)
@@ -470,8 +895,37 @@ class PaperFleetReconciler:
                 restart_count=restart_count,
                 last_error=str(exc),
                 status="dead",
+                fence_token=self._fence_token,
             )
-            return
+            return self._has_current_fence()
+
+        # Spawning is outside the leader store transaction and can block past
+        # the lease deadline.  Validate the exact fence again before exposing
+        # the child in the worker registry.  A stale leader must compensate by
+        # terminating the unregistered child it just created.
+        if not self._has_current_fence():
+            if process.poll() is None:
+                try:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=self._drain_timeout)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=5)
+                except OSError:
+                    pass
+            self._free_port(port)
+            self._end_monitoring_session(
+                monitoring_session_id,
+                reason="spawn_fence_lost",
+                error="leader fence expired while worker spawn was in progress",
+            )
+            self._is_leader = False
+            self._last_error = (
+                f"leader fence expired while spawning worker for binding {binding_id}"
+            )
+            log.error(self._last_error)
+            return False
 
         entry = WorkerEntry(
             binding_id=binding_id,
@@ -483,6 +937,7 @@ class PaperFleetReconciler:
             monitoring_session_id=monitoring_session_id,
             restart_count=restart_count,
             status="running",
+            fence_token=self._fence_token,
         )
         self._workers[binding_id] = entry
         log.info(
@@ -492,6 +947,7 @@ class PaperFleetReconciler:
             port,
             restart_count,
         )
+        return True
 
     def _spawn(
         self, binding_id: str, port: int, env: Dict[str, str]
@@ -504,7 +960,15 @@ class PaperFleetReconciler:
             close_fds=True,
         )
 
-    def _terminate_worker(self, binding_id: str, reason: str = "") -> None:
+    def _terminate_worker(
+        self,
+        binding_id: str,
+        reason: str = "",
+        *,
+        enforce_fence: bool = True,
+    ) -> None:
+        if enforce_fence:
+            self._require_current_fence()
         entry = self._workers.get(binding_id)
         if entry is None:
             return
@@ -899,6 +1363,7 @@ class PaperFleetReconciler:
                     "last_error": entry.last_error,
                     "last_heartbeat_at": entry.last_heartbeat_at,
                     "heartbeat_status": entry.heartbeat_status,
+                    "fence_token": entry.fence_token,
                 }
             )
         running = sum(1 for w in workers if w["status"] == "running")
@@ -925,6 +1390,13 @@ class PaperFleetReconciler:
             "poll_interval_seconds": self._poll_interval,
             "runtime_manager_url": self._url or None,
             "telemetry_api_url": self._telemetry_url or None,
+            "reconciler_id": self._reconciler_id,
+            "is_leader": self._is_leader,
+            "fence_token": self._fence_token if self._is_leader else None,
+            "leader_store_kind": getattr(self._leader_store, "kind", None),
+            "leader_lease_expires_at_ms": (
+                self._lease_expires_at_ms if self._is_leader else None
+            ),
             "monitoring_heartbeat_stale_after_seconds": self._monitoring_heartbeat_stale_after,
             "monitoring_session_store_path": (
                 str(self._monitoring_session_store_path)
@@ -952,10 +1424,36 @@ class PaperFleetReconciler:
 _RECONCILER: Optional[PaperFleetReconciler] = None
 
 
+def _build_production_leader_store() -> Any:
+    lease_path = str(os.getenv("RECONCILER_LEADER_LEASE_PATH") or "").strip()
+    if lease_path:
+        return FileFencedLeaderStore(lease_path)
+
+    redis_url = str(
+        os.getenv("RECONCILER_LEADER_REDIS_URL")
+        or os.getenv("SIGNAL_STORE_URL")
+        or "redis://signal-store:6379"
+    ).strip()
+    if not redis_url.startswith(("redis://", "rediss://")):
+        raise RuntimeError(
+            "Paper fleet reconciler requires a Redis leader URL or an explicit "
+            "RECONCILER_LEADER_LEASE_PATH"
+        )
+    try:
+        import redis
+    except ImportError as exc:  # pragma: no cover - runtime image contract
+        raise RuntimeError("redis package is required for reconciler leader fencing") from exc
+    return RedisFencedLeaderStore(
+        redis.Redis.from_url(redis_url, decode_responses=True)
+    )
+
+
 def get_reconciler() -> PaperFleetReconciler:
     global _RECONCILER
     if _RECONCILER is None:
-        _RECONCILER = PaperFleetReconciler()
+        _RECONCILER = PaperFleetReconciler(
+            leader_store=_build_production_leader_store(),
+        )
     return _RECONCILER
 
 

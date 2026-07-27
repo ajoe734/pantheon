@@ -18,7 +18,7 @@
     "event_log": ".orchestrator/task-state-events.jsonl"
   },
   "coordination": {
-    "enabled": true
+    "enabled": false
   },
   "permission_broker": {
     "allowed_workspace_roots": [

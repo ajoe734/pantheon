@@ -74,7 +74,6 @@ from task_archive import (
     rebuild_archive_index,
     recent_terminal_summaries,
     task_satisfies_dependency,
-    terminal_outcome_for,
 )
 from multi_repo_registry import (
     repository_local_path,
@@ -89,7 +88,12 @@ from runtime_state import (
     load_runtime_state_snapshot,
     runtime_state_lock,
 )
-from rewrite.task_state_store import append_state_commit, load_events, project_latest_state
+from rewrite.task_state_store import (
+    append_state_commit,
+    load_events,
+    load_snapshot,
+    project_latest_state,
+)
 from common import (
     ActivityAuditInvariantError,
     DuplicateActivityJSONKeyError,
@@ -1441,12 +1445,15 @@ def load_state() -> dict[str, Any]:
     if store_mode == "authoritative":
         _validate_task_state_projection_binding(store_mode)
         event_path = _task_state_event_path(store_mode)
-        events = load_events(event_path)
-        if not events:
+        # One validated pass over the journal: load_events followed by
+        # project_latest_state replayed and revalidated every event twice, which
+        # is the bulk of what a plain note command used to spend.
+        snapshot = load_snapshot(event_path)
+        if not snapshot["event_count"]:
             raise SystemExit(
                 "Authoritative task-state journal is empty; refusing ai-status.json fallback."
             )
-        state = project_latest_state(events)
+        state = snapshot["state"]
         if not isinstance(state, dict) or not state:
             raise SystemExit("Authoritative task-state projection is not a non-empty object.")
         sync_canonical_document_metadata(state)
@@ -1906,11 +1913,29 @@ def assert_task_archive_root_binding() -> None:
         )
 
 
+def _status_archive_terminal_outcome(task: Any) -> str:
+    """Return the exact archive outcome, with one legacy compatibility case."""
+
+    if not isinstance(task, dict) or task.get("status") != "done":
+        return ""
+    if "terminal_outcome" not in task:
+        return "completed"
+    outcome = task.get("terminal_outcome")
+    if outcome in {"completed", "superseded"}:
+        return str(outcome)
+    return ""
+
+
 def archive_terminal_task_from_state(state: dict[str, Any], task: dict[str, Any], *, archived_at: str | None = None) -> dict[str, Any]:
     assert_task_archive_root_binding()
     task_id = str(task.get("id") or "").strip()
     if not task_id:
         raise SystemExit("Cannot archive a task without an id")
+    terminal_outcome = _status_archive_terminal_outcome(task)
+    if not terminal_outcome:
+        raise RuntimeError(
+            f"terminal task has invalid archive outcome: {task_id}"
+        )
     related_handoffs = [deepcopy(handoff) for handoff in state.get("handoffs", []) if handoff.get("task_id") == task_id]
     related_blockers = [deepcopy(blocker) for blocker in state.get("blockers", []) if blocker.get("task_id") == task_id]
     existing = archived_task_snapshot(task_id)
@@ -1925,7 +1950,7 @@ def archive_terminal_task_from_state(state: dict[str, Any], task: dict[str, Any]
         )
         or iso_now(),
         "terminal_status": "done",
-        "terminal_outcome": terminal_outcome_for(task) or "completed",
+        "terminal_outcome": terminal_outcome,
         "task": deepcopy(task),
         "handoffs": related_handoffs,
         "blockers": related_blockers,
@@ -2187,6 +2212,7 @@ def _status_archive_snapshot_is_valid(snapshot: Any) -> bool:
     }:
         return False
     task = snapshot.get("task")
+    terminal_outcome = _status_archive_terminal_outcome(task)
     return bool(
         snapshot.get("version") == 1
         and snapshot.get("terminal_status") == "done"
@@ -2195,7 +2221,8 @@ def _status_archive_snapshot_is_valid(snapshot: Any) -> bool:
         and isinstance(task, dict)
         and task.get("id") == snapshot.get("task_id")
         and task.get("status") == "done"
-        and snapshot.get("terminal_outcome") == terminal_outcome_for(task)
+        and terminal_outcome
+        and snapshot.get("terminal_outcome") == terminal_outcome
         and isinstance(snapshot.get("handoffs"), list)
         and isinstance(snapshot.get("blockers"), list)
     )
@@ -6047,6 +6074,64 @@ def command_supersede(state: dict[str, Any], args: list[str]) -> None:
     )
 
 
+APPROVAL_BINDING_KEY = "review_binding"
+APPROVAL_HEAD_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
+DEFAULT_APPROVAL_BASE_BRANCH = "dev"
+
+
+def resolve_approval_binding(task: dict[str, Any]) -> dict[str, Any]:
+    """Bind an approval to the exact pull-request head the reviewer inspected."""
+
+    task_id = str(task.get("id") or "").strip()
+    raw_pr = os.environ.get("REVIEW_PR", "").strip().lstrip("#")
+    raw_head = os.environ.get("REVIEW_HEAD_SHA", "").strip()
+    base_branch = (
+        os.environ.get("REVIEW_BASE", "").strip() or DEFAULT_APPROVAL_BASE_BRANCH
+    )
+    head_branch = (
+        os.environ.get("REVIEW_HEAD_BRANCH", "").strip() or f"task/{task_id}"
+    )
+
+    owner = str(task.get("owner") or "").strip().casefold()
+    reviewer = str(task.get("reviewer") or "").strip().casefold()
+    independent = bool(reviewer) and reviewer != owner
+
+    if not raw_pr and not raw_head:
+        if independent:
+            print(
+                f"warning: {task_id} is approved without a reviewed-head binding. "
+                "If this task has a PR, the review-before-merge gate will refuse to "
+                "merge it (approval_head_binding_missing). Re-approve with "
+                "REVIEW_PR=<pr-number> and REVIEW_HEAD_SHA=<40-hex head oid> "
+                f"(optionally REVIEW_BASE, default {DEFAULT_APPROVAL_BASE_BRANCH!r}).",
+                file=sys.stderr,
+            )
+        return {}
+
+    if not raw_pr:
+        raise SystemExit(
+            "REVIEW_HEAD_SHA was supplied without REVIEW_PR; both are required."
+        )
+    if not raw_head:
+        raise SystemExit(
+            "REVIEW_PR was supplied without REVIEW_HEAD_SHA; both are required."
+        )
+    if not raw_pr.isdigit() or int(raw_pr) <= 0:
+        raise SystemExit(f"REVIEW_PR must be a positive PR number, got {raw_pr!r}")
+    if not APPROVAL_HEAD_SHA_RE.match(raw_head):
+        raise SystemExit(
+            f"REVIEW_HEAD_SHA must be a full 40-hex commit oid, got {raw_head!r}. "
+            "An abbreviated sha cannot be compared exactly."
+        )
+
+    return {
+        "pr": int(raw_pr),
+        "head_sha": raw_head.lower(),
+        "head_branch": head_branch,
+        "base": base_branch,
+    }
+
+
 def command_approve(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: approve <task-id> <message>")
@@ -6063,6 +6148,7 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
 
     review_notes = parse_delimited_env("REVIEW_NOTES_ZH")
     review_file = os.environ.get("REVIEW_FILE", "").strip()
+    binding = resolve_approval_binding(task)
     transition_candidate = dict(task)
     if review_notes:
         transition_candidate["review_notes_zh"] = review_notes
@@ -6082,6 +6168,10 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
         task["review_notes_zh"] = review_notes
     if review_file:
         task["review_file"] = review_file
+    if binding:
+        task[APPROVAL_BINDING_KEY] = dict(binding)
+    else:
+        task.pop(APPROVAL_BINDING_KEY, None)
     if verdict_ref is not None:
         task["protected_closeout_verdict"] = verdict_ref
     mark_blockers_resolved(state, task_id)
@@ -6093,7 +6183,16 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
         timestamp=timestamp,
         message=message,
     )
-    append_log({"ts": timestamp, "agent": actor, "type": "review_approved", "task_id": task_id, "message": message})
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": actor,
+            "type": "review_approved",
+            "task_id": task_id,
+            "message": message,
+            **({APPROVAL_BINDING_KEY: dict(binding)} if binding else {}),
+        }
+    )
 
 
 def command_sync(state: dict[str, Any], _args: list[str]) -> None:

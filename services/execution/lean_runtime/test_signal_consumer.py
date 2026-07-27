@@ -14,6 +14,7 @@ class TestSignalProcessingOrder(unittest.TestCase):
 
     def setUp(self):
         self.store = MagicMock()
+        self.store.is_processed.return_value = False
         self.consumer = SignalConsumer(store_client=self.store)
         self.mock_algo = MagicMock()
 
@@ -359,6 +360,7 @@ class TestBindingIsolation(unittest.TestCase):
 
     def _consumer(self, binding_id=None):
         store = MagicMock()
+        store.is_processed.return_value = False
         return SignalConsumer(store_client=store, binding_id=binding_id)
 
     # --- _is_wrong_binding unit tests ---
@@ -376,16 +378,16 @@ class TestBindingIsolation(unittest.TestCase):
         c = self._consumer(binding_id="b-001")
         self.assertTrue(c._is_wrong_binding(_make_signal("s1", binding_id="b-002")))
 
-    def test_signal_without_binding_field_passes(self):
-        """Signals without a binding_id field are legacy/unrouted — always allowed."""
+    def test_signal_without_binding_field_fails_closed(self):
+        """Signals without a binding_id field are rejected in governed paper mode."""
         c = self._consumer(binding_id="b-001")
-        self.assertFalse(c._is_wrong_binding(_make_signal("s1", binding_id=None)))
+        self.assertTrue(c._is_wrong_binding(_make_signal("s1", binding_id=None)))
 
-    def test_empty_string_binding_field_treated_as_absent(self):
+    def test_empty_string_binding_field_fails_closed(self):
         c = self._consumer(binding_id="b-001")
         sig = _make_signal("s1")
         sig["binding_id"] = ""
-        self.assertFalse(c._is_wrong_binding(sig))
+        self.assertTrue(c._is_wrong_binding(sig))
 
     def _mock_algo(self):
         algo = MagicMock()
@@ -398,7 +400,7 @@ class TestBindingIsolation(unittest.TestCase):
     def test_drain_records_symbol_parse_error_noop_feedback(self):
         """Execution errors should not leave signals invisible or unprocessed."""
         now = datetime.now(timezone.utc).replace(microsecond=0)
-        bad_symbol_signal = _make_signal("s-symbol-parse-error")
+        bad_symbol_signal = _make_signal("s-symbol-parse-error", binding_id="b-default")
         bad_symbol_signal["symbol"] = "BADSYM.XYZ"
         bad_symbol_signal["metadata"] = {
             "alpha_source": "unit_symbol_parse_error",
@@ -431,7 +433,7 @@ class TestBindingIsolation(unittest.TestCase):
     def test_drain_routes_taiwan_to_broker(self):
         """Taiwan-venue signals route to the Shioaji broker boundary, not LEAN."""
         now = datetime.now(timezone.utc).replace(microsecond=0)
-        tw_signal = _make_signal("s-tw-route")
+        tw_signal = _make_signal("s-tw-route", binding_id="b-default")
         tw_signal["symbol"] = "2330.TW"
         tw_signal["action"] = "SELL"
         tw_signal["direction"] = "SHORT"
@@ -455,7 +457,7 @@ class TestBindingIsolation(unittest.TestCase):
     def test_drain_records_unsupported_action_direction_noop_feedback(self):
         """Unsupported action/direction combinations should be classified for recovery."""
         now = datetime.now(timezone.utc).replace(microsecond=0)
-        bad_combo_signal = _make_signal("s-unsupported-combo")
+        bad_combo_signal = _make_signal("s-unsupported-combo", binding_id="b-default")
         bad_combo_signal["action"] = "BUY"
         bad_combo_signal["direction"] = "SHORT"
         bad_combo_signal["metadata"] = {
@@ -491,10 +493,10 @@ class TestBindingIsolation(unittest.TestCase):
     def test_drain_records_conflict_loser_noop_feedback(self):
         """Same-symbol conflict losers are terminal no-order outcomes."""
         now = datetime.now(timezone.utc).replace(microsecond=0)
-        loser = _make_signal("s-conflict-loser")
+        loser = _make_signal("s-conflict-loser", binding_id="b-default")
         loser["timestamp"] = (now - timedelta(minutes=2)).isoformat()
         loser["metadata"] = {"alpha_source": "unit_conflict_loser", "market_data": {"close": 153.0}}
-        winner = _make_signal("s-conflict-winner")
+        winner = _make_signal("s-conflict-winner", binding_id="b-default")
         winner["timestamp"] = now.isoformat()
         winner["metadata"] = {"alpha_source": "unit_conflict_winner", "market_data": {"close": 153.0}}
         store = MagicMock()
@@ -525,7 +527,7 @@ class TestBindingIsolation(unittest.TestCase):
 
     def test_drain_records_duplicate_signal_noop_feedback(self):
         """Duplicate signal IDs are idempotent and still emit terminal no-order feedback."""
-        duplicate_signal = _make_signal("s-duplicate")
+        duplicate_signal = _make_signal("s-duplicate", binding_id="b-default")
         duplicate_signal["metadata"] = {"alpha_source": "unit_duplicate_filter", "market_data": {"close": 152.0}}
         store = MagicMock()
         store.get_pending.return_value = [duplicate_signal]
@@ -561,7 +563,6 @@ class TestBindingIsolation(unittest.TestCase):
         with patch("services.execution.lean_runtime.signal_consumer.execute") as mock_exec:
             c.drain(algo=algo)
         mock_exec.assert_not_called()
-        self.assertIn("s-wrong", c._processed_signal_ids)
         self.assertEqual(len(algo.signal_noops), 1)
         noop = algo.signal_noops[0]
         self.assertEqual(noop["symbol"], "AAPL.US")
@@ -587,16 +588,15 @@ class TestBindingIsolation(unittest.TestCase):
         mock_exec.assert_called_once()
         self.assertIn("s-right", c._processed_signal_ids)
 
-    def test_drain_executes_unrouted_signal_regardless_of_consumer_binding(self):
-        """Signals without binding_id pass through even when consumer has binding_id."""
+    def test_drain_discards_unrouted_signal_regardless_of_consumer_binding(self):
+        """Signals without binding_id are rejected in governed paper mode."""
         unrouted = _make_signal("s-legacy")  # no binding_id field
         store = MagicMock()
         store.get_pending.return_value = [unrouted]
         c = SignalConsumer(store_client=store, binding_id="b-mine")
         with patch("services.execution.lean_runtime.signal_consumer.execute") as mock_exec:
             c.drain(algo=self._mock_algo())
-        mock_exec.assert_called_once()
-        self.assertIn("s-legacy", c._processed_signal_ids)
+        mock_exec.assert_not_called()
 
 
 class TestPendingSignalStoreQueueKey(unittest.TestCase):

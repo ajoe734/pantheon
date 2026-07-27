@@ -1,0 +1,73 @@
+# Pantheon repository distribution — path provisioning only.
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# Pantheon is a monorepo, not a publishable library. This distribution exists
+# for exactly one reason: to make the repository's three importable top-level
+# packages resolvable from an interpreter without depending on the working
+# directory or on PYTHONPATH.
+#
+# `services.telemetry.<module>` is a top-level name, and CPython resolves
+# top-level names only from `sys.path`. The complete set of ways the repository
+# root can reach `sys.path` is: the cwd/script entry, PYTHONPATH, or a
+# site-packages entry. The first two are exactly what
+# docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001/AC2_FEASIBILITY_PROOF.md
+# proves inadmissible, which leaves an installed distribution as the only
+# mechanism. Human/Ops authorized that mechanism as Option A of that proof, and
+# OPS-L12-PYTHON-PACKAGING-PROVISION-001 is the lane that owns it.
+#
+# WHAT THIS FILE DELIBERATELY DOES NOT DO
+# ---------------------------------------
+# * No `[project.dependencies]`. requirements.txt and the per-service
+#   requirements files remain the single source of runtime dependency truth.
+#   Installing this distribution installs import paths, never third-party
+#   packages, so it can never drift from or fight the requirements files.
+#   Provisioning therefore always runs with `--no-deps`.
+# * No `[tool.pytest.ini_options]`. pytest.ini remains the pytest config and
+#   rootdir anchor; pytest prefers pytest.ini over pyproject.toml, and splitting
+#   test configuration across two files would make rootdir resolution depend on
+#   which file happens to be found first.
+# * No automatic (flat-layout) package discovery. Flat-layout discovery would
+#   sweep the repository-root modules — cli.py, gate.py, workflows.py,
+#   conftest.py, mlflow_adapter.py — into the distribution as top-level names
+#   like `cli`, `gate`, and `workflows`, which collide with widely used PyPI
+#   distributions and would shadow or be shadowed by them. `packages.find`
+#   below is therefore an explicit allowlist.
+#
+# Install it through scripts/dev/provision_python_distribution.py, never by
+# hand: that script is the governed entry point shared by dev CI and the
+# auto-worker test bootstrap, and it fails closed if the installed mapping
+# points at a different checkout.
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pantheon-repo"
+version = "0.0.0"
+description = "Pantheon monorepo import paths (services, scripts, integrations). Not published; installed only to provision sys.path."
+requires-python = ">=3.11"
+# Intentionally empty: see the header. Dependencies live in requirements.txt.
+dependencies = []
+
+[tool.setuptools]
+# The repository is not a data-file distribution; keep MANIFEST/package-data
+# machinery out of the picture entirely so an install can only ever add import
+# paths.
+include-package-data = false
+
+[tool.setuptools.packages.find]
+where = ["."]
+# Explicit allowlist. Exactly three top-level names may be exported:
+#   services      — the service packages (regular package, has __init__.py)
+#   integrations  — the OSS integration packages (regular package)
+#   scripts       — the operational/test script tree (namespace package)
+# Anything else in the repository root stays unimportable as a top-level name,
+# which is what keeps this distribution collision-free.
+include = ["services*", "integrations*", "scripts*"]
+# scripts/ and several integrations/ subtrees have no __init__.py and are
+# genuine namespace packages; without this they would be silently dropped and
+# `scripts.*` imports would resolve differently under an installed
+# distribution than under a repository-root cwd.
+namespaces = true

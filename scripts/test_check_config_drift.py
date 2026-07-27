@@ -33,9 +33,9 @@ def test_find_drift_allowlisted_override_is_not_drift() -> None:
     assert report["intentional"][0]["path"] == "coordination.enabled"
 
 
-def test_coordination_disable_is_actionable_with_default_overrides() -> None:
-    repo = {"coordination": {"enabled": True}}
-    live = {"coordination": {"enabled": False}}
+def test_coordination_enable_is_actionable_with_default_overrides() -> None:
+    repo = {"coordination": {"enabled": False}}
+    live = {"coordination": {"enabled": True}}
 
     report = find_drift(
         repo,
@@ -46,7 +46,7 @@ def test_coordination_disable_is_actionable_with_default_overrides() -> None:
 
     assert report["intentional"] == []
     assert report["drift"] == [
-        {"path": "coordination.enabled", "repo": True, "live": False}
+        {"path": "coordination.enabled", "repo": False, "live": True}
     ]
 
 
@@ -172,11 +172,24 @@ def test_set_get_dotted_roundtrip() -> None:
 
 
 def test_git_commits_behind_parses_count() -> None:
+    commands = []
+
     def runner(cmd, **kwargs):
+        commands.append(cmd)
         if "rev-list" in cmd:
             return types.SimpleNamespace(returncode=0, stdout="22\n")
         return types.SimpleNamespace(returncode=0, stdout="")
+
     assert git_commits_behind(Path("/x"), "origin/dev", runner=runner) == 22
+    assert commands[0] == [
+        "git",
+        "-C",
+        "/x",
+        "fetch",
+        "--quiet",
+        "origin",
+        "dev:refs/remotes/origin/dev",
+    ]
 
 
 def test_git_commits_behind_none_on_failure() -> None:
