@@ -64,9 +64,7 @@ if [[ "$CURRENT" != "$TASK_BRANCH" ]]; then
   exit 2
 fi
 
-git fetch origin \
-  "+refs/heads/${DEV_BRANCH}:refs/remotes/origin/${DEV_BRANCH}" \
-  --quiet
+git fetch origin "+refs/heads/${DEV_BRANCH}:refs/remotes/origin/${DEV_BRANCH}" --quiet
 AHEAD=$(git rev-list --count "origin/${DEV_BRANCH}..HEAD")
 if [[ "$AHEAD" -eq 0 ]]; then
   echo "ERROR: $TASK_BRANCH has no commits ahead of origin/${DEV_BRANCH}; nothing to PR." >&2

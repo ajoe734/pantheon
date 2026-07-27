@@ -119,7 +119,8 @@ def test_cli_materializes_raw_signed_packet_through_ai_status(tmp_path: Path) ->
         "Claude",
         "Materialize assistant generated task",
     ]
-    assert record["ai_name"] == "management-ai"
+    assert record["ai_name"] == "Human/Ops"
+    assert record["auto_worker_markers"] == {}
     bridge = record["metadata"]["dev_bridge"]
     assert bridge["packet_id"] == "pkt_cli_live"
     assert bridge["conversation_id"] == "mgmt-nl-cli"
