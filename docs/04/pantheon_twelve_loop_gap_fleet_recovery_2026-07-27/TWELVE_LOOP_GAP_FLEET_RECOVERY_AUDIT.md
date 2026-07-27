@@ -191,5 +191,53 @@ to maximize real fleet parallelism:
 - hosted and final closeout are intentionally last;
 - Claude and Antigravity should be preferred when healthy, but the task packet
   must not stall forever if those lanes are paused/auth-down; healthy
-  supervisor-admitted workers may proceed with a recorded reason.
+supervisor-admitted workers may proceed with a recorded reason.
 
+## Continuation audit addendum — 2026-07-27T21:30Z
+
+After this packet was opened as PR #4277, the supervisor was used to dispatch
+the packet to real auto-worker lanes. This addendum records the additional
+evidence from that live run so the audit does not freeze at the earlier
+snapshot.
+
+### Dispatch and lane health
+
+- The three new control-plane tasks were admitted to supervisor/auto-worker
+  lanes, not conversation subagents.
+- Antigravity remained unavailable because the live provider probe reported
+  quota/auth failure (`local_cli_worker_supported=false`, `auth_ready=false`).
+- Claude remained unavailable after the quota pause window because the live
+  provider probe reported authentication/OAuth refresh failure.
+- Codex/Codex2 were usable for already-started workers, but the provider
+  watchdog repeatedly misclassified non-auth worker output and model-cache
+  output as auth pauses. That behavior is now confirmed as a fleet-control
+  bug, not an operator login task.
+
+### Task and PR outcomes observed after dispatch
+
+| Workstream | Live outcome | Updated gap |
+|---|---|---|
+| `L12-CURRENT-GAP-FLEET-AUDIT-20260727` / PR #4269 | Reviewer-approved exact head `5acc84f67972bbd3f63157250b50753c2199a35c`; merged to `dev` as `58f7ee46a95b55fc7a88bd399cd40e55350fbf73`; canonical task archived `done` | Closed point-in-time audit only. This does not prove twelve-loop operability. |
+| `OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001` / PR #4273 | Reviewer approved exact head `5ce0b9a58924bb47f9c2b369fc30821411051e81`; finalize worker produced a newer head `f91ed836aba84bd86bfd64ce0b1ce187f96be7de`; PR became `BEHIND` after #4269 merged | Needs latest-`dev` compose, exact-head CI, and final closeout. |
+| `L12-EVO-001` / PR #4267 | Independent reviewer rejected exact head `6a534392c81d0eca58d08f289f3a9e1dd033e992` | Real acceptance blocker: direct failed downstream receipt leaves decision `executed/failed`, no compensation, and pending outbox; root compose also defaults evolution auth to disabled/empty token, contradicting tenant-authority evidence. |
+| `L12-DIST-001` / PR #4193 | Independent reviewer rejected exact head `62fecb4bb4c8f1fd55eb3ae014b7e6f746c91b50` | Real acceptance blocker: Registry idempotency accepts same-id StrategySpec with different payload/lineage as terminal success, violating source/draft lineage and terminal-write proof. |
+| `L12-GITHUB-REVIEW-BRIDGE-001` | Worker implemented status-side GitHub review evidence plumbing, but also hit missing merge-gate file assumptions in its task worktree | Review bridge must be reconciled with the actual merge-gate code path on current `dev`; branch-protection proof remains incomplete. |
+| `L12-FLEET-WORKER-OUTCOME-001` | Worker added missing-worker/retry outcome tests; the same live run then exposed repeated stale auth-pause classification for Codex workers | Outcome tracking must include provider-pause classification tests for Codex model-cache/usage/auth distinctions and avoid indefinite false auth pauses. |
+
+### Addendum conclusion
+
+The execution packet successfully maximized available real fleet parallelism:
+multiple supervisor workers ran concurrently, and at least one audit task
+completed through PR merge and archival. It also proved that the twelve-loop
+program is still not complete. The remaining blockers are now more precise:
+
+1. Evolution loop failed on real terminal failure compensation and default
+   tenant-auth posture.
+2. Distillation loop failed on Registry idempotency/lineage verification.
+3. Telemetry closeout needs recompose after `dev` advanced.
+4. GitHub review bridge is still incomplete for branch-protection proof.
+5. Fleet provider health classification still produces false indefinite auth
+   pauses.
+
+Therefore the correct status is **fleet active, delivery incomplete, twelve
+loops not yet operational**.

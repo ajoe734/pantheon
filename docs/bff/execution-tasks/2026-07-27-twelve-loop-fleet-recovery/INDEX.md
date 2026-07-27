@@ -78,3 +78,24 @@ artifact-conflict guard is authoritative.
 
 All other workstreams are bound to existing task IDs in
 `CANONICAL_EXISTING_TASK_BINDINGS.md`.
+
+## Live dispatch update — 2026-07-27T21:30Z
+
+The first fleet run from this packet was executed through real
+supervisor-managed workers. It changed the execution state:
+
+- PR #4269 / `L12-CURRENT-GAP-FLEET-AUDIT-20260727` is now merged and archived
+  `done` at merge commit `58f7ee46a95b55fc7a88bd399cd40e55350fbf73`.
+- PR #4273 / `OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001` was independently
+  approved, then became behind after `dev` advanced; it must recompose before
+  closeout.
+- PR #4267 / `L12-EVO-001` was reopened with concrete acceptance failures in
+  direct failed-receipt compensation and default compose tenant authority.
+- PR #4193 / `L12-DIST-001` was reopened with a concrete Registry
+  idempotency/lineage failure.
+- `L12-GITHUB-REVIEW-BRIDGE-001` and `L12-FLEET-WORKER-OUTCOME-001` remain
+  active control-plane repairs.
+
+This update does not change the machine-readable task catalog. It clarifies the
+current dispatch frontier: do not create duplicate tasks for these reopened
+streams; continue through their canonical task IDs.
