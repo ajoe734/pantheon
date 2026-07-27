@@ -293,6 +293,45 @@ def test_two_api_processes_and_restarted_worker_share_one_authority(tmp_path: Pa
         assert record["status"] == "dead_lettered"
         assert record["delivery_attempts"] == 1
 
+        # Both API replicas consult the same durable replay timestamp. A
+        # concurrent replay trigger cannot race an in-memory cooldown on one
+        # replica and revive the record through the other.
+        replay_payload = {
+            "actor_id": "operator-process-proof",
+            "note": "Concurrent replay must respect durable cooldown.",
+            "tenant_id": TENANT_ID,
+        }
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            replay_outcomes = list(
+                pool.map(
+                    lambda args: _request_json(*args),
+                    [
+                        (
+                            first_url,
+                            "POST",
+                            f"/api/evolution/dispatch-outbox/{outbox_id}/replay",
+                            replay_payload,
+                        ),
+                        (
+                            second_url,
+                            "POST",
+                            f"/api/evolution/dispatch-outbox/{outbox_id}/replay",
+                            replay_payload,
+                        ),
+                    ],
+                )
+            )
+        assert [status for status, _ in replay_outcomes] == [409, 409], replay_outcomes
+        assert all(
+            "replay cooldown" in str(payload.get("detail") or "")
+            for _, payload in replay_outcomes
+        )
+        unchanged = outbox.get_by_id(outbox_id)
+        assert unchanged is not None
+        assert unchanged.status.value == "dead_lettered"
+        assert unchanged.delivery_attempts == 1
+        assert unchanged.redrive_count == 0
+
         status, decision = _request_json(
             second_url,
             "GET",
