@@ -767,6 +767,27 @@ def test_snapshot_reuses_the_checkpointed_prefix_and_only_parses_the_tail(
     assert incremental["state"] == growing_board(6)
 
 
+def test_unchanged_generation_reuses_the_process_snapshot_cache(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """One supervisor process must not hash one generation phase by phase."""
+
+    path = tmp_path / "task-state-events.jsonl"
+    store.append_state_commit(path, growing_board(1), source="test")
+    first = store.load_snapshot(path)
+
+    def unexpected_reload(_event_path: Path) -> dict:
+        raise AssertionError("unchanged journal generation was replayed")
+
+    monkeypatch.setattr(store, "_load_snapshot_unlocked", unexpected_reload)
+    second = store.load_snapshot(path)
+
+    assert second["last_event_id"] == first["last_event_id"]
+    assert second["state"] == first["state"]
+    second["state"]["tasks"][0]["status"] = "mutated-copy"
+    assert first["state"]["tasks"][0]["status"] == "todo"
+
+
 def test_checkpointed_snapshot_matches_a_forced_full_replay(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -911,6 +932,37 @@ def test_read_then_commit_costs_one_journal_pass(tmp_path: Path, monkeypatch) ->
 
     assert passes == ["checkpoint", "checkpoint"]
     assert store.load_snapshot(path)["state"]["tasks"][0]["status"] == "in_progress"
+
+
+def test_snapshot_transaction_reuses_one_validation_across_durable_saves(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Outbox saves advance one stable head without re-hashing its prefix."""
+
+    path = tmp_path / "task-state-events.jsonl"
+    store.append_state_commit(path, board(("T-0", "todo")), source="test")
+
+    passes = _replays(monkeypatch)
+    with store.snapshot_transaction(path) as transaction:
+        current = transaction.load_snapshot()["state"]
+        current["tasks"][0]["status"] = "in_progress"
+        first = transaction.append_state_commit(current, source="ai-status")
+
+        current = transaction.load_snapshot()["state"]
+        current["tasks"][0]["next"] = "activity outbox cleared"
+        second = transaction.append_state_commit(current, source="ai-status")
+
+    assert passes == ["checkpoint"]
+    events = store.load_events(path)
+    assert [event["sequence"] for event in events] == [1, 2, 3]
+    assert first["previous_event_sha256"] == events[0]["event_sha256"]
+    assert second["previous_event_sha256"] == first["event_sha256"]
+    assert events[-1]["state"] == current
+
+    monkeypatch.setenv(store.FULL_REPLAY_ENV, "1")
+    audited = store.load_snapshot(path)
+    assert audited["state"] == current
+    assert audited["last_event_sha256"] == second["event_sha256"]
 
 
 def test_append_readback_detects_a_short_write(tmp_path: Path, monkeypatch) -> None:
