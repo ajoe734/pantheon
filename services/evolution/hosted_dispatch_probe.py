@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 import urllib.error
 import urllib.request
@@ -36,14 +37,34 @@ def _request_json(
     payload: dict[str, Any] | None,
     timeout_seconds: float,
     request_ledger: list[dict[str, Any]],
+    tenant_id: str | None = None,
+    auth_token: str | None = None,
 ) -> dict[str, Any]:
     requested_at = _utc_now()
     url = api_url.rstrip("/") + path
     body = json.dumps(payload).encode("utf-8") if payload is not None else None
+    effective_tenant = (
+        tenant_id
+        or os.getenv("EVOLUTION_PROBE_TENANT_ID")
+        or os.getenv("EVOLUTION_DEFAULT_TENANT_ID")
+        or "pantheon-default"
+    ).strip()
+    effective_token = (
+        auth_token
+        if auth_token is not None
+        else os.getenv("EVOLUTION_AUTH_TOKEN", "").strip() or None
+    )
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "X-Tenant-Id": effective_tenant,
+    }
+    if effective_token:
+        headers["Authorization"] = f"Bearer {effective_token}"
     request = urllib.request.Request(
         url,
         data=body,
-        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        headers=headers,
         method=method,
     )
     try:
@@ -238,7 +259,7 @@ def _executed_steps(decision: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _assert_research_execution(
-    decision: dict[str, Any], *, expected_execution_ref_id: str
+    decision: dict[str, Any], *, expected_execution_ref_id: str | None
 ) -> None:
     decision_id = decision.get("decision_id")
     if decision.get("decision_state") != "executed":
@@ -246,17 +267,24 @@ def _assert_research_execution(
     execution = decision.get("execution_result")
     if not isinstance(execution, dict):
         raise ProbeError(f"{decision_id} has no execution_result")
-    expected = {
-        "status": "submitted",
-        "plane": "research",
-        "execution_ref_id": expected_execution_ref_id,
-    }
+    expected = {"status": "succeeded", "plane": "research"}
     for field, value in expected.items():
         if execution.get(field) != value:
             raise ProbeError(
                 f"{decision_id} execution {field}={execution.get(field)!r}; "
                 f"expected {value!r}"
             )
+    execution_ref_id = execution.get("execution_ref_id")
+    if not isinstance(execution_ref_id, str) or not execution_ref_id:
+        raise ProbeError(f"{decision_id} execution_result lacks a downstream receipt ref")
+    if (
+        expected_execution_ref_id is not None
+        and execution_ref_id != expected_execution_ref_id
+    ):
+        raise ProbeError(
+            f"{decision_id} execution_ref_id={execution_ref_id!r}; "
+            f"expected preserved receipt {expected_execution_ref_id!r}"
+        )
     if not execution.get("executed_at"):
         raise ProbeError(f"{decision_id} execution_result lacks executed_at")
     if not decision.get("cooldown_ends_at") or not decision.get(
@@ -405,9 +433,7 @@ def run_initial_probe(
         time.sleep(poll_interval_seconds)
     if research is None or research.get("decision_state") != "executed":
         raise ProbeError(f"{research_id} was not executed before probe timeout")
-    _assert_research_execution(
-        research, expected_execution_ref_id=f"dispatch-{research_id}"
-    )
+    _assert_research_execution(research, expected_execution_ref_id=None)
 
     freeze_deadline = time.monotonic() + freeze_observation_seconds
     while time.monotonic() < freeze_deadline:

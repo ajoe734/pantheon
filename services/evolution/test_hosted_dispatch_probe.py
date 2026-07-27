@@ -49,9 +49,9 @@ class _FakeEvolutionApi:
             if decision["decision_state"] == "approved":
                 decision["decision_state"] = "executed"
                 decision["execution_result"] = {
-                    "status": "submitted",
+                    "status": "succeeded",
                     "plane": "research",
-                    "execution_ref_id": f"dispatch-{decision_id}",
+                    "execution_ref_id": f"rrun-{decision_id}",
                     "executed_at": "2026-07-14T00:00:00Z",
                 }
                 decision["cooldown_ends_at"] = "2026-07-17T00:00:00Z"
@@ -119,8 +119,9 @@ def test_initial_probe_never_executes_directly_and_leaves_freeze_approved(
         for entry in output["mutating_requests"]
     )
     assert output["research"]["decision_state"] == "executed"
+    assert output["research"]["execution_result"]["status"] == "succeeded"
     assert output["research"]["execution_result"]["execution_ref_id"] == (
-        "dispatch-evoloop-test-research"
+        "rrun-evoloop-test-research"
     )
     assert output["freeze"]["decision_state"] == "approved"
     assert output["freeze"]["execution_result"] is None

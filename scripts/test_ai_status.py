@@ -1471,14 +1471,34 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         ]
 
     def test_approve_records_the_reviewed_pr_head_binding(self) -> None:
-        with mock.patch.dict(
-            os.environ,
-            {
-                "AI_NAME": "Claude",
-                "REVIEW_PR": "#4218",
-                "REVIEW_HEAD_SHA": "B" * 40,
-            },
-            clear=False,
+        bridge_evidence = {
+            "repository": "ajoe734/pantheon",
+            "pr": 4218,
+            "head_sha": "b" * 40,
+            "head_branch": "task/REG-002",
+            "base": "dev",
+            "decision": "approve",
+            "actor": "Claude",
+            "mode": "required_commit_status",
+            "status_id": 101,
+            "status_context": ai_status.GITHUB_CANONICAL_REVIEW_CONTEXT,
+            "status_state": "success",
+        }
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    "AI_NAME": "Claude",
+                    "REVIEW_PR": "#4218",
+                    "REVIEW_HEAD_SHA": "B" * 40,
+                },
+                clear=False,
+            ),
+            mock.patch.object(
+                ai_status,
+                "bridge_github_review_decision",
+                return_value=bridge_evidence,
+            ) as github_bridge,
         ):
             ai_status.command_approve(
                 self.state,
@@ -1493,9 +1513,48 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         }
         task = ai_status.get_task(self.state, "REG-002")
         self.assertEqual(task["review_binding"], expected)
+        self.assertEqual(task["github_review_bridge"], bridge_evidence)
+        self.assertTrue(ai_status.github_review_bridge_evidence_matches(task))
+        github_bridge.assert_called_once_with(
+            task,
+            actor="Claude",
+            decision="approve",
+            message="Approved the exact head.",
+            binding=expected,
+        )
         events = self._approval_events()
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["review_binding"], expected)
+        self.assertEqual(events[0]["github_review_bridge"], bridge_evidence)
+
+    def test_approve_bridge_failure_preserves_review_state(self) -> None:
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    "AI_NAME": "Claude",
+                    "REVIEW_PR": "4269",
+                    "REVIEW_HEAD_SHA": "a" * 40,
+                },
+                clear=False,
+            ),
+            mock.patch.object(
+                ai_status,
+                "bridge_github_review_decision",
+                side_effect=SystemExit("GitHub still reports REVIEW_REQUIRED"),
+            ),
+            self.assertRaisesRegex(SystemExit, "REVIEW_REQUIRED"),
+        ):
+            ai_status.command_approve(
+                self.state,
+                ["REG-002", "Internal approval alone is insufficient."],
+            )
+
+        task = ai_status.get_task(self.state, "REG-002")
+        self.assertEqual(task["status"], "review")
+        self.assertNotIn("review_binding", task)
+        self.assertNotIn("github_review_bridge", task)
+        self.assertEqual(self._approval_events(), [])
 
     def test_approve_without_a_binding_warns_but_still_approves(self) -> None:
         with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
@@ -1505,6 +1564,26 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(task["status"], "review_approved")
         self.assertNotIn("review_binding", task)
         self.assertNotIn("review_binding", self._approval_events()[0])
+
+    def test_approve_refuses_internal_only_verdict_for_pr_backed_task(self) -> None:
+        self.state["tasks"][0]["source_ref"] = {
+            "pr": 4269,
+            "head_sha": "a" * 40,
+            "base": "dev",
+        }
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False),
+            self.assertRaisesRegex(SystemExit, "internal activity approval alone"),
+        ):
+            ai_status.command_approve(
+                self.state,
+                ["REG-002", "No exact head supplied."],
+            )
+
+        task = ai_status.get_task(self.state, "REG-002")
+        self.assertEqual(task["status"], "review")
+        self.assertNotIn("review_binding", task)
+        self.assertEqual(self._approval_events(), [])
 
     def test_fixture_clears_inherited_review_inputs_for_no_binding_approval(
         self,
@@ -2324,6 +2403,74 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(len(pending), 1)
         self.assertEqual(pending[0]["from"], "Claude")
         self.assertEqual(pending[0]["to"], "Codex")
+
+    def test_reviewer_reopen_bridges_existing_exact_head_rejection(self) -> None:
+        binding = {
+            "pr": 4269,
+            "head_sha": "a" * 40,
+            "head_branch": "task/REG-002",
+            "base": "dev",
+        }
+        bridge_evidence = {
+            "repository": "ajoe734/pantheon",
+            **binding,
+            "decision": "reopen",
+            "actor": "Claude",
+            "mode": "required_commit_status",
+            "status_id": 102,
+            "status_context": ai_status.GITHUB_CANONICAL_REVIEW_CONTEXT,
+            "status_state": "failure",
+        }
+        self.state["tasks"][0]["status"] = "review_approved"
+        self.state["tasks"][0]["review_binding"] = binding
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False),
+            mock.patch.object(
+                ai_status,
+                "bridge_github_review_decision",
+                return_value=bridge_evidence,
+            ) as github_bridge,
+        ):
+            ai_status.command_reopen(
+                self.state,
+                ["REG-002", "GitHub gate must remain blocked."],
+            )
+
+        task = ai_status.get_task(self.state, "REG-002")
+        self.assertEqual(task["status"], "in_progress")
+        self.assertEqual(task["github_review_bridge"], bridge_evidence)
+        github_bridge.assert_called_once_with(
+            task,
+            actor="Claude",
+            decision="reopen",
+            message="GitHub gate must remain blocked.",
+            binding=binding,
+        )
+
+    def test_reviewer_reopen_refuses_unbound_pr_rejection(self) -> None:
+        self.state["tasks"][0]["source_ref"] = {
+            "pr": 4269,
+            "head_sha": "a" * 40,
+            "base": "dev",
+        }
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False),
+            self.assertRaisesRegex(SystemExit, "rejection.*GitHub review gate"),
+        ):
+            ai_status.command_reopen(
+                self.state,
+                ["REG-002", "Changes are required."],
+            )
+
+        task = ai_status.get_task(self.state, "REG-002")
+        self.assertEqual(task["status"], "review")
+        self.assertFalse(
+            [
+                handoff
+                for handoff in self.state["handoffs"]
+                if handoff.get("from") == "Claude"
+            ]
+        )
 
     def test_human_ops_reopen_clears_blocker_without_impersonating_worker(self) -> None:
         self.state["tasks"][0]["status"] = "blocked"
@@ -4384,6 +4531,86 @@ class PortableStateRenderingTests(unittest.TestCase):
         self.assertEqual(bundle["worker_task_links"][0]["mismatch_count"], 1)
         self.assertIn("running_worker_on_todo", bundle["worker_task_links"][0]["mismatch_flags"])
         self.assertTrue(bundle["worker_task_links"][0]["resolution_hints"])
+
+    def test_dashboard_flags_internal_approval_without_github_gate_evidence(self) -> None:
+        binding = {
+            "pr": 4269,
+            "head_sha": "a" * 40,
+            "head_branch": "task/AUDIT-001",
+            "base": "dev",
+        }
+        task = {
+            "id": "AUDIT-001",
+            "owner": "Codex",
+            "reviewer": "Codex2",
+            "status": "review_approved",
+            "review_binding": binding,
+            "last_update": "2026-07-27T21:21:10Z",
+        }
+        resolver = mock.Mock()
+        resolver.source.return_value = "active"
+
+        _workers, mismatches = ai_status.detect_truth_mismatches(
+            {"tasks": [task]},
+            [],
+            [],
+            {"pending": []},
+            resolver,
+            {},
+        )
+
+        mismatch = next(
+            item for item in mismatches
+            if item["type"] == "github_review_gate_missing"
+        )
+        self.assertEqual(
+            mismatch["id"],
+            "github-review-gate-missing:AUDIT-001",
+        )
+        self.assertEqual(mismatch["severity"], "high")
+        self.assertIn("不得把 internal review_approved", mismatch["resolution_hint"])
+
+    def test_dashboard_accepts_matching_branch_policy_review_evidence(self) -> None:
+        binding = {
+            "pr": 4269,
+            "head_sha": "a" * 40,
+            "head_branch": "task/AUDIT-001",
+            "base": "dev",
+        }
+        task = {
+            "id": "AUDIT-001",
+            "owner": "Codex",
+            "reviewer": "Codex2",
+            "status": "review_approved",
+            "review_binding": binding,
+            "github_review_bridge": {
+                "repository": "ajoe734/pantheon",
+                **binding,
+                "decision": "approve",
+                "actor": "Codex2",
+                "mode": "required_commit_status",
+                "status_id": 101,
+                "status_context": ai_status.GITHUB_CANONICAL_REVIEW_CONTEXT,
+                "status_state": "success",
+            },
+            "last_update": "2026-07-27T21:21:10Z",
+        }
+        resolver = mock.Mock()
+        resolver.source.return_value = "active"
+
+        _workers, mismatches = ai_status.detect_truth_mismatches(
+            {"tasks": [task]},
+            [],
+            [],
+            {"pending": []},
+            resolver,
+            {},
+        )
+
+        self.assertNotIn(
+            "github_review_gate_missing",
+            {item["type"] for item in mismatches},
+        )
 
     def test_related_live_sidecar_worker_does_not_flag_parent_as_without_worker(self) -> None:
         state = {
