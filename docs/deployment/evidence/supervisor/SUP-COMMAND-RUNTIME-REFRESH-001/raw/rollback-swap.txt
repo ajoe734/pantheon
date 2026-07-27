@@ -1,0 +1,13 @@
+[swap 2026-07-27T16:06:28Z] new_root=/home/lupin/pantheon-ci-deploy/dev-root-6692d51c9bc5 target_sha=6692d51c9bc5a48ffcbaac8cf817b635351a7c9a log=/home/lupin/pantheon/.orchestrator/logs/supervisor-rollback-6692-20260727T160628Z.log
+[swap 2026-07-27T16:06:30Z] old_pid=395813 old_cwd=/home/lupin/pantheon-ci-deploy/dev-root-29054ab270d5
+[swap 2026-07-27T16:06:30Z] recording intentional restart (waits for the in-flight cycle to release the runtime lock)
+recorded intentional deploy restart pid=395813 target=6692d51c9bc5a48ffcbaac8cf817b635351a7c9a expires_at=2026-07-27T16:11:30Z
+[swap 2026-07-27T16:06:30Z] intentional restart recorded
+[swap 2026-07-27T16:06:30Z] acquiring runtime admission lock before TERM
+[swap-inner 2026-07-27T16:06:30Z] holding admission lock; sending TERM to 395813
+[swap-inner 2026-07-27T16:06:30Z] old supervisor 395813 exited
+[swap 2026-07-27T16:06:30Z] runtime admission lock released
+[swap 2026-07-27T16:06:30Z] launching supervisor from /home/lupin/pantheon-ci-deploy/dev-root-6692d51c9bc5
+[swap 2026-07-27T16:06:33Z] new_pid=466881 new_cwd=/home/lupin/pantheon-ci-deploy/dev-root-6692d51c9bc5
+[swap 2026-07-27T16:06:33Z] log=/home/lupin/pantheon/.orchestrator/logs/supervisor-rollback-6692-20260727T160628Z.log
+[2026-07-28 00:06:31] starting supervisor pid=466881 poll_interval=30.0s source=config config=/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json

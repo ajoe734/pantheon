@@ -1,0 +1,3 @@
+[swap 2026-07-27T16:09:07Z] new_root=/home/lupin/pantheon-ci-deploy/dev-root-29054ab270d5 target_sha=29054ab270d552a56ed071cedf3f45150e948b6a log=/home/lupin/pantheon/.orchestrator/logs/supervisor-rollforward-29054-20260727T160907Z.log
+[swap 2026-07-27T16:09:09Z] old_pid=466881 old_cwd=/home/lupin/pantheon-ci-deploy/dev-root-6692d51c9bc5
+[swap 2026-07-27T16:09:09Z] discover-only: stopping before the intentional restart declaration

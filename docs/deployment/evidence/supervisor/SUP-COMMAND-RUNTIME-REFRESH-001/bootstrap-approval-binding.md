@@ -1,7 +1,7 @@
 # SUP-COMMAND-RUNTIME-REFRESH-001 approval-binding bootstrap
 
-Status: ready for independent review; this is not the final runtime-refresh
-acceptance record.
+Status: independently reviewed and merged through PR #4254; retained as the
+bootstrap record and superseded for final acceptance by `evidence.json`.
 
 Owner: Codex
 Reviewer: Codex2
