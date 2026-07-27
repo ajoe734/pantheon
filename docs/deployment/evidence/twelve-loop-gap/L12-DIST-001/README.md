@@ -1,8 +1,12 @@
 # L12-DIST-001 transactional distillation evidence
 
-Owner: Claude
-Reviewer: Antigravity
+Owner: Codex2
+Reviewer: Codex
 Status: owner implementation and acceptance proof ready; independent review pending
+
+This cut scanned through authoritative task-state journal sequence 2551. The
+canonical row at that boundary reports `in_progress`, owner `Codex2`, reviewer
+`Codex`; later journal events are outside this owner cut.
 
 ## Outcome
 
@@ -20,7 +24,8 @@ event pipeline instead of a polling JSONL scan.
   outbox, and dead-letter tables move together on every terminal update.
 - **Leased claims.** Claims are fenced by a unique lease token and a lease
   epoch. An expired lease is recovered back to `pending`; a completion carrying
-  a stale token is rejected rather than silently applied.
+  either a stale token or an already-expired token is rejected rather than
+  silently applied.
 - **Truthful Registry delivery.** A job is acknowledged only after a terminal
   Registry readback. Write failure parks a durable retry with backoff and
   dead-letters after the attempt budget, and the controller tick raises with
@@ -31,7 +36,7 @@ event pipeline instead of a polling JSONL scan.
 
 ## Defects this work found and fixed
 
-Both were found by writing the acceptance proof, not by inspection.
+All five were found or reproduced through acceptance regressions.
 
 1. **Registry sync fell outside the seed's evidence lineage.** The worker
    resolved a version key for the evidence item, but the controller
@@ -57,6 +62,20 @@ Both were found by writing the acceptance proof, not by inspection.
    persisted 39, 39, and 38 of 40 seeds across three runs. With the lease all
    40 persist on every run.
 
+4. **An expired worker could still commit a terminal result.** Terminal
+   updates checked the lease token and `leased` status but not
+   `lease_expires_at`. Before another worker reclaimed the job, an already
+   expired owner could still write `done`, `failed`, `skipped`, or a terminal
+   dead letter. Every claimed terminal transition now fails closed at the
+   expiry boundary as well as on token mismatch.
+
+5. **An intervening revision changed replay materialization identity.** The
+   first version of a source used an unversioned evidence bundle while it was
+   the only version, then switched to a digest-keyed bundle if a later
+   revision arrived before outage replay. The same job could therefore create
+   a second seed identity. A versioned job now always derives its evidence
+   item, bundle, and seed lineage from its admission-time source digest.
+
 ## Acceptance evidence
 
 All proofs live in
@@ -66,8 +85,8 @@ one class per acceptance criterion.
 | Acceptance | Result | Evidence |
 |---|---|---|
 | Committed normalized SourceRecord transactionally enqueues one versioned job | Pass | `TestVersionedAdmission` — duplicate admission yields one job and one version row; the job carries its own committed snapshot; a contradicting payload under the same identity rolls back the whole admission |
-| Concurrent workers claim with lease, revised content handled by digest | Pass | `TestConcurrentWorkers` — two spawned OS processes claim disjoint jobs, and a barrier-synchronized two-process run distills 40 sources to 40 distinct seeds with both workers demonstrably contending; stale lease completion is rejected; revised content is a distinct version while an identical re-crawl is not |
-| Registry failure records controller failure and durable retry or DLQ | Pass | `TestRegistryFailureIsTruthful` — the tick raises at stage `registry_sync`, records no success, parks a durable retry, dead-letters with a redrivable payload after the attempt budget, and replays to `done` on recovery |
+| Concurrent workers claim with lease, revised content handled by digest | Pass | `TestConcurrentWorkers` — two spawned OS processes claim disjoint jobs, and a barrier-synchronized two-process run distills 40 sources to 40 distinct seeds with both workers demonstrably contending; stale and expired lease terminal transitions are rejected; revised content is a distinct version while an identical re-crawl is not |
+| Registry failure records controller failure and durable retry or DLQ | Pass | `TestRegistryFailureIsTruthful` — the tick raises at stage `registry_sync`, records no success, parks a durable retry, dead-letters with a redrivable payload after the attempt budget, replays to `done` on recovery, and preserves the first job's seed identity when a revision arrives during the outage |
 | Approved immutable artifacts remain unchanged | Pass | `TestApprovedArtifactsAreImmutable` — an approved entry is never written, approval landing between probe and readback still blocks mutation, and an accepted seed draft is not overwritten |
 | Crash before or after Registry write replays to one terminal draft | Pass | `TestCrashReplay` — a crash before the write replays after lease expiry to one draft; a lost acknowledgement after a landed write replays by readback without a second Registry entry; repeated ticks stay idempotent |
 
@@ -77,15 +96,17 @@ one class per acceptance criterion.
 |---|---|---|
 | Real source-to-registry service test | Pass | `TestRealSourceToRegistryService` serves the real `services/registry` FastAPI app over real HTTP on a real port and drives a full controller tick through it. Source lineage (`source_id`, `source_digest`, `source_event_version`) is read back over HTTP from the registered entry. No HTTP mock is used in this section. |
 | Two-worker and revised-content test | Pass | Genuinely independent OS processes via `multiprocessing` `spawn`, synchronized by a shared barrier so both processes contend on the same ledger and seed store. Thread coverage is retained only as `TestThreadRegressions` and is explicitly not the concurrency acceptance proof. |
-| Registry outage and replay | Pass | Both a simulated outage (`TestRegistryFailureIsTruthful`) and a real one against a port with nothing listening, then recovery against the real service (`test_real_service_outage_then_recovery_replays_once`). |
+| Registry outage and replay | Pass | Both a simulated outage (`TestRegistryFailureIsTruthful`) and a real one against a port with nothing listening, then recovery against the real service (`test_real_service_outage_then_recovery_replays_once`). The intervening-revision regression proves the original job reuses the same digest-keyed bundle and seed identity. |
 | Approved-artifact immutability | Pass | `TestApprovedArtifactsAreImmutable`, including the approve-between-probe-and-write race. |
 
 ## Validation
 
 Commands run in this task worktree with `/home/lupin/pantheon/.venv/bin/python3`:
 
-- `pytest services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py` — 22 passed.
-- `pytest services/source_ingestion` — 752 passed, 2 skipped.
+- Exact expiry, crash-before/after, outage/recovery, and intervening-revision
+  regression selection — 8 passed.
+- `pytest services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_distillation_controller.py` — 62 passed after merging current `origin/dev`.
+- `pytest services/source_ingestion` — 754 passed, 2 skipped.
 - `pytest services/registry services/research/strategy_spec` — 229 passed
   (regression cover for the shared `JsonlRegistryStore` change and the
   conversion path).
@@ -97,8 +118,8 @@ Commands run in this task worktree with `/home/lupin/pantheon/.venv/bin/python3`
 
 This task owns the distillation worker, its controller's Registry sink, and the
 shared JSONL registry store's read-modify-write safety. It does not change seed
-materialization semantics, the Registry HTTP contract, or the source ingestion
-controller surface owned by `L12-SRC-001`, the allowed overlap task.
+schema or materializer API, the Registry HTTP contract, or the source
+ingestion controller surface owned by `L12-SRC-001`, the allowed overlap task.
 
 This packet does not claim hosted deployment, a real external crawl, live
 broker or capital authority, or any approval-gate change.
