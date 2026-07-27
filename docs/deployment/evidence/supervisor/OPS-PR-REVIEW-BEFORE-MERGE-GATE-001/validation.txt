@@ -4,14 +4,14 @@ archive filename case/escaping, and both PR-opening helpers verify
 autoMergeRequest after revocation and fail closed while it remains armed.
 
 The task branch contains origin/dev
-a7d10d85f972430e3969fb87a8551712ce0d694c, including the specifically
+c3cfdfabae1d73b4b992f8824a529e26f6730ac6, including the specifically
 requested 558c42352129737117dbe9fafb1f863b72e0fe24 composition. The validated
-implementation tree is b21f79f3b71b00fb720379e2333a1eb73ad59a49; the
+implementation tree is 7d8c05b247b5b2e215922c8c1ea5bc3472c93b59; the
 following task commit changes evidence only.
 
 == python3 scripts/git/test_task_review_merge_gate.py
 ----------------------------------------------------------------------
-Ran 84 tests in 3.030s
+Ran 84 tests in 3.693s
 OK
 
 == python3 scripts/git/test_auto_integrator.py
@@ -21,7 +21,7 @@ OK
 
 == python3 scripts/git/test_git_workflow_helpers.py
 ----------------------------------------------------------------------
-Ran 52 tests in 2.140s
+Ran 52 tests in 2.351s
 OK
 
 == python3 scripts/git/test_task_pr_triage.py
@@ -31,12 +31,12 @@ OK
 
 == python3 scripts/git/test_index_safety.py
 ----------------------------------------------------------------------
-Ran 17 tests in 5.404s
+Ran 17 tests in 2.824s
 OK
 
 == python3 scripts/test_ai_status.py
 ----------------------------------------------------------------------
-Ran 141 tests in 12.225s
+Ran 141 tests in 11.186s
 OK
 
 == bash -n helpers
