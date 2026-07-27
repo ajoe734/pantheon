@@ -5,9 +5,10 @@ import sys
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT))
 
-import auto_integrator
+from scripts.git import auto_integrator
 
 
 class FakeRunner(auto_integrator.CommandRunner):

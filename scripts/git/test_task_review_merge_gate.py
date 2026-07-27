@@ -22,10 +22,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT))
 
-import auto_integrator
-import task_review_merge_gate as gate
+from scripts.git import auto_integrator
+from scripts.git import task_review_merge_gate as gate
+from scripts.git.test_auto_integrator import FakeRunner, completed
 
 
 NOW = datetime(2026, 7, 26, 22, 0, 0, tzinfo=timezone.utc)
@@ -1511,11 +1513,6 @@ class IntegratorGateTests(unittest.TestCase):
 
     @staticmethod
     def _runner(pr: Mapping[str, Any] | None, **kwargs: Any) -> Any:
-        try:
-            from test_auto_integrator import FakeRunner
-        except ModuleNotFoundError:
-            from scripts.git.test_auto_integrator import FakeRunner
-
         return FakeRunner(pr=pr, **kwargs)
 
     def _gate(self, *, tasks: Sequence[Mapping[str, Any]], events: Sequence[Mapping[str, Any]]) -> auto_integrator.ReviewGate:
@@ -1724,11 +1721,6 @@ class IntegratorGateTests(unittest.TestCase):
             if command[:3] == ["git", "rev-parse", "HEAD"]:
                 state["calls"] += 1
                 runner.commands.append(command)
-                try:
-                    from test_auto_integrator import completed
-                except ModuleNotFoundError:
-                    from scripts.git.test_auto_integrator import completed
-
                 return completed(command, stdout=("before\n" if state["calls"] == 1 else "after\n"))
             return original_run(args, **kwargs)
 
@@ -1785,11 +1777,6 @@ class IntegratorGateTests(unittest.TestCase):
             if command[:3] == ["git", "rev-parse", "HEAD"]:
                 state["calls"] += 1
                 runner.commands.append(command)
-                try:
-                    from test_auto_integrator import completed
-                except ModuleNotFoundError:
-                    from scripts.git.test_auto_integrator import completed
-
                 return completed(command, stdout=("before\n" if state["calls"] == 1 else "after\n"))
             return original_run(args, **kwargs)
 
@@ -1808,11 +1795,6 @@ class IntegratorGateTests(unittest.TestCase):
         self.assertEqual(merge_commands, [["gh", "pr", "merge", "100", "--disable-auto"]])
 
     def test_concurrent_open_prs_for_one_task_branch_fail_closed(self) -> None:
-        try:
-            from test_auto_integrator import FakeRunner, completed
-        except ModuleNotFoundError:
-            from scripts.git.test_auto_integrator import FakeRunner, completed
-
         class AmbiguousRunner(FakeRunner):
             def run(self, args: Sequence[str], **kwargs: Any):  # type: ignore[override]
                 command = [str(arg) for arg in args]
