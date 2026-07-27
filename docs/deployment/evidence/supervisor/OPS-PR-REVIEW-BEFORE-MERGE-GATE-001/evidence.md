@@ -14,9 +14,13 @@ A later independent pass rejected PR #4218 head
 `23109d468ea1c5ccda9318253d5b4221eac92d61` because its reviewed base
 `eecb96fa3826e8e3527a77da7f187a32b33c6c93` had become stale. Codex preserved
 that rejection, fetched `dev` through the explicit remote-tracking refspec,
-composed authoritative base `6692d51c9bc5a48ffcbaac8cf817b635351a7c9a`,
-and revalidated implementation tree
-`0ab8cbeb1952b3c98ebccf720cc97cb77c5eacf9` before this evidence-only refresh.
+and composed authoritative base `6692d51c9bc5a48ffcbaac8cf817b635351a7c9a`.
+The next exact-head review rejected `dcd4b9ccf80d520c6d95cb84e5e4a83091c71dc3`
+because the integrator trusted a zero `--disable-auto` exit without reading
+live `autoMergeRequest` back. Codex added that mandatory readback, composed
+current authoritative base `125cf21c21d1570eba59904d809f774131f33d9e`, and
+revalidated implementation tree
+`86ce9f3028e11856179bb19838f2cfd1453426af` before this evidence-only refresh.
 
 Scope rule honoured throughout: **no `.orchestrator/config.json` edit**, no
 hand-edited task board, no owner or reviewer action performed on behalf of
@@ -134,13 +138,15 @@ explicitly forbidden to make.
 
 Section 4 of `prefix-reproduction.txt` replays all eight from recorded state.
 
-### 1.3 Four fail-open cases the reviewed implementations still had
+### 1.3 Fail-open cases the reviewed implementations still had
 
 Independent review at exact head `190fb7fe8` rejected the first implementation
 with two reproduced fail-open cases. A later review at exact head `5a9ad1643`
-found two more. All four are now closed; the first pair is replayed against
-the pre-fix modules in §5 of `prefix-reproduction.txt`, and the second pair is
-pinned directly by the 84-test gate suite.
+found two more, and the review at `dcd4b9ccf` extended the revocation finding
+to the zero-exit/still-armed case. All are now closed; the first pair is replayed
+against the pre-fix modules in §5 of `prefix-reproduction.txt`, the latest
+revocation shape is replayed in §8, and all cases are pinned by the 87-test
+gate suite.
 
 **The approval was not structurally bound to the reviewed head.**
 `command_approve` recorded only actor, timestamp and free-text message, and
@@ -350,7 +356,7 @@ and block, instead of silently resolving to the first row returned by GitHub.
 |---|----------------------|--------|--------------|
 | 1 | A canonical review-before-merge task never enables or performs merge before exact assigned reviewer approval | pass | `TaskFinalizeShellTests`, `IntegratorGateTests::test_unapproved_gated_pr_is_never_merged_and_auto_merge_is_revoked`, `prefix-reproduction.txt` §1–§2 |
 | 2 | Approval is bound to exact PR head, expected base, reviewer identity, and a non-stale timestamp | pass | `ApprovalBindingTests` (the recorded binding, compared exactly), `ai_status` `::test_approve_records_the_reviewed_pr_head_binding`, `ApprovedPathTests`, `FailClosedTests::test_head_change_after_approval_blocks`, `::test_wrong_base_branch_blocks`, `::test_approval_by_another_agent_blocks`, `::test_future_approval_timestamp_blocks` |
-| 3 | Reviewer rejection, head change, missing state, GitHub ambiguity, failed revocation in either helper/integrator, and concurrent finalize all fail closed | pass | `FailClosedTests`, `UnreadableStateTests`, `ApprovalBindingTests::test_pre_dated_head_replacement_is_refused`, the task-finalize/safe-pr failed-revocation shell regressions, `IntegratorGateTests::test_concurrent_open_prs_for_one_task_branch_fail_closed`, `::test_failed_auto_merge_revocation_never_reaches_the_merge`, `--match-head-commit` on the merge call |
+| 3 | Reviewer rejection, head change, missing state, GitHub ambiguity, failed or unverified revocation in either helper/integrator, and concurrent finalize all fail closed | pass | `FailClosedTests`, `UnreadableStateTests`, `ApprovalBindingTests::test_pre_dated_head_replacement_is_refused`, the task-finalize/safe-pr failed-revocation shell regressions, `IntegratorGateTests::test_successful_revocation_that_still_reads_armed_never_merges`, `::test_unreadable_revocation_readback_never_reaches_the_merge`, `::test_nonzero_revocation_can_continue_only_when_readback_proves_off`, `::test_concurrent_open_prs_for_one_task_branch_fail_closed`, `--match-head-commit` on the merge call |
 | 4 | Tasks explicitly governed as merge-then-review retain their documented integration behavior | pass | `PolicyResolutionTests`, `IntegratorGateTests::test_merge_then_review_task_keeps_its_documented_behavior`, `TaskFinalizeShellTests::test_merge_then_review_task_still_enables_auto_merge` |
 | 5 | Regression fixtures cover PRs #4212, #4213 and #4214 without impersonating owner or reviewer | pass | `PrematureMergeRegressionTests` (recorded state replayed as data only) |
 | 6 | Focused workflow tests cover branch, commit, push, PR, checks, independent review, merge, and uppercase production-shape evidence archive | pass | `validation.txt`, `UnreadableStateTests::test_archived_task_row_is_still_gated` |
@@ -368,20 +374,26 @@ The full map of PR → entry point → fixture is the `live_regressions` table i
 See `validation.txt` for the captured transcript.
 
 This pass ran against authoritative `origin/dev`
-`6692d51c9bc5a48ffcbaac8cf817b635351a7c9a` and validated tree
-`0ab8cbeb1952b3c98ebccf720cc97cb77c5eacf9`.
+`125cf21c21d1570eba59904d809f774131f33d9e` and validated tree
+`86ce9f3028e11856179bb19838f2cfd1453426af`.
 
 ```
-python3 scripts/git/test_task_review_merge_gate.py     Ran  84 tests - OK
-python3 scripts/git/test_auto_integrator.py            Ran   9 tests - OK
-python3 scripts/git/test_git_workflow_helpers.py       Ran  52 tests - OK
+.venv-pantheon/bin/python3 scripts/git/test_task_review_merge_gate.py
+                                                       Ran  87 tests - OK
+.venv-pantheon/bin/python3 scripts/git/test_auto_integrator.py
+                                                       Ran   9 tests - OK
+.venv-pantheon/bin/python3 scripts/git/test_git_workflow_helpers.py
+                                                       Ran  52 tests - OK
 .venv-pantheon/bin/python3 -m pytest -q scripts/git/test_task_git_helpers_refspec.py
                                                         2 tests - OK
-python3 scripts/git/test_task_pr_triage.py             Ran  24 tests - OK
-python3 scripts/git/test_index_safety.py               Ran  17 tests - OK
-python3 scripts/test_ai_status.py                      Ran 141 tests - OK
+.venv-pantheon/bin/python3 scripts/git/test_task_pr_triage.py
+                                                       Ran  24 tests - OK
+.venv-pantheon/bin/python3 scripts/git/test_index_safety.py
+                                                       Ran  17 tests - OK
+.venv-pantheon/bin/python3 scripts/test_ai_status.py   Ran 141 tests - OK
 bash -n scripts/git/task_finalize.sh scripts/git/safe_pr.sh   syntax ok
-py_compile task_review_merge_gate.py auto_integrator.py        compile ok
+py_compile task_review_merge_gate.py auto_integrator.py ai_status.py
+                                                        compile ok
 git diff --check origin/dev...HEAD                         clean
 ```
 
@@ -392,14 +404,16 @@ replays the eight later live regressions. §5 reproduces the two 2026-07-27
 review findings against the modules as they stood at reviewed head `190fb7fe8`,
 §6 shows the same two fixtures refused after the fix, and §7 is the verbose run
 of the regressions that pin them. The later `5a9ad1643` archive/revocation
-findings are covered by the uppercase archive fixture and the five additional
-helper-state tests in the 84-test gate suite.
+findings are covered by the uppercase archive fixture and five helper-state
+tests. The `dcd4b9ccf` zero-exit/still-armed finding and its unreadable and
+nonzero/already-off boundary cases are reproduced in §8 and pinned by the three
+additional integrator regressions in the 87-test gate suite.
 
 ## 6. Residual risks
 
-**The governed command runtime has a bootstrap boundary.** At Codex adoption
-time `PANTHEON_COMMAND_RUNTIME_SHA` was
-`1434effdc88fb79abd0125351a5206af8fe4a7c7`; its `scripts/ai_status.py` did
+**The governed command runtime has a bootstrap boundary.** At the latest
+revalidation `PANTHEON_COMMAND_RUNTIME_SHA` was
+`6692d51c9bc5a48ffcbaac8cf817b635351a7c9a`; its `scripts/ai_status.py` did
 not yet contain the `REVIEW_PR` / `REVIEW_HEAD_SHA` binding added by this task.
 PR #4218 must therefore keep auto-merge disabled, receive independent Codex2
 review against the exact pushed head, and merge only that head. The repository

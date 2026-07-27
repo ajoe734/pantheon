@@ -1,46 +1,58 @@
-Revalidated by Codex after the independent stale-base rejection of PR #4218
-head 23109d468ea1c5ccda9318253d5b4221eac92d61. The implementation repair
-continues to preserve canonical archive filename case/escaping, and both
-PR-opening helpers verify autoMergeRequest after revocation and fail closed
-while it remains armed.
+Revalidated by Codex after independent review rejected PR #4218 head
+dcd4b9ccf80d520c6d95cb84e5e4a83091c71dc3 on base
+6692d51c9bc5a48ffcbaac8cf817b635351a7c9a. That review reproduced a zero
+`gh pr merge --disable-auto` exit with the live request still armed and the
+integrator still emitting its exact-head merge. The repair now reads live
+autoMergeRequest after every attempted integrator revocation and blocks on an
+unreadable or still-armed result; a nonzero command may continue only when the
+readback proves another actor already turned the request off.
 
 The task branch contains authoritative origin/dev
-6692d51c9bc5a48ffcbaac8cf817b635351a7c9a, fetched through the explicit
-remote-tracking refspec. The validated implementation tree is
-0ab8cbeb1952b3c98ebccf720cc97cb77c5eacf9; the
-following task commit changes evidence only.
+125cf21c21d1570eba59904d809f774131f33d9e, fetched through the explicit
+remote-tracking refspec and composed by
+bee9830dc9bb6365c0cce0bd33f082e41ab07b24. The validated implementation tree
+is 86ce9f3028e11856179bb19838f2cfd1453426af; the following task commit changes
+task-scoped evidence only.
 
-== python3 scripts/git/test_task_review_merge_gate.py
+== .venv-pantheon/bin/python3 scripts/git/test_task_review_merge_gate.py
 ----------------------------------------------------------------------
-Ran 84 tests in 3.058s
+Ran 87 tests in 4.024s
 OK
 
-== python3 scripts/git/test_auto_integrator.py
+== .venv-pantheon/bin/python3 scripts/git/test_auto_integrator.py
 ----------------------------------------------------------------------
-Ran 9 tests in 0.004s
+Ran 9 tests in 0.005s
 OK
 
-== python3 scripts/git/test_git_workflow_helpers.py
+== .venv-pantheon/bin/python3 scripts/git/test_git_workflow_helpers.py
 ----------------------------------------------------------------------
-Ran 52 tests in 2.372s
+Ran 52 tests in 2.690s
 OK
 
 == .venv-pantheon/bin/python3 -m pytest -q scripts/git/test_task_git_helpers_refspec.py
-2 passed in 0.45s
+2 passed in 0.49s
 
-== python3 scripts/git/test_task_pr_triage.py
+== .venv-pantheon/bin/python3 scripts/git/test_task_pr_triage.py
 ----------------------------------------------------------------------
-Ran 24 tests in 0.006s
+Ran 24 tests in 0.007s
 OK
 
-== python3 scripts/git/test_index_safety.py
+== .venv-pantheon/bin/python3 scripts/git/test_index_safety.py
 ----------------------------------------------------------------------
-Ran 17 tests in 3.034s
+Ran 17 tests in 3.822s
 OK
 
-== python3 scripts/test_ai_status.py
+== .venv-pantheon/bin/python3 scripts/test_ai_status.py
 ----------------------------------------------------------------------
-Ran 141 tests in 12.507s
+Ran 141 tests in 12.732s
+OK
+
+== .venv-pantheon/bin/python3 -m unittest -v
+   IntegratorGateTests.test_successful_revocation_that_still_reads_armed_never_merges
+   IntegratorGateTests.test_unreadable_revocation_readback_never_reaches_the_merge
+   IntegratorGateTests.test_nonzero_revocation_can_continue_only_when_readback_proves_off
+----------------------------------------------------------------------
+Ran 3 tests in 0.003s
 OK
 
 == bash -n helpers
@@ -49,7 +61,7 @@ syntax ok
 == py_compile
 compile ok
 
-== python3 -m json.tool evidence.json
+== .venv-pantheon/bin/python3 -m json.tool evidence.json
 evidence manifest parses
 
 == git diff --check origin/dev...HEAD

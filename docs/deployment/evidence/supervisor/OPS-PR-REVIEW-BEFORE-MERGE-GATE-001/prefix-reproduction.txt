@@ -158,3 +158,27 @@ A gate refusal is the more precise diagnosis; it must not be masked. ... ok
 Ran 14 tests in 0.003s
 
 OK
+
+========================================================================
+SECTION 8 - LATER PR #4218 REVIEW: exit-zero revocation is not proof
+========================================================================
+-- reviewed head dcd4b9ccf80d520c6d95cb84e5e4a83091c71dc3 [prefix]
+   `gh pr merge 100 --disable-auto` returned 0 while FakeRunner retained
+   autoMergeRequest.
+   -> action=merged
+   gh pr merge calls emitted:
+     gh pr merge 100 --disable-auto
+     gh pr merge 100 --merge --match-head-commit bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+-- implementation tree 86ce9f3028e11856179bb19838f2cfd1453426af [postfix]
+test_successful_revocation_that_still_reads_armed_never_merges
+A zero exit from gh is not proof that GitHub withdrew the grant. ... ok
+test_unreadable_revocation_readback_never_reaches_the_merge
+A command result cannot replace the required live state proof. ... ok
+test_nonzero_revocation_can_continue_only_when_readback_proves_off
+The live grant, not the command exit status, is authoritative. ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.003s
+
+OK

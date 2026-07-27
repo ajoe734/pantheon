@@ -205,8 +205,8 @@
     },
     {
       "entry_point": "auto_integrator.py",
-      "control": "gate runs before the CI and merge-state probes; a gated PR merges only with --match-head-commit <approved-oid> and never with --auto, and any standing request is revoked first; a `--disable-auto` that returns nonzero blocks the pass before any merge call is emitted, on the approved path included",
-      "proof": "scripts/git/test_task_review_merge_gate.py::IntegratorGateTests (including ::test_failed_auto_merge_revocation_never_reaches_the_merge)"
+      "control": "gate runs before the CI and merge-state probes; a gated PR merges only with --match-head-commit <approved-oid> and never with --auto; after every attempted revocation the integrator reads live autoMergeRequest and blocks before any merge call when that read is unavailable or still armed, regardless of the disable command exit status",
+      "proof": "scripts/git/test_task_review_merge_gate.py::IntegratorGateTests (including ::test_successful_revocation_that_still_reads_armed_never_merges, ::test_unreadable_revocation_readback_never_reaches_the_merge, ::test_failed_auto_merge_revocation_never_reaches_the_merge, and ::test_nonzero_revocation_can_continue_only_when_readback_proves_off)"
     },
     {
       "entry_point": "auto-merge creation (`gh pr merge --auto`, GitHub UI, or API)",
@@ -269,7 +269,7 @@
     },
     {
       "id": "AC3",
-      "statement": "Reviewer rejection, head change, head replacement with an older commit, missing state, GitHub ambiguity, a failed auto-merge revocation, and concurrent finalize all fail closed.",
+      "statement": "Reviewer rejection, head change, head replacement with an older commit, missing state, GitHub ambiguity, a failed or unverified auto-merge revocation, and concurrent finalize all fail closed.",
       "status": "pass",
       "evidence_refs": [
         "scripts/git/test_task_review_merge_gate.py::FailClosedTests::test_reviewer_rejection_after_approval_blocks",
@@ -279,11 +279,14 @@
         "scripts/git/test_task_review_merge_gate.py::UnreadableStateTests",
         "scripts/git/test_task_review_merge_gate.py::TaskFinalizeShellTests::test_task_finalize_fails_closed_when_revocation_leaves_request_armed",
         "scripts/git/test_task_review_merge_gate.py::TaskFinalizeShellTests::test_safe_pr_fails_closed_when_revocation_leaves_request_armed",
+        "scripts/git/test_task_review_merge_gate.py::IntegratorGateTests::test_successful_revocation_that_still_reads_armed_never_merges",
+        "scripts/git/test_task_review_merge_gate.py::IntegratorGateTests::test_unreadable_revocation_readback_never_reaches_the_merge",
         "scripts/git/test_task_review_merge_gate.py::IntegratorGateTests::test_failed_auto_merge_revocation_never_reaches_the_merge",
+        "scripts/git/test_task_review_merge_gate.py::IntegratorGateTests::test_nonzero_revocation_can_continue_only_when_readback_proves_off",
         "scripts/git/test_task_review_merge_gate.py::IntegratorGateTests::test_failed_revocation_on_an_unapproved_pr_still_reports_the_gate_reason",
         "scripts/git/test_task_review_merge_gate.py::IntegratorGateTests::test_concurrent_open_prs_for_one_task_branch_fail_closed",
         "scripts/git/test_task_review_merge_gate.py::IntegratorGateTests::test_gated_pr_needing_a_rebase_is_not_force_pushed",
-        "scripts/git/auto_integrator.py::integrate_candidate blocks on a failed disable-auto before emitting any merge call, and merge_command passes --match-head-commit for gated tasks"
+        "scripts/git/auto_integrator.py::integrate_candidate reads live autoMergeRequest after every attempted revocation and blocks on unreadable or still-armed state before merge_command can pass --match-head-commit for gated tasks"
       ]
     },
     {
@@ -330,15 +333,18 @@
   "validation": {
     "revalidation": {
       "actor": "Codex",
-      "reason": "Owner reassignment after the first exact-head review rejected the predecessor implementation, followed by a second independent review of head 5a9ad1643 that found lowercase archive lookup and fail-open helper revocation. Codex corrected both findings. A later independent review rejected PR #4218 head 23109d468 solely because its eecb96fa3 base became stale; Codex preserved that feedback, explicitly fetched and composed current dev, and reran the full focused matrix.",
+      "reason": "Owner reassignment followed exact-head rejections that found approval-binding, archive-case, helper-revocation, and stale-base defects. The latest independent review rejected PR #4218 head dcd4b9cc because auto_integrator trusted a zero disable-auto exit without reading live autoMergeRequest back. Codex preserved the rejection, added mandatory readback with exit-zero/still-armed, unreadable, and nonzero/already-off regressions, explicitly composed current dev, and reran the full focused matrix.",
       "adopted_predecessor_commit": "7759ed36666ce62a7f912a9c85f74cf409cff095",
       "rejected_review_head": "5a9ad1643eba2580bf8a51c71a6f3a43ad8c57b6",
       "repair_anchor_commit": "e971a2c9441c0611fa7070f7554805e3ccfcb2b7",
       "stale_base_rejected_review_head": "23109d468ea1c5ccda9318253d5b4221eac92d61",
       "stale_pr_base": "eecb96fa3826e8e3527a77da7f187a32b33c6c93",
       "stale_base_anchor_commit": "e0038d729c812095ff411c73580ac6556840ceb8",
-      "validated_dev_base": "6692d51c9bc5a48ffcbaac8cf817b635351a7c9a",
-      "validated_tree_commit": "0ab8cbeb1952b3c98ebccf720cc97cb77c5eacf9"
+      "revocation_readback_rejected_review_head": "dcd4b9ccf80d520c6d95cb84e5e4a83091c71dc3",
+      "revocation_readback_rejected_base": "6692d51c9bc5a48ffcbaac8cf817b635351a7c9a",
+      "revocation_readback_anchor_commit": "aff6e98ae538db7d1593309d0431d12bfb271549",
+      "validated_dev_base": "125cf21c21d1570eba59904d809f774131f33d9e",
+      "validated_tree_commit": "86ce9f3028e11856179bb19838f2cfd1453426af"
     },
     "commands": [
       {
@@ -348,21 +354,26 @@
       },
       {
         "command": "python3 <scratch>/repro.py prefix|postfix  (modules at reviewed head 190fb7fe8 vs now)",
-        "conclusion": "Finding 1 reproduced pre-fix: approving head bbbb... then replacing the PR head with cccc... committed BEFORE the approval returned allow_merge=True reason=exact_head_approved; post-fix the same fixture returns allow_merge=False reason=approval_head_mismatch. Finding 2 reproduced pre-fix: `gh pr merge --disable-auto` returning 1 on an approved gated PR still produced action=merged and emitted `gh pr merge 100 --merge --match-head-commit bbbb...`; post-fix the same fixture returns action=blocked and emits no merge call beyond the failed revocation",
+        "conclusion": "Finding 1 reproduced pre-fix: approving head bbbb... then replacing the PR head with cccc... committed BEFORE the approval returned allow_merge=True reason=exact_head_approved; post-fix the same fixture returns allow_merge=False reason=approval_head_mismatch. Finding 2 reproduced pre-fix: `gh pr merge --disable-auto` returning 1 on an approved gated PR still produced action=merged and emitted `gh pr merge 100 --merge --match-head-commit bbbb...`; post-fix the same fixture returns action=blocked after readback still shows the request armed and emits no later merge call",
         "result": "reproduced_and_fixed"
       },
       {
-        "command": "python3 scripts/git/test_task_review_merge_gate.py",
-        "conclusion": "Ran 84 tests - OK; includes uppercase production-shape archive lookup and already-off, standing-request, and failed-revocation shell regressions for both task_finalize.sh and safe_pr.sh",
+        "command": ".venv-pantheon/bin/python3 scripts/git/test_task_review_merge_gate.py",
+        "conclusion": "Ran 87 tests - OK; includes uppercase production-shape archive lookup, helper revocation regressions, and integrator exit-zero/still-armed, unreadable-readback, nonzero/still-armed, and nonzero/already-off cases",
         "result": "pass"
       },
       {
-        "command": "python3 scripts/git/test_auto_integrator.py",
+        "command": ".venv-pantheon/bin/python3 -m unittest -v scripts.git.test_task_review_merge_gate.IntegratorGateTests.test_successful_revocation_that_still_reads_armed_never_merges scripts.git.test_task_review_merge_gate.IntegratorGateTests.test_unreadable_revocation_readback_never_reaches_the_merge scripts.git.test_task_review_merge_gate.IntegratorGateTests.test_nonzero_revocation_can_continue_only_when_readback_proves_off",
+        "conclusion": "Ran the three exact revocation-readback regressions - OK",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 scripts/git/test_auto_integrator.py",
         "conclusion": "Ran 9 tests - OK",
         "result": "pass"
       },
       {
-        "command": "python3 scripts/git/test_git_workflow_helpers.py",
+        "command": ".venv-pantheon/bin/python3 scripts/git/test_git_workflow_helpers.py",
         "conclusion": "Ran 52 tests - OK",
         "result": "pass"
       },
@@ -372,27 +383,27 @@
         "result": "pass"
       },
       {
-        "command": "python3 scripts/git/test_task_pr_triage.py",
+        "command": ".venv-pantheon/bin/python3 scripts/git/test_task_pr_triage.py",
         "conclusion": "Ran 24 tests - OK",
         "result": "pass"
       },
       {
-        "command": "python3 scripts/git/test_index_safety.py",
+        "command": ".venv-pantheon/bin/python3 scripts/git/test_index_safety.py",
         "conclusion": "Ran 17 tests - OK",
         "result": "pass"
       },
       {
-        "command": "bash -n scripts/git/task_finalize.sh scripts/git/safe_pr.sh && python3 -m py_compile scripts/git/task_review_merge_gate.py scripts/git/auto_integrator.py && git diff --check origin/dev...HEAD",
-        "conclusion": "syntax ok; compile ok; diff check clean",
+        "command": "bash -n scripts/git/task_finalize.sh scripts/git/safe_pr.sh && .venv-pantheon/bin/python3 -m py_compile scripts/git/task_review_merge_gate.py scripts/git/auto_integrator.py scripts/ai_status.py && git diff --check origin/dev...HEAD",
+        "conclusion": "shell syntax ok; all three Python modules compile; diff check clean",
         "result": "pass"
       },
       {
-        "command": "python3 scripts/test_ai_status.py",
+        "command": ".venv-pantheon/bin/python3 scripts/test_ai_status.py",
         "conclusion": "Ran 141 tests - OK after composing current dev",
         "result": "pass"
       },
       {
-        "command": "python3 -m json.tool docs/deployment/evidence/supervisor/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001/evidence.json",
+        "command": ".venv-pantheon/bin/python3 -m json.tool docs/deployment/evidence/supervisor/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001/evidence.json",
         "conclusion": "evidence manifest parses",
         "result": "pass"
       }
@@ -403,7 +414,7 @@
     "command_runtime_bootstrap": {
       "severity": "medium",
       "blocking_for_this_task": false,
-      "description": "At Codex adoption time the governed supervisor command runtime was 1434effdc88fb79abd0125351a5206af8fe4a7c7 and did not yet contain REVIEW_PR / REVIEW_HEAD_SHA review_binding support. The repository change therefore proves the new gate but does not by itself prove that the installed command runtime has switched to it.",
+      "description": "At the latest revalidation the governed supervisor command runtime was 6692d51c9bc5a48ffcbaac8cf817b635351a7c9a and did not yet contain REVIEW_PR / REVIEW_HEAD_SHA review_binding support. The repository change therefore proves the new gate but does not by itself prove that the installed command runtime has switched to it.",
       "containment": "Keep PR #4218 auto-merge disabled, obtain Codex2 review against the exact pushed head, merge only that head, and treat installed-runtime activation as unproven until the normal command-runtime refresh reports a merged SHA containing this change. This bootstrap boundary cannot unlock an unreviewed merge; it only prevents a live-activation claim.",
       "recheck_trigger": "PANTHEON_COMMAND_RUNTIME_SHA does not contain scripts/ai_status.py review_binding support after PR #4218 merges."
     },
@@ -459,8 +470,8 @@
     "failed_revocation_stalls_a_green_pr": {
       "severity": "low",
       "blocking_for_this_task": false,
-      "description": "When `gh pr merge --disable-auto` fails for an environmental reason, an approved and green gated PR now blocks instead of merging.",
-      "containment": "Deliberate: the alternative is merging while a grant that could not be withdrawn is still armed. The blocked result names the manual revocation and the re-run.",
+      "description": "When `gh pr merge --disable-auto` fails for an environmental reason, the live readback is unavailable, or the request remains armed despite a zero exit, an approved and green gated PR blocks instead of merging.",
+      "containment": "Deliberate: the alternative is merging while a grant that could not be proved withdrawn is still armed. A nonzero command may continue only when readback proves another actor already turned the request off; otherwise the blocked result names the manual revocation and re-run.",
       "recheck_trigger": "An INTEGRATION-UNBLOCK-*-AUTO-MERGE-REVOCATION-FAILED task."
     }
   }
