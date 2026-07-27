@@ -622,15 +622,16 @@ class DetectWorkerFailureTests(unittest.TestCase):
         config = {"worker_retry": {"transient_error_patterns": ["429", "resource_exhausted", "rate limit"]}}
         worker = {"provider": "codex2-1"}
 
-        result = supervisor.classify_worker_failure(
-            config,
-            worker,
+        for reason in (
+            "Require authenticated gh session. Run gh auth status.",
             "Require authenticated `gh` session. Run `gh auth status`.",
-        )
+        ):
+            with self.subTest(reason=reason):
+                result = supervisor.classify_worker_failure(config, worker, reason)
 
-        self.assertEqual(result["kind"], "tool_auth")
-        self.assertFalse(result["transient"])
-        self.assertFalse(supervisor.should_pause_dispatch_for_failure_kind(result["kind"]))
+                self.assertEqual(result["kind"], "tool_auth")
+                self.assertFalse(result["transient"])
+                self.assertFalse(supervisor.should_pause_dispatch_for_failure_kind(result["kind"]))
 
     def test_auth_failures_pause_provider_dispatch(self) -> None:
         self.assertTrue(supervisor.should_pause_dispatch_for_failure_kind("auth"))
