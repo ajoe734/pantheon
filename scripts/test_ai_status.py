@@ -290,6 +290,47 @@ class TaskStateShadowTests(unittest.TestCase):
         self.assertEqual(load_events(journal)[-1]["state"], second)
         self.assertEqual(json.loads(self._test_status_file.read_text(encoding="utf-8")), second)
 
+    def test_authoritative_transaction_advances_each_save_from_one_stable_head(self) -> None:
+        journal = self._test_root / "runtime" / "task-state-events.jsonl"
+        first = {
+            "sprint": "authoritative",
+            "tasks": [{"id": "STATE-TX", "status": "todo"}],
+        }
+        ai_status.append_state_commit(journal, first, source="migration")
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                ai_status.TASK_STATE_STORE_MODE_ENV: "authoritative",
+                ai_status.TASK_STATE_EVENT_LOG_ENV: str(journal),
+                "AI_NAME": "Codex",
+            },
+            clear=False,
+        ):
+            with ai_status.authoritative_task_state_transaction():
+                second = ai_status.load_state()
+                second["tasks"][0]["status"] = "in_progress"
+                ai_status.save_state(second)
+                third = ai_status.load_state()
+                third["tasks"][0]["next"] = "activity outbox cleared"
+                ai_status.save_state(third)
+
+        events = load_events(journal)
+        self.assertEqual([event["sequence"] for event in events], [1, 2, 3])
+        self.assertEqual(
+            events[1]["previous_event_sha256"],
+            events[0]["event_sha256"],
+        )
+        self.assertEqual(
+            events[2]["previous_event_sha256"],
+            events[1]["event_sha256"],
+        )
+        self.assertEqual(events[-1]["state"], third)
+        self.assertEqual(
+            json.loads(self._test_status_file.read_text(encoding="utf-8")),
+            third,
+        )
+
     def test_authoritative_append_failure_preserves_existing_projection(self) -> None:
         real_parent = self._test_root / "real-authoritative-runtime"
         real_parent.mkdir()

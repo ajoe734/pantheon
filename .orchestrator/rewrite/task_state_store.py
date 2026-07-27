@@ -514,12 +514,64 @@ def load_snapshot(path: str | Path) -> dict[str, Any]:
     event_path = _prepare_parent(Path(path))
     with _store_lock(event_path, shared=True):
         snapshot = _load_snapshot_unlocked(event_path)
-    # The rolling hasher is an internal continuation for the append path; a
-    # public snapshot has to stay a plain, copyable record.
-    snapshot.pop("journal_digest", None)
-    snapshot["state"] = copy.deepcopy(snapshot["state"])
-    snapshot["last_event"] = copy.deepcopy(snapshot["last_event"])
-    return snapshot
+    return _public_snapshot(snapshot)
+
+
+def _public_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Return a caller-safe view without the internal rolling hasher."""
+
+    public = {
+        key: value
+        for key, value in snapshot.items()
+        if key != "journal_digest"
+    }
+    public["state"] = copy.deepcopy(snapshot["state"])
+    public["last_event"] = copy.deepcopy(snapshot["last_event"])
+    return public
+
+
+class SnapshotTransaction:
+    """One validated journal generation extended under one writer lock.
+
+    A governed command may durably save the board more than once while clearing
+    its archive and activity outboxes. Re-reading and hashing the entire journal
+    before every one of those saves duplicates work and lengthens the canonical
+    task lock. Holding the journal's exclusive writer lock keeps the initially
+    validated snapshot stable; each append then advances its sequence, hash,
+    byte offset, and projected state in memory.
+    """
+
+    def __init__(self, event_path: Path, snapshot: dict[str, Any]) -> None:
+        self._event_path = event_path
+        self._snapshot = snapshot
+
+    def load_snapshot(self) -> dict[str, Any]:
+        return _public_snapshot(self._snapshot)
+
+    def append_state_commit(
+        self,
+        state: dict[str, Any],
+        *,
+        source: str,
+        committed_at: str | None = None,
+    ) -> dict[str, Any]:
+        event, self._snapshot = _append_state_commit_unlocked(
+            self._event_path,
+            state,
+            source=source,
+            committed_at=committed_at,
+            snapshot=self._snapshot,
+        )
+        return copy.deepcopy(event)
+
+
+@contextmanager
+def snapshot_transaction(path: str | Path):
+    """Yield a stable snapshot transaction protected from concurrent writers."""
+
+    event_path = _prepare_parent(Path(path))
+    with _store_lock(event_path, shared=False):
+        yield SnapshotTransaction(event_path, _load_snapshot_unlocked(event_path))
 
 
 def _task_rows(state: Any) -> tuple[list[Any], bool]:
@@ -771,71 +823,105 @@ def append_state_commit(
     event_path = _prepare_parent(Path(path))
     with _store_lock(event_path, shared=False):
         snapshot = _load_snapshot_unlocked(event_path)
-        head = snapshot["last_event"]
-        previous_state = head["state"] if head else None
-        validate_state_transition(state, previous_state)
-        state_sha256 = sha256_json(state)
-        if head is not None and head.get("state_sha256") == state_sha256:
-            return copy.deepcopy(head)
-        sequence = int(snapshot["event_count"]) + 1
-        previous_event_sha256 = snapshot["last_event_sha256"]
-        event: dict[str, Any] = {
-            "version": EVENT_VERSION,
-            "type": EVENT_TYPE_STATE_COMMITTED,
-            "sequence": sequence,
-            "committed_at": committed_at or utc_now(),
-            "source": str(source or "unknown").strip() or "unknown",
-            "previous_event_sha256": previous_event_sha256,
-            "state_sha256": state_sha256,
-            "state": copy.deepcopy(state),
-        }
-        event_sha256 = sha256_json(event)
-        event["event_sha256"] = event_sha256
-        event["event_id"] = f"task-state-{event_sha256}"
-        validate_event(
-            event,
-            expected_sequence=sequence,
-            previous_sha256=previous_event_sha256,
-        )
-        payload = canonical_json_bytes(event) + b"\n"
-        descriptor = os.open(
+        event, _next_snapshot = _append_state_commit_unlocked(
             event_path,
-            os.O_WRONLY
-            | os.O_CREAT
-            | os.O_APPEND
-            | getattr(os, "O_CLOEXEC", 0)
-            | getattr(os, "O_NOFOLLOW", 0),
-            0o600,
-        )
-        try:
-            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-                raise TaskStateStoreError(f"task-state event log must be a regular file: {event_path}")
-            os.fchmod(descriptor, stat.S_IRUSR | stat.S_IWUSR)
-            offset = 0
-            while offset < len(payload):
-                offset += os.write(descriptor, payload[offset:])
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
-        _fsync_directory(event_path.parent)
-        _verify_append_readback(
-            event_path,
-            expected_size=int(snapshot["byte_size"]) + len(payload),
-            offset=int(snapshot["byte_size"]),
-            payload=payload,
-        )
-        # The digest of the journal after this append is the pre-append digest
-        # extended by the bytes just written -- no second pass over the file.
-        journal_digest = snapshot["journal_digest"].copy()
-        journal_digest.update(payload)
-        _write_checkpoint(
-            event_path,
-            prefix_bytes=int(snapshot["byte_size"]) + len(payload),
-            prefix_sha256=journal_digest.hexdigest(),
-            event_count=sequence,
-            last_event=event,
+            state,
+            source=source,
+            committed_at=committed_at,
+            snapshot=snapshot,
         )
         return copy.deepcopy(event)
+
+
+def _append_state_commit_unlocked(
+    event_path: Path,
+    state: dict[str, Any],
+    *,
+    source: str,
+    committed_at: str | None,
+    snapshot: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Append against an already validated snapshot while its writer lock holds."""
+
+    if not isinstance(state, dict):
+        raise TaskStateStoreError("task-state commit must contain an object state")
+    head = snapshot["last_event"]
+    previous_state = head["state"] if head else None
+    validate_state_transition(state, previous_state)
+    state_sha256 = sha256_json(state)
+    if head is not None and head.get("state_sha256") == state_sha256:
+        return head, snapshot
+    sequence = int(snapshot["event_count"]) + 1
+    previous_event_sha256 = snapshot["last_event_sha256"]
+    event: dict[str, Any] = {
+        "version": EVENT_VERSION,
+        "type": EVENT_TYPE_STATE_COMMITTED,
+        "sequence": sequence,
+        "committed_at": committed_at or utc_now(),
+        "source": str(source or "unknown").strip() or "unknown",
+        "previous_event_sha256": previous_event_sha256,
+        "state_sha256": state_sha256,
+        "state": copy.deepcopy(state),
+    }
+    event_sha256 = sha256_json(event)
+    event["event_sha256"] = event_sha256
+    event["event_id"] = f"task-state-{event_sha256}"
+    validate_event(
+        event,
+        expected_sequence=sequence,
+        previous_sha256=previous_event_sha256,
+    )
+    payload = canonical_json_bytes(event) + b"\n"
+    descriptor = os.open(
+        event_path,
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_APPEND
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise TaskStateStoreError(f"task-state event log must be a regular file: {event_path}")
+        os.fchmod(descriptor, stat.S_IRUSR | stat.S_IWUSR)
+        offset = 0
+        while offset < len(payload):
+            offset += os.write(descriptor, payload[offset:])
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    _fsync_directory(event_path.parent)
+    byte_size = int(snapshot["byte_size"]) + len(payload)
+    _verify_append_readback(
+        event_path,
+        expected_size=byte_size,
+        offset=int(snapshot["byte_size"]),
+        payload=payload,
+    )
+    # The digest of the journal after this append is the pre-append digest
+    # extended by the bytes just written -- no second pass over the file.
+    journal_digest = snapshot["journal_digest"].copy()
+    journal_digest.update(payload)
+    _write_checkpoint(
+        event_path,
+        prefix_bytes=byte_size,
+        prefix_sha256=journal_digest.hexdigest(),
+        event_count=sequence,
+        last_event=event,
+    )
+    return event, {
+        "event_count": sequence,
+        "last_event": event,
+        "last_event_id": str(event["event_id"]),
+        "last_event_sha256": str(event["event_sha256"]),
+        "state": event["state"],
+        "state_sha256": state_sha256,
+        "byte_size": byte_size,
+        "journal_digest": journal_digest,
+        "revalidated_events": 0,
+        "resumed_from_checkpoint": True,
+    }
 
 
 def _verify_append_readback(
