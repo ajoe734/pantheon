@@ -1839,7 +1839,10 @@ class IntegratorGateTests(unittest.TestCase):
 FAKE_GH = r"""#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$GH_LOG"
 if [[ "$1 $2" == "pr list" ]]; then
-  echo "1"
+  if [[ "${GH_PR_LIST_FAIL:-0}" == "1" ]]; then
+    exit 1
+  fi
+  printf '%s\n' "${GH_EXISTING_PR:-}"
   exit 0
 fi
 if [[ "$1 $2" == "pr merge" && " $* " == *" --disable-auto "* ]]; then
@@ -1876,6 +1879,17 @@ class TaskFinalizeShellTests(unittest.TestCase):
         origin = tmp / "origin.git"
         repo = tmp / "repo"
         self._git(["init", "--bare", "--initial-branch=dev", str(origin)], cwd=tmp)
+        pre_receive = origin / "hooks" / "pre-receive"
+        pre_receive.write_text(
+            "#!/usr/bin/env bash\n"
+            "if [[ \"${GH_REQUIRE_OFF_BEFORE_PUSH:-0}\" == \"1\" ]]; then\n"
+            "  [[ -n \"${GH_STATE_FILE:-}\" ]] || exit 91\n"
+            "  [[ \"$(cat \"$GH_STATE_FILE\")\" == \"off\" ]] || exit 92\n"
+            "fi\n"
+            "exit 0\n",
+            encoding="utf-8",
+        )
+        pre_receive.chmod(0o755)
         self._git(["init", "--initial-branch=dev", str(repo)], cwd=tmp)
         self._git(["config", "user.email", "gate@example.test"], cwd=repo)
         self._git(["config", "user.name", "Gate Fixture"], cwd=repo)
@@ -1929,6 +1943,10 @@ class TaskFinalizeShellTests(unittest.TestCase):
         *,
         auto_merge_state: str,
         revoke_fails: bool,
+        existing_pr: bool = False,
+        ambiguous_pr: bool = False,
+        pr_lookup_fails: bool = False,
+        require_off_before_push: bool = False,
     ) -> dict[str, str]:
         log = tmp / "gh.log"
         env = dict(os.environ)
@@ -1938,6 +1956,9 @@ class TaskFinalizeShellTests(unittest.TestCase):
         state_file.write_text(auto_merge_state + "\n", encoding="utf-8")
         env["GH_STATE_FILE"] = str(state_file)
         env["GH_REVOKE_FAIL"] = "1" if revoke_fails else "0"
+        env["GH_EXISTING_PR"] = "AMBIGUOUS" if ambiguous_pr else ("1" if existing_pr else "")
+        env["GH_PR_LIST_FAIL"] = "1" if pr_lookup_fails else "0"
+        env["GH_REQUIRE_OFF_BEFORE_PUSH"] = "1" if require_off_before_push else "0"
         env["PANTHEON_STATUS_ROOT"] = str(repo)
         return env
 
@@ -1947,6 +1968,10 @@ class TaskFinalizeShellTests(unittest.TestCase):
         *,
         auto_merge_state: str = "off",
         revoke_fails: bool = False,
+        existing_pr: bool = False,
+        ambiguous_pr: bool = False,
+        pr_lookup_fails: bool = False,
+        require_off_before_push: bool = False,
     ) -> tuple[subprocess.CompletedProcess[str], str]:
         repo, tmp = self._fixture(task, committed_delivery=True)
         env = self._fake_gh_env(
@@ -1954,6 +1979,10 @@ class TaskFinalizeShellTests(unittest.TestCase):
             repo,
             auto_merge_state=auto_merge_state,
             revoke_fails=revoke_fails,
+            existing_pr=existing_pr,
+            ambiguous_pr=ambiguous_pr,
+            pr_lookup_fails=pr_lookup_fails,
+            require_off_before_push=require_off_before_push,
         )
         proc = subprocess.run(
             ["bash", "scripts/git/task_finalize.sh", str(task["id"])],
@@ -1970,6 +1999,10 @@ class TaskFinalizeShellTests(unittest.TestCase):
         *,
         auto_merge_state: str = "off",
         revoke_fails: bool = False,
+        existing_pr: bool = False,
+        ambiguous_pr: bool = False,
+        pr_lookup_fails: bool = False,
+        require_off_before_push: bool = False,
     ) -> tuple[subprocess.CompletedProcess[str], str]:
         repo, tmp = self._fixture(task, committed_delivery=False)
         message = tmp / "message.txt"
@@ -1987,6 +2020,10 @@ class TaskFinalizeShellTests(unittest.TestCase):
             repo,
             auto_merge_state=auto_merge_state,
             revoke_fails=revoke_fails,
+            existing_pr=existing_pr,
+            ambiguous_pr=ambiguous_pr,
+            pr_lookup_fails=pr_lookup_fails,
+            require_off_before_push=require_off_before_push,
         )
         proc = subprocess.run(
             [
@@ -2026,6 +2063,31 @@ class TaskFinalizeShellTests(unittest.TestCase):
         self.assertGreaterEqual(calls.count("--json autoMergeRequest"), 2)
         self.assertIn("standing auto-merge request revoked and verified off", proc.stdout)
 
+    def test_task_finalize_revokes_existing_pr_before_pushing_new_head(self) -> None:
+        proc, calls = self._run_finalize(
+            task_row(id="ABC-001", status="in_progress"),
+            auto_merge_state="armed",
+            existing_pr=True,
+            require_off_before_push=True,
+        )
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertNotIn("pr create", calls)
+        self.assertIn("pr merge 1 --disable-auto", calls)
+        self.assertGreaterEqual(calls.count("--json autoMergeRequest"), 3)
+        self.assertIn("before push", proc.stdout)
+
+    def test_task_finalize_ambiguous_pr_lookup_fails_before_push(self) -> None:
+        proc, calls = self._run_finalize(
+            task_row(id="ABC-001", status="in_progress"),
+            ambiguous_pr=True,
+        )
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("multiple open PRs", proc.stderr)
+        self.assertNotIn("→ push", proc.stdout)
+        self.assertNotIn("pr create", calls)
+
     def test_task_finalize_fails_closed_when_revocation_leaves_request_armed(self) -> None:
         proc, calls = self._run_finalize(
             task_row(id="ABC-001", status="in_progress"),
@@ -2059,6 +2121,31 @@ class TaskFinalizeShellTests(unittest.TestCase):
         self.assertIn("pr merge 1 --disable-auto", calls)
         self.assertGreaterEqual(calls.count("--json autoMergeRequest"), 2)
         self.assertIn("standing auto-merge request revoked and verified off", proc.stdout)
+
+    def test_safe_pr_revokes_existing_pr_before_pushing_new_head(self) -> None:
+        proc, calls = self._run_safe_pr(
+            task_row(id="ABC-001", status="in_progress"),
+            auto_merge_state="armed",
+            existing_pr=True,
+            require_off_before_push=True,
+        )
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertNotIn("pr create", calls)
+        self.assertIn("pr merge 1 --disable-auto", calls)
+        self.assertGreaterEqual(calls.count("--json autoMergeRequest"), 3)
+        self.assertIn("pre-push revoke", proc.stdout)
+
+    def test_safe_pr_unreadable_pr_lookup_fails_before_push(self) -> None:
+        proc, calls = self._run_safe_pr(
+            task_row(id="ABC-001", status="in_progress"),
+            pr_lookup_fails=True,
+        )
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("cannot resolve existing PR", proc.stdout + proc.stderr)
+        self.assertNotIn("push task branch", proc.stdout)
+        self.assertNotIn("pr create", calls)
 
     def test_safe_pr_fails_closed_when_revocation_leaves_request_armed(self) -> None:
         proc, calls = self._run_safe_pr(

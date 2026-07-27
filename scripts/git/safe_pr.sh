@@ -108,6 +108,49 @@ read_auto_merge_state() {
   esac
 }
 
+lookup_existing_pr() {
+  local result
+  if ! result=$(gh pr list \
+    --state open \
+    --head "$TASK_BRANCH" \
+    --base dev \
+    --limit 2 \
+    --json number \
+    --jq 'if length == 0 then "" elif length == 1 then (.[0].number | tostring) else "AMBIGUOUS" end' \
+    2>>"$LOG"); then
+    return 1
+  fi
+  case "$result" in
+    "") printf '\n' ;;
+    AMBIGUOUS) return 2 ;;
+    *[!0-9]*) return 1 ;;
+    *) printf '%s\n' "$result" ;;
+  esac
+}
+
+ensure_auto_merge_off() {
+  local target="$1"
+  local phase="$2"
+  local state
+  local revoke_rc=0
+  if ! state=$(read_auto_merge_state "$target"); then
+    fail "cannot verify autoMergeRequest $phase; refusing fail-open finalization"
+  fi
+  if [[ "$state" == "armed" ]]; then
+    gh pr merge "$target" --disable-auto >>"$LOG" 2>&1 || revoke_rc=$?
+    if ! state=$(read_auto_merge_state "$target"); then
+      fail "cannot verify autoMergeRequest after revocation $phase"
+    fi
+    if [[ "$state" == "armed" ]]; then
+      echo "auto-merge remains armed after revocation $phase (gh exit $revoke_rc)" >>"$LOG"
+      fail "auto-merge remains armed; refusing fail-open finalization"
+    fi
+    ok "standing auto-merge request revoked and verified off $phase"
+  else
+    ok "auto-merge was already off $phase"
+  fi
+}
+
 trap 'echo; echo "FAILED — see $LOG for full transcript"; exit 1' ERR
 
 # --- 1. Fetch dev (short, just refs)
@@ -150,18 +193,7 @@ else
   fail "worker_commit.py failed (likely scope leak or empty staging)"
 fi
 
-# --- 5. Push
-step "push task branch"
-if git push -u origin "$TASK_BRANCH" >>"$LOG" 2>&1; then ok "pushed"; else fail "push failed"; fi
-
-if [[ "$DO_PR" -eq 0 ]]; then
-  echo "(--no-pr: skipping PR create + auto-merge)"
-  exit 0
-fi
-
-# --- 6. Resolve the canonical merge policy before any merge authority is set.
-#        A gate failure resolves to review_before_merge; this helper never
-#        widens merge authority on a broken canonical read.
+# --- 5. Resolve policy and revoke an existing PR before its head changes.
 step "merge policy"
 MERGE_POLICY=$(python3 scripts/git/task_review_merge_gate.py policy "$TASK_ID" 2>>"$LOG" | head -1 || true)
 if [[ "$MERGE_POLICY" != "merge_then_review" ]]; then
@@ -169,7 +201,34 @@ if [[ "$MERGE_POLICY" != "merge_then_review" ]]; then
 fi
 ok "$MERGE_POLICY"
 
-# --- 7. Open PR (idempotent: skip if one already open)
+LOOKUP_RC=0
+EXISTING_PR=$(lookup_existing_pr) || LOOKUP_RC=$?
+if [[ "$LOOKUP_RC" -ne 0 ]]; then
+  if [[ "$LOOKUP_RC" -eq 2 ]]; then
+    fail "multiple open PRs target $TASK_BRANCH"
+  fi
+  fail "cannot resolve existing PR; refusing to push"
+fi
+
+if [[ "$MERGE_POLICY" == "review_before_merge" && -n "$EXISTING_PR" ]]; then
+  step "pre-push revoke"
+  ensure_auto_merge_off "$EXISTING_PR" "before push"
+fi
+
+# --- 6. Push
+step "push task branch"
+if git push -u origin "$TASK_BRANCH" >>"$LOG" 2>&1; then ok "pushed"; else fail "push failed"; fi
+
+if [[ "$DO_PR" -eq 0 ]]; then
+  if [[ "$MERGE_POLICY" == "review_before_merge" && -n "$EXISTING_PR" ]]; then
+    step "post-push verify"
+    ensure_auto_merge_off "$EXISTING_PR" "after push"
+  fi
+  echo "(--no-pr: skipping PR create + auto-merge)"
+  exit 0
+fi
+
+# --- 7. Open PR (idempotent: reuse the unique PR resolved before push)
 step "open PR"
 PR_BODY=$(mktemp -t pr-body-XXXX.md)
 git log -1 --format=%B HEAD > "$PR_BODY"
@@ -186,15 +245,22 @@ if [[ "$MERGE_POLICY" == "merge_then_review" ]]; then
   PR_CREATE_ARGS+=(--label auto-merge)
 fi
 
-EXISTING_PR=$(gh pr list --head "$TASK_BRANCH" --state open --json number -q '.[0].number' 2>/dev/null || echo "")
 if [[ -n "$EXISTING_PR" ]]; then
   ok "PR #$EXISTING_PR already open"
 else
   if gh "${PR_CREATE_ARGS[@]}" >>"$LOG" 2>&1; then
-    EXISTING_PR=$(gh pr list --head "$TASK_BRANCH" --state open --json number -q '.[0].number' 2>/dev/null || echo "")
+    EXISTING_PR=$(gh pr view "$TASK_BRANCH" --json number -q '.number' 2>/dev/null || echo "")
+    if [[ -z "$EXISTING_PR" ]]; then
+      fail "PR opened but its number cannot be resolved"
+    fi
     ok "PR #$EXISTING_PR opened"
   else
-    fail "gh pr create failed"
+    LOOKUP_RC=0
+    EXISTING_PR=$(lookup_existing_pr) || LOOKUP_RC=$?
+    if [[ "$LOOKUP_RC" -ne 0 || -z "$EXISTING_PR" ]]; then
+      fail "gh pr create failed and no unique open PR can be resolved"
+    fi
+    ok "concurrent PR #$EXISTING_PR resolved after create returned nonzero"
   fi
 fi
 
@@ -208,23 +274,7 @@ if [[ "$MERGE_POLICY" == "merge_then_review" ]]; then
   fi
 else
   step "withhold auto-merge"
-  if ! AUTO_MERGE_STATE=$(read_auto_merge_state "$EXISTING_PR"); then
-    fail "cannot verify autoMergeRequest; refusing fail-open finalization"
-  fi
-  if [[ "$AUTO_MERGE_STATE" == "armed" ]]; then
-    REVOKE_RC=0
-    gh pr merge "$EXISTING_PR" --disable-auto >>"$LOG" 2>&1 || REVOKE_RC=$?
-    if ! AUTO_MERGE_STATE=$(read_auto_merge_state "$EXISTING_PR"); then
-      fail "cannot verify autoMergeRequest after revocation"
-    fi
-    if [[ "$AUTO_MERGE_STATE" == "armed" ]]; then
-      echo "auto-merge remains armed after revocation (gh exit $REVOKE_RC)" >>"$LOG"
-      fail "auto-merge remains armed; refusing fail-open finalization"
-    fi
-    ok "standing auto-merge request revoked and verified off"
-  else
-    ok "auto-merge was already off"
-  fi
+  ensure_auto_merge_off "$EXISTING_PR" "after push/open"
 fi
 
 trap - ERR
