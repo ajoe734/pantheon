@@ -173,6 +173,26 @@
         "python -m py_compile services/control-plane/bff/assistant/dev_bridge_dispatcher.py",
         "git diff --check"
       ]
+    },
+    "owner_closeout": {
+      "composed_code_head": "11d6f1309607cafee5d6b1f69c68b703b23685b0",
+      "base_head": "eecb96fa3826e8e3527a77da7f187a32b33c6c93",
+      "result": "pass",
+      "commands": [
+        "pytest -q services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py services/control-plane/bff/assistant/tests/test_dev_bridge_dispatch_cli.py services/control-plane/bff/assistant/tests/test_dev_bridge_inbox_cli.py services/control-plane/bff/assistant/tests/test_dev_bridge.py scripts/test_assistant_dev_packet_inbox_supervisor_contract.py",
+        "pytest -q services/control-plane/bff/assistant/tests scripts/test_assistant_dev_packet_inbox_supervisor_contract.py",
+        "pytest -q scripts/test_ai_status.py scripts/test_status_command_runtime_pin.py scripts/test_assistant_dev_packet_inbox_supervisor_contract.py",
+        "python -m py_compile services/control-plane/bff/assistant/dev_bridge_dispatcher.py",
+        "git diff --check origin/dev...HEAD"
+      ],
+      "results": [
+        "70 passed in 15.37s",
+        "157 passed in 25.28s",
+        "147 passed, 45 subtests passed in 45.50s",
+        "py_compile passed",
+        "diff check passed"
+      ],
+      "scope_note": "The subsequent evidence-only closeout commit does not change the composed production or test code validated at this head."
     }
   },
   "delivery": {

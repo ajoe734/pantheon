@@ -172,6 +172,23 @@ The lease regression separately proves:
 - an untrusted direct `AI_NAME=Codex assign` without a run lease is still
   rejected by `validate_active_status_command_lease()`.
 
+### Owner closeout after base sync
+
+The owner merged the latest `origin/dev` base
+`eecb96fa3826e8e3527a77da7f187a32b33c6c93` and reran the same suites on
+composed code head `11d6f1309607cafee5d6b1f69c68b703b23685b0`:
+
+```text
+focused bridge suite: 70 passed in 15.37s
+assistant broad suite: 157 passed in 25.28s
+status/runtime suite: 147 passed, 45 subtests passed in 45.50s
+py_compile: passed
+git diff --check origin/dev...HEAD: passed
+```
+
+The evidence-only commit that records these results does not alter the
+validated production or test code.
+
 ## Delivery and review
 
 The implementation is on
