@@ -3,11 +3,22 @@
 **Title:** Provision installed Python package for telemetry AC2
 **Owner:** Claude · **Reviewer:** Codex2 · **Phase:** Twelve-loop closure
 **Repository:** `ajoe734/pantheon` · **Branch:** `task/OPS-L12-PYTHON-PACKAGING-PROVISION-001`
-**Base:** merged dev tip `643181a06` · **Validated head:** `c72842d9d`
+**Base:** merged dev tip `7fedefb28` · **Validated head:** `4aab5cca4` (PR
+[#4232](https://github.com/ajoe734/pantheon/pull/4232))
+**First cut:** dev tip `643181a06`, head `c72842d9d` — superseded by the re-cut below.
 
 > **Status: owner-asserted pass, pending independent review.** All four canonical
 > execution modes now pass from a foreign working directory with no `PYTHONPATH`.
 > The reviewer verdict is **not** asserted here — see *Review status* below.
+
+> **Re-cut on a synced head.** After the first cut, `dev` advanced twice and PR #4232
+> went `BEHIND`. Two conflict-free dev merges — `0a5f32db4`, then `4aab5cca4` onto
+> dev tip `7fedefb28` — brought the branch back to `CLEAN`. Between them they landed
+> OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001 and OPS-CI-PR-TRAILER-RANGE-001, which is
+> why the full telemetry count moved; **they changed no file this task owns**, so all
+> six implementation artifacts are byte-identical across both epochs.
+> `integrity.source_artifact_sha256_by_epoch` now pins both epochs so a reviewer can
+> check that mechanically. Every result below was re-observed at `4aab5cca4`.
 
 The machine-readable manifest is `evidence.json`; `evidence.sha256` pins it and
 this README. This README is the human summary and does not outrank the manifest.
@@ -122,17 +133,31 @@ cruder mechanism fails the suite.
 | Fail-closed paths: unprovisioned `--check-only`, `--mode current` on the shared interpreter, cross-checkout binding | exit 1 with a specific message in all three |
 | Rootdir regression | `rootdir: <repo>`, `configfile: pytest.ini` — unchanged |
 
-The single skip is pre-existing and unrelated
+Re-observed at the synced head `4aab5cca4`:
+
+| Run | Result |
+|---|---|
+| `pytest services/telemetry/test_discovery_imports.py -q` — the four modes and the unprovisioned control | 20 passed, 20 subtests, 0 skipped |
+| `pytest scripts/test_ops_l12_python_packaging_provision_evidence.py scripts/dev/test_provision_python_distribution.py -q` | 23 passed, 13 subtests |
+| `pytest services/telemetry -q` | 353 passed, 1 skipped |
+| Exact-head required checks on PR #4232 (runs `30228827007` pull_request, `30228825268` push) | all four Branch CI Gate jobs **success** on both events |
+| Implementation digests at `4aab5cca4` vs the `c72842d9d` epoch | identical for all six files |
+
+The telemetry count rose from 301 to 353 because the sync brought in
+OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001's `test_infrastructure_health_ingest.py`
+and its siblings, not because this task changed: none of its six files differ
+between the two epochs. The single skip is pre-existing and unrelated
 (`test_l12_tel_001_durable_ingest.py:255`, needs `PANTHEON_TEST_NATS_URL`); it is
-identical in the baseline and post-change runs.
+identical in the baseline, post-change, and synced-head runs.
 
 ## What is not claimed
 
-- **No reviewer verdict.** At cut time the branch was not pushed and no review
-  had been requested. Codex2's independent decision must be appended to
-  `record_log` before `done`.
-- **No exact-head required-check conclusion.** The three existing required checks
-  are recorded as `pending_at_cut_time`; the closeout checkpoint binds them.
+- **No reviewer verdict.** Codex2's independent decision must be appended to
+  `record_log` before `done`. Auto-merge is deliberately **not** enabled on PR
+  #4232 so that no merge can precede that decision.
+- **No merge commit.** PR #4232 is open, `CLEAN` and `MERGEABLE` at the time of
+  this re-cut. A manifest cannot contain the merge commit of the PR that
+  introduces it; the governed closeout checkpoint binds that.
 - **The new packaging job is not a branch-protection required check.** Adding it
   is a repository-settings change this task does not own. Recorded as a residual
   risk.
@@ -149,6 +174,11 @@ Awaiting Codex2. The reviewer's independent check should target, at minimum:
 2. that the allowlist exports three names and no more, on the current tree;
 3. that `evidence.sha256` matches the committed bytes, and that
    `integrity.source_artifact_sha256_by_epoch` matches the implementation files
-   at `c72842d9d` (the gate checks both mechanically);
+   at **both** epochs, `c72842d9d` and `4aab5cca4` (the gate checks both
+   mechanically, and their agreement is what makes the sync a no-op for review);
 4. that nothing under `.orchestrator/` or any live supervisor config is in the
-   diff.
+   diff;
+5. that the two sync merges really are confined to other lanes' files —
+   `git diff --stat 7bf1fd5f5..4aab5cca4 -- pyproject.toml scripts/dev
+   .github/workflows/branch-ci.yml AI_COLLABORATION_GUIDE.md
+   services/telemetry/test_discovery_imports.py` is empty.

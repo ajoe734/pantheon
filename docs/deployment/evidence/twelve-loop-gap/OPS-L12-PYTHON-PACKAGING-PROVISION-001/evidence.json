@@ -16,8 +16,8 @@
     },
     "task": {
         "base_branch": "dev",
-        "evidence_cut_at": "2026-07-27T00:35:00Z",
-        "evidence_cut_semantics": "Owner cut on task/OPS-L12-PYTHON-PACKAGING-PROVISION-001. Every result below was observed at implementation head c72842d9de8afeae46d8953174b18698bd2c10e3, whose ancestry is anchor af64e277f3ea3bc0ffee5ce38c35908a800d0721 on merged dev tip 643181a067ec5c344faac0766c69de0d5cfb32eb. The evidence commit that carries this file is a child of that head and changes no implementation file; integrity.source_artifact_sha256_by_epoch pins the exact bytes validated, and the evidence gate re-verifies those digests against the working tree on every run.",
+        "evidence_cut_at": "2026-07-27T01:07:40Z",
+        "evidence_cut_semantics": "Owner re-cut on task/OPS-L12-PYTHON-PACKAGING-PROVISION-001 after two branch syncs. The first cut was taken at implementation head c72842d9de8afeae46d8953174b18698bd2c10e3 on merged dev tip 643181a067ec5c344faac0766c69de0d5cfb32eb. dev then advanced twice and the pull request went BEHIND, so two conflict-free dev merges were taken - 0a5f32db4, then 4aab5cca40a6815876beb8d77972bb71d12d757d onto dev tip 7fedefb281dd416e0412e935c48e866438f56e6d - restoring a CLEAN mergeable state. Between them those merges landed OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001 and OPS-CI-PR-TRAILER-RANGE-001, which includes other lanes' implementation files under services/telemetry as well as their evidence directories. They changed no file this task owns: every implementation artifact this task declares is byte-identical across both epochs, which integrity.source_artifact_sha256_by_epoch records twice with the same digests and which a reviewer can confirm with an empty git diff of the owned paths over 7bf1fd5f5a72d867d5633bc03f55a74665d533b5..4aab5cca40a6815876beb8d77972bb71d12d757d. Every result recorded here was re-observed at the synced head, and the required checks now carry exact-head conclusions rather than the pending placeholders of the first cut. One self-reference is impossible and is stated rather than hidden: every sha recorded here, including implementation_delivery.pull_request.head_sha, is the implementation head 4aab5cca40a6815876beb8d77972bb71d12d757d as it stood at cut time. The evidence commit that carries this re-cut is a child of that head and changes no implementation file - it touches only this evidence directory and the task brief - so it moves the pull-request head without moving anything the exact-head check conclusions below are about. The required checks re-run on that child head, and the terminal binding of the pull-request head and merge commit is recorded in the governed closeout checkpoint, not in this file.",
         "id": "OPS-L12-PYTHON-PACKAGING-PROVISION-001",
         "overall_admission": "owner_asserted_pass_pending_independent_review",
         "owner": "Claude",
@@ -83,31 +83,62 @@
             {
                 "sha": "c72842d9de8afeae46d8953174b18698bd2c10e3",
                 "subject": "OPS-L12-PYTHON-PACKAGING-PROVISION-001: close telemetry AC2"
+            },
+            {
+                "delivery_state": "pushed_on_task_branch",
+                "note": "Evidence directory only. Changes no implementation file, which is why the c72842d9de8afeae46d8953174b18698bd2c10e3 epoch digests still describe the tree under review.",
+                "sha": "7bf1fd5f5a72d867d5633bc03f55a74665d533b5",
+                "subject": "OPS-L12-PYTHON-PACKAGING-PROVISION-001: record evidence cut"
+            },
+            {
+                "delivery_state": "pushed_on_task_branch",
+                "note": "Second branch sync, onto dev tip 7fedefb281dd416e0412e935c48e866438f56e6d, clearing the BEHIND pull-request state. Conflict-free; this merge commit itself brought in only OPS-CI-PR-TRAILER-RANGE-001 evidence files and that task's brief. The earlier sync 0a5f32db4, already on the branch before this run, brought in OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001, which is the source of the higher services/telemetry test count. A merge subject skips the trailer check by repository policy.",
+                "sha": "4aab5cca40a6815876beb8d77972bb71d12d757d",
+                "subject": "Merge remote-tracking branch 'origin/dev' into task/OPS-L12-PYTHON-PACKAGING-PROVISION-001"
             }
         ],
+        "pull_request": {
+            "base": "dev",
+            "head_sha": "4aab5cca40a6815876beb8d77972bb71d12d757d",
+            "number": 4232,
+            "url": "https://github.com/ajoe734/pantheon/pull/4232",
+            "note": "head_sha is the implementation head 4aab5cca40a6815876beb8d77972bb71d12d757d at cut time. The evidence commit carrying this re-cut is its child and advances the pull-request head by an evidence-only commit; see task.evidence_cut_semantics."
+        },
         "required_checks": [
             {
-                "conclusion": "pending_at_cut_time",
+                "conclusion": "success",
                 "event": "pull_request",
-                "note": "Branch CI Gate / Commit trailers. Required check on dev. Not yet reported at cut time because the task branch had not been pushed; the closeout checkpoint records the exact-head conclusion.",
+                "head_sha": "4aab5cca40a6815876beb8d77972bb71d12d757d",
+                "jobs": {
+                    "Commit trailers": "success",
+                    "Python packaging provision": "success",
+                    "Runtime mirror guard": "success",
+                    "Smoke acceptance": "success"
+                },
+                "note": "Branch CI Gate on the exact pull-request head. The first three jobs are the existing dev branch-protection required checks; all four report success. This replaces the pending_at_cut_time placeholders recorded in the first cut.",
+                "run_id": 30228827007,
+                "url": "https://github.com/ajoe734/pantheon/actions/runs/30228827007",
                 "workflow": "branch-ci.yml"
             },
             {
-                "conclusion": "pending_at_cut_time",
-                "event": "pull_request",
-                "note": "Branch CI Gate / Runtime mirror guard. Required check on dev. Not yet reported at cut time.",
+                "conclusion": "success",
+                "event": "push",
+                "head_sha": "4aab5cca40a6815876beb8d77972bb71d12d757d",
+                "jobs": {
+                    "Commit trailers": "success",
+                    "Python packaging provision": "success",
+                    "Runtime mirror guard": "success",
+                    "Smoke acceptance": "success"
+                },
+                "note": "Same four jobs on the push event for the same head; independent second observation.",
+                "run_id": 30228825268,
+                "url": "https://github.com/ajoe734/pantheon/actions/runs/30228825268",
                 "workflow": "branch-ci.yml"
             },
             {
-                "conclusion": "pending_at_cut_time",
+                "conclusion": "not_a_required_check",
                 "event": "pull_request",
-                "note": "Branch CI Gate / Smoke acceptance. Required check on dev. Not yet reported at cut time.",
-                "workflow": "branch-ci.yml"
-            },
-            {
-                "conclusion": "pending_at_cut_time",
-                "event": "pull_request",
-                "note": "Branch CI Gate / Python packaging provision. Added by this task; not a branch-protection required check until branch protection is updated by whoever owns it, which this task does not do. It runs on every push and pull_request the workflow already gates, and validation.commands[9] records a local rehearsal of its exact step sequence in a clean interpreter.",
+                "note": "Scope note, not an observation. 'Python packaging provision' is added by this task and is not in the dev branch-protection required-check set; adding it there is a repository-settings change this task does not own. It is recorded above because it ran and passed on the exact head, and it is carried as a residual risk.",
                 "workflow": "branch-ci.yml"
             }
         ]
@@ -197,11 +228,46 @@
             {
                 "command": "timeout 420 /home/lupin/pantheon/.venv/bin/python3 -m pytest --collect-only -q --ignore=services/telemetry services",
                 "result": "ATTRIBUTION CHECK: also terminated by its cap (rc=143) with services/telemetry - the only directory this task touches - excluded entirely. Whole-services collection therefore does not complete for reasons outside this change. services/telemetry on its own collects 302 tests in 4.66s (commands[15]) and runs 301 passed / 1 skipped (commands[1])."
+            },
+            {
+                "command": "git merge origin/dev -m \"Merge remote-tracking branch 'origin/dev' into task/OPS-L12-PYTHON-PACKAGING-PROVISION-001\"",
+                "conclusion": "pass",
+                "result": "BRANCH SYNC: merge made by the 'ort' strategy onto dev tip 7fedefb281dd416e0412e935c48e866438f56e6d, no conflict. This merge changed 4 files, 314 insertions, 42 deletions, all of them OPS-CI-PR-TRAILER-RANGE-001 artifacts plus that task's brief. Resulting head 4aab5cca40a6815876beb8d77972bb71d12d757d. Counting the earlier sync 0a5f32db4 as well, the full delta from the evidence commit 7bf1fd5f5a72d867d5633bc03f55a74665d533b5 to 4aab5cca40a6815876beb8d77972bb71d12d757d is 15 files across two other lanes, including services/telemetry implementation and test files from OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001. git status --short reports no modified or untracked file inside this task's scope."
+            },
+            {
+                "command": "for f in .github/workflows/branch-ci.yml AI_COLLABORATION_GUIDE.md pyproject.toml scripts/dev/provision_python_distribution.py scripts/dev/test_provision_python_distribution.py services/telemetry/test_discovery_imports.py; do sha256sum \"$f\"; done",
+                "conclusion": "pass",
+                "result": "IMPLEMENTATION SURFACE UNCHANGED BY THE SYNCS: all six digests at the synced head 4aab5cca40a6815876beb8d77972bb71d12d757d are byte-identical to the c72842d9de8afeae46d8953174b18698bd2c10e3 epoch already recorded in integrity.source_artifact_sha256_by_epoch. Cross-checked structurally: git diff --stat 7bf1fd5f5a72d867d5633bc03f55a74665d533b5..4aab5cca40a6815876beb8d77972bb71d12d757d restricted to pyproject.toml, scripts/dev, .github/workflows/branch-ci.yml, AI_COLLABORATION_GUIDE.md, services/telemetry/test_discovery_imports.py, scripts/test_ops_l12_python_packaging_provision_evidence.py and this evidence directory is empty. Neither merge can therefore have altered any behaviour this manifest asserts, and both epochs are pinned so the claim is checkable mechanically."
+            },
+            {
+                "command": "/home/lupin/pantheon/.venv/bin/python -m pytest services/telemetry/test_discovery_imports.py -q",
+                "conclusion": "pass",
+                "result": "RE-VALIDATION at synced head 4aab5cca40a6815876beb8d77972bb71d12d757d: 20 passed, 20 subtests passed in 26.60s, 0 skipped. This module is where the four AC2 execution modes are asserted unconditionally, including the unprovisioned control that must still fail, so the four-mode result is re-observed on the synced head rather than carried over."
+            },
+            {
+                "command": "/home/lupin/pantheon/.venv/bin/python -m pytest scripts/test_ops_l12_python_packaging_provision_evidence.py scripts/dev/test_provision_python_distribution.py -q",
+                "conclusion": "pass",
+                "result": "RE-VALIDATION at the synced head: 23 passed, 13 subtests passed in 5.93s. The evidence gate and the static packaging contract both hold. Note this run was taken before the present re-cut was written; the post-re-cut run is commands[26]."
+            },
+            {
+                "command": "/home/lupin/pantheon/.venv/bin/python -m pytest services/telemetry -q",
+                "conclusion": "pass",
+                "result": "RE-VALIDATION at synced head 4aab5cca40a6815876beb8d77972bb71d12d757d: 353 passed, 1 skipped, 3 warnings, 35 subtests passed in 100.15s. The count is higher than the 301 recorded at c72842d9de8afeae46d8953174b18698bd2c10e3 because the earlier sync brought OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001's services/telemetry/test_infrastructure_health_ingest.py and its siblings in from dev; the delta attributable to this task is unchanged, since none of this task's files differ between the two epochs. The single skip is the same pre-existing PANTHEON_TEST_NATS_URL skip."
+            },
+            {
+                "command": "gh api repos/ajoe734/pantheon/commits/4aab5cca40a6815876beb8d77972bb71d12d757d/check-runs --jq '.check_runs[] | \"\\(.name)\\t\\(.conclusion)\"'",
+                "conclusion": "pass",
+                "result": "EXACT-HEAD REQUIRED CHECKS: eight check runs, all conclusion=success, status=completed - Commit trailers, Runtime mirror guard, Smoke acceptance and Python packaging provision, each once for the pull_request run 30228827007 and once for the push run 30228825268. gh pr view 4232 reports state=OPEN, mergeStateStatus=CLEAN, mergeable=MERGEABLE, autoMergeRequest=null - auto-merge is deliberately not enabled, because AC6 requires Codex2's independent decision before any merge."
+            },
+            {
+                "command": "/home/lupin/pantheon/.venv/bin/python -m pytest scripts/test_ops_l12_python_packaging_provision_evidence.py -q",
+                "conclusion": "pass",
+                "result": "POST-RE-CUT GATE: 10 passed, 20 subtests passed in 1.05s. Run last, against the final committed bytes of this manifest and of the regenerated evidence.sha256, so the schema, timestamp-ordering, dense-record-log, checksum-coverage and source-digest-epoch assertions all cover the re-cut itself and not only the first cut. The subtest count is higher than the 13 of the pre-re-cut run because the record log grew from 4 entries to 9 and each recorded timestamp is one subtest."
             }
         ],
-        "validated_at": "2026-07-27T00:34:18Z",
-        "validated_base_sha": "643181a067ec5c344faac0766c69de0d5cfb32eb",
-        "validated_head_sha": "c72842d9de8afeae46d8953174b18698bd2c10e3"
+        "validated_at": "2026-07-27T01:07:40Z",
+        "validated_base_sha": "7fedefb281dd416e0412e935c48e866438f56e6d",
+        "validated_head_sha": "4aab5cca40a6815876beb8d77972bb71d12d757d"
     },
     "deployment": {
         "applicable": false,
@@ -354,7 +420,7 @@
             "status": "pass"
         },
         {
-            "blocking_until": "The three existing required checks report a conclusion on the exact PR head. The status portion of this criterion is asserted for the suites only; the required-checks portion is recorded as pending in implementation_delivery.required_checks and must be confirmed before done.",
+            "blocking_until": "Nothing. The required-check portion is now observed rather than pending: the exact pull-request head 4aab5cca40a6815876beb8d77972bb71d12d757d carries success on all four Branch CI Gate jobs on both the pull_request and push events.",
             "evidence_refs": [
                 "validation.commands[0]",
                 "validation.commands[1]",
@@ -363,14 +429,17 @@
                 "validation.commands[9]",
                 "validation.commands[15]",
                 "validation.commands[16]",
-                "implementation_delivery.required_checks"
+                "implementation_delivery.required_checks",
+                "validation.commands[23]",
+                "validation.commands[25]",
+                "validation.commands[26]"
             ],
             "id": "AC5",
             "statement": "Focused telemetry and relevant full suites pass and exact-head required checks are green",
-            "status": "suites_pass_required_checks_pending"
+            "status": "pass"
         },
         {
-            "blocking_until": "Codex2 records an independent decision on this manifest and on evidence.sha256, and that decision is appended to record_log.",
+            "blocking_until": "Codex2 records an independent decision on this manifest and on evidence.sha256 at the synced head 4aab5cca40a6815876beb8d77972bb71d12d757d, and that decision is appended to record_log. Auto-merge is deliberately not enabled on pull request 4232 so that no merge can precede that decision.",
             "evidence_refs": [
                 "integrity.checksum_coverage",
                 "integrity.source_artifact_sha256_by_epoch",
@@ -448,6 +517,14 @@
         "self_hash_omitted": true,
         "self_hash_reason": "A manifest cannot contain its own digest, so no digest of evidence.json appears inside evidence.json. The digest is recorded in the companion evidence.sha256, which is the convention used by the sibling twelve-loop-gap evidence directories; scripts/test_ops_l12_python_packaging_provision_evidence.py verifies that companion against the committed bytes, and the merge commit records them a second time.",
         "source_artifact_sha256_by_epoch": {
+            "4aab5cca40a6815876beb8d77972bb71d12d757d": {
+                ".github/workflows/branch-ci.yml": "0ce7b16f33db7773aace114a32d510192beae99b547ae26fb6887505231c8805",
+                "AI_COLLABORATION_GUIDE.md": "489385a5b436bc52888a7a05812a4704215d99df29e0a2c36bd1d3e56f0b39d7",
+                "pyproject.toml": "78811ad02e28b70173aca1a9c3b7a10bcec9e64e4760e3b50bcdcb49aed6c13a",
+                "scripts/dev/provision_python_distribution.py": "09695f5f1b928d0b19adb253f8fb2dc46f261279e9f2bfb70344149d69d903ac",
+                "scripts/dev/test_provision_python_distribution.py": "96cf1d15486cffa3a15b700da05eda73981f834b39dd785dc14287157707072f",
+                "services/telemetry/test_discovery_imports.py": "4b49a813ad43d986a1dabddf5f4e4069c9991eac684328d2808ed6a469c132f1"
+            },
             "c72842d9de8afeae46d8953174b18698bd2c10e3": {
                 ".github/workflows/branch-ci.yml": "0ce7b16f33db7773aace114a32d510192beae99b547ae26fb6887505231c8805",
                 "AI_COLLABORATION_GUIDE.md": "489385a5b436bc52888a7a05812a4704215d99df29e0a2c36bd1d3e56f0b39d7",
@@ -492,6 +569,51 @@
             "recorded_at": "2026-07-27T00:35:00Z",
             "reference": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-PYTHON-PACKAGING-PROVISION-001/evidence.json",
             "sequence": 4,
+            "status": "owner_asserted_pass_pending_independent_review"
+        },
+        {
+            "actor": "Claude",
+            "kind": "evidence_commit",
+            "recorded_at": "2026-07-27T00:32:40Z",
+            "reference": "OPS-L12-PYTHON-PACKAGING-PROVISION-001: record evidence cut",
+            "sequence": 5,
+            "sha": "7bf1fd5f5a72d867d5633bc03f55a74665d533b5",
+            "status": "recorded"
+        },
+        {
+            "actor": "Claude",
+            "kind": "branch_sync",
+            "recorded_at": "2026-07-27T00:59:40Z",
+            "reference": "Two conflict-free dev merges, 0a5f32db4 and 4aab5cca40a6815876beb8d77972bb71d12d757d onto dev tip 7fedefb281dd416e0412e935c48e866438f56e6d, clearing the BEHIND pull-request state; head pushed to origin. They landed two other lanes' deliveries and changed no file this task owns.",
+            "sequence": 6,
+            "sha": "4aab5cca40a6815876beb8d77972bb71d12d757d",
+            "status": "recorded"
+        },
+        {
+            "actor": "Claude",
+            "kind": "validation_run",
+            "recorded_at": "2026-07-27T01:02:40Z",
+            "reference": "validation.commands - re-validation on the synced head: implementation digest comparison across both epochs, the four-mode discovery-imports module, the evidence gate and packaging contract, and the full services/telemetry suite",
+            "sequence": 7,
+            "sha": "4aab5cca40a6815876beb8d77972bb71d12d757d",
+            "status": "pass"
+        },
+        {
+            "actor": "Claude",
+            "kind": "required_checks_observed",
+            "recorded_at": "2026-07-27T01:04:40Z",
+            "reference": "implementation_delivery.required_checks - exact-head conclusions for pull request 4232, runs 30228827007 (pull_request) and 30228825268 (push)",
+            "sequence": 8,
+            "sha": "4aab5cca40a6815876beb8d77972bb71d12d757d",
+            "status": "success"
+        },
+        {
+            "actor": "Claude",
+            "kind": "owner_evidence_recut",
+            "recorded_at": "2026-07-27T01:07:40Z",
+            "reference": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-PYTHON-PACKAGING-PROVISION-001/evidence.json",
+            "sequence": 9,
+            "sha": "4aab5cca40a6815876beb8d77972bb71d12d757d",
             "status": "owner_asserted_pass_pending_independent_review"
         }
     ]
