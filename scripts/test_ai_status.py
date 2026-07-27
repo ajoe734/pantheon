@@ -2447,6 +2447,31 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             binding=binding,
         )
 
+    def test_reviewer_reopen_refuses_unbound_pr_rejection(self) -> None:
+        self.state["tasks"][0]["source_ref"] = {
+            "pr": 4269,
+            "head_sha": "a" * 40,
+            "base": "dev",
+        }
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False),
+            self.assertRaisesRegex(SystemExit, "rejection.*GitHub review gate"),
+        ):
+            ai_status.command_reopen(
+                self.state,
+                ["REG-002", "Changes are required."],
+            )
+
+        task = ai_status.get_task(self.state, "REG-002")
+        self.assertEqual(task["status"], "review")
+        self.assertFalse(
+            [
+                handoff
+                for handoff in self.state["handoffs"]
+                if handoff.get("from") == "Claude"
+            ]
+        )
+
     def test_human_ops_reopen_clears_blocker_without_impersonating_worker(self) -> None:
         self.state["tasks"][0]["status"] = "blocked"
         self.state["tasks"][0]["waiting_for"] = "Human/Ops"
