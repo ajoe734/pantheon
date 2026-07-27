@@ -172,7 +172,36 @@ Raw evidence is under `raw/`. The earlier
 `raw/post-install-snapshot.json` are retained only as historical stage-1
 context; they no longer define the acceptance result.
 
-## 8. Acceptance mapping
+## 8. Exact-head base refresh
+
+Codex2 correctly rejected PR #4257 head
+`dcadf09109d919e35bef078b061faea70b3df7a4` after `dev` advanced. The task
+branch then absorbed current `origin/dev`
+`b79d3a540a797fe69851f4dbb3a119ddb647cf9a` with a normal merge, producing
+base-refresh commit `9c4588c433768ba7ba6b3f7964fdea8f5503c200`. No rebase or force push was
+used.
+
+Before and after that merge, sha256 values for `evidence.json`, `evidence.md`,
+`bootstrap-approval-binding.md`, and `handoff/runtime-snapshot.py` were
+identical. The live config also remained byte-identical at
+`adab474b01b99630041cb06d565ae9dbfd7d52badc1d9e612b7cb8d4129de77e`.
+
+Focused validation on the refreshed branch passed:
+
+- `scripts/test_ai_status.py`: 142/142;
+- `ReviewApprovedWorkflowTests`: 30/30;
+- `scripts/test_status_command_runtime_pin.py`: 7/7;
+- py_compile, evidence manifest parsing, and `git diff --check`.
+
+A read-only snapshot at `2026-07-27T16:51:09Z` reconfirmed exactly one
+supervisor, PID `500973`, at candidate root `dev-root-29054ab270d5`; all five
+active worker PIDs were alive; all five started queue records matched their
+worker `lease_owner`; and the authoritative projection and canonical board
+both hashed
+`cc0b7f1870ac6944b14a96f3e38c43f9deaa1a8900aa3cc9c67eef3cf7da1011`.
+This base refresh changed no live runtime or candidate identity.
+
+## 9. Acceptance mapping
 
 | Acceptance | Result |
 |---|---|
@@ -184,7 +213,7 @@ context; they no longer define the acceptance result.
 | Rollback to prior runtime tested and roll-forward restored candidate | **pass** |
 | Evidence PR exact-head Codex2 review, merge, archive, and `done` | **pending final review** |
 
-## 9. Residual risks and final gate
+## 10. Residual risks and final gate
 
 - The unchanged live config still names the rollback root in
   `watchdog.supervisor_command`. A watchdog-driven future relaunch therefore

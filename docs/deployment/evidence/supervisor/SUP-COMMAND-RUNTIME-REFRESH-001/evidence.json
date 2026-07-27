@@ -216,6 +216,40 @@
   "review": {
     "status": "pending",
     "reviewer": "Codex2",
+    "base_refresh": {
+      "reason": "PR #4257 head became BEHIND after dev advanced; refresh without changing the proven live candidate.",
+      "rejected_head": "dcadf09109d919e35bef078b061faea70b3df7a4",
+      "merged_dev_head": "b79d3a540a797fe69851f4dbb3a119ddb647cf9a",
+      "merge_commit": "9c4588c433768ba7ba6b3f7964fdea8f5503c200",
+      "strategy": "normal merge; no rebase and no force push",
+      "task_artifact_hashes_unchanged_across_merge": {
+        "evidence.json": "457ad11aeb953f713e44c8771b69ed0a551ead5755e7b2d7e7aee977c892f714",
+        "evidence.md": "1f977da2404f3d2b905615b4785b9dbd1084d0eece5c28c23c6908cf2a1cfa3e",
+        "bootstrap-approval-binding.md": "b8968d1991638d214e592a7681501c075b241374a93811473668e67f6b3cae0f",
+        "handoff/runtime-snapshot.py": "9e70818147074e43a93fd4d0bbd11efb486b79aec6a8a2811f009c94c5f3361a"
+      },
+      "local_validation": {
+        "scripts/test_ai_status.py": "142/142 pass",
+        "ReviewApprovedWorkflowTests": "30/30 pass",
+        "scripts/test_status_command_runtime_pin.py": "7/7 pass",
+        "py_compile": "pass",
+        "manifest_parse": "pass",
+        "git_diff_check": "pass"
+      },
+      "live_readonly_recheck": {
+        "captured_at": "2026-07-27T16:51:09Z",
+        "supervisor_pid": 500973,
+        "supervisor_root": "/home/lupin/pantheon-ci-deploy/dev-root-29054ab270d5",
+        "candidate_head": "29054ab270d552a56ed071cedf3f45150e948b6a",
+        "live_config_sha256": "adab474b01b99630041cb06d565ae9dbfd7d52badc1d9e612b7cb8d4129de77e",
+        "active_worker_pids_alive": "5/5",
+        "started_queue_lease_owner_parity": "5/5",
+        "projection_ok": true,
+        "projection_caught_up": true,
+        "projection_hashes_equal": true,
+        "projected_and_board_sha256": "cc0b7f1870ac6944b14a96f3e38c43f9deaa1a8900aa3cc9c67eef3cf7da1011"
+      }
+    },
     "required_binding": {
       "review_file": "docs/deployment/evidence/supervisor/SUP-COMMAND-RUNTIME-REFRESH-001/evidence.json",
       "pull_request": 4257,
