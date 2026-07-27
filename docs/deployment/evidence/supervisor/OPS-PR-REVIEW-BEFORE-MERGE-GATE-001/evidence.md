@@ -3,11 +3,12 @@
 Task: Gate task auto-merge on exact independent review when required
 Owner: Codex · Reviewer: Codex2 · Phase: Fleet delivery governance
 
-Codex adopted the branch after Codex2 rejected predecessor head
-`190fb7fe8c95fa060a33e45edc0e6ac0a0e55a59`. Claude authored the existing
-implementation commits; Codex independently revalidated the corrected
-`7759ed36666ce62a7f912a9c85f74cf409cff095` behavior and owns the final
-evidence, handoff, and closeout.
+Codex adopted the branch after the first exact-head review rejected
+`190fb7fe8c95fa060a33e45edc0e6ac0a0e55a59`, then addressed the second
+independent rejection of
+`5a9ad1643eba2580bf8a51c71a6f3a43ad8c57b6`. Claude authored the initial
+implementation; Codex owns the case-preserving archive repair, helper
+revocation readback, final evidence, handoff, and closeout.
 
 Scope rule honoured throughout: **no `.orchestrator/config.json` edit**, no
 hand-edited task board, no owner or reviewer action performed on behalf of
@@ -108,8 +109,8 @@ one, so its failure direction is safe.
 
 | Entry point | What denies it | Proven by |
 |-------------|----------------|-----------|
-| `task_finalize.sh` | gate call before PR creation; no auto-merge label, request on the head revoked | `TaskFinalizeShellTests::test_gated_task_pr_is_opened_without_any_auto_merge` |
-| `safe_pr.sh` | same gate call before `gh pr merge --auto --merge` | `prefix-reproduction.txt` §1–§2 |
+| `task_finalize.sh` | gate call before PR creation; no auto-merge label; already-off is a no-op, while a standing request is revoked and read back; unreadable/still-armed fails closed | `TaskFinalizeShellTests::test_gated_task_pr_is_opened_without_any_auto_merge`, `::test_task_finalize_revokes_a_standing_request_and_verifies_it_off`, `::test_task_finalize_fails_closed_when_revocation_leaves_request_armed` |
+| `safe_pr.sh` | same gate call and the same before/after `autoMergeRequest` verification | `::test_safe_pr_distinguishes_an_already_off_request`, `::test_safe_pr_revokes_a_standing_request_and_verifies_it_off`, `::test_safe_pr_fails_closed_when_revocation_leaves_request_armed` |
 | `auto_integrator.py` | gate runs before the CI probe; merges only with `--match-head-commit`, never `--auto` | `IntegratorGateTests` |
 | auto-merge **creation** (CLI, UI, or API) | `allow_auto_merge` is `False` for every gated task in every state, approved included | `::test_the_shared_credential_cannot_enable_auto_merge`, `::test_an_approved_task_never_unlocks_auto_merge_creation` |
 | auto-merge **finalization** by GitHub | a request enabled before the current head is refused outright | `::test_pr_4227_shape_is_refused_even_when_this_head_is_approved` |
@@ -125,11 +126,13 @@ explicitly forbidden to make.
 
 Section 4 of `prefix-reproduction.txt` replays all eight from recorded state.
 
-### 1.3 Two fail-open cases the first implementation still had
+### 1.3 Four fail-open cases the reviewed implementations still had
 
 Independent review at exact head `190fb7fe8` rejected the first implementation
-with two reproduced fail-open cases. Both are now closed, and both are replayed
-against the pre-fix modules in §5 of `prefix-reproduction.txt`.
+with two reproduced fail-open cases. A later review at exact head `5a9ad1643`
+found two more. All four are now closed; the first pair is replayed against
+the pre-fix modules in §5 of `prefix-reproduction.txt`, and the second pair is
+pinned directly by the 84-test gate suite.
 
 **The approval was not structurally bound to the reviewed head.**
 `command_approve` recorded only actor, timestamp and free-text message, and
@@ -164,6 +167,24 @@ The armed request survives that merge attempt, so GitHub kept independent
 authority to land whatever head stood next. The integrator now blocks before
 emitting any merge call when a revocation it attempted did not succeed.
 
+**Archived task lookup changed the canonical task ID's case.**
+The archive writer stores `LUV-REACTIVATE-KW01-001.json`, preserving case and
+percent-escaping all characters except `-_.`. The gate instead looked for
+`luv-reactivate-kw01-001.json`, so a terminal task present in production
+resolved as `source=missing`. The lookup now uses the writer's exact
+case-preserving escaping contract, with an uppercase production-shape
+regression.
+
+**The PR-opening helpers claimed revocation without proving it.**
+`task_finalize.sh` and `safe_pr.sh` both ended their gated path with
+`gh pr merge --disable-auto ... || true` and then printed that auto-merge was
+off. A failed command could therefore leave `autoMergeRequest` armed while the
+helper returned success. Both helpers now read the request before acting,
+distinguish already-off from standing, and read back after revocation. An
+unreadable result or a request that remains armed aborts the helper. A nonzero
+disable command is accepted only when readback proves another actor already
+turned the request off.
+
 ## 2. The gate
 
 `scripts/git/task_review_merge_gate.py` is the single canonical authority. It
@@ -171,7 +192,8 @@ answers one question — *may `task/<TASK-ID>` merge into `dev` right now?* — 
 canonical state only:
 
 * the task row in `ai-status.json` under the bound `PANTHEON_STATUS_ROOT`
-  (falling back to the task archive for a terminal task);
+  (falling back to the task archive for a terminal task using the archive
+  writer's case-preserving, percent-escaped filename contract);
 * the immutable `review_approved` event in the activity audit, including its
   rotated `.gz` archives.
 
@@ -263,11 +285,13 @@ approved path too, because a gated PR lands through an explicit
 
 Both ask the gate for the policy before opening the PR. Under
 `review_before_merge` the PR is created **without** the `auto-merge` label,
-auto-merge is never enabled, and any stale auto-merge request on the head is
-revoked with `gh pr merge --disable-auto`. A gate failure resolves to the gated
+auto-merge is never enabled, and request state is read from GitHub. An
+already-off request is left alone. A standing request is revoked with
+`gh pr merge --disable-auto` and then read back; an unreadable or still-armed
+request terminates the helper nonzero. A gate failure resolves to the gated
 path, so a broken canonical read can only withhold merge authority, never widen
 it. Under `merge_then_review` the previous label + `--auto --merge` behaviour is
-byte-for-byte preserved.
+preserved.
 
 Both helpers print the follow-up commands that actually land a gated PR — the
 approval that binds this exact head, then the integrator pass:
@@ -315,10 +339,10 @@ and block, instead of silently resolving to the first row returned by GitHub.
 |---|----------------------|--------|--------------|
 | 1 | A canonical review-before-merge task never enables or performs merge before exact assigned reviewer approval | pass | `TaskFinalizeShellTests`, `IntegratorGateTests::test_unapproved_gated_pr_is_never_merged_and_auto_merge_is_revoked`, `prefix-reproduction.txt` §1–§2 |
 | 2 | Approval is bound to exact PR head, expected base, reviewer identity, and a non-stale timestamp | pass | `ApprovalBindingTests` (the recorded binding, compared exactly), `ai_status` `::test_approve_records_the_reviewed_pr_head_binding`, `ApprovedPathTests`, `FailClosedTests::test_head_change_after_approval_blocks`, `::test_wrong_base_branch_blocks`, `::test_approval_by_another_agent_blocks`, `::test_future_approval_timestamp_blocks` |
-| 3 | Reviewer rejection, head change, missing state, GitHub ambiguity, and concurrent finalize all fail closed | pass | `FailClosedTests`, `UnreadableStateTests`, `ApprovalBindingTests::test_pre_dated_head_replacement_is_refused`, `IntegratorGateTests::test_concurrent_open_prs_for_one_task_branch_fail_closed`, `::test_failed_auto_merge_revocation_never_reaches_the_merge`, `--match-head-commit` on the merge call |
+| 3 | Reviewer rejection, head change, missing state, GitHub ambiguity, failed revocation in either helper/integrator, and concurrent finalize all fail closed | pass | `FailClosedTests`, `UnreadableStateTests`, `ApprovalBindingTests::test_pre_dated_head_replacement_is_refused`, the task-finalize/safe-pr failed-revocation shell regressions, `IntegratorGateTests::test_concurrent_open_prs_for_one_task_branch_fail_closed`, `::test_failed_auto_merge_revocation_never_reaches_the_merge`, `--match-head-commit` on the merge call |
 | 4 | Tasks explicitly governed as merge-then-review retain their documented integration behavior | pass | `PolicyResolutionTests`, `IntegratorGateTests::test_merge_then_review_task_keeps_its_documented_behavior`, `TaskFinalizeShellTests::test_merge_then_review_task_still_enables_auto_merge` |
 | 5 | Regression fixtures cover PRs #4212, #4213 and #4214 without impersonating owner or reviewer | pass | `PrematureMergeRegressionTests` (recorded state replayed as data only) |
-| 6 | Focused workflow tests cover branch, commit, push, PR, checks, independent review, merge, and evidence archive | pass | `validation.txt` |
+| 6 | Focused workflow tests cover branch, commit, push, PR, checks, independent review, merge, and uppercase production-shape evidence archive | pass | `validation.txt`, `UnreadableStateTests::test_archived_task_row_is_still_gated` |
 
 AC5 is met as written and then extended: `LiveMergeGovernanceRegressionTests`
 covers the eight later live regressions (#4201, #4217, #4222, #4225 auto-merge
@@ -333,14 +357,15 @@ The full map of PR → entry point → fixture is the `live_regressions` table i
 See `validation.txt` for the captured transcript.
 
 ```
-python3 scripts/git/test_task_review_merge_gate.py     Ran  79 tests - OK
+python3 scripts/git/test_task_review_merge_gate.py     Ran  84 tests - OK
 python3 scripts/git/test_auto_integrator.py            Ran   9 tests - OK
 python3 scripts/git/test_git_workflow_helpers.py       Ran  52 tests - OK
 python3 scripts/git/test_task_pr_triage.py             Ran  24 tests - OK
 python3 scripts/git/test_index_safety.py               Ran  17 tests - OK
-python3 scripts/test_ai_status.py                      Ran 137 tests - OK
+python3 scripts/test_ai_status.py                      Ran 141 tests - OK
 bash -n scripts/git/task_finalize.sh scripts/git/safe_pr.sh   syntax ok
-py_compile task_review_merge_gate.py auto_integrator.py ai_status.py   compile ok
+py_compile task_review_merge_gate.py auto_integrator.py        compile ok
+git diff --check origin/dev...HEAD                         clean
 ```
 
 The pre-fix reproduction is `prefix-reproduction.txt`; its §1 shows the old
@@ -349,7 +374,9 @@ refusing on the identical fixture. §3 replays PRs #4212/#4213/#4214 and §4
 replays the eight later live regressions. §5 reproduces the two 2026-07-27
 review findings against the modules as they stood at reviewed head `190fb7fe8`,
 §6 shows the same two fixtures refused after the fix, and §7 is the verbose run
-of the regressions that pin them.
+of the regressions that pin them. The later `5a9ad1643` archive/revocation
+findings are covered by the uppercase archive fixture and the five additional
+helper-state tests in the 84-test gate suite.
 
 ## 6. Residual risks
 
@@ -382,8 +409,10 @@ an open PR at cutover needs one extra reviewer action.
 `gh pr merge --disable-auto` fails for an environmental reason — a `gh` auth
 blip, a transient GitHub error — an approved, green PR now blocks rather than
 merging. That is deliberate: the alternative is merging while a grant we could
-not withdraw is still armed. The recovery is to revoke the request by hand and
-re-run the integrator, and the blocked result says exactly that.
+not withdraw is still armed. The same rule applies while either PR-opening
+helper is withholding auto-merge. The recovery is to revoke the request and
+rerun the helper or integrator; if another actor already revoked it, readback
+proves `autoMergeRequest=null` and the helper may continue.
 
 **Approval events are matched by task id in the audit.** A rotation that loses
 both the active tail and the archived `.gz` for an approval would make the gate
@@ -403,11 +432,12 @@ the recovery is the same single re-approval as any other revocation. It exists
 because the #4225 and #4222 do-not-merge instructions were filed as notes
 rather than as `reopen` or `blocker` events.
 
-**Revoking auto-merge costs an integrator call.** A gated PR now gets
-`gh pr merge <n> --disable-auto` before its exact-head merge, and an approved
-head whose auto-merge request predates it is refused outright. The extra call
-is idempotent; the refusal costs one integrator cycle, after which no request
-remains and the approved head merges.
+**A standing auto-merge request costs a revocation and readback.** An
+already-off gated PR is a no-op. When a request is present, the helpers and
+integrator issue `gh pr merge <n> --disable-auto`, then verify it is absent.
+An approved head whose request predates it is refused outright; that refusal
+costs one integrator cycle, after which no request remains and the approved
+head can merge.
 
 **The gate reads canonical state, not GitHub reviews.** Pantheon reviewers are
 agents that approve through `scripts/ai-status.sh approve`, and all task PRs are

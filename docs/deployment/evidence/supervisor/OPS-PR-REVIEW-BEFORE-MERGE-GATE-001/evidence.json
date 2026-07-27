@@ -18,7 +18,7 @@
     "narrative": "docs/deployment/evidence/supervisor/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001/evidence.md"
   },
   "scope": {
-    "owned_layer": "Canonical review-before-merge gate for task/<TASK-ID> PRs: policy resolution from the canonical task row, structural binding of an approval to the exact reviewed PR number, head sha and expected base, and the merge authority handed out by task_finalize.sh, safe_pr.sh, and auto_integrator.py.",
+    "owned_layer": "Canonical review-before-merge gate for task/<TASK-ID> PRs: policy resolution from the canonical task row and case-preserving task archive, structural binding of an approval to the exact reviewed PR number, head sha and expected base, and fail-closed merge authority/revocation readback in task_finalize.sh, safe_pr.sh, and auto_integrator.py.",
     "not_changing": "No .orchestrator/config.json edit, no change to the review_approved transition itself or its guards in ai_status.py (command_approve additionally records the reviewed PR identity and warns when it is absent; it still refuses nothing it previously allowed), no hand-edited task board, no branch protection change, and no change to the publish/promote or hotfix PR paths, which are not task PRs and do not call these helpers.",
     "implementation_changed_files": [
       "scripts/git/task_review_merge_gate.py",
@@ -116,6 +116,18 @@
       "summary": "Open PR #4201 (task/P0-TW-PAPER-ACTIVATE-001, owner Antigravity, reviewer Claude) still had auto-merge armed on head dc5d7128bad1717b23b6c750076b0cb47a213ae3 with reviewDecision empty and reviews=[] while the canonical task was in_progress. Only mergeStateStatus=BEHIND kept it from merging; Human/Ops disabled auto-merge without touching the branch.",
       "live_source": "https://github.com/ajoe734/pantheon/pull/4218#issuecomment-5085953216; gh pr view 4201 --json mergeStateStatus,autoMergeRequest,reviewDecision,reviews,headRefOid",
       "root_cause": "The first pass revoked a standing auto-merge request only on the blocked path, and on the approved path only just before the merge call. A gated PR that resolves to waiting - which is exactly what BEHIND produces - kept its request. A stale base is not a safety property: it expires the moment the base catches up."
+    },
+    {
+      "id": "OF14",
+      "summary": "The gate lowercased archived task filenames even though the canonical archive writer preserves task-id case. On the production filesystem ai-task-archive/tasks/LUV-REACTIVATE-KW01-001.json existed while the gate returned source=missing.",
+      "live_source": "Codex2 independent review of PR #4218 head 5a9ad1643eba2580bf8a51c71a6f3a43ad8c57b6; ai-task-archive/tasks/LUV-REACTIVATE-KW01-001.json",
+      "root_cause": "load_task_contract built `<task-id.lower()>.json` instead of the archive writer's case-preserving, percent-escaped filename."
+    },
+    {
+      "id": "OF15",
+      "summary": "task_finalize.sh and safe_pr.sh swallowed `gh pr merge --disable-auto` failure and then printed that auto-merge was off. A standing autoMergeRequest could remain armed after either helper returned success.",
+      "live_source": "Codex2 independent review of PR #4218 head 5a9ad1643eba2580bf8a51c71a6f3a43ad8c57b6; helper lines formerly ending in `|| true`",
+      "root_cause": "Neither helper read autoMergeRequest before or after revocation, so it could not distinguish already-off from failed-and-still-armed state."
     }
   ],
   "live_regressions": [
@@ -183,13 +195,13 @@
   "merge_entry_point_coverage": [
     {
       "entry_point": "task_finalize.sh",
-      "control": "asks the gate before PR creation; a gated task PR is opened without the auto-merge label and any request on the head is revoked",
-      "proof": "scripts/git/test_task_review_merge_gate.py::TaskFinalizeShellTests::test_gated_task_pr_is_opened_without_any_auto_merge"
+      "control": "asks the gate before PR creation; a gated task PR is opened without the auto-merge label; the helper reads autoMergeRequest, revokes only a standing request, reads it back, and exits nonzero if GitHub is unreadable or the request remains armed",
+      "proof": "scripts/git/test_task_review_merge_gate.py::TaskFinalizeShellTests::test_gated_task_pr_is_opened_without_any_auto_merge, ::test_task_finalize_revokes_a_standing_request_and_verifies_it_off, ::test_task_finalize_fails_closed_when_revocation_leaves_request_armed"
     },
     {
       "entry_point": "safe_pr.sh",
-      "control": "same gate call before `gh pr merge --auto --merge`; falls through to `--disable-auto` for a gated task",
-      "proof": "scripts/git/safe_pr.sh lines around the gate call; docs/deployment/evidence/supervisor/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001/prefix-reproduction.txt sections 1 and 2"
+      "control": "same gate call before `gh pr merge --auto --merge`; the gated path distinguishes already-off from armed, verifies state after revocation, and aborts when a failed revoke leaves autoMergeRequest present",
+      "proof": "scripts/git/test_task_review_merge_gate.py::TaskFinalizeShellTests::test_safe_pr_distinguishes_an_already_off_request, ::test_safe_pr_revokes_a_standing_request_and_verifies_it_off, ::test_safe_pr_fails_closed_when_revocation_leaves_request_armed"
     },
     {
       "entry_point": "auto_integrator.py",
@@ -265,6 +277,8 @@
         "scripts/git/test_task_review_merge_gate.py::ApprovalBindingTests::test_pre_dated_head_replacement_is_refused",
         "scripts/git/test_task_review_merge_gate.py::ApprovalBindingTests::test_unbound_approval_cannot_open_the_gate",
         "scripts/git/test_task_review_merge_gate.py::UnreadableStateTests",
+        "scripts/git/test_task_review_merge_gate.py::TaskFinalizeShellTests::test_task_finalize_fails_closed_when_revocation_leaves_request_armed",
+        "scripts/git/test_task_review_merge_gate.py::TaskFinalizeShellTests::test_safe_pr_fails_closed_when_revocation_leaves_request_armed",
         "scripts/git/test_task_review_merge_gate.py::IntegratorGateTests::test_failed_auto_merge_revocation_never_reaches_the_merge",
         "scripts/git/test_task_review_merge_gate.py::IntegratorGateTests::test_failed_revocation_on_an_unapproved_pr_still_reports_the_gate_reason",
         "scripts/git/test_task_review_merge_gate.py::IntegratorGateTests::test_concurrent_open_prs_for_one_task_branch_fail_closed",
@@ -298,7 +312,8 @@
       "statement": "Focused workflow tests cover branch, commit, push, PR, checks, independent review, merge, and evidence archive.",
       "status": "pass",
       "evidence_refs": [
-        "docs/deployment/evidence/supervisor/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001/validation.txt"
+        "docs/deployment/evidence/supervisor/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001/validation.txt",
+        "scripts/git/test_task_review_merge_gate.py::UnreadableStateTests::test_archived_task_row_is_still_gated (uppercase production-shape archive filename)"
       ]
     }
   ],
@@ -315,10 +330,12 @@
   "validation": {
     "revalidation": {
       "actor": "Codex",
-      "reason": "Owner reassignment after the first exact-head review rejected the predecessor implementation. Codex independently re-ran the corrected exact-head replacement, failed-revocation, and approval-binding suites before adopting the branch.",
+      "reason": "Owner reassignment after the first exact-head review rejected the predecessor implementation, followed by a second independent review of head 5a9ad1643 that found lowercase archive lookup and fail-open helper revocation. Codex corrected both findings, composed current dev, and reran the full focused matrix.",
       "adopted_predecessor_commit": "7759ed36666ce62a7f912a9c85f74cf409cff095",
-      "validated_dev_base": "ab63b3c4c14cb47fd5ddaec0c0ae6a3cd18afc8c",
-      "validated_tree_commit": "a432948dddb8d49a3df0a6e9258002fabc0528d3"
+      "rejected_review_head": "5a9ad1643eba2580bf8a51c71a6f3a43ad8c57b6",
+      "repair_anchor_commit": "e971a2c9441c0611fa7070f7554805e3ccfcb2b7",
+      "validated_dev_base": "a7d10d85f972430e3969fb87a8551712ce0d694c",
+      "validated_tree_commit": "b21f79f3b71b00fb720379e2333a1eb73ad59a49"
     },
     "commands": [
       {
@@ -333,7 +350,7 @@
       },
       {
         "command": "python3 scripts/git/test_task_review_merge_gate.py",
-        "conclusion": "Ran 79 tests - OK (64 from the previous pass plus ApprovalBindingTests and the two failed-revocation integrator regressions from the 2026-07-27 review)",
+        "conclusion": "Ran 84 tests - OK; includes uppercase production-shape archive lookup and already-off, standing-request, and failed-revocation shell regressions for both task_finalize.sh and safe_pr.sh",
         "result": "pass"
       },
       {
@@ -357,13 +374,18 @@
         "result": "pass"
       },
       {
-        "command": "bash -n scripts/git/task_finalize.sh && bash -n scripts/git/safe_pr.sh && python3 -m py_compile scripts/git/task_review_merge_gate.py scripts/git/auto_integrator.py scripts/ai_status.py",
-        "conclusion": "syntax ok; compile ok",
+        "command": "bash -n scripts/git/task_finalize.sh scripts/git/safe_pr.sh && python3 -m py_compile scripts/git/task_review_merge_gate.py scripts/git/auto_integrator.py && git diff --check origin/dev...HEAD",
+        "conclusion": "syntax ok; compile ok; diff check clean",
         "result": "pass"
       },
       {
         "command": "python3 scripts/test_ai_status.py",
-        "conclusion": "Ran 137 tests - OK (133 previous plus 4 covering the approval binding recorded by command_approve)",
+        "conclusion": "Ran 141 tests - OK after composing current dev",
+        "result": "pass"
+      },
+      {
+        "command": "python3 -m json.tool docs/deployment/evidence/supervisor/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001/evidence.json",
+        "conclusion": "evidence manifest parses",
         "result": "pass"
       }
     ],
@@ -408,9 +430,9 @@
     "auto_merge_request_revocation": {
       "severity": "low",
       "blocking_for_this_task": false,
-      "description": "A gated PR now has any standing auto-merge request revoked before the exact-head merge, and an approved head is refused outright when the request predates it. The integrator therefore issues an extra `gh pr merge <n> --disable-auto` call on the approved path.",
-      "containment": "The extra call is idempotent and already used on the blocked path. Refusing the outlived-request case costs one integrator cycle: the next pass sees no request and merges the approved head.",
-      "recheck_trigger": "An approved PR blocked twice in a row with auto_merge_request_outlived_head, which would mean the revocation is not taking effect."
+      "description": "A gated PR now has any standing auto-merge request revoked before the exact-head merge, and an approved head is refused outright when the request predates it. The integrator and both PR-opening helpers verify the grant is absent; an unreadable or still-armed state blocks.",
+      "containment": "Already-off is a no-op. A standing request is revoked and read back. A failed command is tolerated only if the readback proves another actor already turned it off; any request still present aborts the helper or integrator.",
+      "recheck_trigger": "A helper or integrator reports that autoMergeRequest remains armed after revocation."
     },
     "canonical_state_trust": {
       "severity": "low",

@@ -1,12 +1,17 @@
-Revalidated by Codex after owner reassignment from Claude and after composing
-the task branch with origin/dev ab63b3c4c14cb47fd5ddaec0c0ae6a3cd18afc8c.
-The validated implementation tree is
-a432948dddb8d49a3df0a6e9258002fabc0528d3; the following task commit changes
-evidence only.
+Revalidated by Codex after the independent rejection of PR #4218 head
+5a9ad1643eba2580bf8a51c71a6f3a43ad8c57b6. The repair preserves canonical
+archive filename case/escaping, and both PR-opening helpers verify
+autoMergeRequest after revocation and fail closed while it remains armed.
+
+The task branch contains origin/dev
+a7d10d85f972430e3969fb87a8551712ce0d694c, including the specifically
+requested 558c42352129737117dbe9fafb1f863b72e0fe24 composition. The validated
+implementation tree is b21f79f3b71b00fb720379e2333a1eb73ad59a49; the
+following task commit changes evidence only.
 
 == python3 scripts/git/test_task_review_merge_gate.py
 ----------------------------------------------------------------------
-Ran 79 tests in 0.707s
+Ran 84 tests in 3.030s
 OK
 
 == python3 scripts/git/test_auto_integrator.py
@@ -16,7 +21,7 @@ OK
 
 == python3 scripts/git/test_git_workflow_helpers.py
 ----------------------------------------------------------------------
-Ran 52 tests in 2.296s
+Ran 52 tests in 2.140s
 OK
 
 == python3 scripts/git/test_task_pr_triage.py
@@ -26,12 +31,12 @@ OK
 
 == python3 scripts/git/test_index_safety.py
 ----------------------------------------------------------------------
-Ran 17 tests in 3.377s
+Ran 17 tests in 5.404s
 OK
 
 == python3 scripts/test_ai_status.py
 ----------------------------------------------------------------------
-Ran 137 tests in 11.897s
+Ran 141 tests in 12.225s
 OK
 
 == bash -n helpers
@@ -39,3 +44,9 @@ syntax ok
 
 == py_compile
 compile ok
+
+== python3 -m json.tool evidence.json
+evidence manifest parses
+
+== git diff --check origin/dev...HEAD
+diff check clean
