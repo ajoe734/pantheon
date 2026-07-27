@@ -357,19 +357,30 @@ def _resume_point(
         return None
     last_event = checkpoint["last_event"]
     try:
-        # Self-validate the recorded head so a torn or edited cache cannot hand
-        # back a state digest the event body does not actually carry.
+        # A prefix digest proves which journal bytes the cache describes, but
+        # not which event is at that prefix's head. A checkpoint-only writer
+        # could otherwise pair the real prefix digest with a different,
+        # internally valid event and make the accelerated read project forged
+        # state. Bind the cached event to the actual final JSONL record.
+        head_end = prefix_bytes - 1
+        previous_newline = head_end - 1
+        while previous_newline >= 0 and payload[previous_newline] != 0x0A:
+            previous_newline -= 1
+        raw_head = bytes(memoryview(payload)[previous_newline + 1 : head_end])
+        actual_last_event = json.loads(raw_head.decode("utf-8"))
+        if actual_last_event != last_event:
+            return None
         validate_event(
-            last_event,
+            actual_last_event,
             expected_sequence=int(checkpoint["event_count"]),
-            previous_sha256=last_event.get("previous_event_sha256"),
+            previous_sha256=actual_last_event.get("previous_event_sha256"),
         )
-    except TaskStateStoreError:
+    except (UnicodeDecodeError, json.JSONDecodeError, TaskStateStoreError):
         return None
     return {
         "offset": prefix_bytes,
         "event_count": int(checkpoint["event_count"]),
-        "last_event": last_event,
+        "last_event": actual_last_event,
         "digest": prefix_digest,
     }
 
