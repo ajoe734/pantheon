@@ -12319,6 +12319,20 @@ def sync_task_state_shadow(config: dict[str, Any], state: dict[str, Any]) -> boo
     while ``ai-status.json`` remains authoritative. After cutover the direction
     reverses: the journal is authoritative and a divergent JSON board is
     repaired from its latest validated event, never imported into the journal.
+
+    Two properties are load-bearing here and were previously wrong:
+
+    ``caught_up`` reports parity, not work. It used to be assigned the
+    *divergence* predicate, so a healthy cycle published ``caught_up: false``
+    and a cycle that had just repaired a drifted board published
+    ``caught_up: true``. Whether a write was needed is now ``repaired``.
+
+    The journal is read exactly once. The old body replayed the whole log four
+    times inside the exclusive canonical lock -- ``load_events``,
+    ``project_latest_state``, then ``verify_projection`` which loaded and
+    projected it all over again -- so reconciliation cost scaled with journal
+    size four times per cycle while every reviewer, approve, and note command
+    queued behind that same lock.
     """
 
     runtime_env = task_state_store_runtime_env(config)
@@ -12339,33 +12353,45 @@ def sync_task_state_shadow(config: dict[str, Any], state: dict[str, Any]) -> boo
             file_state = load_json(status_file, default={})
             if not isinstance(file_state, dict):
                 raise RuntimeError("task state projection must be a JSON object")
+            snapshot = rewrite_task_state_store.load_snapshot(event_log)
             if mode == "authoritative":
-                events = rewrite_task_state_store.load_events(event_log)
-                if not events:
+                if not snapshot["event_count"]:
                     raise RuntimeError("authoritative task-state journal is empty")
-                canonical_state = rewrite_task_state_store.project_latest_state(events)
-                caught_up = (
+                canonical_state = snapshot["state"]
+                repaired = (
                     rewrite_task_state_store.sha256_json(file_state)
-                    != rewrite_task_state_store.sha256_json(canonical_state)
+                    != snapshot["state_sha256"]
                 )
-                if caught_up:
+                if repaired:
                     write_json(status_file, canonical_state)
-                report = rewrite_task_state_store.verify_projection(
-                    event_log,
-                    canonical_state,
+                # Compare the journal head against the board as it now stands,
+                # so parity is asserted about the file this phase is
+                # responsible for rather than restated about the snapshot.
+                report = rewrite_task_state_store.verify_snapshot(
+                    snapshot,
+                    canonical_state if repaired else file_state,
                 )
             else:
                 canonical_state = file_state
-                before = rewrite_task_state_store.verify_projection(event_log, canonical_state)
-                caught_up = not before["ok"]
-                if caught_up:
-                    rewrite_task_state_store.append_state_commit(
+                repaired = not rewrite_task_state_store.verify_snapshot(
+                    snapshot,
+                    canonical_state,
+                )["ok"]
+                if repaired:
+                    committed = rewrite_task_state_store.append_state_commit(
                         event_log,
                         canonical_state,
                         source="supervisor-shadow-catchup",
                     )
-                report = rewrite_task_state_store.verify_projection(event_log, canonical_state)
-            if not report["ok"]:
+                    snapshot = {
+                        "event_count": int(committed["sequence"]),
+                        "last_event_id": str(committed["event_id"]),
+                        "state": committed["state"],
+                        "state_sha256": str(committed["state_sha256"]),
+                    }
+                report = rewrite_task_state_store.verify_snapshot(snapshot, canonical_state)
+            caught_up = bool(report["ok"])
+            if not caught_up:
                 raise RuntimeError(
                     f"task-state {mode} projection remains divergent after reconciliation"
                 )
@@ -12377,10 +12403,12 @@ def sync_task_state_shadow(config: dict[str, Any], state: dict[str, Any]) -> boo
             "last_checked_at": checked_at,
             "last_success_at": checked_at,
             "last_error": None,
+            # Parity after reconciliation, not "a write happened".
             "caught_up": caught_up,
+            "repaired": repaired,
             **report,
         }
-        return caught_up
+        return repaired
     except Exception as exc:  # per-phase isolation keeps the incumbent loop observable
         failure = {
             "mode": mode,
@@ -12388,7 +12416,9 @@ def sync_task_state_shadow(config: dict[str, Any], state: dict[str, Any]) -> boo
             "event_log": str(event_log),
             "last_checked_at": checked_at,
             "last_error": f"{type(exc).__name__}: {exc}",
+            # Parity was never established this cycle, and no repair is claimed.
             "caught_up": False,
+            "repaired": False,
         }
         for key in (
             "event_count",
