@@ -9,7 +9,7 @@ Local focused validation passed:
 OK
 
 == .venv-pantheon/bin/python3 scripts/git/test_task_review_merge_gate.py
-Ran 91 tests in 7.297s
+Ran 91 tests in 5.979s
 OK
 
 == .venv-pantheon/bin/python3 scripts/git/test_auto_integrator.py
@@ -17,26 +17,26 @@ Ran 9 tests in 0.005s
 OK
 
 == .venv-pantheon/bin/python3 scripts/git/test_git_workflow_helpers.py
-Ran 58 tests in 3.159s
+Ran 58 tests in 2.894s
 OK
 
 == .venv-pantheon/bin/python3 -m pytest -q scripts/git/test_task_git_helpers_refspec.py
-2 passed in 0.48s
+2 passed in 0.40s
 
 == .venv-pantheon/bin/python3 scripts/git/test_task_pr_triage.py
-Ran 24 tests in 0.010s
+Ran 24 tests in 0.005s
 OK
 
 == .venv-pantheon/bin/python3 scripts/git/test_index_safety.py
-Ran 17 tests in 4.007s
+Ran 17 tests in 3.713s
 OK
 
 == .venv-pantheon/bin/python3 scripts/test_ai_status.py
-Ran 144 tests in 12.197s
+Ran 144 tests in 13.956s
 OK
 
 == /home/lupin/pantheon/.venv/bin/python -m pytest focused git/status suite -q
-345 passed, 31 subtests passed in 58.79s
+345 passed, 31 subtests passed in 57.24s
 
 Revalidated by Codex after an independent review dispatch named PR #4218 head
 30b57020d73ba7aefd261a12326b83114d83eec2 but observed that the PR had already
