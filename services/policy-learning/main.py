@@ -7,12 +7,49 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from services.foundation.health import register_fastapi_health_routes
 from services.foundation.persistence_posture import require_persistence_posture
-from store import PolicyLearningStore, build_policy_learning_store
+from agora_dataset_authority import (
+    AgoraAuthorityUnavailable,
+    build_agora_dataset_authority,
+    configured_tenant_id,
+    configured_user_id,
+)
+from inbound_authority import (
+    PolicyLearningAuthority,
+    PolicyLearningAuthorityError,
+    authority_configuration,
+    bind_tenant,
+    resolve_authority,
+)
+from store import (
+    DEFAULT_CLAIM_BATCH_SIZE,
+    DEFAULT_LEASE_SECONDS,
+    CandidateStoreCorrupt,
+    LeaseHeldError,
+    LeaseLostError,
+    STATUS_CLAIMED,
+    STATUS_DEGRADED,
+    STATUS_FAILED,
+    STATUS_PROCESSED,
+    STATUS_PROPOSED,
+    PolicyLearningStore,
+    build_policy_learning_store,
+    candidate_dedupe_key,
+    candidate_id_for,
+    candidate_tenant_id,
+)
+from services.research.imitation.agora_dataset_source import (
+    AGORA_DATASET_AUTHORITY,
+    AgoraDatasetError,
+    attach_step_probabilities,
+    build_dataset_lineage,
+    build_dataset_payload,
+)
 from services.research.imitation.bc_trainer import train as train_bc
 from services.research.imitation.eval_metrics import evaluate as evaluate_policy
 
@@ -95,6 +132,24 @@ GATEWAY_URL = _gateway_url()
 STORE_BACKEND = os.getenv("POLICY_LEARNING_STORE_BACKEND", "json").strip().lower() or "json"
 PERSISTENCE_POSTURE = require_persistence_posture("policy-learning")
 
+# Dataset sourcing mode.  ``product`` is the default and has no seed, fixture,
+# or synthesized fallback: when the tenant-scoped Agora dataset authority
+# cannot answer, the tick and the candidate degrade truthfully.  ``seed`` is an
+# explicitly non-product development mode and stamps every artifact it touches
+# so seed-derived output can never be mistaken for authoritative output.
+DATASET_MODE_ENV = "POLICY_LEARNING_DATASET_MODE"
+PRODUCT_DATASET_MODE = "product"
+SEED_DATASET_MODE = "seed"
+
+
+def _dataset_mode() -> str:
+    mode = (os.getenv(DATASET_MODE_ENV) or PRODUCT_DATASET_MODE).strip().lower()
+    return SEED_DATASET_MODE if mode == SEED_DATASET_MODE else PRODUCT_DATASET_MODE
+
+
+def _product_mode() -> bool:
+    return _dataset_mode() == PRODUCT_DATASET_MODE
+
 
 def _route_to_gateway(adapter: str, objective: str, source_refs: List[Dict[str, Any]], constraints: Dict[str, Any], actor_id: str, job_id: str, timestamp: str) -> Optional[Dict[str, Any]]:
     """POST an offline-capable adapter job to the research-worker-gateway."""
@@ -175,6 +230,15 @@ class ShadowEvalTickBody(BaseModel):
     max_datasets: Optional[int] = None
     actor_id: str = "scheduler"
     ticked_at: Optional[str] = None
+    tenant_id: Optional[str] = None
+    user_id: Optional[str] = None
+
+
+class WorkerClaimBody(BaseModel):
+    worker_id: str = "policy-learning-worker"
+    batch_size: int = DEFAULT_CLAIM_BATCH_SIZE
+    lease_seconds: int = DEFAULT_LEASE_SECONDS
+    tenant_id: Optional[str] = None
 
 
 def _proposal_text(body: ProposalBody) -> str:
@@ -187,7 +251,46 @@ def _proposal_text(body: ProposalBody) -> str:
 
 
 app = FastAPI(title="Pantheon Policy Learning Service", version="0.1.0")
-store = build_policy_learning_store(_data_dir())
+store = build_policy_learning_store(_data_dir(), product_mode=_product_mode())
+
+
+@app.exception_handler(PolicyLearningAuthorityError)
+def _authority_error_handler(request: Request, exc: PolicyLearningAuthorityError) -> JSONResponse:
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.to_detail()})
+
+
+@app.exception_handler(CandidateStoreCorrupt)
+def _corrupt_store_handler(request: Request, exc: CandidateStoreCorrupt) -> JSONResponse:
+    """Surface a damaged backlog as an outage, never as an empty backlog."""
+
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": {
+                "code": "CANDIDATE_STORE_CORRUPT",
+                "message": "The policy-learning candidate backlog is unreadable",
+                "path": exc.path,
+                "reason": exc.detail,
+                "candidate_authority": store.describe(),
+            }
+        },
+    )
+
+
+def require_authority(
+    authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None),
+    x_pantheon_tenant: Optional[str] = Header(default=None),
+) -> PolicyLearningAuthority:
+    """Authenticate one imitation-loop request and bind it to one tenant."""
+
+    return resolve_authority(
+        authorization=authorization,
+        tenant_header=x_tenant_id,
+        tenant_alias=x_pantheon_tenant,
+    )
+
+
 register_fastapi_health_routes(
     app,
     "policy-learning",
@@ -198,6 +301,10 @@ register_fastapi_health_routes(
         "store_backend": STORE_BACKEND,
         "production_adapters_enabled": _production_adapters_allowed(),
         "persistence_posture": PERSISTENCE_POSTURE.to_dict(),
+        "dataset_mode": _dataset_mode(),
+        "dataset_authority": dataset_authority().describe(),
+        "candidate_authority": store.describe(),
+        "inbound_authority": authority_configuration(),
     },
 )
 
@@ -210,6 +317,10 @@ def health() -> Dict[str, Any]:
         "data_dir": _data_dir(),
         "job_count": len(store.list_jobs()),
         "production_adapters_enabled": _production_adapters_allowed(),
+        "dataset_mode": _dataset_mode(),
+        "dataset_authority": dataset_authority().describe(),
+        "candidate_authority": store.describe(),
+        "inbound_authority": authority_configuration(),
     }
 
 
@@ -410,37 +521,85 @@ def reject_job(job_id: str, body: RejectBody) -> Dict[str, Any]:
     return store.put_job(job)
 
 
-def discover_eligible_datasets() -> List[Dict[str, Any]]:
-    backend = os.getenv("POLICY_LEARNING_STORE_BACKEND", "json").strip().lower()
-    if backend == "postgres":
-        dsn = os.getenv("POLICY_LEARNING_STORE_DSN") or os.getenv("DATABASE_URL")
-        if dsn:
-            try:
-                import psycopg  # type: ignore[import]
-                with psycopg.connect(dsn) as conn:
-                    with conn.cursor() as cur:
-                        cur.execute(
-                            "SELECT DISTINCT persona_id, COALESCE(session_id, 'default') "
-                            "FROM agora.agora_dataset_records "
-                            "WHERE learning_eligible = true"
-                        )
-                        rows = cur.fetchall()
-                        if rows:
-                            return [
-                                {
-                                    "id": f"ds-trace-{row[0]}-{row[1]}",
-                                    "type": "trace_dataset",
-                                    "source": "agora_interaction",
-                                    "persona_id": row[0],
-                                    "session_id": None if row[1] == "default" else row[1]
-                                }
-                                for row in rows
-                            ]
-            except Exception:
-                pass
-    return []
+DATASET_AUTHORITY = build_agora_dataset_authority()
 
 
+def dataset_authority() -> Any:
+    """Process-wide Agora dataset authority handle."""
+
+    return DATASET_AUTHORITY
+
+
+def _resolve_tenant_scope(
+    tenant_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> tuple[str, str]:
+    """Resolve the tenant/user scope a tick or resolution runs under."""
+
+    return (
+        (tenant_id or configured_tenant_id() or "").strip(),
+        (user_id or configured_user_id() or "").strip(),
+    )
+
+
+def _degradation(reason: str, detail: str, timestamp: str, **extra: Any) -> Dict[str, Any]:
+    """Truthful degradation record.
+
+    ``seed_fallback_used`` is recorded as an explicit ``False`` in product mode
+    so an auditor can see that the failure produced no substituted data rather
+    than having to infer it from an absence.
+    """
+
+    record = {
+        "status": "degraded",
+        "reason": reason,
+        "detail": detail,
+        "dataset_mode": _dataset_mode(),
+        "seed_fallback_used": False,
+        "authority": dataset_authority().describe(),
+        "degraded_at": timestamp,
+    }
+    record.update(extra)
+    return record
+
+
+class DatasetResolutionError(RuntimeError):
+    """A candidate's dataset could not be resolved from the Agora authority."""
+
+    def __init__(self, reason: str, detail: str) -> None:
+        super().__init__(detail)
+        self.reason = reason
+        self.detail = detail
+
+
+def discover_eligible_datasets(
+    *,
+    tenant_id: str = "",
+    user_id: str = "",
+    limit: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    """Discover tenant-scoped learning-eligible Agora DatasetVersions.
+
+    Discovery is independent of ``POLICY_LEARNING_STORE_BACKEND``: the Agora
+    dataset authority is a separate owner with its own connection settings, so
+    the default JSON candidate store still sees real data.
+
+    Raises:
+        AgoraAuthorityUnavailable: the authority is unresolvable or unreachable.
+            Callers must degrade; there is no seed substitution here.
+    """
+
+    versions = dataset_authority().list_dataset_versions(
+        tenant_id=tenant_id,
+        user_id=user_id,
+        limit=limit,
+    )
+    return [version.to_dataset_ref() for version in versions]
+
+
+# Non-product development fixture.  Only reachable when
+# POLICY_LEARNING_DATASET_MODE=seed is set explicitly; the product path never
+# reads it, and anything derived from it is stamped seed_fallback_used=true.
 SEED_DATASET = {
     "dataset_id": "traj-smoke-2026-05-16",
     "strategy_id": "alpha-mean-reversion",
@@ -484,218 +643,227 @@ SEED_DATASET = {
 }
 
 
-def _get_dataset_payload(dataset_id: str) -> Dict[str, Any]:
-    backend = os.getenv("POLICY_LEARNING_STORE_BACKEND", "json").strip().lower()
-    if backend == "postgres" and dataset_id.startswith("ds-trace-"):
-        dsn = os.getenv("POLICY_LEARNING_STORE_DSN") or os.getenv("DATABASE_URL")
-        if dsn:
-            try:
-                import psycopg
-                with psycopg.connect(dsn) as conn:
-                    with conn.cursor() as cur:
-                        cur.execute(
-                            "SELECT persona_id, COALESCE(session_id, 'default'), content, source_refs, evidence_id "
-                            "FROM agora.agora_dataset_records "
-                            "WHERE learning_eligible = true"
-                        )
-                        rows = cur.fetchall()
-                        
-                        sessions = []
-                        source_dataset_refs = []
-                        strategy_id = None
-                        source_strategy_spec_id = None
-                        
-                        for row in rows:
-                            row_persona_id, row_session_id, content, source_refs, evidence_id = row
-                            expected_id = f"ds-trace-{row_persona_id}-{row_session_id}"
-                            if expected_id == dataset_id:
-                                source_dataset_refs.append(f"evidence://{evidence_id}")
-                                if source_refs:
-                                    if isinstance(source_refs, list):
-                                        source_dataset_refs.extend(source_refs)
-                                    elif isinstance(source_refs, str):
-                                        try:
-                                            parsed_refs = _json.loads(source_refs)
-                                            if isinstance(parsed_refs, list):
-                                                source_dataset_refs.extend(parsed_refs)
-                                        except Exception:
-                                            source_dataset_refs.append(source_refs)
-                                
-                                if isinstance(content, str):
-                                    try:
-                                        content = _json.loads(content)
-                                    except Exception:
-                                        continue
-                                
-                                if not isinstance(content, dict):
-                                    continue
-                                
-                                if "sessions" in content and isinstance(content["sessions"], list):
-                                    for s in content["sessions"]:
-                                        if isinstance(s, dict) and "steps" in s:
-                                            sessions.append(s)
-                                    if "strategy_id" in content:
-                                        strategy_id = content["strategy_id"]
-                                    if "source_strategy_spec_id" in content:
-                                        source_strategy_spec_id = content["source_strategy_spec_id"]
-                                else:
-                                    steps = content.get("steps")
-                                    if steps and isinstance(steps, list):
-                                        session_data = {
-                                            "trajectory_id": content.get("trajectory_id") or f"traj-{evidence_id}",
-                                            "actor_id": content.get("actor_id") or "default-actor",
-                                            "actor_role": content.get("actor_role") or "operator",
-                                            "decision": content.get("decision") or "approve",
-                                            "target": content.get("target") or {
-                                                "registry_id": "default",
-                                                "strategy_id": "default",
-                                                "artifact_version": "1.0.0",
-                                                "artifact_type": "strategy_spec",
-                                                "promotion_state": "candidate"
-                                            },
-                                            "steps": steps
-                                        }
-                                        sessions.append(session_data)
-                                        if "strategy_id" in content:
-                                            strategy_id = content["strategy_id"]
-                                        if "source_strategy_spec_id" in content:
-                                            source_strategy_spec_id = content["source_strategy_spec_id"]
-                                    elif "observation" in content and "action" in content:
-                                        session_data = {
-                                            "trajectory_id": f"traj-{evidence_id}",
-                                            "actor_id": content.get("actor_id") or "default-actor",
-                                            "actor_role": content.get("actor_role") or "operator",
-                                            "decision": content.get("decision") or "approve",
-                                            "target": content.get("target") or {
-                                                "registry_id": "default",
-                                                "strategy_id": "default",
-                                                "artifact_version": "1.0.0",
-                                                "artifact_type": "strategy_spec",
-                                                "promotion_state": "candidate"
-                                            },
-                                            "steps": [{
-                                                "observation": content["observation"],
-                                                "action": content["action"],
-                                                "reward": content.get("reward") or 0.0,
-                                                "feedback_event_id": evidence_id
-                                            }]
-                                        }
-                                        sessions.append(session_data)
-                                        if "strategy_id" in content:
-                                            strategy_id = content["strategy_id"]
-                                        if "source_strategy_spec_id" in content:
-                                            source_strategy_spec_id = content["source_strategy_spec_id"]
-                        
-                        if sessions:
-                            return {
-                                "dataset_id": dataset_id,
-                                "strategy_id": strategy_id or "alpha-mean-reversion",
-                                "source_dataset_refs": sorted(list(set(source_dataset_refs))),
-                                "source_strategy_spec_id": source_strategy_spec_id or "strat-alpha-mean-reversion-v2",
-                                "sessions": sessions
-                            }
-            except Exception as exc:
-                import logging
-                logging.getLogger("policy-learning").warning("Failed to load dataset content from postgres: %s", exc)
-
+def _seed_dataset_payload(dataset_id: str) -> tuple[Dict[str, Any], Dict[str, Any]]:
     payload = copy.deepcopy(SEED_DATASET)
     payload["dataset_id"] = dataset_id
-    return payload
+    lineage = {
+        "authority": "policy_learning_seed_fixture",
+        "dataset_id": dataset_id,
+        "dataset_version_ids": [],
+        "tenant_id": "",
+        "user_id": "",
+        "source_dataset_refs": list(payload["source_dataset_refs"]),
+        "seed_fallback_used": True,
+        "authoritative": False,
+        "product_mode": False,
+        "resolved_at": utc_now(),
+    }
+    return payload, lineage
 
 
-def _process_backlog() -> int:
-    import math
-    processed_count = 0
-    candidates = store.list_candidates()
-    for candidate in candidates:
-        if candidate.get("status") != "proposed":
-            continue
-        candidate_id = candidate["candidate_id"]
-        dataset_ref = candidate.get("dataset_ref") or {}
-        dataset_id = str(dataset_ref.get("id") or dataset_ref.get("dataset_id") or "ds-default")
-        
-        try:
-            # 1. Fetch or generate the dataset payload in IMT-003 format.
-            dataset_payload = _get_dataset_payload(dataset_id)
-            
-            # 2. Run bc_trainer.train(dataset_payload) to get behavior_policy_artifact.
-            bp_artifact = train_bc(dataset_payload)
-            
-            # 3. Pre-compute linear softmax probabilities for each step in dataset_payload and add to bp_artifact
-            policy_data = bp_artifact.get("policy", {})
-            weights = policy_data.get("weights", [])
-            bias = policy_data.get("bias", [])
-            action_labels = policy_data.get("action_labels", [])
-            
-            probs_by_step = {}
-            for session in dataset_payload.get("sessions", []):
-                traj_id = session.get("trajectory_id", "default")
-                for step_idx, step in enumerate(session.get("steps", [])):
-                    obs = step.get("observation", [])
-                    step_id = step.get("step_id")
-                    feedback_id = step.get("feedback_event_id")
-                    
-                    # Compute softmax probabilities
-                    logits = []
-                    for w, b in zip(weights, bias):
-                        logit = sum(wi * xi for wi, xi in zip(w, obs)) + b
-                        logits.append(logit)
-                    max_logit = max(logits)
-                    exp_logits = [math.exp(l - max_logit) for l in logits]
-                    sum_exp = sum(exp_logits)
-                    probs = [e / sum_exp for e in exp_logits]
-                    
-                    probs_map = {label: prob for label, prob in zip(action_labels, probs)}
-                    if step_id:
-                        probs_by_step[step_id] = probs_map
-                    if feedback_id:
-                        probs_by_step[feedback_id] = probs_map
-                    probs_by_step[f"{traj_id}:{step_idx}"] = probs_map
-                    probs_by_step[f"{traj_id}:step{step_idx}"] = probs_map
+def resolve_candidate_dataset(candidate: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    """Resolve a candidate's real dataset payload and its lineage.
 
-            policy_data["probabilities_by_step"] = probs_by_step
-            
-            # 4. Run eval_metrics.evaluate(behavior_policy_artifact, dataset_payload) to get eval_result.
-            eval_result = evaluate_policy(bp_artifact, dataset_payload)
-            
-            # 5. Update candidate with metrics, lineage, policy weights details
-            candidate["status"] = "processed"
-            candidate["metrics"] = eval_result.get("metrics", {})
-            candidate["evaluation_summary"] = {
-                "action_match_rate": eval_result.get("action_match_rate"),
-                "return_gap": eval_result.get("return_gap"),
-                "kl_divergence": eval_result.get("kl_divergence"),
-                "evaluator_id": eval_result.get("evaluator_id"),
-                "evaluation_timestamp": eval_result.get("evaluation_timestamp"),
-            }
-            candidate["policy_weights"] = bp_artifact.get("policy", {})
-            candidate["lineage"] = bp_artifact.get("lineage", {})
-            candidate["updated_at"] = utc_now()
-            
-        except Exception as exc:
-            candidate["status"] = "failed"
-            candidate["error_message"] = str(exc)
-            candidate["updated_at"] = utc_now()
-            
-        store.put_candidate(candidate)
-        processed_count += 1
-        
-    return processed_count
+    Product mode reads the tenant-scoped Agora DatasetVersion the candidate
+    cites and fails closed when it cannot.  No branch of this function returns
+    seed data while ``POLICY_LEARNING_DATASET_MODE`` is ``product``.
+
+    Returns:
+        ``(dataset_payload, dataset_lineage)``.
+
+    Raises:
+        DatasetResolutionError: the authority is unavailable, the version is
+            invisible in this tenant, or the content is not learning-eligible.
+    """
+
+    dataset_ref = candidate.get("dataset_ref") or {}
+    dataset_version_id = str(
+        dataset_ref.get("dataset_version_id") or dataset_ref.get("id") or dataset_ref.get("dataset_id") or ""
+    ).strip()
+
+    if not _product_mode():
+        return _seed_dataset_payload(dataset_version_id or "ds-seed")
+
+    tenant_id, user_id = _resolve_tenant_scope(
+        str(dataset_ref.get("tenant_id") or ""),
+        str(dataset_ref.get("user_id") or ""),
+    )
+    try:
+        versions = dataset_authority().get_dataset_versions(
+            dataset_version_id,
+            tenant_id=tenant_id,
+            user_id=user_id,
+        )
+        payload = build_dataset_payload(versions)
+        lineage = build_dataset_lineage(versions, payload)
+    except AgoraAuthorityUnavailable as exc:
+        raise DatasetResolutionError(exc.reason, exc.detail) from exc
+    except AgoraDatasetError as exc:
+        raise DatasetResolutionError(getattr(exc, "reason", "agora_dataset_error"), str(exc)) from exc
+
+    lineage["authoritative"] = True
+    lineage["product_mode"] = True
+    return payload, lineage
 
 
-def _next_candidate_id(timestamp: str, existing: set) -> str:
-    prefix = timestamp[:10].replace("-", "")
-    index = len(existing) + 1
-    candidate = f"sic-{prefix}-{index:03d}"
-    while candidate in existing:
-        index += 1
-        candidate = f"sic-{prefix}-{index:03d}"
+def _train_and_evaluate(payload: Dict[str, Any], lineage: Dict[str, Any]) -> Dict[str, Any]:
+    """Run the CPU behavior-cloning baseline and its shadow evaluation.
+
+    The returned block keeps the dataset lineage attached to both the trained
+    artifact and the evaluation so a candidate can never be read back without
+    knowing which tenant-scoped DatasetVersion produced it.
+    """
+
+    artifact = train_bc(payload)
+    attach_step_probabilities(artifact, payload)
+    evaluation = evaluate_policy(artifact, payload)
+
+    artifact_lineage = dict(artifact.get("lineage") or {})
+    artifact_lineage["dataset_lineage"] = lineage
+    artifact["lineage"] = artifact_lineage
+
+    return {
+        "artifact": artifact,
+        "evaluation": evaluation,
+        "training_evaluation": {
+            "evaluator_id": evaluation.get("evaluator_id"),
+            "evaluation_timestamp": evaluation.get("evaluation_timestamp"),
+            "action_match_rate": evaluation.get("action_match_rate"),
+            "return_gap": evaluation.get("return_gap"),
+            "kl_divergence": evaluation.get("kl_divergence"),
+            "artifact_checksum": artifact.get("checksum"),
+            "dataset_lineage": lineage,
+        },
+    }
+
+
+def _apply_processed_result(
+    candidate: Dict[str, Any],
+    result: Dict[str, Any],
+    lineage: Dict[str, Any],
+    timestamp: str,
+) -> Dict[str, Any]:
+    evaluation = result["evaluation"]
+    artifact = result["artifact"]
+    candidate["status"] = STATUS_PROCESSED
+    candidate["metrics"] = evaluation.get("metrics", {})
+    candidate["evaluation_summary"] = {
+        "action_match_rate": evaluation.get("action_match_rate"),
+        "return_gap": evaluation.get("return_gap"),
+        "kl_divergence": evaluation.get("kl_divergence"),
+        "evaluator_id": evaluation.get("evaluator_id"),
+        "evaluation_timestamp": evaluation.get("evaluation_timestamp"),
+    }
+    candidate["policy_weights"] = artifact.get("policy", {})
+    candidate["lineage"] = artifact.get("lineage", {})
+    candidate["dataset_lineage"] = lineage
+    candidate["training_evaluation"] = result["training_evaluation"]
+    candidate["artifact_checksum"] = artifact.get("checksum")
+    candidate["dataset_mode"] = _dataset_mode()
+    candidate["seed_fallback_used"] = bool(lineage.get("seed_fallback_used"))
+    candidate["authoritative"] = bool(lineage.get("authoritative"))
+    candidate.pop("error_message", None)
+    candidate.pop("degradation", None)
+    candidate["updated_at"] = timestamp
     return candidate
 
 
+def process_claimed_candidate(claim: Dict[str, Any]) -> Dict[str, Any]:
+    """Resolve, train, evaluate, and settle one leased candidate.
+
+    A dataset-authority failure lands the candidate in ``degraded`` — visibly
+    separate from ``failed`` — because the work was never attempted against
+    real data, and the alternative (training on a fixture) is exactly what this
+    task forbids.  A trainer or evaluator failure lands in ``failed`` / DLQ.
+    """
+
+    timestamp = utc_now()
+    candidate = copy.deepcopy(claim)
+    lease_token = str(candidate.get("lease_token") or "")
+    try:
+        payload, lineage = resolve_candidate_dataset(candidate)
+    except DatasetResolutionError as exc:
+        candidate["status"] = STATUS_DEGRADED
+        candidate["degradation"] = _degradation(exc.reason, exc.detail, timestamp)
+        candidate["seed_fallback_used"] = False
+        candidate["authoritative"] = False
+        candidate["updated_at"] = timestamp
+    else:
+        try:
+            result = _train_and_evaluate(payload, lineage)
+        except Exception as exc:  # trainer / evaluator failure -> DLQ
+            candidate["status"] = STATUS_FAILED
+            candidate["error_message"] = str(exc)
+            candidate["dataset_lineage"] = lineage
+            candidate["updated_at"] = timestamp
+        else:
+            _apply_processed_result(candidate, result, lineage, timestamp)
+
+    try:
+        return store.settle_candidate(candidate, lease_token=lease_token)
+    except LeaseLostError:
+        # Another worker reclaimed the expired lease and is authoritative for
+        # this candidate; discard this result instead of overwriting theirs.
+        candidate["status"] = "lease_lost"
+        return candidate
+
+
+def run_worker_cycle(
+    *,
+    worker_id: str,
+    batch_size: int = DEFAULT_CLAIM_BATCH_SIZE,
+    lease_seconds: int = DEFAULT_LEASE_SECONDS,
+    tenant_id: str = "",
+) -> Dict[str, Any]:
+    """Claim a batch of backlog work and process it under lease."""
+
+    claims = store.claim_candidates(
+        worker_id=worker_id,
+        batch_size=batch_size,
+        lease_seconds=lease_seconds,
+        tenant_id=tenant_id,
+    )
+    settled = [process_claimed_candidate(claim) for claim in claims]
+    counts: Dict[str, int] = {}
+    for record in settled:
+        key = str(record.get("status") or "unknown")
+        counts[key] = counts.get(key, 0) + 1
+    return {
+        "worker_id": worker_id,
+        "claimed_count": len(claims),
+        "processed_count": counts.get(STATUS_PROCESSED, 0),
+        "degraded_count": counts.get(STATUS_DEGRADED, 0),
+        "failed_count": counts.get(STATUS_FAILED, 0),
+        "lease_lost_count": counts.get("lease_lost", 0),
+        "status_counts": counts,
+        "candidate_ids": [str(record.get("candidate_id") or "") for record in settled],
+    }
+
+
+def _dataset_version_id(dataset_ref: Dict[str, Any]) -> str:
+    if not isinstance(dataset_ref, dict):
+        return ""
+    return str(
+        dataset_ref.get("dataset_version_id") or dataset_ref.get("id") or dataset_ref.get("dataset_id") or ""
+    ).strip()
+
+
 @app.post("/api/policy-learning/shadow-eval-tick", status_code=201)
-def shadow_eval_tick(body: ShadowEvalTickBody) -> Dict[str, Any]:
-    """Schedule a shadow / imitation evaluation tick over trace datasets.
+def shadow_eval_tick(
+    body: ShadowEvalTickBody,
+    authority: PolicyLearningAuthority = Depends(require_authority),
+) -> Dict[str, Any]:
+    """Schedule a shadow / imitation evaluation tick over real trace datasets.
+
+    The tick runs inside the authenticated caller's tenant.  A ``tenant_id`` in
+    the body is only accepted when it repeats that tenant, so the route cannot
+    be used to schedule work, or to probe for datasets, in someone else's
+    scope.
+
+    With no explicit ``dataset_refs`` the tick discovers tenant-scoped Agora
+    DatasetVersions through the dataset authority.  If that authority cannot
+    answer, the tick fails closed with HTTP 503 and a truthful degradation
+    record; it never falls back to seed data in product mode.
 
     Produces gated ShadowImitationCandidate records in proposed state.
     Production training and artifact mutation remain fail-closed until a
@@ -704,68 +872,117 @@ def shadow_eval_tick(body: ShadowEvalTickBody) -> Dict[str, Any]:
     timestamp = body.ticked_at or utc_now()
     tick_id = body.tick_id or f"shadow-tick-{timestamp[:10].replace('-', '')}"
     eval_type = body.eval_type.strip().lower() if body.eval_type else "shadow"
+    tenant_id = bind_tenant(authority, body.tenant_id)
+    _, user_id = _resolve_tenant_scope(tenant_id, body.user_id)
 
-    existing_candidates = store.list_candidates()
-    already_seen = {
-        str((c.get("dataset_ref") or {}).get("id") or (c.get("dataset_ref") or {}).get("dataset_id") or "")
-        for c in existing_candidates
-        if c.get("tick_id") == tick_id
-    }
-
-    dataset_refs = body.dataset_refs
+    dataset_refs = list(body.dataset_refs)
+    dataset_source = "explicit_refs"
     if not dataset_refs:
-        dataset_refs = discover_eligible_datasets()
+        dataset_source = "agora_dataset_version" if _product_mode() else "seed_mode"
+        try:
+            dataset_refs = discover_eligible_datasets(
+                tenant_id=tenant_id,
+                user_id=user_id,
+                limit=body.max_datasets,
+            )
+        except AgoraAuthorityUnavailable as exc:
+            degradation = _degradation(
+                exc.reason,
+                exc.detail,
+                timestamp,
+                tick_id=tick_id,
+                eval_type=eval_type,
+                tenant_id=tenant_id,
+                candidate_count=0,
+                production_training="fail_closed",
+            )
+            raise HTTPException(status_code=503, detail=degradation)
 
     if body.max_datasets is not None and len(dataset_refs) > body.max_datasets:
         dataset_refs = dataset_refs[: body.max_datasets]
 
-    existing_ids = {str(c.get("candidate_id") or "") for c in existing_candidates}
     created_ids: List[str] = []
     skipped_ids: List[str] = []
+    rejected: List[Dict[str, Any]] = []
 
     for ref in dataset_refs:
-        ref_id = str(ref.get("id") or ref.get("dataset_id") or "")
-        if ref_id and ref_id in already_seen:
-            skipped_ids.append(ref_id)
+        version_id = _dataset_version_id(ref)
+        if not version_id:
+            rejected.append({"reason": "dataset_version_id_missing", "dataset_ref": ref})
             continue
-        candidate_id = _next_candidate_id(timestamp, existing_ids | set(created_ids))
+        ref_tenant = str(ref.get("tenant_id") or "").strip()
+        if ref_tenant and ref_tenant != tenant_id:
+            # An explicit ref naming another tenant is refused rather than
+            # re-stamped: re-stamping would attach this tenant's candidate to a
+            # dataset version it has no authority over.
+            rejected.append({"reason": "dataset_ref_tenant_mismatch", "dataset_ref": ref})
+            continue
+
+        bound_ref = dict(ref)
+        bound_ref["tenant_id"] = tenant_id
+        dedupe_key = candidate_dedupe_key(tenant_id, tick_id, version_id)
+        candidate_id = candidate_id_for(tenant_id, tick_id, version_id)
         candidate = {
             "id": candidate_id,
             "candidate_id": candidate_id,
+            "dedupe_key": dedupe_key,
             "tick_id": tick_id,
             "eval_type": eval_type,
-            "dataset_ref": ref,
-            "status": "proposed",
+            "dataset_ref": bound_ref,
+            "dataset_version_id": version_id,
+            "dataset_source": dataset_source,
+            "dataset_mode": _dataset_mode(),
+            "tenant_id": tenant_id,
+            "status": STATUS_PROPOSED,
+            "attempt_count": 0,
             "production_training": "fail_closed",
             "experiment_approval_gate": "required",
+            "runtime_effect": "none",
             "gate_note": "Candidate requires experiment approval and deployment gate before any production training.",
             "created_at": timestamp,
             "updated_at": timestamp,
             "created_by": body.actor_id,
+            "scheduled_by": authority.actor_id,
         }
-        store.put_candidate(candidate)
-        created_ids.append(candidate_id)
+        # The store owns duplicate suppression.  A read-then-write check here
+        # would still let two concurrent ticks both observe "not present".
+        _, created = store.create_candidate_if_absent(candidate)
+        if created:
+            created_ids.append(candidate_id)
+        else:
+            skipped_ids.append(candidate_id)
 
     return {
         "status": "ok",
         "tick_id": tick_id,
         "eval_type": eval_type,
+        "dataset_source": dataset_source,
+        "dataset_mode": _dataset_mode(),
+        "tenant_id": tenant_id,
+        "actor_id": authority.actor_id,
+        "seed_fallback_used": not _product_mode(),
         "candidate_count": len(created_ids),
         "skipped_count": len(skipped_ids),
         "skipped_ids": skipped_ids,
+        "rejected_refs": rejected,
         "candidate_ids": created_ids,
         "production_training": "fail_closed",
         "ticked_at": timestamp,
     }
 
 
-@app.get("/api/policy-learning/candidates")
-def list_candidates(
+def _tenant_candidates(
+    authority: PolicyLearningAuthority,
+    *,
     tick_id: Optional[str] = None,
     eval_type: Optional[str] = None,
     status: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    candidates = store.list_candidates()
+    candidates = [
+        candidate
+        for candidate in store.list_candidates()
+        if candidate_tenant_id(candidate) == authority.tenant_id
+    ]
     if tick_id:
         candidates = [c for c in candidates if c.get("tick_id") == tick_id]
     if eval_type:
@@ -775,76 +992,284 @@ def list_candidates(
     return candidates
 
 
-@app.get("/api/policy-learning/candidates/{candidate_id}")
-def get_candidate(candidate_id: str) -> Dict[str, Any]:
+def _tenant_candidate(candidate_id: str, authority: PolicyLearningAuthority) -> Dict[str, Any]:
+    """Load one candidate inside the authenticated tenant.
+
+    A candidate owned by another tenant answers 404 rather than 403 so the
+    route cannot be used to enumerate which candidate ids exist elsewhere.
+    """
+
     candidate = store.get_candidate(candidate_id)
-    if not candidate:
+    if not candidate or candidate_tenant_id(candidate) != authority.tenant_id:
         raise HTTPException(status_code=404, detail="shadow imitation candidate not found")
     return candidate
 
 
+@app.get("/api/policy-learning/candidates")
+def list_candidates(
+    tick_id: Optional[str] = None,
+    eval_type: Optional[str] = None,
+    status: Optional[str] = None,
+    authority: PolicyLearningAuthority = Depends(require_authority),
+) -> List[Dict[str, Any]]:
+    return _tenant_candidates(
+        authority,
+        tick_id=tick_id,
+        eval_type=eval_type,
+        status=status,
+    )
+
+
+@app.get("/api/policy-learning/candidates/{candidate_id}")
+def get_candidate(
+    candidate_id: str,
+    authority: PolicyLearningAuthority = Depends(require_authority),
+) -> Dict[str, Any]:
+    return _tenant_candidate(candidate_id, authority)
+
+
 @app.get("/api/policy-learning/worker/backlog")
-def get_worker_backlog() -> List[Dict[str, Any]]:
-    """Return the list of pending items in the backlog."""
-    return list_candidates(status="proposed")
+def get_worker_backlog(
+    authority: PolicyLearningAuthority = Depends(require_authority),
+) -> List[Dict[str, Any]]:
+    """Return the list of unclaimed pending items in this tenant's backlog."""
+    return _tenant_candidates(authority, status=STATUS_PROPOSED)
+
+
+@app.get("/api/policy-learning/worker/claims")
+def get_worker_claims(
+    authority: PolicyLearningAuthority = Depends(require_authority),
+) -> List[Dict[str, Any]]:
+    """Return this tenant's candidates currently leased by a worker."""
+    return _tenant_candidates(authority, status=STATUS_CLAIMED)
+
+
+@app.get("/api/policy-learning/worker/degraded")
+def get_worker_degraded(
+    authority: PolicyLearningAuthority = Depends(require_authority),
+) -> List[Dict[str, Any]]:
+    """Return candidates whose dataset authority lookup degraded.
+
+    These are separate from the DLQ: no training was attempted, and no seed
+    data was substituted for the missing tenant-scoped dataset.
+    """
+    return _tenant_candidates(authority, status=STATUS_DEGRADED)
 
 
 @app.get("/api/policy-learning/worker/dlq")
-def get_worker_dlq() -> List[Dict[str, Any]]:
-    """Return the list of failed items in the DLQ."""
-    return list_candidates(status="failed")
+def get_worker_dlq(
+    authority: PolicyLearningAuthority = Depends(require_authority),
+) -> List[Dict[str, Any]]:
+    """Return the list of failed items in this tenant's DLQ."""
+    return _tenant_candidates(authority, status=STATUS_FAILED)
+
+
+def _requeue(candidate_id: str) -> Dict[str, Any]:
+    """Return a candidate to the backlog unless a worker still owns it."""
+
+    try:
+        return store.requeue_candidate(candidate_id)
+    except LeaseHeldError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "CANDIDATE_LEASE_HELD", "message": str(exc)},
+        ) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="shadow imitation candidate not found") from exc
 
 
 @app.post("/api/policy-learning/worker/dlq/{candidate_id}/replay")
-def replay_dlq_item(candidate_id: str) -> Dict[str, Any]:
-    """Reset a failed candidate back to proposed."""
-    candidate = get_candidate(candidate_id)
-    if candidate.get("status") != "failed":
+def replay_dlq_item(
+    candidate_id: str,
+    body: Optional[WorkerClaimBody] = None,
+    authority: PolicyLearningAuthority = Depends(require_authority),
+) -> Dict[str, Any]:
+    """Return a failed or degraded candidate to the backlog and re-run it."""
+    candidate = _tenant_candidate(candidate_id, authority)
+    if candidate.get("status") not in (STATUS_FAILED, STATUS_DEGRADED):
         raise HTTPException(status_code=400, detail="candidate is not in DLQ")
-    candidate["status"] = "proposed"
-    candidate["updated_at"] = utc_now()
-    candidate.pop("error_message", None)
-    store.put_candidate(candidate)
-    _process_backlog()
-    return store.get_candidate(candidate_id)
+    claim = body or WorkerClaimBody()
+    bind_tenant(authority, claim.tenant_id)
+    _requeue(candidate_id)
+    run_worker_cycle(
+        worker_id=f"{claim.worker_id}-replay",
+        batch_size=claim.batch_size,
+        lease_seconds=claim.lease_seconds,
+        tenant_id=authority.tenant_id,
+    )
+    return _tenant_candidate(candidate_id, authority)
 
 
 @app.post("/api/policy-learning/worker/retry/{candidate_id}")
-def retry_candidate(candidate_id: str) -> Dict[str, Any]:
-    """Retry processing a candidate."""
-    candidate = get_candidate(candidate_id)
-    candidate["status"] = "proposed"
-    candidate["updated_at"] = utc_now()
-    candidate.pop("error_message", None)
-    store.put_candidate(candidate)
-    _process_backlog()
-    return store.get_candidate(candidate_id)
+def retry_candidate(
+    candidate_id: str,
+    body: Optional[WorkerClaimBody] = None,
+    authority: PolicyLearningAuthority = Depends(require_authority),
+) -> Dict[str, Any]:
+    """Retry processing a candidate this tenant owns."""
+    _tenant_candidate(candidate_id, authority)
+    claim = body or WorkerClaimBody()
+    bind_tenant(authority, claim.tenant_id)
+    _requeue(candidate_id)
+    run_worker_cycle(
+        worker_id=f"{claim.worker_id}-retry",
+        batch_size=claim.batch_size,
+        lease_seconds=claim.lease_seconds,
+        tenant_id=authority.tenant_id,
+    )
+    return _tenant_candidate(candidate_id, authority)
+
+
+@app.post("/api/policy-learning/worker/claim")
+def claim_backlog(
+    body: Optional[WorkerClaimBody] = None,
+    authority: PolicyLearningAuthority = Depends(require_authority),
+) -> Dict[str, Any]:
+    """Take an exclusive expiring lease on this tenant's backlog work.
+
+    Two workers calling this concurrently receive disjoint candidate sets, and
+    the claim never reaches outside the authenticated tenant.
+    """
+    claim = body or WorkerClaimBody()
+    bind_tenant(authority, claim.tenant_id)
+    claims = store.claim_candidates(
+        worker_id=claim.worker_id,
+        batch_size=claim.batch_size,
+        lease_seconds=claim.lease_seconds,
+        tenant_id=authority.tenant_id,
+    )
+    return {
+        "status": "ok",
+        "worker_id": claim.worker_id,
+        "tenant_id": authority.tenant_id,
+        "claimed_count": len(claims),
+        "claims": [
+            {
+                "candidate_id": record.get("candidate_id"),
+                "lease_token": record.get("lease_token"),
+                "lease_expires_at": record.get("lease_expires_at"),
+                "attempt_count": record.get("attempt_count"),
+            }
+            for record in claims
+        ],
+    }
 
 
 @app.post("/api/policy-learning/worker/process")
-def trigger_backlog_processing() -> Dict[str, Any]:
-    """Manually trigger backlog processing."""
-    count = _process_backlog()
-    return {"status": "ok", "processed_count": count}
+def trigger_backlog_processing(
+    body: Optional[WorkerClaimBody] = None,
+    authority: PolicyLearningAuthority = Depends(require_authority),
+) -> Dict[str, Any]:
+    """Claim and process a batch of this tenant's backlog work under lease."""
+    claim = body or WorkerClaimBody()
+    bind_tenant(authority, claim.tenant_id)
+    result = run_worker_cycle(
+        worker_id=claim.worker_id,
+        batch_size=claim.batch_size,
+        lease_seconds=claim.lease_seconds,
+        tenant_id=authority.tenant_id,
+    )
+    return {"status": "ok", "tenant_id": authority.tenant_id, **result}
 
 
 @app.post("/api/policy-learning/worker/restart")
-def restart_worker() -> Dict[str, Any]:
-    """Reset all failed and proposed candidates to proposed status."""
-    candidates = store.list_candidates()
-    count = 0
-    for c in candidates:
-        if c.get("status") in ("failed", "proposed"):
-            c["status"] = "proposed"
-            c.pop("error_message", None)
-            c["updated_at"] = utc_now()
-            store.put_candidate(c)
-            count += 1
-    _process_backlog()
-    return {"status": "ok", "reset_count": count}
+def restart_worker(
+    body: Optional[WorkerClaimBody] = None,
+    authority: PolicyLearningAuthority = Depends(require_authority),
+) -> Dict[str, Any]:
+    """Recover backlog work orphaned by a crashed or restarted worker.
+
+    Only claims whose lease has expired return to the backlog; a candidate held
+    by a live worker keeps its owner, so a restart of one worker cannot steal
+    in-flight work from its peer.  Terminal candidates are left alone, and the
+    recovery sweep stays inside the authenticated tenant.
+    """
+    claim = body or WorkerClaimBody()
+    bind_tenant(authority, claim.tenant_id)
+    released = store.release_expired_leases(tenant_id=authority.tenant_id)
+    result = run_worker_cycle(
+        worker_id=claim.worker_id,
+        batch_size=claim.batch_size,
+        lease_seconds=claim.lease_seconds,
+        tenant_id=authority.tenant_id,
+    )
+    return {
+        "status": "ok",
+        "tenant_id": authority.tenant_id,
+        "released_count": len(released),
+        "released_candidate_ids": released,
+        **result,
+    }
+
+
+@app.get("/api/policy-learning/candidates/{candidate_id}/governance")
+def candidate_governance(
+    candidate_id: str,
+    authority: PolicyLearningAuthority = Depends(require_authority),
+) -> Dict[str, Any]:
+    """Report the gates standing between a candidate and any runtime effect."""
+    return _gate_evaluation(_tenant_candidate(candidate_id, authority))
+
+
+@app.post("/api/policy-learning/candidates/{candidate_id}/promote", status_code=409)
+def promote_candidate(
+    candidate_id: str,
+    authority: PolicyLearningAuthority = Depends(require_authority),
+) -> Dict[str, Any]:
+    """Fail closed: shadow candidates cannot be promoted from this service.
+
+    A shadow imitation candidate is research output.  Promotion requires an
+    experiment approval and a deployment gate that this service boundary does
+    not hold, so this endpoint always refuses and never mutates the candidate,
+    a registry artifact, or a RuntimeBinding.
+    """
+    candidate = _tenant_candidate(candidate_id, authority)
+    raise HTTPException(status_code=409, detail=_gate_evaluation(candidate))
+
+
+def _gate_evaluation(candidate: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "candidate_id": candidate.get("candidate_id"),
+        "status": candidate.get("status"),
+        "promotion_allowed": False,
+        "runtime_effect": "none",
+        "production_training": "fail_closed",
+        "gates": {
+            "experiment_approval": {
+                "required": True,
+                "satisfied": False,
+                "owner": "experiment approval authority",
+            },
+            "deployment_gate": {
+                "required": True,
+                "satisfied": False,
+                "owner": "deployment and RuntimeBinding authority",
+            },
+        },
+        "denied_authorities": [
+            "registry_write",
+            "runtime_binding_mutation",
+            "deployment_stage_change",
+            "capital_binding",
+            "order_routing",
+        ],
+        "detail": (
+            "Shadow imitation candidates are research output. Promotion requires "
+            "experiment approval and a deployment gate held outside policy-learning."
+        ),
+        "dataset_lineage": candidate.get("dataset_lineage"),
+        "evaluated_at": utc_now(),
+    }
 
 
 @app.get("/api/policy-learning/worker/readback/{candidate_id}")
-def readback_candidate_target(candidate_id: str) -> Dict[str, Any]:
-    """Target readback for a candidate."""
-    return get_candidate(candidate_id)
+def readback_candidate_target(
+    candidate_id: str,
+    authority: PolicyLearningAuthority = Depends(require_authority),
+) -> Dict[str, Any]:
+    """Target readback for a candidate inside the authenticated tenant.
+
+    Readback returns the full record, including the dataset lineage and the
+    trained policy weights, so it is tenant-bound like every other route here.
+    """
+    return _tenant_candidate(candidate_id, authority)
