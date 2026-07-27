@@ -1,0 +1,162 @@
+{
+  "schema_version": 1,
+  "program_id": "twelve-loop-fleet-recovery-2026-07-27",
+  "generated_at": "2026-07-27T20:39:49Z",
+  "source_audit": "docs/04/pantheon_twelve_loop_gap_fleet_recovery_2026-07-27/TWELVE_LOOP_GAP_FLEET_RECOVERY_AUDIT.md",
+  "archive_snapshot": "docs/04/pantheon_twelve_loop_gap_fleet_recovery_2026-07-27/archive/20260727T203949Z-current-state-snapshot.md",
+  "dispatch_policy": {
+    "use_supervisor_auto_workers": true,
+    "conversation_subagents_are_not_fleets": true,
+    "prefer_lanes_when_healthy": [
+      "Antigravity",
+      "Claude",
+      "Claude2"
+    ],
+    "fallback_lanes_when_preferred_unhealthy": [
+      "Codex",
+      "Codex2"
+    ],
+    "owner_reviewer_must_be_distinct": true,
+    "shared_checkout_is_not_a_task_worktree": true,
+    "artifact_conflict_guard_is_authoritative": true,
+    "do_not_duplicate_existing_canonical_tasks": true
+  },
+  "tasks": [
+    {
+      "id": "L12-FLEET-STATUS-SYNC-001",
+      "title": "Stop stale supervisor status/source_ref regressions",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "phase": "fleet-control",
+      "parallel_group": "wave-0-control",
+      "depends_on": [],
+      "artifacts": [
+        ".orchestrator/supervisor.py",
+        ".orchestrator/runtime_state.py",
+        "scripts/ai_status.py",
+        ".orchestrator/test_supervisor.py",
+        "scripts/test_ai_status.py"
+      ],
+      "acceptance": [
+        "A task with a newer pushed PR head cannot be overwritten by stale dispatch sync metadata.",
+        "ai-status.json and .orchestrator/state.json source_ref/status mirrors converge after supervisor tick.",
+        "Regression test covers #4273-style 141d06ec -> f6d340ff rollback and fails before the fix.",
+        "No .orchestrator/config.json edit is required."
+      ]
+    },
+    {
+      "id": "L12-FLEET-WORKER-OUTCOME-001",
+      "title": "Make missing worker processes become bounded retry/reopen outcomes",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "phase": "fleet-control",
+      "parallel_group": "wave-0-control",
+      "depends_on": [],
+      "artifacts": [
+        ".orchestrator/supervisor.py",
+        ".orchestrator/worker_runner.py",
+        ".orchestrator/test_supervisor.py",
+        ".orchestrator/test_supervisor_watchdog.py"
+      ],
+      "acceptance": [
+        "A worker marked missing during boot reconciliation cannot leave a task pretending to progress.",
+        "The supervisor records a bounded retry, reopen, or terminal failure with task id, run id, provider, and reason.",
+        "Regression test covers missing closeout worker for review_approved task."
+      ]
+    },
+    {
+      "id": "L12-GITHUB-REVIEW-BRIDGE-001",
+      "title": "Bind fleet reviewer decisions to GitHub review gates",
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "phase": "review-bridge",
+      "parallel_group": "wave-0-control",
+      "depends_on": [],
+      "artifacts": [
+        ".orchestrator/supervisor.py",
+        "scripts/ai_status.py",
+        "scripts/git",
+        ".orchestrator/test_supervisor.py"
+      ],
+      "acceptance": [
+        "A governed approve/reopen for a PR-backed task either submits a GitHub review or records an explicit branch-policy-recognized alternative.",
+        "Internal activity approval cannot be treated as sufficient when GitHub latestReviews is empty.",
+        "Regression test covers #4269-style internal review_approved with GitHub REVIEW_REQUIRED."
+      ]
+    }
+  ],
+  "canonical_existing_task_bindings": [
+    {
+      "existing_task_id": "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001",
+      "covers_rejected_standalone_task": "L12-PR-4273-CLOSE-001",
+      "reason": "Artifact scope already belongs to the open telemetry discovery import task and PR #4273; do not create a duplicate active task.",
+      "required_action": "Keep using the existing task; close PR #4273 through its owner/reviewer path and exact GitHub review gate."
+    },
+    {
+      "existing_task_id": "L12-BFF-001",
+      "covers_rejected_standalone_task": "L12-PR-4274-CLOSE-001",
+      "reason": "Artifact conflict guard rejects duplicate ownership of BFF health monitor files and PR #4274 evidence.",
+      "required_action": "Keep using L12-BFF-001; close PR #4274 through that canonical task."
+    },
+    {
+      "existing_task_id": "L12-CURRENT-GAP-FLEET-AUDIT-20260727",
+      "covers_rejected_standalone_task": "L12-PR-4269-CLOSE-001",
+      "reason": "PR #4269 is already represented by the existing current gap fleet audit task.",
+      "required_action": "Finalize/merge #4269 through the existing review-approved task; do not assign a duplicate closeout task."
+    },
+    {
+      "existing_task_id": "L12-EVO-001",
+      "covers_rejected_standalone_task": "L12-PR-4267-REBASE-001",
+      "reason": "Evolution artifacts and PR #4267 belong to the existing L12-EVO-001 task.",
+      "required_action": "Compose/revalidate/review #4267 through L12-EVO-001."
+    },
+    {
+      "existing_task_id": "L12-DIST-001",
+      "covers_rejected_standalone_task": "L12-PR-4193-REBASE-001",
+      "reason": "Source/distillation artifacts and PR #4193 belong to the existing L12-DIST-001 task.",
+      "required_action": "Compose/revalidate/review #4193 through L12-DIST-001."
+    },
+    {
+      "existing_task_id": "L12-MANIFEST-001",
+      "covers_rejected_standalone_task": "L12-MANIFEST-WORKERS-001",
+      "reason": "Worker manifest activation is already represented by the existing L12-MANIFEST-001 task.",
+      "required_action": "Attach missing-worker/manifest evidence to L12-MANIFEST-001 after control-plane repairs land."
+    },
+    {
+      "existing_task_id": "L12-VERIFY-KNOW-001",
+      "covers_rejected_standalone_task": "L12-VERIFY-KNOW-REAL-001",
+      "reason": "Knowledge-family verification already has a canonical task.",
+      "required_action": "Run real Source/Distillation/Alpha verification under L12-VERIFY-KNOW-001 after dependencies close."
+    },
+    {
+      "existing_task_id": "L12-VERIFY-LEARN-001",
+      "covers_rejected_standalone_task": "L12-VERIFY-LEARN-REAL-001",
+      "reason": "Learning-family verification already has a canonical task.",
+      "required_action": "Run Teaching/Agora/Imitation/Consultation verification under L12-VERIFY-LEARN-001."
+    },
+    {
+      "existing_task_id": "L12-VERIFY-RUNTIME-001",
+      "covers_rejected_standalone_task": "L12-VERIFY-RUNTIME-REAL-001",
+      "reason": "Runtime/capital verification already has a canonical task.",
+      "required_action": "Run Deployment and governed-paper Capital proof under L12-VERIFY-RUNTIME-001."
+    },
+    {
+      "existing_task_id": "L12-VERIFY-OBS-001",
+      "covers_rejected_standalone_task": "L12-VERIFY-OBS-REAL-001",
+      "reason": "Observation-family verification already has a canonical task.",
+      "required_action": "Run Telemetry/Reconciliation/Evolution/BFF proof under L12-VERIFY-OBS-001."
+    },
+    {
+      "existing_task_id": "L12-HOSTED-001",
+      "covers_rejected_standalone_task": "L12-HOSTED-TRUTH-001",
+      "reason": "Hosted FE/BFF acceptance already has a canonical task.",
+      "required_action": "Prove hosted manifest/commit/runtime truth under L12-HOSTED-001."
+    },
+    {
+      "existing_task_id": "L12-CLOSE-001",
+      "covers_rejected_standalone_task": "L12-FINAL-CLOSEOUT-001",
+      "reason": "Final twelve-loop signoff already has a canonical task.",
+      "required_action": "Close final program acceptance under L12-CLOSE-001 with Claude reviewer when healthy."
+    }
+  ]
+}
