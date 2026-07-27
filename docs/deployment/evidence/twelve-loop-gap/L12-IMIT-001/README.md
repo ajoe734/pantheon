@@ -10,15 +10,21 @@ Loop: `human_imitation_shadow_evaluation`
 
 | | |
 |---|---|
-| Implementation PR | [#4235](https://github.com/ajoe734/pantheon/pull/4235) |
-| Implementation head | `1719e10029f38173789706053799f15cbf5292b8` |
-| Merge commit on `dev` | `7ae3adbb441b66ea17fd6d98db0d831b11600ced` (2026-07-27T01:21:43Z) |
-| Branch CI Gate | success — runs [30229566603](https://github.com/ajoe734/pantheon/actions/runs/30229566603) (push) and [30229568740](https://github.com/ajoe734/pantheon/actions/runs/30229568740) (pull_request); Commit trailers, Runtime mirror guard, Smoke acceptance all green |
+| First implementation PR | [#4235](https://github.com/ajoe734/pantheon/pull/4235), head `1719e100`, merged to `dev` as `7ae3adbb441b66ea17fd6d98db0d831b11600ced` at 2026-07-27T01:21:43Z |
+| Branch CI Gate for #4235 | success — runs [30229566603](https://github.com/ajoe734/pantheon/actions/runs/30229566603) (push) and [30229568740](https://github.com/ajoe734/pantheon/actions/runs/30229568740) (pull_request); Commit trailers, Runtime mirror guard, Smoke acceptance all green |
+| Follow-up PR | [#4236](https://github.com/ajoe734/pantheon/pull/4236) — this evidence packet plus one owner-found tenant-isolation fix (see below) |
 | Anchor commits | `f85bf549` Agora dataset source · `6f985c9f` scheduling and backlog leases · `507f51d3` scheduling proofs · `92863858` tenant-safe authority and recovery |
 
-This evidence packet lands as a separate evidence-only PR on top of that merge,
-so the reviewer's exact final head differs from the reviewed implementation only
-by these three files.
+### Owner-found fix carried by #4236
+
+`worker/restart` released *every* tenant's expired leases and then filtered the
+report down to the caller's tenant. Releasing an already-ownerless lease is
+harmless work, but it is still one tenant's routine restart writing to another
+tenant's backlog rows, which contradicts the tenant-bound route guarantee this
+task exists to establish. `release_expired_leases` now takes a `tenant_id` and
+`worker/restart` passes the authenticated tenant, so a tenant recovers only its
+own orphans. Proven by
+`test_one_tenants_restart_does_not_recover_another_tenants_orphans`.
 
 ## Verification Summary
 
@@ -53,7 +59,7 @@ platform linux -- Python 3.12.3, pytest-9.1.1, pluggy-1.6.0
 rootdir: /tmp/pantheon-worker-worktrees/pantheon/l12-imit-001
 configfile: pytest.ini
 plugins: anyio-4.14.2, asyncio-1.4.0
-collected 170 items
+collected 171 items
 
 services/policy-learning/tests/test_l12_imit_001_authority_and_recovery.py [ 12%]
 services/policy-learning/tests/test_l12_imit_001_real_dataset_scheduling.py [ 24%]
@@ -72,11 +78,11 @@ services/research/imitation/test_trajectory_models.py                      [ 88%
 services/research/imitation/test_trl_bridge.py                             [ 92%]
 services/foundation/tests/test_persistence_posture.py                      [100%]
 
-======================= 170 passed, 1 warning in 42.45s ========================
+======================= 171 passed, 1 warning in 40.37s ========================
 ```
 
-Without `PANTHEON_TEST_POSTGRES_DSN` the same suite is `167 passed, 3 skipped`;
-the three skipped cases are the real-Postgres proofs listed below.
+Without `PANTHEON_TEST_POSTGRES_DSN` the same suite is `167 passed, 4 skipped`;
+the four skipped cases are exactly the real-Postgres proofs listed below.
 
 ## Blocker-by-Blocker Evidence
 
@@ -178,6 +184,7 @@ and tenant header.
 | Cross-tenant `dataset_refs` rejected, not re-stamped | `test_explicit_dataset_ref_for_another_tenant_is_rejected_not_restamped` |
 | Two tenants ticking and claiming concurrently stay disjoint | `test_concurrent_cross_tenant_ticks_and_claims_stay_isolated` |
 | Real Postgres, three tenants claiming concurrently, zero overlap | `test_real_postgres_concurrent_cross_tenant_claims_never_overlap` |
+| One tenant's restart recovers only its own orphaned leases | `test_one_tenants_restart_does_not_recover_another_tenants_orphans` |
 
 ### 6. No registry / deployment / runtime mutation
 

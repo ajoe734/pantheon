@@ -30,6 +30,7 @@
         "services/policy-learning/tests/test_l12_imit_001_authority_and_recovery.py::test_a_corrupt_backlog_is_an_outage_not_an_empty_backlog",
         "services/policy-learning/tests/test_l12_imit_001_real_dataset_scheduling.py::test_restart_recovers_orphaned_claims_and_replays_them",
         "services/policy-learning/tests/test_l12_imit_001_real_dataset_scheduling.py::test_settling_a_lost_lease_is_rejected",
+        "services/policy-learning/tests/test_l12_imit_001_authority_and_recovery.py::test_one_tenants_restart_does_not_recover_another_tenants_orphans",
         "services/policy-learning/tests/test_policy_learning_shadow_eval_scheduler.py::test_shadow_eval_tick_idempotent_same_tick_id"
       ],
       "id": "AC3",
@@ -67,6 +68,7 @@
         "services/policy-learning/tests/test_l12_imit_001_authority_and_recovery.py::test_inbound_authority_does_not_inherit_the_runtime_manager_secret",
         "services/policy-learning/tests/test_l12_imit_001_authority_and_recovery.py::test_concurrent_cross_tenant_ticks_and_claims_stay_isolated",
         "services/policy-learning/tests/test_l12_imit_001_authority_and_recovery.py::test_real_postgres_concurrent_cross_tenant_claims_never_overlap",
+        "services/policy-learning/tests/test_l12_imit_001_authority_and_recovery.py::test_one_tenants_restart_does_not_recover_another_tenants_orphans",
         "services/policy-learning/tests/test_l12_imit_001_real_dataset_scheduling.py::test_tick_requires_a_tenant_scope"
       ],
       "id": "AC6",
@@ -111,7 +113,8 @@
     "restart_and_recovery": {
       "proof": [
         "Real two-process proof against real PostgreSQL: a worker claims the backlog under a short lease, is SIGKILLed with no settle and no lease release, the survivor takes nothing while the lease is live, and after expiry release_expired_leases returns exactly the dead worker's candidates for reclaim at attempt_count 2.",
-        "A brand new store handle standing in for a restarted container reads back the same authoritative rows, and a fresh empty data directory still sees the Postgres-backed backlog."
+        "A brand new store handle standing in for a restarted container reads back the same authoritative rows, and a fresh empty data directory still sees the Postgres-backed backlog.",
+        "Recovery is per-tenant: one tenant's restart releases only its own expired leases and leaves another tenant's orphan for that tenant to recover."
       ],
       "status": "pass"
     },
@@ -179,15 +182,27 @@
         "hosted_cut_inclusion": false,
         "sha": "92863858722c89afb04b7f72d788702b2deee8d4",
         "subject": "L12-IMIT-001: anchor tenant-safe authority and recovery"
+      },
+      {
+        "delivery_state": "on_task_branch_in_pr_4236",
+        "hosted_cut_inclusion": false,
+        "sha": "806f7812563823f2591cc2661d052d20f35f4256",
+        "subject": "L12-IMIT-001: record tenant-safe imitation loop evidence"
+      },
+      {
+        "delivery_state": "on_task_branch_in_pr_4236",
+        "hosted_cut_inclusion": false,
+        "note": "Owner-found tenant-isolation fix: worker/restart released every tenant's expired leases and reported only the caller's. release_expired_leases now takes a tenant_id and the route passes the authenticated tenant.",
+        "sha": "11c04d79de0b6ef7c36ae58117aba3f8fb65e731",
+        "subject": "L12-IMIT-001: scope worker restart lease recovery to one tenant"
       }
     ],
     "pull_request": {
       "base": "dev",
-      "head_sha": "1719e10029f38173789706053799f15cbf5292b8",
-      "merge_sha": "7ae3adbb441b66ea17fd6d98db0d831b11600ced",
-      "merged_at": "2026-07-27T01:21:43Z",
-      "number": 4235,
-      "url": "https://github.com/ajoe734/pantheon/pull/4235"
+      "head_sha": "11c04d79de0b6ef7c36ae58117aba3f8fb65e731",
+      "note": "Final task PR. The earlier implementation PR #4235 (head 1719e10029f38173789706053799f15cbf5292b8) merged into dev as 7ae3adbb441b66ea17fd6d98db0d831b11600ced at 2026-07-27T01:21:43Z with the Branch CI Gate green; its runs are recorded in required_checks.",
+      "number": 4236,
+      "url": "https://github.com/ajoe734/pantheon/pull/4236"
     },
     "required_checks": [
       {
@@ -237,11 +252,11 @@
       "agora_dataset_authority": "13c5456487724cbdc071158cddbad3526f4c207793bbc908be66c59cfdc8dfb3",
       "agora_dataset_source": "5d5357295d260bd0c80c5e13fa20fd99ef691366acd68a283e569c9d3c7b885f",
       "inbound_authority": "269eeaedc5cc1ea4801c1db26c3c5e136939f4f3f6f300efb182197813723302",
-      "main": "693e64eec7014fd958f14415f39e524de428495078f7de2e0acb92103e6e93e3",
+      "main": "dda6dd850b60f4a2d4cc1294a36ed929aee8d4e30fb2011ac12c43a97a0741e0",
       "scheduler_worker": "67732458b566347dad0381ecd8d857abb17c35f4235d0a387557748fdc599606",
-      "store": "678b6ea6fc763f8af7f1e8052bc1d35ca151eeff5f0c830111c1a69b0d989cfa",
+      "store": "b6e741c7b5eea84a18f580af39bd0c78fe82b68052fc9835566f8f00e0b7b585",
       "test_agora_dataset_source": "12806f3a42bedee7c1b83617cd5022098280b012a9efd6d8a023371c253990b0",
-      "test_authority_and_recovery": "468f4359577b089a3dc9785da30deaa0c7327b2a6487758d575bdc2f95b139fe",
+      "test_authority_and_recovery": "399a8db2f65f1c06278069ba03e8a06dd098bd7e100bc5fd7c9c65f291c3aab7",
       "test_real_dataset_scheduling": "e7dda6766a820fcdf8f2be30f3dc858abf9630214471071f65978563754ed5ba",
       "test_shadow_eval_scheduler": "ba7f6dca094780f81ec46d6efe3280dccf2134793fd9ce97c115f015674af12c",
       "tests_conftest": "41b4b3b6e1949ba4e66566747a7fe2003b20c3a13caace6ba967ef4c81697380"
@@ -250,11 +265,20 @@
   "record_log": [
     {
       "actor": "Claude",
-      "kind": "owner_evidence_ready",
-      "recorded_at": "2026-07-27T01:24:06Z",
+      "kind": "implementation_merged",
+      "recorded_at": "2026-07-27T01:21:43Z",
       "reference": "https://github.com/ajoe734/pantheon/pull/4235",
       "sequence": 1,
-      "sha": "1719e10029f38173789706053799f15cbf5292b8",
+      "sha": "7ae3adbb441b66ea17fd6d98db0d831b11600ced",
+      "status": "pass"
+    },
+    {
+      "actor": "Claude",
+      "kind": "owner_evidence_ready",
+      "recorded_at": "2026-07-27T01:32:25Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4236",
+      "sequence": 2,
+      "sha": "11c04d79de0b6ef7c36ae58117aba3f8fb65e731",
       "status": "pass"
     }
   ],
@@ -334,7 +358,7 @@
       "status": "pass"
     },
     "tenant_isolation": {
-      "proof": "The tenant comes from the verified request, not the body. A body tenant that disagrees is 403 TENANT_PAYLOAD_MISMATCH, a dataset_ref naming another tenant is rejected rather than re-stamped, cross-tenant candidate reads answer 404 so ids cannot be enumerated, claims are tenant-filtered, and concurrent cross-tenant ticks and claims were proven disjoint in threads and against real PostgreSQL row locks.",
+      "proof": "The tenant comes from the verified request, not the body. A body tenant that disagrees is 403 TENANT_PAYLOAD_MISMATCH, a dataset_ref naming another tenant is rejected rather than re-stamped, cross-tenant candidate reads answer 404 so ids cannot be enumerated, claims are tenant-filtered, and concurrent cross-tenant ticks and claims were proven disjoint in threads and against real PostgreSQL row locks. worker/restart recovers only the authenticated tenant's orphaned leases.",
       "status": "pass"
     },
     "two_person_approval": {
@@ -344,8 +368,8 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-27T01:24:06Z",
-    "evidence_cut_semantics": "Owner evidence cut after the implementation head 1719e10029f38173789706053799f15cbf5292b8 merged into dev as 7ae3adbb441b66ea17fd6d98db0d831b11600ced through PR #4235 with the Branch CI Gate green. This manifest lands as a separate evidence-only task PR on top of that merge, so the reviewer verifies an exact final head whose only delta from the reviewed implementation is this evidence packet. No hosted deployment, maturity promotion, or runtime authority is claimed.",
+    "evidence_cut_at": "2026-07-27T01:32:25Z",
+    "evidence_cut_semantics": "Owner evidence cut on the last code commit 11c04d79de0b6ef7c36ae58117aba3f8fb65e731; the commit that adds this manifest sits directly on top of it and is the final PR head. The first implementation PR #4235 merged into dev as 7ae3adbb441b66ea17fd6d98db0d831b11600ced with the Branch CI Gate green; PR #4236 carries this evidence packet plus one owner-found tenant-isolation fix to worker/restart, and is the exact final head the reviewer verifies against dev e9ad2a6131d55263aa6699306cee7f2b1744ae56. No hosted deployment, maturity promotion, or runtime authority is claimed.",
     "id": "L12-IMIT-001",
     "overall_admission": "owner_evidence_ready",
     "owner": "Claude",
@@ -368,17 +392,17 @@
       },
       {
         "command": "PANTHEON_TEST_POSTGRES_DSN=postgresql://<redacted>@127.0.0.1:55433/<redacted> python -m pytest services/policy-learning services/research/imitation services/foundation/tests/test_persistence_posture.py",
-        "conclusion": "170 passed, 1 warning in 42.45s on the task branch head after merging dev.",
+        "conclusion": "171 passed, 1 warning in 40.37s on the task branch head after merging dev.",
         "result": "pass"
       },
       {
         "command": "PANTHEON_TEST_POSTGRES_DSN=postgresql://<redacted>@127.0.0.1:55433/<redacted> python -m pytest services/policy-learning/tests/test_l12_imit_001_authority_and_recovery.py -v",
-        "conclusion": "22 passed: the auth-negative sweep, concurrent cross-tenant, duplicate/replay, corruption/restart, and the three real-Postgres proofs.",
+        "conclusion": "23 passed: the auth-negative sweep, concurrent cross-tenant ticks, claims and restart recovery, duplicate/replay, corruption/restart, and the four real-Postgres proofs.",
         "result": "pass"
       },
       {
         "command": "python -m pytest services/policy-learning services/research/imitation -q  # without PANTHEON_TEST_POSTGRES_DSN",
-        "conclusion": "167 passed, 3 skipped. The three skips are exactly the real-Postgres proofs, which are recorded as executed in the run above.",
+        "conclusion": "167 passed, 4 skipped. The four skips are exactly the real-Postgres proofs, which are recorded as executed in the run above.",
         "result": "pass"
       },
       {
@@ -392,8 +416,8 @@
         "result": "pass"
       }
     ],
-    "validated_at": "2026-07-27T01:24:06Z",
-    "validated_base_sha": "7ae3adbb441b66ea17fd6d98db0d831b11600ced",
-    "validated_head_sha": "1719e10029f38173789706053799f15cbf5292b8"
+    "validated_at": "2026-07-27T01:32:25Z",
+    "validated_base_sha": "e9ad2a6131d55263aa6699306cee7f2b1744ae56",
+    "validated_head_sha": "11c04d79de0b6ef7c36ae58117aba3f8fb65e731"
   }
 }
