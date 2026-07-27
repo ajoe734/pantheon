@@ -1,358 +1,4 @@
 {
-  "schema_version": "loop_product_evidence.v1",
-  "schema_status": {
-    "formal_schema_owner": "LOOP-PROD-002",
-    "formalization_trigger": "Owner re-cut after OPS-L12-PYTHON-PACKAGING-PROVISION-001 implemented and independently closed the AC2 provisioning dependency.",
-    "note": "This cut supersedes the blocked 2026-07-26 evidence state. It preserves the rejected history, binds PR #4226 and the completed packaging dependency PR #4232, records fresh no-PYTHONPATH execution, and leaves only this cut's independent review and delivery pending.",
-    "status": "formalized"
-  },
-  "evidence_policy": {
-    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001/evidence.sha256",
-    "missing_or_contradicted_proof_fails_closed": true,
-    "mutation_rule": "Task-scoped changes require a reviewed Pantheon PR. The task gate validates schema shape, timestamps, dependency closure, current owner/reviewer, command-reference bounds, and checksum coverage.",
-    "recording_mode": "logical_append_only",
-    "redacted": false,
-    "self_hashing": false
-  },
-  "task": {
-    "base_branch": "dev",
-    "evidence_cut_at": "2026-07-27T19:34:20Z",
-    "evidence_cut_semantics": "Claude is the canonical task owner. Human/Ops re-cut the owner-binding evidence after Codex2 review found the prior cut still named Codex in owner-bearing artifacts. The cut changes only task evidence, its fail-closed gate, the AC2 decision record, and the task brief. It binds the earlier task delivery through PR #4226 and the reviewed packaging dependency through PR #4232. The PR that carries this cut and the independent Codex2 decision are intentionally pending.",
-    "id": "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001",
-    "overall_admission": "ready_for_independent_review",
-    "owner": "Claude",
-    "phase": "Twelve-loop verification hardening",
-    "product_level_required": false,
-    "repository": "ajoe734/pantheon",
-    "review_file": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001/evidence.json",
-    "reviewer": "Codex2",
-    "target_environment": "local developer, auto-worker, and CI test execution only",
-    "target_maturity": "verified_local_test_execution_pending_independent_review",
-    "task_branch": "task/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001",
-    "title": "Eliminate telemetry unittest discovery loader errors"
-  },
-  "authorities": {
-    "actual_state": [
-      "services/telemetry/test_capture.py and services/telemetry/test_feedback_adapter.py import siblings through services.telemetry.* and are discovered without loader errors.",
-      "OPS-L12-PYTHON-PACKAGING-PROVISION-001 is archived done with review_file docs/deployment/evidence/twelve-loop-gap/OPS-L12-PYTHON-PACKAGING-PROVISION-001/evidence.json.",
-      "PR #4232 merged the governed installed-distribution path as 3802799f81778c93728d9dbbe4028289f153c718."
-    ],
-    "desired_state": [
-      ".orchestrator/task-briefs/ops_l12_telemetry_discovery_import_001.md",
-      "schemas/product-evidence.schema.json",
-      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001/AC2_FEASIBILITY_PROOF.md"
-    ],
-    "task_packet": ".orchestrator/task-briefs/ops_l12_telemetry_discovery_import_001.md"
-  },
-  "scope": {
-    "authoritative_write_owner": "Claude owns this task's telemetry test-import evidence and regression gate; Claude does not own telemetry runtime behavior or packaging implementation.",
-    "composes_with": [
-      "OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001 residual loader-error finding",
-      "OPS-L12-PYTHON-PACKAGING-PROVISION-001 governed distribution and worker bootstrap",
-      "PR #4222 initial import repair",
-      "PR #4225 schema/timestamp gate repair",
-      "PR #4226 AC2 feasibility record"
-    ],
-    "evidence_changed_files": [
-      ".orchestrator/task-briefs/ops_l12_telemetry_discovery_import_001.md",
-      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001/AC2_FEASIBILITY_PROOF.md",
-      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001/README.md",
-      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001/evidence.json",
-      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001/evidence.sha256"
-    ],
-    "implementation_changed_files": [
-      "services/telemetry/test_capture.py",
-      "services/telemetry/test_feedback_adapter.py",
-      "services/telemetry/test_discovery_imports.py",
-      "scripts/test_ops_l12_telemetry_discovery_import_evidence.py"
-    ],
-    "not_changing": "No change to services/telemetry/capture.py, services/telemetry/feedback_adapter.py, live supervisor configuration, runtime behavior, or the packaging implementation delivered by OPS-L12-PYTHON-PACKAGING-PROVISION-001.",
-    "owned_layer": "Telemetry test-module import integrity, task-scoped evidence, and fail-closed evidence validation."
-  },
-  "implementation_delivery": {
-    "anchor_commits": [
-      {
-        "delivery_state": "merged_via_pr_4222",
-        "sha": "d5c8d9a5f1ee955a6b3aaf590f407c93d0cef803",
-        "subject": "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001: anchor import repair"
-      },
-      {
-        "delivery_state": "merged_via_pr_4225",
-        "sha": "408d6d9a57c583b8b0762dd60e00842948aebe84",
-        "subject": "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001: anchor import gate hardening"
-      },
-      {
-        "delivery_state": "merged_via_pr_4226",
-        "sha": "b91c845e4616732f3efe9cc67b61914c1b27dce4",
-        "subject": "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001: anchor AC2 gap labels"
-      },
-      {
-        "delivery_state": "merged_via_pr_4226",
-        "sha": "4628dc721b0e1b434303fac679c01a9afa05b108",
-        "subject": "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001: record AC2 proof"
-      },
-      {
-        "delivery_state": "current_task_branch",
-        "sha": "a1c22d64b07634d219f26ddc47f9b42f4d55b1ac",
-        "subject": "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001: anchor dispatch brief"
-      },
-      {
-        "delivery_state": "current_task_branch",
-        "sha": "b4db8aa4b1fa226b878068a43d72faa7be364782",
-        "subject": "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001: anchor AC2 resolution"
-      }
-    ],
-    "pull_requests": [
-      {
-        "base": "dev",
-        "head_sha": "28e62b8f25b184044a002aeb8b1c93b5c622ae30",
-        "merge_sha": "55b17612ed150f52a518a4e8c4c6e75502830f6b",
-        "merged_at": "2026-07-26T21:55:32Z",
-        "number": 4222,
-        "url": "https://github.com/ajoe734/pantheon/pull/4222"
-      },
-      {
-        "base": "dev",
-        "head_sha": "3c2d883700afc3e92568a013bb8e11ec8539031b",
-        "merge_sha": "8d1b5077996a2d27aafb83ff5756f0290d0e90bc",
-        "merged_at": "2026-07-26T23:01:39Z",
-        "number": 4225,
-        "url": "https://github.com/ajoe734/pantheon/pull/4225"
-      },
-      {
-        "base": "dev",
-        "head_sha": "4628dc721b0e1b434303fac679c01a9afa05b108",
-        "merge_sha": "1cf27337e9197c8bc0840e466f55019065e3576e",
-        "merged_at": "2026-07-26T23:07:09Z",
-        "number": 4226,
-        "url": "https://github.com/ajoe734/pantheon/pull/4226"
-      },
-      {
-        "base": "dev",
-        "head_sha": "ca9d91b0209bad18dd9330c8301de9f4ba0a1e01",
-        "merge_sha": "3802799f81778c93728d9dbbe4028289f153c718",
-        "merged_at": "2026-07-27T14:27:20Z",
-        "number": 4232,
-        "url": "https://github.com/ajoe734/pantheon/pull/4232"
-      }
-    ],
-    "required_checks": [
-      {
-        "conclusion": "success",
-        "event": "pull_request",
-        "head_sha": "4628dc721b0e1b434303fac679c01a9afa05b108",
-        "jobs": {
-          "Commit trailers": "success",
-          "Runtime mirror guard": "success",
-          "Smoke acceptance": "success"
-        },
-        "run_id": 30224521338,
-        "url": "https://github.com/ajoe734/pantheon/actions/runs/30224521338",
-        "workflow": "Branch CI Gate"
-      },
-      {
-        "conclusion": "success",
-        "event": "push",
-        "head_sha": "4628dc721b0e1b434303fac679c01a9afa05b108",
-        "jobs": {
-          "Commit trailers": "success",
-          "Runtime mirror guard": "success",
-          "Smoke acceptance": "success"
-        },
-        "run_id": 30224518504,
-        "url": "https://github.com/ajoe734/pantheon/actions/runs/30224518504",
-        "workflow": "Branch CI Gate"
-      },
-      {
-        "conclusion": "success",
-        "event": "pull_request",
-        "head_sha": "ca9d91b0209bad18dd9330c8301de9f4ba0a1e01",
-        "jobs": {
-          "Commit trailers": "success",
-          "Python packaging provision": "success",
-          "Runtime mirror guard": "success",
-          "Smoke acceptance": "success"
-        },
-        "run_id": 30275065946,
-        "url": "https://github.com/ajoe734/pantheon/actions/runs/30275065946",
-        "workflow": "Branch CI Gate"
-      },
-      {
-        "conclusion": "success",
-        "event": "push",
-        "head_sha": "ca9d91b0209bad18dd9330c8301de9f4ba0a1e01",
-        "jobs": {
-          "Commit trailers": "success",
-          "Python packaging provision": "success",
-          "Runtime mirror guard": "success",
-          "Smoke acceptance": "success"
-        },
-        "run_id": 30275060944,
-        "url": "https://github.com/ajoe734/pantheon/actions/runs/30275060944",
-        "workflow": "Branch CI Gate"
-      }
-    ]
-  },
-  "validation": {
-    "commands": [
-      {
-        "command": "Detached worktree at 71aea154b: python -m unittest discover -s services/telemetry -p 'test_*.py' -t .",
-        "conclusion": "Fresh owner reproduction: ran 197 tests in 12.974s; failures=0, errors=2, skipped=1. Error ids were unittest.loader._FailedTest.services.telemetry.test_capture and unittest.loader._FailedTest.services.telemetry.test_feedback_adapter.",
-        "result": "baseline_reproduced"
-      },
-      {
-        "command": "/home/lupin/pantheon/.venv/bin/python3 -m unittest -v services.telemetry.test_discovery_imports",
-        "conclusion": "Ran 20 tests in 28.053s; OK. The four installed-distribution AC2 modes, canonical module identity, hostile environment, repeated discovery, and no-sys.path-mutation checks all passed.",
-        "result": "pass"
-      },
-      {
-        "command": "cd /tmp && env -i PATH=/usr/bin:/bin HOME=/tmp LANG=C.UTF-8 .venv-pantheon/bin/python3 -m unittest services.telemetry.test_capture services.telemetry.test_feedback_adapter",
-        "conclusion": "Ran 75 tests in 0.731s; OK. PYTHONPATH was absent and cwd was outside the checkout.",
-        "result": "pass"
-      },
-      {
-        "command": "cd /tmp && env -i PATH=/usr/bin:/bin HOME=/tmp LANG=C.UTF-8 .venv-pantheon/bin/python3 <repo>/services/telemetry/test_capture.py",
-        "conclusion": "Ran 35 tests in 0.357s; OK. PYTHONPATH was absent.",
-        "result": "pass"
-      },
-      {
-        "command": "cd /tmp && env -i PATH=/usr/bin:/bin HOME=/tmp LANG=C.UTF-8 .venv-pantheon/bin/python3 <repo>/services/telemetry/test_feedback_adapter.py",
-        "conclusion": "Ran 40 tests in 0.333s; OK. PYTHONPATH was absent.",
-        "result": "pass"
-      },
-      {
-        "command": "cd /tmp && env -i PATH=/usr/bin:/bin HOME=/tmp LANG=C.UTF-8 .venv-pantheon/bin/python3 -m pytest -q -c /dev/null --noconftest -p no:cacheprovider <both files>",
-        "conclusion": "75 passed in 3.58s. No PYTHONPATH, repository pytest.ini, root conftest.py, or repository cwd contributed to the pass.",
-        "result": "pass"
-      },
-      {
-        "command": "/home/lupin/pantheon/.venv/bin/python3 -m unittest discover -s services/telemetry -p 'test_*.py' -t . -q",
-        "conclusion": "Ran 342 tests in 51.471s; OK (skipped=1). Zero loader errors.",
-        "result": "pass"
-      },
-      {
-        "command": "env -i with hostile PANTHEON_RUNTIME_MANAGER_*, binding-store, and incidents paths; .venv-pantheon/bin/python3 in-memory unittest discovery runner",
-        "conclusion": "ran=342 failures=0 errors=0 skipped=1 elapsed=44.631s. Hostile ambient values did not change the result.",
-        "result": "pass"
-      },
-      {
-        "command": "/home/lupin/pantheon/.venv/bin/python3 -m unittest scripts.test_ops_l12_telemetry_discovery_import_evidence",
-        "conclusion": "Ran 12 tests; OK. The task evidence gate passes schema, timestamp, owner/reviewer, dependency closure, command-reference bounds, and checksum checks.",
-        "result": "pass"
-      },
-      {
-        "command": "/home/lupin/pantheon/.venv/bin/python3 -c 'jsonschema.validate(evidence.json, product-evidence.schema.json)'",
-        "conclusion": "Exit 0 against schemas/product-evidence.schema.json.",
-        "result": "pass"
-      },
-      {
-        "command": "cd docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001 && sha256sum -c evidence.sha256",
-        "conclusion": "AC2_FEASIBILITY_PROOF.md, README.md, and evidence.json all match the companion checksum.",
-        "result": "pass"
-      },
-      {
-        "command": "git diff --stat 71aea154b..HEAD -- services/telemetry/capture.py services/telemetry/feedback_adapter.py",
-        "conclusion": "Empty. The production capture and feedback-adapter modules are unchanged from the reproduced baseline.",
-        "result": "pass"
-      },
-      {
-        "command": "git diff --check",
-        "conclusion": "Exit 0.",
-        "result": "pass"
-      },
-      {
-        "command": "cd /tmp && env -i PATH=/usr/bin:/bin HOME=/tmp /home/lupin/pantheon/.venv/bin/python3 -m unittest services.telemetry.test_capture services.telemetry.test_feedback_adapter",
-        "conclusion": "Expected negative control: unprovisioned interpreter failed with two ModuleNotFoundError: No module named 'services' loader errors. This proves the positive runs are attributable to the governed distribution.",
-        "result": "negative_control_expected_failure"
-      },
-      {
-        "command": "python3 scripts/dev/provision_python_distribution.py --quiet --print-python",
-        "conclusion": "Exit 0 and returned the checkout-scoped .venv-pantheon/bin/python3 without dirtying the worktree.",
-        "result": "pass"
-      },
-      {
-        "command": "AI_NAME=Claude $PANTHEON_COMMAND_ROOT/scripts/ai-status.sh show OPS-L12-PYTHON-PACKAGING-PROVISION-001; task gate test_dependency_manifest_closes_the_packaging_precondition",
-        "conclusion": "The governed archive reports terminal done, merge 3802799f81778c93728d9dbbe4028289f153c718, review_file bound, and Codex2 approval; the current task gate confirms the committed dependency manifest records review_approved AC3 pass. The dependency's whole historical gate is not reused here because its source-digest assertion intentionally compares its branch-ci.yml epoch with the current tree, and branch-ci.yml changed after that task closed.",
-        "result": "pass"
-      },
-      {
-        "command": ".venv-pantheon/bin/python3 -m pytest -q services/telemetry",
-        "conclusion": "353 passed, 1 skipped, 3 warnings, and 35 subtests passed in 100.07s.",
-        "result": "pass"
-      }
-    ],
-  "validated_at": "2026-07-27T19:34:20Z",
-    "validated_base_sha": "5a2fc69a3b432e0d1bc528981d66a2ee32defa71",
-    "validated_head_sha": "b4db8aa4b1fa226b878068a43d72faa7be364782"
-  },
-  "deployment": {
-    "applicable": false,
-    "environment": "not_applicable_test_only",
-    "public_bff_base_url": "",
-    "publish_cut": {
-      "status": "not_applicable"
-    },
-    "canonical_root_deploy": {
-      "status": "not_applicable"
-    },
-    "identity_admission": {
-      "status": "not_applicable"
-    }
-  },
-  "hosted_readback": {
-    "pre_deploy": {
-      "status": "not_applicable",
-      "reason": "Test-import repair has no hosted runtime surface."
-    }
-  },
-  "behavioral_proof": {
-    "duplicate_safety": {
-      "status": "pass",
-      "evidence": "TestInstalledDistributionIsCanonical proves one canonical module identity and no bare aliases."
-    },
-    "failure_and_degraded_behavior": {
-      "status": "pass",
-      "evidence": "validation.commands[13] is the unprovisioned fail-closed control."
-    },
-    "request_receipt_downstream_correlation": {
-      "status": "pass",
-      "evidence": "validation.commands[0] and validation.commands[6] bind the original loader failures to the zero-error current suite."
-    },
-    "restart_and_recovery": {
-      "status": "pass",
-      "evidence": "services.telemetry.test_discovery_imports.TestTelemetryDiscoveryLoadsWithoutErrors.test_repeated_discovery_in_one_process_is_stable"
-    },
-    "rollback_or_compensation": {
-      "status": "pass",
-      "evidence": "The pre-change detached-worktree reproduction is isolated and removed after recording; the task worktree remains clean."
-    }
-  },
-  "security_and_safety": {
-    "environment_boundary": {
-      "status": "pass",
-      "evidence": "Every AC2 child runs under env -i with no PYTHONPATH."
-    },
-    "hosted_frontend": {
-      "status": "not_applicable"
-    },
-    "mfa": {
-      "status": "not_applicable"
-    },
-    "no_live_capital": {
-      "status": "pass",
-      "evidence": "Test-only task; no broker or capital path changed."
-    },
-    "rbac": {
-      "status": "not_applicable"
-    },
-    "tenant_isolation": {
-      "status": "not_applicable"
-    },
-    "two_person_approval": {
-      "status": "pending",
-      "evidence": "Codex2 must independently review this cut before owner closeout."
-    }
-  },
   "acceptance": [
     {
       "evidence_refs": [
@@ -411,12 +57,13 @@
       "status": "pass"
     },
     {
-      "blocking_until": "Push the current branch, open the repair PR, obtain green exact-head checks and Codex2 independent review, merge to dev, then perform governed owner closeout.",
+      "blocking_until": "Push the current branch, keep exact-head checks green, obtain Codex independent review, merge to dev, then perform governed owner closeout.",
       "evidence_refs": [
         "implementation_delivery.anchor_commits",
         "implementation_delivery.pull_requests",
         "implementation_delivery.required_checks",
-        "record_log"
+        "record_log",
+        "implementation_delivery.pull_requests[4]"
       ],
       "id": "AC6",
       "statement": "Branch, commit, push, PR checks, independent review, merge, and evidence archive complete.",
@@ -434,43 +81,233 @@
       "status": "pass"
     }
   ],
-  "residual_risks": {
-    "unprovisioned_interpreter_cannot_resolve_checkout": {
-      "blocking_for_this_task": false,
-      "containment": "The canonical bootstrap is scripts/dev/provision_python_distribution.py; validation.commands[13] remains the negative control and TestAC2ModesUnderInstalledDistribution provisions its own interpreter when needed.",
-      "description": "A bare interpreter from a foreign cwd cannot import a checkout that has not been installed. This is expected and proves the governed distribution is load-bearing.",
-      "expiry": "When Python can import arbitrary uninstalled checkouts, which is not a project objective.",
-      "owner": "OPS-L12-PYTHON-PACKAGING-PROVISION-001 completed owner lane",
-      "recheck_trigger": "Any change to pyproject.toml or scripts/dev/provision_python_distribution.py",
-      "severity": "low"
+  "authorities": {
+    "actual_state": [
+      "services/telemetry/test_capture.py and services/telemetry/test_feedback_adapter.py import siblings through services.telemetry.* and are discovered without loader errors.",
+      "OPS-L12-PYTHON-PACKAGING-PROVISION-001 is archived done with review_file docs/deployment/evidence/twelve-loop-gap/OPS-L12-PYTHON-PACKAGING-PROVISION-001/evidence.json.",
+      "PR #4232 merged the governed installed-distribution path as 3802799f81778c93728d9dbbe4028289f153c718."
+    ],
+    "desired_state": [
+      ".orchestrator/task-briefs/ops_l12_telemetry_discovery_import_001.md",
+      "schemas/product-evidence.schema.json",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001/AC2_FEASIBILITY_PROOF.md"
+    ],
+    "task_packet": ".orchestrator/task-briefs/ops_l12_telemetry_discovery_import_001.md"
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "evidence": "TestInstalledDistributionIsCanonical proves one canonical module identity and no bare aliases.",
+      "status": "pass"
     },
-    "root_conftest_can_mask_bare_sibling_imports": {
-      "blocking_for_this_task": false,
-      "containment": "The AST regression scans every telemetry test module and fails on bare sibling imports independently of pytest path behavior.",
-      "description": "Repository pytest configuration can make a bare sibling import appear to work, so pytest alone is not the regression authority.",
-      "expiry": "Next root pytest harness redesign.",
-      "owner": "unassigned",
-      "recheck_trigger": "Any conftest.py or pytest.ini import-path change",
-      "severity": "low"
+    "failure_and_degraded_behavior": {
+      "evidence": "validation.commands[13] is the unprovisioned fail-closed control.",
+      "status": "pass"
     },
-    "pre_existing_skip": {
-      "blocking_for_this_task": false,
-      "containment": "The same one skip appears in the baseline and current suite and is not a loader error.",
-      "description": "One telemetry test requires an external NATS test endpoint.",
-      "expiry": "When an integration environment supplies PANTHEON_TEST_NATS_URL.",
-      "owner": "telemetry integration lane",
-      "recheck_trigger": "Any telemetry integration environment change",
-      "severity": "low"
+    "request_receipt_downstream_correlation": {
+      "evidence": "validation.commands[0] and validation.commands[6] bind the original loader failures to the zero-error current suite.",
+      "status": "pass"
     },
-    "current_cut_delivery_binding_pending": {
-      "blocking_for_this_task": false,
-      "containment": "AC6 is explicitly pending; the reviewer appends the exact-head decision and the owner closes only after the PR is merged.",
-      "description": "A manifest cannot contain the merge SHA of the PR that first carries its own bytes.",
-      "expiry": "Owner closeout after Codex2 review and merge.",
-      "owner": "Claude",
-      "recheck_trigger": "Current task PR review or merge",
-      "severity": "low"
+    "restart_and_recovery": {
+      "evidence": "services.telemetry.test_discovery_imports.TestTelemetryDiscoveryLoadsWithoutErrors.test_repeated_discovery_in_one_process_is_stable",
+      "status": "pass"
+    },
+    "rollback_or_compensation": {
+      "evidence": "The pre-change detached-worktree reproduction is isolated and removed after recording; the task worktree remains clean.",
+      "status": "pass"
     }
+  },
+  "deployment": {
+    "applicable": false,
+    "canonical_root_deploy": {
+      "status": "not_applicable"
+    },
+    "environment": "not_applicable_test_only",
+    "identity_admission": {
+      "status": "not_applicable"
+    },
+    "public_bff_base_url": "",
+    "publish_cut": {
+      "status": "not_applicable"
+    }
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Task-scoped changes require a reviewed Pantheon PR. The task gate validates schema shape, timestamps, dependency closure, current owner/reviewer, command-reference bounds, and checksum coverage.",
+    "recording_mode": "logical_append_only",
+    "redacted": false,
+    "self_hashing": false
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "reason": "Test-import repair has no hosted runtime surface.",
+      "status": "not_applicable"
+    }
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "delivery_state": "merged_via_pr_4222",
+        "sha": "d5c8d9a5f1ee955a6b3aaf590f407c93d0cef803",
+        "subject": "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001: anchor import repair"
+      },
+      {
+        "delivery_state": "merged_via_pr_4225",
+        "sha": "408d6d9a57c583b8b0762dd60e00842948aebe84",
+        "subject": "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001: anchor import gate hardening"
+      },
+      {
+        "delivery_state": "merged_via_pr_4226",
+        "sha": "b91c845e4616732f3efe9cc67b61914c1b27dce4",
+        "subject": "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001: anchor AC2 gap labels"
+      },
+      {
+        "delivery_state": "merged_via_pr_4226",
+        "sha": "4628dc721b0e1b434303fac679c01a9afa05b108",
+        "subject": "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001: record AC2 proof"
+      },
+      {
+        "delivery_state": "current_task_branch",
+        "sha": "a1c22d64b07634d219f26ddc47f9b42f4d55b1ac",
+        "subject": "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001: anchor dispatch brief"
+      },
+      {
+        "delivery_state": "current_task_branch",
+        "sha": "b4db8aa4b1fa226b878068a43d72faa7be364782",
+        "subject": "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001: anchor AC2 resolution"
+      },
+      {
+        "delivery_state": "current_repair_pr_4273",
+        "sha": "f6d340ff018cc178bcf2023b7fae00cde77ebb2c",
+        "subject": "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001: align owner evidence"
+      }
+    ],
+    "pull_requests": [
+      {
+        "base": "dev",
+        "head_sha": "28e62b8f25b184044a002aeb8b1c93b5c622ae30",
+        "merge_sha": "55b17612ed150f52a518a4e8c4c6e75502830f6b",
+        "merged_at": "2026-07-26T21:55:32Z",
+        "number": 4222,
+        "url": "https://github.com/ajoe734/pantheon/pull/4222"
+      },
+      {
+        "base": "dev",
+        "head_sha": "3c2d883700afc3e92568a013bb8e11ec8539031b",
+        "merge_sha": "8d1b5077996a2d27aafb83ff5756f0290d0e90bc",
+        "merged_at": "2026-07-26T23:01:39Z",
+        "number": 4225,
+        "url": "https://github.com/ajoe734/pantheon/pull/4225"
+      },
+      {
+        "base": "dev",
+        "head_sha": "4628dc721b0e1b434303fac679c01a9afa05b108",
+        "merge_sha": "1cf27337e9197c8bc0840e466f55019065e3576e",
+        "merged_at": "2026-07-26T23:07:09Z",
+        "number": 4226,
+        "url": "https://github.com/ajoe734/pantheon/pull/4226"
+      },
+      {
+        "base": "dev",
+        "head_sha": "ca9d91b0209bad18dd9330c8301de9f4ba0a1e01",
+        "merge_sha": "3802799f81778c93728d9dbbe4028289f153c718",
+        "merged_at": "2026-07-27T14:27:20Z",
+        "number": 4232,
+        "url": "https://github.com/ajoe734/pantheon/pull/4232"
+      },
+      {
+        "base": "dev",
+        "head_sha": "f6d340ff018cc178bcf2023b7fae00cde77ebb2c",
+        "merge_sha": "",
+        "merged_at": "",
+        "number": 4273,
+        "url": "https://github.com/ajoe734/pantheon/pull/4273"
+      }
+    ],
+    "required_checks": [
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "4628dc721b0e1b434303fac679c01a9afa05b108",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30224521338,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30224521338",
+        "workflow": "Branch CI Gate"
+      },
+      {
+        "conclusion": "success",
+        "event": "push",
+        "head_sha": "4628dc721b0e1b434303fac679c01a9afa05b108",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30224518504,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30224518504",
+        "workflow": "Branch CI Gate"
+      },
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "ca9d91b0209bad18dd9330c8301de9f4ba0a1e01",
+        "jobs": {
+          "Commit trailers": "success",
+          "Python packaging provision": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30275065946,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30275065946",
+        "workflow": "Branch CI Gate"
+      },
+      {
+        "conclusion": "success",
+        "event": "push",
+        "head_sha": "ca9d91b0209bad18dd9330c8301de9f4ba0a1e01",
+        "jobs": {
+          "Commit trailers": "success",
+          "Python packaging provision": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30275060944,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30275060944",
+        "workflow": "Branch CI Gate"
+      },
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "f6d340ff018cc178bcf2023b7fae00cde77ebb2c",
+        "jobs": {
+          "Commit trailers": "success",
+          "Python packaging provision": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30301066804,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30301066804",
+        "workflow": "Branch CI Gate"
+      },
+      {
+        "conclusion": "success",
+        "event": "push",
+        "head_sha": "f6d340ff018cc178bcf2023b7fae00cde77ebb2c",
+        "jobs": {
+          "Commit trailers": "success",
+          "Python packaging provision": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30301062560,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30301062560",
+        "workflow": "Branch CI Gate"
+      }
+    ]
   },
   "integrity": {
     "algorithm": "sha256",
@@ -494,6 +331,12 @@
     "source_artifact_sha256_by_epoch": {
       "b4db8aa4b1fa226b878068a43d72faa7be364782": {
         "scripts/test_ops_l12_telemetry_discovery_import_evidence.py": "ca7eb6e381ca61e4d148ff119f5d447727eace6b2ab43846ecd91b114519be38",
+        "services/telemetry/test_capture.py": "04e7903747f6f00f1c62a64de9f86431b9a6521943c7d719006e01539dad2b96",
+        "services/telemetry/test_discovery_imports.py": "1b7e67880c881ccb3f338b0237d95f0cb5adf58ecb4b38cb3bcdad645e7dc0c1",
+        "services/telemetry/test_feedback_adapter.py": "27eb6e9eedc4f68a466efe2c57c2596ccadfacdc52ac954a53f90b9d6cc97278"
+      },
+      "f6d340ff018cc178bcf2023b7fae00cde77ebb2c": {
+        "scripts/test_ops_l12_telemetry_discovery_import_evidence.py": "0f8ee48cf5e1713ec4d73fe0ebe7d5caf2ed96009cb91d2638f7733051121dc0",
         "services/telemetry/test_capture.py": "04e7903747f6f00f1c62a64de9f86431b9a6521943c7d719006e01539dad2b96",
         "services/telemetry/test_discovery_imports.py": "1b7e67880c881ccb3f338b0237d95f0cb5adf58ecb4b38cb3bcdad645e7dc0c1",
         "services/telemetry/test_feedback_adapter.py": "27eb6e9eedc4f68a466efe2c57c2596ccadfacdc52ac954a53f90b9d6cc97278"
@@ -629,6 +472,239 @@
       "reference": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001/evidence.json",
       "sequence": 16,
       "status": "ready_for_independent_review"
+    },
+    {
+      "actor": "Human/Ops",
+      "kind": "codex_reviewer_binding_recut",
+      "recorded_at": "2026-07-27T20:22:13Z",
+      "reference": "PR #4273 head f6d340ff018cc178bcf2023b7fae00cde77ebb2c",
+      "sequence": 17,
+      "status": "ready_for_independent_review"
     }
-  ]
+  ],
+  "residual_risks": {
+    "current_cut_delivery_binding_pending": {
+      "blocking_for_this_task": false,
+      "containment": "AC6 is explicitly pending; the reviewer appends the exact-head decision and the owner closes only after the PR is merged. This cut binds PR #4273 head f6d340ff018cc178bcf2023b7fae00cde77ebb2c and its green checks, while the commit carrying these updated bytes necessarily needs a fresh exact-head review after push.",
+      "description": "A manifest cannot contain the merge SHA of the PR that first carries its own bytes.",
+      "expiry": "Owner closeout after Codex review and merge.",
+      "owner": "Claude",
+      "recheck_trigger": "Current task PR review or merge",
+      "severity": "low"
+    },
+    "pre_existing_skip": {
+      "blocking_for_this_task": false,
+      "containment": "The same one skip appears in the baseline and current suite and is not a loader error.",
+      "description": "One telemetry test requires an external NATS test endpoint.",
+      "expiry": "When an integration environment supplies PANTHEON_TEST_NATS_URL.",
+      "owner": "telemetry integration lane",
+      "recheck_trigger": "Any telemetry integration environment change",
+      "severity": "low"
+    },
+    "root_conftest_can_mask_bare_sibling_imports": {
+      "blocking_for_this_task": false,
+      "containment": "The AST regression scans every telemetry test module and fails on bare sibling imports independently of pytest path behavior.",
+      "description": "Repository pytest configuration can make a bare sibling import appear to work, so pytest alone is not the regression authority.",
+      "expiry": "Next root pytest harness redesign.",
+      "owner": "unassigned",
+      "recheck_trigger": "Any conftest.py or pytest.ini import-path change",
+      "severity": "low"
+    },
+    "unprovisioned_interpreter_cannot_resolve_checkout": {
+      "blocking_for_this_task": false,
+      "containment": "The canonical bootstrap is scripts/dev/provision_python_distribution.py; validation.commands[13] remains the negative control and TestAC2ModesUnderInstalledDistribution provisions its own interpreter when needed.",
+      "description": "A bare interpreter from a foreign cwd cannot import a checkout that has not been installed. This is expected and proves the governed distribution is load-bearing.",
+      "expiry": "When Python can import arbitrary uninstalled checkouts, which is not a project objective.",
+      "owner": "OPS-L12-PYTHON-PACKAGING-PROVISION-001 completed owner lane",
+      "recheck_trigger": "Any change to pyproject.toml or scripts/dev/provision_python_distribution.py",
+      "severity": "low"
+    }
+  },
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "Owner re-cut after OPS-L12-PYTHON-PACKAGING-PROVISION-001 implemented and independently closed the AC2 provisioning dependency.",
+    "note": "This cut supersedes the blocked 2026-07-26 evidence state. It preserves the rejected history, binds PR #4226 and the completed packaging dependency PR #4232, records fresh no-PYTHONPATH execution, and leaves only this cut's independent review and delivery pending.",
+    "status": "formalized"
+  },
+  "schema_version": "loop_product_evidence.v1",
+  "scope": {
+    "authoritative_write_owner": "Claude owns this task's telemetry test-import evidence and regression gate; Claude does not own telemetry runtime behavior or packaging implementation.",
+    "composes_with": [
+      "OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001 residual loader-error finding",
+      "OPS-L12-PYTHON-PACKAGING-PROVISION-001 governed distribution and worker bootstrap",
+      "PR #4222 initial import repair",
+      "PR #4225 schema/timestamp gate repair",
+      "PR #4226 AC2 feasibility record"
+    ],
+    "evidence_changed_files": [
+      ".orchestrator/task-briefs/ops_l12_telemetry_discovery_import_001.md",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001/AC2_FEASIBILITY_PROOF.md",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "services/telemetry/test_capture.py",
+      "services/telemetry/test_feedback_adapter.py",
+      "services/telemetry/test_discovery_imports.py",
+      "scripts/test_ops_l12_telemetry_discovery_import_evidence.py"
+    ],
+    "not_changing": "No change to services/telemetry/capture.py, services/telemetry/feedback_adapter.py, live supervisor configuration, runtime behavior, or the packaging implementation delivered by OPS-L12-PYTHON-PACKAGING-PROVISION-001.",
+    "owned_layer": "Telemetry test-module import integrity, task-scoped evidence, and fail-closed evidence validation."
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "evidence": "Every AC2 child runs under env -i with no PYTHONPATH.",
+      "status": "pass"
+    },
+    "hosted_frontend": {
+      "status": "not_applicable"
+    },
+    "mfa": {
+      "status": "not_applicable"
+    },
+    "no_live_capital": {
+      "evidence": "Test-only task; no broker or capital path changed.",
+      "status": "pass"
+    },
+    "rbac": {
+      "status": "not_applicable"
+    },
+    "tenant_isolation": {
+      "status": "not_applicable"
+    },
+    "two_person_approval": {
+      "evidence": "Codex must independently review this cut before owner closeout.",
+      "status": "pending"
+    }
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-27T20:22:13Z",
+    "evidence_cut_semantics": "Claude is the canonical task owner and Codex is the current independent reviewer. Human/Ops re-cut this evidence after Codex review reopened PR #4273 for stale reviewer and delivery bindings: current-task artifacts still named Codex2, while Codex2 is only the historical packaging-dependency reviewer. This cut changes only task evidence, its fail-closed gate, the AC2 decision record, and the task brief. It preserves the earlier task delivery through PR #4226, preserves the reviewed packaging dependency through PR #4232, and binds the current repair PR #4273 at head f6d340ff018cc178bcf2023b7fae00cde77ebb2c with green push and pull_request checks. The independent Codex decision for this repaired cut remains pending.",
+    "id": "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001",
+    "overall_admission": "ready_for_independent_review",
+    "owner": "Claude",
+    "phase": "Twelve-loop verification hardening",
+    "product_level_required": false,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001/evidence.json",
+    "reviewer": "Codex",
+    "target_environment": "local developer, auto-worker, and CI test execution only",
+    "target_maturity": "verified_local_test_execution_pending_independent_review",
+    "task_branch": "task/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001",
+    "title": "Eliminate telemetry unittest discovery loader errors"
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "Detached worktree at 71aea154b: python -m unittest discover -s services/telemetry -p 'test_*.py' -t .",
+        "conclusion": "Fresh owner reproduction: ran 197 tests in 12.974s; failures=0, errors=2, skipped=1. Error ids were unittest.loader._FailedTest.services.telemetry.test_capture and unittest.loader._FailedTest.services.telemetry.test_feedback_adapter.",
+        "result": "baseline_reproduced"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python3 -m unittest -v services.telemetry.test_discovery_imports",
+        "conclusion": "Ran 20 tests in 28.053s; OK. The four installed-distribution AC2 modes, canonical module identity, hostile environment, repeated discovery, and no-sys.path-mutation checks all passed.",
+        "result": "pass"
+      },
+      {
+        "command": "cd /tmp && env -i PATH=/usr/bin:/bin HOME=/tmp LANG=C.UTF-8 .venv-pantheon/bin/python3 -m unittest services.telemetry.test_capture services.telemetry.test_feedback_adapter",
+        "conclusion": "Ran 75 tests in 0.731s; OK. PYTHONPATH was absent and cwd was outside the checkout.",
+        "result": "pass"
+      },
+      {
+        "command": "cd /tmp && env -i PATH=/usr/bin:/bin HOME=/tmp LANG=C.UTF-8 .venv-pantheon/bin/python3 <repo>/services/telemetry/test_capture.py",
+        "conclusion": "Ran 35 tests in 0.357s; OK. PYTHONPATH was absent.",
+        "result": "pass"
+      },
+      {
+        "command": "cd /tmp && env -i PATH=/usr/bin:/bin HOME=/tmp LANG=C.UTF-8 .venv-pantheon/bin/python3 <repo>/services/telemetry/test_feedback_adapter.py",
+        "conclusion": "Ran 40 tests in 0.333s; OK. PYTHONPATH was absent.",
+        "result": "pass"
+      },
+      {
+        "command": "cd /tmp && env -i PATH=/usr/bin:/bin HOME=/tmp LANG=C.UTF-8 .venv-pantheon/bin/python3 -m pytest -q -c /dev/null --noconftest -p no:cacheprovider <both files>",
+        "conclusion": "75 passed in 3.58s. No PYTHONPATH, repository pytest.ini, root conftest.py, or repository cwd contributed to the pass.",
+        "result": "pass"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python3 -m unittest discover -s services/telemetry -p 'test_*.py' -t . -q",
+        "conclusion": "Ran 342 tests in 51.471s; OK (skipped=1). Zero loader errors.",
+        "result": "pass"
+      },
+      {
+        "command": "env -i with hostile PANTHEON_RUNTIME_MANAGER_*, binding-store, and incidents paths; .venv-pantheon/bin/python3 in-memory unittest discovery runner",
+        "conclusion": "ran=342 failures=0 errors=0 skipped=1 elapsed=44.631s. Hostile ambient values did not change the result.",
+        "result": "pass"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python3 -m unittest scripts.test_ops_l12_telemetry_discovery_import_evidence",
+        "conclusion": "Ran 12 tests; OK. The task evidence gate passes schema, timestamp, owner/reviewer, dependency closure, command-reference bounds, and checksum checks.",
+        "result": "pass"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python3 -c 'jsonschema.validate(evidence.json, product-evidence.schema.json)'",
+        "conclusion": "Exit 0 against schemas/product-evidence.schema.json.",
+        "result": "pass"
+      },
+      {
+        "command": "cd docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001 && sha256sum -c evidence.sha256",
+        "conclusion": "AC2_FEASIBILITY_PROOF.md, README.md, and evidence.json all match the companion checksum.",
+        "result": "pass"
+      },
+      {
+        "command": "git diff --stat 71aea154b..HEAD -- services/telemetry/capture.py services/telemetry/feedback_adapter.py",
+        "conclusion": "Empty. The production capture and feedback-adapter modules are unchanged from the reproduced baseline.",
+        "result": "pass"
+      },
+      {
+        "command": "git diff --check",
+        "conclusion": "Exit 0.",
+        "result": "pass"
+      },
+      {
+        "command": "cd /tmp && env -i PATH=/usr/bin:/bin HOME=/tmp /home/lupin/pantheon/.venv/bin/python3 -m unittest services.telemetry.test_capture services.telemetry.test_feedback_adapter",
+        "conclusion": "Expected negative control: unprovisioned interpreter failed with two ModuleNotFoundError: No module named 'services' loader errors. This proves the positive runs are attributable to the governed distribution.",
+        "result": "negative_control_expected_failure"
+      },
+      {
+        "command": "python3 scripts/dev/provision_python_distribution.py --quiet --print-python",
+        "conclusion": "Exit 0 and returned the checkout-scoped .venv-pantheon/bin/python3 without dirtying the worktree.",
+        "result": "pass"
+      },
+      {
+        "command": "AI_NAME=Claude $PANTHEON_COMMAND_ROOT/scripts/ai-status.sh show OPS-L12-PYTHON-PACKAGING-PROVISION-001; task gate test_dependency_manifest_closes_the_packaging_precondition",
+        "conclusion": "The governed archive reports terminal done, merge 3802799f81778c93728d9dbbe4028289f153c718, review_file bound, and Codex2 approval; the current task gate confirms the committed dependency manifest records review_approved AC3 pass. The dependency's whole historical gate is not reused here because its source-digest assertion intentionally compares its branch-ci.yml epoch with the current tree, and branch-ci.yml changed after that task closed.",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/telemetry",
+        "conclusion": "353 passed, 1 skipped, 3 warnings, and 35 subtests passed in 100.07s.",
+        "result": "pass"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python -m unittest scripts.test_ops_l12_telemetry_discovery_import_evidence",
+        "conclusion": "Re-run after adding the schema-required empty merged_at placeholder for pending PR #4273; evidence gate passed schema, timestamp, reviewer/dependency, current PR/head/check binding, command-reference bounds, and checksum checks.",
+        "result": "pass"
+      },
+      {
+        "command": "python3 -m json.tool docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001/evidence.json",
+        "conclusion": "Exit 0; evidence.json is syntactically valid JSON.",
+        "result": "pass"
+      },
+      {
+        "command": "cd docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001 && sha256sum -c evidence.sha256",
+        "conclusion": "AC2_FEASIBILITY_PROOF.md, README.md, and evidence.json all match the companion checksum.",
+        "result": "pass"
+      },
+      {
+        "command": "gh pr view 4273 --repo ajoe734/pantheon --json headRefOid,statusCheckRollup,reviewDecision,mergeStateStatus",
+        "conclusion": "PR #4273 was at head f6d340ff018cc178bcf2023b7fae00cde77ebb2c; required push and pull_request Branch CI Gate runs 30301062560 and 30301066804 were success; reviewDecision remained REVIEW_REQUIRED and mergeStateStatus BLOCKED pending fresh Codex review.",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-07-27T20:22:13Z",
+    "validated_base_sha": "b81edf76dfc14087dd7d5e3a6599448cb9d0bb09",
+    "validated_head_sha": "f6d340ff018cc178bcf2023b7fae00cde77ebb2c"
+  }
 }

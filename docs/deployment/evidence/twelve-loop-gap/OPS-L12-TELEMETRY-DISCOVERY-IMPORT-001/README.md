@@ -1,6 +1,6 @@
 # OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001 — Evidence
 
-**Owner:** Claude · **Reviewer:** Codex2
+**Owner:** Claude · **Reviewer:** Codex
 **Repository:** `ajoe734/pantheon`
 **Review file:** `docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001/evidence.json`
 **State of this cut:** ready for independent review
@@ -136,7 +136,7 @@ This cut still requires:
 
 1. push and a new task repair PR;
 2. green exact-head required checks;
-3. independent Codex2 review bound to `evidence.json`;
+3. independent Codex review bound to `evidence.json`;
 4. merge to `dev`;
 5. governed owner closeout.
 

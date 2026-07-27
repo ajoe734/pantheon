@@ -55,8 +55,11 @@ PACKAGING_MANIFEST_PATH = (
 
 TASK_ID = "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001"
 OWNER = "Claude"
-REVIEWER = "Codex2"
+REVIEWER = "Codex"
 PACKAGING_TASK_ID = "OPS-L12-PYTHON-PACKAGING-PROVISION-001"
+PACKAGING_REVIEWER = "Codex2"
+CURRENT_PR_NUMBER = 4273
+CURRENT_PR_HEAD_SHA = "f6d340ff018cc178bcf2023b7fae00cde77ebb2c"
 COMMAND_REF = re.compile(r"^validation\.commands\[(\d+)\]$")
 
 # Every manifest location that carries a wall-clock timestamp. A future value in
@@ -233,10 +236,40 @@ class TestEvidenceManifestSchema(unittest.TestCase):
         task = dependency["task"]
         self.assertEqual(task["id"], PACKAGING_TASK_ID)
         self.assertEqual(task["overall_admission"], "review_approved")
-        self.assertEqual(task["reviewer"], REVIEWER)
+        self.assertEqual(task["reviewer"], PACKAGING_REVIEWER)
         acceptance = {entry["id"]: entry for entry in dependency["acceptance"]}
         self.assertEqual(acceptance["AC3"]["status"], "pass")
         self.assertIn("foreign cwd", acceptance["AC3"]["statement"])
+
+    def test_current_repair_pr_and_exact_head_are_bound(self):
+        pull_requests = self.manifest["implementation_delivery"]["pull_requests"]
+        matches = [
+            entry
+            for entry in pull_requests
+            if entry.get("number") == CURRENT_PR_NUMBER
+        ]
+        self.assertEqual(len(matches), 1, f"expected one PR #{CURRENT_PR_NUMBER} binding")
+        current = matches[0]
+        self.assertEqual(current["base"], "dev")
+        self.assertEqual(current["head_sha"], CURRENT_PR_HEAD_SHA)
+        self.assertEqual(current["url"], "https://github.com/ajoe734/pantheon/pull/4273")
+
+        required_checks = self.manifest["implementation_delivery"]["required_checks"]
+        current_checks = [
+            entry
+            for entry in required_checks
+            if entry.get("head_sha") == CURRENT_PR_HEAD_SHA
+        ]
+        self.assertEqual(
+            sorted(entry["event"] for entry in current_checks),
+            ["pull_request", "push"],
+        )
+        for entry in current_checks:
+            self.assertEqual(entry["conclusion"], "success")
+            self.assertEqual(entry["jobs"].get("Commit trailers"), "success")
+            self.assertEqual(entry["jobs"].get("Python packaging provision"), "success")
+            self.assertEqual(entry["jobs"].get("Runtime mirror guard"), "success")
+            self.assertEqual(entry["jobs"].get("Smoke acceptance"), "success")
 
     def test_validation_command_references_are_in_range(self):
         command_count = len(self.manifest["validation"]["commands"])
