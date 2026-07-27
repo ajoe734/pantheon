@@ -7,6 +7,7 @@ not let one service's top-level imports leak into another service's tests.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -17,6 +18,13 @@ import pytest
 ROOT = Path(__file__).resolve().parent
 SERVICES_DIR = ROOT / "services"
 SCRIPTS_DIR = ROOT / "scripts"
+# A worker shell and a task worktree inherit the provisioned live task-state
+# journal binding. A test run must never reach it: an inherited event log turns
+# any fixture board into a real authoritative commit.
+TASK_STATE_STORE_ENV_VARS = (
+    "PANTHEON_TASK_STATE_STORE_MODE",
+    "PANTHEON_TASK_STATE_EVENT_LOG",
+)
 _STABLE_REPO_PACKAGES = {"integrations", "scripts", "services"}
 _TRANSIENT_MODULES_BY_PATH: dict[Path, dict[str, ModuleType]] = {}
 
@@ -136,16 +144,18 @@ def pytest_pycollect_makemodule(module_path: Path, parent):  # noqa: ANN001
     return IsolatedServiceModule.from_parent(parent, path=module_path)
 
 
+def scrub_inherited_task_state_env() -> list[str]:
+    """Drop any inherited live task-state journal binding from this process."""
+
+    return [name for name in TASK_STATE_STORE_ENV_VARS if os.environ.pop(name, None) is not None]
+
+
 def pytest_configure(config):  # noqa: ANN001
-    import os
-    os.environ.pop("PANTHEON_TASK_STATE_STORE_MODE", None)
-    os.environ.pop("PANTHEON_TASK_STATE_EVENT_LOG", None)
+    scrub_inherited_task_state_env()
 
 
 def pytest_runtest_setup(item):  # noqa: ANN001
-    import os
-    os.environ.pop("PANTHEON_TASK_STATE_STORE_MODE", None)
-    os.environ.pop("PANTHEON_TASK_STATE_EVENT_LOG", None)
+    scrub_inherited_task_state_env()
     module_path = Path(item.path)
     _clear_transient_local_modules()
     _activate_import_roots(module_path)

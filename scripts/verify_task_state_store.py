@@ -41,6 +41,7 @@ def emit(payload: dict[str, Any], *, as_json: bool) -> None:
     print(
         "task-state shadow verification: "
         f"ok={payload.get('ok')} events={payload.get('event_count', 0)} "
+        f"nonterminal_tasks={payload.get('nonterminal_task_count', '-')} "
         f"error={payload.get('error') or '-'}"
     )
 
