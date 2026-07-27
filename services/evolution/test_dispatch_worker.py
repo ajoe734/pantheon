@@ -81,12 +81,12 @@ def isolated_state(tmp_path, monkeypatch):
     each test's durability assertions honest: the objects under test read the
     same files a restarted process would.
     """
-    from evolution_decision import EvolutionDecisionStore  # type: ignore
-
     monkeypatch.setattr(
         evo_main,
         "store",
-        EvolutionDecisionStore(storage_path=str(tmp_path / "decisions.json")),
+        evo_main.EvolutionDecisionStore(
+            storage_path=str(tmp_path / "decisions.json")
+        ),
     )
     outbox = EvolutionDispatchOutbox(build_dispatch_outbox_store(data_dir=tmp_path))
     compensations = CompensationLedger(data_dir=tmp_path)

@@ -37,6 +37,7 @@ import http.client
 import json
 import math
 import os
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -44,6 +45,11 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterator, Mapping, Sequence
+
+from services.evolution.worker_health import (
+    healthcheck as check_worker_health,
+    write_health,
+)
 
 try:  # pragma: no cover - fcntl is present on the Linux runtime.
     import fcntl
@@ -129,6 +135,7 @@ _METRICS_KEY_ALIASES: dict[str, str] = {
 # cadence (`EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS`), tight relative to a
 # genuinely abandoned metric (e.g. a value last refreshed many days ago).
 _DEFAULT_METRIC_MAX_AGE_SECONDS = 172800  # 2 days
+_WORKER_NAME = "evolution-threshold-sweep-producer"
 
 
 def _env_int(name: str, default: int, *, minimum: int = 0) -> int:
@@ -140,6 +147,18 @@ def _env_int(name: str, default: int, *, minimum: int = 0) -> int:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def healthcheck() -> int:
+    return check_worker_health(
+        health_file=os.getenv("EVOCHAIN_THRESHOLD_SWEEP_HEALTH_FILE", ""),
+        interval_seconds=_env_int(
+            "EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS",
+            86400,
+            minimum=1,
+        ),
+        worker_name=_WORKER_NAME,
+    )
 
 
 def load_thresholds(path: str | None = None) -> list[dict[str, Any]]:
@@ -1203,11 +1222,26 @@ def main() -> int:
     state_path = os.getenv("EVOCHAIN_THRESHOLD_SWEEP_STATE_PATH") or DEFAULT_STATE_PATH
     interval_seconds = _env_int("EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS", 86400, minimum=1)
     max_ticks = _env_int("EVOCHAIN_THRESHOLD_SWEEP_MAX_TICKS", 0, minimum=0)
+    health_file = os.getenv("EVOCHAIN_THRESHOLD_SWEEP_HEALTH_FILE", "")
     metric_max_age_seconds = _env_int(
         "EVOCHAIN_THRESHOLD_SWEEP_METRIC_MAX_AGE_SECONDS",
         _DEFAULT_METRIC_MAX_AGE_SECONDS,
         minimum=1,
     )
+
+    health: dict[str, Any] = {
+        "worker_name": _WORKER_NAME,
+        "status": "starting",
+        "ticks": 0,
+        "last_tick_at": None,
+        "last_success_at": None,
+        "last_failure_at": None,
+        "last_failure_reason": None,
+        "total_candidates": 0,
+        "total_incidents_created": 0,
+        "total_errors": 0,
+    }
+    write_health(health_file, health)
 
     tick = 0
     while True:
@@ -1220,11 +1254,47 @@ def main() -> int:
             state_path=state_path,
             metric_max_age_seconds=metric_max_age_seconds,
         )
-        print(json.dumps({"tick": tick, "result": result}, sort_keys=True), flush=True)
+        health["ticks"] = tick
+        health["last_tick_at"] = _utc_now()
+        health["total_candidates"] += int(result.get("candidates") or 0)
+        health["total_incidents_created"] += int(
+            result.get("incidents_created") or 0
+        )
+        tick_errors = int(result.get("errors") or 0)
+        health["total_errors"] += tick_errors
+        if tick_errors:
+            health["status"] = "degraded"
+            health["last_failure_at"] = health["last_tick_at"]
+            diagnostics = result.get("diagnostics")
+            health["last_failure_reason"] = (
+                "; ".join(str(item) for item in diagnostics)
+                if isinstance(diagnostics, list)
+                else f"{tick_errors} threshold sweep error(s)"
+            )
+        else:
+            health["status"] = "ok"
+            health["last_success_at"] = health["last_tick_at"]
+            health["last_failure_reason"] = None
+        write_health(health_file, health)
+        print(
+            json.dumps(
+                {"tick": tick, "health": health, "result": result},
+                sort_keys=True,
+            ),
+            flush=True,
+        )
         if max_ticks and tick >= max_ticks:
             return 0
         time.sleep(interval_seconds)
 
 
 if __name__ == "__main__":  # pragma: no cover - exercised through compose/smoke worker.
+    if sys.argv[1:] == ["healthcheck"]:
+        raise SystemExit(healthcheck())
+    if sys.argv[1:]:
+        print(
+            "usage: python -m services.evolution.threshold_sweep_worker [healthcheck]",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
     raise SystemExit(main())

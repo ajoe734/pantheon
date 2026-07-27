@@ -1650,6 +1650,7 @@ services:
       context: .
       dockerfile: services/evolution/Dockerfile
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       PORT: "8093"
       EVOLUTION_DATA_DIR: /data/evolution
@@ -1687,6 +1688,7 @@ services:
       dockerfile: services/evolution/Dockerfile
     command: ["python", "-m", "services.evolution.dispatch_worker"]
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       EVOLUTION_API_URL: http://evolution:8093
       EVOLUTION_DATA_DIR: /data/evolution
@@ -1719,6 +1721,7 @@ services:
       dockerfile: services/evolution/Dockerfile
     command: ["python", "-m", "services.evolution.scheduler_worker"]
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       EVOLUTION_API_URL: http://evolution:8093
       EVOLUTION_AUTH_MODE: ${EVOLUTION_AUTH_MODE:-disabled}
@@ -1727,9 +1730,16 @@ services:
       EVOLUTION_SCHEDULER_INTERVAL_SECONDS: ${EVOLUTION_SCHEDULER_INTERVAL_SECONDS:-86400}
       EVOLUTION_SCHEDULER_MAX_TICKS: ${EVOLUTION_SCHEDULER_MAX_TICKS:-0}
       EVOLUTION_SWEEP_MAX_INCIDENTS: ${EVOLUTION_SWEEP_MAX_INCIDENTS:-}
+      EVOLUTION_SCHEDULER_HEALTH_FILE: ${EVOLUTION_SCHEDULER_HEALTH_FILE:-/tmp/evolution-scheduler-health.json}
     depends_on:
       evolution:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "services.evolution.scheduler_worker", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
 
   evolution-threshold-sweep-producer:
     build:
@@ -1737,6 +1747,7 @@ services:
       dockerfile: services/evolution/Dockerfile
     command: ["python", "-m", "services.evolution.threshold_sweep_worker"]
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       EVOCHAIN_TELEMETRY_API_URL: http://telemetry:8083
       EVOCHAIN_INCIDENTS_API_URL: http://incidents:8090
@@ -1746,6 +1757,7 @@ services:
       EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS: ${EVOCHAIN_THRESHOLD_SWEEP_INTERVAL_SECONDS:-86400}
       EVOCHAIN_THRESHOLD_SWEEP_MAX_TICKS: ${EVOCHAIN_THRESHOLD_SWEEP_MAX_TICKS:-0}
       EVOCHAIN_THRESHOLD_SWEEP_METRIC_MAX_AGE_SECONDS: ${EVOCHAIN_THRESHOLD_SWEEP_METRIC_MAX_AGE_SECONDS:-172800}
+      EVOCHAIN_THRESHOLD_SWEEP_HEALTH_FILE: ${EVOCHAIN_THRESHOLD_SWEEP_HEALTH_FILE:-/tmp/evolution-threshold-sweep-health.json}
     volumes:
       # Bind-mounted so operators can retune threshold values without an
       # image rebuild: edit the host file, then restart this one service.
@@ -1756,6 +1768,12 @@ services:
         condition: service_healthy
       incidents:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "services.evolution.threshold_sweep_worker", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
 
   lineage-read:
     build:
