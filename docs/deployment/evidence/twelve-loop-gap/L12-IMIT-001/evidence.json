@@ -235,7 +235,7 @@
       "head_sha": "d18a3633cdc3329ad610fb408411d66732aceb43",
       "merge_sha": "ddd8dc5709cf45e2dd8814fd20567afda2f8d48e",
       "merged_at": "2026-07-27T13:02:19Z",
-      "note": "Remediation PR for the second returned review: no repository-published or unedited-placeholder POLICY_LEARNING_SERVICE_TOKEN authenticates a staging or production deployment. It merged into dev with the Branch CI Gate green on both the push and pull_request runs recorded in required_checks. The earlier PRs #4235, #4236, #4237 and #4238 are recorded in pull_requests. This manifest sits in a follow-up evidence PR directly on top of the merge.",
+      "note": "Remediation PR for the second returned review: no repository-published or unedited-placeholder POLICY_LEARNING_SERVICE_TOKEN authenticates a staging or production deployment. It merged into dev with the Branch CI Gate green on both the push and pull_request runs recorded in required_checks. The earlier PRs #4235, #4236, #4237 and #4238 and the reviewed evidence PR #4245 are recorded in pull_requests.",
       "number": 4242,
       "url": "https://github.com/ajoe734/pantheon/pull/4242"
     },
@@ -279,6 +279,14 @@
         "merged_at": "2026-07-27T13:02:19Z",
         "number": 4242,
         "url": "https://github.com/ajoe734/pantheon/pull/4242"
+      },
+      {
+        "base": "dev",
+        "head_sha": "ca620a6182e12b8a64ee8b4a2bffc51a42acf838",
+        "merge_sha": "3330e7ae955b20317f588659ad8d8f28daa43fb8",
+        "merged_at": "2026-07-27T13:12:11Z",
+        "number": 4245,
+        "url": "https://github.com/ajoe734/pantheon/pull/4245"
       }
     ],
     "required_checks": [
@@ -358,6 +366,32 @@
         },
         "run_id": 30268359805,
         "url": "https://github.com/ajoe734/pantheon/actions/runs/30268359805",
+        "workflow": "Branch CI Gate"
+      },
+      {
+        "conclusion": "success",
+        "event": "push",
+        "head_sha": "ca620a6182e12b8a64ee8b4a2bffc51a42acf838",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30269086268,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30269086268",
+        "workflow": "Branch CI Gate"
+      },
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "ca620a6182e12b8a64ee8b4a2bffc51a42acf838",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30269094352,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30269094352",
         "workflow": "Branch CI Gate"
       }
     ]
@@ -463,6 +497,34 @@
       "sequence": 8,
       "sha": "ddd8dc5709cf45e2dd8814fd20567afda2f8d48e",
       "status": "pass"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "independent_review_approval",
+      "note": "Independently verified the reviewed evidence head, production-placeholder refusal with minted-secret positive control, throwaway PostgreSQL 16 suite (190 passed), ProductEvidenceManifest schema, 15 source hashes, evidence.sha256, and merged PR/check ancestry through #4245.",
+      "recorded_at": "2026-07-27T14:18:01Z",
+      "reference": "ai-status-event-e5df15df837bdae87d758487db357af14fdd2ed298113ca4fbdf2f7f383e0902",
+      "sequence": 9,
+      "sha": "ca620a6182e12b8a64ee8b4a2bffc51a42acf838",
+      "status": "review_approved"
+    },
+    {
+      "actor": "Human/Ops",
+      "kind": "task_reassigned",
+      "note": "Reassigned only the approved task-owner role from Claude to Codex after provider availability failures; reviewer Codex2 and the independent approval remain unchanged.",
+      "recorded_at": "2026-07-27T16:22:07Z",
+      "reference": "ai-status-event-8482fd53772180807d407ac82acae3109cbd63cc94f84219c7d06602a3338951",
+      "sequence": 10,
+      "status": "recorded"
+    },
+    {
+      "actor": "Codex",
+      "kind": "owner_closeout_reconciliation",
+      "note": "Reconciled the manifest and task brief to the canonical owner assignment without changing product bytes, prior validation results, reviewer identity, maturity, or runtime authority.",
+      "recorded_at": "2026-07-27T16:32:20Z",
+      "reference": ".orchestrator/task-briefs/l12_imit_001.md",
+      "sequence": 11,
+      "status": "pass"
     }
   ],
   "residual_risks": {
@@ -506,18 +568,19 @@
   "schema_status": {
     "formal_schema_owner": "LOOP-PROD-002",
     "formalization_trigger": "L12-IMIT-001 product-level independent-review gate.",
-    "note": "Owner-side evidence for tenant-safe imitation loop authority and failure recovery, refreshed after the second independent review returned on the published .env.example service token being accepted under an enforced posture. Re-review by Codex2 is pending and is recorded in record_log when it happens.",
+    "note": "Review-approved evidence for tenant-safe imitation loop authority and failure recovery. Codex2 approved reviewed head ca620a6182e12b8a64ee8b4a2bffc51a42acf838; the later Human/Ops owner reassignment to Codex is recorded without changing product proof.",
     "status": "formalized"
   },
   "schema_version": "loop_product_evidence.v1",
   "scope": {
-    "authoritative_write_owner": "Claude for the policy-learning imitation-loop inbound authority, the ShadowImitationCandidate backlog authority and its leases, tenant-scoped Agora DatasetVersion resolution inside policy-learning, and this task's evidence",
+    "authoritative_write_owner": "policy-learning for imitation-loop inbound authority, the ShadowImitationCandidate backlog and leases, and tenant-scoped Agora DatasetVersion resolution; Codex owns only the post-review task closeout reconciliation",
     "composes_with": [
       "L12-AGORA-001 governed Agora dataset extraction owner",
       "L12-TEL-001 telemetry lineage identity",
       "Codex2 independent review"
     ],
     "evidence_changed_files": [
+      ".orchestrator/task-briefs/l12_imit_001.md",
       "docs/deployment/evidence/twelve-loop-gap/L12-IMIT-001/README.md",
       "docs/deployment/evidence/twelve-loop-gap/L12-IMIT-001/evidence.json",
       "docs/deployment/evidence/twelve-loop-gap/L12-IMIT-001/evidence.sha256"
@@ -567,17 +630,17 @@
       "status": "pass"
     },
     "two_person_approval": {
-      "proof": "Owner Claude and reviewer Codex2 are distinct. Independent review of the exact final head is pending and is recorded in record_log when it happens.",
-      "status": "pending_independent_review"
+      "proof": "Current closeout owner Codex and reviewer Codex2 are distinct. Codex2 independently approved reviewed head ca620a6182e12b8a64ee8b4a2bffc51a42acf838 at 2026-07-27T14:18:01Z; Human/Ops later reassigned only the owner role from implementation/evidence author Claude to Codex, as record_log sequences 9 and 10 bind.",
+      "status": "pass"
     }
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-27T13:10:00Z",
-    "evidence_cut_semantics": "Owner evidence cut after the second returned review was remediated. Codex2's re-review at a4ba6685 confirmed the merged delivery but failed closed on one production-authority blocker: .env.example publishes POLICY_LEARNING_SERVICE_TOKEN=replace-me-policy-learning-service-token while inbound_authority rejected only the compose LOCAL_DEV_SERVICE_TOKEN under an enforced posture, so a staging/prod stack running the unedited example file was accepted as policy-learning-service. PR #4242 (head d18a3633) closes it and merged into dev as ddd8dc5709cf45e2dd8814fd20567afda2f8d48e at 2026-07-27T13:02:19Z with the Branch CI Gate green on both its push and pull_request runs. PRs #4235-#4238 remain merged and are recorded in implementation_delivery.pull_requests. This manifest sits in a follow-up evidence PR directly on top of that merge and is the exact head the reviewer verifies. No hosted deployment, maturity promotion, or runtime authority is claimed.",
+    "evidence_cut_at": "2026-07-27T16:32:20Z",
+    "evidence_cut_semantics": "Closeout reconciliation after Codex2 independently approved exact reviewed head ca620a6182e12b8a64ee8b4a2bffc51a42acf838 at 2026-07-27T14:18:01Z and Human/Ops reassigned only the approved task-owner role from Claude to Codex at 2026-07-27T16:22:07Z. PR #4242 merged the final production-placeholder refusal as ddd8dc5709cf45e2dd8814fd20567afda2f8d48e; evidence PR #4245 merged reviewed head ca620a618 as 3330e7ae955b20317f588659ad8d8f28daa43fb8. This cut records those canonical audit events and current owner metadata only. Product bytes, source hashes, validation results, reviewer identity, target maturity, and the no-hosted-activation boundary are unchanged.",
     "id": "L12-IMIT-001",
-    "overall_admission": "owner_evidence_ready",
-    "owner": "Claude",
+    "overall_admission": "review_approved",
+    "owner": "Codex",
     "phase": "Twelve Loop Remediation / Imitation",
     "product_level_required": true,
     "repository": "ajoe734/pantheon",
