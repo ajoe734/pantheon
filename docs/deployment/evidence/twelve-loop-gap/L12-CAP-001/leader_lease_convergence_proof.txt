@@ -1,0 +1,27 @@
+L12-CAP-001 — Two-Process Redis-Fenced Reconciler Proof
+======================================================
+Captured: 2026-07-26T22:06:25Z
+Image: redis@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
+
+Commands (from services/execution/runtime-manager):
+  PYTHONPATH=<repo-root> /home/lupin/pantheon/.venv/bin/python -m unittest -v \
+    test_paper_fleet_reconciler.TestRedisFencedLeaderLease \
+    test_paper_fleet_reconciler.TestLeaderLease
+
+Observed cases:
+  test_production_builder_uses_redis_fenced_backend ... ok
+  test_two_real_processes_converge_and_stale_token_is_rejected ... ok
+  test_missing_store_fails_closed ... ok
+  test_two_reconcilers_converge_to_one_leader ... ok
+
+Result:
+  Ran 4 tests in 2.386s
+  OK
+
+Two spawned reconciler processes contend through disposable real Redis. Exactly
+one mutates the fleet. After lease expiry the successor receives a strictly
+higher fencing token, and the predecessor cannot renew or validate its stale
+token. The production constructor is also proven to select the fenced Redis
+backend, while a missing backend fails closed.
+
+STATUS: OWNER PROOF PASSED; INDEPENDENT REVIEW PENDING

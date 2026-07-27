@@ -161,33 +161,126 @@ def _status_root() -> Path:
     return Path(raw).expanduser().resolve() if raw else ROOT
 
 
-def _safe_status_artifact(relative_path: str) -> Path:
+def _closeout_relative_artifact(relative_path: str) -> Path:
     relative = Path(relative_path)
     if relative.is_absolute() or ".." in relative.parts:
         raise RuntimeError(
             "closeout review_file must be a repository-relative path "
             "without parent traversal"
         )
-    root = _status_root().absolute()
+    return relative
+
+
+def _safe_rooted_artifact(root: Path, relative: Path) -> Path | None:
+    """Resolve ``relative`` under ``root`` or return ``None`` when absent.
+
+    A candidate that exists but breaks containment or crosses a symlink is a
+    hard failure: the caller must not silently fall through to another trusted
+    root once an untrustworthy artifact has been observed.
+    """
+
+    root = root.absolute()
     candidate = (root / relative).absolute()
     try:
-        candidate.relative_to(root.absolute())
+        candidate.relative_to(root)
     except ValueError as exc:
-        raise RuntimeError("closeout review_file escapes PANTHEON_STATUS_ROOT") from exc
-    cursor = Path(candidate.anchor)
-    for part in candidate.parts[1:]:
+        raise RuntimeError(
+            f"closeout review_file escapes its trusted root: {root}"
+        ) from exc
+    cursor = root
+    for part in relative.parts:
         cursor /= part
         if cursor.is_symlink():
             raise RuntimeError(
                 f"closeout review_file cannot contain a symlink: {cursor}"
             )
         if not cursor.exists():
-            break
-    if not candidate.is_file() or candidate.is_symlink():
-        raise RuntimeError(
-            f"closeout review_file is missing or not regular: {relative_path}"
-        )
+            return None
+    if not candidate.is_file():
+        return None
     return candidate
+
+
+def _protected_closeout_roots() -> tuple[list[Path], str | None]:
+    """Return the ordered trusted roots that may hold a protected manifest.
+
+    A governed reviewer command executes from the immutable command root while
+    the manifest it is approving is authored in the supervisor-bound task
+    worktree, and only reaches the central status root once the delivery PR has
+    merged.  Searching the status root alone therefore fails a valid signed
+    verdict in exactly the split-root dispatch it is meant to guard.  The order
+    is the bound task worktree (it holds the artifact under review), then the
+    command root, then the status root; the latter two are merged replay/audit
+    copies.  Search order is not a trust decision: the manifest bytes are
+    sha256-bound into the Human/Ops signature, so a substituted copy in any
+    root fails the binding check instead of being accepted.
+    """
+
+    workspace_roots, error = _review_workspace_roots()
+    if error:
+        return [], error
+
+    roots: list[Path] = []
+    for root in [*workspace_roots, _status_root()]:
+        resolved = root.resolve()
+        if resolved not in roots:
+            roots.append(resolved)
+    return roots, None
+
+
+def _safe_protected_closeout_artifact(relative_path: str) -> Path:
+    """Resolve a protected closeout manifest across validated roots."""
+
+    relative = _closeout_relative_artifact(relative_path)
+    roots, root_error = _protected_closeout_roots()
+    if root_error:
+        raise RuntimeError(f"closeout review_file root binding is invalid: {root_error}")
+
+    for root in roots:
+        resolved = _safe_rooted_artifact(root, relative)
+        if resolved is not None:
+            return resolved
+
+    searched = ", ".join(str(root) for root in roots)
+    raise RuntimeError(
+        f"closeout review_file is missing or not regular: {relative_path} "
+        f"(searched: {searched})"
+    )
+
+
+def _protected_forbidden_roots() -> tuple[Path, ...]:
+    """Derive the candidate-controlled roots that must not hold verifier state.
+
+    The verifier policy and its ledger are the whole authority behind a
+    protected verdict, so they have to live outside anything a candidate can
+    write.  In a split-root dispatch that is three roots, not one: the
+    supervisor-bound task worktree (the worker's own checkout), the immutable
+    command root, and the central status root.  Omitting the bound worktree
+    leaves the ledger writable by the same lane the verdict is gating, which
+    lets a candidate truncate the JSONL tail back to a signed issue record and
+    resurrect a revoked or already consumed approval.
+
+    These roots come from the same validated bindings used to resolve the
+    manifest, so the authority boundary cannot drift away from the search path.
+    A relative or conflicting binding raises instead of degrading to a narrower
+    boundary, and the bound worktree is taken from the supervisor's lease
+    rather than the candidate's environment so it cannot be erased by unsetting
+    both workspace variables.
+    """
+
+    bound_roots, error = _bound_workspace_roots()
+    if error:
+        raise RuntimeError(f"protected closeout root binding is invalid: {error}")
+
+    forbidden: list[Path] = []
+    for root in [*bound_roots, ROOT, _status_root()]:
+        # Keep both the literal and the symlink-resolved form: containment is
+        # checked without resolving the protected path, so a root reachable
+        # under either spelling must be forbidden under both.
+        for form in (root.absolute(), root.resolve()):
+            if form not in forbidden:
+                forbidden.append(form)
+    return tuple(forbidden)
 
 
 def _protected_policy_path(
@@ -252,7 +345,7 @@ def _load_product_closeout_binding(task: dict[str, Any], module: Any) -> Any:
         )
     if Path(review_file).is_absolute():
         raise RuntimeError("protected closeout review_file must be repository-relative")
-    manifest_path = _safe_status_artifact(review_file)
+    manifest_path = _safe_protected_closeout_artifact(review_file)
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -332,6 +425,10 @@ def validate_protected_closeout_transition(
         raise RuntimeError("protected verdict consumption is only valid for done")
 
     module = _load_product_closeout_module()
+    # Resolve the authority boundary before any manifest, policy, or ledger
+    # access so an untrustworthy workspace binding fails closed rather than
+    # silently narrowing what counts as candidate-controlled.
+    forbidden_roots = _protected_forbidden_roots()
     binding = _load_product_closeout_binding(task, module)
     task_ref = task.get("protected_closeout_verdict")
     if task_ref is None:
@@ -349,8 +446,6 @@ def validate_protected_closeout_transition(
             "or a prior governed verdict reference"
         )
 
-    status_root = _status_root()
-    forbidden_roots = tuple({ROOT.absolute(), status_root.absolute()})
     service = module.load_verifier_service(
         policy_path=_protected_policy_path(module, policy_path),
         forbidden_roots=forbidden_roots,
@@ -449,14 +544,46 @@ def validate_protected_closeout_transition(
     return result
 
 
-def _review_workspace_roots() -> tuple[list[Path], str | None]:
-    """Return trusted roots that may contain a repo-relative review manifest.
+def _canonical_workspace_roots() -> tuple[list[Path], str | None]:
+    """Return the worktree roots the supervisor leased to this run.
 
-    Status commands execute from the immutable command root while delivery
-    evidence is authored in a supervisor-bound task worktree.  The worker
-    runner already validates both workspace environment variables against its
-    lease metadata; this helper additionally rejects conflicting bindings and
-    keeps the command root as the replay/audit fallback.
+    The environment bindings below are candidate-controlled.  A worker holding
+    a valid ``ORCH_RUN_ID`` could unset both of them and thereby erase its own
+    worktree from the authority boundary, which is enough to make a ledger it
+    can write count as trusted.  Central runtime state is written by the
+    supervisor outside every task worktree, so the leased path recorded there
+    survives that erasure and is the authoritative source.
+
+    An active run whose lease cannot be resolved is an error, not an absent
+    binding: degrading to a narrower boundary is exactly the bypass.
+    """
+
+    if not str(os.environ.get("ORCH_RUN_ID") or "").strip():
+        return [], None
+    try:
+        import ai_status
+
+        roots = [Path(root).resolve() for root in ai_status.active_lease_workspace_roots()]
+    except Exception as exc:  # noqa: BLE001 - any failure must fail closed
+        return [], (
+            "cannot resolve the supervisor-leased workspace root: "
+            f"{type(exc).__name__}: {exc}"
+        )
+    return roots, None
+
+
+def _bound_workspace_roots() -> tuple[list[Path], str | None]:
+    """Return every worker workspace root bound to this run.
+
+    Both environment bindings name the same task worktree.  A relative or
+    conflicting binding is not an ambiguity to resolve by preference order: it
+    means the caller's view of its own workspace is untrustworthy, so every
+    consumer must fail closed rather than guess which root is authoritative.
+
+    The supervisor-leased root is merged in on top of the environment so that
+    stripping the environment cannot shrink the set.  The union is the safe
+    direction for both consumers: a wider forbidden set only rejects more, and
+    a wider manifest search path is still sha256-bound to the signed verdict.
     """
 
     bound_roots: list[Path] = []
@@ -467,12 +594,37 @@ def _review_workspace_roots() -> tuple[list[Path], str | None]:
         path = Path(raw)
         if not path.is_absolute():
             return [], f"{env_name} must be an absolute path"
-        bound_roots.append(path.resolve())
+        resolved = path.resolve()
+        if resolved not in bound_roots:
+            bound_roots.append(resolved)
 
-    if len(set(bound_roots)) > 1:
+    if len(bound_roots) > 1:
         return [], "conflicting PANTHEON_WORKTREE_ROOT and ORCH_WORKSPACE_PATH"
 
-    roots = bound_roots[:1]
+    canonical_roots, canonical_error = _canonical_workspace_roots()
+    if canonical_error:
+        return [], canonical_error
+    for root in canonical_roots:
+        if root not in bound_roots:
+            bound_roots.append(root)
+    return bound_roots, None
+
+
+def _review_workspace_roots() -> tuple[list[Path], str | None]:
+    """Return trusted roots that may contain a repo-relative review manifest.
+
+    Status commands execute from the immutable command root while delivery
+    evidence is authored in a supervisor-bound task worktree.  The worker
+    runner already validates both workspace environment variables against its
+    lease metadata; this helper additionally rejects conflicting bindings and
+    keeps the command root as the replay/audit fallback.
+    """
+
+    bound_roots, error = _bound_workspace_roots()
+    if error:
+        return [], error
+
+    roots = list(bound_roots)
     command_root = ROOT.resolve()
     if command_root not in roots:
         roots.append(command_root)

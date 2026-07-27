@@ -75,14 +75,14 @@ from dispatch_policy import (
     normalized_status_set,
     ready_dispatch_settings,
 )
-from github_bus import sync_github_bus
+from github_bus import GitHubBusError, resolve_gh_binary, run_gh_process, sync_github_bus
 from provider_permissions import (
     probe_provider_auth,
     provider_capabilities as build_provider_capabilities,
     write_provider_capabilities,
 )
 from rebase_helper import continue_or_skip_empty
-from runtime_state import load_approval_state, load_event_queue, load_runtime_state, prune_worker_records, queue_event_record, replace_event_queue, runtime_state_lock, save_runtime_state
+from runtime_state import load_approval_state, load_event_queue, load_runtime_state, load_runtime_state_snapshot, prune_worker_records, queue_event_record, replace_event_queue, runtime_state_lock, save_runtime_state
 from runtime_state import enqueue_event
 from task_archive import TaskResolver
 from watch_events import queue_delivery_event, run_scan, trim_seen_events
@@ -125,8 +125,18 @@ STICKY_AUTH_BLOCKED_UNTIL = "9999-12-31T23:59:59Z"
 
 
 _DEFERRED_DISPATCH_STATUS_SYNCS: ContextVar[
-    list[tuple[dict[str, Any], str | None]] | None
+    list[tuple[dict[str, Any], str | None, str | None]] | None
 ] = ContextVar("deferred_dispatch_status_syncs", default=None)
+_DEFERRED_WORKER_TERMINATIONS: ContextVar[
+    list[tuple[int, int | None, bool]] | None
+] = ContextVar(
+    "deferred_worker_terminations",
+    default=None,
+)
+_PREFETCHED_WORKER_BASE_REFS: ContextVar[frozenset[str] | None] = ContextVar(
+    "prefetched_worker_base_refs",
+    default=None,
+)
 
 
 SESSION_ID_PATTERNS = [
@@ -183,6 +193,12 @@ SEARCH_RESULT_LOG_JSON_PATTERN = re.compile(
     re.IGNORECASE,
 )
 COMMAND_OUTPUT_EXIT_LINE_PATTERN = re.compile(r"^exited\s+\d+\s+in\s+\S+:", re.IGNORECASE)
+RATE_LIMIT_EVENT_LINE_PATTERN = re.compile(r'"type"\s*:\s*"rate_limit_event"', re.IGNORECASE)
+NONTHROTTLING_RATE_LIMIT_STATUSES = frozenset({"allowed", "allowed_warning"})
+NONTHROTTLING_RATE_LIMIT_LINE_PATTERN = re.compile(
+    r'"status"\s*:\s*"(?:allowed|allowed_warning)"',
+    re.IGNORECASE,
+)
 
 LOCAL_TZ = ZoneInfo("Asia/Taipei")
 SUPERVISOR_LOG_QUIET = False
@@ -1667,6 +1683,51 @@ def _git_ref_exists(repo_root: Path, ref: str) -> bool:
     return proc.returncode == 0
 
 
+def _fetch_worker_base_ref(repo_root: Path, base_ref: str) -> tuple[bool, str | None]:
+    """Refresh the exact remote-tracking ref used to lease worker worktrees.
+
+    ``git fetch origin dev`` updates ``FETCH_HEAD`` but does not necessarily
+    update ``refs/remotes/origin/dev`` when the checkout's configured fetch
+    refspec tracks only another branch (the live command checkout tracked only
+    ``master``).  Worktree creation and freshness checks consume the remote-
+    tracking ref, so fetch it with an explicit source and destination.
+    """
+
+    normalized = str(base_ref or "").strip()
+    if normalized.startswith("origin/"):
+        branch = normalized[len("origin/") :]
+        refspec = f"+refs/heads/{branch}:refs/remotes/origin/{branch}"
+    else:
+        refspec = normalized
+    if not refspec:
+        return False, "missing_base_ref"
+
+    proc = subprocess.run(
+        ["git", "fetch", "origin", refspec, "--quiet"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode == 0:
+        return True, None
+    details = (proc.stderr or proc.stdout or "").strip()
+    return False, details or "git fetch failed"
+
+
+def _worker_base_ref_precondition(base_ref: str) -> tuple[bool, str | None]:
+    """Fail closed in live cycles unless the network fetch ran before admission."""
+
+    prefetched = _PREFETCHED_WORKER_BASE_REFS.get()
+    if prefetched is None:
+        # Standalone maintenance/tests do not run inside the supervisor cycle.
+        return True, None
+    normalized = str(base_ref or "").strip()
+    if normalized in prefetched:
+        return True, None
+    return False, f"base_ref_not_prefetched:{normalized or 'missing'}"
+
+
 def _quarantine_incomplete_worker_path(path: Path) -> Path | None:
     """Move an unregistered partial checkout aside so dispatch can recover.
 
@@ -1712,6 +1773,10 @@ def _create_worker_worktree(repo_root: Path, path: Path, branch: str, base_ref: 
     if path.exists() and (not path.is_dir() or any(path.iterdir())):
         if _quarantine_incomplete_worker_path(path) is None:
             return False, f"Worker worktree path already exists and is not empty: {path}"
+
+    base_ready, base_error = _worker_base_ref_precondition(base_ref)
+    if not base_ready:
+        return False, f"Failed to refresh worker base {base_ref}: {base_error}"
 
     remote_ref = f"refs/remotes/origin/{branch}"
     if _git_ref_exists(repo_root, f"refs/heads/{branch}"):
@@ -1929,22 +1994,16 @@ def _refresh_reused_worker_worktree(
     such as ORCH-CLOSEOUT-MERGE-GATE (require_merged_pr). Refresh on lease so
     the worker always sees current control-plane code.
 
-    Strategy: fetch + `git merge --ff-only origin/<base>`. Never auto-resolve
-    a real merge — if the branch genuinely diverged, leave it for the worker
-    to handle. Dirty reused worktrees are blocked before dispatch so workers
-    cannot inherit unrelated staged or tracked changes.
+    Strategy: fetch the exact remote-tracking ref + `git merge --ff-only
+    origin/<base>`. Never auto-resolve a real merge — if the branch genuinely
+    diverged, leave it for the worker to handle. Dirty reused worktrees are
+    blocked before dispatch so workers cannot inherit unrelated staged or
+    tracked changes.
     """
     base = base_ref.split("/", 1)[1] if base_ref.startswith("origin/") else base_ref
-    fetch_proc = subprocess.run(
-        ["git", "fetch", "origin", base, "--quiet"],
-        cwd=worktree_path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if fetch_proc.returncode != 0:
-        details = (fetch_proc.stderr or fetch_proc.stdout or "").strip()
-        return False, f"fetch_failed: {details}"
+    base_ready, base_error = _worker_base_ref_precondition(base_ref)
+    if not base_ready:
+        return False, f"fetch_failed: {base_error}"
 
     status_proc = subprocess.run(
         ["git", "status", "--porcelain", "--untracked-files=no"],
@@ -2749,7 +2808,20 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
                 record["lease_acquired_at"] = record.get("lease_acquired_at") or active_worker.get("lease_acquired_at") or utc_now()
                 record["lease_expires_at"] = active_worker.get("lease_expires_at") or queue_lease_expiry(config)
                 record["processed_at"] = record.get("processed_at") or utc_now()
-                sync_dispatched_task_status(config, event, run_id=record["run_id"])
+                sync_dispatched_task_status(
+                    config,
+                    event,
+                    run_id=record["run_id"],
+                    workspace_path=(
+                        active_worker.get("workspace_path")
+                        or (
+                            (active_worker.get("request_snapshot") or {})
+                            .get("metadata", {})
+                            .get("workspace_path")
+                        )
+                        or config_path(config, "status_file").parent
+                    ),
+                )
                 changed = True
             continue
         task_id = str(event.get("task_id") or "").strip()
@@ -2828,7 +2900,7 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
             changed = True
             continue
         request_agent_id = str(getattr(request, "agent_id", event.get("target_agent")) or "")
-        refresh_provider_auth_before_dispatch(config, provider_report, request_agent_id)
+        refresh_provider_auth_before_dispatch(config, provider_report, request_agent_id, state)
         auto_block_reason = agent_auto_dispatch_block_reason(config, state, request_agent_id, provider_report)
         if auto_block_reason:
             if auto_dispatch_block_is_temporary_capacity(auto_block_reason):
@@ -2877,7 +2949,7 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
             changed = True
             continue
         if dispatch_agent_id != request_agent_id:
-            refresh_provider_auth_before_dispatch(config, provider_report, dispatch_agent_id)
+            refresh_provider_auth_before_dispatch(config, provider_report, dispatch_agent_id, state)
             alternate_block_reason = agent_auto_dispatch_block_reason(
                 config,
                 state,
@@ -3082,7 +3154,12 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
         record["lease_expires_at"] = queue_lease_expiry(config, queue_started_at)
         record["processed_at"] = _isoformat_utc(queue_started_at)
         record.pop("last_wait_reason", None)
-        sync_dispatched_task_status(config, event, run_id=worker_run_id)
+        sync_dispatched_task_status(
+            config,
+            event,
+            run_id=worker_run_id,
+            workspace_path=workspace_path or config_path(config, "status_file").parent,
+        )
         changed = True
     return changed
 
@@ -3109,6 +3186,31 @@ def pid_is_alive(pid: int | None) -> bool:
     except OSError:
         return False
     return True
+
+
+def worker_pid_start_ticks(pid: int | None, proc_root: Path | None = None) -> int | None:
+    """Return Linux's immutable process start-time token for PID reuse checks."""
+
+    if not pid:
+        return None
+    root = proc_root if proc_root is not None else Path("/proc")
+    try:
+        raw_stat = (root / str(pid) / "stat").read_text(
+            encoding="utf-8",
+            errors="ignore",
+        )
+    except OSError:
+        return None
+    closing_paren = raw_stat.rfind(")")
+    if closing_paren < 0:
+        return None
+    fields = raw_stat[closing_paren + 2 :].split()
+    if len(fields) < 20:
+        return None
+    try:
+        return int(fields[19])
+    except (TypeError, ValueError):
+        return None
 
 
 def _proc_activity_record(pid: int, proc_root: Path) -> dict[str, Any] | None:
@@ -3267,6 +3369,27 @@ def active_worker_refs_for_agent_id(
 def terminate_worker_pid(pid: int | None) -> bool:
     if not pid:
         return False
+    deferred = _DEFERRED_WORKER_TERMINATIONS.get()
+    if deferred is not None:
+        # State transitions still happen in the one runtime-admission
+        # transaction, but confirm_kill's bounded poll/sleep loop must not.
+        # Send the first TERM while the decision is current, then confirm (and
+        # escalate to KILL if necessary) immediately after the lock is released.
+        if any(item[0] == pid for item in deferred):
+            return True
+        if not pid_is_alive(pid):
+            return True
+        start_ticks = worker_pid_start_ticks(pid)
+        term_sent = False
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            if not pid_is_alive(pid):
+                return True
+        else:
+            term_sent = True
+        deferred.append((pid, start_ticks, term_sent))
+        return True
     # SUPERVISOR-REWRITE Phase 4 (anti-pattern E): confirm-kill instead of
     # SIGTERM-and-assume-dead. A worker that ignores SIGTERM used to be reported
     # terminated while still alive (and still mutating state); now we escalate to
@@ -4971,6 +5094,8 @@ def detect_worker_failure(worker: dict[str, Any]) -> str | None:
             role = message.get("role") if isinstance(message, dict) else None
             if stream_payload.get("type") == "user" or role == "user":
                 continue
+        if is_allowed_rate_limit_line(stripped):
+            continue
         if SEARCH_RESULT_JSON_FIELD_PATTERN.search(stripped):
             continue
         if JSON_FIELD_LINE_PATTERN.search(stripped):
@@ -5007,13 +5132,50 @@ def is_captured_orchestrator_record(payload: dict[str, Any]) -> bool:
     return False
 
 
+def rate_limit_info_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the rate-limit envelope carried by one worker stream record."""
+    if not isinstance(payload, dict):
+        return None
+    candidates: list[dict[str, Any]] = [payload]
+    message = payload.get("message")
+    if isinstance(message, dict):
+        candidates.append(message)
+    for candidate in candidates:
+        if str(candidate.get("type") or "") != "rate_limit_event":
+            continue
+        info = candidate.get("rate_limit_info")
+        if isinstance(info, dict):
+            return info
+    return None
+
+
 def is_allowed_rate_limit_event(payload: dict[str, Any]) -> bool:
-    if payload.get("type") != "rate_limit_event":
+    """True for a quota *notice* the CLI emits while still serving the request.
+
+    The Claude CLI reports quota headroom as ``rate_limit_event`` records whose
+    status is ``allowed`` (below threshold) or ``allowed_warning`` (past the
+    warning threshold but still served); only ``rejected`` means the request was
+    actually throttled. Accepting just ``allowed`` made a live
+    ``allowed_warning`` notice match ``WORKER_FAILURE_PATTERNS``, so a healthy
+    worker was recorded as failed, classified ``terminal``, and its task
+    reassigned away from an owner that never failed.
+    """
+    info = rate_limit_info_payload(payload)
+    if info is None:
         return False
-    info = payload.get("rate_limit_info")
-    if not isinstance(info, dict):
+    return str(info.get("status") or "").strip().lower() in NONTHROTTLING_RATE_LIMIT_STATUSES
+
+
+def is_allowed_rate_limit_line(line: str) -> bool:
+    """Raw-line fallback for a nonthrottling rate-limit notice.
+
+    Worker logs can carry a truncated or wrapped stream record that no longer
+    parses as JSON. The failure regexes still match its ``rate_limit_event``
+    substring, so the same nonterminal notice must be recognised textually.
+    """
+    if not RATE_LIMIT_EVENT_LINE_PATTERN.search(line):
         return False
-    return str(info.get("status") or "").strip().lower() == "allowed"
+    return bool(NONTHROTTLING_RATE_LIMIT_LINE_PATTERN.search(line))
 
 
 def is_tool_command_output_failure_line(lines: list[str], idx: int) -> bool:
@@ -5073,6 +5235,12 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
         "[object object]",
     }
 
+    # A nonthrottling rate-limit notice can still reach a stored last_error via an
+    # older worker record or an operator-supplied reason. It never denotes a
+    # failed request, so it must stay nonterminal and redispatchable rather than
+    # pausing the provider or reassigning the task.
+    if is_allowed_rate_limit_line(str(reason or "")):
+        return {"kind": "transient", "transient": True, "label": "allowed rate-limit notice"}
     if is_github_cli_auth_failure(reason):
         return {"kind": "tool_auth", "transient": False, "label": "tool auth"}
     if any(marker in normalized for marker in auth_markers):
@@ -5562,7 +5730,7 @@ def current_provider_dispatch_pause(
         blocked_until = _parse_iso_utc(str(entry.get("blocked_until") or ""))
         now = datetime.now(timezone.utc)
         if blocked_until is not None and blocked_until <= now:
-            if is_sticky_auth_dispatch_pause(entry):
+            if auth_pause_requires_live_probe(entry):
                 return entry
             bucket.pop(pause_id, None)
             continue
@@ -5614,6 +5782,23 @@ def is_sticky_auth_dispatch_pause(entry: dict[str, Any] | None) -> bool:
         for key in ("reason", "summary", "detail", "raw_ref", "auth_status", "failure_status")
     )
     return is_sticky_auth_failure_reason(text)
+
+
+def auth_pause_requires_live_probe(entry: dict[str, Any] | None) -> bool:
+    """True when only a fresh successful auth probe may reopen this lane.
+
+    A wall-clock pause window is the right guardrail for capacity, but it is the
+    wrong one for authentication: letting an auth pause expire on a timer
+    reopened the lane while the account was still not ready, so the very next
+    dispatch burned another worker. Both a revoked refresh token and a fresh
+    not-ready probe therefore hold the lane until a later live probe succeeds.
+    """
+    if not isinstance(entry, dict):
+        return False
+    if is_sticky_auth_dispatch_pause(entry):
+        return True
+    pause_kind = str(entry.get("pause_kind") or entry.get("failure_kind") or "").strip().lower()
+    return pause_kind == "auth" and entry.get("requires_live_auth_probe") is True
 
 
 def _legacy_failure_response_enabled() -> bool:
@@ -5903,7 +6088,7 @@ def expire_provider_dispatch_pauses(config: dict[str, Any], state: dict[str, Any
     for provider_id, entry in list(bucket.items()):
         if not isinstance(entry, dict):
             continue
-        if is_sticky_auth_dispatch_pause(entry):
+        if auth_pause_requires_live_probe(entry):
             continue
         blocked_until = _parse_iso_utc(str(entry.get("blocked_until") or ""))
         if blocked_until is None or blocked_until > now:
@@ -6056,6 +6241,22 @@ def provider_has_sticky_auth_dispatch_pause(
     return False
 
 
+def provider_auth_pause_requires_live_probe(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    provider: str | None,
+) -> bool:
+    ids = _provider_auth_identity_ids(config, provider)
+    if not ids:
+        return False
+    for pause_id, entry in _dispatch_pause_bucket(state).items():
+        if normalize_agent_id(str(pause_id)) not in ids:
+            continue
+        if auth_pause_requires_live_probe(entry if isinstance(entry, dict) else None):
+            return True
+    return False
+
+
 def provider_auth_report_is_live_success(report: dict[str, Any]) -> bool:
     if not isinstance(report, dict) or report.get("auth_ready") is not True:
         return False
@@ -6132,10 +6333,10 @@ def reconcile_provider_auth_recovery(
         if not isinstance(current, dict) or current.get("auth_ready") is not True:
             continue
         previous = _provider_report_entry(previous_report, str(provider_id))
-        sticky_auth_pause = provider_has_sticky_auth_dispatch_pause(config, state, str(provider_id))
-        if previous.get("auth_ready") is not False and not sticky_auth_pause:
+        live_probe_gated = provider_auth_pause_requires_live_probe(config, state, str(provider_id))
+        if previous.get("auth_ready") is not False and not live_probe_gated:
             continue
-        if sticky_auth_pause and not provider_auth_report_is_live_success(current):
+        if live_probe_gated and not provider_auth_report_is_live_success(current):
             continue
         cleared_streaks = clear_auth_failure_streaks_for_provider(config, state, str(provider_id))
         cleared_pauses = clear_auth_dispatch_pauses_for_provider(config, state, str(provider_id))
@@ -6405,10 +6606,52 @@ def agent_provider_auth_blocked(
     return capability.get("auth_ready") is False
 
 
+def mark_provider_auth_probe_not_ready(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    provider_key: str,
+    probe: dict[str, Any],
+) -> bool:
+    """Hold a lane whose own live auth probe just came back not ready.
+
+    The pre-dispatch probe used to update only the in-cycle capability report.
+    The next tick rebuilt that report from the persisted one, which still said
+    ``auth_ready: true``, so the cached probe was reused and the lane was
+    dispatchable again without any account actually recovering. Recording the
+    outcome as a live-probe-gated auth pause keeps the lane unavailable until a
+    later fresh successful probe clears it through
+    ``reconcile_provider_auth_recovery`` -- with no config edit anywhere.
+    """
+    reason = str(
+        probe.get("error")
+        or probe.get("status")
+        or "provider auth probe reported not ready"
+    )
+    changed = mark_provider_dispatch_paused(
+        config,
+        state,
+        provider_key,
+        reason,
+        failure_kind="auth",
+        pause_kind="auth",
+    )
+    entry = current_provider_dispatch_pause(state, provider_key, config)
+    if not isinstance(entry, dict):
+        return changed
+    already_gated = entry.get("requires_live_auth_probe") is True
+    entry["requires_live_auth_probe"] = True
+    entry["auth_probe_status"] = probe.get("status")
+    entry["auth_probe_checked_at"] = probe.get("last_auth_probe_at") or probe.get("checked_at")
+    if not is_sticky_auth_dispatch_pause(entry):
+        entry["blocked_until"] = STICKY_AUTH_BLOCKED_UNTIL
+    return changed or not already_gated
+
+
 def refresh_provider_auth_before_dispatch(
     config: dict[str, Any],
     provider_report: dict[str, Any],
     agent_id: str | None,
+    state: dict[str, Any] | None = None,
 ) -> rewrite_provider_health.AccountHealth | None:
     """Force the selected owner's auth probe and refresh the in-cycle report.
 
@@ -6449,6 +6692,7 @@ def refresh_provider_auth_before_dispatch(
     if health is None:
         return None
     capability = existing_providers[provider_key]
+    previously_ready = capability.get("auth_ready")
     capability["auth_ready"] = probe.get("ready") is True
     capability["auth_error"] = probe.get("error")
     capability["auth_method"] = probe.get("method")
@@ -6461,6 +6705,15 @@ def refresh_provider_auth_before_dispatch(
     else:
         capability["local_cli_worker_supported"] = False
         capability["supports_auto_approve"] = False
+    if capability["auth_ready"] is False and previously_ready is not False:
+        # Persist the flip so the next capability scan re-probes on the
+        # failed-probe interval instead of reusing the stale ready cache.
+        try:
+            write_provider_capabilities(config, report=provider_report)
+        except Exception:  # a report write must never block or bypass dispatch gating
+            pass
+    if state is not None and capability["auth_ready"] is False and str(probe.get("source") or "").strip().lower() == "live":
+        mark_provider_auth_probe_not_ready(config, state, provider_key, probe)
     return health
 
 
@@ -6656,14 +6909,128 @@ def auto_dispatch_block_is_temporary_capacity(reason: str | None) -> bool:
     )
 
 
-def status_command_subprocess_context(config: dict[str, Any]) -> tuple[Path, dict[str, str]]:
+def status_command_subprocess_context(
+    config: dict[str, Any],
+    *,
+    workspace_path: str | Path | None = None,
+) -> tuple[Path, dict[str, str]]:
     status_root = config_path(config, "status_file").parent
     issued_env = status_command_runtime_env(config)
     command_root = Path(str(issued_env["PANTHEON_COMMAND_ROOT"])).resolve()
     env = os.environ.copy()
+    # A supervisor launched from an auto-worker shell must not accidentally
+    # borrow that worker's lease identity for a different dispatch.
+    for key in DISPATCH_STATUS_WORKER_ENV_NAMES:
+        env.pop(key, None)
     env.update(issued_env)
     env["PANTHEON_STATUS_ROOT"] = str(status_root)
+    if workspace_path is not None and str(workspace_path).strip():
+        workspace_root = Path(str(workspace_path)).expanduser().resolve()
+        env["PANTHEON_WORKTREE_ROOT"] = str(workspace_root)
+        env["ORCH_WORKSPACE_PATH"] = str(workspace_root)
     return command_root / "scripts" / "ai_status.py", env
+
+
+DISPATCH_STATUS_WORKER_ENV_NAMES = (
+    "ORCH_RUN_ID",
+    "ORCH_TASK_ID",
+    "PANTHEON_WORKTREE_ROOT",
+    "ORCH_WORKSPACE_PATH",
+    "ORCH_RUNNER_STATUS_PATH",
+    "ORCH_HEARTBEAT_PATH",
+)
+
+
+def _worker_request_metadata(worker: dict[str, Any]) -> dict[str, Any]:
+    snapshot = worker.get("request_snapshot")
+    if not isinstance(snapshot, dict):
+        return {}
+    metadata = snapshot.get("metadata")
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _resolve_dispatch_status_path(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    return str(Path(raw).expanduser().resolve())
+
+
+def _runtime_worker_record_for_status_sync(
+    config: dict[str, Any],
+    run_id: str,
+) -> dict[str, Any]:
+    if not run_id or not (config.get("paths", {}) or {}).get("state_file"):
+        return {}
+    state = load_runtime_state(config)
+    workers = state.get("workers")
+    if not isinstance(workers, dict):
+        return {}
+    worker = workers.get(run_id)
+    return worker if isinstance(worker, dict) else {}
+
+
+def _apply_dispatch_status_worker_binding(
+    config: dict[str, Any],
+    env: dict[str, str],
+    *,
+    run_id: str,
+    task_id: str,
+    workspace_path: str | Path | None = None,
+) -> None:
+    for env_name in DISPATCH_STATUS_WORKER_ENV_NAMES:
+        env.pop(env_name, None)
+
+    lease_run_id = str(run_id or "").strip()
+    if not lease_run_id:
+        return
+
+    env["ORCH_RUN_ID"] = lease_run_id
+    env["ORCH_TASK_ID"] = task_id
+
+    workspace_root = _resolve_dispatch_status_path(workspace_path)
+    if workspace_root:
+        env["PANTHEON_WORKTREE_ROOT"] = workspace_root
+        env["ORCH_WORKSPACE_PATH"] = workspace_root
+
+    worker = _runtime_worker_record_for_status_sync(config, lease_run_id)
+    if not worker:
+        return
+
+    worker_task_id = str(worker.get("task_id") or task_id).strip()
+    if worker_task_id:
+        env["ORCH_TASK_ID"] = worker_task_id
+
+    request_metadata = _worker_request_metadata(worker)
+    if not workspace_root:
+        workspace_root = _resolve_dispatch_status_path(
+            worker.get("workspace_path") or request_metadata.get("workspace_path")
+        )
+    if workspace_root:
+        env["PANTHEON_WORKTREE_ROOT"] = workspace_root
+        env["ORCH_WORKSPACE_PATH"] = workspace_root
+
+    status_root = _resolve_dispatch_status_path(
+        worker.get("status_root") or request_metadata.get("status_root")
+    )
+    if status_root:
+        env["PANTHEON_STATUS_ROOT"] = status_root
+
+    worker_metadata = worker.get("metadata") if isinstance(worker.get("metadata"), dict) else {}
+    runner_status_path = _resolve_dispatch_status_path(
+        worker.get("runner_status_path")
+        or worker.get("status_path")
+        or worker_metadata.get("runner_status_path")
+    )
+    if runner_status_path:
+        env["ORCH_RUNNER_STATUS_PATH"] = runner_status_path
+
+    heartbeat_path = _resolve_dispatch_status_path(
+        worker.get("heartbeat_path")
+        or worker_metadata.get("heartbeat_path")
+    )
+    if heartbeat_path:
+        env["ORCH_HEARTBEAT_PATH"] = heartbeat_path
 
 
 def sync_status_pipeline(config: dict[str, Any]) -> bool:
@@ -6714,6 +7081,7 @@ def sync_dispatched_task_status(
     config: dict[str, Any],
     event: dict[str, Any],
     run_id: str | None = None,
+    workspace_path: str | Path | None = None,
 ) -> bool:
     reason = str(event.get("reason") or "").strip()
     action = DISPATCH_STATUS_ACTIONS.get(reason)
@@ -6724,10 +7092,36 @@ def sync_dispatched_task_status(
 
     deferred = _DEFERRED_DISPATCH_STATUS_SYNCS.get()
     if deferred is not None:
-        deferred.append((dict(event), run_id))
+        deferred.append(
+            (
+                dict(event),
+                run_id,
+                str(workspace_path) if workspace_path is not None else None,
+            )
+        )
         return False
 
-    script, env = status_command_subprocess_context(config)
+    lease_run_id = str(run_id or "").strip()
+    workspace_binding = str(workspace_path or "").strip()
+    if lease_run_id and not workspace_binding:
+        write_activity_log(
+            config,
+            {
+                "type": "task_dispatch_sync_failed",
+                "task_id": event.get("task_id"),
+                "dispatch_reason": reason,
+                "message": (
+                    "Dispatch status sync refused an incomplete worker lease: "
+                    f"ORCH_RUN_ID={lease_run_id} has no workspace binding."
+                ),
+            },
+        )
+        return False
+
+    script, env = status_command_subprocess_context(
+        config,
+        workspace_path=workspace_binding or None,
+    )
     if not script.exists():
         write_activity_log(
             config,
@@ -6763,11 +7157,13 @@ def sync_dispatched_task_status(
     # auto worker and requires the supervisor-issued lease. Without ORCH_RUN_ID it took
     # the no-lease branch and raised "status command lease required for auto worker",
     # which failed every dispatch sync. Both call sites already hold the worker run id.
-    lease_run_id = str(run_id or "").strip()
-    if lease_run_id:
-        env["ORCH_RUN_ID"] = lease_run_id
-    else:
-        env.pop("ORCH_RUN_ID", None)
+    _apply_dispatch_status_worker_binding(
+        config,
+        env,
+        run_id=lease_run_id,
+        task_id=task_id,
+        workspace_path=workspace_binding or None,
+    )
     result = subprocess.run(
         [sys.executable, str(script), command_name, task_id, message],
         cwd=str(config_path(config, "status_file").parent),
@@ -6814,20 +7210,43 @@ def _run_with_deferred_dispatch_status_syncs(
     the critical section.
     """
 
-    deferred: list[tuple[dict[str, Any], str | None]] = []
+    deferred: list[tuple[dict[str, Any], str | None, str | None]] = []
+    deferred_terminations: list[tuple[int, int | None, bool]] = []
     token = _DEFERRED_DISPATCH_STATUS_SYNCS.set(deferred)
+    termination_token = _DEFERRED_WORKER_TERMINATIONS.set(deferred_terminations)
     try:
         with runtime_state_lock(config, shared=False, nonblocking=False):
             changed = bool(operation())
     finally:
         _DEFERRED_DISPATCH_STATUS_SYNCS.reset(token)
+        _DEFERRED_WORKER_TERMINATIONS.reset(termination_token)
+        # terminate_worker_pid now runs its confirm/sleep path because the
+        # deferral context has been reset. Keep this in the finally block so a
+        # partially completed cycle cannot strand a process it already TERM'd.
+        for pid, expected_start_ticks, term_sent in deferred_terminations:
+            def deferred_worker_is_alive(candidate_pid: int) -> bool:
+                if not pid_is_alive(candidate_pid):
+                    return False
+                if expected_start_ticks is None:
+                    return True
+                return worker_pid_start_ticks(candidate_pid) == expected_start_ticks
+
+            rewrite_worker_lifecycle.confirm_kill(
+                pid,
+                is_alive=deferred_worker_is_alive,
+                send_signal=os.kill,
+                sleep=time.sleep,
+                monotonic=time.monotonic,
+                term_already_sent=term_sent,
+            )
 
     sync_changed = False
-    for event, run_id in deferred:
+    for event, run_id, workspace_path in deferred:
         sync_changed = sync_dispatched_task_status(
             config,
             event,
             run_id=run_id,
+            workspace_path=workspace_path,
         ) or sync_changed
     return changed or sync_changed
 
@@ -6910,6 +7329,764 @@ def sync_preempted_task_status(config: dict[str, Any], worker: dict[str, Any]) -
     if event is None:
         return False
     return sync_status_pipeline(config)
+
+
+def ownerless_in_progress_settings(config: dict[str, Any]) -> dict[str, Any]:
+    settings = dict(ready_dispatch_settings(config).get("ownerless_in_progress", {}) or {})
+    settings.setdefault("enabled", True)
+    settings.setdefault(
+        "owner_dispatch_reasons",
+        [REASON_OWNED_READY, REASON_OWNED_IN_PROGRESS],
+    )
+    settings.setdefault("max_transitions_per_tick", 4)
+    settings.setdefault("merge_search_limit", 200)
+    settings.setdefault("github_pr_lookup_enabled", True)
+    settings.setdefault("github_pr_lookup_timeout_seconds", 20)
+    settings.setdefault("github_pr_lookup_limit", 20)
+    return settings
+
+
+def task_ids_with_active_workers(config: dict[str, Any], state: dict[str, Any]) -> set[str]:
+    """Task ids a live worker still owns; reconciliation must never touch them."""
+    active_statuses = {
+        str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])
+    }
+    busy: set[str] = set()
+    for worker in (state.get("workers", {}) or {}).values():
+        if not isinstance(worker, dict):
+            continue
+        task_id = str(worker.get("task_id") or "").strip()
+        if not task_id:
+            continue
+        if worker.get("status") in active_statuses or pid_is_alive(worker.get("pid")):
+            busy.add(task_id)
+    return busy
+
+
+def task_ids_with_open_queue_records(state: dict[str, Any]) -> set[str]:
+    """Task ids with an undelivered wake-up; a dispatch is still in flight."""
+    open_statuses = {"queued", "pending", "started", "stalled", "retry_backoff"}
+    pending: set[str] = set()
+    for record in ((state.get("queue", {}) or {}).get("events", {}) or {}).values():
+        if not isinstance(record, dict):
+            continue
+        if str(record.get("status") or "").strip().lower() not in open_statuses:
+            continue
+        task_id = str(record.get("task_id") or "").strip()
+        if task_id:
+            pending.add(task_id)
+    return pending
+
+
+def latest_owner_worker_for_task(
+    state: dict[str, Any],
+    task_id: str,
+    *,
+    owner_reasons: set[str],
+) -> dict[str, Any] | None:
+    """Most recent worker record dispatched to implement ``task_id``."""
+    candidates: list[dict[str, Any]] = []
+    for worker in (state.get("workers", {}) or {}).values():
+        if not isinstance(worker, dict):
+            continue
+        if str(worker.get("task_id") or "").strip() != task_id:
+            continue
+        snapshot = worker.get("request_snapshot")
+        reason = str((snapshot or {}).get("reason") or "") if isinstance(snapshot, dict) else ""
+        if reason not in owner_reasons:
+            continue
+        candidates.append(worker)
+    if not candidates:
+        return None
+    return max(
+        candidates,
+        key=lambda worker: str(
+            worker.get("last_event_at") or worker.get("runner_finished_at") or ""
+        ),
+    )
+
+
+def _git_capture(repo_root: Path, args: list[str]) -> str | None:
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(repo_root), *args],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout
+
+
+def _git_commit_is_ancestor(repo_root: Path, commit: str, ref: str) -> bool:
+    """True only when git positively answers that ``commit`` is merged into ``ref``.
+
+    ``merge-base --is-ancestor`` exits 1 for "not an ancestor" and 128 for an
+    unknown object, so any non-zero exit and any transport failure is read as
+    "not proven merged".
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(repo_root), "merge-base", "--is-ancestor", commit, ref],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return proc.returncode == 0
+
+
+def worker_delivery_head_commit(worker: dict[str, Any]) -> str | None:
+    """The exact commit this worker's isolated worktree was last observed at.
+
+    ``update_worker_commit_progress`` records the worker's own ``HEAD`` while it
+    runs, so the final snapshot is the delivery head that worker produced. This
+    is the only worker-side field that names a specific commit; ``pr_url`` is
+    scraped from provider output and is not trustworthy (the live 2026-07-26
+    state carried a malformed URL pointing at an unrelated PR).
+    """
+    snapshot = worker.get("work_progress_snapshot")
+    if not isinstance(snapshot, dict):
+        return None
+    sha = str(snapshot.get("commit_sha") or "").strip().lower()
+    return sha if re.fullmatch(r"[0-9a-f]{40,64}", sha) else None
+
+
+def worker_dispatch_started_at(worker: dict[str, Any]) -> datetime | None:
+    """When this worker run began; the lower bound for work it can claim."""
+    for field in ("lease_acquired_at", "runner_started_at", "started_at"):
+        parsed = _parse_iso_utc(str(worker.get(field) or ""))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def worker_target_agent_display_name(config: dict[str, Any], worker: dict[str, Any]) -> str:
+    """Canonical display name this worker was dispatched as, or ``""`` if unknown.
+
+    ``display_name_for`` echoes an unregistered id back, so an id that the agent
+    registry does not know is treated as unresolved rather than accepted as its
+    own display name.
+    """
+    snapshot = worker.get("request_snapshot")
+    snapshot = snapshot if isinstance(snapshot, dict) else {}
+    agents = config.get("agents", {}) or {}
+    for raw in (
+        worker.get("logical_agent_id"),
+        snapshot.get("agent_id"),
+        worker.get("agent_id"),
+        worker.get("provider"),
+    ):
+        agent_id = normalize_agent_id(str(raw or ""))
+        if not agent_id or agent_id not in agents:
+            continue
+        name = str(display_name_for(config, agent_id) or "").strip()
+        if name:
+            return name
+    return ""
+
+
+def _repository_slug_from_remote(repo_root: Path) -> str | None:
+    """``owner/repo`` for the checkout whose history the evidence is read from.
+
+    Deriving it from ``origin`` rather than from configuration guarantees the PR
+    lookup asks about the same repository the ancestry checks ran against.
+    """
+    output = _git_capture(repo_root, ["config", "--get", "remote.origin.url"])
+    url = str(output or "").strip()
+    if not url:
+        return None
+    match = re.search(r"github\.com[:/]+([^/\s]+)/([^/\s]+?)(?:\.git)?/?$", url)
+    if not match:
+        return None
+    return f"{match.group(1)}/{match.group(2)}"
+
+
+def _merged_pull_requests_for_branch(
+    config: dict[str, Any],
+    repo_root: Path,
+    branch: str,
+) -> list[dict[str, Any]] | None:
+    """Authoritative merged-PR records for ``branch``, or ``None`` on any doubt.
+
+    Every failure mode -- gh missing, non-zero exit, timeout, unparseable JSON,
+    unknown repository -- returns ``None`` so an unanswered lookup can never be
+    read as a merged delivery.
+    """
+    settings = ownerless_in_progress_settings(config)
+    if not settings.get("github_pr_lookup_enabled", True):
+        return None
+    if not resolve_gh_binary():
+        return None
+    slug = _repository_slug_from_remote(repo_root)
+    if not slug:
+        return None
+    try:
+        timeout = float(settings.get("github_pr_lookup_timeout_seconds", 20) or 20)
+        limit = str(int(settings.get("github_pr_lookup_limit", 20) or 20))
+    except (TypeError, ValueError):
+        return None
+    try:
+        proc = run_gh_process(
+            [
+                "pr",
+                "list",
+                "--repo",
+                slug,
+                "--head",
+                branch,
+                "--state",
+                "merged",
+                "--limit",
+                limit,
+                "--json",
+                "number,state,headRefName,headRefOid,baseRefName,mergedAt,mergeCommit,url",
+            ],
+            timeout_seconds=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired, GitHubBusError):
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        records = json.loads(proc.stdout or "[]")
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(records, list):
+        return None
+    return [record for record in records if isinstance(record, dict)]
+
+
+def squash_merged_delivery_metadata(
+    config: dict[str, Any],
+    task_id: str,
+    *,
+    delivery_head: str,
+    base_name: str,
+    base_ref: str,
+    since: str,
+    repo_root: Path,
+) -> dict[str, Any] | None:
+    """Bind a squash-merged delivery through authoritative GitHub PR metadata.
+
+    A squash merge deliberately rewrites the delivery: the worker's head is not
+    and never will be an ancestor of the integration base, so git ancestry alone
+    can never recognise this shape. The live 2026-07-26 example is PR #4213,
+    whose head ``9e484e252`` squash-merged to ``0410a89f0`` on ``dev``.
+
+    The task branch name is only the *lookup key*; it is never the evidence. The
+    binding is:
+
+    * exactly one merged PR whose ``headRefOid`` equals this worker's delivery
+      head -- no match, or more than one, fails closed;
+    * ``baseRefName`` equal to the expected integration branch;
+    * ``mergedAt`` at or after the worker's dispatch;
+    * a ``mergeCommit`` that is present locally and an ancestor of the base ref;
+    * that merge commit itself carrying this task's ``Task-ID:`` trailer and
+      dated at or after the dispatch.
+
+    Provider prose and ``pr_url`` are never consulted, and a task id alone never
+    implies a squash.
+    """
+    normalized_task_id = str(task_id or "").strip()
+    head = str(delivery_head or "").strip().lower()
+    since_value = str(since or "").strip()
+    dispatched_at = _parse_iso_utc(since_value)
+    if not normalized_task_id or dispatched_at is None:
+        return None
+    if not re.fullmatch(r"[0-9a-f]{40,64}", head):
+        return None
+
+    branch = worker_task_branch(config, normalized_task_id)
+    records = _merged_pull_requests_for_branch(config, repo_root, branch)
+    if not records:
+        return None
+
+    matches = [
+        record
+        for record in records
+        if str(record.get("headRefOid") or "").strip().lower() == head
+    ]
+    if len(matches) != 1:
+        # No PR delivered this exact head, or the metadata is ambiguous about
+        # which one did. Either way there is nothing to bind to.
+        return None
+    pull_request = matches[0]
+
+    if str(pull_request.get("state") or "").strip().upper() != "MERGED":
+        return None
+    if str(pull_request.get("baseRefName") or "").strip() != str(base_name or "").strip():
+        return None
+    merged_at = _parse_iso_utc(str(pull_request.get("mergedAt") or ""))
+    if merged_at is None or merged_at < dispatched_at:
+        return None
+
+    merge_commit = pull_request.get("mergeCommit")
+    merge_oid = ""
+    if isinstance(merge_commit, dict):
+        merge_oid = str(merge_commit.get("oid") or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{40,64}", merge_oid):
+        return None
+    if not _git_commit_is_ancestor(repo_root, merge_oid, base_ref):
+        return None
+
+    # The squashed commit on the base carries the trailer; --no-walk keeps the
+    # search on that commit itself instead of its whole ancestry.
+    output = _git_capture(
+        repo_root,
+        [
+            "log",
+            "--no-walk",
+            "--format=%H",
+            "--fixed-strings",
+            f"--grep=Task-ID: {normalized_task_id}",
+            f"--since={since_value}",
+            merge_oid,
+        ],
+    )
+    if output is None:
+        return None
+    commits = [line.strip() for line in str(output).splitlines() if line.strip()]
+    if not commits:
+        return None
+
+    return {
+        "base_ref": base_ref,
+        "commits": commits[:10],
+        "delivery_head": head,
+        "merge_commit": merge_oid,
+        "trailer_commits_since": since_value,
+        "delivery_shape": "squash_pr_metadata",
+        "pull_request_number": pull_request.get("number"),
+        "pull_request_url": pull_request.get("url"),
+        "pull_request_head_ref_oid": str(pull_request.get("headRefOid") or "").strip().lower(),
+        "pull_request_base_ref_name": pull_request.get("baseRefName"),
+        "pull_request_merged_at": _isoformat_utc(merged_at),
+    }
+
+
+def merged_delivery_commits(
+    config: dict[str, Any],
+    task_id: str,
+    *,
+    delivery_head: str,
+    since: str,
+) -> dict[str, Any] | None:
+    """Durable evidence that *this worker's* delivery already merged.
+
+    ``task/<TASK-ID>`` branches are deleted by GitHub when their PR merges, so
+    the branch ref is exactly what is missing in the merged case. The commit
+    trailer enforced by ``.githooks/commit-msg`` survives the merge, but a
+    trailer alone only proves the id was delivered at *some* point: a reopened
+    or reassigned task still carries every commit from its earlier rounds.
+
+    Two delivery shapes are recognised, and each is bound to this exact worker:
+
+    ``merge_ancestry``
+        A merge-commit or fast-forward PR keeps the delivery head in history.
+        The head must be an ancestor of the integration base, and a ``Task-ID:``
+        trailer commit reachable from that head must be dated at or after
+        ``since`` (the worker's dispatch time). The merge commit that carried
+        the head into the base is recorded when there is one.
+
+    ``squash_pr_metadata``
+        A squash merge rewrites the head, so git ancestry can never see it. That
+        shape is bound through authoritative GitHub PR metadata instead -- see
+        ``squash_merged_delivery_metadata``. It is tried only after ancestry has
+        failed, and it is never inferred from a task id or from ``pr_url``.
+
+    Every git or metadata failure returns ``None``; absent linkage never reads
+    as merged.
+    """
+    normalized_task_id = str(task_id or "").strip()
+    head = str(delivery_head or "").strip().lower()
+    since_value = str(since or "").strip()
+    if not normalized_task_id or not since_value:
+        return None
+    if not re.fullmatch(r"[0-9a-f]{40,64}", head):
+        return None
+    try:
+        repo_root = config_path(config, "status_file").parent
+    except (KeyError, TypeError):
+        return None
+    limit = str(int(ownerless_in_progress_settings(config).get("merge_search_limit", 200) or 200))
+
+    bases: list[tuple[str, str]] = []
+    for base in worktree_cleanup_settings(config).get("base_branches", []):
+        for candidate in (f"origin/{base}", base):
+            if _git_ref_exists(repo_root, candidate):
+                bases.append((str(base), candidate))
+                break
+
+    for _base_name, candidate in bases:
+        if not _git_commit_is_ancestor(repo_root, head, candidate):
+            continue
+        output = _git_capture(
+            repo_root,
+            [
+                "log",
+                "--format=%H",
+                "-n",
+                limit,
+                "--fixed-strings",
+                f"--grep=Task-ID: {normalized_task_id}",
+                f"--since={since_value}",
+                head,
+            ],
+        )
+        if output is None:
+            return None
+        commits = [line.strip() for line in str(output).splitlines() if line.strip()]
+        if not commits:
+            continue
+        return {
+            "base_ref": candidate,
+            "commits": commits[:10],
+            "delivery_head": head,
+            "merge_commit": _merge_commit_carrying_head(repo_root, head, candidate),
+            "trailer_commits_since": since_value,
+            "delivery_shape": "merge_ancestry",
+        }
+
+    for base_name, candidate in bases:
+        squashed = squash_merged_delivery_metadata(
+            config,
+            normalized_task_id,
+            delivery_head=head,
+            base_name=base_name,
+            base_ref=candidate,
+            since=since_value,
+            repo_root=repo_root,
+        )
+        if squashed:
+            return squashed
+    return None
+
+
+def _merge_commit_carrying_head(repo_root: Path, head: str, base_ref: str) -> str | None:
+    """The oldest merge on the ancestry path from ``head`` into ``base_ref``.
+
+    A PR merged with a merge commit yields the commit GitHub created; a
+    fast-forward merge legitimately has none, so this is recorded for audit and
+    is not itself a gate.
+    """
+    output = _git_capture(
+        repo_root, ["rev-list", "--ancestry-path", "--merges", f"{head}..{base_ref}"]
+    )
+    commits = [line.strip() for line in str(output or "").splitlines() if line.strip()]
+    return commits[-1] if commits else None
+
+
+def task_branch_has_unmerged_commits(
+    config: dict[str, Any],
+    task_id: str,
+    base_ref: str = "",
+    *,
+    delivery_head: str | None = None,
+) -> bool:
+    """True when a surviving task branch carries work the delivery does not cover.
+
+    Two shapes both mean "not finished": the branch is ahead of the integration
+    base (unpushed or unmerged work), or the branch moved past the delivery head
+    the terminal worker was observed at (new work landed after that delivery).
+    A git failure is read as unmerged so a transport error cannot be mistaken
+    for a clean, fully merged branch.
+
+    ``base_ref`` is empty for a squash-merged delivery. A squash rewrites the
+    commits, so the original branch is legitimately never an ancestor of the
+    base and only movement past the delivery head is meaningful there; the merge
+    itself is proven by ``squash_merged_delivery_metadata`` instead.
+    """
+    branch = worker_task_branch(config, task_id)
+    try:
+        repo_root = config_path(config, "status_file").parent
+    except (KeyError, TypeError):
+        return True
+    head = str(delivery_head or "").strip().lower()
+    for ref in (branch, f"origin/{branch}"):
+        if not _git_ref_exists(repo_root, ref):
+            continue
+        for start in [base_ref] + ([head] if head else []):
+            if not str(start or "").strip():
+                continue
+            output = _git_capture(repo_root, ["rev-list", "--count", f"{start}..{ref}"])
+            if output is None:
+                return True
+            try:
+                if int(str(output).strip() or "0") > 0:
+                    return True
+            except ValueError:
+                return True
+    return False
+
+
+def merged_owner_delivery_evidence(
+    config: dict[str, Any],
+    task_id: str,
+    worker: dict[str, Any],
+    *,
+    owner: str,
+) -> dict[str, Any] | None:
+    """Evidence that *this* owner's *this* delivery merged and nothing remains.
+
+    Fail-closed by construction: every gate below must be positively proven from
+    worker state plus git history, and any missing linkage returns ``None`` so
+    the task stays exactly where the existing ladders left it.
+    """
+    if str(worker.get("status") or "").strip().lower() != "completed":
+        return None
+    if not worker_runner_succeeded(worker):
+        return None
+
+    # Identity binding: the terminal worker must be the task's *current* owner.
+    # A reassignment after dispatch leaves the latest owner-dispatch worker
+    # pointing at the previous owner, which is not evidence about this owner.
+    normalized_owner = str(owner or "").strip()
+    target_agent = worker_target_agent_display_name(config, worker)
+    if not normalized_owner or not target_agent or target_agent != normalized_owner:
+        return None
+
+    # Timestamp binding: without a dispatch time there is no window to attribute
+    # merged commits to, so nothing can be claimed for this run.
+    dispatched_at = worker_dispatch_started_at(worker)
+    if dispatched_at is None:
+        return None
+
+    # Work binding: a rerun over an already-merged branch commits nothing. Only a
+    # run that actually advanced its worktree can have produced this delivery.
+    try:
+        commit_progress_count = int(worker.get("commit_progress_count") or 0)
+    except (TypeError, ValueError):
+        return None
+    last_commit_progress_at = _parse_iso_utc(str(worker.get("last_commit_progress_at") or ""))
+    if commit_progress_count < 1 or last_commit_progress_at is None:
+        return None
+
+    delivery_head = worker_delivery_head_commit(worker)
+    if not delivery_head:
+        return None
+
+    merged = merged_delivery_commits(
+        config,
+        task_id,
+        delivery_head=delivery_head,
+        since=_isoformat_utc(dispatched_at),
+    )
+    if not merged:
+        return None
+    delivery_shape = str(merged.get("delivery_shape") or "")
+    if task_branch_has_unmerged_commits(
+        config,
+        task_id,
+        # A squash-merged branch is never an ancestor of the base by design, so
+        # only movement past the delivery head is meaningful for that shape.
+        "" if delivery_shape == "squash_pr_metadata" else str(merged.get("base_ref") or ""),
+        delivery_head=delivery_head,
+    ):
+        return None
+    return {
+        "worker_run_id": worker.get("run_id"),
+        "worker_status": worker.get("status"),
+        "worker_target_agent": target_agent,
+        "task_owner": normalized_owner,
+        "dispatched_at": _isoformat_utc(dispatched_at),
+        "commit_progress_count": commit_progress_count,
+        "last_commit_progress_at": _isoformat_utc(last_commit_progress_at),
+        "runner_finished_at": worker.get("runner_finished_at"),
+        "delivery_head_commit": delivery_head,
+        "delivery_shape": delivery_shape,
+        "merged_base_ref": merged.get("base_ref"),
+        "merge_commit": merged.get("merge_commit"),
+        "merged_commits": merged.get("commits"),
+        "trailer_commits_since": merged.get("trailer_commits_since"),
+        "pull_request_number": merged.get("pull_request_number"),
+        "pull_request_url": merged.get("pull_request_url"),
+        "pull_request_head_ref_oid": merged.get("pull_request_head_ref_oid"),
+        "pull_request_base_ref_name": merged.get("pull_request_base_ref_name"),
+        "pull_request_merged_at": merged.get("pull_request_merged_at"),
+        # Recorded for the audit trail only. pr_url is scraped from provider
+        # output and has been observed malformed and pointing at an unrelated
+        # PR, so it is never a gate.
+        "pr_url": worker.get("pr_url"),
+        "pr_url_is_authoritative": False,
+    }
+
+
+def _prepare_ownerless_review_handoff_locked(
+    config: dict[str, Any],
+    *,
+    task_id: str,
+    owner: str,
+    reviewer: str,
+    message: str,
+    evidence: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Move a merged, ownerless ``in_progress`` task through the review handoff.
+
+    Written with the same locked canonical transaction the preemption path uses,
+    so the authoritative task-state journal receives the commit before the
+    derived board projection is refreshed.
+    """
+    status = load_status(config)
+    if status.get("status_activity_outbox") not in (None, {}, []):
+        return None
+    task = task_index_from_status(config, status).get(task_id)
+    if not task:
+        return None
+    if str(task.get("status") or "").strip().lower() != "in_progress":
+        return None
+    if str(task.get("owner") or "").strip() != owner:
+        return None
+    if str(task.get("reviewer") or "").strip() != reviewer:
+        return None
+
+    timestamp = utc_now()
+    task["status"] = "review"
+    task["last_update"] = timestamp
+    task["next"] = message
+    task.pop("waiting_for", None)
+
+    handoffs_path = (config.get("schema", {}) or {}).get("handoffs_path", "handoffs")
+    handoffs = status.setdefault(handoffs_path, [])
+    if isinstance(handoffs, list):
+        handoffs.append(
+            {
+                "task_id": task_id,
+                "from": owner,
+                "to": reviewer,
+                "message": message,
+                "status": "pending",
+                "created_at": timestamp,
+            }
+        )
+
+    event = {
+        "event_id": "supervisor-ownerless-review-"
+        + hashlib.sha256(f"{task_id}\0{timestamp}\0{message}".encode("utf-8")).hexdigest(),
+        "ts": timestamp,
+        "agent": "Orchestrator",
+        "type": "task_ownerless_review_handoff",
+        "task_id": task_id,
+        "target_agent": reviewer,
+        "owner": owner,
+        "message": message,
+        "evidence": evidence,
+    }
+    status["status_activity_outbox"] = _status_activity_outbox([event])
+    write_status(config, status, source="supervisor-ownerless-review-handoff")
+    return event
+
+
+def reconcile_ownerless_in_progress_tasks(config: dict[str, Any], state: dict[str, Any]) -> bool:
+    """Resolve ``in_progress`` tasks whose owner worker already terminated.
+
+    An owner worker that merges its delivery and exits leaves the task row at
+    ``in_progress`` with no live worker. The ready dispatcher then reads that row
+    as owned work and wakes the same owner again every cycle, forever, because
+    there is nothing left for it to implement. This phase reads the terminal
+    worker outcome plus durable git evidence and routes the task through the
+    governed review handoff instead. Everything else -- live workers, in-flight
+    dispatches, failed outcomes, and tasks without durable evidence -- is left
+    exactly as it was for the existing ladders to own.
+
+    The evidence is bound to one specific delivery by one specific owner: see
+    ``merged_owner_delivery_evidence``. The latest owner-dispatch worker is the
+    only candidate considered, and it must itself match the task's current owner,
+    so a reopened or reassigned task cannot be moved to review on the strength of
+    an earlier round's merged commits.
+    """
+    settings = ownerless_in_progress_settings(config)
+    if not settings.get("enabled", True):
+        return False
+    if not config.get("paths", {}).get("status_file"):
+        return False
+
+    try:
+        status = load_status(config)
+    except (KeyError, RuntimeError, OSError):
+        return False
+    tasks = task_index_from_status(config, status)
+    if not tasks:
+        return False
+
+    owner_reasons = {str(value) for value in settings.get("owner_dispatch_reasons", [])}
+    live_task_ids = task_ids_with_active_workers(config, state)
+    queued_task_ids = task_ids_with_open_queue_records(state)
+    max_transitions = max(1, int(settings.get("max_transitions_per_tick", 4) or 1))
+
+    counts = {"ownerless_in_progress_review_handoffs": 0}
+    changed = False
+    for task_id, task in tasks.items():
+        if counts["ownerless_in_progress_review_handoffs"] >= max_transitions:
+            break
+        if str(task.get("status") or "").strip().lower() != "in_progress":
+            continue
+        if task_id in live_task_ids or task_id in queued_task_ids:
+            continue
+        owner = str(task.get("owner") or "").strip()
+        reviewer = str(task.get("reviewer") or "").strip()
+        if not owner or not reviewer or owner == reviewer:
+            continue
+        worker = latest_owner_worker_for_task(state, task_id, owner_reasons=owner_reasons)
+        if worker is None:
+            continue
+        if str(worker.get("ownerless_reconciled_task_status") or "") == "review":
+            continue
+        evidence = merged_owner_delivery_evidence(config, task_id, worker, owner=owner)
+        if not evidence:
+            continue
+
+        message = (
+            f"Supervisor reconciled {task_id} from the terminal worker outcome: {owner}'s delivery head "
+            f"{str(evidence.get('delivery_head_commit') or '')[:12]} merged into "
+            f"{evidence.get('merged_base_ref')} and no implementation remains, so the task "
+            f"moves to review for {reviewer} instead of another owner redispatch."
+        )
+        status_path = config_path(config, "status_file")
+        with canonical_task_state_lock_file(status_path, shared=False, nonblocking=False):
+            event = _prepare_ownerless_review_handoff_locked(
+                config,
+                task_id=task_id,
+                owner=owner,
+                reviewer=reviewer,
+                message=message,
+                evidence=evidence,
+            )
+        if event is None:
+            continue
+        sync_status_pipeline(config)
+        worker["ownerless_reconciled_task_status"] = "review"
+        worker["ownerless_reconciled_at"] = event.get("ts")
+        finalize_queue_event_record(config, state, worker, "completed")
+        write_activity_log(
+            config,
+            {
+                "type": "task_ownerless_review_handoff",
+                "task_id": task_id,
+                "target_agent": reviewer,
+                "provider": worker.get("provider"),
+                "worker_run_id": worker.get("run_id"),
+                "message": message,
+                "evidence": evidence,
+            },
+        )
+        counts["ownerless_in_progress_review_handoffs"] += 1
+        changed = True
+
+    record_worker_runtime_measurement(
+        config,
+        state,
+        "ownerless_in_progress_reconciliation",
+        counts,
+        emit_activity=bool(positive_runtime_counts(counts)),
+    )
+    return changed
 
 
 def task_assignment_is_catalog_locked(task: dict[str, Any]) -> bool:
@@ -11394,6 +12571,102 @@ def dispatch_chair_review(
     return False
 
 
+RUNTIME_LOCK_HOLD_WARN_DEFAULT_SECONDS = 30.0
+
+
+def record_runtime_lock_hold(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    held_since: float,
+    *,
+    quiet: bool = False,
+) -> float:
+    """Publish how long this cycle owned the exclusive runtime-admission lock.
+
+    Every status command an auto worker runs takes the same lock shared, so this
+    number is the ceiling on how long ``approve``, ``assign``, and ``note`` can
+    be made to wait. Leaving it unmeasured is how a 771s hold stayed invisible
+    until reviewers noticed nine-minute stalls.
+    """
+
+    held_seconds = round(max(0.0, time.monotonic() - held_since), 3)
+    supervisor_state = state.setdefault("supervisor", {})
+    supervisor_state["runtime_lock_hold_seconds"] = held_seconds
+    peak = supervisor_state.get("runtime_lock_hold_peak_seconds")
+    if not isinstance(peak, (int, float)) or held_seconds > float(peak):
+        supervisor_state["runtime_lock_hold_peak_seconds"] = held_seconds
+    warn_after = float(
+        config.get("supervisor", {}).get(
+            "runtime_lock_hold_warn_after_seconds",
+            RUNTIME_LOCK_HOLD_WARN_DEFAULT_SECONDS,
+        )
+    )
+    exceeded = warn_after > 0 and held_seconds > warn_after
+    supervisor_state["runtime_lock_hold_exceeded"] = exceeded
+    if exceeded:
+        console_log(
+            f"runtime-admission lock held {held_seconds}s (> {warn_after}s); "
+            "concurrent approve/assign/note commands queued for that long",
+            quiet=quiet,
+        )
+    return held_seconds
+
+
+def probe_provider_reports(
+    config: dict[str, Any],
+    *,
+    quiet: bool = False,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Refresh provider capabilities outside every canonical lock.
+
+    ``load_provider_report`` shells out to ``gh`` for auth and version checks,
+    so it is an unbounded network wait. Run from inside the cycle it charged
+    that wait to the exclusive runtime-admission lock, where every reviewer,
+    approve, and worker status command was queued behind it. Nothing it touches
+    is runtime state, so it belongs before the lock is taken.
+    """
+
+    try:
+        previous = load_json(config_path(config, "provider_capabilities"), default={}) or {}
+    except KeyError:
+        previous = {}
+    report = _safe_phase("load_provider_report", load_provider_report, config, quiet=quiet)
+    if report is None:
+        report = previous or {}
+    return previous, report
+
+
+def pending_worker_base_refs(
+    config: dict[str, Any],
+    runtime_snapshot: dict[str, Any],
+) -> set[str]:
+    """Return worktree base refs needed by queue events not yet terminal."""
+
+    settings = worker_worktree_settings(config)
+    if not settings.get("enabled"):
+        return set()
+    try:
+        events = load_event_queue(config)
+    except Exception:
+        return set()
+    queue_records = (
+        (runtime_snapshot.get("queue") or {}).get("events") or {}
+        if isinstance(runtime_snapshot, dict)
+        else {}
+    )
+    terminal_statuses = {"started", "manual_pending", "completed", "failed"}
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        if not worker_worktree_reason_enabled(event.get("reason"), settings):
+            continue
+        event_id = str(event.get("event_id") or "").strip()
+        record = queue_records.get(event_id, {}) if isinstance(queue_records, dict) else {}
+        if str((record or {}).get("status") or "").strip() not in terminal_statuses:
+            return {str(settings.get("base_ref") or "origin/dev")}
+    return set()
+
+
 def run_once(
     config: dict[str, Any],
     *,
@@ -11403,17 +12676,67 @@ def run_once(
     verbose: bool = False,
     once: bool = False,
 ) -> bool:
-    return _run_with_deferred_dispatch_status_syncs(
+    provider_reports = probe_provider_reports(config, quiet=quiet)
+    # GitHub bus sync can perform several gh/API round trips and status-command
+    # subprocesses. It only consumes an atomic runtime snapshot; any queue or
+    # status mutation it issues uses that subsystem's own canonical writer.
+    # Running it before runtime admission prevents an 8s gh timeout (or several
+    # of them) from blocking approve/assign/note behind the supervisor cycle.
+    try:
+        github_runtime_snapshot = load_runtime_state_snapshot(config)
+    except Exception:
+        github_runtime_snapshot = {}
+    prefetched_worker_base_refs: set[str] = set()
+    required_worker_base_refs = pending_worker_base_refs(
         config,
-        lambda: _run_once_locked(
+        github_runtime_snapshot,
+    )
+    if required_worker_base_refs:
+        repo_root = config_path(config, "status_file").parent
+        for base_ref in required_worker_base_refs:
+            fetched, fetch_error = _fetch_worker_base_ref(repo_root, base_ref)
+            if fetched:
+                prefetched_worker_base_refs.add(base_ref)
+                continue
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_worktree_base_refresh_failed",
+                    "message": (
+                        f"Worker base {base_ref} could not be refreshed before "
+                        f"runtime admission: {fetch_error}"
+                    ),
+                    "base_ref": base_ref,
+                },
+            )
+    github_bus_changed = bool(
+        _safe_phase(
+            "sync_github_bus",
+            sync_github_bus,
             config,
-            watch=watch,
-            replay=replay,
+            github_runtime_snapshot,
             quiet=quiet,
-            verbose=verbose,
-            once=once,
         )
     )
+    base_ref_token = _PREFETCHED_WORKER_BASE_REFS.set(
+        frozenset(prefetched_worker_base_refs)
+    )
+    try:
+        return _run_with_deferred_dispatch_status_syncs(
+            config,
+            lambda: _run_once_locked(
+                config,
+                watch=watch,
+                replay=replay,
+                quiet=quiet,
+                verbose=verbose,
+                once=once,
+                provider_reports=provider_reports,
+                prelock_changed=github_bus_changed,
+            )
+        )
+    finally:
+        _PREFETCHED_WORKER_BASE_REFS.reset(base_ref_token)
 
 
 def sync_task_state_shadow(config: dict[str, Any], state: dict[str, Any]) -> bool:
@@ -11425,6 +12748,20 @@ def sync_task_state_shadow(config: dict[str, Any], state: dict[str, Any]) -> boo
     while ``ai-status.json`` remains authoritative. After cutover the direction
     reverses: the journal is authoritative and a divergent JSON board is
     repaired from its latest validated event, never imported into the journal.
+
+    Two properties are load-bearing here and were previously wrong:
+
+    ``caught_up`` reports parity, not work. It used to be assigned the
+    *divergence* predicate, so a healthy cycle published ``caught_up: false``
+    and a cycle that had just repaired a drifted board published
+    ``caught_up: true``. Whether a write was needed is now ``repaired``.
+
+    The journal is read exactly once. The old body replayed the whole log four
+    times inside the exclusive canonical lock -- ``load_events``,
+    ``project_latest_state``, then ``verify_projection`` which loaded and
+    projected it all over again -- so reconciliation cost scaled with journal
+    size four times per cycle while every reviewer, approve, and note command
+    queued behind that same lock.
     """
 
     runtime_env = task_state_store_runtime_env(config)
@@ -11445,33 +12782,43 @@ def sync_task_state_shadow(config: dict[str, Any], state: dict[str, Any]) -> boo
             file_state = load_json(status_file, default={})
             if not isinstance(file_state, dict):
                 raise RuntimeError("task state projection must be a JSON object")
+            snapshot = rewrite_task_state_store.load_snapshot(event_log)
             if mode == "authoritative":
-                events = rewrite_task_state_store.load_events(event_log)
-                if not events:
+                if not snapshot["event_count"]:
                     raise RuntimeError("authoritative task-state journal is empty")
-                canonical_state = rewrite_task_state_store.project_latest_state(events)
-                caught_up = (
+                canonical_state = snapshot["state"]
+                repaired = (
                     rewrite_task_state_store.sha256_json(file_state)
-                    != rewrite_task_state_store.sha256_json(canonical_state)
+                    != snapshot["state_sha256"]
                 )
-                if caught_up:
+                if repaired:
                     write_json(status_file, canonical_state)
-                report = rewrite_task_state_store.verify_projection(
-                    event_log,
-                    canonical_state,
-                )
+                    # Re-read rather than compare the value just written, so the
+                    # parity claim is about the board on disk and a repair that
+                    # silently failed to land cannot report itself as healthy.
+                    file_state = load_json(status_file, default={})
+                report = rewrite_task_state_store.verify_snapshot(snapshot, file_state)
             else:
                 canonical_state = file_state
-                before = rewrite_task_state_store.verify_projection(event_log, canonical_state)
-                caught_up = not before["ok"]
-                if caught_up:
-                    rewrite_task_state_store.append_state_commit(
+                repaired = not rewrite_task_state_store.verify_snapshot(
+                    snapshot,
+                    canonical_state,
+                )["ok"]
+                if repaired:
+                    committed = rewrite_task_state_store.append_state_commit(
                         event_log,
                         canonical_state,
                         source="supervisor-shadow-catchup",
                     )
-                report = rewrite_task_state_store.verify_projection(event_log, canonical_state)
-            if not report["ok"]:
+                    snapshot = {
+                        "event_count": int(committed["sequence"]),
+                        "last_event_id": str(committed["event_id"]),
+                        "state": committed["state"],
+                        "state_sha256": str(committed["state_sha256"]),
+                    }
+                report = rewrite_task_state_store.verify_snapshot(snapshot, canonical_state)
+            caught_up = bool(report["ok"])
+            if not caught_up:
                 raise RuntimeError(
                     f"task-state {mode} projection remains divergent after reconciliation"
                 )
@@ -11483,10 +12830,12 @@ def sync_task_state_shadow(config: dict[str, Any], state: dict[str, Any]) -> boo
             "last_checked_at": checked_at,
             "last_success_at": checked_at,
             "last_error": None,
+            # Parity after reconciliation, not "a write happened".
             "caught_up": caught_up,
+            "repaired": repaired,
             **report,
         }
-        return caught_up
+        return repaired
     except Exception as exc:  # per-phase isolation keeps the incumbent loop observable
         failure = {
             "mode": mode,
@@ -11494,7 +12843,9 @@ def sync_task_state_shadow(config: dict[str, Any], state: dict[str, Any]) -> boo
             "event_log": str(event_log),
             "last_checked_at": checked_at,
             "last_error": f"{type(exc).__name__}: {exc}",
+            # Parity was never established this cycle, and no repair is claimed.
             "caught_up": False,
+            "repaired": False,
         }
         for key in (
             "event_count",
@@ -11545,8 +12896,11 @@ def _run_once_locked(
     quiet: bool = False,
     verbose: bool = False,
     once: bool = False,
+    provider_reports: tuple[dict[str, Any], dict[str, Any]],
+    prelock_changed: bool = False,
 ) -> bool:
     write_supervisor_pid(config)
+    lock_held_since = time.monotonic()
     loop_started_at = utc_now()
     state = load_runtime_state(config)
     previous_heartbeat = state.get("supervisor", {}).get("last_heartbeat_at")
@@ -11560,7 +12914,7 @@ def _run_once_locked(
         loop_started_at=loop_started_at,
     )
     save_runtime_state(config, state)
-    changed = False
+    changed = prelock_changed
     try:
         # Phase 0 (SUPERVISOR_REWRITE_PLAN.md): every phase runs isolated via
         # _safe_phase, so one failing subsystem degrades only itself. The outer
@@ -11574,13 +12928,10 @@ def _run_once_locked(
         pruned = _safe_phase("prune_stale_approvals", prune_stale_approvals, config, quiet=quiet)
         if pruned:
             changed = True
-        try:
-            previous_provider_report = load_json(config_path(config, "provider_capabilities"), default={}) or {}
-        except KeyError:
-            previous_provider_report = {}
-        provider_report = _safe_phase("load_provider_report", load_provider_report, config, quiet=quiet)
-        if provider_report is None:
-            provider_report = previous_provider_report or {}
+        # Probing here would put a gh auth round trip inside the exclusive
+        # runtime-admission hold; run_once supplies the reports it gathered
+        # before the lock was taken.
+        previous_provider_report, provider_report = provider_reports
         changed = _safe_phase("reconcile_provider_auth_recovery", reconcile_provider_auth_recovery, config, state, previous_provider_report, provider_report, quiet=quiet) or changed
         changed = _safe_phase("drain_assistant_dev_packet_inbox", drain_assistant_dev_packet_inbox, config, state, quiet=quiet) or changed
         if watch:
@@ -11599,6 +12950,10 @@ def _run_once_locked(
         changed = _safe_phase("maybe_reassign_tasks_from_failure_streaks", maybe_reassign_tasks_from_failure_streaks, config, state, quiet=quiet) or changed
         changed = _safe_phase("reconcile_queue_records", reconcile_queue_records, config, state, quiet=quiet) or changed
         changed = _safe_phase("prune_event_queue", prune_event_queue, config, state, quiet=quiet) or changed
+        # Runs after the worker/queue phases have settled terminal outcomes and
+        # before dispatch, so a merged ownerless task is routed to review in this
+        # same cycle instead of being woken as owned work one more time.
+        changed = _safe_phase("reconcile_ownerless_in_progress_tasks", reconcile_ownerless_in_progress_tasks, config, state, quiet=quiet) or changed
         changed = _safe_phase("refresh_chair_review_state", refresh_chair_review_state, config, state, quiet=quiet) or changed
         planning_state = load_discussion_planning_state()
         changed = _safe_phase("auto_materialize_discussion_planning", auto_materialize_discussion_planning, config, planning_state, quiet=quiet) or changed
@@ -11620,7 +12975,6 @@ def _run_once_locked(
         changed = _safe_phase("poll_workers", poll_workers, config, state, provider_report=provider_report, quiet=quiet) or changed
         changed = _safe_phase("reconcile_queue_records", reconcile_queue_records, config, state, quiet=quiet) or changed
         changed = _safe_phase("prune_event_queue", prune_event_queue, config, state, quiet=quiet) or changed
-        changed = _safe_phase("sync_github_bus", sync_github_bus, config, state, quiet=quiet) or changed
         _safe_phase("trim_worker_history", trim_worker_history, state, int(config.get("supervisor", {}).get("max_worker_history", 200)), quiet=quiet)
         _safe_phase("trim_seen_events", trim_seen_events, state, int(config.get("watcher", {}).get("max_seen_events", 2000)), quiet=quiet)
         changed = _safe_phase("prune_orphan_worktrees", prune_orphan_worktrees, config, state, quiet=quiet) or changed
@@ -11638,6 +12992,7 @@ def _run_once_locked(
             loop_finished_at=loop_finished_at,
             loop_error=None,
         )
+        record_runtime_lock_hold(config, state, lock_held_since, quiet=quiet)
         save_runtime_state(config, state)
         refresh_dashboard_runtime_artifacts(config)
         log_runtime_summary(
@@ -11662,6 +13017,7 @@ def _run_once_locked(
             loop_finished_at=loop_finished_at,
             loop_error=f"{type(exc).__name__}: {exc}",
         )
+        record_runtime_lock_hold(config, state, lock_held_since, quiet=quiet)
         save_runtime_state(config, state)
         refresh_dashboard_runtime_artifacts(config)
         raise

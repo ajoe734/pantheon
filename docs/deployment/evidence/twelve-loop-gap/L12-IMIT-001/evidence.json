@@ -1,0 +1,648 @@
+{
+  "acceptance": [
+    {
+      "evidence_refs": [
+        "services/policy-learning/tests/test_l12_imit_001_real_dataset_scheduling.py::test_dataset_authority_resolves_independently_of_policy_store_backend",
+        "services/policy-learning/tests/test_l12_imit_001_real_dataset_scheduling.py::test_default_product_path_trains_on_real_tenant_dataset",
+        "services/policy-learning/tests/test_l12_imit_001_authority_and_recovery.py::test_real_postgres_agora_resolution_is_tenant_scoped_and_read_only",
+        "services/policy-learning/tests/test_l12_imit_001_authority_and_recovery.py::test_real_postgres_is_the_default_candidate_authority_in_product_mode",
+        "services/policy-learning/tests/test_l12_imit_001_default_compose_loop.py::test_default_compose_gives_api_and_scheduler_one_credential_and_tenant_scope",
+        "services/policy-learning/tests/test_l12_imit_001_default_compose_loop.py::test_offline_compose_renderer_matches_docker_compose_config",
+        "services/policy-learning/tests/test_l12_imit_001_default_compose_loop.py::test_default_compose_environment_authenticates_the_whole_sidecar_loop",
+        "services/policy-learning/tests/test_l12_imit_001_default_compose_loop.py::test_default_compose_environment_trains_on_real_tenant_scoped_agora_rows",
+        "services/policy-learning/tests/test_policy_learning_compose_activation.py::test_compose_wires_the_imitation_loop_credential_and_tenant_scope"
+      ],
+      "id": "AC1",
+      "statement": "Default product path discovers tenant-scoped Agora DatasetVersions regardless of policy-store backend.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/policy-learning/tests/test_l12_imit_001_real_dataset_scheduling.py::test_cross_tenant_dataset_resolution_degrades_without_seed",
+        "services/policy-learning/tests/test_l12_imit_001_real_dataset_scheduling.py::test_unreachable_authority_degrades_every_candidate_without_seed",
+        "services/policy-learning/tests/test_l12_imit_001_real_dataset_scheduling.py::test_seed_mode_is_explicitly_non_product",
+        "services/policy-learning/tests/test_l12_imit_001_authority_and_recovery.py::test_agora_resolution_requires_an_authenticated_connection",
+        "services/policy-learning/tests/test_l12_imit_001_default_compose_loop.py::test_a_compose_scheduler_without_the_wiring_is_refused_before_it_ticks"
+      ],
+      "id": "AC2",
+      "statement": "Dataset lookup failure is degraded and never substitutes seed data.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/policy-learning/tests/test_l12_imit_001_authority_and_recovery.py::test_real_postgres_two_process_crash_restart_and_reclaim",
+        "services/policy-learning/tests/test_l12_imit_001_authority_and_recovery.py::test_concurrent_duplicate_ticks_create_exactly_one_candidate_each",
+        "services/policy-learning/tests/test_l12_imit_001_authority_and_recovery.py::test_replay_is_refused_while_a_worker_still_holds_the_lease",
+        "services/policy-learning/tests/test_l12_imit_001_authority_and_recovery.py::test_a_corrupt_backlog_is_an_outage_not_an_empty_backlog",
+        "services/policy-learning/tests/test_l12_imit_001_real_dataset_scheduling.py::test_restart_recovers_orphaned_claims_and_replays_them",
+        "services/policy-learning/tests/test_l12_imit_001_real_dataset_scheduling.py::test_settling_a_lost_lease_is_rejected",
+        "services/policy-learning/tests/test_l12_imit_001_authority_and_recovery.py::test_one_tenants_restart_does_not_recover_another_tenants_orphans",
+        "services/policy-learning/tests/test_policy_learning_shadow_eval_scheduler.py::test_shadow_eval_tick_idempotent_same_tick_id",
+        "services/policy-learning/tests/test_l12_imit_001_default_compose_loop.py::test_default_compose_environment_authenticates_the_whole_sidecar_loop"
+      ],
+      "id": "AC3",
+      "statement": "Scheduler and worker use claim lease and survive duplicate ticks and restart.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/policy-learning/tests/test_l12_imit_001_real_dataset_scheduling.py::test_default_product_path_trains_on_real_tenant_dataset",
+        "services/policy-learning/tests/test_l12_imit_001_real_dataset_scheduling.py::test_processed_candidate_carries_no_runtime_authority",
+        "services/research/imitation/test_agora_dataset_source.py",
+        "services/policy-learning/tests/test_l12_imit_001_default_compose_loop.py::test_default_compose_environment_trains_on_real_tenant_scoped_agora_rows"
+      ],
+      "id": "AC4",
+      "statement": "Authoritative training evaluation and candidate artifacts retain dataset lineage.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/policy-learning/tests/test_l12_imit_001_real_dataset_scheduling.py::test_candidate_cannot_be_promoted_or_reach_runtime",
+        "services/policy-learning/tests/test_l12_imit_001_real_dataset_scheduling.py::test_processed_candidate_carries_no_runtime_authority",
+        "services/policy-learning/tests/test_policy_learning_shadow_eval_scheduler.py::test_shadow_eval_tick_candidates_remain_fail_closed"
+      ],
+      "id": "AC5",
+      "statement": "Candidate cannot affect runtime before experiment approval and deployment gates.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/policy-learning/tests/test_l12_imit_001_authority_and_recovery.py::test_every_direct_route_rejects_an_unauthenticated_caller",
+        "services/policy-learning/tests/test_l12_imit_001_authority_and_recovery.py::test_direct_routes_reject_a_forged_service_token",
+        "services/policy-learning/tests/test_l12_imit_001_authority_and_recovery.py::test_authenticated_caller_outside_its_tenant_authority_is_refused",
+        "services/policy-learning/tests/test_l12_imit_001_authority_and_recovery.py::test_body_tenant_cannot_smuggle_a_second_scope_past_the_header",
+        "services/policy-learning/tests/test_l12_imit_001_authority_and_recovery.py::test_candidate_reads_are_invisible_across_tenants",
+        "services/policy-learning/tests/test_l12_imit_001_authority_and_recovery.py::test_a_verified_jwt_without_tenant_authority_is_refused",
+        "services/policy-learning/tests/test_l12_imit_001_authority_and_recovery.py::test_inbound_authority_does_not_inherit_the_runtime_manager_secret",
+        "services/policy-learning/tests/test_l12_imit_001_authority_and_recovery.py::test_concurrent_cross_tenant_ticks_and_claims_stay_isolated",
+        "services/policy-learning/tests/test_l12_imit_001_authority_and_recovery.py::test_real_postgres_concurrent_cross_tenant_claims_never_overlap",
+        "services/policy-learning/tests/test_l12_imit_001_authority_and_recovery.py::test_one_tenants_restart_does_not_recover_another_tenants_orphans",
+        "services/policy-learning/tests/test_l12_imit_001_real_dataset_scheduling.py::test_tick_requires_a_tenant_scope",
+        "services/policy-learning/tests/test_l12_imit_001_default_compose_loop.py::test_a_compose_scheduler_without_the_wiring_is_refused_before_it_ticks",
+        "services/policy-learning/tests/test_l12_imit_001_default_compose_loop.py::test_the_published_compose_token_is_refused_on_a_deployment_posture",
+        "services/policy-learning/tests/test_policy_learning_compose_activation.py::test_staging_compose_keeps_the_published_dev_credential_fail_closed"
+      ],
+      "id": "AC6",
+      "statement": "Direct tick, claim, replay, and readback routes are trusted and tenant-bound.",
+      "status": "pass"
+    }
+  ],
+  "authorities": {
+    "actual_state": [
+      "training evaluation run",
+      "ShadowImitationCandidate",
+      "candidate backlog and DLQ"
+    ],
+    "desired_state": [
+      "Agora DatasetVersion",
+      "shadow evaluation schedule and policy"
+    ],
+    "task_packet": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-IMIT-001.md"
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "proof": [
+        "Candidate identity is a digest of (tenant, tick, dataset version), so a duplicate tick, a scheduler restart inside the same window, and two schedulers racing all resolve to the same candidate id instead of minting colliding backlog-length counters.",
+        "Creation is insert-if-absent: Postgres uses ON CONFLICT DO NOTHING against a UNIQUE (dedupe_key) index and JSON performs the check and the insert inside one flock-held read-modify-write, so six concurrent ticks of the same tick_id produce each candidate exactly once."
+      ],
+      "status": "pass"
+    },
+    "failure_and_degraded_behavior": {
+      "proof": [
+        "A dataset-authority failure produces a degraded candidate carrying an explicit seed_fallback_used: false and authoritative: false; no branch of the product path returns seed, fixture, or synthesized data.",
+        "A damaged JSON backlog raises CandidateStoreCorrupt and every affected route answers HTTP 503 CANDIDATE_STORE_CORRUPT, so a corrupt backlog can never present as an idle healthy loop, and a tick will not overwrite it.",
+        "A misconfigured sidecar fails closed at start-up (SchedulerConfigurationError, exit 2) instead of emitting unauthenticated ticks forever, and if started anyway its tick is refused 401 with no candidate created. The published compose credential is itself refused once the persistence posture is staging or prod, where authority_configuration reports configured: false."
+      ],
+      "status": "pass"
+    },
+    "request_receipt_downstream_correlation": {
+      "proof": [
+        "Every processed candidate retains the Agora dataset lineage on the candidate row, the trained artifact, and the training evaluation, including dataset_version_ids, content_sha256, and payload_sha256.",
+        "The scheduler sidecar presents its service token and X-Tenant-Id, and the tick response echoes the authenticated actor and tenant it scheduled under.",
+        "Default compose is now the proof surface, not a fixture: the scheduler sidecar is configured only from the environment docker-compose.yml renders for it, presents that credential as Authorization: Bearer and that tenant as X-Tenant-Id, and every exchange in the startup recovery, tick and claim cycle is answered below 400 by the real route surface. Reverting only the compose change fails six of the seven new cases."
+      ],
+      "status": "pass"
+    },
+    "restart_and_recovery": {
+      "proof": [
+        "Real two-process proof against real PostgreSQL: a worker claims the backlog under a short lease, is SIGKILLed with no settle and no lease release, the survivor takes nothing while the lease is live, and after expiry release_expired_leases returns exactly the dead worker's candidates for reclaim at attempt_count 2.",
+        "A brand new store handle standing in for a restarted container reads back the same authoritative rows, and a fresh empty data directory still sees the Postgres-backed backlog.",
+        "Recovery is per-tenant: one tenant's restart releases only its own expired leases and leaves another tenant's orphan for that tenant to recover.",
+        "The sidecar's start-up worker/restart recovery runs on the compose default and is bound to the compose tenant, so the restart path an operator actually gets is authenticated rather than a 401."
+      ],
+      "status": "pass"
+    },
+    "rollback_or_compensation": {
+      "proof": [
+        "settle_candidate compares the presented lease token under FOR UPDATE (or the file lock) and raises LeaseLostError, so a revived worker cannot overwrite the new owner's result.",
+        "requeue_candidate refuses (HTTP 409 CANDIDATE_LEASE_HELD) while a live lease exists, so retry and DLQ replay cannot create a second run that also believes it is authoritative; replay of a degraded candidate reruns it cleanly once the authority returns."
+      ],
+      "status": "pass"
+    }
+  },
+  "deployment": {
+    "applicable": false,
+    "canonical_root_deploy": {
+      "claimed": false,
+      "note": "No canonical root deploy is part of this task."
+    },
+    "environment": "dev integration",
+    "identity_admission": {
+      "claimed": false,
+      "note": "Inbound authority is proven by in-process HTTP tests against the real FastAPI app and the shared runtime_auth_inbound validator, not by a hosted identity admission."
+    },
+    "public_bff_base_url": "",
+    "publish_cut": {
+      "claimed": false,
+      "note": "No frontend or BFF publish cut is part of this task."
+    }
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/L12-IMIT-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Task-scoped evidence changes require a Pantheon task commit and independent reviewer verification.",
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "claimed": false,
+      "note": "No hosted readback is claimed. The policy-learning service is verified locally through its real ASGI app and a throwaway PostgreSQL instance."
+    }
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "delivery_state": "merged_via_pr_4235",
+        "hosted_cut_inclusion": false,
+        "sha": "f85bf549e9e1eb67fc315b0fe360aaafa1ab4f7d",
+        "subject": "L12-IMIT-001: anchor tenant-scoped Agora dataset source"
+      },
+      {
+        "delivery_state": "merged_via_pr_4235",
+        "hosted_cut_inclusion": false,
+        "sha": "6f985c9f1f69e8ad5134c29ceca08c5071ab778e",
+        "subject": "L12-IMIT-001: anchor real-dataset scheduling and backlog leases"
+      },
+      {
+        "delivery_state": "merged_via_pr_4235",
+        "hosted_cut_inclusion": false,
+        "sha": "507f51d34059f98947efe2ee6e63033191e46ea1",
+        "subject": "L12-IMIT-001: anchor real-dataset scheduling proofs"
+      },
+      {
+        "delivery_state": "merged_via_pr_4235",
+        "hosted_cut_inclusion": false,
+        "sha": "92863858722c89afb04b7f72d788702b2deee8d4",
+        "subject": "L12-IMIT-001: anchor tenant-safe authority and recovery"
+      },
+      {
+        "delivery_state": "on_task_branch_in_pr_4236",
+        "hosted_cut_inclusion": false,
+        "sha": "806f7812563823f2591cc2661d052d20f35f4256",
+        "subject": "L12-IMIT-001: record tenant-safe imitation loop evidence"
+      },
+      {
+        "delivery_state": "on_task_branch_in_pr_4236",
+        "hosted_cut_inclusion": false,
+        "note": "Owner-found tenant-isolation fix: worker/restart released every tenant's expired leases and reported only the caller's. release_expired_leases now takes a tenant_id and the route passes the authenticated tenant.",
+        "sha": "11c04d79de0b6ef7c36ae58117aba3f8fb65e731",
+        "subject": "L12-IMIT-001: scope worker restart lease recovery to one tenant"
+      },
+      {
+        "delivery_state": "merged_via_pr_4237",
+        "hosted_cut_inclusion": false,
+        "sha": "35538b0b5e52a77dd584f0ce9b7f9c1ecf1ee3dd",
+        "subject": "L12-IMIT-001: anchor compose service credential wiring"
+      },
+      {
+        "delivery_state": "merged_via_pr_4237",
+        "hosted_cut_inclusion": false,
+        "sha": "7aa5a7a0bb324817b9ba6918489e180c7fc14d04",
+        "subject": "L12-IMIT-001: anchor default-compose loop proofs"
+      },
+      {
+        "delivery_state": "merged_via_pr_4242",
+        "hosted_cut_inclusion": false,
+        "note": "Closes the second returned review. PUBLISHED_SERVICE_TOKENS pins both credentials this repository publishes (the compose default and the exact .env.example placeholder); is_published_service_token() additionally refuses unedited fill-me-in shapes; service_token() downgrades any of them to \"\" on a staging/prod posture; authority_configuration() reports the new published_placeholder scope.",
+        "sha": "4f6e2498eaf8fbf1d45b788ee364a2fae03f13ab",
+        "subject": "L12-IMIT-001: anchor published service token refusal"
+      }
+    ],
+    "pull_request": {
+      "base": "dev",
+      "head_sha": "d18a3633cdc3329ad610fb408411d66732aceb43",
+      "merge_sha": "ddd8dc5709cf45e2dd8814fd20567afda2f8d48e",
+      "merged_at": "2026-07-27T13:02:19Z",
+      "note": "Remediation PR for the second returned review: no repository-published or unedited-placeholder POLICY_LEARNING_SERVICE_TOKEN authenticates a staging or production deployment. It merged into dev with the Branch CI Gate green on both the push and pull_request runs recorded in required_checks. The earlier PRs #4235, #4236, #4237 and #4238 are recorded in pull_requests. This manifest sits in a follow-up evidence PR directly on top of the merge.",
+      "number": 4242,
+      "url": "https://github.com/ajoe734/pantheon/pull/4242"
+    },
+    "pull_requests": [
+      {
+        "base": "dev",
+        "head_sha": "1719e10029f38173789706053799f15cbf5292b8",
+        "merge_sha": "7ae3adbb441b66ea17fd6d98db0d831b11600ced",
+        "merged_at": "2026-07-27T01:21:43Z",
+        "number": 4235,
+        "url": "https://github.com/ajoe734/pantheon/pull/4235"
+      },
+      {
+        "base": "dev",
+        "head_sha": "3eefc3fe386b2c5af393a4ee0eb7a57104c42ce3",
+        "merge_sha": "4cb436f80f82657cbd58a8527a3ca374f41253aa",
+        "merged_at": "2026-07-27T01:35:23Z",
+        "number": 4236,
+        "url": "https://github.com/ajoe734/pantheon/pull/4236"
+      },
+      {
+        "base": "dev",
+        "head_sha": "6c76909f210d9da6d842d26f70f292591c086ade",
+        "merge_sha": "d8c925f3636b0aece66b156c7f63896c5eb6d127",
+        "merged_at": "2026-07-27T02:48:13Z",
+        "number": 4237,
+        "url": "https://github.com/ajoe734/pantheon/pull/4237"
+      },
+      {
+        "base": "dev",
+        "head_sha": "a4ba66855a224ea1843f5954a5ae28ba9e67248b",
+        "merge_sha": "d65b87eecac09ffafa5653cf05ebeb5d526546d5",
+        "merged_at": "2026-07-27T02:55:03Z",
+        "number": 4238,
+        "url": "https://github.com/ajoe734/pantheon/pull/4238"
+      },
+      {
+        "base": "dev",
+        "head_sha": "d18a3633cdc3329ad610fb408411d66732aceb43",
+        "merge_sha": "ddd8dc5709cf45e2dd8814fd20567afda2f8d48e",
+        "merged_at": "2026-07-27T13:02:19Z",
+        "number": 4242,
+        "url": "https://github.com/ajoe734/pantheon/pull/4242"
+      }
+    ],
+    "required_checks": [
+      {
+        "conclusion": "success",
+        "event": "push",
+        "head_sha": "1719e10029f38173789706053799f15cbf5292b8",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30229566603,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30229566603",
+        "workflow": "Branch CI Gate"
+      },
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "1719e10029f38173789706053799f15cbf5292b8",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30229568740,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30229568740",
+        "workflow": "Branch CI Gate"
+      },
+      {
+        "conclusion": "success",
+        "event": "push",
+        "head_sha": "6c76909f210d9da6d842d26f70f292591c086ade",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30232997381,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30232997381",
+        "workflow": "Branch CI Gate"
+      },
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "6c76909f210d9da6d842d26f70f292591c086ade",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30232999094,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30232999094",
+        "workflow": "Branch CI Gate"
+      },
+      {
+        "conclusion": "success",
+        "event": "push",
+        "head_sha": "d18a3633cdc3329ad610fb408411d66732aceb43",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30268355592,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30268355592",
+        "workflow": "Branch CI Gate"
+      },
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "d18a3633cdc3329ad610fb408411d66732aceb43",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30268359805,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30268359805",
+        "workflow": "Branch CI Gate"
+      }
+    ]
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-IMIT-001/evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/twelve-loop-gap/L12-IMIT-001/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/twelve-loop-gap/L12-IMIT-001/evidence.json",
+    "normalized_hosted_readback": {
+      "default_compose_rendered_config": true,
+      "hosted_activation_claimed": false,
+      "localhost_postgresql_integration": true,
+      "real_two_process_sigkill_reclaim": true
+    },
+    "self_hash_omitted": true,
+    "self_hash_reason": "The companion checksum file contains the manifest digest and avoids recursive self-hashing.",
+    "source_artifact_sha256_by_epoch": {
+      "agora_dataset_authority": "13c5456487724cbdc071158cddbad3526f4c207793bbc908be66c59cfdc8dfb3",
+      "agora_dataset_source": "5d5357295d260bd0c80c5e13fa20fd99ef691366acd68a283e569c9d3c7b885f",
+      "compose_file": "1ba4d349f4b760151061262ae14b700c1ead0d8811c818cf76110a91e33e49e9",
+      "env_example": "8e7296c777d7c9a79acc00f06bfa0afe9ff9eb74b14df8dcc9c25455dfadbdf0",
+      "inbound_authority": "94075df327c195e374f03c1a19ae711fffc3479d1bb5beae15615288be721416",
+      "main": "dda6dd850b60f4a2d4cc1294a36ed929aee8d4e30fb2011ac12c43a97a0741e0",
+      "scheduler_worker": "29805f27003e7e6cc9546a62a50a47e089159e435a42a470843b73203342753d",
+      "store": "b6e741c7b5eea84a18f580af39bd0c78fe82b68052fc9835566f8f00e0b7b585",
+      "test_agora_dataset_source": "12806f3a42bedee7c1b83617cd5022098280b012a9efd6d8a023371c253990b0",
+      "test_authority_and_recovery": "399a8db2f65f1c06278069ba03e8a06dd098bd7e100bc5fd7c9c65f291c3aab7",
+      "test_compose_activation": "9c507d89911db84b7a467bf695849e4bf00f0d0fdf436c969880311668254aee",
+      "test_default_compose_loop": "cfb6372c08ca2d76a5de928551c2483d900795007c2a3954e12b94e8b7fcd74e",
+      "test_real_dataset_scheduling": "e7dda6766a820fcdf8f2be30f3dc858abf9630214471071f65978563754ed5ba",
+      "test_shadow_eval_scheduler": "ba7f6dca094780f81ec46d6efe3280dccf2134793fd9ce97c115f015674af12c",
+      "tests_conftest": "41b4b3b6e1949ba4e66566747a7fe2003b20c3a13caace6ba967ef4c81697380"
+    }
+  },
+  "record_log": [
+    {
+      "actor": "Claude",
+      "kind": "implementation_merged",
+      "recorded_at": "2026-07-27T01:21:43Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4235",
+      "sequence": 1,
+      "sha": "7ae3adbb441b66ea17fd6d98db0d831b11600ced",
+      "status": "pass"
+    },
+    {
+      "actor": "Claude",
+      "kind": "owner_evidence_ready",
+      "recorded_at": "2026-07-27T01:32:25Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4236",
+      "sequence": 2,
+      "sha": "11c04d79de0b6ef7c36ae58117aba3f8fb65e731",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "independent_review_returned",
+      "recorded_at": "2026-07-27T02:13:03Z",
+      "sequence": 3,
+      "status": "fail"
+    },
+    {
+      "actor": "Claude",
+      "kind": "remediation_merged",
+      "recorded_at": "2026-07-27T02:48:13Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4237",
+      "sequence": 4,
+      "sha": "d8c925f3636b0aece66b156c7f63896c5eb6d127",
+      "status": "pass"
+    },
+    {
+      "actor": "Claude",
+      "kind": "owner_evidence_ready",
+      "recorded_at": "2026-07-27T02:55:00Z",
+      "sequence": 5,
+      "sha": "6c76909f210d9da6d842d26f70f292591c086ade",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "independent_review_returned",
+      "note": "Merged delivery verified at a4ba6685; failed closed on one production-authority blocker: the published .env.example POLICY_LEARNING_SERVICE_TOKEN was accepted under PANTHEON_PERSISTENCE_POSTURE=production.",
+      "recorded_at": "2026-07-27T12:48:00Z",
+      "sequence": 6,
+      "status": "fail"
+    },
+    {
+      "actor": "Claude",
+      "kind": "remediation_merged",
+      "recorded_at": "2026-07-27T13:02:19Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4242",
+      "sequence": 7,
+      "sha": "ddd8dc5709cf45e2dd8814fd20567afda2f8d48e",
+      "status": "pass"
+    },
+    {
+      "actor": "Claude",
+      "kind": "owner_evidence_ready",
+      "recorded_at": "2026-07-27T13:10:00Z",
+      "sequence": 8,
+      "sha": "ddd8dc5709cf45e2dd8814fd20567afda2f8d48e",
+      "status": "pass"
+    }
+  ],
+  "residual_risks": {
+    "json_backlog_remains_reachable_without_a_dsn": {
+      "blocking_for_this_task": false,
+      "containment": "Only reachable when no POLICY_LEARNING_STORE_DSN and no DATABASE_URL is configured, or when POLICY_LEARNING_CANDIDATE_AUTHORITY=json is set explicitly. The resolution is reported on /health and /readyz as durable: false with its reason, and the JSON path is still lease-fenced, atomically written, and fail-closed on corruption.",
+      "description": "A deployment with no database configured at all keeps a non-durable JSON candidate backlog. It is labelled rather than refused, so an operator who removes the DSN loses durability without the loop refusing to run.",
+      "expiry": "2026-10-27",
+      "owner": "Claude",
+      "recheck_trigger": "Any change to policy-learning persistence posture enforcement, or a decision to make a missing DSN fail closed in the product path.",
+      "severity": "low"
+    },
+    "placeholder_refusal_can_reject_a_lookalike_operator_secret": {
+      "blocking_for_this_task": false,
+      "containment": "The rule is deliberately fail-closed: a rejected token makes the service report configured: false on /health and /readyz and answer 401, which is loud and immediate rather than silent. The prefixes are unambiguous placeholder words (replace-me, changeme, placeholder, example, sample, dummy, todo, your-) and the exact set is enumerated in inbound_authority, so an operator hitting it can see why and mint a different secret.",
+      "description": "is_published_service_token() also refuses unedited fill-me-in shapes by prefix, so a genuine operator secret that happens to begin with one of those words is treated as unconfigured on a staging or production posture.",
+      "expiry": "2026-10-27",
+      "owner": "Claude",
+      "recheck_trigger": "Any operator report of a legitimate policy-learning credential being refused, or a decision to move this rule into a shared runtime-auth helper.",
+      "severity": "low"
+    },
+    "published_compose_service_credential": {
+      "blocking_for_this_task": false,
+      "containment": "inbound_authority refuses every value in PUBLISHED_SERVICE_TOKENS - the compose default and the exact .env.example placeholder - plus any unedited fill-me-in shape, once PANTHEON_PERSISTENCE_POSTURE (or PANTHEON_ENV) is staging or prod, reporting service_token_configured: false and configured: false. docker-compose.staging-full.yml pins that posture for policy-learning-svc. authority_configuration exposes service_token_scope (local_dev_default / published_placeholder / deployment_secret / none) so an operator can see which credential is in use without the value being logged, and test_every_repository_published_service_token_is_one_the_service_refuses reads the tracked docker-compose.yml and .env.example so a newly published default cannot drift past the refusal list.",
+      "description": "docker-compose.yml ships a well-known default service token and .env.example ships a fill-me-in placeholder, so the local product loop runs without an operator secret. Anyone reading the repository knows both values, so a dev-posture stack exposed beyond localhost would be reachable by them.",
+      "expiry": "2026-10-27",
+      "owner": "Human/Ops",
+      "recheck_trigger": "Any deployment of the dev compose profile outside a developer machine, any new published POLICY_LEARNING_SERVICE_TOKEN default, or a decision to require POLICY_LEARNING_SERVICE_TOKEN unconditionally.",
+      "severity": "low"
+    },
+    "shared_dsn_read_role_not_yet_separated": {
+      "blocking_for_this_task": false,
+      "containment": "The cross-owner Agora session is pinned read_only, so policy-learning physically cannot write agora.* even when it falls back to the shared DATABASE_URL, and an anonymous connection is refused. describe() reports dedicated_read_role_dsn so an operator can see whether a separate role is in use. docker-compose.yml now passes AGORA_DATASET_STORE_BACKEND/DSN/SCHEMA through, so provisioning that role no longer needs a compose change.",
+      "description": "Unless AGORA_DATASET_STORE_DSN names a dedicated read role, the Agora read reuses the shared application role from DATABASE_URL. Compose now exposes the setting, but provisioning the role itself is a deployment-configuration change outside this task.",
+      "expiry": "2026-10-27",
+      "owner": "Human/Ops",
+      "recheck_trigger": "The next change to Pantheon Postgres role provisioning or to DATABASE_OWNERSHIP_AND_SHARED_CLUSTER_POLICY.md read-role enforcement.",
+      "severity": "medium"
+    }
+  },
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "L12-IMIT-001 product-level independent-review gate.",
+    "note": "Owner-side evidence for tenant-safe imitation loop authority and failure recovery, refreshed after the second independent review returned on the published .env.example service token being accepted under an enforced posture. Re-review by Codex2 is pending and is recorded in record_log when it happens.",
+    "status": "formalized"
+  },
+  "schema_version": "loop_product_evidence.v1",
+  "scope": {
+    "authoritative_write_owner": "Claude for the policy-learning imitation-loop inbound authority, the ShadowImitationCandidate backlog authority and its leases, tenant-scoped Agora DatasetVersion resolution inside policy-learning, and this task's evidence",
+    "composes_with": [
+      "L12-AGORA-001 governed Agora dataset extraction owner",
+      "L12-TEL-001 telemetry lineage identity",
+      "Codex2 independent review"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-IMIT-001/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-IMIT-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-IMIT-001/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      ".env.example",
+      "docker-compose.yml",
+      "services/policy-learning/agora_dataset_authority.py",
+      "services/policy-learning/inbound_authority.py",
+      "services/policy-learning/main.py",
+      "services/policy-learning/scheduler_worker.py",
+      "services/policy-learning/store.py",
+      "services/policy-learning/tests/conftest.py",
+      "services/policy-learning/tests/test_l12_imit_001_authority_and_recovery.py",
+      "services/policy-learning/tests/test_l12_imit_001_default_compose_loop.py",
+      "services/policy-learning/tests/test_l12_imit_001_real_dataset_scheduling.py",
+      "services/policy-learning/tests/test_policy_learning_compose_activation.py",
+      "services/policy-learning/tests/test_policy_learning_shadow_eval_scheduler.py",
+      "services/research/imitation/agora_dataset_source.py",
+      "services/research/imitation/test_agora_dataset_source.py"
+    ],
+    "not_changing": "docker-compose.staging-full.yml and every other compose or env file except docker-compose.yml and .env.example, which this task changes because the reviewer required the default compose product loop to reach tenant-scoped Agora data through auth; live Pantheon service, database, or runtime state; registry artifacts, deployment stages, RuntimeBinding, capital binding, or order routing; the pre-existing policy-learning job and capability route surface.",
+    "owned_layer": "Authenticated tenant-bound direct tick/claim/process/restart/retry/replay/candidate/readback routes, atomic (tenant, tick, dataset version) candidate authority with collision-free ids, lease fencing at settle and requeue, durable Postgres candidate authority in the product path, authenticated read-only cross-owner Agora resolution with no seed fallback, fail-closed backlog corruption handling, and the proof suite for all of it; and the default-compose wiring that makes policy-learning-svc and the shadow-eval scheduler sidecar one credential and one tenant scope, with the published compose credential refused under a deployment persistence posture"
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "proof": "Verification used a localhost-only throwaway postgres:16-alpine container and in-process ASGI clients, plus `docker compose config`, which renders the file and starts nothing. The compose file and .env.example are changed by this task as the reviews required; no live Pantheon service, database, env file, or runtime state was written.",
+      "status": "pass"
+    },
+    "hosted_frontend": {
+      "status": "not_applicable"
+    },
+    "mfa": {
+      "proof": "No route in this surface performs an irreversible operator action; the loop produces research candidates that are fail-closed against promotion.",
+      "status": "not_applicable"
+    },
+    "no_live_capital": {
+      "proof": "policy-learning imports no registry, deployment, RuntimeBinding, capital, broker, or order-routing writer. promote always answers 409 and mutates nothing, and the governance report enumerates those authorities as denied.",
+      "status": "pass"
+    },
+    "rbac": {
+      "proof": "Every direct imitation-loop route requires a verified caller holding a configured role; a verified JWT with the wrong role is 403 and one with no role claim at all fails closed instead of defaulting to operator. No credential this repository publishes can authenticate a deployment: under a staging or production persistence posture inbound_authority treats the compose default, the exact .env.example placeholder, and any unedited fill-me-in shape as unconfigured, reporting service_token_configured: false and answering 401 on every protected route, while an operator-minted secret authenticates normally on those same routes. docker-compose.staging-full.yml pins that posture and does not override the token, so a staging stack must supply its own secret.",
+      "status": "pass"
+    },
+    "tenant_isolation": {
+      "proof": "The tenant comes from the verified request, not the body. A body tenant that disagrees is 403 TENANT_PAYLOAD_MISMATCH, a dataset_ref naming another tenant is rejected rather than re-stamped, cross-tenant candidate reads answer 404 so ids cannot be enumerated, claims are tenant-filtered, and concurrent cross-tenant ticks and claims were proven disjoint in threads and against real PostgreSQL row locks. worker/restart recovers only the authenticated tenant's orphaned leases.",
+      "status": "pass"
+    },
+    "two_person_approval": {
+      "proof": "Owner Claude and reviewer Codex2 are distinct. Independent review of the exact final head is pending and is recorded in record_log when it happens.",
+      "status": "pending_independent_review"
+    }
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-27T13:10:00Z",
+    "evidence_cut_semantics": "Owner evidence cut after the second returned review was remediated. Codex2's re-review at a4ba6685 confirmed the merged delivery but failed closed on one production-authority blocker: .env.example publishes POLICY_LEARNING_SERVICE_TOKEN=replace-me-policy-learning-service-token while inbound_authority rejected only the compose LOCAL_DEV_SERVICE_TOKEN under an enforced posture, so a staging/prod stack running the unedited example file was accepted as policy-learning-service. PR #4242 (head d18a3633) closes it and merged into dev as ddd8dc5709cf45e2dd8814fd20567afda2f8d48e at 2026-07-27T13:02:19Z with the Branch CI Gate green on both its push and pull_request runs. PRs #4235-#4238 remain merged and are recorded in implementation_delivery.pull_requests. This manifest sits in a follow-up evidence PR directly on top of that merge and is the exact head the reviewer verifies. No hosted deployment, maturity promotion, or runtime authority is claimed.",
+    "id": "L12-IMIT-001",
+    "overall_admission": "owner_evidence_ready",
+    "owner": "Claude",
+    "phase": "Twelve Loop Remediation / Imitation",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-IMIT-001/evidence.json",
+    "reviewer": "Codex2",
+    "target_environment": "dev integration",
+    "target_maturity": "reconciled",
+    "task_branch": "task/L12-IMIT-001",
+    "title": "Prove tenant-safe imitation loop authority and failure recovery"
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "docker run -d --rm --name l12-imit-pg-proof -e POSTGRES_PASSWORD=<redacted> -e POSTGRES_USER=<redacted> -e POSTGRES_DB=<redacted> -p 127.0.0.1:55433:5432 postgres:16-alpine",
+        "conclusion": "Throwaway localhost-only PostgreSQL 16 used for the real-Postgres proofs. No live Pantheon database was touched; every schema the tests created was dropped.",
+        "result": "pass"
+      },
+      {
+        "command": "PANTHEON_PERSISTENCE_POSTURE=production POLICY_LEARNING_SERVICE_TOKEN=replace-me-policy-learning-service-token POLICY_LEARNING_SERVICE_TENANTS=pantheon-local python -c '<authority_configuration() + resolve_authority() with that exact token>'",
+        "conclusion": "The reviewer's exact reproduction of the returned blocker, re-run on this head. authority_configuration() now reports service_token_configured: false, service_token_scope: none, configured: false, and resolve_authority refuses with 401 AUTH_TOKEN_FORMAT instead of returning policy-learning-service bound to pantheon-local. Before the fix the same command reported configured: true / service_token_scope: deployment_secret and accepted the caller.",
+        "result": "pass"
+      },
+      {
+        "command": "PANTHEON_TEST_POSTGRES_DSN=postgresql://<redacted>@127.0.0.1:55433/<redacted> python -m pytest services/policy-learning services/research/imitation services/foundation/tests/test_persistence_posture.py",
+        "conclusion": "190 passed, 1 warning in 48.86s on this evidence head after merging dev. The count rose from 180 because this remediation adds 10 assertions: the published-token drift guard, the .env.example route-level negative with its operator-secret positive control, and eight unedited-placeholder shapes.",
+        "result": "pass"
+      },
+      {
+        "command": "python -m pytest services/policy-learning/tests/test_l12_imit_001_default_compose_loop.py -q",
+        "conclusion": "16 passed, 1 skipped. The skip is the `docker compose config` agreement check, which is recorded separately below as its own executed command.",
+        "result": "pass"
+      },
+      {
+        "command": "git show HEAD~1:services/policy-learning/inbound_authority.py > services/policy-learning/inbound_authority.py && python -m pytest services/policy-learning/tests/test_l12_imit_001_default_compose_loop.py -q ; git checkout HEAD -- services/policy-learning/inbound_authority.py",
+        "conclusion": "Negative control for this remediation: with only inbound_authority reverted to its pre-fix state, 10 failed / 6 passed. The 10 failures are exactly the new assertions, including the route-level .env.example negative. The pre-existing compose-token refusal still passed, confirming the old rule covered only that one value. The module was restored immediately and `git status --short` was re-checked.",
+        "result": "pass"
+      },
+      {
+        "command": "docker compose --env-file /dev/null --profile policy-learning-shadow-eval-scheduler config --format json",
+        "conclusion": "The reviewer's own independent command, unchanged by this remediation. policy-learning-svc renders POLICY_LEARNING_SERVICE_TOKEN=pantheon-local-policy-learning-service, POLICY_LEARNING_SERVICE_TENANTS=pantheon-local, POLICY_LEARNING_AGORA_TENANT_ID=pantheon-local, PANTHEON_PERSISTENCE_POSTURE=dev; the scheduler renders the same token, tenant, and posture.",
+        "result": "pass"
+      },
+      {
+        "command": "python -m pytest services/policy-learning services/research/imitation services/foundation/tests/test_persistence_posture.py -q  # without PANTHEON_TEST_POSTGRES_DSN",
+        "conclusion": "185 passed, 5 skipped. The five skips are exactly the real-Postgres proofs, which are recorded as executed in the run above.",
+        "result": "pass"
+      },
+      {
+        "command": "python -c '<validate evidence.json against schemas/product-evidence.schema.json>' && sha256sum -c evidence.sha256",
+        "conclusion": "ProductEvidenceManifest schema and companion checksum both pass.",
+        "result": "pass"
+      },
+      {
+        "command": "gh pr checks 4242",
+        "conclusion": "Commit trailers, Runtime mirror guard, and Smoke acceptance all pass on both the push and pull_request Branch CI Gate runs; PR #4242 merged into dev as ddd8dc5709cf45e2dd8814fd20567afda2f8d48e at 2026-07-27T13:02:19Z.",
+        "result": "pass"
+      },
+      {
+        "command": "git diff --check",
+        "conclusion": "exit 0 after integrating current dev.",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-07-27T13:10:00Z",
+    "validated_base_sha": "ddd8dc5709cf45e2dd8814fd20567afda2f8d48e",
+    "validated_head_sha": "ddd8dc5709cf45e2dd8814fd20567afda2f8d48e"
+  }
+}

@@ -31,6 +31,18 @@ status_path.write_text(json.dumps(state), encoding="utf-8")
 record = {
     "argv": sys.argv[1:],
     "ai_name": os.environ.get("AI_NAME"),
+    "auto_worker_markers": {
+        key: os.environ[key]
+        for key in (
+            "ORCH_RUN_ID",
+            "ORCH_TASK_ID",
+            "PANTHEON_WORKTREE_ROOT",
+            "ORCH_WORKSPACE_PATH",
+            "ORCH_RUNNER_STATUS_PATH",
+            "ORCH_HEARTBEAT_PATH",
+        )
+        if os.environ.get(key)
+    },
     "metadata": metadata,
 }
 with (root / "calls.jsonl").open("a", encoding="utf-8") as handle:

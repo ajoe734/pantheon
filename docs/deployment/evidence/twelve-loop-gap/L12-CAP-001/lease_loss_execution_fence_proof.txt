@@ -1,0 +1,37 @@
+L12-CAP-001 execution-fence lease-loss proof
+Recorded at: 2026-07-27T00:32:27Z
+Branch: task/L12-CAP-001
+Validated base: 643181a067ec5c344faac0766c69de0d5cfb32eb
+Implementation head: aa64c1921b1f9b10994a327d633990dc8282fc0e
+
+Stability command (each exact real-Redis failure regression repeated three times):
+/tmp/l12-cap-001-venv/bin/python -m unittest -v \
+  services.execution.lean_runtime.test_signal_isolation.TestRedisPendingSignalStoreClaimVisibility.test_execution_fence_blocks_reclaim_when_heartbeat_renew_returns_false \
+  services.execution.lean_runtime.test_signal_isolation.TestRedisPendingSignalStoreClaimVisibility.test_execution_fence_blocks_reclaim_when_heartbeat_renew_raises \
+  services.execution.lean_runtime.test_signal_isolation.TestRedisPendingSignalStoreClaimVisibility.test_execution_fence_blocks_reclaim_when_heartbeat_renew_returns_false \
+  services.execution.lean_runtime.test_signal_isolation.TestRedisPendingSignalStoreClaimVisibility.test_execution_fence_blocks_reclaim_when_heartbeat_renew_raises \
+  services.execution.lean_runtime.test_signal_isolation.TestRedisPendingSignalStoreClaimVisibility.test_execution_fence_blocks_reclaim_when_heartbeat_renew_returns_false \
+  services.execution.lean_runtime.test_signal_isolation.TestRedisPendingSignalStoreClaimVisibility.test_execution_fence_blocks_reclaim_when_heartbeat_renew_raises
+
+Observed result:
+- renew-returned-false regression: 3/3 passed;
+- renew-exception regression: 3/3 passed;
+- combined suite: Ran 6 tests in 3.531s, OK.
+
+Assertions exercised independently by both regressions:
+- worker-A atomically reserves the signal execution boundary and enters
+  execute() after a successful boundary renewal;
+- the next heartbeat either returns false or raises RuntimeError after
+  execution has started, and that lease loss is published to _execute_one;
+- after more than two visibility TTLs, worker-B reclaims the pending payload
+  while worker-A remains blocked inside execute();
+- worker-B observes worker-A's durable execution reservation, does not call
+  execute(), and atomically transfers its reclaimed copy to the binding DLQ;
+- worker-A returns and commits the processed marker only with its execution
+  token, even though its shorter queue claim is gone;
+- each test asserts execution_count == 1, executions == ["worker-A"],
+  renew_calls == 2, processed == true, queue_depth == 0, and both worker
+  inflight depths == 0; DLQ depth is 1 because the ambiguous reclaimed copy is
+  retained for recovery instead of being executed or discarded;
+- the disposable Redis proof container was removed after validation, and no
+  l12-cap-redis-* container remained.

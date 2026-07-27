@@ -62988,10 +62988,108 @@ def _loop_inventory_response_meta(payload: Dict[str, Any]) -> Dict[str, Any]:
     return payload
 
 
-def _loop_health_store_records() -> Tuple[bool, List[Dict[str, Any]], str]:
+def _loop_health_store_records(
+    tenant_id: str,
+    environment: str,
+) -> Tuple[bool, List[Dict[str, Any]], str]:
     available, records = read_store.list_loop_health_records()
     source = read_store.dataset_source("loop_health") if available else "missing"
-    return available, records if available else [], source
+    scoped_records = [
+        record
+        for record in records
+        if isinstance(record, dict)
+        and str(record.get("tenant_id") or "").strip() == tenant_id
+        and str(record.get("environment") or "").strip() == environment
+    ]
+    return bool(available and scoped_records), scoped_records, source
+
+
+def _authenticated_loop_truth_scope(
+    identity: OperatorIdentity,
+    *,
+    requested_tenant: Optional[str],
+    requested_environment: Optional[str],
+) -> Tuple[str, str]:
+    """Resolve a fail-closed tenant/environment key for controller truth."""
+
+    tenant_defaults = _identity_claim_strings(
+        identity,
+        ["tenant_id", "tenantId", "tenant.id", "tid", "org_id"],
+    )
+    allowed_tenants = _dedupe_nonblank_strings(
+        [
+            *_identity_claim_strings(
+                identity,
+                [
+                    "allowed_tenants",
+                    "allowedTenants",
+                    "tenant_ids",
+                    "tenantIds",
+                    "tenants",
+                ],
+            ),
+            *tenant_defaults,
+        ]
+    )
+    clean_requested_tenant = str(
+        _resolve_param(requested_tenant) or ""
+    ).strip()
+    default_tenant = next(
+        (tenant for tenant in tenant_defaults if tenant != "*"),
+        next((tenant for tenant in allowed_tenants if tenant != "*"), ""),
+    )
+    effective_tenant = clean_requested_tenant or default_tenant
+    if not effective_tenant:
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Controller truth requires an authenticated tenant scope",
+            "Authenticated identity does not declare a concrete tenant",
+            precondition_failed="tenant_scope",
+        )
+    if "*" not in allowed_tenants and effective_tenant not in allowed_tenants:
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Tenant access denied",
+            "Requested controller truth tenant is outside the authenticated scope",
+            precondition_failed="tenant_scope",
+            details_extra={
+                "tenantId": effective_tenant,
+                "allowedTenantIds": allowed_tenants,
+            },
+        )
+
+    deployed_environment = str(os.environ.get("PANTHEON_ENV", "dev")).strip()
+    clean_requested_environment = str(
+        _resolve_param(requested_environment) or ""
+    ).strip()
+    effective_environment = clean_requested_environment or deployed_environment
+    allowed_environments = _identity_claim_strings(
+        identity,
+        ["environment", "environments", "allowed_environments", "allowedEnvironments"],
+    )
+    if allowed_environments:
+        environment_allowed = (
+            "*" in allowed_environments
+            or effective_environment in allowed_environments
+        )
+    else:
+        environment_allowed = effective_environment == deployed_environment
+    if not effective_environment or not environment_allowed:
+        raise _bff_error(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Environment access denied",
+            "Requested controller truth environment is outside the authenticated deployment scope",
+            precondition_failed="environment_scope",
+            details_extra={
+                "environment": effective_environment,
+                "allowedEnvironments": allowed_environments
+                or [deployed_environment],
+            },
+        )
+    return effective_tenant, effective_environment
 
 
 def _loop_health_response_meta(
@@ -63001,6 +63099,8 @@ def _loop_health_response_meta(
     health_record_count: int,
     accepted_controller_health_record_count: int,
     health_source: str,
+    tenant_id: str,
+    environment: str,
 ) -> Dict[str, Any]:
     meta = dict(payload.get("meta") or {})
     snapshot_at = meta.get("snapshot_at") or utc_now()
@@ -63064,6 +63164,11 @@ def _loop_health_response_meta(
             accepted_controller_health_record_count
         ),
     }
+    meta["scope"] = {
+        "tenant_id": tenant_id,
+        "environment": environment,
+        "source": "authenticated_identity_and_deployment_scope",
+    }
     payload["meta"] = meta
     return payload
 
@@ -63085,8 +63190,15 @@ async def bff_v5_loop_inventory(
     return _loop_inventory_response_meta(payload)
 
 
-async def _async_loop_health_records() -> Tuple[bool, List[Dict[str, Any]], str]:
-    fs_available, fs_records, fs_source = _loop_health_store_records()
+async def _async_loop_health_records(
+    *,
+    tenant_id: str,
+    environment: str,
+) -> Tuple[bool, List[Dict[str, Any]], str]:
+    fs_available, fs_records, fs_source = _loop_health_store_records(
+        tenant_id,
+        environment,
+    )
     for r in fs_records:
         if isinstance(r, dict):
             r["_health_source"] = fs_source
@@ -63101,9 +63213,13 @@ async def _async_loop_health_records() -> Tuple[bool, List[Dict[str, Any]], str]
             LoopControllerStore = loop_control.LoopControllerStore
             project_controller_record_to_bff = loop_control.project_controller_record_to_bff
             store = LoopControllerStore(dsn)
-            tenant_id = os.environ.get("PANTHEON_TENANT_ID", "default")
-            environment = os.environ.get("PANTHEON_ENV", "dev")
             records = await store.list_records(tenant_id, environment)
+            records = [
+                record
+                for record in records
+                if str(record.get("tenant_id") or "").strip() == tenant_id
+                and str(record.get("environment") or "").strip() == environment
+            ]
             if records:
                 db_records = [project_controller_record_to_bff(r) for r in records]
                 for r in db_records:
@@ -63137,11 +63253,21 @@ async def _async_loop_health_records() -> Tuple[bool, List[Dict[str, Any]], str]
 @app.get("/bff/v5/loop-health", response_model=LoopHealthListEnvelope)
 async def bff_v5_loop_health(
     authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+    environment: Optional[str] = Query(default=None),
 ):
     """List operator loop health truth without promoting registry metadata to liveness."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
-    health_available, health_records, health_source = await _async_loop_health_records()
+    tenant_id, effective_environment = _authenticated_loop_truth_scope(
+        identity,
+        requested_tenant=x_tenant_id,
+        requested_environment=environment,
+    )
+    health_available, health_records, health_source = await _async_loop_health_records(
+        tenant_id=tenant_id,
+        environment=effective_environment,
+    )
     records = list_loop_health_entries(
         health_records,
         health_source=health_source,
@@ -63162,6 +63288,8 @@ async def bff_v5_loop_health(
             if (record.get("controller_health") or {}).get("current_record_accepted")
         ),
         health_source=health_source,
+        tenant_id=tenant_id,
+        environment=effective_environment,
     )
 
 
@@ -63169,11 +63297,21 @@ async def bff_v5_loop_health(
 async def bff_v5_loop_health_detail(
     loop_id: str,
     authorization: Optional[str] = Header(default=None),
+    x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+    environment: Optional[str] = Query(default=None),
 ):
     """Get one operator loop health truth record."""
     identity = _extract_identity(authorization)
     _require_read_role(identity)
-    health_available, health_records, health_source = await _async_loop_health_records()
+    tenant_id, effective_environment = _authenticated_loop_truth_scope(
+        identity,
+        requested_tenant=x_tenant_id,
+        requested_environment=environment,
+    )
+    health_available, health_records, health_source = await _async_loop_health_records(
+        tenant_id=tenant_id,
+        environment=effective_environment,
+    )
     payload = _sem_final_registry_detail(
         get_loop_health_entry(
             loop_id,
@@ -63196,6 +63334,8 @@ async def bff_v5_loop_health_detail(
             else 0
         ),
         health_source=health_source,
+        tenant_id=tenant_id,
+        environment=effective_environment,
     )
 
 
@@ -64449,12 +64589,10 @@ def _management_fleet_autonomy(
     return "manual"
 
 
-def _training_improvement_delta(metrics: Dict[str, Any]) -> Optional[float]:
-    raw_val = metrics.get("training_improvement_pct")
-    if raw_val is None:
-        return None
-    val = _as_float(raw_val)
-    return val / 100.0
+def _trading_performance_delta() -> Optional[float]:
+    """Return no delta until telemetry defines a canonical trading-return field."""
+
+    return None
 
 
 _SOURCE_HEALTH_OVERLAY_CACHE: Dict[str, Any] = {"at": 0.0, "by_connector": None}
@@ -65060,6 +65198,7 @@ def _build_persona_health_items(
     )
     incidents_list = list(read_store.list_incidents() or [])
     all_decisions = list(read_store.list_evolution_decisions() or [])
+    all_telemetry = list(read_store.list_telemetry_summaries() or [])
     items: List[Dict[str, Any]] = []
     for persona in read_store.list_personas(
         include_market_persona_defaults=include_market_persona_defaults,
@@ -65276,6 +65415,43 @@ def _build_persona_health_items(
             if str(incident.get("incident_id") or incident.get("id") or "").strip()
         }
 
+        telemetry_summaries = [
+            t for t in all_telemetry
+            if t.get("persona_id") == persona_id or t.get("runtime_id") == runtime_id
+        ]
+        telemetry_rollup = _management_telemetry_rollup(telemetry_summaries)
+        telemetry_sharpe_values = [
+            value
+            for value in (
+                _management_first_float(
+                    summary,
+                    "sharpe",
+                    "sharpe_ratio",
+                    "summary.sharpe",
+                    "summary.sharpe_ratio",
+                )
+                for summary in telemetry_summaries
+            )
+            if value is not None
+        ]
+        telemetry_trade_values = [
+            value
+            for value in (
+                _management_first_float(summary, "total_trades", "summary.total_trades")
+                for summary in telemetry_summaries
+            )
+            if value is not None
+        ]
+        telemetry_metrics = {
+            "pnl": telemetry_rollup.get("total_pnl"),
+            "max_drawdown": telemetry_rollup.get("max_drawdown"),
+            "fill_rate": telemetry_rollup.get("average_fill_rate"),
+            "total_trades": int(sum(telemetry_trade_values)) if telemetry_trade_values else None,
+            "sharpe": _management_avg(telemetry_sharpe_values),
+        }
+        telemetry_has_performance = any(value is not None for value in telemetry_metrics.values())
+        is_seed_row = bool(metadata.get("is_market_persona_default") or metadata.get("seed_row"))
+
         mutation_projection = _persona_fleet_mutation_projection(
             persona_id=persona_id,
             updated_at=updated_at,
@@ -65305,8 +65481,14 @@ def _build_persona_health_items(
                 governance_required=governance_required,
                 human_needed=human_needed,
             ),
-            "perf_delta": _training_improvement_delta(metrics),
-            "perfDelta": _training_improvement_delta(metrics),
+            "perf_delta": _trading_performance_delta(),
+            "perfDelta": _trading_performance_delta(),
+            "has_trading_telemetry": telemetry_has_performance,
+            "hasTradingTelemetry": telemetry_has_performance,
+            "is_market_persona_default": is_seed_row,
+            "isMarketPersonaDefault": is_seed_row,
+            "seed_row": is_seed_row,
+            "seedRow": is_seed_row,
             "human_needed": human_needed,
             "humanNeeded": human_needed,
             "last_mutation": str(updated_at)[:10],
@@ -66268,7 +66450,14 @@ def _project_persona_fleet_list_row(
             governance_required=governance_required,
             human_needed=human_needed,
         ),
-        "perf_delta": _training_improvement_delta(metrics),
+        "perf_delta": _trading_performance_delta(),
+        "perfDelta": _trading_performance_delta(),
+        "has_trading_telemetry": telemetry_has_performance,
+        "hasTradingTelemetry": telemetry_has_performance,
+        "is_market_persona_default": bool(raw_metadata.get("is_market_persona_default") or raw_metadata.get("seed_row")),
+        "isMarketPersonaDefault": bool(raw_metadata.get("is_market_persona_default") or raw_metadata.get("seed_row")),
+        "seed_row": bool(raw_metadata.get("seed_row")),
+        "seedRow": bool(raw_metadata.get("seed_row")),
         "human_needed": human_needed,
         "last_mutation": str(updated_at)[:10],
         "state": normalized_state,

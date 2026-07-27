@@ -1,0 +1,220 @@
+{
+  "schema_version": 1,
+  "schema_status": "review_approved_pending_merge",
+  "task": {
+    "id": "OPS-ASSISTANT-DEV-BRIDGE-DRAIN-001",
+    "title": "Repair supervisor DevTaskPacket drain and bridge command binding",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "review_approved",
+    "branch": "task/OPS-ASSISTANT-DEV-BRIDGE-DRAIN-001"
+  },
+  "scope": {
+    "owned": [
+      "services/control-plane/bff/assistant/dev_bridge_dispatcher.py",
+      "services/control-plane/bff/assistant/dev_bridge_inbox.py",
+      "scripts/drain_assistant_dev_task_packet_inbox.py",
+      "scripts/test_assistant_dev_packet_inbox_supervisor_contract.py",
+      "services/control-plane/bff/assistant/tests/dev_bridge_test_support.py",
+      "services/control-plane/bff/assistant/tests/test_dev_bridge.py",
+      "services/control-plane/bff/assistant/tests/test_dev_bridge_dispatch_cli.py",
+      "services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py",
+      "services/control-plane/bff/assistant/tests/test_dev_bridge_inbox_cli.py",
+      "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py",
+      "docs/deployment/evidence/supervisor/OPS-ASSISTANT-DEV-BRIDGE-DRAIN-001"
+    ],
+    "not_changed": [
+      ".orchestrator/supervisor.py",
+      "scripts/ai_status.py",
+      ".orchestrator/config.json",
+      "authoritative task-state projection and lock implementation",
+      "live supervisor process or configuration"
+    ],
+    "composes_with": [
+      "SUP-TASK-STATE-LOCK-LATENCY-001",
+      "SUP-COMMAND-RUNTIME-REFRESH-001"
+    ]
+  },
+  "root_causes": [
+    {
+      "id": "RC1",
+      "summary": "Bridge dispatch executed status-root scripts/ai_status.py instead of the installed governed command runtime.",
+      "impact": "Authoritative journal did not receive the assignment, so projection could remove a task after a processed receipt."
+    },
+    {
+      "id": "RC2",
+      "summary": "The signed packet actor was reused as AI_NAME for the canonical mutation.",
+      "impact": "A verified repo-local service operation was rejected as an unleased auto-worker mutation."
+    }
+  ],
+  "live_observations": {
+    "lease_rejection_receipt": {
+      "packet_id": "pkt_pantheon_batch_architecture_20260727_platform_001",
+      "drained_at": "2026-07-27T14:15:02Z",
+      "status": "failed",
+      "admission_status": "not_attempted",
+      "error": "status command lease required for auto worker: codex-root",
+      "sha256": "55f6f217289289fea77f9260030222abcce23289c07e85097cd2cd7c2126d439"
+    },
+    "file_only_admission_receipt": {
+      "packet_id": "pkt_pantheon_batch_architecture_20260727_supervisor_autodrain_001",
+      "drained_at": "2026-07-27T14:23:26Z",
+      "status": "processed",
+      "admission_status": "admitted",
+      "receipt_sha256": "28451b3a2ef4dd81fc2eb493c8cbb2463941cefad798b4fe9a3f09f4bd209341",
+      "admission_sha256": "e538ecc9ac7a949000e5ab9c8c917285024983033a8a46fbeece506abea20536",
+      "first_task_journal_sequence": 2357,
+      "first_task_journal_commit_at": "2026-07-27T14:27:33Z",
+      "first_task_journal_source": "Human/Ops",
+      "finding": "No bridge assignment event exists at the receipt admission time."
+    },
+    "installed_pydantic_runtime": {
+      "supervisor_pid": 2493424,
+      "supervisor_executable": "/usr/bin/python3.12",
+      "supervisor_command_root": "/home/lupin/pantheon-ci-deploy/dev-root-1434effdc88f",
+      "pydantic_version": "2.13.4",
+      "pydantic_module": "/home/lupin/.local/lib/python3.12/site-packages/pydantic/__init__.py",
+      "fresh_auto_drain_processed_count": 1,
+      "fresh_auto_drain_error_count": 0,
+      "finding": "The earlier pydantic import failure is stale and does not reproduce in the installed runtime."
+    }
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "statement": "Reproduce pydantic unavailable with a pending packet or prove it stale in the installed runtime.",
+      "status": "pass",
+      "evidence_refs": [
+        "README.md#pydantic-incident-is-stale-in-the-installed-runtime",
+        "services/control-plane/bff/requirements.txt"
+      ]
+    },
+    {
+      "id": "AC2",
+      "statement": "Reproduce status-root assignment being absent from the authoritative journal and washed out by projection.",
+      "status": "pass",
+      "evidence_refs": [
+        "README.md#file-only-admission-was-absent-from-the-journal",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_authoritative_bridge_dispatch_survives_next_projection_cycle"
+      ]
+    },
+    {
+      "id": "AC3",
+      "statement": "Dev bridge dispatch uses the installed governed command runtime with authoritative writer binding.",
+      "status": "pass",
+      "evidence_refs": [
+        "services/control-plane/bff/assistant/dev_bridge_dispatcher.py::_status_command_context",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_supervisor_runtime_state_discovers_authoritative_journal",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_authoritative_bridge_dispatch_survives_next_projection_cycle"
+      ]
+    },
+    {
+      "id": "AC4",
+      "statement": "Verified repo-local bridge assignment needs no auto-worker lease while untrusted worker mutations still require one.",
+      "status": "pass",
+      "evidence_refs": [
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_verified_bridge_uses_trusted_status_actor_without_worker_lease",
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_untrusted_direct_status_mutation_still_requires_worker_lease"
+      ]
+    },
+    {
+      "id": "AC5",
+      "statement": "A fresh signed inbox drain remains canonical after the next projection and writes durable admission evidence.",
+      "status": "pass",
+      "evidence_refs": [
+        "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py::test_authoritative_bridge_dispatch_survives_next_projection_cycle"
+      ]
+    },
+    {
+      "id": "AC6",
+      "statement": "Avoid overlap with supervisor.py and scripts/ai_status.py task owners.",
+      "status": "pass",
+      "evidence_refs": [
+        "README.md#repair",
+        "scope.not_changed"
+      ]
+    },
+    {
+      "id": "AC7",
+      "statement": "Branch, focused and broad validation, PR checks, independent review, merge, and closeout are complete.",
+      "status": "pending_merge",
+      "evidence_refs": [
+        "README.md#verification",
+        "delivery",
+        "review"
+      ]
+    }
+  ],
+  "verification": {
+    "fail_first": {
+      "result": "28 passed, 4 expected failures",
+      "failures": [
+        "trusted bridge status actor mismatch",
+        "authoritative dispatcher looked for status-root scripts/ai_status.py"
+      ]
+    },
+    "focused": {
+      "result": "70 passed",
+      "command": "pytest -q test_dev_bridge_reliability.py test_dev_bridge_inbox.py test_dev_bridge_dispatch_cli.py test_dev_bridge_inbox_cli.py test_dev_bridge.py scripts/test_assistant_dev_packet_inbox_supervisor_contract.py"
+    },
+    "broad": [
+      {
+        "result": "157 passed",
+        "command": "pytest -q services/control-plane/bff/assistant/tests scripts/test_assistant_dev_packet_inbox_supervisor_contract.py"
+      },
+      {
+        "result": "147 passed, 45 subtests passed",
+        "command": "pytest -q scripts/test_ai_status.py scripts/test_status_command_runtime_pin.py scripts/test_assistant_dev_packet_inbox_supervisor_contract.py"
+      }
+    ],
+    "syntax": {
+      "result": "pass",
+      "commands": [
+        "python -m py_compile services/control-plane/bff/assistant/dev_bridge_dispatcher.py",
+        "git diff --check"
+      ]
+    },
+    "owner_closeout": {
+      "composed_code_head": "11d6f1309607cafee5d6b1f69c68b703b23685b0",
+      "base_head": "eecb96fa3826e8e3527a77da7f187a32b33c6c93",
+      "result": "pass",
+      "commands": [
+        "pytest -q services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py services/control-plane/bff/assistant/tests/test_dev_bridge_dispatch_cli.py services/control-plane/bff/assistant/tests/test_dev_bridge_inbox_cli.py services/control-plane/bff/assistant/tests/test_dev_bridge.py scripts/test_assistant_dev_packet_inbox_supervisor_contract.py",
+        "pytest -q services/control-plane/bff/assistant/tests scripts/test_assistant_dev_packet_inbox_supervisor_contract.py",
+        "pytest -q scripts/test_ai_status.py scripts/test_status_command_runtime_pin.py scripts/test_assistant_dev_packet_inbox_supervisor_contract.py",
+        "python -m py_compile services/control-plane/bff/assistant/dev_bridge_dispatcher.py",
+        "git diff --check origin/dev...HEAD"
+      ],
+      "results": [
+        "70 passed in 15.37s",
+        "157 passed in 25.28s",
+        "147 passed, 45 subtests passed in 45.50s",
+        "py_compile passed",
+        "diff check passed"
+      ],
+      "scope_note": "The subsequent evidence-only closeout commit does not change the composed production or test code validated at this head."
+    }
+  },
+  "delivery": {
+    "repository": "ajoe734/pantheon",
+    "base": "dev",
+    "branch": "task/OPS-ASSISTANT-DEV-BRIDGE-DRAIN-001",
+    "anchor_commit": "308314dd6",
+    "implementation_commit": "a736741c6",
+    "pull_request": 4251,
+    "pull_request_url": "https://github.com/ajoe734/pantheon/pull/4251",
+    "merge_commit": null,
+    "live_runtime_refresh": "Not in task scope; governed by SUP-COMMAND-RUNTIME-REFRESH-001."
+  },
+  "review": {
+    "reviewer": "Codex2",
+    "status": "approved",
+    "decision": "review_approved",
+    "reviewed_commit": "7f6216c41b6f1ae1d166c8f269de1eedbfb280a4",
+    "notes": [
+      "Codex2 independently reviewed the exact head and approved the installed governed command-root and authoritative journal binding, trusted Human/Ops mutation identity, signed packet actor provenance, ambient lease-marker removal, and invalid-path/symlink fail-closed boundaries.",
+      "Codex2 independently reran 70 focused, 157 assistant broad, and 147 status/runtime tests plus 45 subtests; all passed and all visible required PR checks were green.",
+      "At approval PR #4251 remained open and behind dev, so merge evidence and the governed done transition remain owner closeout work."
+    ]
+  }
+}

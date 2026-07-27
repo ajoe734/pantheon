@@ -74,7 +74,6 @@ from task_archive import (
     rebuild_archive_index,
     recent_terminal_summaries,
     task_satisfies_dependency,
-    terminal_outcome_for,
 )
 from multi_repo_registry import (
     repository_local_path,
@@ -89,7 +88,12 @@ from runtime_state import (
     load_runtime_state_snapshot,
     runtime_state_lock,
 )
-from rewrite.task_state_store import append_state_commit, load_events, project_latest_state
+from rewrite.task_state_store import (
+    append_state_commit,
+    load_events,
+    load_snapshot,
+    project_latest_state,
+)
 from common import (
     ActivityAuditInvariantError,
     DuplicateActivityJSONKeyError,
@@ -523,6 +527,77 @@ def _find_worker_worktree_lease(
     return None
 
 
+def _declared_lease_workspace_roots(
+    runtime_state: Mapping[str, Any],
+    *,
+    worker: Mapping[str, Any],
+    task_id: str | None,
+    status_root: Path,
+) -> tuple[Path, ...]:
+    """Return the worktree roots the supervisor recorded for this worker run.
+
+    Both sources live in central runtime state, which is written by the
+    supervisor outside every task worktree.  A candidate can rewrite its own
+    environment but not this file, so these paths stay true even when the
+    worker's workspace variables are missing.
+    """
+
+    roots: list[Path] = []
+    raw_workspace = _worker_metadata_value(worker, "workspace_path")
+    if raw_workspace not in (None, ""):
+        roots.append(_metadata_path(raw_workspace, label="worker workspace_path"))
+    lease_match = _find_worker_worktree_lease(
+        runtime_state,
+        worker=worker,
+        task_id=task_id,
+        workspace_root=None,
+        status_root=status_root,
+    )
+    if lease_match is not None:
+        raw_lease_path = lease_match[1].get("path")
+        if raw_lease_path not in (None, ""):
+            roots.append(_metadata_path(raw_lease_path, label="worktree lease path"))
+    ordered: list[Path] = []
+    for root in roots:
+        if root not in ordered:
+            ordered.append(root)
+    return tuple(ordered)
+
+
+def active_lease_workspace_roots() -> tuple[Path, ...]:
+    """Return the canonical candidate-controlled worktrees for this run.
+
+    ``PANTHEON_WORKTREE_ROOT`` / ``ORCH_WORKSPACE_PATH`` cannot be the
+    authority for "which directory is candidate-controlled": the candidate owns
+    its own environment and can simply unset both, which silently removes its
+    worktree from every workspace-scoped boundary while its run lease stays
+    valid.  Consumers that need that boundary — notably the protected closeout
+    verifier's forbidden roots — must ask the supervisor's runtime state
+    instead.  Returns an empty tuple when there is no active run lease.
+    """
+
+    run_id = str(os.environ.get("ORCH_RUN_ID") or "").strip()
+    if not run_id:
+        return ()
+    config = load_config()
+    runtime_state = load_runtime_state_snapshot(config)
+    workers = runtime_state.get("workers", {})
+    worker = workers.get(run_id) if isinstance(workers, Mapping) else None
+    if not isinstance(worker, Mapping):
+        raise RuntimeError(
+            f"active status command lease not found for ORCH_RUN_ID={run_id}"
+        )
+    task_id = str(worker.get("task_id") or "").strip() or str(
+        os.environ.get("ORCH_TASK_ID") or ""
+    ).strip()
+    return _declared_lease_workspace_roots(
+        runtime_state,
+        worker=worker,
+        task_id=task_id or None,
+        status_root=STATUS_ROOT.resolve(),
+    )
+
+
 def normalize_logical_actor(name: str | None) -> str:
     if not name:
         return ""
@@ -627,12 +702,24 @@ def validate_active_status_command_lease(command: str, args: list[str]) -> None:
 
     workspace_root = _worker_workspace_root()
     worker_workspace_raw = _worker_metadata_value(worker, "workspace_path")
-    if workspace_root is not None:
+    if worker_workspace_raw not in (None, ""):
         worker_workspace = _metadata_path(worker_workspace_raw, label="worker workspace_path")
+        # The supervisor recorded which worktree this run owns.  Treating the
+        # environment binding as optional let a candidate unset both workspace
+        # variables and drop out of every workspace-scoped check while its
+        # lease stayed valid, so the canonical value is the authority here and
+        # an absent binding fails closed instead of widening the lease.
+        if workspace_root is None:
+            raise RuntimeError(
+                f"status command workspace binding is required: lease for ORCH_RUN_ID={run_id} "
+                f"owns worktree {worker_workspace} but PANTHEON_WORKTREE_ROOT and "
+                "ORCH_WORKSPACE_PATH are unset"
+            )
         if worker_workspace != workspace_root:
             raise RuntimeError(
                 f"status command workspace mismatch: worker workspace {worker_workspace} != {workspace_root}"
             )
+        workspace_root = worker_workspace
 
     runtime_metadata = status_command_metadata() or {}
     issued_runtime = _worker_status_command_runtime(worker)
@@ -670,8 +757,15 @@ def validate_active_status_command_lease(command: str, args: list[str]) -> None:
         raise RuntimeError(
             f"worktree lease status root mismatch for {lease_key}: {lease_status_root} != {status_root}"
         )
-    if workspace_root is not None:
-        lease_path = _metadata_path(lease.get("path"), label="worktree lease path")
+    raw_lease_path = lease.get("path")
+    if raw_lease_path not in (None, ""):
+        lease_path = _metadata_path(raw_lease_path, label="worktree lease path")
+        if workspace_root is None:
+            raise RuntimeError(
+                f"status command workspace binding is required: worktree lease {lease_key} "
+                f"owns {lease_path} but PANTHEON_WORKTREE_ROOT and ORCH_WORKSPACE_PATH "
+                "are unset"
+            )
         if lease_path != workspace_root:
             raise RuntimeError(
                 f"worktree lease path mismatch for {lease_key}: {lease_path} != {workspace_root}"
@@ -1351,12 +1445,15 @@ def load_state() -> dict[str, Any]:
     if store_mode == "authoritative":
         _validate_task_state_projection_binding(store_mode)
         event_path = _task_state_event_path(store_mode)
-        events = load_events(event_path)
-        if not events:
+        # One validated pass over the journal: load_events followed by
+        # project_latest_state replayed and revalidated every event twice, which
+        # is the bulk of what a plain note command used to spend.
+        snapshot = load_snapshot(event_path)
+        if not snapshot["event_count"]:
             raise SystemExit(
                 "Authoritative task-state journal is empty; refusing ai-status.json fallback."
             )
-        state = project_latest_state(events)
+        state = snapshot["state"]
         if not isinstance(state, dict) or not state:
             raise SystemExit("Authoritative task-state projection is not a non-empty object.")
         sync_canonical_document_metadata(state)
@@ -1816,11 +1913,29 @@ def assert_task_archive_root_binding() -> None:
         )
 
 
+def _status_archive_terminal_outcome(task: Any) -> str:
+    """Return the exact archive outcome, with one legacy compatibility case."""
+
+    if not isinstance(task, dict) or task.get("status") != "done":
+        return ""
+    if "terminal_outcome" not in task:
+        return "completed"
+    outcome = task.get("terminal_outcome")
+    if outcome in {"completed", "superseded"}:
+        return str(outcome)
+    return ""
+
+
 def archive_terminal_task_from_state(state: dict[str, Any], task: dict[str, Any], *, archived_at: str | None = None) -> dict[str, Any]:
     assert_task_archive_root_binding()
     task_id = str(task.get("id") or "").strip()
     if not task_id:
         raise SystemExit("Cannot archive a task without an id")
+    terminal_outcome = _status_archive_terminal_outcome(task)
+    if not terminal_outcome:
+        raise RuntimeError(
+            f"terminal task has invalid archive outcome: {task_id}"
+        )
     related_handoffs = [deepcopy(handoff) for handoff in state.get("handoffs", []) if handoff.get("task_id") == task_id]
     related_blockers = [deepcopy(blocker) for blocker in state.get("blockers", []) if blocker.get("task_id") == task_id]
     existing = archived_task_snapshot(task_id)
@@ -1835,7 +1950,7 @@ def archive_terminal_task_from_state(state: dict[str, Any], task: dict[str, Any]
         )
         or iso_now(),
         "terminal_status": "done",
-        "terminal_outcome": terminal_outcome_for(task) or "completed",
+        "terminal_outcome": terminal_outcome,
         "task": deepcopy(task),
         "handoffs": related_handoffs,
         "blockers": related_blockers,
@@ -2097,6 +2212,7 @@ def _status_archive_snapshot_is_valid(snapshot: Any) -> bool:
     }:
         return False
     task = snapshot.get("task")
+    terminal_outcome = _status_archive_terminal_outcome(task)
     return bool(
         snapshot.get("version") == 1
         and snapshot.get("terminal_status") == "done"
@@ -2105,7 +2221,8 @@ def _status_archive_snapshot_is_valid(snapshot: Any) -> bool:
         and isinstance(task, dict)
         and task.get("id") == snapshot.get("task_id")
         and task.get("status") == "done"
-        and snapshot.get("terminal_outcome") == terminal_outcome_for(task)
+        and terminal_outcome
+        and snapshot.get("terminal_outcome") == terminal_outcome
         and isinstance(snapshot.get("handoffs"), list)
         and isinstance(snapshot.get("blockers"), list)
     )
@@ -5957,6 +6074,64 @@ def command_supersede(state: dict[str, Any], args: list[str]) -> None:
     )
 
 
+APPROVAL_BINDING_KEY = "review_binding"
+APPROVAL_HEAD_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
+DEFAULT_APPROVAL_BASE_BRANCH = "dev"
+
+
+def resolve_approval_binding(task: dict[str, Any]) -> dict[str, Any]:
+    """Bind an approval to the exact pull-request head the reviewer inspected."""
+
+    task_id = str(task.get("id") or "").strip()
+    raw_pr = os.environ.get("REVIEW_PR", "").strip().lstrip("#")
+    raw_head = os.environ.get("REVIEW_HEAD_SHA", "").strip()
+    base_branch = (
+        os.environ.get("REVIEW_BASE", "").strip() or DEFAULT_APPROVAL_BASE_BRANCH
+    )
+    head_branch = (
+        os.environ.get("REVIEW_HEAD_BRANCH", "").strip() or f"task/{task_id}"
+    )
+
+    owner = str(task.get("owner") or "").strip().casefold()
+    reviewer = str(task.get("reviewer") or "").strip().casefold()
+    independent = bool(reviewer) and reviewer != owner
+
+    if not raw_pr and not raw_head:
+        if independent:
+            print(
+                f"warning: {task_id} is approved without a reviewed-head binding. "
+                "If this task has a PR, the review-before-merge gate will refuse to "
+                "merge it (approval_head_binding_missing). Re-approve with "
+                "REVIEW_PR=<pr-number> and REVIEW_HEAD_SHA=<40-hex head oid> "
+                f"(optionally REVIEW_BASE, default {DEFAULT_APPROVAL_BASE_BRANCH!r}).",
+                file=sys.stderr,
+            )
+        return {}
+
+    if not raw_pr:
+        raise SystemExit(
+            "REVIEW_HEAD_SHA was supplied without REVIEW_PR; both are required."
+        )
+    if not raw_head:
+        raise SystemExit(
+            "REVIEW_PR was supplied without REVIEW_HEAD_SHA; both are required."
+        )
+    if not raw_pr.isdigit() or int(raw_pr) <= 0:
+        raise SystemExit(f"REVIEW_PR must be a positive PR number, got {raw_pr!r}")
+    if not APPROVAL_HEAD_SHA_RE.match(raw_head):
+        raise SystemExit(
+            f"REVIEW_HEAD_SHA must be a full 40-hex commit oid, got {raw_head!r}. "
+            "An abbreviated sha cannot be compared exactly."
+        )
+
+    return {
+        "pr": int(raw_pr),
+        "head_sha": raw_head.lower(),
+        "head_branch": head_branch,
+        "base": base_branch,
+    }
+
+
 def command_approve(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: approve <task-id> <message>")
@@ -5973,6 +6148,7 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
 
     review_notes = parse_delimited_env("REVIEW_NOTES_ZH")
     review_file = os.environ.get("REVIEW_FILE", "").strip()
+    binding = resolve_approval_binding(task)
     transition_candidate = dict(task)
     if review_notes:
         transition_candidate["review_notes_zh"] = review_notes
@@ -5992,6 +6168,10 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
         task["review_notes_zh"] = review_notes
     if review_file:
         task["review_file"] = review_file
+    if binding:
+        task[APPROVAL_BINDING_KEY] = dict(binding)
+    else:
+        task.pop(APPROVAL_BINDING_KEY, None)
     if verdict_ref is not None:
         task["protected_closeout_verdict"] = verdict_ref
     mark_blockers_resolved(state, task_id)
@@ -6003,7 +6183,16 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
         timestamp=timestamp,
         message=message,
     )
-    append_log({"ts": timestamp, "agent": actor, "type": "review_approved", "task_id": task_id, "message": message})
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": actor,
+            "type": "review_approved",
+            "task_id": task_id,
+            "message": message,
+            **({APPROVAL_BINDING_KEY: dict(binding)} if binding else {}),
+        }
+    )
 
 
 def command_sync(state: dict[str, Any], _args: list[str]) -> None:

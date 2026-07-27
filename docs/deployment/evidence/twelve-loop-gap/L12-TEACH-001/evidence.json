@@ -1,186 +1,443 @@
 {
-  "schema_version": 1,
-  "task_id": "L12-TEACH-001",
-  "owner": "Codex2",
-  "reviewer": "Codex",
-  "status": "blocked",
-  "generated_at": "2026-07-26T13:00:10Z",
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "L12-TEACH-001 product-level independent-review gate.",
+    "note": "Schema-normalized evidence for authenticated, tenant-safe, authoritative-HA persona teaching. Codex independently approved the merged implementation and the bounded hosted-activation residual.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/L12-TEACH-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Task-scoped evidence changes require a Pantheon task commit and independent reviewer verification.",
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-26T17:03:57Z",
+    "evidence_cut_semantics": "Owner closeout re-cut on task/L12-TEACH-001 at 3c42fbed3ad0060c9e02b9cf94531e061cebafba over dev integration tip 8b89fe10203df56ad95ef98a12459d8eeadb9b82, after Codex recorded review_approved at 2026-07-26T15:21:15Z. Delivery PRs #4149, #4166, #4176 and #4182 are already merged to dev. No hosted deployment, runtime activation, or maturity promotion is claimed.",
+    "id": "L12-TEACH-001",
+    "overall_admission": "review_approved",
+    "owner": "Claude",
+    "phase": "Twelve Loop Remediation / Teaching",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-TEACH-001/evidence.json",
+    "reviewer": "Codex",
+    "target_environment": "dev integration",
+    "target_maturity": "reconciled",
+    "task_branch": "task/L12-TEACH-001",
+    "title": "Make Persona Teaching authenticated, tenant-safe, and HA"
+  },
+  "authorities": {
+    "actual_state": [
+      "TeachingEvent and evaluation result",
+      "persona before and after controller record"
+    ],
+    "desired_state": [
+      "authenticated TeachingSession",
+      "evaluation and persona mutation policy"
+    ],
+    "task_packet": "docs/deployment/evidence/twelve-loop-gap/L12-TEACH-001/README.md"
+  },
   "scope": {
-    "target_repo": "pantheon",
-    "merge_target": "dev",
-    "service_root": "services/training-session",
-    "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-TEACH-001",
-    "store_anchor_commit": "5a942db461633dbd755fdf0578c42ad519c516b2",
-    "authority_anchor_commit": "184b5a54d7816e40841a1c52fd2c970d6c0ade36",
-    "reviewer_hardening_anchor_commit": "cc8592176e62907794e3a8943c13d0bd74524bc6",
-    "original_delivery_pr": 4149,
-    "original_merge_commit": "6636507f274ffcaf4b6d42b1c3cb8adb09dd49f5",
-    "reviewer_hardening_pr": 4166,
-    "reviewer_hardening_source_head": "408db61c5e8884d603555db03f2579ae071a4bb3",
-    "reviewer_hardening_merge_commit": "022bb35f4cd93c82571fcaf2799905a7043efcd2"
-  },
-  "inbound_authority": {
-    "bearer_verified": true,
-    "service_claim_bound": true,
-    "allowed_role": "training-service",
-    "tenant_claim_bound": true,
-    "cross_tenant_identifier_status": 404,
-    "commit_discard_mfa_required": true,
-    "trusted_actor_overrides_body": true,
-    "negative_cases": [
-      "missing_bearer",
-      "missing_tenant",
-      "service_claim_mismatch",
-      "actor_spoof",
-      "cross_tenant_read",
-      "missing_role",
-      "wrong_role",
-      "missing_mfa",
-      "malformed_mfa",
-      "well_formed_unverified_mfa_commit",
-      "well_formed_unverified_mfa_discard",
-      "raw_otp_actor_context_not_verified",
-      "strict_verifier_missing"
+    "authoritative_write_owner": "training-session-svc for teaching sessions, controls, previews, preview jobs, replays, and functional health records",
+    "composes_with": [
+      "L12-FLEET-001 fleet dependency",
+      "Codex independent review",
+      "L12-MANIFEST-001 Compose activation",
+      "L12-VERIFY-LEARN-001 and L12-HOSTED-001 hosted proof"
     ],
-    "missing_role_default_is_privileged": false,
-    "mfa_authority": "verified_jwt_claim",
-    "caller_supplied_six_digit_mfa_is_authoritative": false
-  },
-  "authoritative_store": {
-    "backend": "postgres",
-    "records_table": "training_session.authority_records",
-    "events_table": "training_session.teaching_events",
-    "record_kinds": [
-      "session",
-      "controls",
-      "preview",
-      "preview_job",
-      "replay",
-      "functional_health"
+    "evidence_changed_files": [
+      ".orchestrator/task-briefs/l12_teach_001.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-TEACH-001/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-TEACH-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-TEACH-001/evidence.sha256"
     ],
-    "preview_job_lock": "pg_advisory_xact_lock",
-    "replay_lock": "pg_advisory_xact_lock",
-    "session_append_lock": "pg_advisory_xact_lock",
-    "session_event_same_transaction": true,
-    "identical_event_duplicate": "return_durable_prior",
-    "mismatched_event_duplicate": "reject_without_overwrite",
-    "persona_target_owner_api_idempotent": true,
-    "json_fallback": "development_single_node_only"
-  },
-  "real_postgres_proof": {
-    "database": "existing local dev Postgres",
-    "isolated_random_tables": true,
-    "worker_instances": 2,
-    "restart_readback_instances": 1,
-    "terminal_commit_callbacks": 1,
-    "both_workers_observed_terminal": true,
-    "restart_observed_same_controller_record": true,
-    "concurrent_session_append_events": 2,
-    "durable_session_sequences": [
-      1,
-      2
+    "implementation_changed_files": [
+      "services/training-session/inbound_authority.py",
+      "services/training-session/main.py",
+      "services/training-session/store.py",
+      "services/training-session/tests/test_inbound_authority.py",
+      "services/training-session/tests/test_persona_target.py",
+      "services/training-session/tests/test_postgres_event_store.py"
     ],
-    "no_lost_session_update": true,
-    "identical_duplicate_returns_durable_prior": true,
-    "mismatched_duplicate_rejected": true,
-    "durable_conflict_rows": 1,
-    "test_tables_removed": true,
-    "result": "passed"
+    "not_changing": "source-ingest owner data production, persona target owner implementation, live broker or capital authority, execute-plans frontend, and hosted deployment cutover",
+    "owned_layer": "training-session inbound authority, tenant-bound teaching contracts, authoritative Postgres session/job/replay state, fail-closed persona mutation, and functional readiness derived from real evaluation and commit outcomes"
   },
-  "evaluation_failure": {
-    "governance_gate_state": "failed",
-    "persona_mutation_calls": 0,
-    "completion_status": 409,
-    "readyz_status": 503,
-    "functional_dependency": "degraded",
-    "later_passing_result_recovers": true
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "delivery_state": "merged_via_pr_4149",
+        "hosted_cut_inclusion": true,
+        "sha": "5a942db461633dbd755fdf0578c42ad519c516b2",
+        "subject": "L12-TEACH-001: anchor authoritative teaching store"
+      },
+      {
+        "delivery_state": "merged_via_pr_4149",
+        "hosted_cut_inclusion": true,
+        "sha": "184b5a54d7816e40841a1c52fd2c970d6c0ade36",
+        "subject": "L12-TEACH-001: anchor teaching authority and health"
+      },
+      {
+        "delivery_state": "merged_via_pr_4166",
+        "hosted_cut_inclusion": false,
+        "sha": "cc8592176e62907794e3a8943c13d0bd74524bc6",
+        "subject": "L12-TEACH-001: anchor reviewer hardening"
+      },
+      {
+        "delivery_state": "merged_via_pr_4182",
+        "hosted_cut_inclusion": false,
+        "sha": "b2a60abe0a02b78666f18a1abe1f3557664098b6",
+        "subject": "L12-TEACH-001: anchor hosted activation blocker"
+      }
+    ],
+    "pull_requests": [
+      {
+        "base": "dev",
+        "head_sha": "da0837b99ad72e10dfd89f0651fc88903f767e33",
+        "merge_sha": "6636507f274ffcaf4b6d42b1c3cb8adb09dd49f5",
+        "merged_at": "2026-07-26T10:12:03Z",
+        "number": 4149,
+        "url": "https://github.com/ajoe734/pantheon/pull/4149"
+      },
+      {
+        "base": "dev",
+        "head_sha": "408db61c5e8884d603555db03f2579ae071a4bb3",
+        "merge_sha": "022bb35f4cd93c82571fcaf2799905a7043efcd2",
+        "merged_at": "2026-07-26T11:51:10Z",
+        "number": 4166,
+        "url": "https://github.com/ajoe734/pantheon/pull/4166"
+      },
+      {
+        "base": "dev",
+        "head_sha": "eac18d93fbbee73db948204c7c8fc38ffa64a293",
+        "merge_sha": "26bf434f2ebab5c47af4692cb1eb71440a74d839",
+        "merged_at": "2026-07-26T12:27:32Z",
+        "number": 4176,
+        "url": "https://github.com/ajoe734/pantheon/pull/4176"
+      },
+      {
+        "base": "dev",
+        "head_sha": "b2a60abe0a02b78666f18a1abe1f3557664098b6",
+        "merge_sha": "902584bef7448b92cbf0686fd9c655481763b2bd",
+        "merged_at": "2026-07-26T13:02:44Z",
+        "number": 4182,
+        "url": "https://github.com/ajoe734/pantheon/pull/4182"
+      }
+    ],
+    "required_checks": [
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "0ec25b58e6c41681e0228650d3a2bd5eb828bbc8",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 29259973772,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/29259973772",
+        "workflow": "Branch CI Gate"
+      }
+    ]
   },
-  "persona_target_authority": {
-    "tenant_in_pre_readback": true,
-    "tenant_in_approval": true,
-    "tenant_in_write": true,
-    "tenant_in_terminal_readback": true,
-    "tenant_in_digest_binding": true,
-    "tenant_header_forwarded": true,
-    "exact_terminal_readback_required": true,
-    "duplicate_commit_idempotent": true
+  "validation": {
+    "commands": [
+      {
+        "command": "TRAINING_SESSION_TEST_POSTGRES_DSN=<local-dev-dsn> PYTHONPATH=services/training-session/tests:services/training-session:. /home/lupin/pantheon/.venv/bin/python -m pytest -q -p no:cacheprovider services/training-session",
+        "conclusion": "Owner closeout rerun: 129 passed, 1 warning in 30.38s against the local dev PostgreSQL instance on 127.0.0.1:15432; both opt-in real-Postgres tests ran and no test was skipped.",
+        "result": "pass"
+      },
+      {
+        "command": "PYTHONPATH=services/training-session/tests:services/training-session:. /home/lupin/pantheon/.venv/bin/python -m pytest -q -p no:cacheprovider services/training-session",
+        "conclusion": "Owner closeout rerun without the opt-in DSN: 127 passed, 2 skipped, 1 warning in 32.81s; the two skips are the env-gated real-Postgres tests proven in the run above.",
+        "result": "pass"
+      },
+      {
+        "command": "PYTHONPATH=. /home/lupin/pantheon/.venv/bin/python -m py_compile services/training-session/inbound_authority.py services/training-session/main.py services/training-session/store.py services/training-session/tests/test_inbound_authority.py services/training-session/tests/test_postgres_event_store.py",
+        "conclusion": "exit 0",
+        "result": "pass"
+      },
+      {
+        "command": "git diff --check",
+        "conclusion": "exit 0",
+        "result": "pass"
+      },
+      {
+        "command": "python3 scripts/loop_done_guardrail.py --evidence-root docs/deployment/evidence/twelve-loop-gap/L12-TEACH-001",
+        "conclusion": "Evidence replay passed with 0 gaps after the manifest was corrected to describe L12-TEACH-001.",
+        "result": "pass"
+      },
+      {
+        "command": "git -C /home/lupin/pantheon-ci-deploy/dev-root rev-parse HEAD; git merge-base --is-ancestor <required-merge> <hosted-head>",
+        "conclusion": "The read-only replacement-dev observation at 2026-07-26T13:00:10Z found active Compose checkout 6a0281e8f8996883faae3ddaab7505b2ddc68ac1, which contains original merge 6636507f274ffcaf4b6d42b1c3cb8adb09dd49f5 but not reviewer-hardening merge 022bb35f4cd93c82571fcaf2799905a7043efcd2 or evidence merge 26bf434f2ebab5c47af4692cb1eb71440a74d839.",
+        "result": "observed_not_activated"
+      },
+      {
+        "command": "curl hosted training-session healthz/readyz and inspect only non-secret runtime configuration presence",
+        "conclusion": "healthz=200 readyz=200; PANTHEON_PERSISTENCE_POSTURE=dev; TRAINING_SESSION_EVENT_STORE_BACKEND=jsonl; all four persona/approval/target authority URL templates absent; persona authority token absent; no source-revision image labels. A healthy local-fallback service without an owner API cannot emit a hosted persona terminal record, so no hosted proof is claimed here.",
+        "result": "observed_not_activated"
+      }
+    ],
+    "validated_at": "2026-07-26T17:03:57Z",
+    "validated_base_sha": "8b89fe10203df56ad95ef98a12459d8eeadb9b82",
+    "validated_head_sha": "3c42fbed3ad0060c9e02b9cf94531e061cebafba"
   },
-  "hosted_terminal_readback": {
-    "status": "not_claimed",
-    "reason": "The active hosted runtime cannot produce the required owner-service terminal record: it predates the reviewer-hardening merge and has neither the authoritative Postgres mode nor persona authority endpoints activated. Local/fake records are not hosted proof.",
-    "activation_task": "L12-MANIFEST-001",
-    "service_boundary_verification_task": "L12-VERIFY-LEARN-001",
-    "hosted_acceptance_task": "L12-HOSTED-001",
-    "observed_at": "2026-07-26T13:00:10Z",
-    "active_runtime_observation": {
-      "compose_checkout_head": "6a0281e8f8996883faae3ddaab7505b2ddc68ac1",
-      "original_delivery_is_ancestor": true,
-      "reviewer_hardening_is_ancestor": false,
-      "evidence_refresh_is_ancestor": false,
-      "training_session_container": "pantheon-training-session-svc-1",
-      "healthz_status": 200,
-      "readyz_status": 200,
-      "persistence_posture": "dev",
-      "event_store_backend": "jsonl",
-      "persona_readback_url_configured": false,
-      "approval_readback_url_configured": false,
-      "persona_target_write_url_configured": false,
-      "persona_target_readback_url_configured": false,
-      "persona_authority_token_configured": false,
-      "training_session_image_revision_label": null,
-      "persona_image_revision_label": null
+  "deployment": {
+    "applicable": false,
+    "canonical_root_deploy": {
+      "reason": "Hosted Compose activation belongs to L12-MANIFEST-001; this packet does not deploy the merged implementation.",
+      "status": "not_applicable"
     },
-    "ownership_blocker": {
-      "task_scope_allows_compose_activation": false,
-      "manifest_owner": "L12-MANIFEST-001",
-      "manifest_depends_on_this_task": true,
-      "service_drill_owner": "L12-VERIFY-LEARN-001",
-      "service_drill_depends_on_this_task": true,
-      "hosted_drill_owner": "L12-HOSTED-001",
-      "required_resolution": "Supervisor must either move hosted terminal readback proof to the downstream activation/verification tasks or allow those tasks to activate and verify before L12-TEACH-001 review."
+    "environment": "dev integration",
+    "identity_admission": {
+      "proof": "The inbound authority tests exercise the real strict bearer verifier, the training-service role claim, the allowlisted X-Pantheon-Service claim binding, and the X-Tenant-Id claim binding; no fixture bypass is admitted as identity proof.",
+      "status": "pass"
+    },
+    "public_bff_base_url": "not_applicable_no_hosted_claim",
+    "post_cut_runtime_observation": {
+      "compose_checkout_head": "6a0281e8f8996883faae3ddaab7505b2ddc68ac1",
+      "event_store_backend": "jsonl",
+      "observed_at": "2026-07-26T13:00:10Z",
+      "original_delivery_is_ancestor": true,
+      "persistence_posture": "dev",
+      "persona_authority_urls_configured": false,
+      "reviewer_hardening_is_ancestor": false,
+      "status": "not_activated"
+    },
+    "publish_cut": {
+      "reason": "This owner packet proves the local authoritative-store and HTTP contract and does not claim a hosted publication cut.",
+      "status": "not_applicable"
     }
   },
-  "validation": [
+  "hosted_readback": {
+    "pre_deploy": {
+      "reason": "Hosted persona terminal readback is deliberately not claimed. The active replacement-dev runtime predates the reviewer-hardening merge and has neither the authoritative Postgres mode nor the persona authority endpoints activated. Compose activation belongs to L12-MANIFEST-001, the cross-service teaching drill to L12-VERIFY-LEARN-001, and the hosted acceptance drill to L12-HOSTED-001.",
+      "status": "not_applicable"
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "proof": [
+        "Replay decisions require an Idempotency-Key and replay the stored decision without emitting a duplicate commit or discard event.",
+        "An identical duplicate teaching event returns the durable prior row, while a duplicate event_id with a changed payload is rejected without overwriting the durable row.",
+        "Persona target commit reuses the same idempotency key and generation on duplicate submission."
+      ],
+      "status": "pass"
+    },
+    "failure_and_degraded_behavior": {
+      "proof": [
+        "Missing, malformed, stale, or digest-mismatched evaluation proofs fail closed with HTTP 409 and perform zero persona mutation calls.",
+        "A failed governance gate returns 409 and drives /readyz to 503 with the functional dependency reported as degraded; a later passing evaluation with an exact terminal readback restores readiness.",
+        "A commit that reaches a missing replay after authenticated MFA admission is recorded as a failed persona_commit functional result and holds /readyz at 503."
+      ],
+      "status": "pass"
+    },
+    "request_receipt_downstream_correlation": {
+      "proof": [
+        "Inbound authority verifies the bearer identity, the training-service role, the allowlisted service claim, and the tenant claim before route execution, and body actor fields cannot override the verified delegated actor.",
+        "Persona pre-readback, approval, target write, and terminal readback all carry the same tenant, which is bound into the digest-verified proof and the committed target binding."
+      ],
+      "status": "pass"
+    },
+    "restart_and_recovery": {
+      "proof": [
+        "In Postgres mode, sessions, controls, previews, preview jobs, replays, and functional results are stored in training_session.authority_records and teaching events in training_session.teaching_events, with transaction-scoped advisory locks on replay, preview-job, and session-append paths.",
+        "Two independent store instances against isolated random tables in the local dev PostgreSQL both observed one terminal committed replay with exactly one persona-target callback, and a newly constructed store read the same terminal controller record.",
+        "Concurrent session appends produced durable sequences 1 and 2 with no lost session update; each test dropped only its own random tables."
+      ],
+      "status": "pass"
+    },
+    "rollback_or_compensation": {
+      "proof": [
+        "Evaluation failure performs no persona mutation, so a failed teaching attempt needs no compensating write.",
+        "Replay decisions are idempotent and digest-bound, so re-submission replays the stored terminal decision instead of duplicating or reversing persona state."
+      ],
+      "status": "pass"
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "proof": "Verification ran in the task worktree against the local dev PostgreSQL instance and isolated random tables; no hosted or shared runtime state was mutated, and the hosted observation was read-only.",
+      "status": "pass"
+    },
+    "hosted_frontend": {
+      "reason": "No execute-plans or frontend surface is in this task's artifact scope.",
+      "status": "not_applicable"
+    },
+    "mfa": {
+      "proof": "Commit and discard require MFA asserted by the verified JWT/IdP claim before route execution; a caller-supplied six-digit X-MFA-Token without claim-bound proof fails with 401 MFA_NOT_VERIFIED, and well-formed-but-unverified MFA is rejected on both commit and discard.",
+      "status": "pass"
+    },
+    "no_live_capital": {
+      "proof": "The teaching path writes persona target state through the persona owner API only; it imports no broker, order, or capital writer.",
+      "status": "pass"
+    },
+    "rbac": {
+      "proof": "JWTs without a role claim are no longer promoted to training-service; both missing-role and wrong-role tokens fail with 403 AUTH_FORBIDDEN, and cross-tenant reads return scoped absence.",
+      "status": "pass"
+    },
+    "tenant_isolation": {
+      "proof": "Teaching records are bound to the verified tenant and service, every persona authority request carries X-Tenant-Id, and the tenant is included in the digest-bound proof and the committed target binding.",
+      "status": "pass"
+    },
+    "two_person_approval": {
+      "proof": "Owner Claude and reviewer Codex remain distinct; Codex independently approved the merged delivery at 2026-07-26T15:21:15Z after re-reviewing PR #4149, #4166, #4176 and #4182.",
+      "status": "pass"
+    }
+  },
+  "acceptance": [
     {
-      "command": "TRAINING_SESSION_TEST_POSTGRES_DSN=<local-dev-dsn> PYTHONPATH=services/training-session/tests:services/training-session:. /home/lupin/pantheon/.venv/bin/python -m pytest -q -p no:cacheprovider services/training-session",
-      "result": "129 passed, 1 warning in 31.16s"
+      "evidence_refs": [
+        "services/training-session/tests/test_inbound_authority.py::test_teaching_mutation_requires_bearer_service_and_tenant",
+        "services/training-session/tests/test_inbound_authority.py::test_strict_jwt_requires_explicit_authorized_training_role",
+        "services/training-session/tests/test_inbound_authority.py::test_teaching_records_are_bound_to_verified_tenant_and_service",
+        "services/training-session/tests/test_inbound_authority.py::test_replay_commit_requires_verified_mfa_before_route_execution",
+        "services/training-session/tests/test_inbound_authority.py::test_commit_and_discard_reject_well_formed_but_unverified_mfa",
+        "services/training-session/tests/test_inbound_authority.py::test_caller_supplied_otp_is_not_recorded_as_verified_mfa"
+      ],
+      "id": "AC1",
+      "statement": "Teaching mutations authenticate actor service and tenant.",
+      "status": "pass"
     },
     {
-      "command": "PYTHONPATH=. /home/lupin/pantheon/.venv/bin/python -m py_compile services/training-session/inbound_authority.py services/training-session/main.py services/training-session/store.py services/training-session/tests/test_inbound_authority.py services/training-session/tests/test_postgres_event_store.py",
-      "result": "exit 0"
+      "evidence_refs": [
+        "services/training-session/tests/test_postgres_event_store.py::test_postgres_event_store_is_env_gated_and_uses_table_payload",
+        "services/training-session/tests/test_postgres_event_store.py::test_postgres_event_store_replays_durable_duplicate_and_rejects_conflict",
+        "services/training-session/tests/test_postgres_event_store.py::test_postgres_replay_lock_allows_one_terminal_commit_across_workers_and_restart",
+        "services/training-session/tests/test_persona_target.py::test_commit_persona_target_reads_authorities_writes_and_verifies_terminal",
+        "services/training-session/tests/test_persona_target.py::test_terminal_readback_must_match_every_digest_and_generation",
+        "services/training-session/tests/test_store_durability.py::test_event_append_is_durable_and_complete_across_store_instances"
+      ],
+      "id": "AC2",
+      "statement": "Session, job, replay, and persona target state are authoritative HA storage.",
+      "status": "pass"
     },
     {
-      "command": "git diff --check",
-      "result": "exit 0"
+      "evidence_refs": [
+        "services/training-session/tests/test_http_service.py::test_canonical_dataset_validation_and_fail_closed_and_evidence",
+        "services/training-session/tests/test_inbound_authority.py::test_replay_commit_requires_verified_mfa_before_route_execution",
+        "services/training-session/tests/test_inbound_authority.py::test_readiness_degrades_when_strict_inbound_verifier_is_missing"
+      ],
+      "id": "AC3",
+      "statement": "Health is degraded when evaluation or commit cannot complete.",
+      "status": "pass"
     },
     {
-      "command": "git -C /home/lupin/pantheon-ci-deploy/dev-root rev-parse HEAD; git -C /home/lupin/pantheon-ci-deploy/dev-root merge-base --is-ancestor <required-merge> HEAD",
-      "result": "hosted checkout 6a0281e8f8996883faae3ddaab7505b2ddc68ac1 contains original merge 6636507f274ffcaf4b6d42b1c3cb8adb09dd49f5 but not reviewer hardening 022bb35f4cd93c82571fcaf2799905a7043efcd2 or evidence refresh 26bf434f2ebab5c47af4692cb1eb71440a74d839"
+      "evidence_refs": [
+        "services/training-session/tests/test_http_service.py::test_canonical_dataset_validation_and_fail_closed_and_evidence",
+        "services/training-session/tests/test_http_service.py::test_commit_rejects_persona_patch_without_eval_proof",
+        "services/training-session/tests/test_persona_target.py::test_commit_persona_target_rejects_negative_authoritative_approval",
+        "services/training-session/tests/test_persona_target.py::test_commit_rejects_changed_persona_precondition_digest"
+      ],
+      "id": "AC4",
+      "statement": "Evaluation failure performs no persona mutation.",
+      "status": "pass"
     },
     {
-      "command": "curl hosted training-session healthz/readyz and inspect only non-secret runtime configuration presence",
-      "result": "healthz=200 readyz=200; persistence_posture=dev; event_store_backend=jsonl; persona/approval/write/readback URL templates absent; persona authority token absent; training-session and persona image revision labels absent"
+      "evidence_refs": [
+        "services/training-session/tests/test_postgres_event_store.py::test_real_postgres_two_workers_and_restart_observe_one_terminal_commit",
+        "services/training-session/tests/test_postgres_event_store.py::test_real_postgres_two_workers_serialize_session_append_and_reject_event_conflict",
+        "services/training-session/tests/test_http_service.py::test_concurrent_replay_commit_serializes_persona_commit_and_evidence",
+        "services/training-session/tests/test_persona_target.py::test_duplicate_commit_reuses_idempotency_key_and_generation"
+      ],
+      "id": "AC5",
+      "statement": "Two workers and a process restart produce one terminal persona commit.",
+      "status": "pass"
     }
   ],
-  "acceptance": {
-    "teaching_mutations_authenticate_actor_service_and_tenant": true,
-    "session_job_replay_are_authoritative_ha_state": true,
-    "persona_target_uses_authoritative_tenant_bound_owner_api": true,
-    "health_degrades_on_evaluation_or_commit_failure": true,
-    "evaluation_failure_performs_no_persona_mutation": true,
-    "two_workers_and_restart_produce_one_terminal_commit": true,
-    "strict_jwt_requires_explicit_training_role": true,
-    "commit_discard_require_authoritative_mfa": true,
-    "two_workers_append_without_lost_session_update": true,
-    "event_id_conflicts_preserve_durable_prior": true,
-    "implementation_overall": "passed",
-    "hosted_proof": "deferred_to_downstream_activation_and_verification"
+  "residual_risks": {
+    "hosted_activation": {
+      "blocking_for_this_task": false,
+      "containment": "No hosted or maturity claim is made. The packet remains dev-integration evidence until the deployment lanes deploy and prove an exact merged commit.",
+      "description": "The merged reviewer-hardening delivery is not active on the replacement-dev runtime: the observed Compose checkout predates it, persistence posture is dev, the event store backend is jsonl, and the persona authority URL templates and token are absent.",
+      "expiry": "When L12-MANIFEST-001 records an accepted deployment cut and L12-VERIFY-LEARN-001 / L12-HOSTED-001 record a real persona terminal readback.",
+      "owner": "L12-MANIFEST-001, L12-VERIFY-LEARN-001, and L12-HOSTED-001",
+      "recheck_trigger": "Before any hosted persona teaching maturity promotion to proven-live.",
+      "severity": "medium"
+    },
+    "hosted_proof_ordering": {
+      "blocking_for_this_task": false,
+      "containment": "The reviewer accepted the dev-integration boundary and deferred the hosted terminal readback to the downstream lanes, so the ordering question does not gate this closeout.",
+      "description": "The canonical dependency graph places L12-TEACH-001 before L12-MANIFEST-001 and L12-VERIFY-LEARN-001, while a hosted terminal readback for teaching can only be produced after those lanes activate and verify the runtime.",
+      "expiry": "When the supervisor confirms hosted teaching proof ownership sits with the downstream activation and verification tasks.",
+      "owner": "Supervisor",
+      "recheck_trigger": "Before adding a hosted-proof requirement to any upstream loop implementation task.",
+      "severity": "low"
+    },
+    "image_revision_labels_absent": {
+      "blocking_for_this_task": false,
+      "containment": "The observation records the absence explicitly instead of inferring a source identity from a healthy endpoint.",
+      "description": "Neither the training-session nor the persona image exposes a source-revision label, so a running image cannot be bound to an exact source commit by readback alone.",
+      "expiry": "When deployment images carry a source-revision label.",
+      "owner": "L12-MANIFEST-001",
+      "recheck_trigger": "Whenever hosted evidence must bind a running image to a merged commit.",
+      "severity": "low"
+    }
   },
-  "residuals": [
-    "Docker Compose/BFF credential forwarding and worker activation are outside this task artifact scope and belong to L12-MANIFEST-001.",
-    "A real hosted persona terminal readback must be captured by L12-VERIFY-LEARN-001/L12-HOSTED-001 after the exact merged commit is deployed.",
-    "The full suite warning is the existing Starlette httpx deprecation warning.",
-    "PR #4166 is merged, but the reviewer-hardening delivery remains unhosted until downstream deployment selects and proves its exact merged commit.",
-    "The canonical dependency graph currently requires L12-TEACH-001 before L12-MANIFEST-001 and L12-VERIFY-LEARN-001, while L12-TEACH-001 review now requires the hosted proof owned by those downstream tasks; supervisor contract or ordering revision is required."
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-TEACH-001/evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/twelve-loop-gap/L12-TEACH-001/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/twelve-loop-gap/L12-TEACH-001/evidence.json",
+    "normalized_hosted_readback": {
+      "authoritative_postgres_integration": true,
+      "hosted_activation_claimed": false,
+      "hosted_terminal_readback_claimed": false
+    },
+    "self_hash_omitted": true,
+    "self_hash_reason": "The companion checksum file contains the manifest digest and avoids recursive self-hashing.",
+    "source_artifact_sha256_by_epoch": {
+      "inbound_authority": "17ffcf8a149607378709d4e85cfbbdf5d5e1db33541bf89adad7c72ed419bbc7",
+      "main": "14882def1e58945e254dcc0678b44566625ed54656159860935408849c8490f7",
+      "store": "23602f999cfd048a632a0ec96d421453285eb411a67ce3e0f70160a5b0a770cf",
+      "test_inbound_authority": "b1826404eacf709233fa3d5ed589454016ca0204e02855e0d08581d3426917d4",
+      "test_persona_target": "fda13ac85f49751ff148de43c4878cf4977d97c0d183265d350c6144cede2fe2",
+      "test_postgres_event_store": "ffd9d1136a36ec897e2821523db722cd92cf409dfec05f3f65ff0f2049f85cd8"
+    }
+  },
+  "record_log": [
+    {
+      "actor": "Codex2",
+      "kind": "owner_evidence_ready",
+      "recorded_at": "2026-07-26T13:00:10Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/L12-TEACH-001/evidence.json",
+      "sequence": 1,
+      "sha": "26bf434f2ebab5c47af4692cb1eb71440a74d839",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "owner_hosted_activation_observation",
+      "recorded_at": "2026-07-26T15:08:48Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4182",
+      "sequence": 2,
+      "sha": "902584bef7448b92cbf0686fd9c655481763b2bd",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex",
+      "kind": "independent_review_approval",
+      "recorded_at": "2026-07-26T15:21:15Z",
+      "reference": "Independent re-review passed: PR #4149 merge 6636507f274ffcaf4b6d42b1c3cb8adb09dd49f5, hardening PR #4166 merge 022bb35f4cd93c82571fcaf2799905a7043efcd2, evidence PR #4176 merge 26bf434f2ebab5c47af4692cb1eb71440a74d839, and blocker-observation PR #4182 merge 902584bef7448b92cbf0686fd9c655481763b2bd",
+      "sequence": 3,
+      "sha": "902584bef7448b92cbf0686fd9c655481763b2bd",
+      "status": "review_approved"
+    },
+    {
+      "actor": "Claude",
+      "kind": "owner_closeout_manifest_correction",
+      "recorded_at": "2026-07-26T17:03:57Z",
+      "reference": "Corrected the schema-normalized manifest, which had been populated from the LOOP-PROD-002 template and carried that task's branch, checksum, integrity, authority, deployment, hosted-readback, and acceptance content. Replaced with L12-TEACH-001 truth and re-ran the owner validation commands; no reviewed claim was upgraded and no hosted proof was added.",
+      "sequence": 4,
+      "sha": "3c42fbed3ad0060c9e02b9cf94531e061cebafba",
+      "status": "pass"
+    }
   ]
 }

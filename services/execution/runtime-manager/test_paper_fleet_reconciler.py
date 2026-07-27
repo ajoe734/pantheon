@@ -2,14 +2,133 @@
 from __future__ import annotations
 
 import json
+import multiprocessing
+import shutil
+import socket
 import subprocess
 import tempfile
 import threading
+import time
 import unittest
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock, patch
+
+
+def _unit_leader_store():
+    from paper_fleet_reconciler import InMemoryFencedLeaderStore
+
+    return InMemoryFencedLeaderStore()
+
+
+def _redis_lease_process(
+    redis_url: str,
+    reconciler_id: str,
+    ttl_seconds: float,
+    result_queue,
+) -> None:
+    import redis
+    from paper_fleet_reconciler import (
+        PaperFleetReconciler,
+        RedisFencedLeaderStore,
+    )
+
+    store = RedisFencedLeaderStore(
+        redis.Redis.from_url(redis_url, decode_responses=True),
+        lease_key="pantheon:test:l12-cap:leader",
+    )
+    reconciler = PaperFleetReconciler(
+        leader_store=store,
+        leader_lease_ttl_seconds=ttl_seconds,
+        reconciler_id=reconciler_id,
+    )
+    acquired = reconciler.try_acquire_lease()
+    result_queue.put(
+        {
+            "reconciler_id": reconciler_id,
+            "acquired": acquired,
+            "token": reconciler._fence_token,
+            "expires_at_ms": reconciler._lease_expires_at_ms,
+        }
+    )
+
+
+class _RealRedisDockerTestCase(unittest.TestCase):
+    redis_url = ""
+    _container_name = ""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        super().setUpClass()
+        if shutil.which("docker") is None:
+            raise unittest.SkipTest("docker is required for real Redis proof")
+        if subprocess.run(
+            ["docker", "info"],
+            check=False,
+            capture_output=True,
+            text=True,
+        ).returncode != 0:
+            raise unittest.SkipTest("docker daemon is unavailable for real Redis proof")
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = int(sock.getsockname()[1])
+        cls._container_name = f"l12-cap-leader-{uuid.uuid4().hex[:10]}"
+        started = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "-d",
+                "--name",
+                cls._container_name,
+                "-p",
+                f"127.0.0.1:{port}:6379",
+                "redis:7-alpine",
+                "redis-server",
+                "--save",
+                "",
+                "--appendonly",
+                "no",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if started.returncode != 0:
+            raise unittest.SkipTest(f"could not start Redis container: {started.stderr}")
+        cls.redis_url = f"redis://127.0.0.1:{port}/14"
+        import redis
+
+        client = redis.Redis.from_url(cls.redis_url, decode_responses=True)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            try:
+                if client.ping():
+                    return
+            except Exception:
+                time.sleep(0.05)
+        cls.tearDownClass()
+        raise RuntimeError("real Redis container did not become ready")
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        if cls._container_name:
+            subprocess.run(
+                ["docker", "rm", "-f", cls._container_name],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            cls._container_name = ""
+        super().tearDownClass()
+
+    def setUp(self) -> None:
+        import redis
+
+        self.redis = redis.Redis.from_url(self.redis_url, decode_responses=True)
+        self.redis.flushdb()
 
 
 class _FakeProcess:
@@ -90,6 +209,7 @@ class _InstrumentedReconciler:
                 self.spawned.append({"binding_id": binding_id, "port": port, "pid": pid, "proc": proc})
                 return proc
 
+        kwargs.setdefault("leader_store", _unit_leader_store())
         self.recon = _TestReconciler(**kwargs)
 
     def set_bindings(self, bindings: List[Dict[str, Any]]) -> None:
@@ -452,7 +572,11 @@ class TestPaperFleetReconcilerFiltersPaperOnly(unittest.TestCase):
                 proc = _FakeProcess()
                 return proc
 
-        recon = _TestFetch(worker_base_port=9750, poll_interval_seconds=999)
+        recon = _TestFetch(
+            worker_base_port=9750,
+            poll_interval_seconds=999,
+            leader_store=_unit_leader_store(),
+        )
         snap = recon.reconcile_once()
         self.assertEqual(snap["worker_count"], 1)
         self.assertEqual(snap["workers"][0]["binding_id"], "b-paper")
@@ -490,6 +614,7 @@ class TestPaperFleetReconcilerDegradedFetch(unittest.TestCase):
             max_restarts=2,
             restart_backoff_seconds=0,
             drain_timeout_seconds=1,
+            leader_store=_unit_leader_store(),
         )
         return recon, state, spawned
 
@@ -593,7 +718,11 @@ class TestPaperFleetReconcilerSignalQueueIsolation(unittest.TestCase):
                 captured_envs[binding_id] = env.get("PANTHEON_SIGNAL_QUEUE_KEY", "")
                 return _FakeProcess()
 
-        recon = _R(worker_base_port=9950, poll_interval_seconds=999)
+        recon = _R(
+            worker_base_port=9950,
+            poll_interval_seconds=999,
+            leader_store=_unit_leader_store(),
+        )
         recon.reconcile_once()
 
         self.assertEqual(len(captured_envs), 2)
@@ -654,6 +783,7 @@ class TestPaperFleetReconcilerMonitoringSessions(unittest.TestCase):
             restart_backoff_seconds=0,
             monitoring_heartbeat_stale_after_seconds=1,
             drain_timeout_seconds=1,
+            leader_store=_unit_leader_store(),
         )
 
         first = recon.reconcile_once()
@@ -730,6 +860,7 @@ class TestPaperFleetReconcilerMonitoringSessions(unittest.TestCase):
                 monitoring_session_store_path=str(store_path),
                 monitoring_heartbeat_stale_after_seconds=1,
                 drain_timeout_seconds=1,
+                leader_store=_unit_leader_store(),
             )
 
             snap = recon.reconcile_once()
@@ -804,6 +935,7 @@ class TestPaperFleetReconcilerMonitoringSessions(unittest.TestCase):
                 monitoring_session_store_path=str(store_path),
                 monitoring_heartbeat_stale_after_seconds=90,
                 drain_timeout_seconds=1,
+                leader_store=_unit_leader_store(),
             )
 
             snap = recon.reconcile_once()
@@ -923,6 +1055,7 @@ class TestPaperFleetReconcilerExcludedBindings(unittest.TestCase):
             worker_base_port=9050,
             poll_interval_seconds=999,
             drain_timeout_seconds=1,
+            leader_store=_unit_leader_store(),
         )
         recon.reconcile_once()
         self.assertEqual(recon.snapshot()["worker_count"], 1)
@@ -1025,6 +1158,192 @@ class TestPaperFleetReconcilerAcceptanceCriteria(unittest.TestCase):
         self.assertEqual(snap["worker_count"], 0)
         proc = wrapper.spawned[0]["proc"]
         self.assertTrue(proc.terminated or proc.killed, "retired binding must stop its worker")
+
+
+class TestLeaderLease(unittest.TestCase):
+
+    def test_two_reconcilers_leader_lease_convergence(self) -> None:
+        """Requirement (d): Two concurrent reconcilers converge to a single leader owner."""
+        shared_store = _unit_leader_store()
+        w1 = _InstrumentedReconciler(
+            worker_base_port=9100,
+            leader_store=shared_store,
+        )
+        w2 = _InstrumentedReconciler(
+            worker_base_port=9200,
+            leader_store=shared_store,
+        )
+
+        binding = _make_binding("b-lease")
+        w1.set_bindings([binding])
+        w2.set_bindings([binding])
+
+        # w1 runs first and acquires lease
+        s1 = w1.recon.reconcile_once()
+        self.assertTrue(w1.recon.is_leader)
+        self.assertEqual(len(w1.spawned), 1)
+        self.assertGreater(s1["fence_token"], 0)
+
+        # w2 runs and yields to w1
+        s2 = w2.recon.reconcile_once()
+        self.assertFalse(w2.recon.is_leader)
+        self.assertEqual(len(w2.spawned), 0)
+        self.assertIsNone(s2["fence_token"])
+
+    def test_missing_leader_store_fails_closed(self) -> None:
+        from paper_fleet_reconciler import PaperFleetReconciler
+
+        reconciler = PaperFleetReconciler()
+        self.assertFalse(reconciler.try_acquire_lease())
+        self.assertFalse(reconciler.is_leader)
+        self.assertIn("not configured", reconciler.snapshot()["last_error"])
+
+    def test_blocked_spawn_expiry_terminates_stale_leader_child(self) -> None:
+        from paper_fleet_reconciler import (
+            InMemoryFencedLeaderStore,
+            PaperFleetReconciler,
+        )
+
+        shared_store = InMemoryFencedLeaderStore()
+        spawn_entered = threading.Event()
+        release_spawn = threading.Event()
+        stale_process = _FakeProcess(pid=1201)
+        successor_process = _FakeProcess(pid=1202)
+
+        class _BlockedReconciler(PaperFleetReconciler):
+            def _fetch_fleet_state(self):
+                return ([_make_binding("b-blocked-spawn")], set())
+
+            def _spawn(self, binding_id, port, env):  # noqa: ANN001
+                spawn_entered.set()
+                release_spawn.wait(timeout=5)
+                return stale_process
+
+        class _SuccessorReconciler(PaperFleetReconciler):
+            def _fetch_fleet_state(self):
+                return ([_make_binding("b-blocked-spawn")], set())
+
+            def _spawn(self, binding_id, port, env):  # noqa: ANN001
+                return successor_process
+
+        stale = _BlockedReconciler(
+            leader_store=shared_store,
+            leader_lease_ttl_seconds=0.1,
+            reconciler_id="reconciler-stale",
+            drain_timeout_seconds=0.1,
+        )
+        successor = _SuccessorReconciler(
+            leader_store=shared_store,
+            leader_lease_ttl_seconds=0.1,
+            reconciler_id="reconciler-successor",
+            drain_timeout_seconds=0.1,
+        )
+        stale_result: dict[str, Any] = {}
+
+        def _run_stale() -> None:
+            stale_result["snapshot"] = stale.reconcile_once()
+
+        stale_thread = threading.Thread(target=_run_stale)
+        stale_thread.start()
+        self.assertTrue(spawn_entered.wait(timeout=2))
+        stale_token = stale._fence_token
+
+        time.sleep(0.15)
+        successor_snapshot = successor.reconcile_once()
+        self.assertGreater(successor._fence_token, stale_token)
+        self.assertEqual(successor_snapshot["worker_count"], 1)
+
+        release_spawn.set()
+        stale_thread.join(timeout=2)
+        self.assertFalse(stale_thread.is_alive())
+        self.assertFalse(stale.is_leader)
+        self.assertEqual(stale_result["snapshot"]["worker_count"], 0)
+        self.assertTrue(stale_process.terminated or stale_process.killed)
+        self.assertFalse(successor_process.terminated)
+        self.assertIn("fence expired", stale.snapshot()["last_error"])
+
+
+class TestRedisFencedLeaderLease(_RealRedisDockerTestCase):
+    def _store(self):
+        from paper_fleet_reconciler import RedisFencedLeaderStore
+
+        return RedisFencedLeaderStore(
+            self.redis,
+            lease_key="pantheon:test:l12-cap:leader",
+        )
+
+    def test_two_real_reconciler_processes_converge_and_stale_token_is_fenced(self):
+        context = multiprocessing.get_context("spawn")
+        result_queue = context.Queue()
+        contenders = [
+            context.Process(
+                target=_redis_lease_process,
+                args=(
+                    self.redis_url,
+                    f"reconciler-process-{index}",
+                    0.4,
+                    result_queue,
+                ),
+            )
+            for index in (1, 2)
+        ]
+        for process in contenders:
+            process.start()
+        for process in contenders:
+            process.join(timeout=10)
+            self.assertEqual(process.exitcode, 0)
+
+        first_round = [result_queue.get(timeout=2) for _ in contenders]
+        leaders = [item for item in first_round if item["acquired"]]
+        followers = [item for item in first_round if not item["acquired"]]
+        self.assertEqual(len(leaders), 1)
+        self.assertEqual(len(followers), 1)
+        first_token = leaders[0]["token"]
+
+        time.sleep(0.45)
+        successor = context.Process(
+            target=_redis_lease_process,
+            args=(
+                self.redis_url,
+                "reconciler-process-successor",
+                0.4,
+                result_queue,
+            ),
+        )
+        successor.start()
+        successor.join(timeout=10)
+        self.assertEqual(successor.exitcode, 0)
+        successor_result = result_queue.get(timeout=2)
+        self.assertTrue(successor_result["acquired"])
+        self.assertGreater(successor_result["token"], first_token)
+
+        stale_renewal = self._store().acquire_or_renew(
+            leaders[0]["reconciler_id"],
+            first_token,
+            0.4,
+        )
+        self.assertFalse(stale_renewal.acquired)
+        self.assertEqual(stale_renewal.token, successor_result["token"])
+        self.assertFalse(
+            self._store().validate(
+                leaders[0]["reconciler_id"],
+                first_token,
+            )
+        )
+
+    def test_production_builder_uses_shared_redis_fenced_backend(self) -> None:
+        import paper_fleet_reconciler
+
+        with patch.dict(
+            "os.environ",
+            {
+                "RECONCILER_LEADER_REDIS_URL": self.redis_url,
+                "RECONCILER_LEADER_LEASE_PATH": "",
+            },
+            clear=False,
+        ):
+            store = paper_fleet_reconciler._build_production_leader_store()
+        self.assertEqual(store.kind, "redis_fenced_leader_store")
 
 
 if __name__ == "__main__":
