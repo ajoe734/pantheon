@@ -6802,6 +6802,101 @@ def status_command_subprocess_context(config: dict[str, Any]) -> tuple[Path, dic
     return command_root / "scripts" / "ai_status.py", env
 
 
+DISPATCH_STATUS_WORKER_ENV_NAMES = (
+    "ORCH_RUN_ID",
+    "ORCH_TASK_ID",
+    "PANTHEON_WORKTREE_ROOT",
+    "ORCH_WORKSPACE_PATH",
+    "ORCH_RUNNER_STATUS_PATH",
+    "ORCH_HEARTBEAT_PATH",
+)
+
+
+def _worker_request_metadata(worker: dict[str, Any]) -> dict[str, Any]:
+    snapshot = worker.get("request_snapshot")
+    if not isinstance(snapshot, dict):
+        return {}
+    metadata = snapshot.get("metadata")
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _resolve_dispatch_status_path(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    return str(Path(raw).expanduser().resolve())
+
+
+def _runtime_worker_record_for_status_sync(
+    config: dict[str, Any],
+    run_id: str,
+) -> dict[str, Any]:
+    if not run_id or not (config.get("paths", {}) or {}).get("state_file"):
+        return {}
+    state = load_runtime_state(config)
+    workers = state.get("workers")
+    if not isinstance(workers, dict):
+        return {}
+    worker = workers.get(run_id)
+    return worker if isinstance(worker, dict) else {}
+
+
+def _apply_dispatch_status_worker_binding(
+    config: dict[str, Any],
+    env: dict[str, str],
+    *,
+    run_id: str,
+    task_id: str,
+) -> None:
+    for env_name in DISPATCH_STATUS_WORKER_ENV_NAMES:
+        env.pop(env_name, None)
+
+    lease_run_id = str(run_id or "").strip()
+    if not lease_run_id:
+        return
+
+    env["ORCH_RUN_ID"] = lease_run_id
+    env["ORCH_TASK_ID"] = task_id
+
+    worker = _runtime_worker_record_for_status_sync(config, lease_run_id)
+    if not worker:
+        return
+
+    worker_task_id = str(worker.get("task_id") or task_id).strip()
+    if worker_task_id:
+        env["ORCH_TASK_ID"] = worker_task_id
+
+    request_metadata = _worker_request_metadata(worker)
+    workspace_root = _resolve_dispatch_status_path(
+        worker.get("workspace_path") or request_metadata.get("workspace_path")
+    )
+    if workspace_root:
+        env["PANTHEON_WORKTREE_ROOT"] = workspace_root
+        env["ORCH_WORKSPACE_PATH"] = workspace_root
+
+    status_root = _resolve_dispatch_status_path(
+        worker.get("status_root") or request_metadata.get("status_root")
+    )
+    if status_root:
+        env["PANTHEON_STATUS_ROOT"] = status_root
+
+    worker_metadata = worker.get("metadata") if isinstance(worker.get("metadata"), dict) else {}
+    runner_status_path = _resolve_dispatch_status_path(
+        worker.get("runner_status_path")
+        or worker.get("status_path")
+        or worker_metadata.get("runner_status_path")
+    )
+    if runner_status_path:
+        env["ORCH_RUNNER_STATUS_PATH"] = runner_status_path
+
+    heartbeat_path = _resolve_dispatch_status_path(
+        worker.get("heartbeat_path")
+        or worker_metadata.get("heartbeat_path")
+    )
+    if heartbeat_path:
+        env["ORCH_HEARTBEAT_PATH"] = heartbeat_path
+
+
 def sync_status_pipeline(config: dict[str, Any]) -> bool:
     script, env = status_command_subprocess_context(config)
     if not script.exists():
@@ -6899,11 +6994,12 @@ def sync_dispatched_task_status(
     # auto worker and requires the supervisor-issued lease. Without ORCH_RUN_ID it took
     # the no-lease branch and raised "status command lease required for auto worker",
     # which failed every dispatch sync. Both call sites already hold the worker run id.
-    lease_run_id = str(run_id or "").strip()
-    if lease_run_id:
-        env["ORCH_RUN_ID"] = lease_run_id
-    else:
-        env.pop("ORCH_RUN_ID", None)
+    _apply_dispatch_status_worker_binding(
+        config,
+        env,
+        run_id=str(run_id or "").strip(),
+        task_id=task_id,
+    )
     result = subprocess.run(
         [sys.executable, str(script), command_name, task_id, message],
         cwd=str(config_path(config, "status_file").parent),

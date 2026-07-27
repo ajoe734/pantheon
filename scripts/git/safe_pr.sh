@@ -112,7 +112,7 @@ trap 'echo; echo "FAILED — see $LOG for full transcript"; exit 1' ERR
 
 # --- 1. Fetch dev (short, just refs)
 step "fetch dev"
-if git fetch origin dev --quiet >>"$LOG" 2>&1; then ok "ok"; else fail "git fetch dev failed"; fi
+if git fetch origin '+refs/heads/dev:refs/remotes/origin/dev' --quiet >>"$LOG" 2>&1; then ok "ok"; else fail "git fetch dev failed"; fi
 
 # --- 2. Create / move task branch
 step "checkout task branch"
