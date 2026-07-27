@@ -12288,6 +12288,71 @@ def dispatch_chair_review(
     return False
 
 
+RUNTIME_LOCK_HOLD_WARN_DEFAULT_SECONDS = 30.0
+
+
+def record_runtime_lock_hold(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    held_since: float,
+    *,
+    quiet: bool = False,
+) -> float:
+    """Publish how long this cycle owned the exclusive runtime-admission lock.
+
+    Every status command an auto worker runs takes the same lock shared, so this
+    number is the ceiling on how long ``approve``, ``assign``, and ``note`` can
+    be made to wait. Leaving it unmeasured is how a 771s hold stayed invisible
+    until reviewers noticed nine-minute stalls.
+    """
+
+    held_seconds = round(max(0.0, time.monotonic() - held_since), 3)
+    supervisor_state = state.setdefault("supervisor", {})
+    supervisor_state["runtime_lock_hold_seconds"] = held_seconds
+    peak = supervisor_state.get("runtime_lock_hold_peak_seconds")
+    if not isinstance(peak, (int, float)) or held_seconds > float(peak):
+        supervisor_state["runtime_lock_hold_peak_seconds"] = held_seconds
+    warn_after = float(
+        config.get("supervisor", {}).get(
+            "runtime_lock_hold_warn_after_seconds",
+            RUNTIME_LOCK_HOLD_WARN_DEFAULT_SECONDS,
+        )
+    )
+    exceeded = warn_after > 0 and held_seconds > warn_after
+    supervisor_state["runtime_lock_hold_exceeded"] = exceeded
+    if exceeded:
+        console_log(
+            f"runtime-admission lock held {held_seconds}s (> {warn_after}s); "
+            "concurrent approve/assign/note commands queued for that long",
+            quiet=quiet,
+        )
+    return held_seconds
+
+
+def probe_provider_reports(
+    config: dict[str, Any],
+    *,
+    quiet: bool = False,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Refresh provider capabilities outside every canonical lock.
+
+    ``load_provider_report`` shells out to ``gh`` for auth and version checks,
+    so it is an unbounded network wait. Run from inside the cycle it charged
+    that wait to the exclusive runtime-admission lock, where every reviewer,
+    approve, and worker status command was queued behind it. Nothing it touches
+    is runtime state, so it belongs before the lock is taken.
+    """
+
+    try:
+        previous = load_json(config_path(config, "provider_capabilities"), default={}) or {}
+    except KeyError:
+        previous = {}
+    report = _safe_phase("load_provider_report", load_provider_report, config, quiet=quiet)
+    if report is None:
+        report = previous or {}
+    return previous, report
+
+
 def run_once(
     config: dict[str, Any],
     *,
@@ -12297,6 +12362,7 @@ def run_once(
     verbose: bool = False,
     once: bool = False,
 ) -> bool:
+    provider_reports = probe_provider_reports(config, quiet=quiet)
     return _run_with_deferred_dispatch_status_syncs(
         config,
         lambda: _run_once_locked(
@@ -12306,6 +12372,7 @@ def run_once(
             quiet=quiet,
             verbose=verbose,
             once=once,
+            provider_reports=provider_reports,
         )
     )
 
@@ -12364,13 +12431,11 @@ def sync_task_state_shadow(config: dict[str, Any], state: dict[str, Any]) -> boo
                 )
                 if repaired:
                     write_json(status_file, canonical_state)
-                # Compare the journal head against the board as it now stands,
-                # so parity is asserted about the file this phase is
-                # responsible for rather than restated about the snapshot.
-                report = rewrite_task_state_store.verify_snapshot(
-                    snapshot,
-                    canonical_state if repaired else file_state,
-                )
+                    # Re-read rather than compare the value just written, so the
+                    # parity claim is about the board on disk and a repair that
+                    # silently failed to land cannot report itself as healthy.
+                    file_state = load_json(status_file, default={})
+                report = rewrite_task_state_store.verify_snapshot(snapshot, file_state)
             else:
                 canonical_state = file_state
                 repaired = not rewrite_task_state_store.verify_snapshot(
@@ -12469,8 +12534,10 @@ def _run_once_locked(
     quiet: bool = False,
     verbose: bool = False,
     once: bool = False,
+    provider_reports: tuple[dict[str, Any], dict[str, Any]] | None = None,
 ) -> bool:
     write_supervisor_pid(config)
+    lock_held_since = time.monotonic()
     loop_started_at = utc_now()
     state = load_runtime_state(config)
     previous_heartbeat = state.get("supervisor", {}).get("last_heartbeat_at")
@@ -12498,13 +12565,14 @@ def _run_once_locked(
         pruned = _safe_phase("prune_stale_approvals", prune_stale_approvals, config, quiet=quiet)
         if pruned:
             changed = True
-        try:
-            previous_provider_report = load_json(config_path(config, "provider_capabilities"), default={}) or {}
-        except KeyError:
-            previous_provider_report = {}
-        provider_report = _safe_phase("load_provider_report", load_provider_report, config, quiet=quiet)
-        if provider_report is None:
-            provider_report = previous_provider_report or {}
+        # Probing here would put a gh auth round trip inside the exclusive
+        # runtime-admission hold; run_once supplies the reports it gathered
+        # before the lock was taken.
+        previous_provider_report, provider_report = (
+            provider_reports
+            if provider_reports is not None
+            else probe_provider_reports(config, quiet=quiet)
+        )
         changed = _safe_phase("reconcile_provider_auth_recovery", reconcile_provider_auth_recovery, config, state, previous_provider_report, provider_report, quiet=quiet) or changed
         changed = _safe_phase("drain_assistant_dev_packet_inbox", drain_assistant_dev_packet_inbox, config, state, quiet=quiet) or changed
         if watch:
@@ -12566,6 +12634,7 @@ def _run_once_locked(
             loop_finished_at=loop_finished_at,
             loop_error=None,
         )
+        record_runtime_lock_hold(config, state, lock_held_since, quiet=quiet)
         save_runtime_state(config, state)
         refresh_dashboard_runtime_artifacts(config)
         log_runtime_summary(
@@ -12590,6 +12659,7 @@ def _run_once_locked(
             loop_finished_at=loop_finished_at,
             loop_error=f"{type(exc).__name__}: {exc}",
         )
+        record_runtime_lock_hold(config, state, lock_held_since, quiet=quiet)
         save_runtime_state(config, state)
         refresh_dashboard_runtime_artifacts(config)
         raise

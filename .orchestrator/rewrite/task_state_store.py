@@ -12,8 +12,10 @@ import copy
 import fcntl
 import hashlib
 import json
+import mmap
 import os
 import stat
+import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -304,7 +306,9 @@ def _write_checkpoint(
         "last_event": last_event,
     }
     target = _checkpoint_path(event_path)
-    temporary = target.with_name(f"{target.name}.{os.getpid()}.tmp")
+    # Readers hold the store lock shared, so two of them can refresh the cache
+    # at once; each needs its own staging name before the atomic replace.
+    temporary = target.with_name(f"{target.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     flags = (
         os.O_WRONLY
         | os.O_CREAT
@@ -331,7 +335,10 @@ def _write_checkpoint(
             pass
 
 
-def _resume_point(payload: bytes, checkpoint: dict[str, Any] | None) -> dict[str, Any] | None:
+def _resume_point(
+    payload: bytes | memoryview,
+    checkpoint: dict[str, Any] | None,
+) -> dict[str, Any] | None:
     """Return the validated head a checkpoint still describes, if any.
 
     The checkpoint is honoured only when a SHA-256 over the exact byte prefix it
@@ -367,7 +374,10 @@ def _resume_point(payload: bytes, checkpoint: dict[str, Any] | None) -> dict[str
     }
 
 
-def _snapshot_from_payload(payload: bytes, checkpoint: dict[str, Any] | None) -> dict[str, Any]:
+def _snapshot_from_payload(
+    payload: bytes | memoryview,
+    checkpoint: dict[str, Any] | None,
+) -> dict[str, Any]:
     resume = _resume_point(payload, checkpoint)
     if resume is None:
         offset = 0
@@ -388,7 +398,9 @@ def _snapshot_from_payload(payload: bytes, checkpoint: dict[str, Any] | None) ->
     replayed_from_checkpoint = resume is not None
     revalidated = 0
 
-    for raw_line in payload[offset:].splitlines():
+    # Only the unvalidated tail is materialized; when the checkpoint already
+    # covers the whole journal this is empty.
+    for raw_line in bytes(payload[offset:]).splitlines():
         if not raw_line.strip():
             continue
         try:
@@ -433,10 +445,39 @@ def _snapshot_from_payload(payload: bytes, checkpoint: dict[str, Any] | None) ->
     }
 
 
+@contextmanager
+def _journal_view(path: Path):
+    """Expose the journal as a read-only buffer without copying it into the heap.
+
+    Hashing every byte is what lets the checkpoint be trusted, but reading a
+    ~160MB journal into a ``bytes`` object costs more than the hash itself. The
+    file cannot change underneath the mapping: every reader holds the shared
+    store lock and every writer holds it exclusively.
+    """
+
+    if not path.exists():
+        yield memoryview(b"")
+        return
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode):
+            raise TaskStateStoreError(f"task-state event log must be a regular file: {path}")
+        if info.st_size == 0:
+            yield memoryview(b"")
+            return
+        with mmap.mmap(descriptor, info.st_size, access=mmap.ACCESS_READ) as mapped:
+            with memoryview(mapped) as view:
+                yield view
+    finally:
+        os.close(descriptor)
+
+
 def _load_snapshot_unlocked(event_path: Path) -> dict[str, Any]:
-    payload = _read_journal_bytes(event_path)
     checkpoint = _read_checkpoint(event_path)
-    snapshot = _snapshot_from_payload(payload, checkpoint)
+    with _journal_view(event_path) as payload:
+        snapshot = _snapshot_from_payload(payload, checkpoint)
     if snapshot["revalidated_events"]:
         _write_checkpoint(
             event_path,
