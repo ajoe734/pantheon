@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: in_progress
 - Owner: Codex2
 - Reviewer: Codex
-- Next: Codex2 adopted the reassigned owner identity in the task evidence while preserving Claude's historical delivery attribution and Codex2's historical packaging-review role; refresh PR #4273 checks and hand off the exact head to Codex for independent review.
+- Next: Canonical binding: PR #4273 closeout stays on this task. Do not use duplicate L12-PR-4273-CLOSE-001; that duplicate was superseded.
 
 ## Summary
 修正 telemetry 完整 unittest discovery 的兩個裸模組 import error，讓乾淨 repo-root 與 package discovery 都能零 loader error。
