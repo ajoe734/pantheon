@@ -2,7 +2,8 @@
 
 Task ID: `L12-IMIT-001`
 Phase: `Twelve Loop Remediation / Imitation`
-Owner: `Claude`
+Owner: `Codex` (closeout owner; implementation and evidence through PR #4245
+were authored by `Claude`)
 Reviewer: `Codex2`
 Loop: `human_imitation_shadow_evaluation`
 
@@ -18,7 +19,26 @@ Loop: `human_imitation_shadow_evaluation`
 | Second evidence PR | [#4238](https://github.com/ajoe734/pantheon/pull/4238), head `a4ba6685`, merged to `dev` as `d65b87eecac09ffafa5653cf05ebeb5d526546d5` at 2026-07-27T02:55:03Z — the head Codex2 independently re-reviewed and returned on |
 | Second remediation PR | [#4242](https://github.com/ajoe734/pantheon/pull/4242), head `d18a3633`, merged to `dev` as `ddd8dc5709cf45e2dd8814fd20567afda2f8d48e` at 2026-07-27T13:02:19Z — closes the published-service-token gap the re-review returned on (see [Returned re-review](#returned-re-review-a-published-credential-authenticated-a-deployment)) |
 | Branch CI Gate for #4242 | success — runs [30268355592](https://github.com/ajoe734/pantheon/actions/runs/30268355592) (push) and [30268359805](https://github.com/ajoe734/pantheon/actions/runs/30268359805) (pull_request); Commit trailers, Runtime mirror guard, Smoke acceptance all green |
+| Final reviewed evidence PR | [#4245](https://github.com/ajoe734/pantheon/pull/4245), head `ca620a61`, merged to `dev` as `3330e7ae955b20317f588659ad8d8f28daa43fb8` at 2026-07-27T13:12:11Z |
+| Branch CI Gate for #4245 | success — runs [30269086268](https://github.com/ajoe734/pantheon/actions/runs/30269086268) (push) and [30269094352](https://github.com/ajoe734/pantheon/actions/runs/30269094352) (pull_request); Commit trailers, Runtime mirror guard, Smoke acceptance all green |
 | Anchor commits | `f85bf549` Agora dataset source · `6f985c9f` scheduling and backlog leases · `507f51d3` scheduling proofs · `92863858` tenant-safe authority and recovery · `35538b0b` compose service credential wiring · `7aa5a7a0` default-compose loop proofs · `4f6e2498` published service token refusal |
+
+### Closeout reconciliation
+
+Codex2 independently approved the exact reviewed evidence head `ca620a61` at
+2026-07-27T14:18:01Z after reproducing the production-placeholder refusal,
+running the throwaway-PostgreSQL suite (190 passed), checking the schema and
+all 15 source hashes, and confirming PRs #4235, #4236, #4237, #4238, #4242,
+and #4245 were merged. Canonical audit event
+`ai-status-event-e5df15df837bdae87d758487db357af14fdd2ed298113ca4fbdf2f7f383e0902`
+records that `review_approved` decision.
+
+Human/Ops reassigned only the approved task-owner role from Claude to Codex at
+2026-07-27T16:22:07Z, retaining Codex2 as reviewer. Canonical audit event
+`ai-status-event-8482fd53772180807d407ac82acae3109cbd63cc94f84219c7d06602a3338951`
+records the assignment. The implementation and evidence authorship below stays
+historically attributed to Claude; this reconciliation changes no product
+bytes, proof result, maturity claim, or review decision.
 
 ### Returned review: default-compose authority
 
