@@ -3,7 +3,7 @@
   "schema_status": {
     "formal_schema_owner": "LOOP-PROD-002",
     "formalization_trigger": "L12-SIGNOFF-001 protected product-closeout admission.",
-    "note": "Owner evidence for the protected Human/Ops verdict implementation, revalidated by the current Codex owner after the sequence-9 remediation merged as PR #4210 and re-composed for a fresh exact-head review in sequence 13 after strict branch protection refused the stale sequence-12 head.",
+    "note": "Owner evidence for the protected Human/Ops verdict implementation, revalidated by the current Codex owner after the sequence-9 remediation merged as PR #4210 and re-composed for a fresh exact-head review in sequence 14 after strict branch protection refused the stale sequence-12 head and a final pre-push gate caught one later docs-only dev merge.",
     "status": "formalized"
   },
   "evidence_policy": {
@@ -16,8 +16,8 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-27T17:32:37Z",
-    "evidence_cut_semantics": "Sequence-13 owner exact-head revalidation after strict branch protection refused the sequence-12 reviewed head because supervisor PR #4257 advanced origin/dev to 4580fc5d19b5bff8c0014006324c56d6368ec5dc. The current Codex owner composed that base normally, confirmed all nine protected-verdict source hashes and the canonical catalog digest are unchanged, and re-ran the focused suites before preparing one new immutable post-commit head for Codex2 review. Sequence-12 remains append-only historical approval and is not reusable for the new head.",
+    "evidence_cut_at": "2026-07-27T17:39:49Z",
+    "evidence_cut_semantics": "Sequence-14 owner exact-head revalidation after strict branch protection refused the sequence-12 reviewed head and the final pre-push gate caught L12-IMIT reconciliation PR #4265 advancing origin/dev to 4688bd252911b91ea0459a38a694c5faa53e3bbd. The current Codex owner composed that base normally, confirmed all nine protected-verdict source hashes and the canonical catalog digest are unchanged, and re-ran the focused suites before preparing one new immutable post-commit head for Codex2 review. Sequence-12 remains append-only historical approval and is not reusable for the new head.",
     "id": "L12-SIGNOFF-001",
     "overall_admission": "pass_owner_evidence_ready",
     "owner": "Codex",
@@ -272,11 +272,16 @@
         "command": "env -u ORCH_RUN_ID .venv-pantheon/bin/python3 scripts/loop_done_guardrail.py --task-id L12-SIGNOFF-001 --evidence-root . --status-file /home/lupin/pantheon/ai-status.json",
         "conclusion": "The target row passed as '[OK] L12-SIGNOFF-001 (pass_owner_evidence_ready)'. The aggregate command exited 1 because 26 unrelated repository evidence sources remain incomplete (19/45 passed); no unrelated failure was attributed to L12-SIGNOFF-001. Fresh Codex2 exact-head review remains a canonical PR gate outside this task-scoped evidence replay.",
         "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/governance/test_product_closeout_verdict.py services/control-plane/bff/test_product_closeout_verdict.py scripts/test_loop_done_guardrail.py scripts/test_ai_status.py  # sequence-14 revalidation after integrating origin/dev 4688bd252911b91ea0459a38a694c5faa53e3bbd",
+        "conclusion": "296 tests passed with 39 passing subtests and the one known Starlette deprecation warning. The new base adds only L12-IMIT closeout reconciliation docs; the protected-verdict implementation and all canonical lease, forbidden-root, revocation, consumption, ledger-tail, exact-binding, and exactly-once regressions remain green.",
+        "result": "pass"
       }
     ],
-    "validated_at": "2026-07-27T17:32:37Z",
-    "validated_base_sha": "4580fc5d19b5bff8c0014006324c56d6368ec5dc",
-    "validated_head_sha": "d27b4b515502d25904a6ca4014c5e0bf1429c9b5"
+    "validated_at": "2026-07-27T17:39:49Z",
+    "validated_base_sha": "4688bd252911b91ea0459a38a694c5faa53e3bbd",
+    "validated_head_sha": "9d7abd7ef478b3247bf0176cf6d692ee63282d45"
   },
   "deployment": {
     "applicable": false,
@@ -446,7 +451,7 @@
     "independent_review": {
       "blocking_for_this_task": false,
       "containment": "The owner admission is explicitly non-final and the governed closeout guard still requires a distinct approved Codex2 record.",
-      "description": "Codex2 approved sequence 11 in the append-only sequence-12 record, but strict branch protection refused that exact head after dev advanced. Sequence 13 carries no inherited approval and requires a new exact-head verdict.",
+      "description": "Codex2 approved sequence 11 in the append-only sequence-12 record, but strict branch protection refused that exact head after dev advanced. Sequence 14 carries no inherited approval and requires a new exact-head verdict.",
       "expiry": "At formal Codex2 approval or changes-requested verdict.",
       "owner": "Codex2",
       "recheck_trigger": "Immediately after PR and evidence handoff.",
@@ -555,6 +560,18 @@
         "scripts/test_ai_status.py": "2635035ab0102359da932ac8fe524a62ab253840cfe6acedb89ce2084e33c09f"
       },
       "2026-07-27-codex-stale-base-revalidation": {
+        "catalog_canonical_json": "8c7610b0e6bbba31c36cb0ecd1ddce4bf843fc6de89dcaecc4a5e3154af8933d",
+        "services/control-plane/governance/product_closeout_verdict.py": "59f0804dc27225bfd058e179e4542ca6ebec51b29276adccf1238ebf3064eea8",
+        "services/control-plane/governance/product_closeout_verdict.schema.json": "8ce0069cb1b5598388596935a55b1fe6e7e8eb3626dd606e0aa91ee9ac3b58b6",
+        "services/control-plane/governance/test_product_closeout_verdict.py": "c53d8d5807b50fefae2c8b7b349743f37134246a616205aa5841195e5139235b",
+        "services/control-plane/bff/product_closeout_verdict.py": "d5592e960ed01c97a2f40676579730135c7220b79688ed547fb9e2f278bd3a33",
+        "services/control-plane/bff/test_product_closeout_verdict.py": "da3f0d79251bf96f2dbec5ce988bf02c269aa7f2d51c14bd6ec105ffef3912ff",
+        "scripts/loop_done_guardrail.py": "856e3c65dc158a02d6dfbb67c6d68df5341c9c9437505e7931a9da54addafa2e",
+        "scripts/test_loop_done_guardrail.py": "dd545b914b4003e83738d654bf05bb6622ca5621e3af3ae6395bb2cb30f80ff3",
+        "scripts/ai_status.py": "602d10efdd68e819c34cf416259d996259ad054c1b3fba22f21e159a1a589a45",
+        "scripts/test_ai_status.py": "2635035ab0102359da932ac8fe524a62ab253840cfe6acedb89ce2084e33c09f"
+      },
+      "2026-07-27-codex-final-base-revalidation": {
         "catalog_canonical_json": "8c7610b0e6bbba31c36cb0ecd1ddce4bf843fc6de89dcaecc4a5e3154af8933d",
         "services/control-plane/governance/product_closeout_verdict.py": "59f0804dc27225bfd058e179e4542ca6ebec51b29276adccf1238ebf3064eea8",
         "services/control-plane/governance/product_closeout_verdict.schema.json": "8ce0069cb1b5598388596935a55b1fe6e7e8eb3626dd606e0aa91ee9ac3b58b6",
@@ -696,6 +713,16 @@
       "reference": "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.json",
       "sequence": 13,
       "sha": "d27b4b515502d25904a6ca4014c5e0bf1429c9b5",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex",
+      "kind": "owner_evidence_ready",
+      "note": "Sequence-14 final-base revalidation after the pre-push ancestry gate caught L12-IMIT closeout reconciliation PR #4265 advancing origin/dev to 4688bd252911b91ea0459a38a694c5faa53e3bbd. The owner composed that base normally, confirmed the two new docs do not overlap this task, re-proved all nine protected-verdict source artifacts and the canonical catalog digest byte-identical to sequence 11, and repeated the four focused suites at 296 tests and 39 subtests. Sequence-12 remains append-only historical approval and must not be reused for the new head.",
+      "recorded_at": "2026-07-27T17:39:49Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.json",
+      "sequence": 14,
+      "sha": "9d7abd7ef478b3247bf0176cf6d692ee63282d45",
       "status": "pass"
     }
   ]

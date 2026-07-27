@@ -1,12 +1,13 @@
 # L12-SIGNOFF-001 protected closeout evidence
 
-Status: owner evidence sequence 13 revalidated after strict branch protection
+Status: owner evidence sequence 14 revalidated after strict branch protection
 refused the sequence-12 reviewed head when a concurrent supervisor PR advanced
-`dev`, ready for a fresh independent `Codex2` review of the new immutable head.
+`dev` and a final pre-push gate caught one later docs-only merge, ready for a
+fresh independent `Codex2` review of the new immutable head.
 
 Owner is `Codex` and reviewer is `Codex2`, matching the current canonical task
 row and supervisor dispatch. Historical owner and reviewer records remain
-append-only in `record_log`; sequence 13 is the current owner admission.
+append-only in `record_log`; sequence 14 is the current owner admission.
 
 This packet proves that protected product closeout decisions are signed by a
 configured Human/Ops authority, recorded in a lock-protected append-only
@@ -190,7 +191,7 @@ focused suites at 296 tests and 39 subtests. Sequence 11 is the final owner
 admission before a new exact-head handoff; it carries no inherited or
 self-issued reviewer verdict.
 
-### Sequence-12 approval and sequence-13 stale-base revalidation
+### Sequence-12 approval and sequences 13-14 stale-base revalidation
 
 Codex2 independently approved the sequence-11 owner cut and committed that
 formal verdict as sequence 12. Before PR #4261 could merge, the independently
@@ -203,8 +204,14 @@ Sequence 13 preserves the sequence-12 verdict as history, composes the new
 `dev` tip normally, and re-runs the four focused suites at 296 tests and 39
 subtests. The nine protected-verdict source artifacts and canonical catalog
 digest are byte-identical to sequence 11; the new base adds only task-scoped
-supervisor refresh evidence. Sequence 13 is a new owner admission and requires
-a fresh Codex2 verdict bound to the new PR head.
+supervisor refresh evidence.
+
+Before sequence 13 was pushed, the final pre-push ancestry gate caught one
+more `dev` advance: L12-IMIT closeout reconciliation PR #4265 merged as
+`4688bd252911b91ea0459a38a694c5faa53e3bbd`. Its two added files do not overlap
+this task or the protected-verdict sources. Sequence 14 composes that tip and
+repeats the 296-test, 39-subtest matrix. Sequence 14 is the current owner
+admission and requires a fresh Codex2 verdict bound to the new PR head.
 
 ## Authority and binding
 
@@ -295,7 +302,7 @@ rejections.
 At sequence 11,
 `scripts/loop_done_guardrail.py --task-id L12-SIGNOFF-001 --evidence-root .`
 reported exactly one gap: the then-absent formal `Codex2` verdict. The
-sequence-13 target row now passes evidence truth replay because sequence 12
+sequence-14 target row now passes evidence truth replay because sequence 12
 remains append-only review history. That replay does not authorize reuse of
 the stale PR-head binding; the canonical GitHub review gate still requires a
 fresh Codex2 verdict for the new exact head.
@@ -305,8 +312,9 @@ all re-run at the sequence-9 head and passed; the smoke run completed stage-0
 validation and the full smoke baseline. Sequence 10 then re-ran the four
 focused suites after merging current `origin/dev`; 294 tests and 39 subtests
 passed. Sequence 11 re-ran them after its pre-review `dev` composition; 296
-tests and 39 subtests passed. Sequence 13 repeated the same 296-test,
-39-subtest matrix after composing `dev` `4580fc5d19b5bff8c0014006324c56d6368ec5dc`;
-all nine protected-verdict source hashes remained unchanged.
+tests and 39 subtests passed. Sequences 13 and 14 repeated the same 296-test,
+39-subtest matrix after composing `dev` first at `4580fc5d19b5bff8c0014006324c56d6368ec5dc`
+and then at `4688bd252911b91ea0459a38a694c5faa53e3bbd`; all nine
+protected-verdict source hashes remained unchanged.
 
 [`evidence.sha256`](evidence.sha256) covers the machine-readable manifest.
