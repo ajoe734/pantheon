@@ -59,6 +59,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import site
 import subprocess
 import sys
 import tempfile
@@ -202,18 +203,73 @@ def verify_checkout_binding(python: Path, checkout: Path) -> dict[str, str]:
 # --------------------------------------------------------------------------
 
 
+#: Name of the path-inheritance file written into a checkout-scoped environment.
+PARENT_SITE_PTH = "_pantheon_parent_site.pth"
+
+
+def _invoking_site_packages() -> list[str]:
+    """Site directories of the interpreter running this script."""
+    directories = list(site.getsitepackages())
+    if site.ENABLE_USER_SITE:
+        directories.append(site.getusersitepackages())
+    resolved: list[str] = []
+    for entry in directories:
+        if entry and Path(entry).is_dir():
+            text = str(Path(entry).resolve())
+            if text not in resolved:
+                resolved.append(text)
+    return resolved
+
+
+def _write_parent_site_pth(venv_dir: Path) -> None:
+    """Let the new environment see the dependencies of the one that made it.
+
+    ``EnvBuilder(system_site_packages=True)`` inherits the *base* prefix, not the
+    invoking environment. When Pantheon is run from a virtualenv — the fleet
+    ``.venv`` is the normal case — that means the fresh environment would come up
+    without pytest or any service dependency, and the whole suite would collapse
+    into skips and import errors.
+
+    Writing the invoking interpreter's site directories into a ``.pth`` closes
+    that. ``site.addpackage`` adds the listed directories to ``sys.path``
+    directly; it does not recurse into their own ``.pth`` files, so a Pantheon
+    editable install belonging to a *different* checkout in the parent
+    environment is inherited as neither a path entry nor a finder. Dependency
+    inheritance therefore cannot reintroduce the cross-checkout collision.
+    """
+    site_packages = sorted(venv_dir.glob("lib/python*/site-packages"))
+    if not site_packages:  # pragma: no cover - defensive
+        raise ProvisionError(f"virtual environment at {venv_dir} has no site-packages")
+    inherited = _invoking_site_packages()
+    if not inherited:
+        return
+    header = (
+        "# Written by scripts/dev/provision_python_distribution.py: dependency\n"
+        "# site directories inherited from the interpreter that provisioned this\n"
+        "# environment. Import paths for the checkout itself come from the\n"
+        "# editable install, not from here.\n"
+    )
+    (site_packages[0] / PARENT_SITE_PTH).write_text(
+        header + "\n".join(inherited) + "\n", encoding="utf-8"
+    )
+
+
 def ensure_venv(venv_dir: Path) -> Path:
     """Create ``venv_dir`` if absent; return its interpreter."""
     python = venv_dir / "bin" / "python3"
     if not python.exists():
-        # --system-site-packages: the environment provisions import *paths*, not
-        # dependencies (pyproject declares none). Inheriting site-packages keeps
-        # pytest and every service dependency available without a second
+        # system_site_packages: the environment provisions import *paths*, not
+        # dependencies (pyproject declares none). Inheriting site directories
+        # keeps pytest and every service dependency available without a second
         # dependency installation that could drift from requirements.txt.
         builder = venv.EnvBuilder(system_site_packages=True, with_pip=True, symlinks=True)
         builder.create(str(venv_dir))
     if not python.exists():  # pragma: no cover - defensive
         raise ProvisionError(f"virtual environment at {venv_dir} has no bin/python3")
+    # Rewritten on every run: the invoking environment's dependency set changes,
+    # and a stale inheritance list is how an environment silently goes missing a
+    # package that the caller can see.
+    _write_parent_site_pth(venv_dir)
     return python
 
 

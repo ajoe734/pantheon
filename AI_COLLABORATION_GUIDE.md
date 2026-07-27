@@ -456,6 +456,45 @@ Optional environment variables:
 - `REVIEW_FILE`
 - `REVIEW_NOTES_ZH` (`||` separated when setting multiple notes)
 
+### Python Test Environment Provisioning
+
+`services.*`, `scripts.*`, and `integrations.*` are top-level import names, so
+Python resolves them only from `sys.path`. Running the suite from the
+repository root, or exporting `PYTHONPATH`, happens to work — but it makes every
+test result depend on where the interpreter was started, and it is why dotted
+`unittest` and direct-file execution used to fail from any other directory.
+
+The repository is therefore installable. Provision it once per checkout before
+running tests:
+
+```bash
+# auto worker, inside your task worktree
+python3 scripts/dev/provision_python_distribution.py
+PANTHEON_PY="$(python3 scripts/dev/provision_python_distribution.py --print-python)"
+"$PANTHEON_PY" -m pytest -q services/telemetry
+```
+
+Rules:
+
+- **Use the script, never a bare `pip install -e .`.** An editable install
+  writes an absolute mapping to one checkout. Every auto worker gets its own
+  git worktree while sharing the host interpreter, so a bare install into that
+  shared interpreter silently rebinds `services` for every other worker. The
+  script installs into a checkout-scoped `.venv-pantheon` instead and fails
+  closed if the mapping ever points somewhere else.
+- **Provisioning does not dirty your worktree.** `.venv-pantheon/` matches the
+  existing `.venv-*/` ignore rule, and no install artifact is written into the
+  tree.
+- **Provisioning installs import paths only.** `pyproject.toml` declares no
+  dependencies; `requirements.txt` and the per-service requirements files stay
+  the dependency source of truth, and the environment inherits the packages of
+  the interpreter that created it.
+- `--mode current --allow-system-interpreter` installs into the running
+  interpreter. It is for disposable single-checkout containers only — dev CI
+  uses it in the `Python packaging provision` job of `branch-ci.yml`, which is
+  the same entry point, so CI and workers install the same distribution.
+- `--check-only` verifies an existing provision without installing.
+
 ## 4. Working Agreement
 
 - prefer one source of truth per concern
