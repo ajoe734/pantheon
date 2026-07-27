@@ -16,8 +16,8 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-27T20:53:27Z",
-    "evidence_cut_semantics": "Owner evidence over implementation head 00f1ba98f85ea3937ee9edb1a590a2ff73fc4d6e after composing origin/dev 852da0aa71d4e0d0293d5fcc8b5dff6d886386f7 at merge head 9b6b4ebe5fd1783ded0e59b2f32cc95a09b1303d. It closes the empty or invalid threshold-policy false-green found at d300f4eb5ba33616771068908eefe19a8f82cafa, binds canonical reviewer Codex, and does not assert hosted activation or an independent reviewer verdict.",
+    "evidence_cut_at": "2026-07-27T21:12:06Z",
+    "evidence_cut_semantics": "Owner evidence over implementation head 00f1ba98f85ea3937ee9edb1a590a2ff73fc4d6e after composing origin/dev 7f545a33bf41e5682dc67f50333c84b42f09d17e at merge head 7bccccb15bd76c15334812c209670094e1f15867. It closes the empty or invalid threshold-policy false-green found at d300f4eb5ba33616771068908eefe19a8f82cafa, binds canonical reviewer Codex, and does not assert hosted activation or an independent reviewer verdict.",
     "id": "L12-EVO-001",
     "overall_admission": "pass_owner_evidence_ready",
     "owner": "Codex2",
@@ -142,7 +142,7 @@
     "commands": [
       {
         "command": "PANTHEON_RUNTIME_MANAGER_URL=http://runtime-manager:8081 .venv-pantheon/bin/python -m pytest -q services/evolution services/incidents services/postmortems services/control-plane/governance/test_evolution_decision.py services/control-plane/governance/test_evolution_controller.py services/control-plane/governance/test_evolution_dispatcher_invariants.py services/control-plane/governance/smoke_test_evolution_decision.py services/control-plane/governance/smoke_test_evolution_controller.py scripts/test_evolution_daily_sweep_deploy_contract.py",
-        "conclusion": "440 passed with five known FastAPI/Starlette deprecation warnings in 91.15 seconds after composing current dev.",
+        "conclusion": "440 passed with five known FastAPI/Starlette deprecation warnings in 94.36 seconds after composing current dev.",
         "result": "pass"
       },
       {
@@ -177,13 +177,13 @@
       },
       {
         "command": ".venv-pantheon/bin/python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge",
-        "conclusion": "All non-merge task commits through implementation head 00f1ba98f85ea3937ee9edb1a590a2ff73fc4d6e carry valid task trailers.",
+        "conclusion": "All non-merge task commits through owner routing anchor a2c73a28bc6d8690bf0ea5a849b6a1ec904e1a8c carry valid task trailers.",
         "result": "pass"
       }
     ],
-    "validated_at": "2026-07-27T20:53:27Z",
-    "validated_base_sha": "852da0aa71d4e0d0293d5fcc8b5dff6d886386f7",
-    "validated_head_sha": "9b6b4ebe5fd1783ded0e59b2f32cc95a09b1303d"
+    "validated_at": "2026-07-27T21:12:06Z",
+    "validated_base_sha": "7f545a33bf41e5682dc67f50333c84b42f09d17e",
+    "validated_head_sha": "7bccccb15bd76c15334812c209670094e1f15867"
   },
   "deployment": {
     "applicable": false,
@@ -435,6 +435,15 @@
       "reference": "9b6b4ebe5fd1783ded0e59b2f32cc95a09b1303d",
       "sequence": 5,
       "sha": "9b6b4ebe5fd1783ded0e59b2f32cc95a09b1303d",
+      "status": "ready_for_independent_review"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "post_latest_dev_compose_revalidation",
+      "recorded_at": "2026-07-27T21:12:06Z",
+      "reference": "7bccccb15bd76c15334812c209670094e1f15867",
+      "sequence": 6,
+      "sha": "7bccccb15bd76c15334812c209670094e1f15867",
       "status": "ready_for_independent_review"
     }
   ]
