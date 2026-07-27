@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from provision_live_supervisor_config import (
+    apply_coordination_policy,
     apply_provider_account_schema,
     apply_ready_dispatcher_policy,
     apply_supervisor_lease_policy,
@@ -144,6 +145,27 @@ def test_apply_supervisor_lease_policy_replaces_stale_live_overlay() -> None:
     }
 
 
+def test_apply_coordination_policy_replaces_stale_live_overlay() -> None:
+    repo = {
+        "coordination": {
+            "enabled": False,
+        },
+    }
+    rendered = {
+        "coordination": {
+            "enabled": True,
+            "environment_only_key": "preserved",
+        },
+    }
+
+    apply_coordination_policy(repo, rendered)
+
+    assert rendered["coordination"] == {
+        "enabled": False,
+        "environment_only_key": "preserved",
+    }
+
+
 def test_build_live_config_pins_status_paths_and_supervisor_command(tmp_path: Path) -> None:
     command_root = tmp_path / "dev-root"
     status_root = tmp_path / "canonical-root"
@@ -156,7 +178,7 @@ def test_build_live_config_pins_status_paths_and_supervisor_command(tmp_path: Pa
             "activity_log": "ai-activity-log.jsonl",
         },
         "watchdog": {"enabled": True, "supervisor_command": ["stale"]},
-        "coordination": {"enabled": True},
+        "coordination": {"enabled": False},
         "supervisor": {"lease_requires_work_progress": True},
         "worker_runtime": {"worker_lease_seconds": 600},
         "task_state_store": {
@@ -166,7 +188,7 @@ def test_build_live_config_pins_status_paths_and_supervisor_command(tmp_path: Pa
     }
     existing = {
         "github_bus": {"enabled": False},
-        "coordination": {"enabled": False},
+        "coordination": {"enabled": True},
         "paths": {"status_file": "/stale/ai-status.json"},
         "supervisor": {"lease_requires_work_progress": False},
         "worker_runtime": {"worker_lease_seconds": 1800},

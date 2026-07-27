@@ -117,9 +117,16 @@ def find_drift(
 
 def git_commits_behind(checkout: Path, ref: str, runner=subprocess.run) -> int | None:
     """How many commits `checkout` HEAD is behind `ref`. None if undeterminable."""
+    fetch_ref = ref.split("/", 1)[-1]
+    if ref.startswith("origin/"):
+        # Deployment roots intentionally use narrow fetch refspecs. A bare
+        # `git fetch origin dev` updates FETCH_HEAD only in those checkouts and
+        # can leave refs/remotes/origin/dev stale, hiding real dev-root lag.
+        branch = ref.split("/", 1)[1]
+        fetch_ref = f"{branch}:refs/remotes/origin/{branch}"
     try:
         runner(["git", "-C", str(checkout), "fetch", "--quiet",
-                "origin", ref.split("/", 1)[-1]],
+                "origin", fetch_ref],
                check=False, capture_output=True, timeout=120)
         result = runner(["git", "-C", str(checkout), "rev-list", "--count",
                          f"HEAD..{ref}"], check=False, capture_output=True,
