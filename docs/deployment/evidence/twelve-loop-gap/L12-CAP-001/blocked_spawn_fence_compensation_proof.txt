@@ -1,0 +1,25 @@
+L12-CAP-001 blocked-spawn fence-compensation proof
+Recorded at: 2026-07-26T23:07:08Z
+Branch: task/L12-CAP-001
+Implementation head: da77966f29e7eb9adea286f1dde04dfa138f1f88
+
+Command:
+PYTHONPATH=<repo-root>/services/execution/runtime-manager /tmp/l12-cap-001-venv/bin/python -m unittest -v test_paper_fleet_reconciler.TestLeaderLease.test_blocked_spawn_expiry_terminates_stale_leader_child
+
+Observed output:
+test_blocked_spawn_expiry_terminates_stale_leader_child (test_paper_fleet_reconciler.TestLeaderLease.test_blocked_spawn_expiry_terminates_stale_leader_child) ... leader fence expired while spawning worker for binding b-blocked-spawn
+ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.178s
+
+OK
+
+Assertions exercised:
+- reconciler-stale blocks inside _spawn until its 0.1-second lease expires;
+- reconciler-successor obtains a strictly higher fence token and registers
+  exactly one current worker;
+- after _spawn returns, reconciler-stale revalidates its original fence,
+  compensates by terminating the unregistered child, closes its monitoring
+  session, frees its port, and registers no WorkerEntry;
+- the successor child remains running and the stale reconciler is demoted.
