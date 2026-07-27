@@ -1,7 +1,8 @@
 name: Hourly Publish Cut
 
 # Cut a publish snapshot from dev every hour (or on demand) when dev has
-# advanced since the latest release tag, then auto-deploy it to the dev VM.
+# advanced since the latest release tag. A snapshot is dispatched to the dev
+# deploy workflow only after exact accepted FE/BFF pair admission.
 # Per docs/conventions/GIT_WORKFLOW.md §3 (per-task PR model, 2026-05-17).
 #
 # Trigger:
@@ -12,10 +13,9 @@ name: Hourly Publish Cut
 # can run the same sequence locally. The version suffix (vYYYY.MM.DD.N) auto-
 # increments within a UTC day, so multiple cuts per day never collide.
 #
-# Deploy: nonprod-deploy.yml's `on: push: publish/v*` trigger does NOT fire for
-# branches pushed with GITHUB_TOKEN (GitHub suppresses recursive workflow runs),
-# so after a successful cut we explicitly dispatch it via the API. workflow_dispatch
-# IS exempt from the GITHUB_TOKEN suppression, so this reliably rolls dev forward.
+# Deploy: branches pushed with GITHUB_TOKEN do not start downstream workflow
+# runs, so an admitted snapshot is dispatched explicitly. Admission uses the
+# same exact-pair contract enforced again by nonprod-deploy.yml before switching.
 
 on:
   schedule:
@@ -86,19 +86,71 @@ jobs:
         run: |
           out=$(bash scripts/git/nightly_publish.sh now)
           echo "$out"
-          # nightly_publish.sh prints "  branch: publish/vYYYY.MM.DD.N" on success.
+          # The helper emits one machine-readable publish_branch line on success.
           # If dev did not actually advance between the check and now (e.g. a
           # back-to-back queued run already cut this SHA), `now` no-ops and prints
           # no branch line — that is a benign skip, not a failure.
-          branch=$(printf '%s\n' "$out" | sed -n 's/^[[:space:]]*branch:[[:space:]]*//p' | head -1)
+          branch=""
+          while IFS= read -r line; do
+            case "$line" in
+              publish_branch=*)
+                branch="${line#publish_branch=}"
+                break
+                ;;
+            esac
+          done <<< "$out"
           if [[ -z "$branch" ]]; then
             echo "no snapshot cut this run (dev did not advance); skipping deploy"
           else
             echo "publish_branch=$branch" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Deploy snapshot to dev
+      - name: Checkout accepted Agora frontend history
         if: steps.check.outputs.should_cut == 'true' && steps.cut.outputs.publish_branch != ''
+        uses: actions/checkout@v6
+        with:
+          repository: ajoe734/execute-plans
+          ref: dev
+          path: .agora-frontend
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Admit exact accepted FE/BFF pair
+        id: pair_admission
+        if: steps.check.outputs.should_cut == 'true' && steps.cut.outputs.publish_branch != ''
+        env:
+          PUBLISH_BRANCH: ${{ steps.cut.outputs.publish_branch }}
+        run: |
+          candidate_sha="$(git rev-parse "${PUBLISH_BRANCH}^{commit}")"
+          frontend_sha="$(python3 -c '
+          import json
+          with open("docs/contracts/agora/dev-compatibility-manifest.json", encoding="utf-8") as handle:
+              print(json.load(handle)["frontend"]["runtime_commit"])
+          ')"
+          evidence="$RUNNER_TEMP/publish-pair-admission.json"
+          set +e
+          python3 scripts/agora_compat_manifest.py deployment-gate \
+            --manifest docs/contracts/agora/dev-compatibility-manifest.json \
+            --frontend-root "$GITHUB_WORKSPACE/.agora-frontend" \
+            --backend-dev-ref refs/remotes/origin/dev \
+            --frontend-dev-ref refs/remotes/origin/dev \
+            --backend-runtime-commit "$candidate_sha" \
+            --frontend-runtime-commit "$frontend_sha" \
+            --evidence-out "$evidence"
+          admission_rc=$?
+          set -e
+          if [[ "$admission_rc" == "0" ]]; then
+            echo "admitted=true" >> "$GITHUB_OUTPUT"
+            echo "candidate_sha=$candidate_sha" >> "$GITHUB_OUTPUT"
+            echo "Exact accepted pair admitted; deploy dispatch is eligible."
+          else
+            echo "admitted=false" >> "$GITHUB_OUTPUT"
+            echo "candidate_sha=$candidate_sha" >> "$GITHUB_OUTPUT"
+            echo "Candidate is not the exact accepted FE/BFF pair; suppressing deploy dispatch."
+          fi
+
+      - name: Deploy snapshot to dev
+        if: steps.pair_admission.outputs.admitted == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -123,4 +175,6 @@ jobs:
             echo "- should_cut: ${{ steps.check.outputs.should_cut }}"
             echo "- trigger: ${{ github.event_name }}"
             echo "- publish_branch: ${{ steps.cut.outputs.publish_branch }}"
+            echo "- pair_admitted: ${{ steps.pair_admission.outputs.admitted }}"
+            echo "- candidate_sha: ${{ steps.pair_admission.outputs.candidate_sha }}"
           } >> "$GITHUB_STEP_SUMMARY"
