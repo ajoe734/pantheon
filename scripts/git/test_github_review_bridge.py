@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import sys
 import unittest
+from pathlib import Path
 from typing import Any, Mapping, Sequence
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import github_review_bridge as bridge
 
