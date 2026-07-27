@@ -48,8 +48,9 @@ validator script at all.  ``receipt_commit_artifacts`` closes this by reading th
 receipt commit out of the local object store: every bound artifact must exist at
 that commit, each blob's sha256 must equal the digest the manifest records, and
 the digest recomputed from those blobs must equal ``validated_head_sha``.  The
-check is offline -- ``git cat-file`` only -- and fails closed when git is
-unavailable, the commit is unknown, a path is absent, or a digest disagrees.
+check is offline -- ``git ls-tree`` and ``git cat-file`` only -- and fails closed
+when git is unavailable, the commit is unknown, a path is absent, or a digest
+disagrees.
 
 Usage::
 
@@ -176,26 +177,40 @@ def _git(git_root: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
 def git_commit_exists(git_root: Path, sha: str) -> bool:
     """True when ``sha`` resolves to a commit object already in the store."""
 
-    if not _git(git_root, "rev-parse", "--git-dir").returncode == 0:
+    if _git(git_root, "rev-parse", "--git-dir").returncode != 0:
         raise GitUnavailable(f"{git_root} is not a git repository, so no receipt commit can be verified")
     return _git(git_root, "cat-file", "-e", f"{sha}^{{commit}}").returncode == 0
 
 
-def git_blob_at(git_root: Path, sha: str, relative: str) -> bytes | None:
-    """Bytes of ``relative`` at commit ``sha``, or ``None`` when absent there.
+def git_tree_paths(git_root: Path, sha: str) -> set[str]:
+    """Every blob path in the tree of commit ``sha``.
 
-    Absence is a distinct answer from a git failure: a commit that never
-    carried the artifact is the exact 5c39428 substitution shape, whereas a git
-    failure means the claim is unverifiable and must fail closed.
+    Absence of a path must be distinguishable from git failing: a commit that
+    never carried the artifact is the exact 5c39428 substitution shape, whereas a
+    git failure means the claim is unverifiable and has to fail closed.  Listing
+    the tree once answers that from an exit status, instead of inferring it from
+    the wording of a ``cat-file`` error message.
     """
 
+    completed = _git(git_root, "ls-tree", "-r", "--name-only", "-z", sha)
+    if completed.returncode != 0:
+        raise GitUnavailable(
+            f"git ls-tree of {sha} failed: {completed.stderr.decode('utf-8', 'replace').strip()}"
+        )
+    return {path for path in completed.stdout.decode("utf-8").split("\0") if path}
+
+
+def git_blob_at(git_root: Path, sha: str, relative: str) -> bytes:
+    """Bytes of ``relative`` at commit ``sha``.  The path must already be known
+    to exist there (see :func:`git_tree_paths`), so any failure is fail-closed."""
+
     completed = _git(git_root, "cat-file", "blob", f"{sha}:{relative}")
-    if completed.returncode == 0:
-        return completed.stdout
-    stderr = completed.stderr.decode("utf-8", "replace")
-    if "does not exist" in stderr or "exists on disk, but not in" in stderr or "Not a valid object name" in stderr:
-        return None
-    raise GitUnavailable(f"git cat-file blob {sha}:{relative} failed: {stderr.strip()}")
+    if completed.returncode != 0:
+        raise GitUnavailable(
+            f"git cat-file blob {sha}:{relative} failed: "
+            f"{completed.stderr.decode('utf-8', 'replace').strip()}"
+        )
+    return completed.stdout
 
 
 def parse_iso(value: str) -> datetime:
@@ -493,7 +508,7 @@ def check_receipt_commit_artifacts(manifest: dict[str, Any], git_root: Path) -> 
     for receipt in receipts:
         raw_sha = receipt.get("sha")
         sha = raw_sha.strip() if isinstance(raw_sha, str) else ""
-        label = f"delivery receipt {sha or raw_sha!r}"
+        label = f"delivery receipt {sha}"
 
         if not BARE_COMMIT_SHA.match(sha):
             rejections.append(
@@ -526,10 +541,10 @@ def check_receipt_commit_artifacts(manifest: dict[str, Any], git_root: Path) -> 
                 )
                 continue
 
+            tree_paths = git_tree_paths(git_root, sha)
             actual_by_path: dict[str, str] = {}
             for relative, recorded in sorted(recorded_by_path.items()):
-                payload = git_blob_at(git_root, sha, relative)
-                if payload is None:
+                if relative not in tree_paths:
                     rejections.append(
                         Rejection(
                             "receipt_commit_artifacts",
@@ -538,7 +553,7 @@ def check_receipt_commit_artifacts(manifest: dict[str, Any], git_root: Path) -> 
                         )
                     )
                     continue
-                actual = hashlib.sha256(payload).hexdigest()
+                actual = hashlib.sha256(git_blob_at(git_root, sha, relative)).hexdigest()
                 actual_by_path[relative] = actual
                 if actual != recorded:
                     rejections.append(

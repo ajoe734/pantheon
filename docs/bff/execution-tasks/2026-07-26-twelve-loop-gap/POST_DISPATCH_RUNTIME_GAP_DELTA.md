@@ -48,8 +48,8 @@ v6.0.0 交付於 PR `#4221` head `b3f8edad0b5ac078ada3dd791b8166dbaf58cf9e`，�
 `5c39428dda1d3c1e42fa926aa5f320467e1b8324`、將其 `delivery_state` 改寫成 live、再重封
 `evidence.sha256`，七條規則依然零拒絕——即使 git object 顯示該 commit 的本文件 sha256 為
 `9ac925e0…` 而非被綁定的 `4f2f7735…`，且該 commit 完全不含兩支 validator script。
-v7.0.0 新增第八條規則 `receipt_commit_artifacts`：直接以 `git cat-file` 離線讀出收據
-commit 的 tree，逐一比對每個被綁定 artifact 的存在與 blob sha256，並在 git 不可用、
+v7.0.0 新增第八條規則 `receipt_commit_artifacts`：直接以 `git ls-tree` / `git cat-file` 離線讀出
+收據 commit 的 tree，逐一比對每個被綁定 artifact 的存在與 blob sha256，並在 git 不可用、
 commit 未知、路徑缺失或摘要不符時 fail closed（§7.6）。v1–v6 中被推翻的具體主張逐條列於
 §7。
 
@@ -772,7 +772,7 @@ fail-closed 拒絕規則**（v5.0.0 為五條，v6.0.0 新增 `current_delivery_
 （git object store）核對的規則，也因此是唯一一條無法用改寫 manifest 來滿足的規則。
 
 驗證器只讀不寫：它不修改工作樹，也不觸碰任何 status plane，且**完全離線**——唯一的外部
-呼叫是 `git --no-optional-locks -C <git-root> cat-file`，不存取網路，也不需要 GitHub
+呼叫是 `git --no-optional-locks -C <git-root> ls-tree` / `cat-file`，不存取網路，也不需要 GitHub
 憑證。`--repo-root` 指定被雜湊的 bytes 所在的樹，`--git-root` 指定收據 commit 所在的
 object store；正常使用時兩者是同一個 repository，未指定 `--git-root` 時預設等於
 `--repo-root`（因此把 `--repo-root` 指向沒有 object store 的暫存目錄會 fail closed，
@@ -822,7 +822,7 @@ v5.0.0 交付於 PR `#4221` head `5a9ed0c9957529467fce0b7afa0338546987ee4b`，�
    head 上三項必要檢查的 run id、conclusion、`completed_at`。
 4. `evidence.json` 自身的 bytes 由 companion `evidence.sha256` 封存。
 5. **（v7.0.0 新增）**收據 commit 不只被「宣告」，還要能被**離線核對**：
-   `receipt_commit_artifacts` 以 `git cat-file` 讀出該 commit 的 tree，要求每個被綁定
+   `receipt_commit_artifacts` 以 `git ls-tree` / `git cat-file` 讀出該 commit 的 tree，要求每個被綁定
    artifact 都存在於該 tree 且 blob sha256 等於 manifest 記載值，並以這些 blob 重算
    content digest 與 `validated_head_sha` 比對。少了這一步，第 3 點只是 manifest 的
    自述，可以被改寫（§7.6）。
@@ -869,14 +869,17 @@ manifest 對收據的自述，沒有一條去讀收據 commit 本身。因此以
 v7.0.0 的修正是新增第八條規則 `receipt_commit_artifacts`（§7.3 表格最後一列），
 把收據從「manifest 說的」變成「object store 能證明的」：
 
-- 以 `git --no-optional-locks -C <git-root> cat-file` 離線讀取，不觸網、不需憑證；
+- 以 `git --no-optional-locks -C <git-root> ls-tree` 與 `cat-file` 離線讀取，不觸網、
+  不需憑證；
 - 收據 sha 必須是 40-hex 小寫且解析為 commit object，否則 fail closed；
 - `source_artifact_sha256_by_epoch` 中每一個路徑都必須存在於收據 commit 的 tree，
-  缺任一路徑即 fail closed（這是上表第 2、3 列的形狀）；
+  缺任一路徑即 fail closed（這是上表第 2、3 列的形狀）。「路徑不存在」以
+  `ls-tree -r --name-only -z` 的成員關係判定，而非以 `cat-file` 的錯誤訊息字串推測——
+  後者會隨 git 版本改變措辭，把「無法核對」誤判成「路徑不存在」；
 - 每個 blob 的 sha256 必須等於 manifest 記載值，不符即 fail closed（第 1 列的形狀）；
 - 以收據 commit 的 blob 重算 content digest，必須等於 `validated_head_sha`；
-- git 不可用、`--git-root` 不是 git repository、或 `cat-file` 以非「路徑不存在」的原因
-  失敗時，一律 fail closed——「無法核對」不等於「通過」。
+- git 不可用、`--git-root` 不是 git repository、`ls-tree` 失敗、或已知存在的路徑
+  `cat-file` 仍失敗時，一律 fail closed——「無法核對」不等於「通過」。
 
 迴歸測試以**這次否決的精確形狀**覆蓋，而非近似形狀：
 
