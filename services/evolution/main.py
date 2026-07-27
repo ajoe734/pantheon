@@ -141,6 +141,7 @@ from services.evolution.dispatch_outbox import (
 )
 from services.evolution.dispatch_receipts import (
     DispatchReceiptError,
+    OUTCOME_FAILED,
     OUTCOME_SUCCEEDED,
     build_adapter_registry,
     supported_planes,
@@ -659,6 +660,66 @@ def _domain_error(exc: Exception) -> HTTPException:
 
 def _delivery_conflict(detail: str) -> HTTPException:
     return HTTPException(status_code=409, detail=detail)
+
+
+def _settle_terminal_dispatch_failure(
+    decision: EvolutionDecision,
+    *,
+    downstream_kind: str,
+    downstream_ref_id: str,
+    downstream_status: str | None,
+    detail: str | None,
+) -> None:
+    """Preserve approval while durably converging a real downstream failure."""
+    intent = _dispatch_intent_for(decision)
+    if intent is None:
+        raise _delivery_conflict(
+            f"failed downstream receipt for {decision.decision_id} has no dispatch boundary"
+        )
+
+    reason = (
+        "downstream terminal failure: "
+        f"{detail or f'{downstream_kind} {downstream_ref_id} status={downstream_status!r}'}"
+    )
+    try:
+        record = dispatch_outbox.activate(dispatch_outbox.prepare(intent))
+        # Compensation is written before the DLQ transition.  A crash between
+        # the two leaves an idempotent obligation that a retry can finish;
+        # reversing the order could strand a terminal DLQ without compensation.
+        compensation_ledger.record(
+            tenant_id=decision.tenant_id,
+            decision_id=decision.decision_id,
+            outbox_id=record.outbox_id,
+            reason=reason,
+            downstream_kind=downstream_kind,
+            downstream_ref_id=downstream_ref_id,
+        )
+        _, completed = dispatch_outbox.dead_letter_terminal_failure(record, reason)
+    except EvolutionDispatchError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"failed to durably settle downstream failure for "
+                f"{decision.decision_id}: {exc}"
+            ),
+        ) from exc
+
+    log.warning(
+        "evolution.dispatch_failed decision_id=%s tenant=%s downstream=%s:%s "
+        "status=%s outbox_id=%s outbox_status=%s",
+        decision.decision_id,
+        decision.tenant_id,
+        downstream_kind,
+        downstream_ref_id,
+        downstream_status,
+        record.outbox_id,
+        completed.status.value,
+    )
+    raise _delivery_conflict(
+        f"{downstream_kind} {downstream_ref_id} reported terminal "
+        f"status={downstream_status!r}; decision remains approved, dispatch is "
+        "dead-lettered, and compensation is required"
+    )
 
 
 def _proposal_request_payload(body: ProposeRequest) -> Dict[str, Any]:
@@ -1975,6 +2036,15 @@ def execute_proposal(decision_id: str, body: ExecuteRequest):
     except DispatchReceiptError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    if receipt.outcome == OUTCOME_FAILED:
+        _settle_terminal_dispatch_failure(
+            decision,
+            downstream_kind=receipt.downstream_kind,
+            downstream_ref_id=str(receipt.downstream_ref_id or ""),
+            downstream_status=receipt.downstream_status,
+            detail=receipt.detail,
+        )
+
     execution_result = ExecutionResult(
         status=(
             ExecutionStatus.SUCCEEDED
@@ -2134,6 +2204,15 @@ def rollback_followthrough(decision_id: str, body: RollbackFollowthroughRequest)
         )
     except DispatchReceiptError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    if receipt.outcome == OUTCOME_FAILED:
+        _settle_terminal_dispatch_failure(
+            decision,
+            downstream_kind=receipt.downstream_kind,
+            downstream_ref_id=str(receipt.downstream_ref_id or ""),
+            downstream_status=receipt.downstream_status,
+            detail=receipt.detail,
+        )
 
     try:
         decision.execute(

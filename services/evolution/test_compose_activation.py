@@ -19,10 +19,10 @@ def test_daily_sweep_scheduler_is_enabled_by_default_in_root_compose() -> None:
     assert scheduler["stop_grace_period"] == "30s"
     assert scheduler["environment"]["EVOLUTION_API_URL"] == "http://evolution:8093"
     assert scheduler["environment"]["EVOLUTION_AUTH_MODE"] == (
-        "${EVOLUTION_AUTH_MODE:-disabled}"
+        "${EVOLUTION_AUTH_MODE:-token}"
     )
     assert scheduler["environment"]["EVOLUTION_AUTH_TOKEN"] == (
-        "${EVOLUTION_AUTH_TOKEN:-}"
+        "${EVOLUTION_AUTH_TOKEN:-pantheon-local-evolution-service}"
     )
     assert scheduler["environment"]["EVOLUTION_SCHEDULER_TENANT_ID"] == (
         "${EVOLUTION_DEFAULT_TENANT_ID:-pantheon-default}"
@@ -133,8 +133,10 @@ def test_dispatch_worker_is_enabled_by_default_in_root_compose() -> None:
     assert environment["PANTHEON_PERSISTENCE_POSTURE"] == (
         "${PANTHEON_PERSISTENCE_POSTURE:-dev}"
     )
-    assert environment["EVOLUTION_AUTH_MODE"] == "${EVOLUTION_AUTH_MODE:-disabled}"
-    assert environment["EVOLUTION_AUTH_TOKEN"] == "${EVOLUTION_AUTH_TOKEN:-}"
+    assert environment["EVOLUTION_AUTH_MODE"] == "${EVOLUTION_AUTH_MODE:-token}"
+    assert environment["EVOLUTION_AUTH_TOKEN"] == (
+        "${EVOLUTION_AUTH_TOKEN:-pantheon-local-evolution-service}"
+    )
     assert environment["EVOLUTION_DISPATCH_ACTOR_ID"] == (
         "${EVOLUTION_DISPATCH_ACTOR_ID:-evolution-dispatch-worker}"
     )
@@ -164,6 +166,15 @@ def test_dispatch_worker_is_enabled_by_default_in_root_compose() -> None:
     assert api["environment"]["PANTHEON_PERSISTENCE_POSTURE"] == environment[
         "PANTHEON_PERSISTENCE_POSTURE"
     ]
+    assert api["environment"]["EVOLUTION_AUTH_MODE"] == environment[
+        "EVOLUTION_AUTH_MODE"
+    ]
+    assert api["environment"]["EVOLUTION_AUTH_TOKEN"] == environment[
+        "EVOLUTION_AUTH_TOKEN"
+    ]
+    assert api["environment"]["EVOLUTION_AUTH_ALLOWED_TENANTS"] == (
+        "${EVOLUTION_AUTH_ALLOWED_TENANTS:-pantheon-default}"
+    )
     assert worker["depends_on"]["evolution"]["condition"] == "service_healthy"
     assert worker["healthcheck"]["test"] == [
         "CMD",

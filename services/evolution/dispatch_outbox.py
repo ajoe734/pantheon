@@ -436,6 +436,67 @@ class EvolutionDispatchOutbox:
             permanent=permanent,
         )
 
+    def dead_letter_terminal_failure(
+        self,
+        record: ReliableOutboxRecord,
+        error: str,
+        *,
+        now: datetime | None = None,
+    ) -> tuple[bool, ReliableOutboxRecord]:
+        """Durably settle a directly verified terminal downstream failure.
+
+        The dispatch worker normally settles a leased record through
+        :meth:`complete_failed`.  The HTTP execute route can also be called
+        directly with a downstream receipt, however, and that caller does not
+        own a worker lease.  Requiring a lease there left a real failed receipt
+        able to mark the decision ``executed`` while its outbox stayed pending.
+
+        Compare-and-set the current canonical snapshot instead.  This safely
+        fences a concurrent worker claim: one writer records the terminal DLQ
+        state and the other observes it.  Repeating the same failed receipt is
+        idempotent and does not consume another delivery attempt.
+        """
+        if not str(error).strip():
+            raise EvolutionDispatchError("terminal dispatch failure requires an error")
+
+        canonical = self.store.get(record.outbox_id)
+        if canonical is None:
+            raise EvolutionDispatchError(
+                f"dispatch outbox record disappeared: {record.outbox_id}"
+            )
+
+        for _ in range(8):
+            if canonical.status == OutboxRecordStatus.DEAD_LETTERED:
+                return False, canonical
+            if canonical.status == OutboxRecordStatus.PUBLISHED:
+                raise EvolutionDispatchError(
+                    f"cannot dead-letter published dispatch {record.outbox_id}"
+                )
+
+            completed = canonical.mark_failed(
+                error,
+                max_attempts=self.max_attempts,
+                base_delay_seconds=self.base_delay_seconds,
+                now=now,
+                permanent=True,
+            )
+            replaced, observed_payload = self.store.impl.compare_and_set(
+                canonical.outbox_id,
+                canonical.to_dict(),
+                completed.to_dict(),
+            )
+            if replaced:
+                return True, completed
+            if observed_payload is None:
+                raise EvolutionDispatchError(
+                    f"dispatch outbox record disappeared: {record.outbox_id}"
+                )
+            canonical = ReliableOutboxRecord.from_dict(observed_payload)
+
+        raise EvolutionDispatchError(
+            f"dispatch {record.outbox_id} changed repeatedly while recording terminal failure"
+        )
+
     # -- DLQ replay ---------------------------------------------------------
 
     def replay_available_at(self, record: ReliableOutboxRecord) -> datetime | None:

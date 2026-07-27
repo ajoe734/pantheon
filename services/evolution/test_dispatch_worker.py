@@ -491,6 +491,65 @@ def test_execute_is_refused_when_the_downstream_is_not_terminal(
     assert decision_state(decision_id) == "approved"
 
 
+def test_direct_execute_terminal_failure_dead_letters_and_compensates(
+    isolated_state, scripted_downstream
+):
+    """A direct failed receipt must converge exactly like the outbox worker."""
+    decision_id = approve_research_decision()["decision_id"]
+    reference = scripted_downstream.set_receipt(
+        decision_id,
+        DispatchReceipt(
+            outcome=OUTCOME_FAILED,
+            downstream_kind=RECEIPT_KIND,
+            downstream_ref_id=scripted_downstream.reference_for(decision_id),
+            downstream_status="failed",
+            detail="research run failed before direct execute",
+        ),
+    )
+    payload = {
+        "actor_role": "evolution_controller",
+        "actor_id": "evo-ctrl",
+        "tenant_id": RESEARCH_TENANT,
+        "execution_receipt": {
+            "downstream_kind": RECEIPT_KIND,
+            "downstream_ref_id": reference,
+        },
+    }
+
+    response = client.post(
+        f"/api/evolution/proposals/{decision_id}/execute",
+        json=payload,
+    )
+    assert response.status_code == 409, response.text
+    assert "remains approved" in response.json()["detail"]
+    assert decision_state(decision_id) == "approved"
+    assert evo_main.store.get(decision_id).execution_result is None
+
+    outbox_id, _, _ = dispatch_identity(RESEARCH_TENANT, decision_id)
+    record = isolated_state["outbox"].get_by_id(outbox_id)
+    assert record.status.value == "dead_lettered"
+    assert record.delivery_attempts == 1
+    assert "research run failed before direct execute" in (record.last_error or "")
+
+    compensation = isolated_state["compensations"].get(RESEARCH_TENANT, decision_id)
+    assert compensation is not None
+    assert compensation["outbox_id"] == outbox_id
+    assert compensation["downstream_ref_id"] == reference
+    assert compensation["resolved"] is False
+
+    # A duplicate caller sees the same durable terminal disposition; neither
+    # the delivery attempt nor the compensation obligation is duplicated.
+    duplicate = client.post(
+        f"/api/evolution/proposals/{decision_id}/execute",
+        json=payload,
+    )
+    assert duplicate.status_code == 409, duplicate.text
+    repeated = isolated_state["outbox"].get_by_id(outbox_id)
+    assert repeated.status.value == "dead_lettered"
+    assert repeated.delivery_attempts == 1
+    assert len(isolated_state["compensations"].list_all(tenant_id=RESEARCH_TENANT)) == 1
+
+
 def test_execute_is_refused_for_a_mismatched_receipt_source(
     isolated_state, scripted_downstream
 ):
