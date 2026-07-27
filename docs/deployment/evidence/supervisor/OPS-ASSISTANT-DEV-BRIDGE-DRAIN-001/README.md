@@ -175,9 +175,22 @@ The lease regression separately proves:
 ## Delivery and review
 
 The implementation is on
-`task/OPS-ASSISTANT-DEV-BRIDGE-DRAIN-001`. Independent Codex2 review, PR
-checks, merge into `dev`, and the final governed `done` transition remain
-pending at this evidence revision.
+`task/OPS-ASSISTANT-DEV-BRIDGE-DRAIN-001` in PR
+[#4251](https://github.com/ajoe734/pantheon/pull/4251).
+
+Codex2 independently reviewed exact head
+`7f6216c41b6f1ae1d166c8f269de1eedbfb280a4` and approved the installed
+governed command-root and authoritative journal binding, trusted `Human/Ops`
+mutation identity, signed packet actor provenance, ambient lease-marker
+removal, and invalid-path/symlink fail-closed boundaries. The independent
+rerun passed 70 focused tests, 157 assistant-wide tests, and 147
+status/runtime tests plus 45 subtests; all visible required PR checks were
+green.
+
+At approval the PR remained open and behind `dev`. The owner closeout must
+sync the base, revalidate the composed head, merge PR #4251, record the merge
+through the governed delivery metadata, and only then transition the task to
+`done`.
 
 Installing or restarting the live supervisor command runtime is deliberately
 not performed here. It belongs to the separately governed

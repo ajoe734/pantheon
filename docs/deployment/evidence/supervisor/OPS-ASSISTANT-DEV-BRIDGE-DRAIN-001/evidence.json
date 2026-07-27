@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "schema_status": "owner_complete_pending_independent_review",
+  "schema_status": "review_approved_pending_merge",
   "task": {
     "id": "OPS-ASSISTANT-DEV-BRIDGE-DRAIN-001",
     "title": "Repair supervisor DevTaskPacket drain and bridge command binding",
     "owner": "Codex",
     "reviewer": "Codex2",
-    "status": "in_progress",
+    "status": "review_approved",
     "branch": "task/OPS-ASSISTANT-DEV-BRIDGE-DRAIN-001"
   },
   "scope": {
@@ -137,7 +137,7 @@
     {
       "id": "AC7",
       "statement": "Branch, focused and broad validation, PR checks, independent review, merge, and closeout are complete.",
-      "status": "pending_reviewer",
+      "status": "pending_merge",
       "evidence_refs": [
         "README.md#verification",
         "delivery",
@@ -181,15 +181,20 @@
     "branch": "task/OPS-ASSISTANT-DEV-BRIDGE-DRAIN-001",
     "anchor_commit": "308314dd6",
     "implementation_commit": "a736741c6",
-    "pull_request": null,
+    "pull_request": 4251,
+    "pull_request_url": "https://github.com/ajoe734/pantheon/pull/4251",
     "merge_commit": null,
     "live_runtime_refresh": "Not in task scope; governed by SUP-COMMAND-RUNTIME-REFRESH-001."
   },
   "review": {
     "reviewer": "Codex2",
-    "status": "pending",
-    "decision": null,
-    "reviewed_commit": null,
-    "notes": []
+    "status": "approved",
+    "decision": "review_approved",
+    "reviewed_commit": "7f6216c41b6f1ae1d166c8f269de1eedbfb280a4",
+    "notes": [
+      "Codex2 independently reviewed the exact head and approved the installed governed command-root and authoritative journal binding, trusted Human/Ops mutation identity, signed packet actor provenance, ambient lease-marker removal, and invalid-path/symlink fail-closed boundaries.",
+      "Codex2 independently reran 70 focused, 157 assistant broad, and 147 status/runtime tests plus 45 subtests; all passed and all visible required PR checks were green.",
+      "At approval PR #4251 remained open and behind dev, so merge evidence and the governed done transition remain owner closeout work."
+    ]
   }
 }
