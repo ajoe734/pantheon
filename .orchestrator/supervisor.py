@@ -125,7 +125,7 @@ STICKY_AUTH_BLOCKED_UNTIL = "9999-12-31T23:59:59Z"
 
 
 _DEFERRED_DISPATCH_STATUS_SYNCS: ContextVar[
-    list[tuple[dict[str, Any], str | None]] | None
+    list[tuple[dict[str, Any], str | None, str | None]] | None
 ] = ContextVar("deferred_dispatch_status_syncs", default=None)
 _DEFERRED_WORKER_TERMINATIONS: ContextVar[
     list[tuple[int, int | None, bool]] | None
@@ -1679,6 +1679,38 @@ def _git_ref_exists(repo_root: Path, ref: str) -> bool:
     return proc.returncode == 0
 
 
+def _fetch_worker_base_ref(repo_root: Path, base_ref: str) -> tuple[bool, str | None]:
+    """Refresh the exact remote-tracking ref used to lease worker worktrees.
+
+    ``git fetch origin dev`` updates ``FETCH_HEAD`` but does not necessarily
+    update ``refs/remotes/origin/dev`` when the checkout's configured fetch
+    refspec tracks only another branch (the live command checkout tracked only
+    ``master``).  Worktree creation and freshness checks consume the remote-
+    tracking ref, so fetch it with an explicit source and destination.
+    """
+
+    normalized = str(base_ref or "").strip()
+    if normalized.startswith("origin/"):
+        branch = normalized[len("origin/") :]
+        refspec = f"+refs/heads/{branch}:refs/remotes/origin/{branch}"
+    else:
+        refspec = normalized
+    if not refspec:
+        return False, "missing_base_ref"
+
+    proc = subprocess.run(
+        ["git", "fetch", "origin", refspec, "--quiet"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode == 0:
+        return True, None
+    details = (proc.stderr or proc.stdout or "").strip()
+    return False, details or "git fetch failed"
+
+
 def _quarantine_incomplete_worker_path(path: Path) -> Path | None:
     """Move an unregistered partial checkout aside so dispatch can recover.
 
@@ -1724,6 +1756,10 @@ def _create_worker_worktree(repo_root: Path, path: Path, branch: str, base_ref: 
     if path.exists() and (not path.is_dir() or any(path.iterdir())):
         if _quarantine_incomplete_worker_path(path) is None:
             return False, f"Worker worktree path already exists and is not empty: {path}"
+
+    fetched, fetch_error = _fetch_worker_base_ref(repo_root, base_ref)
+    if not fetched:
+        return False, f"Failed to refresh worker base {base_ref}: {fetch_error}"
 
     remote_ref = f"refs/remotes/origin/{branch}"
     if _git_ref_exists(repo_root, f"refs/heads/{branch}"):
@@ -1941,22 +1977,16 @@ def _refresh_reused_worker_worktree(
     such as ORCH-CLOSEOUT-MERGE-GATE (require_merged_pr). Refresh on lease so
     the worker always sees current control-plane code.
 
-    Strategy: fetch + `git merge --ff-only origin/<base>`. Never auto-resolve
-    a real merge — if the branch genuinely diverged, leave it for the worker
-    to handle. Dirty reused worktrees are blocked before dispatch so workers
-    cannot inherit unrelated staged or tracked changes.
+    Strategy: fetch the exact remote-tracking ref + `git merge --ff-only
+    origin/<base>`. Never auto-resolve a real merge — if the branch genuinely
+    diverged, leave it for the worker to handle. Dirty reused worktrees are
+    blocked before dispatch so workers cannot inherit unrelated staged or
+    tracked changes.
     """
     base = base_ref.split("/", 1)[1] if base_ref.startswith("origin/") else base_ref
-    fetch_proc = subprocess.run(
-        ["git", "fetch", "origin", base, "--quiet"],
-        cwd=worktree_path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if fetch_proc.returncode != 0:
-        details = (fetch_proc.stderr or fetch_proc.stdout or "").strip()
-        return False, f"fetch_failed: {details}"
+    fetched, fetch_error = _fetch_worker_base_ref(repo_root, base_ref)
+    if not fetched:
+        return False, f"fetch_failed: {fetch_error}"
 
     status_proc = subprocess.run(
         ["git", "status", "--porcelain", "--untracked-files=no"],
@@ -2761,7 +2791,20 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
                 record["lease_acquired_at"] = record.get("lease_acquired_at") or active_worker.get("lease_acquired_at") or utc_now()
                 record["lease_expires_at"] = active_worker.get("lease_expires_at") or queue_lease_expiry(config)
                 record["processed_at"] = record.get("processed_at") or utc_now()
-                sync_dispatched_task_status(config, event, run_id=record["run_id"])
+                sync_dispatched_task_status(
+                    config,
+                    event,
+                    run_id=record["run_id"],
+                    workspace_path=(
+                        active_worker.get("workspace_path")
+                        or (
+                            (active_worker.get("request_snapshot") or {})
+                            .get("metadata", {})
+                            .get("workspace_path")
+                        )
+                        or config_path(config, "status_file").parent
+                    ),
+                )
                 changed = True
             continue
         task_id = str(event.get("task_id") or "").strip()
@@ -3094,7 +3137,12 @@ def process_queue(config: dict[str, Any], state: dict[str, Any], provider_report
         record["lease_expires_at"] = queue_lease_expiry(config, queue_started_at)
         record["processed_at"] = _isoformat_utc(queue_started_at)
         record.pop("last_wait_reason", None)
-        sync_dispatched_task_status(config, event, run_id=worker_run_id)
+        sync_dispatched_task_status(
+            config,
+            event,
+            run_id=worker_run_id,
+            workspace_path=workspace_path or config_path(config, "status_file").parent,
+        )
         changed = True
     return changed
 
@@ -6844,13 +6892,25 @@ def auto_dispatch_block_is_temporary_capacity(reason: str | None) -> bool:
     )
 
 
-def status_command_subprocess_context(config: dict[str, Any]) -> tuple[Path, dict[str, str]]:
+def status_command_subprocess_context(
+    config: dict[str, Any],
+    *,
+    workspace_path: str | Path | None = None,
+) -> tuple[Path, dict[str, str]]:
     status_root = config_path(config, "status_file").parent
     issued_env = status_command_runtime_env(config)
     command_root = Path(str(issued_env["PANTHEON_COMMAND_ROOT"])).resolve()
     env = os.environ.copy()
+    # A supervisor launched from an auto-worker shell must not accidentally
+    # borrow that worker's lease identity for a different dispatch.
+    for key in ("ORCH_RUN_ID", "PANTHEON_WORKTREE_ROOT", "ORCH_WORKSPACE_PATH"):
+        env.pop(key, None)
     env.update(issued_env)
     env["PANTHEON_STATUS_ROOT"] = str(status_root)
+    if workspace_path is not None and str(workspace_path).strip():
+        workspace_root = Path(str(workspace_path)).expanduser().resolve()
+        env["PANTHEON_WORKTREE_ROOT"] = str(workspace_root)
+        env["ORCH_WORKSPACE_PATH"] = str(workspace_root)
     return command_root / "scripts" / "ai_status.py", env
 
 
@@ -6902,6 +6962,7 @@ def sync_dispatched_task_status(
     config: dict[str, Any],
     event: dict[str, Any],
     run_id: str | None = None,
+    workspace_path: str | Path | None = None,
 ) -> bool:
     reason = str(event.get("reason") or "").strip()
     action = DISPATCH_STATUS_ACTIONS.get(reason)
@@ -6912,10 +6973,36 @@ def sync_dispatched_task_status(
 
     deferred = _DEFERRED_DISPATCH_STATUS_SYNCS.get()
     if deferred is not None:
-        deferred.append((dict(event), run_id))
+        deferred.append(
+            (
+                dict(event),
+                run_id,
+                str(workspace_path) if workspace_path is not None else None,
+            )
+        )
         return False
 
-    script, env = status_command_subprocess_context(config)
+    lease_run_id = str(run_id or "").strip()
+    workspace_binding = str(workspace_path or "").strip()
+    if lease_run_id and not workspace_binding:
+        write_activity_log(
+            config,
+            {
+                "type": "task_dispatch_sync_failed",
+                "task_id": event.get("task_id"),
+                "dispatch_reason": reason,
+                "message": (
+                    "Dispatch status sync refused an incomplete worker lease: "
+                    f"ORCH_RUN_ID={lease_run_id} has no workspace binding."
+                ),
+            },
+        )
+        return False
+
+    script, env = status_command_subprocess_context(
+        config,
+        workspace_path=workspace_binding or None,
+    )
     if not script.exists():
         write_activity_log(
             config,
@@ -6951,7 +7038,6 @@ def sync_dispatched_task_status(
     # auto worker and requires the supervisor-issued lease. Without ORCH_RUN_ID it took
     # the no-lease branch and raised "status command lease required for auto worker",
     # which failed every dispatch sync. Both call sites already hold the worker run id.
-    lease_run_id = str(run_id or "").strip()
     if lease_run_id:
         env["ORCH_RUN_ID"] = lease_run_id
     else:
@@ -7002,7 +7088,7 @@ def _run_with_deferred_dispatch_status_syncs(
     the critical section.
     """
 
-    deferred: list[tuple[dict[str, Any], str | None]] = []
+    deferred: list[tuple[dict[str, Any], str | None, str | None]] = []
     deferred_terminations: list[tuple[int, int | None, bool]] = []
     token = _DEFERRED_DISPATCH_STATUS_SYNCS.set(deferred)
     termination_token = _DEFERRED_WORKER_TERMINATIONS.set(deferred_terminations)
@@ -7033,11 +7119,12 @@ def _run_with_deferred_dispatch_status_syncs(
             )
 
     sync_changed = False
-    for event, run_id in deferred:
+    for event, run_id, workspace_path in deferred:
         sync_changed = sync_dispatched_task_status(
             config,
             event,
             run_id=run_id,
+            workspace_path=workspace_path,
         ) or sync_changed
     return changed or sync_changed
 

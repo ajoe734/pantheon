@@ -1694,12 +1694,38 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                 "preserve me\n",
             )
             self.assertIn("original_path=", (quarantined[0] / "ORCHESTRATOR_QUARANTINE.txt").read_text(encoding="utf-8"))
-            run.assert_called_once_with(
-                ["git", "worktree", "add", "-b", "task/AG-WS-OPS-002", str(worktree_path), "origin/dev"],
-                cwd=repo_root,
-                capture_output=True,
-                text=True,
-                check=False,
+            self.assertEqual(
+                run.call_args_list,
+                [
+                    mock.call(
+                        [
+                            "git",
+                            "fetch",
+                            "origin",
+                            "+refs/heads/dev:refs/remotes/origin/dev",
+                            "--quiet",
+                        ],
+                        cwd=repo_root,
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    ),
+                    mock.call(
+                        [
+                            "git",
+                            "worktree",
+                            "add",
+                            "-b",
+                            "task/AG-WS-OPS-002",
+                            str(worktree_path),
+                            "origin/dev",
+                        ],
+                        cwd=repo_root,
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    ),
+                ],
             )
 
     def test_create_worker_worktree_does_not_move_git_worktree(self) -> None:
@@ -2254,7 +2280,15 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             "message": "wake",
         }
         state = {"queue": {"events": {}}, "workers": {}}
-        request = object()
+        request = supervisor.DeliveryRequest(
+            agent_id="codex",
+            provider="codex",
+            delivery_mode="codex",
+            message="wake",
+            task_id="BUS-VAL-004",
+            reason="owned_in_progress_dispatch",
+            metadata={"workspace_path": "/tmp/workers/bus-val-004"},
+        )
         delivery = {"manual_confirmation_required": False, "auto_delivered": True}
 
         with (
@@ -2273,7 +2307,10 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         build_request.assert_called_once_with(self.config, queue_payload)
         start_worker.assert_called_once()
         sync_dispatched_task_status.assert_called_once_with(
-            self.config, queue_payload, run_id="run-123"
+            self.config,
+            queue_payload,
+            run_id="run-123",
+            workspace_path="/tmp/workers/bus-val-004",
         )
 
     def test_process_queue_skips_second_event_when_task_worker_is_active(self) -> None:
@@ -4696,6 +4733,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                     "run_id": "gemini-run-1",
                     "queue_event_id": "evt-current",
                     "status": "running",
+                    "workspace_path": "/tmp/workers/p3-001",
                 }
             },
         }
@@ -4712,8 +4750,13 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         record = state["queue"]["events"]["evt-current"]
         self.assertEqual(record["status"], "started")
         self.assertEqual(record["run_id"], "gemini-run-1")
-        sync_dispatched_task_status.assert_called_once_with(
-            self.config, queue_payload, run_id="gemini-run-1"
+        self.assertEqual(
+            sync_dispatched_task_status.call_args.kwargs["run_id"],
+            "gemini-run-1",
+        )
+        self.assertEqual(
+            Path(sync_dispatched_task_status.call_args.kwargs["workspace_path"]),
+            Path("/tmp/workers/p3-001"),
         )
 
 
@@ -4801,17 +4844,58 @@ class DispatchStatusSyncTests(unittest.TestCase):
             "PANTHEON_COMMAND_ROOT": str(self.root),
             "PANTHEON_COMMAND_RUNTIME_SHA": "installed-sha",
         }
+        workspace = self.root / "worker"
+        workspace.mkdir()
 
         with (
+            mock.patch.dict(
+                supervisor.os.environ,
+                {
+                    "PANTHEON_WORKTREE_ROOT": "/tmp/inherited-other-worker",
+                    "ORCH_WORKSPACE_PATH": "/tmp/inherited-other-worker",
+                },
+                clear=False,
+            ),
             mock.patch.object(supervisor, "status_command_runtime_env", return_value=command_env),
             mock.patch.object(supervisor.subprocess, "run", return_value=mock.Mock(returncode=0, stderr="", stdout="")) as run_mock,
         ):
             changed = supervisor.sync_dispatched_task_status(
-                self.config, event, run_id="copilot-run-7"
+                self.config,
+                event,
+                run_id="copilot-run-7",
+                workspace_path=workspace,
             )
 
         self.assertTrue(changed)
-        self.assertEqual(run_mock.call_args.kwargs["env"]["ORCH_RUN_ID"], "copilot-run-7")
+        command_process_env = run_mock.call_args.kwargs["env"]
+        self.assertEqual(command_process_env["ORCH_RUN_ID"], "copilot-run-7")
+        self.assertEqual(command_process_env["PANTHEON_WORKTREE_ROOT"], str(workspace))
+        self.assertEqual(command_process_env["ORCH_WORKSPACE_PATH"], str(workspace))
+
+    def test_sync_dispatched_task_status_rejects_run_id_without_workspace(self) -> None:
+        event = {
+            "task_id": "APP-002-W1-FRONT-HANDOFF",
+            "target_agent": "copilot",
+            "target_display_name": "Copilot",
+            "reason": "owned_ready_dispatch",
+        }
+
+        with (
+            mock.patch.object(supervisor.subprocess, "run") as run_mock,
+            mock.patch.object(supervisor, "write_activity_log") as activity_log,
+        ):
+            changed = supervisor.sync_dispatched_task_status(
+                self.config,
+                event,
+                run_id="copilot-run-7",
+            )
+
+        self.assertFalse(changed)
+        run_mock.assert_not_called()
+        self.assertIn(
+            "has no workspace binding",
+            activity_log.call_args.args[1]["message"],
+        )
 
     def test_sync_dispatched_task_status_without_run_id_does_not_inherit_lease(self) -> None:
         # A stray ORCH_RUN_ID in the supervisor environment must not be borrowed as a
@@ -4836,6 +4920,8 @@ class DispatchStatusSyncTests(unittest.TestCase):
 
         self.assertTrue(changed)
         self.assertNotIn("ORCH_RUN_ID", run_mock.call_args.kwargs["env"])
+        self.assertNotIn("PANTHEON_WORKTREE_ROOT", run_mock.call_args.kwargs["env"])
+        self.assertNotIn("ORCH_WORKSPACE_PATH", run_mock.call_args.kwargs["env"])
 
     def test_run_once_syncs_dispatch_after_releasing_runtime_lock(self) -> None:
         event = {
@@ -4864,6 +4950,7 @@ class DispatchStatusSyncTests(unittest.TestCase):
                 self.config,
                 event,
                 run_id="copilot-run-7",
+                workspace_path=self.root,
             )
             self.assertFalse(changed)
             return False
@@ -4889,6 +4976,14 @@ class DispatchStatusSyncTests(unittest.TestCase):
             ["lock_enter", "locked_cycle", "lock_exit", "status_command"],
         )
         self.assertEqual(run_mock.call_args.kwargs["env"]["ORCH_RUN_ID"], "copilot-run-7")
+        self.assertEqual(
+            run_mock.call_args.kwargs["env"]["PANTHEON_WORKTREE_ROOT"],
+            str(self.root),
+        )
+        self.assertEqual(
+            run_mock.call_args.kwargs["env"]["ORCH_WORKSPACE_PATH"],
+            str(self.root),
+        )
 
     def test_run_once_probes_providers_before_taking_the_runtime_lock(self) -> None:
         """A gh auth probe must not be charged to the exclusive runtime lock.
@@ -10356,6 +10451,88 @@ class WorktreeDirtClassificationTests(unittest.TestCase):
     def _commit_all(self, repo: Path, message: str) -> None:
         subprocess.run(["git", "add", "."], cwd=repo, check=True)
         subprocess.run(["git", "commit", "-qm", message], cwd=repo, check=True)
+
+    def test_worker_base_fetch_updates_origin_dev_with_master_only_refspec(self) -> None:
+        """An explicit branch fetch must update the ref freshness checks consume."""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            origin = root / "origin.git"
+            source = root / "source"
+            consumer = root / "consumer"
+            subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+            source.mkdir()
+            consumer.mkdir()
+            subprocess.run(["git", "init", "-q", "-b", "master"], cwd=source, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=source, check=True)
+            subprocess.run(["git", "config", "user.name", "Test User"], cwd=source, check=True)
+            (source / "tracked.txt").write_text("initial\n", encoding="utf-8")
+            self._commit_all(source, "initial")
+            initial_sha = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=source,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+            subprocess.run(["git", "remote", "add", "origin", str(origin)], cwd=source, check=True)
+            subprocess.run(["git", "push", "-q", "origin", "master"], cwd=source, check=True)
+            subprocess.run(["git", "checkout", "-q", "-b", "dev"], cwd=source, check=True)
+            subprocess.run(["git", "push", "-q", "origin", "dev"], cwd=source, check=True)
+
+            subprocess.run(["git", "init", "-q"], cwd=consumer, check=True)
+            subprocess.run(["git", "remote", "add", "origin", str(origin)], cwd=consumer, check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "config",
+                    "remote.origin.fetch",
+                    "+refs/heads/master:refs/remotes/origin/master",
+                ],
+                cwd=consumer,
+                check=True,
+            )
+            subprocess.run(["git", "fetch", "-q", "origin", "master"], cwd=consumer, check=True)
+            subprocess.run(
+                ["git", "update-ref", "refs/remotes/origin/dev", initial_sha],
+                cwd=consumer,
+                check=True,
+            )
+
+            (source / "tracked.txt").write_text("advanced\n", encoding="utf-8")
+            self._commit_all(source, "advance dev")
+            advanced_sha = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=source,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+            subprocess.run(["git", "push", "-q", "origin", "dev"], cwd=source, check=True)
+
+            # This is the live failure shape: FETCH_HEAD advances, but the
+            # master-only configured refspec leaves origin/dev untouched.
+            subprocess.run(["git", "fetch", "-q", "origin", "dev"], cwd=consumer, check=True)
+            stale_sha = subprocess.run(
+                ["git", "rev-parse", "origin/dev"],
+                cwd=consumer,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+            self.assertEqual(stale_sha, initial_sha)
+
+            fetched, error = supervisor._fetch_worker_base_ref(consumer, "origin/dev")
+
+            self.assertTrue(fetched, error)
+            refreshed_sha = subprocess.run(
+                ["git", "rev-parse", "origin/dev"],
+                cwd=consumer,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+            self.assertEqual(refreshed_sha, advanced_sha)
 
     def test_clean_status(self) -> None:
         self.assertEqual(supervisor._classify_worktree_dirt(""), ("clean", []))
