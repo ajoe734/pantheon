@@ -1112,7 +1112,9 @@ _ppl_alloc_009_eligibility_observation_store = PaperEligibilityObservationStore(
 )
 _COMMAND_AUTH_CONTEXT: Dict[str, Dict[str, Optional[str]]] = {}
 
-downstream_health_monitor = DownstreamHealthMonitor()
+downstream_health_monitor = DownstreamHealthMonitor(
+    state_path=os.path.join(BFF_DATA_DIR, "downstream_health.sqlite3"),
+)
 
 
 _RETRYABLE_CAPITAL_COMMAND_TYPES = {
@@ -63380,6 +63382,44 @@ async def bff_v5_downstream_health(
                 "Live probe results from the BFF continuous downstream health monitor. "
                 "Degraded targets have their last failure reason and consecutive failure count."
             ),
+        },
+    }
+
+
+@app.post("/bff/v5/downstream-health/dlq/replay")
+async def bff_v5_downstream_health_dlq_replay(
+    payload: Dict[str, Any] = Body(default_factory=dict),
+    authorization: Optional[str] = Header(default=None),
+):
+    """Redrive durable infrastructure-health delivery dead letters.
+
+    This changes only BFF delivery intent.  It does not bypass telemetry
+    admission, incident authority, governance, or active-runtime controls.
+    """
+    identity = _extract_identity(authorization)
+    _require_operator_role(identity)
+    event_id = str(payload.get("event_id") or "").strip() or None
+    channel = str(payload.get("channel") or "").strip() or None
+    allowed_channels = {"telemetry", "incident_open", "incident_resolve"}
+    if channel is not None and channel not in allowed_channels:
+        raise _bff_error(
+            422,
+            ErrorCode.VALIDATION_FAILED,
+            "Unknown downstream health delivery channel",
+            f"channel must be one of {sorted(allowed_channels)}",
+            precondition_failed="channel",
+        )
+    result = await asyncio.to_thread(
+        downstream_health_monitor.replay_dead_letters,
+        event_id=event_id,
+        channel=channel,
+    )
+    return {
+        "read_model": "downstream_health_delivery_replay",
+        "data": result,
+        "meta": {
+            "source": "bff_downstream_health_monitor",
+            "authority": "operator",
         },
     }
 
