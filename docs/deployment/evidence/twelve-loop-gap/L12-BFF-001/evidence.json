@@ -16,8 +16,8 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-27T19:47:00Z",
-    "evidence_cut_semantics": "BFF-owned implementation, focused integration validation, and the services/incidents non-trading infrastructure-health consume authority are complete on this PR branch. The BFF payload still contains no caller-supplied RuntimeBinding fields; the incident authority maps infrastructure subject evidence internally and exact replay is idempotent. Hosted stop/recovery verification and independent reviewer approval are not claimed.",
+    "evidence_cut_at": "2026-07-27T20:14:00Z",
+    "evidence_cut_semantics": "BFF-owned implementation, focused integration validation, and the services/incidents non-trading infrastructure-health consume authority are complete on this PR branch after composing current origin/dev. The BFF payload still contains no caller-supplied RuntimeBinding fields; the incident authority maps infrastructure subject evidence internally and exact replay is idempotent. Hosted stop/recovery verification and independent reviewer approval are not claimed.",
     "id": "L12-BFF-001",
     "overall_admission": "implementation_ready",
     "owner": "Codex2",
@@ -105,7 +105,7 @@
     ],
     "pull_request": {
       "base": "dev",
-      "head_sha": "18a094764bdee7caccc4f516e3920f8b19285ed5",
+      "head_sha": "bfc80889af58234edfab19679f5b094ffeea3f86",
       "number": 4274,
       "url": "https://github.com/ajoe734/pantheon/pull/4274"
     },
@@ -139,9 +139,9 @@
         "result": "pass"
       }
     ],
-    "validated_at": "2026-07-27T19:47:00Z",
-    "validated_base_sha": "87166a352c0b90a26a6e35c138acfaea195fa4ee",
-    "validated_head_sha": "18a094764bdee7caccc4f516e3920f8b19285ed5"
+    "validated_at": "2026-07-27T20:14:00Z",
+    "validated_base_sha": "b81edf76dfc14087dd7d5e3a6599448cb9d0bb09",
+    "validated_head_sha": "bfc80889af58234edfab19679f5b094ffeea3f86"
   },
   "deployment": {
     "applicable": false,
@@ -369,6 +369,15 @@
       "reference": "services/incidents/main.py#/api/incidents/consume-infrastructure-health",
       "sequence": 3,
       "sha": "18a094764bdee7caccc4f516e3920f8b19285ed5",
+      "status": "implementation_ready_pending_review"
+    },
+    {
+      "actor": "Human/Ops",
+      "kind": "current_dev_metadata_recut",
+      "recorded_at": "2026-07-27T20:14:00Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4274",
+      "sequence": 4,
+      "sha": "bfc80889af58234edfab19679f5b094ffeea3f86",
       "status": "implementation_ready_pending_review"
     }
   ]

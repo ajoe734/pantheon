@@ -2,7 +2,7 @@
 
 Status: BFF implementation ready; IncidentCase authority composed locally.
 
-Draft delivery: [PR #4274](https://github.com/ajoe734/pantheon/pull/4274)
+Delivery: [PR #4274](https://github.com/ajoe734/pantheon/pull/4274)
 targets `dev`; the prior AC5 blocker has been resolved in the PR branch and
 now awaits independent review plus normal PR gates.
 
@@ -23,8 +23,8 @@ requires `approval_ref` plus `reason`; the actor and replay result are persisted
 
 ## Verified
 
-On branch head `18a094764bdee7caccc4f516e3920f8b19285ed5`, based on dev
-`87166a352c0b90a26a6e35c138acfaea195fa4ee`:
+On branch head `bfc80889af58234edfab19679f5b094ffeea3f86`, based on dev
+`b81edf76dfc14087dd7d5e3a6599448cb9d0bb09`:
 
 ```text
 /home/lupin/pantheon/.venv/bin/python -m pytest -q \
