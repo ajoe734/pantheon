@@ -15,7 +15,10 @@ Loop: `human_imitation_shadow_evaluation`
 | First evidence PR | [#4236](https://github.com/ajoe734/pantheon/pull/4236), head `3eefc3fe`, merged to `dev` as `4cb436f80f82657cbd58a8527a3ca374f41253aa` at 2026-07-27T01:35:23Z — evidence packet plus one owner-found tenant-isolation fix (see below) |
 | Remediation PR | [#4237](https://github.com/ajoe734/pantheon/pull/4237), head `6c76909f`, merged to `dev` as `d8c925f3636b0aece66b156c7f63896c5eb6d127` at 2026-07-27T02:48:13Z — closes the default-compose gap the first review returned on (see [Returned review](#returned-review-default-compose-authority)) |
 | Branch CI Gate for #4237 | success — runs [30232997381](https://github.com/ajoe734/pantheon/actions/runs/30232997381) (push) and [30232999094](https://github.com/ajoe734/pantheon/actions/runs/30232999094) (pull_request); Commit trailers, Runtime mirror guard, Smoke acceptance all green |
-| Anchor commits | `f85bf549` Agora dataset source · `6f985c9f` scheduling and backlog leases · `507f51d3` scheduling proofs · `92863858` tenant-safe authority and recovery · `35538b0b` compose service credential wiring · `7aa5a7a0` default-compose loop proofs |
+| Second evidence PR | [#4238](https://github.com/ajoe734/pantheon/pull/4238), head `a4ba6685`, merged to `dev` as `d65b87eecac09ffafa5653cf05ebeb5d526546d5` at 2026-07-27T02:55:03Z — the head Codex2 independently re-reviewed and returned on |
+| Second remediation PR | [#4242](https://github.com/ajoe734/pantheon/pull/4242), head `d18a3633`, merged to `dev` as `ddd8dc5709cf45e2dd8814fd20567afda2f8d48e` at 2026-07-27T13:02:19Z — closes the published-service-token gap the re-review returned on (see [Returned re-review](#returned-re-review-a-published-credential-authenticated-a-deployment)) |
+| Branch CI Gate for #4242 | success — runs [30268355592](https://github.com/ajoe734/pantheon/actions/runs/30268355592) (push) and [30268359805](https://github.com/ajoe734/pantheon/actions/runs/30268359805) (pull_request); Commit trailers, Runtime mirror guard, Smoke acceptance all green |
+| Anchor commits | `f85bf549` Agora dataset source · `6f985c9f` scheduling and backlog leases · `507f51d3` scheduling proofs · `92863858` tenant-safe authority and recovery · `35538b0b` compose service credential wiring · `7aa5a7a0` default-compose loop proofs · `4f6e2498` published service token refusal |
 
 ### Returned review: default-compose authority
 
@@ -48,6 +51,50 @@ PANTHEON_PERSISTENCE_POSTURE    = dev
 ```
 
 plus `POLICY_LEARNING_SERVICE_TENANTS = pantheon-local` on the API.
+
+### Returned re-review: a published credential authenticated a deployment
+
+The re-review at `a4ba6685` confirmed the merged delivery — schema, checksums,
+all 15 source hashes, the rendered compose credential and tenant scope, and a
+fresh throwaway-Postgres suite — and then failed closed on one thing the
+previous remediation had left half-done.
+
+`inbound_authority.py` refused exactly one string under an enforced posture:
+`LOCAL_DEV_SERVICE_TOKEN`, the value compose interpolates. But `.env.example`
+publishes a *second* credential for the same variable,
+`POLICY_LEARNING_SERVICE_TOKEN=replace-me-policy-learning-service-token`, and an
+operator who copies that file into a staging or production stack without editing
+the line is running on a value anyone with a checkout can read. Codex2's
+reproduction, with `PANTHEON_PERSISTENCE_POSTURE=production` and that exact
+published placeholder:
+
+```text
+authority_configuration() → configured: true, service_token_scope: deployment_secret
+resolve_authority()       → policy-learning-service, tenant pantheon-local, ACCEPTED
+```
+
+That directly contradicts the trusted-direct-route and fail-closed deployment
+authority claim this task exists to establish.
+
+PR #4242 closes it:
+
+| Change | File |
+|---|---|
+| `PUBLISHED_SERVICE_TOKENS` pins both credentials this repository publishes — the compose default and the exact `.env.example` placeholder; `is_published_service_token()` additionally refuses unedited fill-me-in shapes (`replace-me`, `changeme`, `placeholder`, `example`, `sample`, `dummy`, `todo`, `your-`, and bare words like `secret`); `service_token()` downgrades any of them to `""` on a staging/prod posture; `authority_configuration()` reports the new `published_placeholder` scope | `services/policy-learning/inbound_authority.py` |
+| Route-level negative for the exact `.env.example` value across all 15 protected routes with an operator-minted positive control on the same routes and posture, a drift guard that reads the tracked `docker-compose.yml` and `.env.example`, and eight parametrised placeholder shapes | `services/policy-learning/tests/test_l12_imit_001_default_compose_loop.py` |
+| Operator comment states that both the compose default and this placeholder are refused on staging/prod | `.env.example` |
+
+The same reproduction on this head:
+
+```text
+authority_configuration() → configured: false, service_token_configured: false,
+                            service_token_scope: none
+resolve_authority()       → REFUSED 401 AUTH_TOKEN_FORMAT
+```
+
+An operator-minted secret still authenticates every one of those routes on the
+same `staging` and `prod` postures, so the refusal is the placeholder being
+rejected and not the service being broken.
 
 ### Owner-found fix carried by #4236
 
@@ -95,30 +142,36 @@ platform linux -- Python 3.12.3, pytest-9.1.1, pluggy-1.6.0
 rootdir: /tmp/pantheon-worker-worktrees/pantheon/l12-imit-001
 configfile: pytest.ini
 plugins: anyio-4.14.2, asyncio-1.4.0
-collected 180 items
-
-services/policy-learning/tests/test_l12_imit_001_authority_and_recovery.py [ 12%]
-services/policy-learning/tests/test_l12_imit_001_default_compose_loop.py   [ 16%]
-services/policy-learning/tests/test_l12_imit_001_real_dataset_scheduling.py [ 27%]
-services/policy-learning/tests/test_policy_learning_compose_activation.py  [ 29%]
-services/policy-learning/tests/test_policy_learning_gateway_routing.py     [ 33%]
-services/policy-learning/tests/test_policy_learning_http_service.py        [ 35%]
-services/policy-learning/tests/test_policy_learning_postgres_store.py      [ 36%]
-services/policy-learning/tests/test_policy_learning_shadow_eval_scheduler.py [ 45%]
-services/research/imitation/test_agora_dataset_source.py                   [ 51%]
-services/research/imitation/test_bc_trainer.py                             [ 53%]
-services/research/imitation/test_dataset_builder.py                        [ 66%]
-services/research/imitation/test_eval_metrics.py                           [ 68%]
-services/research/imitation/test_policy_validation_gate.py                 [ 74%]
-services/research/imitation/test_preference_models.py                      [ 83%]
-services/research/imitation/test_trajectory_models.py                      [ 89%]
-services/research/imitation/test_trl_bridge.py                             [ 92%]
-services/foundation/tests/test_persistence_posture.py                      [100%]
-
-======================= 180 passed, 1 warning in 54.91s ========================
+collected 190 items
+services/policy-learning/tests/test_l12_imit_001_authority_and_recovery.py . [  0%]
+......................                                                   [ 12%]
+services/policy-learning/tests/test_l12_imit_001_default_compose_loop.py . [ 12%]
+................                                                         [ 21%]
+services/policy-learning/tests/test_l12_imit_001_real_dataset_scheduling.py . [ 21%]
+...................                                                      [ 31%]
+services/policy-learning/tests/test_policy_learning_compose_activation.py . [ 32%]
+..                                                                       [ 33%]
+services/policy-learning/tests/test_policy_learning_gateway_routing.py . [ 33%]
+.......                                                                  [ 37%]
+services/policy-learning/tests/test_policy_learning_http_service.py ...  [ 38%]
+services/policy-learning/tests/test_policy_learning_postgres_store.py .. [ 40%]
+                                                                         [ 40%]
+services/policy-learning/tests/test_policy_learning_shadow_eval_scheduler.py . [ 40%]
+..............                                                           [ 47%]
+services/research/imitation/test_agora_dataset_source.py ............    [ 54%]
+services/research/imitation/test_bc_trainer.py ...                       [ 55%]
+services/research/imitation/test_dataset_builder.py .................... [ 66%]
+....                                                                     [ 68%]
+services/research/imitation/test_eval_metrics.py ....                    [ 70%]
+services/research/imitation/test_policy_validation_gate.py ..........    [ 75%]
+services/research/imitation/test_preference_models.py .................  [ 84%]
+services/research/imitation/test_trajectory_models.py ..........         [ 90%]
+services/research/imitation/test_trl_bridge.py ......                    [ 93%]
+services/foundation/tests/test_persistence_posture.py .............      [100%]
+======================= 190 passed, 1 warning in 48.86s ========================
 ```
 
-Without `PANTHEON_TEST_POSTGRES_DSN` the same suite is `175 passed, 5 skipped`;
+Without `PANTHEON_TEST_POSTGRES_DSN` the same suite is `185 passed, 5 skipped`;
 the five skipped cases are exactly the real-Postgres proofs listed below.
 
 ### Negative control for the compose wiring
@@ -134,6 +187,28 @@ git checkout HEAD -- docker-compose.yml
 
 The single pass is `test_offline_compose_renderer_matches_docker_compose_config`,
 which asserts the two renderings agree rather than asserting any wiring.
+
+### Negative control for the published-token refusal
+
+Same discipline for the re-review remediation — revert only
+`inbound_authority.py` and the new assertions must all fail:
+
+```bash
+git show HEAD~1:services/policy-learning/inbound_authority.py > services/policy-learning/inbound_authority.py
+python -m pytest services/policy-learning/tests/test_l12_imit_001_default_compose_loop.py -q
+#  → 10 failed, 6 passed
+git checkout HEAD -- services/policy-learning/inbound_authority.py
+```
+
+The 10 failures are exactly the assertions this remediation adds:
+`test_every_repository_published_service_token_is_one_the_service_refuses`,
+`test_the_env_example_placeholder_cannot_authenticate_a_deployment`, and the
+eight parametrised cases of
+`test_unedited_placeholder_shapes_are_refused_on_a_deployment_posture`.
+`test_the_published_compose_token_is_refused_on_a_deployment_posture` still
+**passes** against the pre-fix module, which is the point: the old rule covered
+the compose default and nothing else. The module was restored immediately and
+`git status --short` re-checked.
 
 ## Blocker-by-Blocker Evidence
 
@@ -233,6 +308,7 @@ and tenant header, and refuses to start without both — compose supplies them
 | Cross-tenant `get` / `readback` / `governance` / `promote` / `retry` / `replay` → 404, id absent from the body, victim record untouched | `test_candidate_reads_are_invisible_across_tenants` |
 | Verified JWT without tenant claims → 403 `TENANT_SCOPE_UNCONFIGURED`; wrong role → 403; tampered signature → 401 | `test_a_verified_jwt_without_tenant_authority_is_refused` |
 | A runtime-manager secret does not authenticate a policy-learning caller | `test_inbound_authority_does_not_inherit_the_runtime_manager_secret` |
+| No repository-published credential — compose default, the exact `.env.example` placeholder, or any unedited fill-me-in shape — authenticates any of the 15 routes on a `staging` or `prod` posture, while an operator-minted secret does | `test_the_env_example_placeholder_cannot_authenticate_a_deployment` (§7) |
 | Cross-tenant `dataset_refs` rejected, not re-stamped | `test_explicit_dataset_ref_for_another_tenant_is_rejected_not_restamped` |
 | Two tenants ticking and claiming concurrently stay disjoint | `test_concurrent_cross_tenant_ticks_and_claims_stay_isolated` |
 | Real Postgres, three tenants claiming concurrently, zero overlap | `test_real_postgres_concurrent_cross_tenant_claims_never_overlap` |
@@ -275,14 +351,22 @@ location.
 | Real Postgres: the compose environment discovers and trains on real `<schema>.agora_dataset_records` rows for the compose tenant, ignores a neighbouring tenant's rows in the same table, resolves the candidate backlog to the durable Postgres authority, and keeps full lineage | `test_default_compose_environment_trains_on_real_tenant_scoped_agora_rows` |
 | Without the wiring the sidecar refuses to start (`SchedulerConfigurationError`, `main()` → 2) and, if started anyway, its tick is 401 with no candidate created | `test_a_compose_scheduler_without_the_wiring_is_refused_before_it_ticks` |
 | The published compose token is refused under a `staging` or `prod` posture (`configured: false`, tick 401), while a deployment-supplied secret is accepted | `test_the_published_compose_token_is_refused_on_a_deployment_posture` |
+| Every `POLICY_LEARNING_SERVICE_TOKEN` value the tracked `docker-compose.yml` and `.env.example` actually publish is in `PUBLISHED_SERVICE_TOKENS`, and that constant is exactly that set — not a stale subset and not a widened superset | `test_every_repository_published_service_token_is_one_the_service_refuses` |
+| The exact published `.env.example` placeholder answers 401 on all 15 protected routes under `staging` and `prod` (`service_token_configured: false`, `service_token_scope: none`, `configured: false`), while an operator-minted secret authenticates the same 15 routes on the same postures — and the placeholder stays refused even while that secret is the configured one | `test_the_env_example_placeholder_cannot_authenticate_a_deployment` |
+| Unedited fill-me-in shapes (`REPLACE_ME_…`, `changeme`, `change-me-please`, `your-service-token-here`, `example-token`, `placeholder`, `secret`, `TBD`) resolve to no credential under `prod` and stay usable under `dev` | `test_unedited_placeholder_shapes_are_refused_on_a_deployment_posture` |
 | The compose declaration itself cannot regress, and the staging stack keeps the published token fail-closed | `test_compose_wires_the_imitation_loop_credential_and_tenant_scope`, `test_staging_compose_keeps_the_published_dev_credential_fail_closed` |
 
-The compose default token is a published value, deliberately. It is a
-development convenience, and `inbound_authority.py` downgrades it to "no
-credential" as soon as `PANTHEON_PERSISTENCE_POSTURE` (or `PANTHEON_ENV`) is a
-staging or production mode — which `docker-compose.staging-full.yml` pins — so
-a real deployment fails closed rather than running on a credential anyone can
-read off GitHub. This is recorded as a residual risk with its containment.
+The compose default token and the `.env.example` placeholder are published
+values, deliberately. They are development conveniences, and
+`inbound_authority.py` downgrades **both** — and any other unedited fill-me-in
+shape — to "no credential" as soon as `PANTHEON_PERSISTENCE_POSTURE` (or
+`PANTHEON_ENV`) is a staging or production mode, which
+`docker-compose.staging-full.yml` pins. A real deployment therefore fails closed
+rather than running on a credential anyone can read off GitHub. Because the
+service runs in a container with no `.env.example` to consult, the refused
+values are constants; the drift guard above is what keeps those constants
+honest. Both the published-credential risk and the fail-closed cost of the
+prefix rule are recorded as residual risks with their containment.
 
 ## Crash, Restart, and Corruption Evidence
 
@@ -323,10 +407,21 @@ a peer process.
 ## Scope and Non-Goals Held
 
 - `docker-compose.yml` and `.env.example` **are** changed, because the returned
-  review required the default compose product loop to reach tenant-scoped Agora
-  data through auth. No other compose or env file was touched;
-  `docker-compose.staging-full.yml` is only read, to assert that its inherited
-  credential stays fail-closed.
+  reviews required the default compose product loop to reach tenant-scoped Agora
+  data through auth and required the published `.env.example` credential to be
+  refused on a deployment posture. The `.env.example` change in #4242 is comment
+  text only — the published value itself is unchanged, because changing it would
+  hide the very failure mode the refusal now proves. No other compose or env file
+  was touched; `docker-compose.staging-full.yml` is only read, to assert that its
+  inherited credential stays fail-closed.
+- The refusal rule is scoped to policy-learning. The sibling
+  `services/capital/inbound_authority.py` and
+  `services/training-session/inbound_authority.py` are **not** changed by this
+  task; whether they carry the same exposure is outside this task's boundary and
+  is not claimed either way here.
+- `scheduler_worker.py` is unchanged by #4242. A sidecar handed a published
+  credential under an enforced posture still starts and then takes 401s from the
+  API, which is the same fail-closed outcome as before, just not a fail-fast one.
 - No live Pantheon service, database, or runtime state was written; the
   Postgres proofs used a throwaway container and dropped every schema they
   created, and `docker compose config` renders the file without starting
