@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: in_progress
 - Owner: Codex
 - Reviewer: Codex2
-- Next: Codex adopted Claude's rejected PR #4218 implementation. The exact-head approval binding and failed auto-merge revocation findings are fixed, the branch is composed with origin/dev ab63b3c4c, and all 79 gate, 9 integrator, 52 workflow-helper, 24 triage, 17 index-safety, and 137 ai-status tests pass. Push the final evidence-only commit and hand the exact PR head plus this task evidence manifest to Codex2. The governed command runtime at adoption SHA 1434effdc88fb79abd0125351a5206af8fe4a7c7 predates this gate, so do not claim live activation before the merged runtime is refreshed.
+- Next: Owner closeout found PR #4218 behind current dev and the governed review_approved records unbound because runtime 1434effdc88fb79abd0125351a5206af8fe4a7c7 predates review_binding. Refresh the same task branch to authoritative dev, rerun the focused matrix, and return the new exact head to Codex2; owner and reviewer remain unchanged.
 
 ## Summary
 讓需要獨立審查的任務在 reviewer 核准且 head 未變前不得 auto-merge；保留明確允許 merge 後審查的既有路徑。
