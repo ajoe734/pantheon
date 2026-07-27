@@ -1,0 +1,657 @@
+{
+    "schema_version": "loop_product_evidence.v1",
+    "schema_status": {
+        "formal_schema_owner": "LOOP-PROD-002",
+        "formalization_trigger": "OPS-L12-PYTHON-PACKAGING-PROVISION-001 owner cut. The task exists because the Human/Ops in-progress audit of OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001 at 2026-07-26T22:41:34Z rejected an acceptance narrowing and required either an implementation that makes every named AC2 mode pass or a formal impossibility proof plus scope revision. The feasibility proof committed by that task proved AC2 achievable by exactly one mechanism and offered two options; Human/Ops chose Option A, authorize packaging, and created this task to own it.",
+        "note": "Owner third cut for a packaging and test-environment-provisioning delivery, taken after an independent AC2 rejection that this cut answers with an implementation change rather than an argument. It supplies the mechanism the predecessor proved to be the only admissible one, asserts that all four canonical AC2 modes pass, and adds the dependency-interpreter selection contract that makes the documented worker bootstrap work from a dependency-free default interpreter and fail closed with a named diagnostic when it cannot. Three conventions are explicit: this manifest does not contain its own digest (see integrity.self_hash_reason); it cannot contain the merge commit of the pull request that introduces it, so that terminal binding is recorded in the governed status checkpoint at closeout; and it records exactly one source epoch, because the earlier epochs pinned files this cut changed (see task.evidence_cut_semantics). Codex2 subsequently completed the independent review at PR head dd64fd9d4833766eeb32e7a18901a65a73a5df49; acceptance AC6 and record_log sequence 17 bind that decision without rewriting Claude's implementation history or Codex's owner-adoption record.",
+        "status": "formalized"
+    },
+    "evidence_policy": {
+        "checksum_file": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-PYTHON-PACKAGING-PROVISION-001/evidence.sha256",
+        "missing_or_contradicted_proof_fails_closed": true,
+        "mutation_rule": "Task-scoped changes require a reviewed Pantheon PR; append a record_log entry whenever the accepted evidence cut or formal review state changes. scripts/test_ops_l12_python_packaging_provision_evidence.py enforces the schema, timestamp, checksum, and source-digest rules mechanically.",
+        "recording_mode": "logical_append_only",
+        "redacted": false,
+        "self_hashing": false
+    },
+    "task": {
+        "base_branch": "dev",
+        "evidence_cut_at": "2026-07-27T13:02:56Z",
+        "evidence_cut_semantics": "Owner third cut on task/OPS-L12-PYTHON-PACKAGING-PROVISION-001, taken at implementation head 36b3750eb5e4af593bedf822e28b59e53cb3cdfb on merged dev tip 4cb436f80f82657cbd58a8527a3ca374f41253aa. It supersedes the two earlier cuts entirely, including their epoch digests, because this cut changes implementation files that those epochs pinned. The first cut was taken at head c72842d9de8afeae46d8953174b18698bd2c10e3 on dev tip 643181a067ec5c344faac0766c69de0d5cfb32eb; the second re-cut it at 4aab5cca40a6815876beb8d77972bb71d12d757d on dev tip 7fedefb281dd416e0412e935c48e866438f56e6d after two conflict-free dev merges, and asserted the same digests for both epochs because those merges changed no owned file. Codex2 then rejected AC2 in the actual auto-worker dispatch, and the rejection was correct: on that head the documented bootstrap started with plain python3, which on an auto-worker host is /usr/bin/python3 with no pytest, so provisioning reported success and returned an interpreter whose very next documented command died with 'No module named pytest'. validation.commands[0] reproduces that failure at the rejected head ad719d9c25b84813231731dedaefe405406d926a and validation.commands[1] shows the same command passing at this head. Because scripts/dev/provision_python_distribution.py, its contract test, services/telemetry/test_discovery_imports.py and AI_COLLABORATION_GUIDE.md all changed, integrity.source_artifact_sha256_by_epoch now carries exactly one epoch - this one. Carrying the superseded epochs forward would make the manifest describe trees that no longer exist and would fail scripts/test_ops_l12_python_packaging_provision_evidence.py, which checks every recorded digest against the committed bytes. The prior epoch shas remain readable in the git history of this file and in record_log. One self-reference is impossible and is stated rather than hidden: every sha recorded here, including implementation_delivery.pull_request.head_sha, is 36b3750eb5e4af593bedf822e28b59e53cb3cdfb as it stood at cut time. The evidence commit carrying this cut is a child of that head and changes no implementation file - it touches only this evidence directory and the task brief - so it moves the pull-request head without moving anything the exact-head check conclusions are about. The terminal binding of the pull-request head and merge commit is recorded in the governed closeout checkpoint, not in this file.",
+        "id": "OPS-L12-PYTHON-PACKAGING-PROVISION-001",
+        "overall_admission": "review_approved",
+        "owner": "Codex",
+        "phase": "Twelve-loop closure",
+        "product_level_required": false,
+        "repository": "ajoe734/pantheon",
+        "review_file": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-PYTHON-PACKAGING-PROVISION-001/evidence.json",
+        "reviewer": "Codex2",
+        "target_environment": "local developer, auto-worker, and CI test execution only",
+        "target_maturity": "verified_local_and_ci_test_execution",
+        "task_branch": "task/OPS-L12-PYTHON-PACKAGING-PROVISION-001",
+        "title": "Provision installed Python package for telemetry AC2"
+    },
+    "authorities": {
+        "actual_state": [
+            "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001/AC2_FEASIBILITY_PROOF.md at dev 643181a06 - the formal enumeration proving that a site-packages entry is the only admissible mechanism for AC2 modes M2 and M3, and its Option A / Option B scope decision.",
+            "services/telemetry/test_discovery_imports.py at dev 643181a06 - 15 tests, of which test_dotted_unittest_from_foreign_cwd_without_pythonpath_fails_only_on_services and test_direct_file_execution_from_foreign_cwd_fails_only_on_services recorded AC2 M2 and M3 as an unresolved gap rather than a pass.",
+            "The repository at dev 643181a06 has no pyproject.toml, setup.py, or setup.cfg anywhere; `git ls-files` matches none of them, so the repository was not installable and `services` was reachable only through the working directory or PYTHONPATH.",
+            "pytest.ini at dev 643181a06 - the pytest configuration and rootdir anchor, which this task must not displace.",
+            "requirements.txt at dev 643181a06 - the declared root-level test dependency file, which this task must not duplicate or supersede.",
+            "Governed task row OPS-L12-PYTHON-PACKAGING-PROVISION-001 - current owner Codex after governed reassignment from implementation author Claude, reviewer Codex2, status review at the independently reviewed candidate, and the six canonical acceptance criteria this manifest answers one by one."
+        ],
+        "desired_state": [
+            ".orchestrator/task-briefs/ops_l12_python_packaging_provision_001.md - task brief and acceptance scope of record.",
+            "AI_COLLABORATION_GUIDE.md - canonical collaboration rules; this task adds the section 3 subsection 'Python Test Environment Provisioning' describing the worker test bootstrap, and asserts no L1 architecture change.",
+            "schemas/product-evidence.schema.json - the formal manifest schema this cut validates against."
+        ],
+        "task_packet": ".orchestrator/task-briefs/ops_l12_python_packaging_provision_001.md"
+    },
+    "scope": {
+        "authoritative_write_owner": "Codex is the current task owner after the governed reassignment from Claude and owns finalization. Claude remains the recorded author of the root packaging declaration, provisioning entry point, dev CI provisioning job, telemetry import-integrity regression module, and the third evidence cut; those historical record_log entries are preserved. This task owns no runtime, service, or deployment surface. Codex2 independently approved the reviewed candidate at record_log sequence 17; that reviewer decision is separate from and does not rewrite the owner-adoption update.",
+        "composes_with": [
+            "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001 - this task supplies the Option A mechanism its AC2_FEASIBILITY_PROOF.md identified as the only admissible one, and converts the two boundary tests that task left recording an unresolved gap into unconditional pass assertions.",
+            "merged dev tip 4cb436f80f82657cbd58a8527a3ca374f41253aa - the base this delivery is branched from and verified against. The two earlier bases, 643181a067ec5c344faac0766c69de0d5cfb32eb and 7fedefb281dd416e0412e935c48e866438f56e6d, are superseded.",
+            ".github/workflows/branch-ci.yml - the governed dev CI gate; this task adds a 'Python packaging provision' job and changes none of the three existing required checks.",
+            "requirements.txt - unchanged and still the dependency source of truth; pyproject.toml declares no dependencies and provisioning always installs with --no-deps.",
+            "pytest.ini - unchanged and still the pytest configuration and rootdir anchor; pyproject.toml carries no [tool.pytest.ini_options].",
+            "schemas/product-evidence.schema.json - the formalized manifest contract owned by LOOP-PROD-002.",
+            "The auto-worker execution environment - the contract this cut adds is derived from it rather than assumed about it: an auto worker runs in a linked git worktree whose python3 is the bare system interpreter, so provisioning resolves the main checkout's environment through git rev-parse --git-common-dir. No supervisor or worker configuration is read or written to do it."
+        ],
+        "evidence_changed_files": [
+            "docs/deployment/evidence/twelve-loop-gap/OPS-L12-PYTHON-PACKAGING-PROVISION-001/README.md",
+            "docs/deployment/evidence/twelve-loop-gap/OPS-L12-PYTHON-PACKAGING-PROVISION-001/evidence.json",
+            "docs/deployment/evidence/twelve-loop-gap/OPS-L12-PYTHON-PACKAGING-PROVISION-001/evidence.sha256",
+            "scripts/test_ops_l12_python_packaging_provision_evidence.py"
+        ],
+        "implementation_changed_files": [
+            ".github/workflows/branch-ci.yml",
+            "AI_COLLABORATION_GUIDE.md",
+            "pyproject.toml",
+            "scripts/dev/provision_python_distribution.py",
+            "scripts/dev/test_provision_python_distribution.py",
+            "services/telemetry/test_discovery_imports.py"
+        ],
+        "not_changing": "No live supervisor configuration is read or written: .orchestrator/config.json, scripts/provision_live_supervisor_config.py, and every worker_runtime / worker_worktrees setting are untouched, and the task made no supervisor process-control request. services/telemetry/capture.py and services/telemetry/feedback_adapter.py are byte-identical to dev 643181a06. pytest.ini, requirements.txt, conftest.py, and .gitignore are unmodified - .venv-pantheon/ is already covered by the existing .venv-*/ rule, so no ignore change was needed. No service runtime, deployment, or hosted surface is touched.",
+        "owned_layer": "Repository packaging and test-environment provisioning: a root pyproject.toml declaring the pantheon-repo distribution with an explicit three-name package allowlist; scripts/dev/provision_python_distribution.py as the single governed install entry point shared by dev CI and the auto-worker test bootstrap, including the dependency-interpreter selection contract that resolves where the test dependencies come from and fails closed when no candidate supplies them; the dev CI job that exercises it; the packaging contract test, including the dependency-free bootstrap regression; and the telemetry import-integrity regression module that asserts all four canonical AC2 modes."
+    },
+    "implementation_delivery": {
+        "anchor_commits": [
+            {
+                "sha": "af64e277f3ea3bc0ffee5ce38c35908a800d0721",
+                "subject": "OPS-L12-PYTHON-PACKAGING-PROVISION-001: anchor packaging surface"
+            },
+            {
+                "sha": "c72842d9de8afeae46d8953174b18698bd2c10e3",
+                "subject": "OPS-L12-PYTHON-PACKAGING-PROVISION-001: close telemetry AC2"
+            },
+            {
+                "delivery_state": "pushed_on_task_branch",
+                "note": "Evidence directory only. Changes no implementation file, which is why the c72842d9de8afeae46d8953174b18698bd2c10e3 epoch digests still describe the tree under review.",
+                "sha": "7bf1fd5f5a72d867d5633bc03f55a74665d533b5",
+                "subject": "OPS-L12-PYTHON-PACKAGING-PROVISION-001: record evidence cut"
+            },
+            {
+                "delivery_state": "pushed_on_task_branch",
+                "note": "Second branch sync, onto dev tip 7fedefb281dd416e0412e935c48e866438f56e6d, clearing the BEHIND pull-request state. Conflict-free; this merge commit itself brought in only OPS-CI-PR-TRAILER-RANGE-001 evidence files and that task's brief. The earlier sync 0a5f32db4, already on the branch before this run, brought in OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001, which is the source of the higher services/telemetry test count. A merge subject skips the trailer check by repository policy.",
+                "sha": "4aab5cca40a6815876beb8d77972bb71d12d757d",
+                "subject": "Merge remote-tracking branch 'origin/dev' into task/OPS-L12-PYTHON-PACKAGING-PROVISION-001"
+            },
+            {
+                "delivery_state": "pushed_on_task_branch",
+                "note": "Third branch sync onto dev tip 4cb436f80f82657cbd58a8527a3ca374f41253aa, conflict-free, clearing the BEHIND pull-request state that followed the review dispatch. It changed no file this task owns.",
+                "sha": "146252eb3",
+                "subject": "Merge remote-tracking branch 'origin/dev' into task/OPS-L12-PYTHON-PACKAGING-PROVISION-001"
+            },
+            {
+                "delivery_state": "pushed_on_task_branch",
+                "note": "The repair for Codex2's AC2 rejection: the dependency-interpreter selection contract in the provisioning script, the dependency-free bootstrap regression, the AC2 M1 skip turned into a hard assertion, and the guide section documenting the contract. This is the epoch every digest and result below describes.",
+                "sha": "36b3750eb5e4af593bedf822e28b59e53cb3cdfb",
+                "subject": "OPS-L12-PYTHON-PACKAGING-PROVISION-001: anchor bootstrap contract"
+            }
+        ],
+        "pull_request": {
+            "base": "dev",
+            "head_sha": "36b3750eb5e4af593bedf822e28b59e53cb3cdfb",
+            "number": 4232,
+            "url": "https://github.com/ajoe734/pantheon/pull/4232",
+            "note": "head_sha is the implementation head 36b3750eb5e4af593bedf822e28b59e53cb3cdfb at cut time. The evidence commit carrying this third cut is its child and advances the pull-request head by an evidence-only commit; see task.evidence_cut_semantics. The pull request has never had auto-merge enabled, so no merge can precede the independent decision AC6 requires."
+        },
+        "required_checks": [
+            {
+                "conclusion": "success",
+                "event": "pull_request",
+                "head_sha": "36b3750eb5e4af593bedf822e28b59e53cb3cdfb",
+                "jobs": {
+                    "Commit trailers": "success",
+                    "Python packaging provision": "success",
+                    "Runtime mirror guard": "success",
+                    "Smoke acceptance": "success"
+                },
+                "note": "Branch CI Gate on the exact pull-request head. The first three jobs are the existing dev branch-protection required checks; all four report success. 'Python packaging provision' is the job that runs this task's own entry point with --mode current --allow-system-interpreter and then executes both new test modules, so the dependency-free bootstrap regression added by this cut is exercised on a clean GitHub runner as well as on the worker host.",
+                "run_id": 30231402274,
+                "url": "https://github.com/ajoe734/pantheon/actions/runs/30231402274",
+                "workflow": "branch-ci.yml"
+            },
+            {
+                "conclusion": "success",
+                "event": "push",
+                "head_sha": "36b3750eb5e4af593bedf822e28b59e53cb3cdfb",
+                "jobs": {
+                    "Commit trailers": "success",
+                    "Python packaging provision": "success",
+                    "Runtime mirror guard": "success",
+                    "Smoke acceptance": "success"
+                },
+                "note": "Same four jobs on the push event for the same head; recorded so a reviewer can confirm the conclusions are not specific to one event type.",
+                "run_id": 30231401041,
+                "url": "https://github.com/ajoe734/pantheon/actions/runs/30231401041",
+                "workflow": "branch-ci.yml"
+            }
+        ]
+    },
+    "validation": {
+        "commands": [
+            {
+                "command": "# CONTROL, rejected head ad719d9c25b84813231731dedaefe405406d926a in a throwaway worktree\nenv -u VIRTUAL_ENV -u PYTHONPATH /usr/bin/python3 scripts/dev/provision_python_distribution.py --quiet --print-python  && \"$PY\" -m pytest -q services/telemetry/test_discovery_imports.py",
+                "result": "REPRODUCES THE REJECTION. Provisioning exits 0 and prints <worktree>/.venv-pantheon/bin/python3; the guide's very next command then fails with '<...>/.venv-pantheon/bin/python3: No module named pytest'. This is the defect Codex2 found, observed on the exact rejected head rather than reconstructed from the report. The throwaway worktree was removed afterwards."
+            },
+            {
+                "command": "# cd /tmp/pantheon-worker-worktrees/pantheon/ops-l12-python-packaging-provision-001 (head 36b3750eb5e4af593bedf822e28b59e53cb3cdfb)\nenv -u VIRTUAL_ENV -u PYTHONPATH /usr/bin/python3 scripts/dev/provision_python_distribution.py",
+                "result": "FIXED. Exit 0, and stderr names where the dependencies came from before anything is installed: '-> dependencies from /home/lupin/pantheon/.venv/bin/python3 (via <main worktree>/.venv)'. The candidate was found by deriving the main checkout from git rev-parse --path-format=absolute --git-common-dir, which is what an auto-worker worktree needs. Verification then reports all four names resolving inside this checkout plus the new line 'dependencies -> pytest importable'. command -v python3 on this host is /usr/bin/python3 and it cannot import pytest, which command[4] confirms."
+            },
+            {
+                "command": "PANTHEON_PY=\"$(env -u VIRTUAL_ENV -u PYTHONPATH /usr/bin/python3 scripts/dev/provision_python_distribution.py --print-python)\" && env -u VIRTUAL_ENV -u PYTHONPATH \"$PANTHEON_PY\" -m pytest -q scripts/dev/test_provision_python_distribution.py services/telemetry/test_discovery_imports.py",
+                "result": "40 passed, 23 subtests passed in 27.44s, zero skips and zero failures. This is the documented worker bootstrap run end to end from the dependency-free default interpreter - the exact sequence that failed in the review dispatch."
+            },
+            {
+                "command": "env -u VIRTUAL_ENV -u PYTHONPATH .venv-pantheon/bin/python3 -m pytest -q services/telemetry",
+                "result": "353 passed, 1 skipped, 3 warnings, 35 subtests passed in 92.91s under the interpreter the documented bootstrap produced. Exactly +5 against the baseline in command[5], matching the 15 -> 20 test growth of services/telemetry/test_discovery_imports.py; no test was lost and no new skip appeared. The one skip is the pre-existing PANTHEON_TEST_NATS_URL skip."
+            },
+            {
+                "command": "env -u VIRTUAL_ENV -u PYTHONPATH /usr/bin/python3 -c 'import pytest'",
+                "result": "CONTROL: ModuleNotFoundError: No module named 'pytest'. The host's default python3 has no pytest, so commands[1] and [2] are not being certified by an ambient environment."
+            },
+            {
+                "command": "# BASELINE, throwaway worktree detached at merged dev tip 4cb436f80f82657cbd58a8527a3ca374f41253aa\nPYTHONPATH=<baseline worktree> /home/lupin/pantheon/.venv/bin/python -m pytest services/telemetry -q -rs",
+                "result": "348 passed, 1 skipped, 3 warnings, 35 subtests passed in 114.74s. The single skip is services/telemetry/test_l12_tel_001_durable_ingest.py:255, which requires PANTHEON_TEST_NATS_URL. The worktree was removed afterwards."
+            },
+            {
+                "command": "cd /tmp && env -u PYTHONPATH -u VIRTUAL_ENV /usr/bin/python3 -m unittest services.telemetry.test_capture",
+                "result": "CONTROL, MODE M2 UNPROVISIONED: FAILED (errors=1). Dotted unittest from a foreign working directory with no PYTHONPATH still fails under an interpreter that has no distribution installed, so the M2 pass in commands[3] and [8] is attributable to the installed distribution and not to ambient state."
+            },
+            {
+                "command": "cd /tmp && env -u PYTHONPATH -u VIRTUAL_ENV /usr/bin/python3 /tmp/pantheon-worker-worktrees/pantheon/ops-l12-python-packaging-provision-001/services/telemetry/test_capture.py",
+                "result": "CONTROL, MODE M3 UNPROVISIONED: ModuleNotFoundError: No module named 'services'. Same attribution argument for direct-file execution. The error names 'services', never the bare siblings 'capture' or 'feedback_adapter', which is the predecessor's repair still holding."
+            },
+            {
+                "command": "env -u VIRTUAL_ENV -u PYTHONPATH /usr/bin/python3 -m unittest services.telemetry.test_discovery_imports -v",
+                "result": "Ran 20 tests, OK (skipped=2), 20.435s. The AC2 module driven directly by the bare system interpreter: it provisions through the shipped script on its own and every AC2 mode passes, including test_m1_pytest_from_foreign_cwd, which this cut converted from a skip into a hard assertion. The only two skips are TestRepositoryRootResolutionWithoutPythonPath::test_pytest_passes_from_foreign_cwd_with_no_pythonpath_or_repo_config and TestTelemetryDiscoveryUnderForeignCwdAndHostileEnv::test_repaired_modules_collect_under_pytest_from_a_foreign_cwd, which are about the *ambient* interpreter by design and are correctly skipped when it has no pytest. Before this cut, M1 would have skipped here too - the mode would have been unproven while the run still read as OK."
+            },
+            {
+                "command": "# fail-closed path: synthetic checkout, dependency-free interpreter, no overrides\n<dependency-free venv>/bin/python3 scripts/dev/provision_python_distribution.py --quiet --checkout <synthetic checkout>",
+                "result": "Exit 1. stderr: 'no interpreter on this host can supply the test dependencies the documented bootstrap needs (pytest).' followed by the full candidate table with a reason per entry, the PANTHEON_DEPENDENCY_PYTHON remedy, the pip remedy, and a pointer to AI_COLLABORATION_GUIDE.md. No environment is created, because selection runs before any install. Asserted by scripts/dev/test_provision_python_distribution.py::TestDependencyInterpreterContract::test_provisioning_fails_closed_when_no_candidate_has_the_dependencies."
+            },
+            {
+                "command": "<dependency-free venv>/bin/python3 scripts/dev/provision_python_distribution.py --quiet --checkout <synthetic checkout> --dependency-python <dependency-free venv>/bin/python3",
+                "result": "Exit 1: '--dependency-python names <...>, which cannot import pytest. An explicitly selected dependency interpreter is authoritative and is never replaced by a fallback.' An operator's stated choice failing must not silently fall through to a guessed one. Asserted by TestDependencyInterpreterContract::test_an_explicit_dependency_interpreter_is_never_silently_replaced."
+            },
+            {
+                "command": "env -u VIRTUAL_ENV -u PYTHONPATH /usr/bin/python3 scripts/dev/provision_python_distribution.py --mode current",
+                "result": "Exit 1: '--mode current would install into the shared system interpreter /usr/bin/python3, which rebinds the Pantheon packages for every other checkout on this host.' The cross-checkout guard is unchanged by this cut and still refuses without --allow-system-interpreter."
+            },
+            {
+                "command": "env -u VIRTUAL_ENV -u PYTHONPATH /usr/bin/python3 scripts/dev/provision_python_distribution.py --check-only",
+                "result": "Exit 0 against the provisioned checkout, and the dependency line is part of what it verifies: --check-only now fails closed on a provisioned-but-dependency-less environment rather than certifying it."
+            },
+            {
+                "command": "/home/lupin/pantheon/.venv/bin/python -m pytest -q scripts/dev/test_provision_python_distribution.py",
+                "result": "20 passed, 3 subtests passed in 9.52s under the fleet interpreter - the packaging contract plus the seven new dependency-interpreter tests. Run under a second, unrelated interpreter so the suite is not only green in the environment it provisions."
+            },
+            {
+                "command": "/home/lupin/pantheon/.venv/bin/python -m pytest -q scripts/test_ops_l12_python_packaging_provision_evidence.py",
+                "result": "Before this cut: 1 failed, 9 passed - TestEvidenceChecksumAnchor::test_recorded_source_digests_match_the_committed_files, because the manifest still pinned the superseded epochs' digests for files this cut changed. That failure is the gate working, and it is why integrity.source_artifact_sha256_by_epoch was replaced rather than appended to. The post-cut result is recorded in record_log as the closing validation run."
+            },
+            {
+                "command": "gh pr checks 4232 ; gh run list --branch task/OPS-L12-PYTHON-PACKAGING-PROVISION-001",
+                "result": "All four Branch CI Gate jobs report success at the exact head 36b3750eb5e4af593bedf822e28b59e53cb3cdfb on both the pull_request run 30231402274 and the push run 30231401041: Commit trailers, Runtime mirror guard, Python packaging provision, Smoke acceptance. Pull request 4232 is OPEN with auto-merge never enabled. See implementation_delivery.required_checks."
+            },
+            {
+                "command": "git diff --stat ad719d9c25b84813231731dedaefe405406d926a..36b3750eb5e4af593bedf822e28b59e53cb3cdfb -- pyproject.toml .github/workflows/branch-ci.yml services/telemetry/capture.py services/telemetry/feedback_adapter.py",
+                "result": "Empty. The repair is confined to the provisioning script, its contract test, the AC2 regression module and the guide. The packaging declaration, the CI job, and the two telemetry runtime modules the predecessor repaired are untouched by this cut and remain byte-identical to dev."
+            },
+            {
+                "command": "git log --oneline ad719d9c25b84813231731dedaefe405406d926a..36b3750eb5e4af593bedf822e28b59e53cb3cdfb -- <the six owned implementation paths>",
+                "result": "The three dev merges taken on this branch changed no owned file; the only owned-path change in the range is 36b3750eb5e4af593bedf822e28b59e53cb3cdfb itself. integrity.source_artifact_sha256_by_epoch pins the resulting digests, and scripts/test_ops_l12_python_packaging_provision_evidence.py checks every one of them against the committed bytes."
+            }
+        ],
+        "validated_at": "2026-07-27T02:12:09Z",
+        "validated_base_sha": "4cb436f80f82657cbd58a8527a3ca374f41253aa",
+        "validated_head_sha": "36b3750eb5e4af593bedf822e28b59e53cb3cdfb"
+    },
+    "deployment": {
+        "applicable": false,
+        "canonical_root_deploy": {
+            "reason": "Packaging and test-environment provisioning. Nothing is deployed, no runtime surface changes, and no service or supervisor configuration is touched. The distribution is installed only into developer, auto-worker, and CI test interpreters.",
+            "status": "not_applicable"
+        },
+        "environment": "local developer, auto-worker, and CI test execution only",
+        "identity_admission": {
+            "proof": "No runtime identity, credential, or admission path is exercised or changed. Both the provisioning script and the regression module construct a minimal child environment explicitly (PATH, HOME, LANG only) and never inherit the parent process environment, so no ambient credential can reach a child.",
+            "status": "not_applicable"
+        },
+        "public_bff_base_url": "not_applicable_test_environment_only_change",
+        "publish_cut": {
+            "reason": "No hosted surface is affected. The distribution is named pantheon-repo and is never published to an index; it exists only to provision sys.path for a local checkout.",
+            "status": "not_applicable"
+        }
+    },
+    "hosted_readback": {
+        "pre_deploy": {
+            "hosted_activation_claimed": false,
+            "reason": "No hosted or deployed surface is exercised or changed. The only executed surfaces are local test runners, pip installing into throwaway environments under the scratch directory, and child interpreters spawned with an explicitly constructed minimal environment.",
+            "status": "not_applicable"
+        }
+    },
+    "behavioral_proof": {
+        "duplicate_safety": {
+            "proof": [
+                "The duplicate hazard for a packaging change is two distinct module objects for the same source file, or one checkout's packages shadowing another's. TestInstalledDistributionIsCanonical::test_module_identity_is_canonical_and_unduplicated asserts that services.telemetry.capture resolves to this checkout's capture.py, that sys.modules holds the same object, and that no bare 'capture' or 'feedback_adapter' alias is registered.",
+                "TestInstalledDistributionIsCanonical::test_repository_root_is_not_placed_on_sys_path asserts the distribution never puts the repository root on sys.path, which is what would otherwise let root-level modules load a second time under different names.",
+                "verify_checkout_binding runs on every provisioning invocation and fails closed when any exported name resolves outside the requested checkout, so the cross-worktree duplicate-identity case is detected rather than silently accepted. validation.commands[12] exercises that failure.",
+                "Provisioning is idempotent: ensure_venv reuses an existing environment and rewrites the inheritance .pth, and a second run of validation.commands[9] gives the same verification output."
+            ],
+            "status": "pass"
+        },
+        "failure_and_degraded_behavior": {
+            "proof": [
+                "The defect being closed: services is a top-level name, so with the repository neither on the working directory nor on PYTHONPATH, 'python -m unittest services.telemetry.test_capture' and 'python <abs>/test_capture.py' failed with ModuleNotFoundError: No module named 'services' before the module body ever ran. validation.commands[8] reproduces exactly that failure on an unprovisioned interpreter as the control for the passes in commands[5] and [6].",
+                "Degraded provisioning is stated rather than assumed. --check-only on an unprovisioned environment exits 1 (commands[10]); --mode current on the shared system interpreter is refused (commands[11]); a distribution bound to a different checkout is reported as a collision (commands[12]). None of the three degrades to a warning.",
+                "The editable install tries --no-build-isolation first so provisioning works with no package-index access, and falls back to an isolated build only if that fails. The CI rehearsal in commands[9] records which strategy was used ('no-build-isolation').",
+                "provisioned_interpreter() in the regression module raises AssertionError rather than skipTest when provisioning fails, so an environment where AC2 cannot be proven reads as a failure. The 20-passed / 0-skipped result in commands[2] shows no assertion was reached by the skip path."
+            ],
+            "status": "pass"
+        },
+        "request_receipt_downstream_correlation": {
+            "proof": [
+                "Not a request-serving surface. The correlation this task must preserve is between the suite total and the tests that actually executed. Baseline 296 passed / 1 skipped at dev 643181a06, post-change 301 passed / 1 skipped at head c72842d9d: exactly +5, matching the 15 -> 20 growth of the one changed telemetry module. No test was lost, converted to a skip, or silently stopped running.",
+                "Each AC2 mode reports its own count and each is pinned at 75 (35 from test_capture plus 40 from test_feedback_adapter), so a mode that starts collecting fewer tests fails rather than passing with a smaller suite.",
+                "The four modes are recorded separately in validation.commands[4] through [7] with their observed counts, not aggregated into a single claim."
+            ],
+            "status": "pass"
+        },
+        "restart_and_recovery": {
+            "proof": [
+                "Provisioning is re-runnable: a second invocation reuses the existing .venv-pantheon, reinstalls the editable distribution, rewrites the inheritance .pth, and re-verifies. Nothing accumulates in the checkout.",
+                "Recovery from a wrong provision is a plain re-run: because the mapping is absolute and verification compares it against the requested checkout, a stale binding is reported (commands[12]) and corrected by provisioning again.",
+                "The provisioned environment is disposable by construction. Deleting .venv-pantheon returns the checkout to its unprovisioned state, and --check-only then reports it (commands[10]). No repository file records provisioning state."
+            ],
+            "status": "pass"
+        },
+        "rollback_or_compensation": {
+            "proof": [
+                "Rollback is reverting the PR. The distribution has no installed footprint inside the repository: the editable install writes a .pth and a finder module into the target environment's site-packages only, and git status stayed clean across every install performed during validation (commands[18]).",
+                "Reverting restores the previous behaviour exactly: AC2 modes M1 and M4 keep passing on a bare checkout (they never needed packaging), and M2 and M3 return to the recorded gap.",
+                "No live supervisor, service, or deployment state is mutated, so there is nothing to compensate outside the git revert."
+            ],
+            "status": "pass"
+        }
+    },
+    "security_and_safety": {
+        "environment_boundary": {
+            "proof": "Only local test execution in the task worktree, throwaway environments under the session scratch directory, and explicitly constructed child interpreters were exercised. No hosted, staging, or production surface was contacted. pip reached the package index only in the CI rehearsal, to install pip, setuptools, requirements.txt and pytest into a scratch virtualenv; the repository's own editable install ran with --no-build-isolation and --no-deps and downloaded nothing.",
+            "status": "pass"
+        },
+        "hosted_frontend": {
+            "reason": "No hosted frontend surface is touched.",
+            "status": "not_applicable"
+        },
+        "mfa": {
+            "proof": "No interactive operator authentication or MFA policy is touched.",
+            "status": "not_applicable"
+        },
+        "no_live_capital": {
+            "proof": "Packaging and test-provisioning change with no broker, order, or capital authority. No test executes against a live venue.",
+            "status": "pass"
+        },
+        "rbac": {
+            "proof": "No authorization rule is added, removed, or weakened. No credential is read or written. The provisioning script builds child environments containing only PATH, HOME and LANG, which strips any ambient token the caller happened to export rather than forwarding it.",
+            "status": "pass"
+        },
+        "tenant_isolation": {
+            "proof": "No tenant scoping logic is changed. The relevant isolation here is between checkouts sharing one host, and it is strengthened: provisioning defaults to a checkout-scoped environment and fails closed when an interpreter's distribution points at a different checkout, which is the case that would have let one auto-worker execute another's code.",
+            "status": "pass"
+        },
+        "two_person_approval": {
+            "proof": "Current owner Codex and reviewer Codex2 are distinct and match the governed task row after the owner reassignment from implementation author Claude. Codex2 independently reproduced the bare-system bootstrap, positive suites, negative controls, integrity gate, checksum, and exact-head CI before recording review approval at record_log sequence 17. Owner closeout and merge remain separate.",
+            "status": "pass"
+        }
+    },
+    "acceptance": [
+        {
+            "evidence_refs": [
+                "validation.commands[16]",
+                "pyproject.toml [tool.setuptools.packages.find]",
+                "scripts/dev/test_provision_python_distribution.py::TestPackagingAllowlist",
+                "scripts/dev/test_provision_python_distribution.py::TestPackagingDoesNotAnnexOtherConfiguration",
+                "services/telemetry/test_discovery_imports.py::TestInstalledDistributionIsCanonical",
+                "validation.commands[13]"
+            ],
+            "id": "AC1",
+            "statement": "Root packaging uses explicit package discovery and introduces no top-level collision or duplicate module identity",
+            "status": "pass"
+        },
+        {
+            "evidence_refs": [
+                "validation.commands[0]",
+                "validation.commands[1]",
+                "validation.commands[2]",
+                "validation.commands[4]",
+                "validation.commands[9]",
+                "validation.commands[10]",
+                "validation.commands[15]",
+                ".github/workflows/branch-ci.yml job 'Python packaging provision'",
+                "AI_COLLABORATION_GUIDE.md section 3 'Python Test Environment Provisioning'",
+                "scripts/dev/provision_python_distribution.py",
+                "scripts/dev/test_provision_python_distribution.py::TestDependencyInterpreterContract",
+                "scope.not_changing"
+            ],
+            "id": "AC2",
+            "statement": "Governed dev CI and auto-worker test bootstrap install the same distribution without editing live supervisor config",
+            "status": "pass",
+            "note": "Rejected by Codex2 on the previous head and re-asserted here on an implementation change, not an argument. The rejection was that the documented bootstrap is 'python3 scripts/dev/provision_python_distribution.py', and on the auto-worker host python3 is /usr/bin/python3 with no pytest: provisioning reported success and returned an interpreter that could not run the command printed on the next line. validation.commands[0] reproduces that at the rejected head ad719d9c25b84813231731dedaefe405406d926a; validation.commands[1] and [2] show the identical command succeeding at this head. The fix is a dependency-interpreter selection contract - an ordered candidate list, each probed for pytest from a foreign cwd with no PYTHONPATH, ending at the main checkout's environment derived from git rev-parse --git-common-dir - plus a closing verification that the interpreter handed back can import pytest. Where no candidate qualifies the script exits non-zero with the whole candidate table (validation.commands[9]) instead of returning something unusable, and an explicitly named interpreter is never silently replaced (validation.commands[10]). CI and workers still call the one entry point, and no supervisor or worker configuration is read or written to make the derivation work."
+        },
+        {
+            "evidence_refs": [
+                "validation.commands[2]",
+                "validation.commands[6]",
+                "validation.commands[7]",
+                "validation.commands[8]",
+                "services/telemetry/test_discovery_imports.py::TestAC2ModesUnderInstalledDistribution"
+            ],
+            "id": "AC3",
+            "statement": "From a foreign cwd with PYTHONPATH absent direct pytest dotted unittest and direct-file execution for both repaired telemetry files all pass",
+            "status": "pass",
+            "note": "Strengthened by this cut. test_m1_pytest_from_foreign_cwd previously skipped when the provisioned interpreter had no pytest, which on the worker host meant M1 was unproven while the run still read as OK. It is now a hard assertion, and provisioning is required to fail closed rather than return such an interpreter. validation.commands[8] shows all four modes passing with the module driven by the bare system interpreter; validation.commands[6] and [7] are the unprovisioned M2/M3 controls that keep the passes attributable to the distribution."
+        },
+        {
+            "evidence_refs": [
+                "validation.commands[13]",
+                "services/telemetry/test_discovery_imports.py::TestInstalledDistributionIsCanonical::test_repository_root_is_not_placed_on_sys_path",
+                "services/telemetry/test_discovery_imports.py::TestInstalledDistributionIsCanonical::test_module_identity_is_canonical_and_unduplicated",
+                "services/telemetry/test_discovery_imports.py::TestTelemetryTestModuleImportContract::test_repaired_modules_do_not_mutate_process_global_sys_path",
+                "validation.commands[16]",
+                "scope.not_changing"
+            ],
+            "id": "AC4",
+            "statement": "The repaired modules do not mutate process-global sys.path and import identities remain canonical",
+            "status": "pass"
+        },
+        {
+            "blocking_until": "Nothing. Baseline 348 passed / 1 skipped at merged dev tip 4cb436f80f82657cbd58a8527a3ca374f41253aa against 353 passed / 1 skipped at this head, a clean +5 matching the growth of the AC2 regression module; and the exact head 36b3750eb5e4af593bedf822e28b59e53cb3cdfb carries success on all four Branch CI Gate jobs on both the pull_request and push events.",
+            "evidence_refs": [
+                "validation.commands[2]",
+                "validation.commands[3]",
+                "validation.commands[5]",
+                "validation.commands[13]",
+                "validation.commands[15]",
+                "implementation_delivery.required_checks"
+            ],
+            "id": "AC5",
+            "statement": "Focused telemetry and relevant full suites pass and exact-head required checks are green",
+            "status": "pass"
+        },
+        {
+            "blocking_until": "Nothing. Codex2 independently reviewed the implementation epoch 36b3750eb5e4af593bedf822e28b59e53cb3cdfb and the evidence/checksum at PR head dd64fd9d4833766eeb32e7a18901a65a73a5df49 before auto-merge or merge, then recorded the decision at record_log sequence 17. PR #4232 remained open with auto-merge disabled throughout review.",
+            "evidence_refs": [
+                "integrity.checksum_coverage",
+                "integrity.source_artifact_sha256_by_epoch",
+                "scripts/test_ops_l12_python_packaging_provision_evidence.py",
+                "security_and_safety.two_person_approval",
+                "record_log[16]"
+            ],
+            "id": "AC6",
+            "statement": "Evidence and checksum are independently reviewed by Codex2 before auto-merge or merge",
+            "status": "pass"
+        }
+    ],
+    "residual_risks": {
+        "packaging_job_is_not_yet_a_branch_protection_required_check": {
+            "blocking_for_this_task": false,
+            "containment": "The job runs on every push and pull_request that branch-ci.yml already gates, so a regression is visible on the PR even while the check is advisory. The same assertions also run in any local or worker pytest invocation of the two modules.",
+            "description": "The new 'Python packaging provision' job is not in the dev branch-protection required-check set. Adding it there is a branch-protection change owned by whoever administers the repository settings, not by this task.",
+            "expiry": "next branch-protection review",
+            "owner": "unassigned; candidate for the repository administration lane",
+            "recheck_trigger": "Any task that edits dev or master branch protection",
+            "severity": "low"
+        },
+        "pre_existing_skip": {
+            "blocking_for_this_task": false,
+            "containment": "Present identically in the baseline and post-change runs (validation.commands[0] and [1]); neither introduced nor masked by this task.",
+            "description": "services/telemetry/test_l12_tel_001_durable_ingest.py:255 is skipped in every recorded run because it requires PANTHEON_TEST_NATS_URL for a real JetStream crash probe.",
+            "expiry": "next telemetry test-hygiene task",
+            "owner": "unassigned",
+            "recheck_trigger": "Any task that provisions a test NATS endpoint",
+            "severity": "low"
+        },
+        "provisioning_slows_the_first_run_of_the_ac2_regression": {
+            "blocking_for_this_task": false,
+            "containment": "The cost is paid once per process and only when the ambient interpreter is unprovisioned. Where CI or the worker bootstrap has already provisioned, provisioned_interpreter() returns sys.executable and the module runs in a few seconds; validation.commands[2] runs both new modules together in 27.44s including a full provision from a dependency-free interpreter.",
+            "description": "On an unprovisioned interpreter, services/telemetry/test_discovery_imports.py builds a throwaway environment and performs an editable install before its AC2 assertions, taking about 26 seconds instead of a few. The alternative - asserting the ambient interpreter is already provisioned - was rejected because it would turn an unprovisioned developer machine into a failure of the telemetry suite rather than a self-contained proof.",
+            "expiry": "next telemetry test-runtime review",
+            "owner": "unassigned",
+            "recheck_trigger": "Any complaint about telemetry suite runtime, or any change to provisioned_interpreter()",
+            "severity": "low"
+        },
+        "subset_schema_validator_exists_in_two_gate_modules": {
+            "blocking_for_this_task": false,
+            "containment": "This task's gate does not reimplement it: scripts/test_ops_l12_python_packaging_provision_evidence.py imports _validate_subset from the predecessor's module by file path, and test_both_validators_agree cross-checks it against jsonschema when jsonschema is importable. There is one implementation, not two.",
+            "description": "The draft-07 subset validator used to check evidence manifests without jsonschema lives inside a task-scoped gate module (scripts/test_ops_l12_telemetry_discovery_import_evidence.py) rather than in shared code. Promoting it to a shared helper would put this task's diff inside another lane's merged artifact.",
+            "expiry": "next evidence-tooling consolidation task",
+            "owner": "unassigned; candidate for the twelve-loop evidence-tooling lane",
+            "recheck_trigger": "A third evidence gate needing the same validator, or any refactor of scripts/test_ops_l12_telemetry_discovery_import_evidence.py",
+            "severity": "low"
+        },
+        "whole_services_collect_only_does_not_complete": {
+            "blocking_for_this_task": false,
+            "containment": "The current evidence does not use whole-services collection to prove an acceptance criterion. The task-owned telemetry tree was run directly at review with 353 passed / 1 skipped / 35 subtests, and the task-focused packaging/discovery suites passed with 40 passed / 23 subtests.",
+            "description": "The first owner cut recorded that `pytest --collect-only -q` over the whole services testpath did not complete before its cap, including when services/telemetry was excluded. Those detailed command records were removed when the superseded evidence epochs were replaced, so this current cut deliberately makes no indexed validation.commands reference or whole-services collection claim.",
+            "expiry": "next root pytest harness task",
+            "owner": "unassigned",
+            "recheck_trigger": "Any change to conftest.py import-root activation, pytest.ini testpaths, or a report of slow full-suite collection",
+            "severity": "low"
+        },
+        "dependency_interpreter_discovery_is_host_shaped": {
+            "blocking_for_this_task": false,
+            "containment": "The failure mode is a loud one, not a silent one: where no candidate qualifies, provisioning exits non-zero and prints every candidate with the reason it was rejected, plus the PANTHEON_DEPENDENCY_PYTHON and pip remedies (validation.commands[9]). Both overrides are authoritative, so an operator on an unusual host has a first-class way to state the answer rather than work around a guess. The dev CI job does not rely on discovery at all: it installs requirements.txt and then uses --mode current, where the running interpreter is the dependency interpreter by definition.",
+            "description": "The candidate list encodes where Pantheon dependencies live on the hosts this repository actually runs on - an activated environment, the checkout's .venv, or the main checkout's .venv reached through git rev-parse --git-common-dir. A host that keeps them somewhere else will not be discovered automatically.",
+            "expiry": "next change to the fleet environment layout",
+            "owner": "unassigned",
+            "recheck_trigger": "Any change to where the fleet installs Python dependencies, or the first report of provisioning failing to find them on a host that does have them",
+            "severity": "low"
+        }
+    },
+    "integrity": {
+        "algorithm": "sha256",
+        "checksum_coverage": [
+            "docs/deployment/evidence/twelve-loop-gap/OPS-L12-PYTHON-PACKAGING-PROVISION-001/README.md",
+            "docs/deployment/evidence/twelve-loop-gap/OPS-L12-PYTHON-PACKAGING-PROVISION-001/evidence.json"
+        ],
+        "companion_checksum_path": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-PYTHON-PACKAGING-PROVISION-001/evidence.sha256",
+        "hosted_semantic_sha256": {
+            "reason": "No hosted readback artifact exists for this test-environment-only task.",
+            "status": "not_applicable"
+        },
+        "manifest_path": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-PYTHON-PACKAGING-PROVISION-001/evidence.json",
+        "normalized_hosted_readback": {
+            "reason": "No hosted readback artifact exists for this test-environment-only task.",
+            "status": "not_applicable"
+        },
+        "self_hash_omitted": true,
+        "self_hash_reason": "A manifest cannot contain its own digest, so no digest of evidence.json appears inside evidence.json. The digest is recorded in the companion evidence.sha256, which is the convention used by the sibling twelve-loop-gap evidence directories; scripts/test_ops_l12_python_packaging_provision_evidence.py verifies that companion against the committed bytes, and the merge commit records them a second time.",
+        "source_artifact_sha256_by_epoch": {
+            "36b3750eb5e4af593bedf822e28b59e53cb3cdfb": {
+                ".github/workflows/branch-ci.yml": "0ce7b16f33db7773aace114a32d510192beae99b547ae26fb6887505231c8805",
+                "AI_COLLABORATION_GUIDE.md": "5652b3b1480ece26e46cf0b8a150a0dd950d1b3f768819bcebe6ee1c4f6d9e74",
+                "pyproject.toml": "78811ad02e28b70173aca1a9c3b7a10bcec9e64e4760e3b50bcdcb49aed6c13a",
+                "scripts/dev/provision_python_distribution.py": "3122ee1c68e8fe77c68b0054a58f84e2feefa9746e090ea1d2335e8282f7db29",
+                "scripts/dev/test_provision_python_distribution.py": "ec57b2a25f88bf5201c589bfe9bb756612c65471b2c0ba872d8f6fe2e8e13031",
+                "services/telemetry/test_discovery_imports.py": "1b7e67880c881ccb3f338b0237d95f0cb5adf58ecb4b38cb3bcdad645e7dc0c1"
+            }
+        }
+    },
+    "record_log": [
+        {
+            "actor": "Claude",
+            "kind": "anchor_commit",
+            "recorded_at": "2026-07-26T23:35:00Z",
+            "reference": "OPS-L12-PYTHON-PACKAGING-PROVISION-001: anchor packaging surface",
+            "sequence": 1,
+            "sha": "af64e277f3ea3bc0ffee5ce38c35908a800d0721",
+            "status": "recorded"
+        },
+        {
+            "actor": "Claude",
+            "kind": "implementation_commit",
+            "recorded_at": "2026-07-27T00:05:00Z",
+            "reference": "OPS-L12-PYTHON-PACKAGING-PROVISION-001: close telemetry AC2",
+            "sequence": 2,
+            "sha": "c72842d9de8afeae46d8953174b18698bd2c10e3",
+            "status": "recorded"
+        },
+        {
+            "actor": "Claude",
+            "kind": "validation_run",
+            "recorded_at": "2026-07-27T00:34:18Z",
+            "reference": "validation.commands - baseline, post-change, four AC2 modes with an unprovisioned control, CI rehearsal, three fail-closed paths, identity and collision probes, rootdir regression check, whole-services collection attribution check",
+            "sequence": 3,
+            "sha": "c72842d9de8afeae46d8953174b18698bd2c10e3",
+            "status": "pass"
+        },
+        {
+            "actor": "Claude",
+            "kind": "owner_evidence_cut",
+            "recorded_at": "2026-07-27T00:35:00Z",
+            "reference": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-PYTHON-PACKAGING-PROVISION-001/evidence.json",
+            "sequence": 4,
+            "status": "owner_asserted_pass_pending_independent_review"
+        },
+        {
+            "actor": "Claude",
+            "kind": "evidence_commit",
+            "recorded_at": "2026-07-27T00:32:40Z",
+            "reference": "OPS-L12-PYTHON-PACKAGING-PROVISION-001: record evidence cut",
+            "sequence": 5,
+            "sha": "7bf1fd5f5a72d867d5633bc03f55a74665d533b5",
+            "status": "recorded"
+        },
+        {
+            "actor": "Claude",
+            "kind": "branch_sync",
+            "recorded_at": "2026-07-27T00:59:40Z",
+            "reference": "Two conflict-free dev merges, 0a5f32db4 and 4aab5cca40a6815876beb8d77972bb71d12d757d onto dev tip 7fedefb281dd416e0412e935c48e866438f56e6d, clearing the BEHIND pull-request state; head pushed to origin. They landed two other lanes' deliveries and changed no file this task owns.",
+            "sequence": 6,
+            "sha": "4aab5cca40a6815876beb8d77972bb71d12d757d",
+            "status": "recorded"
+        },
+        {
+            "actor": "Claude",
+            "kind": "validation_run",
+            "recorded_at": "2026-07-27T01:02:40Z",
+            "reference": "validation.commands - re-validation on the synced head: implementation digest comparison across both epochs, the four-mode discovery-imports module, the evidence gate and packaging contract, and the full services/telemetry suite",
+            "sequence": 7,
+            "sha": "4aab5cca40a6815876beb8d77972bb71d12d757d",
+            "status": "pass"
+        },
+        {
+            "actor": "Claude",
+            "kind": "required_checks_observed",
+            "recorded_at": "2026-07-27T01:04:40Z",
+            "reference": "implementation_delivery.required_checks - exact-head conclusions for pull request 4232, runs 30228827007 (pull_request) and 30228825268 (push)",
+            "sequence": 8,
+            "sha": "4aab5cca40a6815876beb8d77972bb71d12d757d",
+            "status": "success"
+        },
+        {
+            "actor": "Claude",
+            "kind": "owner_evidence_recut",
+            "recorded_at": "2026-07-27T01:07:40Z",
+            "reference": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-PYTHON-PACKAGING-PROVISION-001/evidence.json",
+            "sequence": 9,
+            "sha": "4aab5cca40a6815876beb8d77972bb71d12d757d",
+            "status": "owner_asserted_pass_pending_independent_review"
+        },
+        {
+            "actor": "Codex2",
+            "kind": "independent_review_decision",
+            "recorded_at": "2026-07-27T01:45:16Z",
+            "reference": "Review rejected on AC2 in the auto-worker dispatch: the documented bootstrap's plain python3 is /usr/bin/python3 on this host and has no pytest, so provision_python_distribution.py --print-python succeeded while the returned interpreter's -m pytest failed with 'No module named pytest'. Codex2 also confirmed the evidence.sha256 anchor, both epoch source digests, an empty owned-path sync diff, and the unprovisioned M2/M3 controls, and required a portable bootstrap contract, a regression from a dependency-free interpreter, and a resync of the BEHIND pull request.",
+            "sha": "ad719d9c25b84813231731dedaefe405406d926a",
+            "status": "review_rejected",
+            "sequence": 10
+        },
+        {
+            "actor": "Claude",
+            "kind": "branch_sync",
+            "recorded_at": "2026-07-27T01:52:00Z",
+            "reference": "Conflict-free dev merge onto tip 4cb436f80f82657cbd58a8527a3ca374f41253aa, clearing the BEHIND pull-request state that followed the review dispatch. It changed no file this task owns.",
+            "sha": "146252eb3",
+            "status": "recorded",
+            "sequence": 11
+        },
+        {
+            "actor": "Claude",
+            "kind": "implementation_commit",
+            "recorded_at": "2026-07-27T02:00:00Z",
+            "reference": "OPS-L12-PYTHON-PACKAGING-PROVISION-001: anchor bootstrap contract",
+            "sha": "36b3750eb5e4af593bedf822e28b59e53cb3cdfb",
+            "status": "recorded",
+            "sequence": 12
+        },
+        {
+            "actor": "Claude",
+            "kind": "validation_run",
+            "recorded_at": "2026-07-27T02:10:00Z",
+            "reference": "validation.commands - the rejection reproduced at the rejected head and the same command passing here, the documented bootstrap end to end from the dependency-free default interpreter, a fresh baseline at the new dev tip, the full telemetry suite, the AC2 module driven by the bare system interpreter, both unprovisioned mode controls, and three fail-closed paths",
+            "sha": "36b3750eb5e4af593bedf822e28b59e53cb3cdfb",
+            "status": "pass",
+            "sequence": 13
+        },
+        {
+            "actor": "Claude",
+            "kind": "required_checks_observed",
+            "recorded_at": "2026-07-27T02:11:00Z",
+            "reference": "implementation_delivery.required_checks - exact-head conclusions for pull request 4232, runs 30231402274 (pull_request) and 30231401041 (push)",
+            "sha": "36b3750eb5e4af593bedf822e28b59e53cb3cdfb",
+            "status": "success",
+            "sequence": 14
+        },
+        {
+            "actor": "Claude",
+            "kind": "owner_evidence_recut",
+            "recorded_at": "2026-07-27T02:12:09Z",
+            "reference": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-PYTHON-PACKAGING-PROVISION-001/evidence.json - third cut, answering the AC2 rejection; supersedes both earlier epochs",
+            "sha": "36b3750eb5e4af593bedf822e28b59e53cb3cdfb",
+            "status": "owner_asserted_pass_pending_independent_review",
+            "sequence": 15
+        },
+        {
+            "actor": "Codex",
+            "kind": "owner_reassignment_adoption",
+            "recorded_at": "2026-07-27T12:42:18Z",
+            "reference": "Governed task row reassigned final ownership from Claude to Codex while preserving Claude as the implementation and evidence-cut actor. Codex adopted the validated head and the responsibility for Codex2 review handoff and closeout; no implementation assertion or reviewer verdict changed.",
+            "sha": "6773c64ee4166198456f573f406a9bd364cfdef7",
+            "status": "owner_asserted_pass_pending_independent_review",
+            "sequence": 16
+        },
+        {
+            "actor": "Codex2",
+            "kind": "independent_review_approved",
+            "recorded_at": "2026-07-27T13:02:56Z",
+            "reference": "Independent review of PR #4232 at candidate dd64fd9d4833766eeb32e7a18901a65a73a5df49. A fresh /usr/bin/python3 bootstrap with PANTHEON_DEPENDENCY_PYTHON, VIRTUAL_ENV and PYTHONPATH absent selected the main-worktree dependency interpreter and passed the packaging/discovery suites (40 passed, 23 subtests); the bare interpreter directly drove the discovery module (20 tests, 2 intended ambient-pytest skips); full telemetry passed (353 passed, 1 pre-existing skip, 35 subtests); unprovisioned M2/M3 and both unsafe dependency/current-mode controls failed as required; the finalized evidence gate passed (10 passed, 36 subtests), checksum/source digests matched, and push/pull_request runs 30267610432 and 30267613436 had all four jobs green. Auto-merge stayed disabled. Two stale non-acceptance residual-risk command indexes were corrected during this evidence-only review.",
+            "sha": "dd64fd9d4833766eeb32e7a18901a65a73a5df49",
+            "status": "approved",
+            "sequence": 17
+        }
+    ]
+}
