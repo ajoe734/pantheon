@@ -1,0 +1,159 @@
+{
+  "schema_version": "supervisor_runtime_repair_evidence.v2",
+  "task": {
+    "id": "SUP-PROVIDER-POOL-PROBE-GATE-001",
+    "title": "provider pool probe gate and root coherence",
+    "phase": "Control-plane",
+    "owner": "Claude2",
+    "reviewer": "Codex2",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-PROVIDER-POOL-PROBE-GATE-001",
+    "base_commit": "a6966b13d84430387da9c3a33fcf224c841bc5c6",
+    "review_status": "pending_independent_review"
+  },
+  "scope": {
+    "owned_layer": "Provider capability probe caching and credential-group capacity; worker worktree base-ref readiness invariant; clean-owner-exit missing-handoff lifecycle; watchdog/sync active supervisor root coherence.",
+    "not_changing": "Pantheon product services, Agora contracts, dev deployment, FE/BFF, GitHub custom status contexts, global provider auth enablement, targeted probe_provider_auth(force=True) semantics, provider failure pausing policy.",
+    "implementation_files": [
+      ".orchestrator/provider_permissions.py",
+      ".orchestrator/supervisor.py",
+      ".orchestrator/supervisor_watchdog.py",
+      "scripts/sync-dev-root.sh"
+    ],
+    "test_files": [
+      ".orchestrator/test_provider_permissions.py",
+      ".orchestrator/test_supervisor.py",
+      ".orchestrator/test_supervisor_watchdog.py"
+    ],
+    "anchors": [
+      "7336e566b"
+    ]
+  },
+  "hazards_repaired": [
+    {
+      "id": 1,
+      "hazard": "provider_capabilities() forced a Codex CLI smoke on every supervisor loop, ignoring provider_auth.probe_interval_seconds=900",
+      "repair": "the periodic report now honours the probe interval; the forced probe stays at the targeted launch gate"
+    },
+    {
+      "id": 2,
+      "hazard": "antigravity + antigravity1-1..1-4 share one /home/lupin OAuth token but were probed and counted as five independent healthy lanes",
+      "repair": "one probe per credential group; every alias in a failed group reports auth_ready=false and publishes a shared account_group"
+    },
+    {
+      "id": 3,
+      "hazard": "base_ref_not_prefetched:origin/dev stalled dispatch whenever the per-loop prefetch context was absent across a recovery/redispatch boundary",
+      "repair": "readiness is a git ref invariant: recovery fetch plus rev-parse; fail closed only when the ref does not resolve"
+    },
+    {
+      "id": 4,
+      "hazard": "a clean owner exit after pushing a prepared PR head was recorded as a generic exit, so owned_in_progress_dispatch reissued forever",
+      "repair": "the shape is detected and recorded as an actionable missing_handoff blocker that moves the task off in_progress"
+    },
+    {
+      "id": 5,
+      "hazard": "sync-dev-root.sh repaired a default dev-root path while the live supervisor ran from a different checkout 63 commits behind origin/dev",
+      "repair": "the live root is resolved from /proc/<pid>/cwd, synced, and any split is logged with HEAD/target evidence; the watchdog publishes supervisor_root on every decision"
+    }
+  ],
+  "acceptance": {
+    "1_codex_probe_cached_by_default": {
+      "status": "proven",
+      "tests": [
+        ".orchestrator/test_provider_permissions.py::ProviderProbeGateTest::test_codex_probe_reuses_recent_result_inside_probe_interval",
+        ".orchestrator/test_provider_permissions.py::ProviderProbeGateTest::test_codex_probe_reruns_exec_once_the_probe_interval_elapsed",
+        ".orchestrator/test_provider_permissions.py::ProviderPermissionsTest::test_provider_capabilities_marks_codex_revoked_token_auth_down"
+      ]
+    },
+    "2_targeted_force_probe_preserved": {
+      "status": "proven",
+      "tests": [
+        ".orchestrator/test_provider_permissions.py::ProviderProbeGateTest::test_targeted_probe_provider_auth_force_still_runs_a_fresh_probe"
+      ]
+    },
+    "3_shared_credential_aliases_not_independent_capacity": {
+      "status": "proven",
+      "tests": [
+        ".orchestrator/test_provider_permissions.py::ProviderProbeGateTest::test_antigravity_aliases_sharing_a_token_share_one_probe",
+        ".orchestrator/test_provider_permissions.py::ProviderProbeGateTest::test_antigravity_declared_quota_group_shares_capacity"
+      ]
+    },
+    "4_loop_uses_cached_capabilities_without_cli_smoke": {
+      "status": "proven",
+      "tests": [
+        ".orchestrator/test_supervisor.py::CachedProviderCapabilityLoopTests::test_loop_report_reuses_cached_probes_when_none_are_due"
+      ]
+    },
+    "5_watchdog_sync_report_actual_active_root": {
+      "status": "proven",
+      "tests": [
+        ".orchestrator/test_supervisor_watchdog.py::SupervisorRootCoherenceTests::test_process_working_directory_reports_the_live_checkout",
+        ".orchestrator/test_supervisor_watchdog.py::SupervisorRootCoherenceTests::test_process_working_directory_reports_missing_pid_instead_of_guessing",
+        ".orchestrator/test_supervisor_watchdog.py::SupervisorRootCoherenceTests::test_report_exposes_a_split_between_active_and_worker_runner_roots",
+        ".orchestrator/test_supervisor_watchdog.py::SupervisorRootCoherenceTests::test_report_flags_an_active_root_that_is_not_the_expected_dev_root",
+        ".orchestrator/test_supervisor_watchdog.py::SupervisorRootCoherenceTests::test_watchdog_decision_publishes_the_active_supervisor_root"
+      ],
+      "smoke": "raw/sync-dev-root-split-smoke.txt"
+    },
+    "6_base_ref_invariant_survives_redispatch": {
+      "status": "proven",
+      "tests": [
+        ".orchestrator/test_supervisor.py::WorkerBaseRefPreconditionTests::test_prefetched_context_is_still_the_fast_path",
+        ".orchestrator/test_supervisor.py::WorkerBaseRefPreconditionTests::test_empty_context_accepts_a_resolvable_freshly_fetched_base",
+        ".orchestrator/test_supervisor.py::WorkerBaseRefPreconditionTests::test_worktree_creation_succeeds_across_a_redispatch_boundary",
+        ".orchestrator/test_supervisor.py::WorkerBaseRefPreconditionTests::test_unresolvable_base_still_fails_closed",
+        ".orchestrator/test_supervisor.py::WorkerBaseRefPreconditionTests::test_missing_base_ref_name_fails_closed",
+        ".orchestrator/test_supervisor.py::WorkerBaseRefPreconditionTests::test_standalone_maintenance_outside_a_cycle_is_unaffected"
+      ]
+    },
+    "7_clean_owner_exit_cannot_loop": {
+      "status": "proven",
+      "tests": [
+        ".orchestrator/test_supervisor.py::MissingHandoffBlockerTests::test_blocker_takes_the_task_out_of_owned_in_progress_dispatch",
+        ".orchestrator/test_supervisor.py::MissingHandoffBlockerTests::test_blocker_is_not_duplicated_on_a_later_tick",
+        ".orchestrator/test_supervisor.py::MissingHandoffBlockerTests::test_blocker_is_skipped_when_the_owner_no_longer_owns_the_task",
+        ".orchestrator/test_supervisor.py::PollWorkersRecoveryTests::test_completion_stage_blocks_prepared_head_without_handoff",
+        ".orchestrator/test_supervisor.py::PollWorkersRecoveryTests::test_completion_stage_keeps_generic_exit_when_no_head_was_prepared",
+        ".orchestrator/test_supervisor.py::PollWorkersRecoveryTests::test_worker_prepared_review_head_requires_an_owner_dispatch"
+      ]
+    },
+    "8_pr_review_merge_and_live_root_repair": {
+      "status": "pending",
+      "note": "filled in after the PR merges and the temporary live repair step runs"
+    }
+  },
+  "verification": {
+    "provisioning": "python3 scripts/dev/provision_python_distribution.py",
+    "command": "cd .orchestrator && \"$PANTHEON_PY\" -m pytest -q test_provider_permissions.py test_supervisor.py test_supervisor_watchdog.py",
+    "result": "572 passed, 10 subtests passed",
+    "raw": [
+      "raw/orchestrator-suites.txt",
+      "raw/acceptance-selections.txt",
+      "raw/sync-dev-root-split-smoke.txt"
+    ],
+    "known_pre_existing_failure": {
+      "test": "scripts/test_supervisor.py::SupervisorRuntimeStateTests::test_run_once_reconciles_execution_mode_state_from_running_workers",
+      "error": "AttributeError: module 'supervisor' does not have the attribute 'dispatch_underutilization_sidecars'",
+      "proof_it_predates_this_task": "git show origin/dev:.orchestrator/supervisor.py | grep -c dispatch_underutilization_sidecars -> 0",
+      "ci_gating": false,
+      "action": "left untouched; unrelated to this task's scope"
+    }
+  },
+  "delivery": {
+    "implementation_pr": null,
+    "head_commit": null,
+    "merge_commit": null,
+    "merged_at": null,
+    "base_branch": "dev",
+    "checks": {}
+  },
+  "live_repair": {
+    "status": "pending",
+    "planned_steps": [
+      "resync the actual live supervisor root via scripts/sync-dev-root.sh with the live pid file",
+      "restart the supervisor through the recorded intentional-restart path",
+      "record live root HEAD == origin/dev and queue health"
+    ]
+  }
+}

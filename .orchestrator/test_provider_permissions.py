@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -849,7 +851,10 @@ EOF
         }
 
         def fake_codex_probe(config: dict, provider_id: str, binary: str | None, **kwargs: object) -> dict:
-            self.assertTrue(kwargs.get("force"))
+            # SUP-PROVIDER-POOL-PROBE-GATE-001: the periodic capability report is
+            # telemetry, so it must NOT force a fresh `codex exec` smoke. The
+            # forced probe belongs to probe_provider_auth at the launch gate.
+            self.assertFalse(kwargs.get("force", False))
             return {
                 "provider": provider_id,
                 "kind": "codex",
@@ -1076,6 +1081,241 @@ EOF
         command = run_command.call_args.args[0]
         self.assertEqual(command[command.index("--model") + 1], "gemini-3.6-flash-low")
 
+class ProviderProbeGateTest(unittest.TestCase):
+    """SUP-PROVIDER-POOL-PROBE-GATE-001.
+
+    The supervisor calls the full capability report before every loop. Forcing a
+    provider CLI smoke inside it turned an intended telemetry refresh into a
+    per-tick `codex exec` / `agy --prompt` storm, and made a shared-credential
+    Antigravity pool look like several independent healthy lanes.
+    """
+
+    @staticmethod
+    def _codex_config(codex_home: Path, capabilities: Path) -> dict:
+        return {
+            "paths": {"provider_capabilities": str(capabilities)},
+            "provider_auth": {"probe_interval_seconds": 900},
+            "providers": {
+                "codex": {
+                    "delivery_mode": "codex",
+                    "codex": {"cli": "codex", "codex_home": str(codex_home)},
+                }
+            },
+        }
+
+    @staticmethod
+    def _write_recent_capabilities(path: Path, provider_id: str, *, checked_at: str) -> None:
+        path.write_text(
+            json.dumps(
+                {
+                    "providers": {
+                        provider_id: {
+                            "auth_ready": True,
+                            "auth_probe": {
+                                "provider": provider_id,
+                                "kind": "codex",
+                                "ready": True,
+                                "status": "ready",
+                                "method": "codex_exec_oauth",
+                                "error": None,
+                                "checked_at": checked_at,
+                                "last_auth_probe_at": checked_at,
+                                "source": "live",
+                            },
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def test_codex_probe_reuses_recent_result_inside_probe_interval(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            codex_home = root / "codex-home"
+            codex_home.mkdir()
+            (codex_home / "auth.json").write_text(
+                '{"tokens":{"access_token":"redacted","refresh_token":"redacted"}}',
+                encoding="utf-8",
+            )
+            capabilities = root / "provider-capabilities.json"
+            recent = (
+                datetime.now(timezone.utc) - timedelta(seconds=60)
+            ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            self._write_recent_capabilities(capabilities, "codex", checked_at=recent)
+            config = self._codex_config(codex_home, capabilities)
+
+            with mock.patch.object(provider_permissions, "run_command") as run_command:
+                probe = provider_permissions._codex_auth_probe(config, "codex", "/usr/bin/codex")
+
+        run_command.assert_not_called()
+        self.assertTrue(probe["ready"])
+        self.assertEqual(probe["source"], "cached")
+
+    def test_codex_probe_reruns_exec_once_the_probe_interval_elapsed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            codex_home = root / "codex-home"
+            codex_home.mkdir()
+            (codex_home / "auth.json").write_text(
+                '{"tokens":{"access_token":"redacted","refresh_token":"redacted"}}',
+                encoding="utf-8",
+            )
+            capabilities = root / "provider-capabilities.json"
+            stale = (
+                datetime.now(timezone.utc) - timedelta(seconds=3600)
+            ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            self._write_recent_capabilities(capabilities, "codex", checked_at=stale)
+            config = self._codex_config(codex_home, capabilities)
+
+            completed = subprocess.CompletedProcess(["codex"], 0, "OK\n", "")
+            with mock.patch.object(
+                provider_permissions, "run_command", return_value=completed
+            ) as run_command:
+                probe = provider_permissions._codex_auth_probe(config, "codex", "/usr/bin/codex")
+
+        run_command.assert_called_once()
+        self.assertEqual(run_command.call_args.args[0][:2], ["/usr/bin/codex", "exec"])
+        self.assertEqual(probe["source"], "live")
+
+    def test_targeted_probe_provider_auth_force_still_runs_a_fresh_probe(self) -> None:
+        """The launch gate must never inherit the telemetry cache."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            codex_home = root / "codex-home"
+            codex_home.mkdir()
+            (codex_home / "auth.json").write_text(
+                '{"tokens":{"access_token":"redacted","refresh_token":"redacted"}}',
+                encoding="utf-8",
+            )
+            capabilities = root / "provider-capabilities.json"
+            recent = (
+                datetime.now(timezone.utc) - timedelta(seconds=60)
+            ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            self._write_recent_capabilities(capabilities, "codex", checked_at=recent)
+            config = self._codex_config(codex_home, capabilities)
+
+            completed = subprocess.CompletedProcess(["codex"], 0, "OK\n", "")
+            with (
+                mock.patch.object(
+                    provider_permissions, "command_exists", side_effect=lambda cmd: f"/usr/bin/{cmd}"
+                ),
+                mock.patch.object(
+                    provider_permissions, "run_command", return_value=completed
+                ) as run_command,
+            ):
+                probe = provider_permissions.probe_provider_auth(config, "codex", force=True)
+
+        run_command.assert_called_once()
+        self.assertEqual(run_command.call_args.args[0][:2], ["/usr/bin/codex", "exec"])
+        self.assertEqual(probe["source"], "live")
+        self.assertTrue(probe["ready"])
+
+    def test_antigravity_aliases_sharing_a_token_share_one_probe(self) -> None:
+        """Five aliases on one OAuth token are one quota account, not five lanes."""
+        config = {
+            "providers": {
+                "antigravity": {"delivery_mode": "antigravity", "antigravity": {"cli": "agy"}},
+                "antigravity1-1": {"delivery_mode": "antigravity", "antigravity": {"cli": "agy"}},
+                "antigravity1-2": {"delivery_mode": "antigravity", "antigravity": {"cli": "agy"}},
+                "antigravity2": {
+                    "delivery_mode": "antigravity",
+                    "antigravity": {"cli": "agy", "home": "/tmp/pantheon-test-agy2"},
+                },
+            }
+        }
+        probed: list[str] = []
+
+        def fake_probe(_config: dict, provider_id: str, _binary: str | None) -> dict:
+            probed.append(provider_id)
+            quota_dead = provider_id != "antigravity2"
+            return {
+                "provider": provider_id,
+                "kind": "antigravity",
+                "ready": not quota_dead,
+                "status": "quota_reached" if quota_dead else "ready",
+                "method": "agy_prompt_oauth",
+                "error": "Individual quota reached" if quota_dead else None,
+                "checked_at": "2026-07-27T18:04:00Z",
+                "last_auth_probe_at": "2026-07-27T18:04:00Z",
+                "source": "live",
+            }
+
+        with (
+            mock.patch.object(
+                provider_permissions, "command_exists", side_effect=lambda cmd: "/usr/bin/agy"
+            ),
+            mock.patch.object(provider_permissions, "_antigravity_auth_probe", side_effect=fake_probe),
+        ):
+            reports = provider_permissions._antigravity_provider_reports(
+                config, ["antigravity", "antigravity1-1", "antigravity1-2", "antigravity2"]
+            )
+
+        # One live probe per credential group, not one per alias.
+        self.assertEqual(probed, ["antigravity", "antigravity2"])
+
+        shared_group = reports["antigravity"]["account_group"]
+        for alias in ("antigravity", "antigravity1-1", "antigravity1-2"):
+            self.assertEqual(reports[alias]["account_group"], shared_group)
+            self.assertFalse(reports[alias]["auth_ready"], alias)
+            self.assertFalse(reports[alias]["local_cli_worker_supported"], alias)
+            self.assertFalse(reports[alias]["supports_auto_approve"], alias)
+        self.assertEqual(reports["antigravity1-1"]["auth_probe"]["shared_with"], "antigravity")
+
+        # A genuinely separate credential home keeps its own capacity.
+        self.assertNotEqual(reports["antigravity2"]["account_group"], shared_group)
+        self.assertTrue(reports["antigravity2"]["auth_ready"])
+
+    def test_antigravity_declared_quota_group_shares_capacity(self) -> None:
+        config = {
+            "providers": {
+                "antigravityA": {
+                    "delivery_mode": "antigravity",
+                    "quota_group": "shared_pool",
+                    "antigravity": {"cli": "agy", "home": "/tmp/pantheon-test-agy-a"},
+                },
+                "antigravityB": {
+                    "delivery_mode": "antigravity",
+                    "quota_group": "shared_pool",
+                    "antigravity": {"cli": "agy", "home": "/tmp/pantheon-test-agy-b"},
+                },
+            }
+        }
+        probed: list[str] = []
+
+        def fake_probe(_config: dict, provider_id: str, _binary: str | None) -> dict:
+            probed.append(provider_id)
+            return {
+                "provider": provider_id,
+                "kind": "antigravity",
+                "ready": False,
+                "status": "quota_reached",
+                "method": "agy_prompt_oauth",
+                "error": "Individual quota reached",
+                "checked_at": "2026-07-27T18:04:00Z",
+                "last_auth_probe_at": "2026-07-27T18:04:00Z",
+                "source": "live",
+            }
+
+        with (
+            mock.patch.object(
+                provider_permissions, "command_exists", side_effect=lambda cmd: "/usr/bin/agy"
+            ),
+            mock.patch.object(provider_permissions, "_antigravity_auth_probe", side_effect=fake_probe),
+        ):
+            reports = provider_permissions._antigravity_provider_reports(
+                config, ["antigravityA", "antigravityB"]
+            )
+
+        # Different homes, but one declared quota group: one probe, one capacity.
+        self.assertEqual(probed, ["antigravityA"])
+        self.assertEqual(
+            reports["antigravityA"]["account_group"], reports["antigravityB"]["account_group"]
+        )
+        self.assertFalse(reports["antigravityB"]["supports_auto_approve"])
+
+
+class PermissionBrokerCommandTest(unittest.TestCase):
     def test_force_push_is_denied(self) -> None:
         command = "git push --force origin HEAD"
 
