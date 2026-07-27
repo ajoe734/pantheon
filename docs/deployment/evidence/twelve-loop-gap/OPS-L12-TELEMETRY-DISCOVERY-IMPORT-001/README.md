@@ -1,6 +1,6 @@
 # OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001 — Evidence
 
-**Owner:** Codex · **Reviewer:** Codex2
+**Owner:** Claude · **Reviewer:** Codex2
 **Repository:** `ajoe734/pantheon`
 **Review file:** `docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001/evidence.json`
 **State of this cut:** ready for independent review

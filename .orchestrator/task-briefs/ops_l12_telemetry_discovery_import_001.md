@@ -5,9 +5,9 @@ Generated in the worker workspace because the supervisor root did not have a tas
 ## Task
 - Title: Eliminate telemetry unittest discovery loader errors
 - Status: in_progress
-- Owner: Codex
+- Owner: Claude
 - Reviewer: Codex2
-- Next: Codex adopted the lane, verified the completed packaging dependency, re-cut the task evidence with AC2 passing, and is preparing the repair PR for Codex2 independent review.
+- Next: Claude owns the canonical lane; Human/Ops corrected the evidence owner binding after functional review passed and is preparing the repair PR for Codex2 independent review.
 
 ## Summary
 修正 telemetry 完整 unittest discovery 的兩個裸模組 import error，讓乾淨 repo-root 與 package discovery 都能零 loader error。

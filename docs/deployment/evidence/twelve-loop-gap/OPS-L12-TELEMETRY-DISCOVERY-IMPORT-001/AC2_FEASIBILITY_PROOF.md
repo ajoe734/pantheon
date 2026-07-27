@@ -1,6 +1,6 @@
 # AC2 feasibility proof — OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001
 
-**Task:** OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001 · **Owner:** Codex · **Reviewer:** Codex2
+**Task:** OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001 · **Owner:** Claude · **Reviewer:** Codex2
 **Requested by:** Human/Ops in-progress audit, `2026-07-26T22:41:34Z`
 **Subject head:** `408d6d9a57c583b8b0762dd60e00842948aebe84`
 **Status of this document:** resolved through Option A. The analysis below is

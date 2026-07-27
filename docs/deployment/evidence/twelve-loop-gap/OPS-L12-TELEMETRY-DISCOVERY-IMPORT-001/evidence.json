@@ -16,11 +16,11 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-27T19:03:55Z",
-    "evidence_cut_semantics": "Codex owner re-cut at implementation anchor b4db8aa4b1fa226b878068a43d72faa7be364782 on dev base 5a2fc69a3b432e0d1bc528981d66a2ee32defa71. The cut changes only task evidence, its fail-closed gate, the AC2 decision record, and the task brief. It binds the earlier task delivery through PR #4226 and the reviewed packaging dependency through PR #4232. The PR that carries this cut and the independent Codex2 decision are intentionally pending.",
+    "evidence_cut_at": "2026-07-27T19:34:20Z",
+    "evidence_cut_semantics": "Claude is the canonical task owner. Human/Ops re-cut the owner-binding evidence after Codex2 review found the prior cut still named Codex in owner-bearing artifacts. The cut changes only task evidence, its fail-closed gate, the AC2 decision record, and the task brief. It binds the earlier task delivery through PR #4226 and the reviewed packaging dependency through PR #4232. The PR that carries this cut and the independent Codex2 decision are intentionally pending.",
     "id": "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001",
     "overall_admission": "ready_for_independent_review",
-    "owner": "Codex",
+    "owner": "Claude",
     "phase": "Twelve-loop verification hardening",
     "product_level_required": false,
     "repository": "ajoe734/pantheon",
@@ -45,7 +45,7 @@
     "task_packet": ".orchestrator/task-briefs/ops_l12_telemetry_discovery_import_001.md"
   },
   "scope": {
-    "authoritative_write_owner": "Codex owns this task's telemetry test-import evidence and regression gate; Codex does not own telemetry runtime behavior or packaging implementation.",
+    "authoritative_write_owner": "Claude owns this task's telemetry test-import evidence and regression gate; Claude does not own telemetry runtime behavior or packaging implementation.",
     "composes_with": [
       "OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001 residual loader-error finding",
       "OPS-L12-PYTHON-PACKAGING-PROVISION-001 governed distribution and worker bootstrap",
@@ -246,7 +246,7 @@
         "result": "pass"
       },
       {
-        "command": "sha256sum -c docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001/evidence.sha256",
+        "command": "cd docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001 && sha256sum -c evidence.sha256",
         "conclusion": "AC2_FEASIBILITY_PROOF.md, README.md, and evidence.json all match the companion checksum.",
         "result": "pass"
       },
@@ -271,7 +271,7 @@
         "result": "pass"
       },
       {
-        "command": "AI_NAME=Codex $PANTHEON_COMMAND_ROOT/scripts/ai-status.sh show OPS-L12-PYTHON-PACKAGING-PROVISION-001; task gate test_dependency_manifest_closes_the_packaging_precondition",
+        "command": "AI_NAME=Claude $PANTHEON_COMMAND_ROOT/scripts/ai-status.sh show OPS-L12-PYTHON-PACKAGING-PROVISION-001; task gate test_dependency_manifest_closes_the_packaging_precondition",
         "conclusion": "The governed archive reports terminal done, merge 3802799f81778c93728d9dbbe4028289f153c718, review_file bound, and Codex2 approval; the current task gate confirms the committed dependency manifest records review_approved AC3 pass. The dependency's whole historical gate is not reused here because its source-digest assertion intentionally compares its branch-ci.yml epoch with the current tree, and branch-ci.yml changed after that task closed.",
         "result": "pass"
       },
@@ -281,7 +281,7 @@
         "result": "pass"
       }
     ],
-    "validated_at": "2026-07-27T19:03:55Z",
+  "validated_at": "2026-07-27T19:34:20Z",
     "validated_base_sha": "5a2fc69a3b432e0d1bc528981d66a2ee32defa71",
     "validated_head_sha": "b4db8aa4b1fa226b878068a43d72faa7be364782"
   },
@@ -467,7 +467,7 @@
       "containment": "AC6 is explicitly pending; the reviewer appends the exact-head decision and the owner closes only after the PR is merged.",
       "description": "A manifest cannot contain the merge SHA of the PR that first carries its own bytes.",
       "expiry": "Owner closeout after Codex2 review and merge.",
-      "owner": "Codex",
+      "owner": "Claude",
       "recheck_trigger": "Current task PR review or merge",
       "severity": "low"
     }
@@ -620,6 +620,14 @@
       "recorded_at": "2026-07-27T19:03:55Z",
       "reference": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001/evidence.json",
       "sequence": 15,
+      "status": "ready_for_independent_review"
+    },
+    {
+      "actor": "Human/Ops",
+      "kind": "owner_binding_recut",
+      "recorded_at": "2026-07-27T19:34:20Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001/evidence.json",
+      "sequence": 16,
       "status": "ready_for_independent_review"
     }
   ]
