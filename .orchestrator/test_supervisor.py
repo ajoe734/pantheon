@@ -8,6 +8,7 @@ import tempfile
 import unittest
 import os
 import json
+import signal
 import subprocess
 import sys
 import time
@@ -4928,6 +4929,98 @@ class DispatchStatusSyncTests(unittest.TestCase):
             ["provider_probe", "lock_enter", "locked_cycle", "lock_exit"],
         )
 
+    def test_run_once_syncs_github_bus_before_taking_the_runtime_lock(self) -> None:
+        """No gh/API subprocess may extend the exclusive admission hold."""
+
+        call_order: list[str] = []
+
+        @contextlib.contextmanager
+        def runtime_lock(*_args: object, **_kwargs: object):
+            call_order.append("lock_enter")
+            try:
+                yield
+            finally:
+                call_order.append("lock_exit")
+
+        def github_sync(
+            _config: dict[str, object],
+            runtime_snapshot: dict[str, object],
+        ) -> bool:
+            call_order.append("github_sync")
+            self.assertEqual(runtime_snapshot, {"snapshot": True})
+            return True
+
+        def locked_cycle(*_args: object, **kwargs: object) -> bool:
+            call_order.append("locked_cycle")
+            self.assertTrue(kwargs["prelock_changed"])
+            return True
+
+        with (
+            mock.patch.object(supervisor, "probe_provider_reports", return_value=({}, {})),
+            mock.patch.object(
+                supervisor,
+                "load_runtime_state_snapshot",
+                return_value={"snapshot": True},
+            ),
+            mock.patch.object(supervisor, "sync_github_bus", side_effect=github_sync),
+            mock.patch.object(supervisor, "runtime_state_lock", side_effect=runtime_lock),
+            mock.patch.object(supervisor, "_run_once_locked", side_effect=locked_cycle),
+        ):
+            changed = supervisor.run_once(self.config, watch=False)
+
+        self.assertTrue(changed)
+        self.assertEqual(
+            call_order,
+            ["github_sync", "lock_enter", "locked_cycle", "lock_exit"],
+        )
+
+    def test_run_once_confirms_worker_termination_after_runtime_lock_release(self) -> None:
+        """SIGTERM is immediate; confirm_kill's poll sleeps are deferred."""
+
+        call_order: list[str] = []
+
+        @contextlib.contextmanager
+        def runtime_lock(*_args: object, **_kwargs: object):
+            call_order.append("lock_enter")
+            try:
+                yield
+            finally:
+                call_order.append("lock_exit")
+
+        def send_signal(pid: int, sent_signal: int) -> None:
+            self.assertEqual((pid, sent_signal), (4242, signal.SIGTERM))
+            call_order.append("sigterm")
+
+        def confirm_kill(pid: int, **_kwargs: object) -> bool:
+            self.assertEqual(pid, 4242)
+            call_order.append("confirm_kill")
+            return True
+
+        def locked_cycle() -> bool:
+            self.assertTrue(supervisor.terminate_worker_pid(4242))
+            return True
+
+        with (
+            mock.patch.object(supervisor, "runtime_state_lock", side_effect=runtime_lock),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor.os, "kill", side_effect=send_signal),
+            mock.patch.object(
+                supervisor.rewrite_worker_lifecycle,
+                "confirm_kill",
+                side_effect=confirm_kill,
+            ),
+        ):
+            changed = supervisor._run_with_deferred_dispatch_status_syncs(
+                self.config,
+                locked_cycle,
+            )
+
+        self.assertTrue(changed)
+        self.assertEqual(
+            call_order,
+            ["lock_enter", "sigterm", "lock_exit", "confirm_kill"],
+        )
+
     def test_sync_status_pipeline_uses_installed_command_runtime(self) -> None:
         command_env = {
             "PANTHEON_COMMAND_ROOT": str(self.root),
@@ -6145,12 +6238,19 @@ class SupervisorRuntimeAdmissionLockTests(unittest.TestCase):
         locked_operation_source = inspect.getsource(
             supervisor._run_with_deferred_dispatch_status_syncs
         )
+        locked_cycle_source = inspect.getsource(supervisor._run_once_locked)
         queue_writer_source = inspect.getsource(supervisor.save_event_queue)
 
         self.assertIn("_run_with_deferred_dispatch_status_syncs(", run_once_source)
         self.assertIn("lambda: _run_once_locked(", run_once_source)
+        self.assertIn('"sync_github_bus"', run_once_source)
+        self.assertNotIn('"sync_github_bus"', locked_cycle_source)
         self.assertIn(
             "with runtime_state_lock(config, shared=False",
+            locked_operation_source,
+        )
+        self.assertIn(
+            "for pid in deferred_terminations",
             locked_operation_source,
         )
         self.assertEqual(

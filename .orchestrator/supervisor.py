@@ -82,7 +82,7 @@ from provider_permissions import (
     write_provider_capabilities,
 )
 from rebase_helper import continue_or_skip_empty
-from runtime_state import load_approval_state, load_event_queue, load_runtime_state, prune_worker_records, queue_event_record, replace_event_queue, runtime_state_lock, save_runtime_state
+from runtime_state import load_approval_state, load_event_queue, load_runtime_state, load_runtime_state_snapshot, prune_worker_records, queue_event_record, replace_event_queue, runtime_state_lock, save_runtime_state
 from runtime_state import enqueue_event
 from task_archive import TaskResolver
 from watch_events import queue_delivery_event, run_scan, trim_seen_events
@@ -127,6 +127,10 @@ STICKY_AUTH_BLOCKED_UNTIL = "9999-12-31T23:59:59Z"
 _DEFERRED_DISPATCH_STATUS_SYNCS: ContextVar[
     list[tuple[dict[str, Any], str | None]] | None
 ] = ContextVar("deferred_dispatch_status_syncs", default=None)
+_DEFERRED_WORKER_TERMINATIONS: ContextVar[list[int] | None] = ContextVar(
+    "deferred_worker_terminations",
+    default=None,
+)
 
 
 SESSION_ID_PATTERNS = [
@@ -3273,6 +3277,21 @@ def active_worker_refs_for_agent_id(
 def terminate_worker_pid(pid: int | None) -> bool:
     if not pid:
         return False
+    deferred = _DEFERRED_WORKER_TERMINATIONS.get()
+    if deferred is not None:
+        # State transitions still happen in the one runtime-admission
+        # transaction, but confirm_kill's bounded poll/sleep loop must not.
+        # Send the first TERM while the decision is current, then confirm (and
+        # escalate to KILL if necessary) immediately after the lock is released.
+        if not pid_is_alive(pid):
+            return True
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            return not pid_is_alive(pid)
+        if pid not in deferred:
+            deferred.append(pid)
+        return True
     # SUPERVISOR-REWRITE Phase 4 (anti-pattern E): confirm-kill instead of
     # SIGTERM-and-assume-dead. A worker that ignores SIGTERM used to be reported
     # terminated while still alive (and still mutating state); now we escalate to
@@ -6951,12 +6970,20 @@ def _run_with_deferred_dispatch_status_syncs(
     """
 
     deferred: list[tuple[dict[str, Any], str | None]] = []
+    deferred_terminations: list[int] = []
     token = _DEFERRED_DISPATCH_STATUS_SYNCS.set(deferred)
+    termination_token = _DEFERRED_WORKER_TERMINATIONS.set(deferred_terminations)
     try:
         with runtime_state_lock(config, shared=False, nonblocking=False):
             changed = bool(operation())
     finally:
         _DEFERRED_DISPATCH_STATUS_SYNCS.reset(token)
+        _DEFERRED_WORKER_TERMINATIONS.reset(termination_token)
+        # terminate_worker_pid now runs its confirm/sleep path because the
+        # deferral context has been reset. Keep this in the finally block so a
+        # partially completed cycle cannot strand a process it already TERM'd.
+        for pid in deferred_terminations:
+            terminate_worker_pid(pid)
 
     sync_changed = False
     for event, run_id in deferred:
@@ -12363,6 +12390,24 @@ def run_once(
     once: bool = False,
 ) -> bool:
     provider_reports = probe_provider_reports(config, quiet=quiet)
+    # GitHub bus sync can perform several gh/API round trips and status-command
+    # subprocesses. It only consumes an atomic runtime snapshot; any queue or
+    # status mutation it issues uses that subsystem's own canonical writer.
+    # Running it before runtime admission prevents an 8s gh timeout (or several
+    # of them) from blocking approve/assign/note behind the supervisor cycle.
+    try:
+        github_runtime_snapshot = load_runtime_state_snapshot(config)
+    except Exception:
+        github_runtime_snapshot = {}
+    github_bus_changed = bool(
+        _safe_phase(
+            "sync_github_bus",
+            sync_github_bus,
+            config,
+            github_runtime_snapshot,
+            quiet=quiet,
+        )
+    )
     return _run_with_deferred_dispatch_status_syncs(
         config,
         lambda: _run_once_locked(
@@ -12373,6 +12418,7 @@ def run_once(
             verbose=verbose,
             once=once,
             provider_reports=provider_reports,
+            prelock_changed=github_bus_changed,
         )
     )
 
@@ -12535,6 +12581,7 @@ def _run_once_locked(
     verbose: bool = False,
     once: bool = False,
     provider_reports: tuple[dict[str, Any], dict[str, Any]] | None = None,
+    prelock_changed: bool = False,
 ) -> bool:
     write_supervisor_pid(config)
     lock_held_since = time.monotonic()
@@ -12551,7 +12598,7 @@ def _run_once_locked(
         loop_started_at=loop_started_at,
     )
     save_runtime_state(config, state)
-    changed = False
+    changed = prelock_changed
     try:
         # Phase 0 (SUPERVISOR_REWRITE_PLAN.md): every phase runs isolated via
         # _safe_phase, so one failing subsystem degrades only itself. The outer
@@ -12616,7 +12663,6 @@ def _run_once_locked(
         changed = _safe_phase("poll_workers", poll_workers, config, state, provider_report=provider_report, quiet=quiet) or changed
         changed = _safe_phase("reconcile_queue_records", reconcile_queue_records, config, state, quiet=quiet) or changed
         changed = _safe_phase("prune_event_queue", prune_event_queue, config, state, quiet=quiet) or changed
-        changed = _safe_phase("sync_github_bus", sync_github_bus, config, state, quiet=quiet) or changed
         _safe_phase("trim_worker_history", trim_worker_history, state, int(config.get("supervisor", {}).get("max_worker_history", 200)), quiet=quiet)
         _safe_phase("trim_seen_events", trim_seen_events, state, int(config.get("watcher", {}).get("max_seen_events", 2000)), quiet=quiet)
         changed = _safe_phase("prune_orphan_worktrees", prune_orphan_worktrees, config, state, quiet=quiet) or changed
