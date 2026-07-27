@@ -337,7 +337,7 @@
   "validation": {
     "revalidation": {
       "actor": "Codex",
-      "reason": "Owner reassignment followed exact-head rejections that found approval-binding, archive-case, helper-revocation, stale-base, and revocation-readback defects. After Codex repaired those paths, live finalization of f93ab06e exposed that task_finalize pushed an existing PR head and then exited at gh pr create before autoMergeRequest readback/revocation. PR #4218 was already off and did not merge; Codex withdrew the handoff, moved existing-PR discovery and revocation before push in both helpers, added pre-receive regressions plus unreadable/ambiguous lookup guards, composed current dev through PR #4258, and reran the full matrix.",
+      "reason": "Owner reassignment followed exact-head rejections that found approval-binding, archive-case, helper-revocation, stale-base, and revocation-readback defects. After Codex repaired those paths, live finalization of f93ab06e exposed that task_finalize pushed an existing PR head and then exited at gh pr create before autoMergeRequest readback/revocation. PR #4218 was already off and did not merge; Codex withdrew the handoff, moved existing-PR discovery and revocation before push in both helpers, added pre-receive regressions plus unreadable/ambiguous lookup guards, proved the repaired existing-PR path live on c6d38ea7, composed current dev through PR #4259, and reran the full matrix.",
       "adopted_predecessor_commit": "7759ed36666ce62a7f912a9c85f74cf409cff095",
       "rejected_review_head": "5a9ad1643eba2580bf8a51c71a6f3a43ad8c57b6",
       "repair_anchor_commit": "e971a2c9441c0611fa7070f7554805e3ccfcb2b7",
@@ -352,8 +352,9 @@
       "latest_rejection_anchor_commit": "456982f4d8566befb60b54d221065c4573cc423f",
       "withdrawn_live_candidate_head": "f93ab06e67eff8e5e197172608a97d0e3b01fb77",
       "pre_push_revocation_anchor_commit": "d8549af42d9dd5358b9b6b907c2d5f36aa4f4d20",
-      "validated_dev_base": "6ae436c546942df1ba0a762d7167b456dfedabc8",
-      "validated_tree_commit": "b679224c70da3b8cdb0df29f9215fa4a5fb3e350"
+      "live_pre_push_probe_head": "c6d38ea7e9b5bbc7f2480768120478894e522f38",
+      "validated_dev_base": "2644329db702068142d3e942a40b3bc5d76c0c1a",
+      "validated_tree_commit": "dba1c9129d5cd5b375874d5b3c419bfd62e6edc7"
     },
     "commands": [
       {
@@ -383,12 +384,12 @@
       },
       {
         "command": "/home/lupin/pantheon/.venv/bin/python -m pytest scripts/git/test_task_review_merge_gate.py scripts/git/test_auto_integrator.py scripts/git/test_git_workflow_helpers.py scripts/git/test_task_pr_triage.py scripts/git/test_index_safety.py scripts/test_ai_status.py scripts/git/test_task_git_helpers_refspec.py -q",
-        "conclusion": "341 passed, 31 subtests passed after composing current dev",
+        "conclusion": "343 passed, 31 subtests passed after composing current dev",
         "result": "pass"
       },
       {
         "command": "/home/lupin/pantheon/.venv/bin/python -m pytest scripts/git/test_task_review_merge_gate.py scripts/git/test_auto_integrator.py scripts/git/test_git_workflow_helpers.py scripts/git/test_task_pr_triage.py scripts/git/test_index_safety.py scripts/test_ai_status.py scripts/git/test_task_git_helpers_refspec.py scripts/test_status_command_runtime_pin.py scripts/test_nightly_publish_cut.py -q",
-        "conclusion": "349 passed, 45 subtests passed after composing current dev through PR #4258",
+        "conclusion": "351 passed, 45 subtests passed in a sequential post-compose run through PR #4259",
         "result": "pass"
       },
       {
@@ -398,7 +399,7 @@
       },
       {
         "command": ".venv-pantheon/bin/python3 scripts/git/test_git_workflow_helpers.py",
-        "conclusion": "Ran 56 tests - OK",
+        "conclusion": "Ran 58 tests - OK",
         "result": "pass"
       },
       {

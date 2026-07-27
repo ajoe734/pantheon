@@ -10,10 +10,10 @@ unreadable or still-armed result; a nonzero command may continue only when the
 readback proves another actor already turned the request off.
 
 The task branch contains authoritative origin/dev
-6ae436c546942df1ba0a762d7167b456dfedabc8, fetched through the explicit
+2644329db702068142d3e942a40b3bc5d76c0c1a, fetched through the explicit
 remote-tracking refspec and composed by
-b679224c70da3b8cdb0df29f9215fa4a5fb3e350. The validated implementation tree
-is b679224c70da3b8cdb0df29f9215fa4a5fb3e350; the following task commit changes
+dba1c9129d5cd5b375874d5b3c419bfd62e6edc7. The validated implementation tree
+is dba1c9129d5cd5b375874d5b3c419bfd62e6edc7; the following task commit changes
 task-scoped evidence only. The final implementation pass also normalizes the
 gate/integrator regression imports to one `scripts.git.auto_integrator` module
 identity, so package-mode pytest and direct script execution exercise the same
@@ -27,9 +27,15 @@ d8549af42d9dd5358b9b6b907c2d5f36aa4f4d20 now resolves the unique PR and
 verifies its merge grant off before push, aborts unreadable or ambiguous lookup
 before push, and verifies off again after push/open.
 
+Live task_finalize on c6d38ea7e9b5bbc7f2480768120478894e522f38 then
+resolved existing PR #4218, proved auto-merge already off before push, reused
+the PR, proved it off after push/open, and returned zero. Dev advanced during
+that run, so the candidate was not handed off; the branch composed the current
+base above and reran validation.
+
 == .venv-pantheon/bin/python3 scripts/git/test_task_review_merge_gate.py
 ----------------------------------------------------------------------
-Ran 91 tests in 10.312s
+Ran 91 tests in 13.826s
 OK
 
 == .venv-pantheon/bin/python3 scripts/git/test_auto_integrator.py
@@ -39,25 +45,25 @@ OK
 
 == .venv-pantheon/bin/python3 scripts/git/test_git_workflow_helpers.py
 ----------------------------------------------------------------------
-Ran 56 tests in 6.026s
+Ran 58 tests in 5.270s
 OK
 
 == .venv-pantheon/bin/python3 -m pytest -q scripts/git/test_task_git_helpers_refspec.py
-2 passed in 0.77s
+2 passed in 0.55s
 
 == .venv-pantheon/bin/python3 scripts/git/test_task_pr_triage.py
 ----------------------------------------------------------------------
-Ran 24 tests in 0.014s
+Ran 24 tests in 0.007s
 OK
 
 == .venv-pantheon/bin/python3 scripts/git/test_index_safety.py
 ----------------------------------------------------------------------
-Ran 17 tests in 6.065s
+Ran 17 tests in 7.979s
 OK
 
 == .venv-pantheon/bin/python3 scripts/test_ai_status.py
 ----------------------------------------------------------------------
-Ran 142 tests in 23.573s
+Ran 142 tests in 25.167s
 OK
 
 == .venv-pantheon/bin/python3 -m unittest -v
@@ -66,17 +72,17 @@ OK
    IntegratorGateTests.test_failed_auto_merge_revocation_never_reaches_the_merge
    IntegratorGateTests.test_nonzero_revocation_can_continue_only_when_readback_proves_off
 ----------------------------------------------------------------------
-Ran 4 tests in 0.011s
+Ran 4 tests in 0.014s
 OK
 
 == /home/lupin/pantheon/.venv/bin/python -m pytest scripts/git/test_task_review_merge_gate.py scripts/git/test_auto_integrator.py -q
-100 passed in 24.48s
+100 passed in 29.49s
 
 == /home/lupin/pantheon/.venv/bin/python -m pytest scripts/git/test_task_review_merge_gate.py scripts/git/test_auto_integrator.py scripts/git/test_git_workflow_helpers.py scripts/git/test_task_pr_triage.py scripts/git/test_index_safety.py scripts/test_ai_status.py scripts/git/test_task_git_helpers_refspec.py -q
-341 passed, 31 subtests passed in 77.92s
+343 passed, 31 subtests passed in 70.39s
 
 == /home/lupin/pantheon/.venv/bin/python -m pytest scripts/git/test_task_review_merge_gate.py scripts/git/test_auto_integrator.py scripts/git/test_git_workflow_helpers.py scripts/git/test_task_pr_triage.py scripts/git/test_index_safety.py scripts/test_ai_status.py scripts/git/test_task_git_helpers_refspec.py scripts/test_status_command_runtime_pin.py scripts/test_nightly_publish_cut.py -q
-349 passed, 45 subtests passed in 86.47s
+351 passed, 45 subtests passed in 71.97s
 
 == bash -n scripts/git/task_finalize.sh scripts/git/safe_pr.sh scripts/git/nightly_publish.sh
 syntax ok

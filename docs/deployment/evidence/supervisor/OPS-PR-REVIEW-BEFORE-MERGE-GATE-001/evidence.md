@@ -40,8 +40,15 @@ withdrew that handoff. Anchor `d8549af42d9dd5358b9b6b907c2d5f36aa4f4d20`
 now makes both PR helpers resolve a unique existing PR and prove its request
 off before changing the head, fail before push on unreadable or ambiguous
 lookup, and prove it off again after push/open. The final validation composes
-authoritative base `6ae436c546942df1ba0a762d7167b456dfedabc8` at tree
-`b679224c70da3b8cdb0df29f9215fa4a5fb3e350`.
+authoritative base `2644329db702068142d3e942a40b3bc5d76c0c1a` at tree
+`dba1c9129d5cd5b375874d5b3c419bfd62e6edc7`.
+
+The repaired helper was also exercised live on candidate
+`c6d38ea7e9b5bbc7f2480768120478894e522f38`: it resolved existing PR #4218,
+proved auto-merge already off before push, reused the PR without calling
+`pr create`, proved it off after push/open, and returned zero. That candidate
+was not handed off because `dev` advanced during the run; the branch then
+composed the newer base above and reran the matrix.
 
 Scope rule honoured throughout: **no `.orchestrator/config.json` edit**, no
 hand-edited task board, no owner or reviewer action performed on behalf of
@@ -397,8 +404,8 @@ The full map of PR → entry point → fixture is the `live_regressions` table i
 See `validation.txt` for the captured transcript.
 
 This pass ran against authoritative `origin/dev`
-`6ae436c546942df1ba0a762d7167b456dfedabc8` and validated tree
-`b679224c70da3b8cdb0df29f9215fa4a5fb3e350`.
+`2644329db702068142d3e942a40b3bc5d76c0c1a` and validated tree
+`dba1c9129d5cd5b375874d5b3c419bfd62e6edc7`.
 
 ```
 .venv-pantheon/bin/python3 scripts/git/test_task_review_merge_gate.py
@@ -406,7 +413,7 @@ This pass ran against authoritative `origin/dev`
 .venv-pantheon/bin/python3 scripts/git/test_auto_integrator.py
                                                        Ran   9 tests - OK
 .venv-pantheon/bin/python3 scripts/git/test_git_workflow_helpers.py
-                                                       Ran  56 tests - OK
+                                                       Ran  58 tests - OK
 .venv-pantheon/bin/python3 -m pytest -q scripts/git/test_task_git_helpers_refspec.py
                                                         2 tests - OK
 .venv-pantheon/bin/python3 scripts/git/test_task_pr_triage.py
@@ -419,8 +426,8 @@ bash -n task_finalize.sh safe_pr.sh nightly_publish.sh        syntax ok
 py_compile task_review_merge_gate.py auto_integrator.py ai_status.py
                                                         compile ok
 git diff --check origin/dev...HEAD                         clean
-pytest combined focused matrix                              341 passed, 31 subtests
-pytest post-dev-compose matrix                              349 passed, 45 subtests
+pytest combined focused matrix                              343 passed, 31 subtests
+pytest sequential post-dev-compose matrix                   351 passed, 45 subtests
 check_commit_trailers origin/dev..HEAD --skip-merge         ok
 ```
 
