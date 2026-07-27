@@ -1,0 +1,78 @@
+# OPS-CI-PR-TRAILER-RANGE-001 — post-merge branch-ci.yml run audit
+#
+# Source : GitHub Actions API,
+#          repos/ajoe734/pantheon/actions/workflows/branch-ci.yml/runs
+# Window : created_at in [2026-07-26T21:43:27Z, 2026-07-26T23:19:29Z]
+#          lower bound = PR #4217 merged_at, upper bound = last run of the
+#          audited fleet burst. Both bounds inclusive.
+# Rows   : every run in the window, no sampling, no truncation. 53 runs.
+#
+# head_has_fix_merge    : `git merge-base --is-ancestor 71aea154b <head_sha>`
+#                         i.e. does the run's head commit already contain the
+#                         PR #4217 merge?
+# workflow_file_version : which branch-ci.yml / resolver actually executed,
+#                         read out of the run's `Commit trailers` job log.
+#                         `repaired` = the job printed the new
+#                         `[range] event=... resolved=...` line.
+#                         `pre-fix`  = no `[range]` line; the range was taken
+#                         from the pre-#4217 resolver invocation.
+#                         A `pull_request` run is `repaired` even when its head
+#                         predates the merge, because GitHub runs the workflow
+#                         file from refs/pull/N/merge (base + head), and dev
+#                         already carried the fix.
+# resolved_range        : the range handed to check_commit_trailers.py.
+#
+run_id	created_at	event	conclusion	branch	head_sha	head_has_fix_merge	workflow_file_version	resolved_range
+30221668884	2026-07-26T21:43:30Z	push	success	dev	71aea154b	yes	repaired	6445eacd603f0bcfb8893508fbffe341a67dd309..71aea154b8a1ab6e652e02018f47c57f26513de0
+30221669820	2026-07-26T21:43:31Z	push	success	task/OPS-L12-RUNTIME-GAP-DELTA-001	5c39428dd	no	pre-fix	6445eacd603f0bcfb8893508fbffe341a67dd309..5c39428dda1d3c1e42fa926aa5f320467e1b8324
+30221671216	2026-07-26T21:43:34Z	pull_request	success	task/OPS-L12-RUNTIME-GAP-DELTA-001	5c39428dd	no	repaired	origin/dev..5c39428dda1d3c1e42fa926aa5f320467e1b8324
+30221804623	2026-07-26T21:47:36Z	push	success	task/OPS-L12-RUNTIME-GAP-DELTA-001	0bb6d7ffb	no	pre-fix	5c39428dda1d3c1e42fa926aa5f320467e1b8324..0bb6d7ffbef956a57f3a3b300056f77088837f2a
+30221806024	2026-07-26T21:47:39Z	pull_request	success	task/OPS-L12-RUNTIME-GAP-DELTA-001	0bb6d7ffb	no	repaired	origin/dev..0bb6d7ffbef956a57f3a3b300056f77088837f2a
+30222032719	2026-07-26T21:54:22Z	push	success	task/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001	28e62b8f2	yes	repaired	origin/dev..28e62b8f25b184044a002aeb8b1c93b5c622ae30
+30222034264	2026-07-26T21:54:24Z	pull_request	success	task/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001	28e62b8f2	yes	repaired	origin/dev..28e62b8f25b184044a002aeb8b1c93b5c622ae30
+30222074393	2026-07-26T21:55:34Z	push	success	dev	55b17612e	yes	repaired	71aea154b8a1ab6e652e02018f47c57f26513de0..55b17612ed150f52a518a4e8c4c6e75502830f6b
+30222138131	2026-07-26T21:57:27Z	push	success	task/SUP-WORKER-TRUTH-RECONCILE-001	2d97f80e8	no	pre-fix	aa70767538baefc1a331b5e7ef51a0cad903c6b9..2d97f80e8965ae28859672a6d2b75261565fc727
+30222139919	2026-07-26T21:57:30Z	pull_request	success	task/SUP-WORKER-TRUTH-RECONCILE-001	2d97f80e8	no	repaired	origin/dev..2d97f80e8965ae28859672a6d2b75261565fc727
+30222531649	2026-07-26T22:08:26Z	push	success	task/SUP-WORKER-TRUTH-RECONCILE-001	16d4e504a	yes	repaired	origin/dev..16d4e504ab90e04a46abc7f30923f0dfdf59659f
+30222532696	2026-07-26T22:08:28Z	pull_request	success	task/SUP-WORKER-TRUTH-RECONCILE-001	16d4e504a	yes	repaired	origin/dev..16d4e504ab90e04a46abc7f30923f0dfdf59659f
+30222566267	2026-07-26T22:09:31Z	push	success	dev	6578ef968	yes	repaired	55b17612ed150f52a518a4e8c4c6e75502830f6b..6578ef968f7e0374b046de0afb5b07ce2f81558e
+30222784123	2026-07-26T22:15:51Z	push	success	task/OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001	fb5f8c58b	yes	repaired	origin/dev..fb5f8c58b30fb3bdcf6ad7be03c5e2281a7773a3
+30222786033	2026-07-26T22:15:55Z	pull_request	success	task/OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001	fb5f8c58b	yes	repaired	origin/dev..fb5f8c58b30fb3bdcf6ad7be03c5e2281a7773a3
+30222792583	2026-07-26T22:16:06Z	push	failure	task/L12-CAP-001	590512f55	yes	repaired	origin/dev..590512f55cefd13e071928cf5c9b062c5a39f0f4
+30222793958	2026-07-26T22:16:08Z	pull_request	failure	task/L12-CAP-001	590512f55	yes	repaired	origin/dev..590512f55cefd13e071928cf5c9b062c5a39f0f4
+30222823409	2026-07-26T22:17:00Z	push	failure	task/L12-CAP-001	65e9719a5	yes	repaired	origin/dev..65e9719a53cc8f37e344793ddd68f737aeab1dc4
+30222825355	2026-07-26T22:17:03Z	pull_request	failure	task/L12-CAP-001	65e9719a5	yes	repaired	origin/dev..65e9719a53cc8f37e344793ddd68f737aeab1dc4
+30222834932	2026-07-26T22:17:21Z	push	success	task/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001	cca84df53	yes	repaired	origin/dev..cca84df537d274d8c71c4ac999eeb8907a3dd4cf
+30222836610	2026-07-26T22:17:24Z	pull_request	success	task/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001	cca84df53	yes	repaired	origin/dev..cca84df537d274d8c71c4ac999eeb8907a3dd4cf
+30223077585	2026-07-26T22:24:41Z	push	success	task/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001	c1686aaec	yes	repaired	origin/dev..c1686aaecd393e57648a06d8aa593fd71a1f9a7b
+30223078996	2026-07-26T22:24:43Z	pull_request	success	task/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001	c1686aaec	yes	repaired	origin/dev..c1686aaecd393e57648a06d8aa593fd71a1f9a7b
+30223114561	2026-07-26T22:25:46Z	push	success	task/OPS-L12-RUNTIME-GAP-DELTA-001	c5cc564ce	yes	repaired	origin/dev..c5cc564ceb33279f3a5255dcede44a09dc44a0e0
+30223116129	2026-07-26T22:25:49Z	pull_request	success	task/OPS-L12-RUNTIME-GAP-DELTA-001	c5cc564ce	yes	repaired	origin/dev..c5cc564ceb33279f3a5255dcede44a09dc44a0e0
+30223185962	2026-07-26T22:27:56Z	push	success	task/OPS-L12-RUNTIME-GAP-DELTA-001	5a9ed0c99	yes	repaired	origin/dev..5a9ed0c9957529467fce0b7afa0338546987ee4b
+30223187297	2026-07-26T22:27:59Z	pull_request	success	task/OPS-L12-RUNTIME-GAP-DELTA-001	5a9ed0c99	yes	repaired	origin/dev..5a9ed0c9957529467fce0b7afa0338546987ee4b
+30223234029	2026-07-26T22:29:30Z	push	success	task/L12-CAP-001	7cec6f7cb	yes	repaired	origin/dev..7cec6f7cb0929a34024eb67c27bb299d2a2c6d62
+30223235130	2026-07-26T22:29:32Z	pull_request	success	task/L12-CAP-001	7cec6f7cb	yes	repaired	origin/dev..7cec6f7cb0929a34024eb67c27bb299d2a2c6d62
+30223686258	2026-07-26T22:42:43Z	push	success	task/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001	3c2d88370	yes	repaired	origin/dev..3c2d883700afc3e92568a013bb8e11ec8539031b
+30223688553	2026-07-26T22:42:47Z	pull_request	success	task/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001	3c2d88370	yes	repaired	origin/dev..3c2d883700afc3e92568a013bb8e11ec8539031b
+30224190859	2026-07-26T22:57:32Z	push	success	task/OPS-L12-RUNTIME-GAP-DELTA-001	20ba1af92	yes	repaired	origin/dev..20ba1af92688b27b25aa88d5094dd06eeaad2e90
+30224192311	2026-07-26T22:57:34Z	pull_request	success	task/OPS-L12-RUNTIME-GAP-DELTA-001	20ba1af92	yes	repaired	origin/dev..20ba1af92688b27b25aa88d5094dd06eeaad2e90
+30224348608	2026-07-26T23:01:41Z	push	success	dev	8d1b50779	yes	repaired	6578ef968f7e0374b046de0afb5b07ce2f81558e..8d1b5077996a2d27aafb83ff5756f0290d0e90bc
+30224431454	2026-07-26T23:03:52Z	push	success	task/OPS-L12-RUNTIME-GAP-DELTA-001	a9af5f336	yes	repaired	origin/dev..a9af5f3363c2769ce98fabe89c593f3ad95859ee
+30224432880	2026-07-26T23:03:54Z	pull_request	success	task/OPS-L12-RUNTIME-GAP-DELTA-001	a9af5f336	yes	repaired	origin/dev..a9af5f3363c2769ce98fabe89c593f3ad95859ee
+30224440847	2026-07-26T23:04:05Z	push	success	task/OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001	2e8e1d728	yes	repaired	origin/dev..2e8e1d7286bceb548362302b8be9f917d941102e
+30224442474	2026-07-26T23:04:07Z	pull_request	success	task/OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001	2e8e1d728	yes	repaired	origin/dev..2e8e1d7286bceb548362302b8be9f917d941102e
+30224517972	2026-07-26T23:05:59Z	push	success	task/OPS-L12-RUNTIME-GAP-DELTA-001	b3f8edad0	yes	repaired	origin/dev..b3f8edad0b5ac078ada3dd791b8166dbaf58cf9e
+30224518504	2026-07-26T23:05:59Z	push	success	task/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001	4628dc721	yes	repaired	origin/dev..4628dc721b0e1b434303fac679c01a9afa05b108
+30224519817	2026-07-26T23:06:01Z	pull_request	success	task/OPS-L12-RUNTIME-GAP-DELTA-001	b3f8edad0	yes	repaired	origin/dev..b3f8edad0b5ac078ada3dd791b8166dbaf58cf9e
+30224521338	2026-07-26T23:06:04Z	pull_request	success	task/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001	4628dc721	yes	repaired	origin/dev..4628dc721b0e1b434303fac679c01a9afa05b108
+30224563378	2026-07-26T23:07:11Z	push	success	dev	1cf27337e	yes	repaired	8d1b5077996a2d27aafb83ff5756f0290d0e90bc..1cf27337e9197c8bc0840e466f55019065e3576e
+30224687872	2026-07-26T23:10:43Z	push	success	task/SUP-COMMAND-RUNTIME-REFRESH-001	21238ce8a	yes	repaired	origin/dev..21238ce8abbff725d63bff2d757051454ba726b0
+30224694617	2026-07-26T23:10:54Z	pull_request	success	task/SUP-COMMAND-RUNTIME-REFRESH-001	21238ce8a	yes	repaired	origin/dev..21238ce8abbff725d63bff2d757051454ba726b0
+30224788284	2026-07-26T23:13:30Z	push	success	task/SUP-COMMAND-RUNTIME-REFRESH-001	5fb21c80b	yes	repaired	origin/dev..5fb21c80ba21fcdfd9f304d66b57f56362f9dc60
+30224789516	2026-07-26T23:13:32Z	pull_request	success	task/SUP-COMMAND-RUNTIME-REFRESH-001	5fb21c80b	yes	repaired	origin/dev..5fb21c80ba21fcdfd9f304d66b57f56362f9dc60
+30224831676	2026-07-26T23:14:43Z	push	success	dev	e376955ff	yes	repaired	1cf27337e9197c8bc0840e466f55019065e3576e..e376955ff8ac3555871932457865ed1fd0beee83
+30224857927	2026-07-26T23:15:25Z	push	success	task/L12-CAP-001	d4636f901	yes	repaired	origin/dev..d4636f901b86ac6f8d0245a20012eb9ed16b1c98
+30224859261	2026-07-26T23:15:27Z	pull_request	success	task/L12-CAP-001	d4636f901	yes	repaired	origin/dev..d4636f901b86ac6f8d0245a20012eb9ed16b1c98
+30224956120	2026-07-26T23:18:16Z	push	success	task/SUP-COMMAND-RUNTIME-REFRESH-001	1ea220c43	yes	repaired	origin/dev..1ea220c43ac7ba20a95f0cdda34aaf3d0caa5784
+30224958034	2026-07-26T23:18:19Z	pull_request	success	task/SUP-COMMAND-RUNTIME-REFRESH-001	1ea220c43	yes	repaired	origin/dev..1ea220c43ac7ba20a95f0cdda34aaf3d0caa5784
+30224998589	2026-07-26T23:19:29Z	push	success	dev	3ac69ff7f	yes	repaired	e376955ff8ac3555871932457865ed1fd0beee83..3ac69ff7f82e92577bec042a8bcef8f482a22122
