@@ -1,10 +1,5 @@
 {
-  "schema_version": "supervisor_runtime_repair_evidence.v1",
-  "schema_status": {
-    "note": "Task-scoped owner evidence manifest for a supervisor runtime repair. This is not a product-level loop manifest: the task changes orchestrator task-state read/verify logic, the supervisor reconciliation phase, and their regression suites, and claims no hosted activation, deployment, or capital authority.",
-    "product_level_required": false,
-    "status": "task_scoped"
-  },
+  "schema_version": "supervisor_runtime_repair_evidence.v2",
   "task": {
     "id": "SUP-TASK-STATE-LOCK-LATENCY-001",
     "title": "Bound supervisor task-state lock latency and projection truth",
@@ -14,19 +9,21 @@
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/SUP-TASK-STATE-LOCK-LATENCY-001",
-    "review_file": "docs/deployment/evidence/supervisor/SUP-TASK-STATE-LOCK-LATENCY-001/evidence.json",
-    "narrative": "docs/deployment/evidence/supervisor/SUP-TASK-STATE-LOCK-LATENCY-001/README.md",
-    "depends_on": [
-      "SUP-WORKER-TRUTH-RECONCILE-001",
-      "OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001"
+    "candidate_commit": "2abc735b024917d0cd1e03784ca1e27040540341",
+    "review_status": "pending_fresh_independent_review",
+    "prior_merged_prs_with_failed_followup_review": [
+      4239,
+      4250,
+      4253
     ]
   },
   "scope": {
-    "owned_layer": "The authoritative task-state journal read/verify contract; supervisor runtime-admission boundaries for provider probes, GitHub bus network work, worker-base fetches, and termination polling; dispatch-status workspace lease propagation; and exact task-branch remote-tracking refresh.",
-    "not_changing": "No .orchestrator/config.json edit, no hand-edited ai-status.json / current-work.md / ai-activity-log.jsonl, no live worker signal or task-board mutation, no change to the event schema, hash chain, nonterminal-drop guard, dispatch ordering, provider routing, or product service code.",
-    "implementation_changed_files": [
+    "owned_layer": "Authoritative task-state snapshot and transaction cost; supervisor runtime-admission boundaries around provider/network/projection/archive/termination work; governed status-command derived views; real command/full-cycle evidence.",
+    "not_changing": "No production config, task ownership, provider routing, dispatch priority, event schema, hash-chain fields, nonterminal-drop policy, product service, or hosted deployment.",
+    "implementation_files": [
       ".orchestrator/rewrite/task_state_store.py",
       ".orchestrator/rewrite/worker_lifecycle.py",
+      ".orchestrator/runtime_state.py",
       ".orchestrator/supervisor.py",
       ".orchestrator/common.py",
       "scripts/ai_status.py",
@@ -35,156 +32,104 @@
       "scripts/git/task_finalize.sh",
       "scripts/git/safe_pr.sh"
     ],
-    "test_changed_files": [
-      ".orchestrator/rewrite/test_task_state_store.py",
-      ".orchestrator/rewrite/test_worker_lifecycle.py",
-      ".orchestrator/test_supervisor.py"
-    ],
-    "evidence_changed_files": [
-      "docs/deployment/evidence/supervisor/SUP-TASK-STATE-LOCK-LATENCY-001/README.md",
-      "docs/deployment/evidence/supervisor/SUP-TASK-STATE-LOCK-LATENCY-001/evidence.json",
-      "docs/deployment/evidence/supervisor/SUP-TASK-STATE-LOCK-LATENCY-001/task_state_lock_latency_bench.py",
-      "docs/deployment/evidence/supervisor/SUP-TASK-STATE-LOCK-LATENCY-001/bench-report.json"
+    "second_pass_anchors": [
+      "62470884c",
+      "7229978d9",
+      "611b2a480"
     ]
   },
-  "observed_failures": [
-    {
-      "id": "OF1",
-      "summary": "Supervisor PID 901543 stamped a tick heartbeat at 22:35:04Z and completed it at 22:47:55Z (771s) while reviewer and status processes queued on runtime-admission inode 807896; the task-state reviewer reopen waited about nine minutes. A further exclusive hold ran from at least 22:50:27Z to 22:59:04Z (~517s), and Codex2 BFF reopen PID 480495 waited from about 22:51:17Z and committed only at 22:59:45Z.",
-      "root_cause": "Replay cost inside the canonical lock. sync_task_state_shadow replayed and revalidated the entire journal four times per cycle (load_events, project_latest_state, then verify_projection loading and projecting it again), and common.load_status replayed it twice on each of its many per-cycle calls. validate_event canonically re-serializes each event's full state twice, so cost scaled with journal size on every pass.",
-      "fixed_by": "load_snapshot / verify_snapshot: one lock window, one validated pass, with a validated-prefix checkpoint and an mmap-ed read.",
-      "regressions": [
-        ".orchestrator/test_supervisor.py::TaskStateShadowCatchupTests::test_reconciliation_replays_the_journal_once_per_cycle",
-        ".orchestrator/rewrite/test_task_state_store.py::test_read_then_commit_costs_one_journal_pass"
-      ]
+  "delivery": {
+    "implementation_pr": 4263,
+    "implementation_pr_url": "https://github.com/ajoe734/pantheon/pull/4263",
+    "head_commit": "891f8f74b7f10838ec3884ce461be0d2ae80d260",
+    "merge_commit": "52aa8a623e68336e1965d7241950cb3c22f0c827",
+    "merged_at": "2026-07-27T16:51:47Z",
+    "base_branch": "dev",
+    "checks": {
+      "Commit trailers": "success",
+      "Runtime mirror guard": "success",
+      "Python packaging provision": "success",
+      "Smoke acceptance": "success"
     },
-    {
-      "id": "OF2",
-      "summary": "Lock-free Human/Ops note commands over the ~157MB / 2050-event journal each required roughly 55-90s.",
-      "root_cause": "One governed status command replayed the journal four times: load_events plus project_latest_state to read the board, then append_state_commit loading the whole journal for the head and replaying it a second time purely to read back the line it had just appended.",
-      "fixed_by": "load_snapshot for the read; an offset-and-size readback of exactly the appended bytes for the commit.",
-      "regressions": [
-        ".orchestrator/rewrite/test_task_state_store.py::test_append_does_not_replay_the_journal_to_read_back_its_own_line",
-        ".orchestrator/rewrite/test_task_state_store.py::test_append_readback_detects_a_short_write"
-      ]
-    },
-    {
-      "id": "OF3",
-      "summary": "caught_up was inverted. A healthy cycle published caught_up=false; a cycle that had just rewritten a drifted board published caught_up=true.",
-      "root_cause": "caught_up was assigned the divergence predicate (sha(file) != sha(journal) in authoritative mode, not before['ok'] in shadow mode) and then reused as the phase's changed signal, so one field carried two contradictory meanings.",
-      "fixed_by": "caught_up is now parity after reconciliation (report['ok']); a separate repaired flag records whether a write was needed, and repaired is what the phase returns as its changed signal.",
-      "regressions": [
-        ".orchestrator/test_supervisor.py::TaskStateShadowCatchupTests::test_caught_up_reports_parity_and_repaired_reports_the_write",
-        ".orchestrator/test_supervisor.py::TaskStateShadowCatchupTests::test_shadow_mode_reports_parity_and_repair_separately",
-        ".orchestrator/test_supervisor.py::TaskStateShadowCatchupTests::test_repair_that_never_lands_is_not_reported_as_caught_up"
-      ]
-    },
-    {
-      "id": "OF4",
-      "summary": "A verifier begun around the 22:48 lock handoff transiently reported event_count=2046 with the expected SHA from event 2045 and the projected SHA from event 2046 while a concurrent append landed; a stable rerun at event 2049 then returned ok=true.",
-      "root_cause": "Two lock domains. scripts/verify_task_state_store.py read ai-status.json with no lock and then called verify_projection, which opened its own shared store-lock window; a commit landing between the two reads produced a report whose count came from one journal generation and whose compared digest came from another.",
-      "fixed_by": "verify_snapshot is pure and derives every field from one snapshot; the verifier samples the board and the journal inside one canonical task-state lock domain.",
-      "regressions": [
-        ".orchestrator/rewrite/test_task_state_store.py::test_verify_snapshot_reports_one_generation",
-        ".orchestrator/test_supervisor.py::TaskStateShadowCatchupTests::test_reconciliation_report_describes_one_journal_generation"
-      ]
-    },
-    {
-      "id": "OF5",
-      "summary": "The provider capability probe, which shells out to gh for auth and version checks, ran inside the exclusive runtime-admission hold.",
-      "root_cause": "load_provider_report was called from _run_once_locked, which executes entirely inside runtime_state_lock(shared=False).",
-      "fixed_by": "probe_provider_reports runs in run_once before the lock is acquired and its result is passed into the locked cycle.",
-      "regressions": [
-        ".orchestrator/test_supervisor.py::DispatchStatusSyncTests::test_run_once_probes_providers_before_taking_the_runtime_lock"
-      ]
-    },
-    {
-      "id": "OF6",
-      "summary": "A 771s exclusive hold left no trace in runtime state, so the stall was only discoverable from reviewer complaints and lock inode inspection.",
-      "root_cause": "Cycle duration was stamped, but the exclusive-hold duration -- the actual ceiling on every worker status command's wait -- was never published.",
-      "fixed_by": "record_runtime_lock_hold publishes runtime_lock_hold_seconds, runtime_lock_hold_peak_seconds, and runtime_lock_hold_exceeded each cycle, warning past supervisor.runtime_lock_hold_warn_after_seconds (default 30s).",
-      "regressions": [
-        ".orchestrator/test_supervisor.py::RuntimeLockHoldTests::test_multi_minute_hold_is_flagged_and_peak_is_retained",
-        ".orchestrator/test_supervisor.py::RuntimeLockHoldTests::test_hold_within_budget_is_published_without_a_warning"
-      ]
-    },
-    {
-      "id": "OF7",
-      "summary": "Four live worker dispatches between 12:35Z and 14:42Z failed their immediate status sync because ORCH_RUN_ID was set while PANTHEON_WORKTREE_ROOT and ORCH_WORKSPACE_PATH were unset.",
-      "root_cause": "sync_dispatched_task_status propagated only the worker run id. The status lease validator correctly rejected an incomplete identity even though the Claude/Codex adapter process itself had both workspace variables.",
-      "fixed_by": "Both process_queue call sites and the deferred sync tuple carry the exact resolved worker workspace. status_command_subprocess_context clears inherited lease variables, then binds both workspace names. A run id without a workspace is refused before subprocess launch.",
-      "regressions": [
-        ".orchestrator/test_supervisor.py::DispatchStatusSyncTests::test_sync_dispatched_task_status_issues_worker_lease",
-        ".orchestrator/test_supervisor.py::DispatchStatusSyncTests::test_sync_dispatched_task_status_rejects_run_id_without_workspace",
-        ".orchestrator/test_supervisor.py::DispatchStatusSyncTests::test_run_once_syncs_dispatch_after_releasing_runtime_lock"
-      ]
-    },
-    {
-      "id": "OF8",
-      "summary": "A worker with a master-only remote.origin.fetch ran git fetch origin dev, but origin/dev remained stale while the remote dev tip had advanced.",
-      "root_cause": "An explicit branch name updates FETCH_HEAD; it does not guarantee the remote-tracking destination is updated when the configured fetch refspec excludes that branch.",
-      "fixed_by": "Supervisor prefetch and task Git helpers use +refs/heads/<base>:refs/remotes/origin/<base>. The network fetch runs before runtime admission, and the locked phase fails closed unless that exact base was refreshed.",
-      "regressions": [
-        ".orchestrator/test_supervisor.py::WorktreeDirtClassificationTests::test_worker_base_fetch_updates_origin_dev_with_master_only_refspec",
-        ".orchestrator/test_supervisor.py::DispatchStatusSyncTests::test_run_once_fetches_worker_base_before_taking_runtime_lock",
-        ".orchestrator/test_supervisor.py::SupervisorRuntimeAdmissionLockTests::test_supervisor_runtime_writer_surface_uses_canonical_helpers"
-      ]
-    }
-  ],
-  "integrity_rules": {
-    "every_byte_is_hashed_on_every_read": "The checkpoint records a SHA-256 over the exact byte prefix it summarizes. A read recomputes that hash over the journal on disk and rejects the checkpoint on any mismatch, so an edited, reordered, or truncated prefix always falls back to a full replay and is caught by the chain validator.",
-    "what_the_checkpoint_actually_saves": "Only the per-event canonical re-serialization and digest work for events whose bytes are unchanged. Validation is a pure function of those bytes, so an unchanged prefix means the earlier verdict still holds.",
-    "checkpoint_is_never_the_authority": "Missing, unreadable, wrong-version, wrong-schema, symlinked, self-inconsistent, or prefix-head-mismatched checkpoints all degrade silently to a full replay. The recorded head must equal the actual last JSONL event in the claimed byte prefix and is re-validated before use.",
-    "deep_audit_escape_hatch": "PANTHEON_TASK_STATE_STORE_FULL_REPLAY=1, or verify_task_state_store.py --full-replay, re-parses and revalidates every event and refuses to read or write the checkpoint.",
-    "mmap_safety": "The journal is mapped read-only inside the store lock. Readers hold it shared and writers exclusively, so the mapped range cannot be rewritten or truncated while it is in use.",
-    "append_durability": "append_state_commit fsyncs the file and its directory, then confirms the file's size equals the pre-append size plus the payload and that the payload bytes are present at their offset. A short or partial write raises 'task-state append readback mismatch' instead of being accepted."
+    "independent_review": "pending_codex2"
+  },
+  "incident": {
+    "supervisor_pid": 901543,
+    "runtime_admission_inode": 807896,
+    "exclusive_hold_seconds": [
+      517,
+      771
+    ],
+    "reviewer_reopen_wait_seconds": 508,
+    "live_journal_events": 2050,
+    "live_journal_bytes_approx": 157000000,
+    "live_note_seconds": [
+      55,
+      90
+    ],
+    "root_cause": "Repeated full journal replay/validation plus network, archive, projection, and termination waits reachable from exclusive runtime/task critical sections."
   },
   "acceptance": [
     {
       "id": "AC1",
-      "statement": "Supervisor never holds runtime-admission, task-state, or event-log exclusive locks across provider probes, network subprocess waits, or poll sleeps.",
       "status": "pass",
-      "delivered": "Provider probes, GitHub bus network work, and exact worker-base fetches run before runtime admission. Worker confirm/kill polling runs after lock release, with one pre-sent SIGTERM and Linux start-tick binding to prevent PID-reuse signalling. Journal work remains one snapshot pass, and every cycle publishes the measured exclusive hold.",
-      "not_delivered": null,
-      "evidence_refs": [
-        ".orchestrator/supervisor.py::probe_provider_reports",
-        ".orchestrator/supervisor.py::pending_worker_base_refs",
-        ".orchestrator/supervisor.py::_run_with_deferred_dispatch_status_syncs",
-        ".orchestrator/supervisor.py::record_runtime_lock_hold",
-        ".orchestrator/test_supervisor.py::DispatchStatusSyncTests::test_run_once_probes_providers_before_taking_the_runtime_lock",
-        ".orchestrator/test_supervisor.py::DispatchStatusSyncTests::test_run_once_syncs_github_bus_before_taking_the_runtime_lock",
-        ".orchestrator/test_supervisor.py::DispatchStatusSyncTests::test_run_once_fetches_worker_base_before_taking_runtime_lock",
-        ".orchestrator/test_supervisor.py::DispatchStatusSyncTests::test_run_once_confirms_worker_termination_after_runtime_lock_release",
-        ".orchestrator/test_supervisor.py::DispatchStatusSyncTests::test_deferred_termination_does_not_signal_a_reused_pid",
-        ".orchestrator/test_supervisor.py::RuntimeLockHoldTests"
+      "statement": "No runtime-admission or task-state lock is held across provider/network subprocesses or poll sleeps.",
+      "delivered": "Provider probes, GitHub bus, worker-base fetch, ownerless merged-PR lookup, task-state projection reconciliation, auto-archive subprocess work, and termination confirmation execute outside exclusive runtime admission. Auto-archive and PR snapshots have freshness gates.",
+      "evidence": [
+        ".orchestrator/test_supervisor.py::DispatchStatusSyncTests::test_run_once_prefetches_ownerless_pr_metadata_before_runtime_lock",
+        ".orchestrator/test_supervisor.py::DispatchStatusSyncTests::test_auto_commit_archive_subprocess_runs_after_runtime_admission",
+        ".orchestrator/test_supervisor.py::DispatchStatusSyncTests::test_auto_commit_archive_result_rejects_a_stale_token",
+        ".orchestrator/test_supervisor.py::OwnerlessInProgressReconciliationTests::test_prefetched_squash_metadata_never_falls_back_to_locked_gh",
+        ".orchestrator/test_supervisor.py::TaskStateShadowCatchupTests::test_run_once_reconciles_task_state_before_runtime_admission"
       ]
     },
     {
       "id": "AC2",
-      "statement": "Task-state authoritative reconciliation validates one stable journal snapshot without duplicate full replay under the canonical lock.",
       "status": "pass",
-      "evidence_refs": [
-        ".orchestrator/supervisor.py::sync_task_state_shadow",
-        ".orchestrator/rewrite/task_state_store.py::load_snapshot",
-        ".orchestrator/test_supervisor.py::TaskStateShadowCatchupTests::test_reconciliation_replays_the_journal_once_per_cycle"
+      "statement": "Authoritative reconciliation uses one stable journal generation without duplicate full replay.",
+      "delivered": "A validated generation is process-cached only while dev/inode/size/mtime-ns/ctime-ns remain exact. Governed mutations hold one journal writer lock and extend one rolling snapshot across durable outbox saves. Forced full replay remains available.",
+      "evidence": [
+        ".orchestrator/rewrite/test_task_state_store.py::test_unchanged_generation_reuses_the_process_snapshot_cache",
+        ".orchestrator/rewrite/test_task_state_store.py::test_snapshot_transaction_reuses_one_validation_across_durable_saves",
+        ".orchestrator/rewrite/test_task_state_store.py::test_checkpointed_snapshot_matches_a_forced_full_replay"
       ]
     },
     {
       "id": "AC3",
-      "statement": "Concurrent approve, assign, note, and reviewer commands complete within two seconds p95 during active supervisor cycles over a 2000-event / 134MB fixture.",
       "status": "pass",
-      "measured": "Refreshed on the second-pass branch: 2050-event / 159.5MB fixture, 4 concurrent commands against a continuously cycling supervisor: p50 1.114s, p95 1.179s, max 1.179s. Legacy shape on the same fixture: p50 59.737s, p95 63.463s.",
-      "evidence_refs": [
+      "statement": "Approve, assign, note, and reviewer commands remain below two seconds p95 during full supervisor cycles on a roughly 2000-event / 134 MiB fixture.",
+      "measured": {
+        "candidate_sha": "2abc735b024917d0cd1e03784ca1e27040540341",
+        "fixture_events": 2050,
+        "fixture_bytes": 141402624,
+        "fixture_mib": 134.852,
+        "workers": 4,
+        "commands": 8,
+        "command_mix": {
+          "approve": 2,
+          "assign": 2,
+          "note": 2,
+          "reopen": 2
+        },
+        "full_run_once_cycles": 17,
+        "legacy_p95_seconds": 59.327,
+        "current_p50_seconds": 0.959,
+        "current_p95_seconds": 1.296,
+        "current_max_seconds": 1.296,
+        "all_commands_succeeded": true,
+        "exact_projection": true,
+        "final_event_count": 2066
+      },
+      "evidence": [
         "docs/deployment/evidence/supervisor/SUP-TASK-STATE-LOCK-LATENCY-001/bench-report.json",
-        "docs/deployment/evidence/supervisor/SUP-TASK-STATE-LOCK-LATENCY-001/task_state_lock_latency_bench.py::measure_contention"
+        "docs/deployment/evidence/supervisor/SUP-TASK-STATE-LOCK-LATENCY-001/task_state_lock_latency_bench.py::measure_governed_contention"
       ]
     },
     {
       "id": "AC4",
-      "statement": "caught_up is true whenever projection equals canonical state after reconciliation, and a separate repaired flag records whether a write was needed.",
       "status": "pass",
-      "evidence_refs": [
-        ".orchestrator/supervisor.py::sync_task_state_shadow",
+      "statement": "caught_up reports post-reconciliation parity and repaired separately reports a write.",
+      "evidence": [
         ".orchestrator/test_supervisor.py::TaskStateShadowCatchupTests::test_caught_up_reports_parity_and_repaired_reports_the_write",
         ".orchestrator/test_supervisor.py::TaskStateShadowCatchupTests::test_shadow_mode_reports_parity_and_repair_separately",
         ".orchestrator/test_supervisor.py::TaskStateShadowCatchupTests::test_repair_that_never_lands_is_not_reported_as_caught_up"
@@ -192,181 +137,104 @@
     },
     {
       "id": "AC5",
-      "statement": "Concurrent append and reconciliation preserve monotonic sequence, exact projection SHA, queue leases, and no lost state.",
       "status": "pass",
-      "detail": "Sequence and previous-hash chaining are unchanged and still enforced by validate_event on every appended event and replayed tail. A report is built from one snapshot, so a commit landing mid-phase cannot split it across generations. Dispatch sync now carries the existing queue lease's exact run id and workspace; it does not create or replace queue leases.",
-      "evidence_refs": [
+      "statement": "Concurrent append and reconciliation preserve sequence, SHA, leases, and task state.",
+      "delivered": "The transaction test proves monotonic sequences and previous-event hashes across multiple saves from one stable head. The full benchmark proves exact final journal/projection SHA after all eight real mutations. Existing lease validation remains active for six worker-bound commands.",
+      "evidence": [
+        ".orchestrator/rewrite/test_task_state_store.py::test_snapshot_transaction_reuses_one_validation_across_durable_saves",
         ".orchestrator/test_supervisor.py::TaskStateShadowCatchupTests::test_reconciliation_report_describes_one_journal_generation",
-        ".orchestrator/rewrite/test_task_state_store.py::test_verify_snapshot_reports_one_generation",
-        ".orchestrator/rewrite/test_task_state_store.py::test_checkpointed_snapshot_matches_a_forced_full_replay",
-        ".orchestrator/rewrite/test_task_state_store.py::test_edited_history_is_rejected_even_though_a_checkpoint_exists"
-      ]
-    },
-    {
-      "id": "AC6",
-      "statement": "Regression reproduces the live PID 901543 multi-minute lock wait and proves reviewer approve no longer stalls.",
-      "status": "pass",
-      "detail": "task_state_lock_latency_bench.py builds a 2050-event / 159.5MB journal and runs reviewer-approve-shaped commands against a supervisor that is actively cycling under the real canonical task-state lock. The refreshed legacy shape reproduces the live 55-90s command cost at 59.737s p50 / 63.463s p95; the second-pass branch returns 1.179s p95. The harness exits non-zero if current p95 crosses 2s.",
-      "evidence_refs": [
-        "docs/deployment/evidence/supervisor/SUP-TASK-STATE-LOCK-LATENCY-001/task_state_lock_latency_bench.py",
         "docs/deployment/evidence/supervisor/SUP-TASK-STATE-LOCK-LATENCY-001/bench-report.json"
       ]
     },
     {
+      "id": "AC6",
+      "status": "pass",
+      "statement": "The regression reproduces the live multi-minute shape and proves governed reviewer/status commands no longer stall.",
+      "delivered": "The same 2050-event fixture reports legacy p95 59.327s and real governed/full-cycle current p95/max 1.296s. The harness exits nonzero unless p95 is below 2s, all commands succeed, supervisor overlap occurs, and final projection is exact."
+    },
+    {
       "id": "AC7",
-      "statement": "No config edit, manual worker termination, or task-board mutation; branch, PR checks, review, merge, and evidence complete.",
-      "status": "pending_review",
-      "detail": "Implementation and owner validation are complete with no .orchestrator/config.json change, no live process signalled, and no generated status file hand-edit. PR checks, independent Codex2 review, merge, and owner closeout remain pending at this evidence revision.",
-      "evidence_refs": [
-        "git show --stat task/SUP-TASK-STATE-LOCK-LATENCY-001"
-      ]
+      "status": "pending_independent_review",
+      "statement": "No live config/manual-kill/task-file mutation; branch, PR checks, independent review, merge, and closeout evidence complete.",
+      "delivered": "No config edit, live worker signal, or manual status/activity/current-work edit. Candidate implementation, benchmark, owner validation, PR #4263 checks, and merge commit 52aa8a623e68336e1965d7241950cb3c22f0c827 are complete.",
+      "remaining": "Receive fresh Codex2 approval and perform owner closeout."
     }
   ],
-  "negative_tests": [
-    {
-      "required_case": "tampered history behind a valid checkpoint",
-      "tests": [
-        ".orchestrator/rewrite/test_task_state_store.py::test_edited_history_is_rejected_even_though_a_checkpoint_exists"
-      ],
-      "asserts": "Rewriting one event in the middle of a checkpointed journal breaks the prefix hash, forces a full replay, and raises TaskStateStoreError. The checkpoint cannot launder an edited event."
-    },
-    {
-      "required_case": "truncated journal behind a stale checkpoint",
-      "tests": [
-        ".orchestrator/rewrite/test_task_state_store.py::test_truncated_journal_is_not_served_from_a_stale_checkpoint"
-      ],
-      "asserts": "A checkpoint claiming more bytes than the file holds is refused; the snapshot reflects the events that actually survive."
-    },
-    {
-      "required_case": "corrupt or unreadable checkpoint",
-      "tests": [
-        ".orchestrator/rewrite/test_task_state_store.py::test_unusable_checkpoint_degrades_to_full_replay"
-      ],
-      "asserts": "A garbage checkpoint degrades to a full replay rather than raising, and the healthy read repairs the cache instead of leaving it poisoned."
-    },
-    {
-      "required_case": "checkpointed result must equal a full audit",
-      "tests": [
-        ".orchestrator/rewrite/test_task_state_store.py::test_checkpointed_snapshot_matches_a_forced_full_replay"
-      ],
-      "asserts": "event_count, last_event_id, state, and state_sha256 are identical between the accelerated read and PANTHEON_TASK_STATE_STORE_FULL_REPLAY=1."
-    },
-    {
-      "required_case": "partial write must not be accepted as committed",
-      "tests": [
-        ".orchestrator/rewrite/test_task_state_store.py::test_append_readback_detects_a_short_write"
-      ],
-      "asserts": "A write that reports success while landing only part of the payload raises 'task-state append readback mismatch'; the O(1) readback is not weaker than the full replay it replaces."
-    },
-    {
-      "required_case": "empty authoritative journal must not fall back to the board",
-      "tests": [
-        ".orchestrator/test_supervisor.py::TaskStateShadowCatchupTests::test_authoritative_mode_reports_empty_journal_without_touching_file"
-      ],
-      "asserts": "An empty journal is reported as an error and ai-status.json is left untouched."
-    },
-    {
-      "required_case": "corrupt journal must not touch canonical state",
-      "tests": [
-        ".orchestrator/test_supervisor.py::TaskStateShadowCatchupTests::test_corrupt_journal_is_reported_without_touching_canonical_state"
-      ],
-      "asserts": "The phase degrades, records last_error, and leaves ai-status.json byte-identical."
-    },
-    {
-      "required_case": "nonterminal drop guard still applies on the new append path",
-      "tests": [
-        ".orchestrator/rewrite/test_task_state_store.py::test_mass_replacement_to_empty_board_is_rejected",
-        ".orchestrator/rewrite/test_task_state_store.py::test_single_live_task_disappearance_is_rejected"
-      ],
-      "asserts": "validate_state_transition is still called with the previous state taken from the snapshot head, so OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001 is unchanged in effect."
-    },
-    {
-      "required_case": "repair that never reaches disk",
-      "tests": [
-        ".orchestrator/test_supervisor.py::TaskStateShadowCatchupTests::test_repair_that_never_lands_is_not_reported_as_caught_up"
-      ],
-      "asserts": "With write_json stubbed out, the authoritative branch re-reads the board, finds it still divergent, raises, and publishes ok=false / caught_up=false instead of claiming parity."
-    },
-    {
-      "required_case": "dispatch run id without exact workspace binding",
-      "tests": [
-        ".orchestrator/test_supervisor.py::DispatchStatusSyncTests::test_sync_dispatched_task_status_rejects_run_id_without_workspace"
-      ],
-      "asserts": "The supervisor refuses the dispatch status sync before spawning ai_status.py; inherited lease variables are cleared and cannot substitute for the worker's exact workspace."
-    },
-    {
-      "required_case": "master-only remote fetch refspec leaves origin/dev stale",
-      "tests": [
-        ".orchestrator/test_supervisor.py::WorktreeDirtClassificationTests::test_worker_base_fetch_updates_origin_dev_with_master_only_refspec"
-      ],
-      "asserts": "The fixture proves plain git fetch origin dev advances FETCH_HEAD but not origin/dev, then proves the explicit source:destination refspec advances origin/dev to the exact remote commit."
-    },
-    {
-      "required_case": "PID reused after deferred SIGTERM",
-      "tests": [
-        ".orchestrator/test_supervisor.py::DispatchStatusSyncTests::test_deferred_termination_does_not_signal_a_reused_pid"
-      ],
-      "asserts": "The post-lock confirmer compares process start ticks and treats the original worker as gone when the numeric PID now belongs to another process, without sending another signal."
-    }
-  ],
-  "non_interference": {
-    "event_schema": "unchanged",
-    "hash_chain": "unchanged; sequence and previous_event_sha256 are still validated for every event on every full replay and for every tail event on every accelerated read",
-    "nonterminal_drop_guard": "unchanged; still invoked from append_state_commit with the previous state read from the journal head",
-    "public_api": "load_events, project_latest_state, append_state_commit, and verify_projection keep their signatures and behaviour; load_snapshot and verify_snapshot are additions",
-    "config_mutation": "none",
-    "task_board_hand_edit": "none",
-    "worker_termination": "no live worker was signalled; code changes defer bounded confirmation outside runtime admission and prevent duplicate/PID-reuse signals",
-    "generated_mirrors": "dashboard-bundle.json and docs-site/dashboard-bundle.json were dirtied by the test suites and restored before staging"
-  },
-  "validation": {
-    "commands": [
-      {
-        "command": "PYTHONPATH=.orchestrator python3 -m pytest -q .orchestrator/test_supervisor.py .orchestrator/test_runtime_state.py .orchestrator/rewrite/test_task_state_store.py .orchestrator/rewrite/test_worker_lifecycle.py .orchestrator/test_common.py scripts/test_ai_status.py scripts/test_verify_task_state_store.py scripts/test_status_file_guard.py",
-        "conclusion": "780 passed, 134 subtests passed in 140.81s",
-        "result": "pass"
-      },
-      {
-        "command": "PYTHONPATH=.orchestrator python3 -m pytest -q .orchestrator/test_adapter_fallback_policy.py .orchestrator/test_worker_runner_heartbeat.py scripts/git/test_task_git_helpers_refspec.py",
-        "conclusion": "39 passed in 8.38s",
-        "result": "pass"
-      },
-      {
-        "command": "PYTHONPATH=.orchestrator python3 docs/deployment/evidence/supervisor/SUP-TASK-STATE-LOCK-LATENCY-001/task_state_lock_latency_bench.py --events 2050 --task-rows 34 --samples 8 --contention-workers 4 --contention-commands 2 --contention-seconds 45",
-        "conclusion": "meets_target true. Uncontended p95 14.844s legacy -> 0.263s current (56.4x). Under an active supervisor cycle p95 63.463s legacy -> 1.179s current (53.8x). Cold first read with no checkpoint 3.281s once.",
-        "result": "pass"
-      }
+  "termination_safety": {
+    "status": "pass",
+    "properties": [
+      "Missing worker_pid_start_ticks sends no signal.",
+      "PID reuse sends no signal to the replacement process.",
+      "SIGTERM/grace/escalation execute after runtime lock release.",
+      "Worker remains nonterminal until disappearance is observed."
     ],
-    "focused_suites": [
-      "test_supervisor.TaskStateShadowCatchupTests",
-      "test_supervisor.RuntimeLockHoldTests",
-      "test_supervisor.DispatchStatusSyncTests",
-      "test_supervisor.WorktreeDirtClassificationTests",
-      "rewrite.test_task_state_store",
-      "rewrite.test_worker_lifecycle"
+    "evidence": [
+      ".orchestrator/test_supervisor.py::DispatchStatusSyncTests::test_run_once_confirms_worker_termination_after_runtime_lock_release",
+      ".orchestrator/test_supervisor.py::DispatchStatusSyncTests::test_deferred_termination_does_not_signal_a_reused_pid",
+      ".orchestrator/test_supervisor.py::DispatchStatusSyncTests::test_deferred_termination_without_start_ticks_fails_closed",
+      ".orchestrator/test_supervisor.py::DispatchStatusSyncTests::test_worker_remains_nonterminal_until_deferred_confirmation"
     ]
   },
-  "residual_risks": {
-    "cold_read_after_journal_replacement": {
-      "severity": "low",
-      "blocking_for_this_task": false,
-      "description": "The first read after the checkpoint is absent or invalidated pays a full replay: 3.281s on the 159.5MB fixture, against about 0.25s for a checkpointed read.",
-      "containment": "It is a one-time cost per journal generation, paid by whichever caller reads first, and it is strictly cheaper than the four full replays every caller paid before. It is bounded by journal size, not by concurrency.",
-      "recheck_trigger": "If task-state commands regress to multi-second latency, check whether <journal>.checkpoint.json is being repeatedly invalidated -- that would indicate something is rewriting journal history rather than appending to it."
+  "negative_tests": [
+    "Edited history invalidates the accelerated generation and raises.",
+    "Truncation cannot be served from a stale checkpoint.",
+    "Corrupt checkpoint degrades to full replay and repairs itself.",
+    "Forced full replay matches accelerated event count, head, state, and SHA.",
+    "Short append readback raises instead of accepting partial state.",
+    "Stale ownerless PR identity and locked network fallback fail closed.",
+    "Stale derived projections cannot overwrite current views.",
+    "Missing PID start ticks and reused PIDs receive no signal."
+  ],
+  "validation": {
+    "pytest": {
+      "command": "env -u PANTHEON_STATUS_ROOT -u PANTHEON_TASK_STATE_STORE_MODE -u PANTHEON_TASK_STATE_EVENT_LOG PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py .orchestrator/test_runtime_state.py .orchestrator/rewrite/test_task_state_store.py .orchestrator/rewrite/test_worker_lifecycle.py scripts/test_ai_status.py",
+      "result": "pass",
+      "conclusion": "685 passed, 82 subtests passed in 144.67s"
     },
-    "checkpoint_shares_the_journal_trust_domain": {
-      "severity": "low",
-      "blocking_for_this_task": false,
-      "description": "The checkpoint binds a validated head to an exact byte prefix by SHA-256, so an edited journal is always caught. An actor able to write both the journal and a matching checkpoint could in principle present a self-consistent forgery.",
-      "containment": "That actor can already rewrite the journal itself. The checkpoint lives in the same directory, is created 0600, is replaced atomically, and is never trusted without recomputing the prefix hash. verify_task_state_store.py --full-replay ignores it entirely for audits.",
-      "recheck_trigger": "Any change to who may write the runtime directory holding the event log."
+    "benchmark": {
+      "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 docs/deployment/evidence/supervisor/SUP-TASK-STATE-LOCK-LATENCY-001/task_state_lock_latency_bench.py --events 2050 --task-rows 30 --samples 8 --contention-workers 4 --contention-commands 2 --contention-seconds 45 --json docs/deployment/evidence/supervisor/SUP-TASK-STATE-LOCK-LATENCY-001/bench-report.json",
+      "result": "pass",
+      "conclusion": "meets_target=true; candidate 2abc735b0249; legacy p95 59.327s; real governed/full-cycle current p95/max 1.296s; 8/8 commands; 17 run_once cycles; exact projection at event 2066"
     },
-    "contention_scales_with_concurrent_writers": {
-      "severity": "low",
-      "blocking_for_this_task": false,
-      "description": "Governed status commands take the canonical task-state lock exclusively, so latency grows with the number of simultaneous commands. Refreshed p95 at 4 concurrent commands plus an active supervisor is 1.179s against a 2s target.",
-      "containment": "Per-command cost on the 159.5MB fixture is ~0.263s, so the target holds with headroom at the concurrency the live system exhibits (the incident involved two waiting reopens).",
-      "recheck_trigger": "If routine concurrency rises well above four simultaneous status commands, or if the journal grows several times beyond 160MB, re-run the bench and consider journal compaction."
+    "static": {
+      "result": "pass",
+      "checks": [
+        "python3 -m py_compile",
+        "git diff --check"
+      ]
+    },
+    "github": {
+      "result": "pass",
+      "pr": 4263,
+      "merge_commit": "52aa8a623e68336e1965d7241950cb3c22f0c827",
+      "checks": [
+        "Commit trailers",
+        "Runtime mirror guard",
+        "Python packaging provision",
+        "Smoke acceptance"
+      ]
     }
-  }
+  },
+  "non_interference": {
+    "config_mutation": "none",
+    "live_worker_signal": "none",
+    "manual_task_state_edit": "none",
+    "benchmark_state": "scratch only",
+    "generated_test_artifacts": "restored/removed before staging",
+    "event_schema": "unchanged",
+    "hash_chain_fields": "unchanged",
+    "nonterminal_drop_guard": "unchanged"
+  },
+  "residual_risks": [
+    {
+      "risk": "A first read in a new command process still validates the full journal generation.",
+      "severity": "low",
+      "containment": "The formal 134.852 MiB, four-worker benchmark remains below 2s p95. Same-process supervisor phases reuse an exact generation; mutation outbox saves reuse one writer-locked rolling snapshot."
+    },
+    {
+      "risk": "Exclusive status-writer latency grows with simultaneous writers and journal size.",
+      "severity": "low",
+      "containment": "Re-run the committed harness if routine concurrency exceeds four workers or the journal grows materially beyond the measured fixture; consider governed compaction as a separate task."
+    }
+  ]
 }

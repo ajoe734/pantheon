@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import time
+from copy import deepcopy
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -128,9 +129,15 @@ _DEFERRED_DISPATCH_STATUS_SYNCS: ContextVar[
     list[tuple[dict[str, Any], str | None, str | None]] | None
 ] = ContextVar("deferred_dispatch_status_syncs", default=None)
 _DEFERRED_WORKER_TERMINATIONS: ContextVar[
-    list[tuple[int, int | None, bool]] | None
+    list[tuple[int, int]] | None
 ] = ContextVar(
     "deferred_worker_terminations",
+    default=None,
+)
+_DEFERRED_AUTO_COMMIT_ARCHIVES: ContextVar[
+    list[dict[str, Any]] | None
+] = ContextVar(
+    "deferred_auto_commit_archives",
     default=None,
 )
 _PREFETCHED_WORKER_BASE_REFS: ContextVar[frozenset[str] | None] = ContextVar(
@@ -3371,25 +3378,22 @@ def terminate_worker_pid(pid: int | None) -> bool:
         return False
     deferred = _DEFERRED_WORKER_TERMINATIONS.get()
     if deferred is not None:
-        # State transitions still happen in the one runtime-admission
-        # transaction, but confirm_kill's bounded poll/sleep loop must not.
-        # Send the first TERM while the decision is current, then confirm (and
-        # escalate to KILL if necessary) immediately after the lock is released.
+        # A terminal state must never be published until the process is
+        # positively gone. Queue the identity-bound termination for immediately
+        # after runtime admission instead of sending TERM and reporting success
+        # while the worker can still mutate state.
         if any(item[0] == pid for item in deferred):
-            return True
+            return False
         if not pid_is_alive(pid):
             return True
         start_ticks = worker_pid_start_ticks(pid)
-        term_sent = False
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except OSError:
-            if not pid_is_alive(pid):
-                return True
-        else:
-            term_sent = True
-        deferred.append((pid, start_ticks, term_sent))
-        return True
+        if start_ticks is None:
+            # Without Linux's immutable process-start token, a reused PID is
+            # indistinguishable from the intended worker. Fail closed: do not
+            # signal it and do not let the caller publish a terminal outcome.
+            return False
+        deferred.append((pid, start_ticks))
+        return False
     # SUPERVISOR-REWRITE Phase 4 (anti-pattern E): confirm-kill instead of
     # SIGTERM-and-assume-dead. A worker that ignores SIGTERM used to be reported
     # terminated while still alive (and still mutating state); now we escalate to
@@ -7211,24 +7215,28 @@ def _run_with_deferred_dispatch_status_syncs(
     """
 
     deferred: list[tuple[dict[str, Any], str | None, str | None]] = []
-    deferred_terminations: list[tuple[int, int | None, bool]] = []
+    deferred_terminations: list[tuple[int, int]] = []
+    deferred_archives: list[dict[str, Any]] = []
     token = _DEFERRED_DISPATCH_STATUS_SYNCS.set(deferred)
     termination_token = _DEFERRED_WORKER_TERMINATIONS.set(deferred_terminations)
+    archive_token = _DEFERRED_AUTO_COMMIT_ARCHIVES.set(deferred_archives)
     try:
         with runtime_state_lock(config, shared=False, nonblocking=False):
             changed = bool(operation())
     finally:
         _DEFERRED_DISPATCH_STATUS_SYNCS.reset(token)
         _DEFERRED_WORKER_TERMINATIONS.reset(termination_token)
-        # terminate_worker_pid now runs its confirm/sleep path because the
-        # deferral context has been reset. Keep this in the finally block so a
-        # partially completed cycle cannot strand a process it already TERM'd.
-        for pid, expected_start_ticks, term_sent in deferred_terminations:
+        _DEFERRED_AUTO_COMMIT_ARCHIVES.reset(archive_token)
+        # Keep confirmation outside runtime admission. The start-time token is
+        # checked before the first signal and throughout confirmation, so PID
+        # reuse can only turn the request into a fail-closed no-op.
+        for pid, expected_start_ticks in deferred_terminations:
+            if worker_pid_start_ticks(pid) != expected_start_ticks:
+                continue
+
             def deferred_worker_is_alive(candidate_pid: int) -> bool:
                 if not pid_is_alive(candidate_pid):
                     return False
-                if expected_start_ticks is None:
-                    return True
                 return worker_pid_start_ticks(candidate_pid) == expected_start_ticks
 
             rewrite_worker_lifecycle.confirm_kill(
@@ -7237,8 +7245,15 @@ def _run_with_deferred_dispatch_status_syncs(
                 send_signal=os.kill,
                 sleep=time.sleep,
                 monotonic=time.monotonic,
-                term_already_sent=term_sent,
             )
+
+    archive_changed = False
+    for action in deferred_archives:
+        result = execute_auto_commit_archive(config, action)
+        archive_changed = (
+            apply_auto_commit_archive_result(config, action, result)
+            or archive_changed
+        )
 
     sync_changed = False
     for event, run_id, workspace_path in deferred:
@@ -7248,7 +7263,7 @@ def _run_with_deferred_dispatch_status_syncs(
             run_id=run_id,
             workspace_path=workspace_path,
         ) or sync_changed
-    return changed or sync_changed
+    return changed or archive_changed or sync_changed
 
 
 def _prepare_preempted_task_status_locked(
@@ -7508,6 +7523,129 @@ def _repository_slug_from_remote(repo_root: Path) -> str | None:
     return f"{match.group(1)}/{match.group(2)}"
 
 
+def _ownerless_pr_snapshot_identity(
+    config: dict[str, Any],
+    task_id: str,
+    task: dict[str, Any],
+    worker: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Immutable task/worker facts that bind one pre-lock PR lookup."""
+
+    owner = str(task.get("owner") or "").strip()
+    reviewer = str(task.get("reviewer") or "").strip()
+    dispatched_at = worker_dispatch_started_at(worker)
+    delivery_head = worker_delivery_head_commit(worker)
+    run_id = str(worker.get("run_id") or "").strip()
+    if (
+        str(task.get("status") or "").strip().lower() != "in_progress"
+        or not owner
+        or not reviewer
+        or owner == reviewer
+        or not run_id
+        or dispatched_at is None
+        or not delivery_head
+    ):
+        return None
+    return {
+        "task_id": task_id,
+        "task_status": "in_progress",
+        "owner": owner,
+        "reviewer": reviewer,
+        "worker_run_id": run_id,
+        "worker_status": str(worker.get("status") or "").strip().lower(),
+        "delivery_head": delivery_head,
+        "dispatched_at": _isoformat_utc(dispatched_at),
+        "branch": worker_task_branch(config, task_id),
+    }
+
+
+def prefetch_ownerless_merged_pr_snapshots(
+    config: dict[str, Any],
+    runtime_snapshot: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    """Fetch squash-merge metadata before exclusive runtime admission.
+
+    The snapshot includes the exact task assignment and terminal worker
+    identity that justified the query. Locked reconciliation consumes records
+    only while all of those facts still match; a missing, failed, or stale
+    lookup is an explicit negative and never falls back to ``gh`` under lock.
+    """
+
+    settings = ownerless_in_progress_settings(config)
+    if (
+        not settings.get("enabled", True)
+        or not config.get("paths", {}).get("status_file")
+    ):
+        return {}
+    try:
+        status = load_status(config)
+    except (KeyError, RuntimeError, OSError):
+        return {}
+    tasks = task_index_from_status(config, status)
+    owner_reasons = {
+        str(value) for value in settings.get("owner_dispatch_reasons", [])
+    }
+    max_lookups = max(
+        1,
+        int(settings.get("max_transitions_per_tick", 4) or 1),
+    )
+    snapshots: dict[str, dict[str, Any]] = {}
+    for task_id, task in tasks.items():
+        if len(snapshots) >= max_lookups:
+            break
+        worker = latest_owner_worker_for_task(
+            runtime_snapshot,
+            task_id,
+            owner_reasons=owner_reasons,
+        )
+        if worker is None:
+            continue
+        identity = _ownerless_pr_snapshot_identity(
+            config,
+            task_id,
+            task,
+            worker,
+        )
+        if identity is None:
+            continue
+        # Only terminal successful deliveries can reach merged evidence. This
+        # avoids spending a network timeout on every live in-progress task.
+        if (
+            identity["worker_status"] != "completed"
+            or not worker_runner_succeeded(worker)
+        ):
+            continue
+        try:
+            repo_root = config_path(config, "status_file").parent
+        except (KeyError, TypeError):
+            continue
+        snapshots[task_id] = {
+            **identity,
+            "fetched_at": utc_now(),
+            # ``None`` is retained as an authoritative lookup failure. The
+            # locked phase must not reinterpret it as permission to retry.
+            "records": _merged_pull_requests_for_branch(
+                config,
+                repo_root,
+                identity["branch"],
+            ),
+        }
+    return snapshots
+
+
+def ownerless_pr_snapshot_is_current(
+    config: dict[str, Any],
+    task_id: str,
+    task: dict[str, Any],
+    worker: dict[str, Any],
+    snapshot: dict[str, Any],
+) -> bool:
+    identity = _ownerless_pr_snapshot_identity(config, task_id, task, worker)
+    if identity is None:
+        return False
+    return all(snapshot.get(key) == value for key, value in identity.items())
+
+
 def _merged_pull_requests_for_branch(
     config: dict[str, Any],
     repo_root: Path,
@@ -7572,6 +7710,8 @@ def squash_merged_delivery_metadata(
     base_ref: str,
     since: str,
     repo_root: Path,
+    merged_pull_requests: list[dict[str, Any]] | None = None,
+    allow_network_lookup: bool = True,
 ) -> dict[str, Any] | None:
     """Bind a squash-merged delivery through authoritative GitHub PR metadata.
 
@@ -7604,7 +7744,11 @@ def squash_merged_delivery_metadata(
         return None
 
     branch = worker_task_branch(config, normalized_task_id)
-    records = _merged_pull_requests_for_branch(config, repo_root, branch)
+    records = (
+        _merged_pull_requests_for_branch(config, repo_root, branch)
+        if allow_network_lookup
+        else merged_pull_requests
+    )
     if not records:
         return None
 
@@ -7677,6 +7821,8 @@ def merged_delivery_commits(
     *,
     delivery_head: str,
     since: str,
+    merged_pull_requests: list[dict[str, Any]] | None = None,
+    allow_network_lookup: bool = True,
 ) -> dict[str, Any] | None:
     """Durable evidence that *this worker's* delivery already merged.
 
@@ -7763,6 +7909,8 @@ def merged_delivery_commits(
             base_ref=candidate,
             since=since_value,
             repo_root=repo_root,
+            merged_pull_requests=merged_pull_requests,
+            allow_network_lookup=allow_network_lookup,
         )
         if squashed:
             return squashed
@@ -7832,6 +7980,8 @@ def merged_owner_delivery_evidence(
     worker: dict[str, Any],
     *,
     owner: str,
+    merged_pull_requests: list[dict[str, Any]] | None = None,
+    allow_network_lookup: bool = True,
 ) -> dict[str, Any] | None:
     """Evidence that *this* owner's *this* delivery merged and nothing remains.
 
@@ -7872,11 +8022,18 @@ def merged_owner_delivery_evidence(
     if not delivery_head:
         return None
 
+    merged_kwargs: dict[str, Any] = {}
+    if not allow_network_lookup or merged_pull_requests is not None:
+        merged_kwargs = {
+            "merged_pull_requests": merged_pull_requests,
+            "allow_network_lookup": allow_network_lookup,
+        }
     merged = merged_delivery_commits(
         config,
         task_id,
         delivery_head=delivery_head,
         since=_isoformat_utc(dispatched_at),
+        **merged_kwargs,
     )
     if not merged:
         return None
@@ -7983,7 +8140,12 @@ def _prepare_ownerless_review_handoff_locked(
     return event
 
 
-def reconcile_ownerless_in_progress_tasks(config: dict[str, Any], state: dict[str, Any]) -> bool:
+def reconcile_ownerless_in_progress_tasks(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    prefetched_merged_prs: dict[str, dict[str, Any]] | None = None,
+) -> bool:
     """Resolve ``in_progress`` tasks whose owner worker already terminated.
 
     An owner worker that merges its delivery and exits leaves the task row at
@@ -8038,7 +8200,28 @@ def reconcile_ownerless_in_progress_tasks(config: dict[str, Any], state: dict[st
             continue
         if str(worker.get("ownerless_reconciled_task_status") or "") == "review":
             continue
-        evidence = merged_owner_delivery_evidence(config, task_id, worker, owner=owner)
+        evidence_kwargs: dict[str, Any] = {}
+        if prefetched_merged_prs is not None:
+            snapshot = prefetched_merged_prs.get(task_id)
+            if not isinstance(snapshot, dict) or not ownerless_pr_snapshot_is_current(
+                config,
+                task_id,
+                task,
+                worker,
+                snapshot,
+            ):
+                continue
+            evidence_kwargs = {
+                "merged_pull_requests": snapshot.get("records"),
+                "allow_network_lookup": False,
+            }
+        evidence = merged_owner_delivery_evidence(
+            config,
+            task_id,
+            worker,
+            owner=owner,
+            **evidence_kwargs,
+        )
         if not evidence:
             continue
 
@@ -8908,7 +9091,10 @@ def poll_worker_observation_stage(
 
     stop = False
     if alive and worker.get("status") in active_worker_statuses and worker_lease_is_expired(config, worker, now):
-        terminate_worker_pid(worker.get("pid"))
+        if not terminate_worker_pid(worker.get("pid")):
+            # Deferred termination is confirmed after runtime admission. Keep
+            # the worker nonterminal until a later cycle observes it gone.
+            return {"changed": changed, "stop": True}
         worker["status"] = "failed"
         # Classify the expired signal before recording this failure event:
         # last_event_at is a fallback work-progress timestamp, so advancing it
@@ -9166,7 +9352,8 @@ def poll_worker_stall_stage(
     if activity_timestamps:
         stalled_for_seconds = (now - max(activity_timestamps)).total_seconds()
         if worker.get("status") == "stalled" and stalled_for_seconds >= stall_after * 2:
-            terminate_worker_pid(worker.get("pid"))
+            if not terminate_worker_pid(worker.get("pid")):
+                return {"changed": changed, "stop": True}
             worker["status"] = "failed"
             worker["last_event_at"] = utc_now()
             worker["last_error"] = (
@@ -9587,7 +9774,8 @@ def poll_worker_assignment_stage(
         and worker.get("status") in active_worker_statuses
         and chair_review_worker_artifacts_applied(state, worker)
     ):
-        terminate_worker_pid(worker.get("pid"))
+        if not terminate_worker_pid(worker.get("pid")):
+            return {"changed": False, "stop": True}
         worker["status"] = "completed"
         worker["last_event_at"] = utc_now()
         clear_task_failure_streak(state, worker=worker)
@@ -9621,8 +9809,8 @@ def poll_worker_assignment_stage(
     if worker.get("queue_event_id") and not worker_matches_current_assignment(config, worker, task_map):
         if worker.get("status") == "superseded":
             return {"changed": False, "stop": True}
-        if alive:
-            terminate_worker_pid(worker.get("pid"))
+        if alive and not terminate_worker_pid(worker.get("pid")):
+            return {"changed": False, "stop": True}
         worker["status"] = "superseded"
         worker["last_event_at"] = utc_now()
         worker["last_error"] = "Worker superseded after task responsibility moved to another agent."
@@ -9654,8 +9842,8 @@ def poll_worker_assignment_stage(
         and worker.get("status") in active_worker_statuses
         and higher_priority_ready_task_exists(config, worker, task_map, state)
     ):
-        if alive:
-            terminate_worker_pid(worker.get("pid"))
+        if alive and not terminate_worker_pid(worker.get("pid")):
+            return {"changed": False, "stop": True}
         worker["status"] = "superseded"
         worker["last_event_at"] = utc_now()
         worker["last_error"] = "Worker superseded to prioritize higher-priority review/finalize work."
@@ -10377,64 +10565,166 @@ def prune_chair_review_worktrees(config: dict[str, Any], state: dict[str, Any]) 
 def auto_commit_archive_settings(config: dict[str, Any]) -> dict[str, Any]:
     raw = config.get("auto_commit_archive")
     settings = raw if isinstance(raw, dict) else {}
+    timeout_seconds = int(settings.get("script_timeout_seconds", 180))
     return {
         "enabled": bool(settings.get("enabled", True)),
         "tick_interval_seconds": int(settings.get("tick_interval_seconds", 1800) or 0),
-        "script_timeout_seconds": int(settings.get("script_timeout_seconds", 180)),
+        "script_timeout_seconds": timeout_seconds,
+        "pending_stale_seconds": int(
+            settings.get(
+                "pending_stale_seconds",
+                max(300, timeout_seconds * 2),
+            )
+            or 0
+        ),
     }
 
 
 def maybe_auto_commit_archive(config: dict[str, Any], state: dict[str, Any]) -> bool:
-    """Periodically run .orchestrator/auto_commit_archive.py so supervisor-side
-    archive metadata + task briefs are not stranded as untracked files in the
-    main worktree. Returns True iff the script ran AND produced a PR (so the
-    caller can mark state as changed and refresh runtime artifacts)."""
+    """Schedule archive publication without running a subprocess under lock.
+
+    The caller owns the exclusive runtime-admission lock. The old implementation
+    launched ``auto_commit_archive.py`` here and could hold admission for its
+    full 180-second timeout while that script fetched, pushed, and opened a PR.
+    This phase now records one tokenized intent only. The enclosing supervisor
+    transaction executes it after releasing admission, then applies telemetry
+    through ``apply_auto_commit_archive_result`` only if the token is still
+    current.
+    """
     settings = auto_commit_archive_settings(config)
     if not settings["enabled"]:
         return False
 
+    deferred = _DEFERRED_AUTO_COMMIT_ARCHIVES.get()
+    if deferred is None:
+        # This phase is safe only inside the supervisor's deferred transaction.
+        # A direct caller cannot silently regain the old locked subprocess path.
+        return False
+
     interval = settings["tick_interval_seconds"]
     bucket = state.setdefault("auto_commit_archive", {})
+    if str(bucket.get("pending_token") or "").strip():
+        pending_since = _parse_iso_utc(str(bucket.get("pending_since") or ""))
+        now = datetime.now(timezone.utc)
+        pending_age = (
+            (now - pending_since).total_seconds()
+            if pending_since is not None
+            else float("inf")
+        )
+        if pending_age < settings["pending_stale_seconds"]:
+            return False
+        bucket["last_error"] = "stale pending archive action expired"
+        bucket["pending_token"] = None
+        bucket["pending_since"] = None
     if interval > 0:
         last_at = bucket.get("last_run_at")
         last_dt = _parse_iso_utc(str(last_at or ""))
         now = datetime.now(timezone.utc)
         if last_dt is not None and (now - last_dt).total_seconds() < interval:
             return False
-    bucket["last_run_at"] = utc_now()
 
     try:
         repo_root = config_path(config, "status_file").parents[0]
     except KeyError:
         bucket["last_error"] = "status_file path not configured"
-        return False
+        return True
     script = repo_root / ".orchestrator" / "auto_commit_archive.py"
     if not script.exists():
         bucket["last_error"] = "script missing"
-        return False
+        return True
 
+    scheduled_at = utc_now()
+    action = {
+        "token": new_runtime_id("archive"),
+        "scheduled_at": scheduled_at,
+        "repo_root": str(repo_root),
+        "script": str(script),
+        "timeout_seconds": settings["script_timeout_seconds"],
+    }
+    bucket["pending_token"] = action["token"]
+    bucket["pending_since"] = scheduled_at
+    bucket["last_error"] = None
+    deferred.append(action)
+    return True
+
+
+def execute_auto_commit_archive(
+    config: dict[str, Any],
+    action: dict[str, Any],
+) -> dict[str, Any]:
+    """Run one previously scheduled archive action outside runtime admission."""
+
+    del config  # the immutable action carries every execution input
+    started_at = utc_now()
     try:
         proc = subprocess.run(
-            ["python3", str(script), "--quiet"],
-            cwd=str(repo_root),
+            ["python3", str(action["script"]), "--quiet"],
+            cwd=str(action["repo_root"]),
             capture_output=True,
             text=True,
-            timeout=settings["script_timeout_seconds"],
+            timeout=int(action["timeout_seconds"]),
         )
     except subprocess.TimeoutExpired:
-        bucket["last_error"] = "timeout"
-        return False
+        return {
+            "started_at": started_at,
+            "finished_at": utc_now(),
+            "last_error": "timeout",
+        }
     except OSError as exc:
-        bucket["last_error"] = f"spawn failed: {exc}"
-        return False
+        return {
+            "started_at": started_at,
+            "finished_at": utc_now(),
+            "last_error": f"spawn failed: {exc}",
+        }
 
-    bucket["last_exit"] = proc.returncode
     stdout_tail = (proc.stdout or "").strip().splitlines()[-1:] if proc.stdout else []
     stderr_tail = (proc.stderr or "").strip().splitlines()[-1:] if proc.stderr else []
-    bucket["last_stdout"] = stdout_tail[0] if stdout_tail else ""
-    bucket["last_stderr"] = stderr_tail[0] if stderr_tail else ""
-    # Script prints "auto_commit_archive: opened PR for ..." when it actually opens one.
-    return proc.returncode == 0 and "opened PR for" in (proc.stdout or "")
+    return {
+        "started_at": started_at,
+        "finished_at": utc_now(),
+        "last_error": None if proc.returncode == 0 else "nonzero exit",
+        "last_exit": proc.returncode,
+        "last_stdout": stdout_tail[0] if stdout_tail else "",
+        "last_stderr": stderr_tail[0] if stderr_tail else "",
+        # The script prints this marker only after it actually opens a PR.
+        "opened_pr": proc.returncode == 0
+        and "opened PR for" in (proc.stdout or ""),
+    }
+
+
+def apply_auto_commit_archive_result(
+    config: dict[str, Any],
+    action: dict[str, Any],
+    result: dict[str, Any],
+) -> bool:
+    """Apply post-lock archive telemetry iff the scheduling token is current."""
+
+    with runtime_state_lock(config, shared=False, nonblocking=False):
+        state = load_runtime_state(config)
+        bucket = state.setdefault("auto_commit_archive", {})
+        if str(bucket.get("pending_token") or "") != str(action.get("token") or ""):
+            return False
+        if str(bucket.get("pending_since") or "") != str(
+            action.get("scheduled_at") or ""
+        ):
+            return False
+
+        bucket.pop("pending_token", None)
+        bucket.pop("pending_since", None)
+        bucket["last_run_at"] = result.get("finished_at") or utc_now()
+        for key in (
+            "started_at",
+            "finished_at",
+            "last_error",
+            "last_exit",
+            "last_stdout",
+            "last_stderr",
+        ):
+            if key in result:
+                bucket[key] = result[key]
+        save_runtime_state(config, state)
+    refresh_dashboard_runtime_artifacts(config)
+    return bool(result.get("opened_pr"))
 
 
 def trim_worker_history(state: dict[str, Any], max_entries: int) -> None:
@@ -10535,8 +10825,10 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             continue
         if not missing_process and not expired_lease:
             continue
-        if alive:
-            terminate_worker_pid(worker.get("pid"))
+        if alive and not terminate_worker_pid(worker.get("pid")):
+            # The post-lock confirmer owns the signal path. Do not classify the
+            # still-live worker as terminal during this admission transaction.
+            continue
         reason = (
             "Worker lease expired during supervisor boot reconciliation."
             if expired_lease
@@ -12686,6 +12978,22 @@ def run_once(
         github_runtime_snapshot = load_runtime_state_snapshot(config)
     except Exception:
         github_runtime_snapshot = {}
+    task_state_shadow_snapshot = _safe_phase(
+        "prefetch_task_state_shadow",
+        prefetch_task_state_shadow,
+        config,
+        github_runtime_snapshot,
+        quiet=quiet,
+    )
+    ownerless_pr_snapshots = _safe_phase(
+        "prefetch_ownerless_merged_pr_snapshots",
+        prefetch_ownerless_merged_pr_snapshots,
+        config,
+        github_runtime_snapshot,
+        quiet=quiet,
+    )
+    if not isinstance(ownerless_pr_snapshots, dict):
+        ownerless_pr_snapshots = {}
     prefetched_worker_base_refs: set[str] = set()
     required_worker_base_refs = pending_worker_base_refs(
         config,
@@ -12732,6 +13040,8 @@ def run_once(
                 verbose=verbose,
                 once=once,
                 provider_reports=provider_reports,
+                ownerless_pr_snapshots=ownerless_pr_snapshots,
+                task_state_shadow_snapshot=task_state_shadow_snapshot,
                 prelock_changed=github_bus_changed,
             )
         )
@@ -12864,6 +13174,42 @@ def sync_task_state_shadow(config: dict[str, Any], state: dict[str, Any]) -> boo
         return False
 
 
+def prefetch_task_state_shadow(
+    config: dict[str, Any],
+    runtime_snapshot: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Reconcile the task projection before runtime admission.
+
+    Authoritative journal validation takes the canonical task lock and may need
+    to repair its derived JSON projection. Keeping that wait outside the
+    exclusive runtime lock lets worker-lease commands continue validating
+    admission while this independent state plane reaches parity.
+    """
+
+    previous = (
+        (runtime_snapshot.get("supervisor") or {}).get("task_state_shadow")
+        if isinstance(runtime_snapshot, dict)
+        else None
+    )
+    scratch = {
+        "supervisor": {
+            **(
+                {"task_state_shadow": deepcopy(previous)}
+                if isinstance(previous, dict)
+                else {}
+            )
+        }
+    }
+    changed = sync_task_state_shadow(config, scratch)
+    report = scratch["supervisor"].get("task_state_shadow")
+    if not isinstance(report, dict):
+        return None
+    return {
+        "changed": bool(changed),
+        "report": deepcopy(report),
+    }
+
+
 def _safe_phase(name: str, fn, *args, quiet: bool = False, **kwargs):
     """Run one supervisor cycle phase in isolation.
 
@@ -12897,6 +13243,8 @@ def _run_once_locked(
     verbose: bool = False,
     once: bool = False,
     provider_reports: tuple[dict[str, Any], dict[str, Any]],
+    ownerless_pr_snapshots: dict[str, dict[str, Any]] | None = None,
+    task_state_shadow_snapshot: dict[str, Any] | None = None,
     prelock_changed: bool = False,
 ) -> bool:
     write_supervisor_pid(config)
@@ -12953,7 +13301,14 @@ def _run_once_locked(
         # Runs after the worker/queue phases have settled terminal outcomes and
         # before dispatch, so a merged ownerless task is routed to review in this
         # same cycle instead of being woken as owned work one more time.
-        changed = _safe_phase("reconcile_ownerless_in_progress_tasks", reconcile_ownerless_in_progress_tasks, config, state, quiet=quiet) or changed
+        changed = _safe_phase(
+            "reconcile_ownerless_in_progress_tasks",
+            reconcile_ownerless_in_progress_tasks,
+            config,
+            state,
+            prefetched_merged_prs=ownerless_pr_snapshots,
+            quiet=quiet,
+        ) or changed
         changed = _safe_phase("refresh_chair_review_state", refresh_chair_review_state, config, state, quiet=quiet) or changed
         planning_state = load_discussion_planning_state()
         changed = _safe_phase("auto_materialize_discussion_planning", auto_materialize_discussion_planning, config, planning_state, quiet=quiet) or changed
@@ -12980,7 +13335,13 @@ def _run_once_locked(
         changed = _safe_phase("prune_orphan_worktrees", prune_orphan_worktrees, config, state, quiet=quiet) or changed
         changed = _safe_phase("prune_chair_review_worktrees", prune_chair_review_worktrees, config, state, quiet=quiet) or changed
         changed = _safe_phase("maybe_auto_commit_archive", maybe_auto_commit_archive, config, state, quiet=quiet) or changed
-        changed = _safe_phase("sync_task_state_shadow", sync_task_state_shadow, config, state, quiet=quiet) or changed
+        if isinstance(task_state_shadow_snapshot, dict):
+            report = task_state_shadow_snapshot.get("report")
+            if isinstance(report, dict):
+                state.setdefault("supervisor", {})["task_state_shadow"] = deepcopy(
+                    report
+                )
+                changed = bool(task_state_shadow_snapshot.get("changed")) or changed
 
         loop_finished_at = utc_now()
         stamp_supervisor_runtime_state(
