@@ -83,4 +83,3 @@ The source facts were derived from:
 - `/home/lupin/pantheon/.orchestrator/state.json` parsed with Python
 - `gh pr list --repo ajoe734/pantheon --state open --json ...`
 - tail/grep of `/home/lupin/pantheon/ai-activity-log.jsonl`
-

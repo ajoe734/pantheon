@@ -15,4 +15,3 @@ Acceptance:
 - Closeout workers that disappear cannot leave `review_approved` tasks looking
   as if owner closeout is still progressing.
 - Regression tests cover missing owner and missing reviewer workers.
-

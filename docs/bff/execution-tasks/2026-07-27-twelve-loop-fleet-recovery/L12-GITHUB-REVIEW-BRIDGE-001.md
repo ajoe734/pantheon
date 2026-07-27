@@ -14,4 +14,3 @@ Acceptance:
 - The supervisor/dashboard must not display internal activity approval as PR
   completion while GitHub review is still missing.
 - Include tests for an internal approval with GitHub review gate still blocked.
-

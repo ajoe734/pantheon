@@ -15,4 +15,3 @@ Acceptance:
 - The regression must fail before the fix and pass after the fix.
 - `ai-status.json` and `.orchestrator/state.json` must converge.
 - No `.orchestrator/config.json` edit is allowed for this repair.
-
