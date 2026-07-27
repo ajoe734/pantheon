@@ -707,3 +707,196 @@ def test_task_worktree_pytest_run_cannot_reach_an_inherited_live_event_log(
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert not live_event_log.exists()
     assert not live_event_log.parent.exists()
+
+
+# ---------------------------------------------------------------------------
+# Bounded-cost journal reads (SUP-TASK-STATE-LOCK-LATENCY-001)
+#
+# Live measurement being defended: a ~157MB / 2050-event journal made every
+# lock-free Human/Ops note command take roughly 55-90s, because a single
+# command replayed and revalidated the whole log four times -- load_events plus
+# project_latest_state on the read, then load_events plus project_latest_state
+# again inside append_state_commit's readback.
+# ---------------------------------------------------------------------------
+
+
+def growing_board(count: int) -> dict:
+    """A board that only ever gains task ids, so the drop guard stays quiet."""
+
+    return board(*[(f"T-{index}", "todo") for index in range(count)])
+
+
+def _replays(monkeypatch) -> list[str]:
+    """Record every full parse+validate pass over the journal."""
+
+    seen: list[str] = []
+    original = store._snapshot_from_payload
+
+    def counting(payload: bytes, checkpoint):
+        snapshot = original(payload, checkpoint)
+        seen.append(
+            "checkpoint" if snapshot["resumed_from_checkpoint"] else "full"
+        )
+        return snapshot
+
+    monkeypatch.setattr(store, "_snapshot_from_payload", counting)
+    return seen
+
+
+def test_snapshot_reuses_the_checkpointed_prefix_and_only_parses_the_tail(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "task-state-events.jsonl"
+    for index in range(1, 6):
+        store.append_state_commit(path, growing_board(index), source="test")
+
+    warm = store.load_snapshot(path)
+
+    assert warm["event_count"] == 5
+    assert warm["resumed_from_checkpoint"] is True
+    # The append already checkpointed the head, so a read that follows it has
+    # no new events left to revalidate.
+    assert warm["revalidated_events"] == 0
+
+    store.append_state_commit(path, growing_board(6), source="test")
+    incremental = store.load_snapshot(path)
+
+    assert incremental["event_count"] == 6
+    assert incremental["resumed_from_checkpoint"] is True
+    assert incremental["revalidated_events"] == 0
+    assert incremental["state"] == growing_board(6)
+
+
+def test_checkpointed_snapshot_matches_a_forced_full_replay(
+    tmp_path: Path, monkeypatch
+) -> None:
+    path = tmp_path / "task-state-events.jsonl"
+    for index in range(1, 7):
+        store.append_state_commit(path, growing_board(index), source="test")
+
+    accelerated = store.load_snapshot(path)
+    monkeypatch.setenv(store.FULL_REPLAY_ENV, "1")
+    audited = store.load_snapshot(path)
+
+    assert audited["resumed_from_checkpoint"] is False
+    assert audited["revalidated_events"] == 6
+    for field in ("event_count", "last_event_id", "state", "state_sha256"):
+        assert accelerated[field] == audited[field]
+    assert store.project_latest_state(store.load_events(path)) == accelerated["state"]
+
+
+def test_edited_history_is_rejected_even_though_a_checkpoint_exists(
+    tmp_path: Path,
+) -> None:
+    """The checkpoint accelerates parsing; it never excuses a byte from hashing."""
+
+    path = tmp_path / "task-state-events.jsonl"
+    for index in range(1, 5):
+        store.append_state_commit(path, growing_board(index), source="test")
+    store.load_snapshot(path)
+
+    lines = path.read_bytes().split(b"\n")
+    tampered = json.loads(lines[1])
+    tampered["source"] = "rogue-rewrite"
+    lines[1] = json.dumps(
+        tampered, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    path.write_bytes(b"\n".join(lines))
+
+    with pytest.raises(store.TaskStateStoreError):
+        store.load_snapshot(path)
+
+
+def test_truncated_journal_is_not_served_from_a_stale_checkpoint(tmp_path: Path) -> None:
+    path = tmp_path / "task-state-events.jsonl"
+    for index in range(1, 5):
+        store.append_state_commit(path, growing_board(index), source="test")
+    store.load_snapshot(path)
+
+    lines = [line for line in path.read_bytes().split(b"\n") if line]
+    path.write_bytes(b"\n".join(lines[:2]) + b"\n")
+
+    recovered = store.load_snapshot(path)
+
+    assert recovered["event_count"] == 2
+    assert recovered["resumed_from_checkpoint"] is False
+    assert recovered["state"] == growing_board(2)
+
+
+def test_unusable_checkpoint_degrades_to_full_replay(tmp_path: Path) -> None:
+    path = tmp_path / "task-state-events.jsonl"
+    store.append_state_commit(path, growing_board(1), source="test")
+    checkpoint = store._checkpoint_path(path)
+    assert checkpoint.exists()
+    checkpoint.write_bytes(b"not json at all")
+
+    snapshot = store.load_snapshot(path)
+
+    assert snapshot["resumed_from_checkpoint"] is False
+    assert snapshot["event_count"] == 1
+    # A healthy read repairs the cache instead of leaving it poisoned.
+    assert json.loads(checkpoint.read_text(encoding="utf-8"))["event_count"] == 1
+
+
+def test_append_does_not_replay_the_journal_to_read_back_its_own_line(
+    tmp_path: Path, monkeypatch
+) -> None:
+    path = tmp_path / "task-state-events.jsonl"
+    for index in range(1, 4):
+        store.append_state_commit(path, growing_board(index), source="test")
+
+    passes = _replays(monkeypatch)
+    store.append_state_commit(path, growing_board(4), source="test")
+
+    # One snapshot to establish the previous state; the readback verifies the
+    # appended bytes at their offset instead of replaying the whole file.
+    assert passes == ["checkpoint"]
+
+
+def test_read_then_commit_costs_one_journal_pass(tmp_path: Path, monkeypatch) -> None:
+    """The shape of a status command: project the board, then commit one change."""
+
+    path = tmp_path / "task-state-events.jsonl"
+    store.append_state_commit(path, board(("T-0", "todo")), source="test")
+
+    passes = _replays(monkeypatch)
+    current = store.load_snapshot(path)["state"]
+    current["tasks"][0]["status"] = "in_progress"
+    store.append_state_commit(path, current, source="ai-status")
+
+    assert passes == ["checkpoint", "checkpoint"]
+    assert store.load_snapshot(path)["state"]["tasks"][0]["status"] == "in_progress"
+
+
+def test_append_readback_detects_a_short_write(tmp_path: Path, monkeypatch) -> None:
+    path = tmp_path / "task-state-events.jsonl"
+    store.append_state_commit(path, board(("T-0", "todo")), source="test")
+
+    real_write = os.write
+
+    def truncating(fd: int, data: bytes) -> int:
+        # Report a full write while only part of the payload lands.
+        real_write(fd, data[: max(1, len(data) // 2)])
+        return len(data)
+
+    monkeypatch.setattr(store.os, "write", truncating)
+    with pytest.raises(store.TaskStateStoreError, match="append readback mismatch"):
+        store.append_state_commit(path, board(("T-0", "in_progress")), source="test")
+
+
+def test_verify_snapshot_reports_one_generation(tmp_path: Path) -> None:
+    """A report is built from a single snapshot, so it cannot straddle commits."""
+
+    path = tmp_path / "task-state-events.jsonl"
+    first = board(("T-0", "todo"))
+    store.append_state_commit(path, first, source="test")
+    snapshot = store.load_snapshot(path)
+
+    # A commit lands after the snapshot was taken.
+    store.append_state_commit(path, board(("T-0", "in_progress")), source="test")
+    report = store.verify_snapshot(snapshot, first)
+
+    assert report["ok"] is True
+    assert report["event_count"] == 1
+    assert report["last_event_id"] == snapshot["last_event_id"]
+    assert report["projected_state_sha256"] == report["expected_state_sha256"]
