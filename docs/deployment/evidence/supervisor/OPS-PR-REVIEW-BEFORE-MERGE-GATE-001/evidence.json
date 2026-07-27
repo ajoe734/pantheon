@@ -343,7 +343,7 @@
   "validation": {
     "revalidation": {
       "actor": "Codex",
-      "reason": "Owner reassignment followed exact-head rejections that found approval-binding, archive-case, helper-revocation, stale-base, and revocation-readback defects. After Codex repaired those paths, live finalization of f93ab06e exposed that task_finalize pushed an existing PR head and then exited at gh pr create before autoMergeRequest readback/revocation. PR #4218 was already off and did not merge; Codex withdrew the handoff, moved existing-PR discovery and revocation before push in both helpers, added pre-receive regressions plus unreadable/ambiguous lookup guards, proved the repaired existing-PR path live on c6d38ea7, composed current dev through PR #4260, and reran the full matrix.",
+      "reason": "Owner reassignment followed exact-head rejections that found approval-binding, archive-case, helper-revocation, stale-base, and revocation-readback defects. After Codex repaired those paths, live finalization of f93ab06e exposed that task_finalize pushed an existing PR head and then exited at gh pr create before autoMergeRequest readback/revocation. PR #4218 was already off and did not merge; Codex withdrew the handoff, moved existing-PR discovery and revocation before push in both helpers, added pre-receive regressions plus unreadable/ambiguous lookup guards, proved the repaired existing-PR path live on c6d38ea7, and reran the full matrix. The latest independent review rejected head 7d275dafdee4e2320d0bb897c72b0075523c06e0 because it was behind current dev; Codex anchored that rejection, composed dev 4580fc5d19b5bff8c0014006324c56d6368ec5dc without rewriting the reviewed history, and reran the required individual, combined, and static validation on compose commit fac2040230d24497b747d2189c77fafb1a774382.",
       "adopted_predecessor_commit": "7759ed36666ce62a7f912a9c85f74cf409cff095",
       "rejected_review_head": "5a9ad1643eba2580bf8a51c71a6f3a43ad8c57b6",
       "repair_anchor_commit": "e971a2c9441c0611fa7070f7554805e3ccfcb2b7",
@@ -359,8 +359,15 @@
       "withdrawn_live_candidate_head": "f93ab06e67eff8e5e197172608a97d0e3b01fb77",
       "pre_push_revocation_anchor_commit": "d8549af42d9dd5358b9b6b907c2d5f36aa4f4d20",
       "live_pre_push_probe_head": "c6d38ea7e9b5bbc7f2480768120478894e522f38",
-      "validated_dev_base": "b79d3a540a797fe69851f4dbb3a119ddb647cf9a",
-      "validated_tree_commit": "f22ea3561ca3578febd4402c39b4bd2643dbec8c",
+      "previous_validated_dev_base": "b79d3a540a797fe69851f4dbb3a119ddb647cf9a",
+      "previous_validated_tree_commit": "f22ea3561ca3578febd4402c39b4bd2643dbec8c",
+      "latest_stale_review_head": "7d275dafdee4e2320d0bb897c72b0075523c06e0",
+      "latest_stale_review_anchor_commit": "6ea640bf655e8aea6f90f1639071a3c84aaa6a6d",
+      "validated_dev_base": "4580fc5d19b5bff8c0014006324c56d6368ec5dc",
+      "validated_tree_commit": "fac2040230d24497b747d2189c77fafb1a774382",
+      "validated_tree_object": "e78cbb5cdb6e21d9e9d48bbcd38d55e5c9ea6f5e",
+      "validated_base_only_commit_count": 0,
+      "validated_head_only_commit_count": 54,
       "post_containment_dev_base": "4974824687ef5c3acf665fa22a4306e5d3d664f1",
       "post_containment_compose_commit": "8a05394974f88b95a686aeb62add7b14f9fe6cc6",
       "post_containment_reason": "#4263/#4264 repeated the same unreviewed auto-merge race while old helpers were still installed; dev branch protection was temporarily held by the `Pantheon canonical review gate` status and this branch was revalidated on the new base."
@@ -392,8 +399,8 @@
         "result": "pass"
       },
       {
-        "command": "/home/lupin/pantheon/.venv/bin/python -m pytest scripts/git/test_task_review_merge_gate.py scripts/git/test_auto_integrator.py scripts/git/test_git_workflow_helpers.py scripts/git/test_task_pr_triage.py scripts/git/test_index_safety.py scripts/test_ai_status.py scripts/git/test_task_git_helpers_refspec.py -q",
-        "conclusion": "345 passed, 31 subtests passed after composing current dev through 4974824687ef5c3acf665fa22a4306e5d3d664f1",
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/git/test_task_review_merge_gate.py scripts/git/test_auto_integrator.py scripts/git/test_git_workflow_helpers.py scripts/git/test_task_git_helpers_refspec.py scripts/git/test_task_pr_triage.py scripts/git/test_index_safety.py scripts/test_ai_status.py",
+        "conclusion": "345 passed, 31 subtests passed on compose commit fac2040230d24497b747d2189c77fafb1a774382 after composing current dev 4580fc5d19b5bff8c0014006324c56d6368ec5dc",
         "result": "pass"
       },
       {
@@ -427,8 +434,8 @@
         "result": "pass"
       },
       {
-        "command": "bash -n scripts/git/task_finalize.sh scripts/git/safe_pr.sh scripts/git/nightly_publish.sh && python3 -m py_compile scripts/git/auto_integrator.py scripts/git/task_review_merge_gate.py scripts/git/test_task_review_merge_gate.py scripts/git/test_auto_integrator.py scripts/ai_status.py scripts/test_ai_status.py && git diff --check origin/dev...HEAD",
-        "conclusion": "shell syntax ok; relevant Python modules compile; diff check clean",
+        "command": "bash -n scripts/git/task_finalize.sh scripts/git/safe_pr.sh scripts/git/nightly_publish.sh && .venv-pantheon/bin/python3 -m py_compile scripts/git/auto_integrator.py scripts/git/task_review_merge_gate.py scripts/git/test_task_review_merge_gate.py scripts/git/test_auto_integrator.py scripts/ai_status.py scripts/test_ai_status.py && .venv-pantheon/bin/python3 -m json.tool docs/deployment/evidence/supervisor/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001/evidence.json && git diff --check origin/dev...HEAD",
+        "conclusion": "shell syntax ok; relevant Python modules compile; evidence JSON parses; diff check clean",
         "result": "pass"
       },
       {
@@ -438,7 +445,7 @@
       },
       {
         "command": ".venv-pantheon/bin/python3 scripts/test_ai_status.py",
-        "conclusion": "Ran 144 tests - OK after composing current dev",
+        "conclusion": "Ran 144 tests - OK on compose commit fac2040230d24497b747d2189c77fafb1a774382 after composing current dev 4580fc5d19b5bff8c0014006324c56d6368ec5dc",
         "result": "pass"
       },
       {
@@ -447,7 +454,7 @@
         "result": "pass"
       }
     ],
-    "cwd": "task worktree /tmp/pantheon-worker-worktrees/pantheon/ops-pr-review-before-merge-gate-001"
+    "cwd": "task worktree /tmp/pantheon-ops-pr-review-gate-rebuild"
   },
   "residual_risks": {
     "command_runtime_bootstrap": {

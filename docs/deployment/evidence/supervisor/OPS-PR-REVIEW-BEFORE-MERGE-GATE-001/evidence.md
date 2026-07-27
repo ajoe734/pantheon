@@ -50,6 +50,15 @@ proved auto-merge already off before push, reused the PR without calling
 was not handed off because `dev` advanced during the run; the branch then
 composed the newer base above and reran the matrix.
 
+The latest exact-head review rejected
+`7d275dafdee4e2320d0bb897c72b0075523c06e0` because PR #4218 was behind
+current `dev`. Codex anchored that rejection at
+`6ea640bf655e8aea6f90f1639071a3c84aaa6a6d`, composed authoritative base
+`4580fc5d19b5bff8c0014006324c56d6368ec5dc`, and reran the required validation
+on compose commit `fac2040230d24497b747d2189c77fafb1a774382` (tree object
+`e78cbb5cdb6e21d9e9d48bbcd38d55e5c9ea6f5e`). The tested graph had zero
+base-only commits and 54 head-only commits.
+
 Scope rule honoured throughout: **no `.orchestrator/config.json` edit**, no
 hand-edited task board, no owner or reviewer action performed on behalf of
 anyone. Every decision is derived from canonical task state that already
@@ -423,8 +432,9 @@ The full map of PR → entry point → fixture is the `live_regressions` table i
 See `validation.txt` for the captured transcript.
 
 This pass ran against authoritative `origin/dev`
-`4974824687ef5c3acf665fa22a4306e5d3d664f1` and validated tree
-`8a05394974f88b95a686aeb62add7b14f9fe6cc6`.
+`4580fc5d19b5bff8c0014006324c56d6368ec5dc` and validated compose commit
+`fac2040230d24497b747d2189c77fafb1a774382` (tree object
+`e78cbb5cdb6e21d9e9d48bbcd38d55e5c9ea6f5e`).
 
 ```
 .venv-pantheon/bin/python3 scripts/git/test_task_review_merge_gate.py
@@ -445,7 +455,7 @@ bash -n task_finalize.sh safe_pr.sh nightly_publish.sh        syntax ok
 py_compile task_review_merge_gate.py auto_integrator.py ai_status.py
                                                         compile ok
 git diff --check origin/dev...HEAD                         clean
-pytest combined focused matrix                              343 passed, 31 subtests
+pytest combined focused matrix                              345 passed, 31 subtests
 pytest sequential post-dev-compose matrix                   351 passed, 45 subtests
 check_commit_trailers origin/dev..HEAD --skip-merge         ok
 ```

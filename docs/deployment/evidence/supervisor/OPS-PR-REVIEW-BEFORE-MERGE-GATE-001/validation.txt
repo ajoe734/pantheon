@@ -1,3 +1,45 @@
+Revalidated by Codex on 2026-07-27 after independent exact-head review rejected
+PR #4218 head 7d275dafdee4e2320d0bb897c72b0075523c06e0 as behind current
+origin/dev 4580fc5d19b5bff8c0014006324c56d6368ec5dc. Codex anchored the
+rejection at 6ea640bf655e8aea6f90f1639071a3c84aaa6a6d, composed current dev
+without rewriting prior reviewed history, and validated compose commit
+fac2040230d24497b747d2189c77fafb1a774382 (tree object
+e78cbb5cdb6e21d9e9d48bbcd38d55e5c9ea6f5e). The tested graph had 0
+base-only commits and 54 head-only commits.
+
+== .venv-pantheon/bin/python3 scripts/git/test_task_review_merge_gate.py
+Ran 91 tests in 5.769s
+OK
+
+== .venv-pantheon/bin/python3 scripts/git/test_auto_integrator.py
+Ran 9 tests in 0.003s
+OK
+
+== .venv-pantheon/bin/python3 scripts/git/test_git_workflow_helpers.py
+Ran 58 tests in 2.712s
+OK
+
+== .venv-pantheon/bin/python3 -m pytest -q scripts/git/test_task_git_helpers_refspec.py
+2 passed in 0.31s
+
+== .venv-pantheon/bin/python3 scripts/git/test_task_pr_triage.py
+Ran 24 tests in 0.006s
+OK
+
+== .venv-pantheon/bin/python3 scripts/git/test_index_safety.py
+Ran 17 tests in 3.874s
+OK
+
+== .venv-pantheon/bin/python3 scripts/test_ai_status.py
+Ran 144 tests in 16.094s
+OK
+
+== .venv-pantheon/bin/python3 -m pytest -q focused git/status matrix
+345 passed, 31 subtests passed in 59.32s
+
+== bash -n; py_compile; json.tool; git diff --check; check_commit_trailers
+OK
+
 Post-containment revalidated by Codex on 2026-07-27 after #4263/#4264 advanced
 dev to 4974824687ef5c3acf665fa22a4306e5d3d664f1 and the temporary
 `Pantheon canonical review gate` branch-protection hold was installed. The task
