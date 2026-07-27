@@ -649,6 +649,54 @@ def test_concurrent_cross_tenant_ticks_and_claims_stay_isolated() -> None:
             assert stored[candidate_id]["lease_owner"] == "worker-tenant-b"
 
 
+def test_one_tenants_restart_does_not_recover_another_tenants_orphans() -> None:
+    """Recovery is a per-tenant sweep, not a global one."""
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        _install_authority(
+            svc,
+            [
+                _agora_record("dsv-a", tenant_id="tenant-a", order=1),
+                _agora_record("dsv-b", tenant_id="tenant-b", order=2),
+            ],
+        )
+        client_a = authorized_client(svc.app, "tenant-a")
+        client_b = authorized_client(svc.app, "tenant-b")
+        client_a.post("/api/policy-learning/shadow-eval-tick", json={"tick_id": "tick-a"})
+        client_b.post("/api/policy-learning/shadow-eval-tick", json={"tick_id": "tick-b"})
+
+        # Both tenants' workers claim, then both die, leaving expired leases.
+        for client, tenant in ((client_a, "tenant-a"), (client_b, "tenant-b")):
+            client.post(
+                "/api/policy-learning/worker/claim",
+                json={"worker_id": f"worker-{tenant}", "batch_size": 10, "lease_seconds": 900},
+            )
+        for candidate in svc.store.list_candidates():
+            candidate["lease_expires_at"] = "2020-01-01T00:00:00Z"
+            svc.store.put_candidate(candidate)
+
+        recovered = client_a.post(
+            "/api/policy-learning/worker/restart", json={"worker_id": "worker-a2"}
+        ).json()
+        assert recovered["released_count"] == 1
+        assert recovered["tenant_id"] == "tenant-a"
+
+        by_tenant = {
+            candidate["tenant_id"]: candidate for candidate in svc.store.list_candidates()
+        }
+        assert by_tenant["tenant-a"]["status"] == "processed"
+        # Tenant B's orphan was left exactly as it was, for tenant B to recover.
+        assert by_tenant["tenant-b"]["status"] == "claimed"
+        assert by_tenant["tenant-b"]["lease_owner"] == "worker-tenant-b"
+
+        recovered_b = client_b.post(
+            "/api/policy-learning/worker/restart", json={"worker_id": "worker-b2"}
+        ).json()
+        assert recovered_b["released_count"] == 1
+        assert recovered_b["processed_count"] == 1
+
+
 # ---------------------------------------------------------------------------
 # Duplicate ticks and replay
 # ---------------------------------------------------------------------------

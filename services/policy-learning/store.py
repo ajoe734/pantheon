@@ -570,17 +570,26 @@ class PostgresPolicyLearningCandidateStore:
             self._upsert(conn, payload)
         return payload
 
-    def release_expired_leases(self, *, now: Optional[datetime] = None) -> List[str]:
+    def release_expired_leases(
+        self,
+        *,
+        tenant_id: str = "",
+        now: Optional[datetime] = None,
+    ) -> List[str]:
         """Return orphaned claims to the backlog after a worker restart."""
 
         moment = now or utc_now_dt()
         released: List[str] = []
+        clauses = ["status = %s", "(lease_expires_at IS NULL OR lease_expires_at <= %s)"]
+        params: List[Any] = [STATUS_CLAIMED, moment]
+        if tenant_id:
+            clauses.append("tenant_id = %s")
+            params.append(tenant_id)
         with self._connect() as conn:
             rows = conn.execute(
-                f"SELECT payload FROM {self.table} WHERE status = %s "
-                "AND (lease_expires_at IS NULL OR lease_expires_at <= %s) "
+                f"SELECT payload FROM {self.table} WHERE {' AND '.join(clauses)} "
                 "ORDER BY candidate_id FOR UPDATE SKIP LOCKED",
-                (STATUS_CLAIMED, moment),
+                tuple(params),
             ).fetchall()
             for row in rows:
                 payload = row[0] if isinstance(row, tuple) else row.get("payload")
@@ -868,17 +877,30 @@ class PolicyLearningStore:
             self._write_candidates(records)
         return json.loads(json.dumps(record))
 
-    def release_expired_leases(self, *, now: Optional[datetime] = None) -> List[str]:
-        """Return orphaned claims to the backlog after a worker restart."""
+    def release_expired_leases(
+        self,
+        *,
+        tenant_id: str = "",
+        now: Optional[datetime] = None,
+    ) -> List[str]:
+        """Return orphaned claims to the backlog after a worker restart.
+
+        A tenant's restart only recovers its own orphans.  Sweeping every
+        tenant would let one tenant's routine restart write to another tenant's
+        backlog rows, which is a cross-tenant effect even though the rows it
+        touches are already ownerless.
+        """
 
         if self.candidate_store is not None:
-            return self.candidate_store.release_expired_leases(now=now)
+            return self.candidate_store.release_expired_leases(tenant_id=tenant_id, now=now)
         moment = now or utc_now_dt()
         released: List[str] = []
         with self._candidate_lock():
             records = self._read_candidates()
             for candidate_id, record in records.items():
                 if str(record.get("status") or "") != STATUS_CLAIMED:
+                    continue
+                if tenant_id and candidate_tenant_id(record) != tenant_id:
                     continue
                 expires_at = _parse_iso(record.get("lease_expires_at"))
                 if expires_at is not None and expires_at > moment:
