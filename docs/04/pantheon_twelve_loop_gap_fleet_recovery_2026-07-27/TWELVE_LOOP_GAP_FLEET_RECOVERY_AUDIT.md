@@ -219,10 +219,10 @@ snapshot.
 |---|---|---|
 | `L12-CURRENT-GAP-FLEET-AUDIT-20260727` / PR #4269 | Reviewer-approved exact head `5acc84f67972bbd3f63157250b50753c2199a35c`; merged to `dev` as `58f7ee46a95b55fc7a88bd399cd40e55350fbf73`; canonical task archived `done` | Closed point-in-time audit only. This does not prove twelve-loop operability. |
 | `OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001` / PR #4273 | Reviewer approved the repaired telemetry evidence; closeout composed latest `dev`, merged PR #4273 as `db658d8dc88dfc1e9abd6cec55e9c7e86b9a269a`, and archived the canonical task `done` | Closed. Telemetry discovery import no longer blocks the twelve-loop recovery frontier. |
-| `L12-EVO-001` / PR #4267 | Independent reviewer rejected exact head `6a534392c81d0eca58d08f289f3a9e1dd033e992` | Real acceptance blocker: direct failed downstream receipt leaves decision `executed/failed`, no compensation, and pending outbox; root compose also defaults evolution auth to disabled/empty token, contradicting tenant-authority evidence. |
+| `L12-EVO-001` / PR #4267 | Independent reviewer rejected exact head `6a534392c81d0eca58d08f289f3a9e1dd033e992`; owner then repaired the two cited blockers at head `0e6a1f5d18c309d197fe222101d4b4d19c8c7b99` with green Branch CI, but the PR is still `BEHIND` latest `dev` | The original acceptance blockers are repaired, but the loop is still not accepted until #4267 is composed onto latest `dev`, revalidated at exact head, reviewed, merged, and archived. |
 | `L12-DIST-001` / PR #4193 | Independent reviewer rejected exact head `62fecb4bb4c8f1fd55eb3ae014b7e6f746c91b50` | Real acceptance blocker: Registry idempotency accepts same-id StrategySpec with different payload/lineage as terminal success, violating source/draft lineage and terminal-write proof. |
-| `L12-GITHUB-REVIEW-BRIDGE-001` | Core GitHub review bridge PR #4280 merged as `16296c35fd2e604f3ecf2d06dec80da0040ee8e0`; follow-up PR #4281 remains open for exact-head reopen binding fail-closed coverage | Core bridge is landed, but control-plane closeout is not complete until #4281 passes review, CI, merge, and archival. |
-| `L12-FLEET-WORKER-OUTCOME-001` | Worker added missing-worker/retry outcome tests; the same live run then exposed repeated stale auth-pause classification for Codex workers | Outcome tracking must include provider-pause classification tests for Codex model-cache/usage/auth distinctions and avoid indefinite false auth pauses. |
+| `L12-GITHUB-REVIEW-BRIDGE-001` | Core GitHub review bridge PR #4280 merged as `16296c35fd2e604f3ecf2d06dec80da0040ee8e0`; follow-up PR #4281 merged as `cd09255a5ad82b3089ea7deb325dfe5ad7178a83` | Bridge implementation is landed. Task closeout still needs merged-dev verification and archival, not another implementation branch. |
+| `L12-FLEET-WORKER-OUTCOME-001` | Missing-worker/retry outcome repair PR #4279 merged as `6c57f19932d84903ec6bea700205f4a87229f59c`; authoritative status still shows the task not archived `done` | Implementation is landed, but owner/reviewer closeout must verify merged dev and archive the canonical task. Provider-pause classification remains a separate live fleet-control bug. |
 
 ### Addendum conclusion
 
@@ -234,8 +234,8 @@ program is still not complete. The remaining blockers are now more precise:
 1. Evolution loop failed on real terminal failure compensation and default
    tenant-auth posture.
 2. Distillation loop failed on Registry idempotency/lineage verification.
-3. GitHub review bridge closeout still has follow-up PR #4281 open for
-   exact-head reopen binding.
+3. GitHub review bridge and worker-outcome implementation PRs are merged, but
+   their canonical tasks still require merged-dev verification and archival.
 4. Fleet provider health classification still produces false indefinite auth
    pauses.
 

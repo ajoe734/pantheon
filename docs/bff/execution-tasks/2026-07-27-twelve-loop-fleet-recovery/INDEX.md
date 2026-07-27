@@ -90,13 +90,18 @@ supervisor-managed workers. It changed the execution state:
   approved, recomposed onto latest `dev`, merged as
   `db658d8dc88dfc1e9abd6cec55e9c7e86b9a269a`, and archived `done`.
 - PR #4267 / `L12-EVO-001` was reopened with concrete acceptance failures in
-  direct failed-receipt compensation and default compose tenant authority.
+  direct failed-receipt compensation and default compose tenant authority. The
+  owner later repaired those blockers at head
+  `0e6a1f5d18c309d197fe222101d4b4d19c8c7b99`, but the PR still requires
+  latest-`dev` compose, exact-head validation, review, merge, and archival.
 - PR #4193 / `L12-DIST-001` was reopened with a concrete Registry
   idempotency/lineage failure.
 - `L12-GITHUB-REVIEW-BRIDGE-001` landed core bridge PR #4280 as
-  `16296c35fd2e604f3ecf2d06dec80da0040ee8e0`; follow-up PR #4281 remains open
-  for exact-head reopen binding.
-- `L12-FLEET-WORKER-OUTCOME-001` remains an active control-plane repair.
+  `16296c35fd2e604f3ecf2d06dec80da0040ee8e0`; follow-up PR #4281 merged as
+  `cd09255a5ad82b3089ea7deb325dfe5ad7178a83`.
+- `L12-FLEET-WORKER-OUTCOME-001` landed implementation PR #4279 as
+  `6c57f19932d84903ec6bea700205f4a87229f59c`, but the canonical task still
+  needs merged-dev verification and archival.
 
 This update does not change the machine-readable task catalog. It clarifies the
 current dispatch frontier: do not create duplicate tasks for these reopened
