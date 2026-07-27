@@ -1038,3 +1038,62 @@ def test_l12_bff_incident_mapping_survives_failure_restart_and_recovery(
     assert resolved["status"] == "resolved"
     assert resolved["incident_id"] == incident_id
     assert "telemetry" not in restarted._open_incident_ids
+
+
+def test_l12_bff_recovery_survives_delivered_history_retention(
+    tmp_path,
+):
+    state_path = str(tmp_path / "incident-retention.sqlite3")
+    monitor = _health_monitor(
+        tmp_path,
+        state_path=state_path,
+        failure_threshold=1,
+        delivery_max_attempts=1,
+    )
+
+    with patch.object(health_module, "_post_json", return_value=(True, 202)):
+        asyncio.run(
+            monitor._handle_probe_result(
+                _probe(ok=False, consecutive_failures=1)
+            )
+        )
+
+    incident = monitor.get_state()["incidents"]["telemetry"]
+    opening_delivery_id = incident["create_delivery_id"]
+    assert incident["status"] == "open"
+    with monitor._store._connect() as connection:
+        connection.execute(
+            """
+            UPDATE delivery_outbox
+            SET updated_at='2026-01-01T00:00:00Z'
+            WHERE status='delivered'
+            """
+        )
+
+    pruned = monitor._store.prune_retained_history(
+        delivery_history_seconds=60,
+    )
+    retained_ids = {
+        item["delivery_id"] for item in monitor.list_delivery_records()
+    }
+    assert pruned["delivery_outbox"] == 1
+    assert opening_delivery_id in retained_ids
+
+    restarted = _health_monitor(
+        tmp_path,
+        state_path=state_path,
+        instance_id="replica-after-retention",
+        failure_threshold=1,
+        delivery_max_attempts=1,
+    )
+    with patch.object(health_module, "_post_json", return_value=(True, 202)):
+        asyncio.run(
+            restarted._handle_probe_result(
+                _probe(ok=True, checked_at="2026-07-27T18:41:00Z")
+            )
+        )
+
+    resolved = restarted.get_state()["incidents"]["telemetry"]
+    assert resolved["status"] == "resolved"
+    assert resolved["incident_id"] == incident["incident_id"]
+    assert restarted.get_state()["delivery"]["backlog"] == 0

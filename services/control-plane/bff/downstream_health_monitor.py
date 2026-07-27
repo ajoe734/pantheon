@@ -1160,10 +1160,53 @@ class _DurableHealthStore:
         )
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            protected_delivery_ids = {
+                str(row["create_delivery_id"])
+                for row in connection.execute(
+                    """
+                    SELECT create_delivery_id
+                    FROM incident_mappings
+                    WHERE status IN ('opening', 'open', 'resolving')
+                    """
+                ).fetchall()
+            }
+            for row in connection.execute(
+                """
+                SELECT dependency_ids_json
+                FROM delivery_outbox
+                WHERE status <> 'delivered'
+                """
+            ).fetchall():
+                protected_delivery_ids.update(
+                    str(item)
+                    for item in json.loads(
+                        str(row["dependency_ids_json"]) or "[]"
+                    )
+                )
+            connection.execute(
+                """
+                CREATE TEMP TABLE IF NOT EXISTS delivery_prune_protected (
+                    delivery_id TEXT PRIMARY KEY
+                )
+                """
+            )
+            connection.execute("DELETE FROM delivery_prune_protected")
+            connection.executemany(
+                """
+                INSERT OR IGNORE INTO delivery_prune_protected(delivery_id)
+                VALUES (?)
+                """,
+                ((delivery_id,) for delivery_id in protected_delivery_ids),
+            )
             delivered = connection.execute(
                 """
                 DELETE FROM delivery_outbox
                 WHERE status='delivered' AND updated_at < ?
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM delivery_prune_protected AS protected
+                      WHERE protected.delivery_id=delivery_outbox.delivery_id
+                  )
                 """,
                 (delivery_cutoff,),
             ).rowcount
