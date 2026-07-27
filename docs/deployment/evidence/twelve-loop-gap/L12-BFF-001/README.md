@@ -1,10 +1,16 @@
 # L12-BFF-001 owner evidence
 
-Status: BFF implementation ready; IncidentCase authority composed locally.
+Status: BFF implementation ready; independent Codex review pending.
 
 Delivery: [PR #4274](https://github.com/ajoe734/pantheon/pull/4274)
-targets `dev`; the prior AC5 blocker has been resolved in the PR branch and
-now awaits independent review plus normal PR gates.
+targets `dev`. The BFF and incidents authority compose locally and now await
+independent exact-head review plus normal PR gates.
+
+This owner evidence receipt uses canonical task-state journal sequence 2968,
+committed at `2026-07-27T20:48:26Z`, as its point-in-time task snapshot. The
+canonical snapshot scan boundary is journal sequence 2968: owner `Codex2`,
+reviewer `Codex`, status `in_progress`, and review file
+`docs/deployment/evidence/twelve-loop-gap/L12-BFF-001/evidence.json`.
 
 The BFF health controller now emits the strict non-trading
 `pantheon.infrastructure-health/1` contract, enumerates the complete configured
@@ -23,17 +29,19 @@ requires `approval_ref` plus `reason`; the actor and replay result are persisted
 
 ## Verified
 
-On implementation head `f2be990d53f041cb52d6eadf4832b8873baab6b0`, based on dev
-`b81edf76dfc14087dd7d5e3a6599448cb9d0bb09`:
+The delivery receipt tree is based on dev
+`b81edf76dfc14087dd7d5e3a6599448cb9d0bb09`. Its exact receipt commit and
+required GitHub checks are recorded in `evidence.json` after that commit's
+checks complete.
 
 ```text
-/home/lupin/pantheon/.venv/bin/python -m pytest -q \
+.venv-pantheon/bin/python -m pytest -q \
   services/control-plane/bff/test_bff_downstream_health_monitor.py \
   services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py \
   services/telemetry/test_infrastructure_health_ingest.py \
   services/incidents/test_main_routes.py
 
-167 passed, 29 warnings
+168 tests collected and passed
 ```
 
 The tests include a monitor-built event admitted through the real strict
@@ -44,7 +52,11 @@ the incidents-owned non-trading `POST /api/incidents/consume-infrastructure-heal
 route. The post-review repair also proves incident authority HTTP 409 is not
 treated as an idempotent success, leaves conflicting delivery intent visible in
 DLQ, and bounds retained durable history with trigger-maintained delivery
-status counters so health reads do not scale with outbox history.
+status counters so health reads do not scale with outbox history. The latest
+recovery-after-retention regression additionally ages and prunes delivered
+history, proves the active incident-open dependency is retained, restarts the
+monitor on the same SQLite WAL store, and confirms that recovery reaches the
+real incident resolve route with zero delivery backlog.
 
 ## Incident authority composition
 
@@ -61,5 +73,5 @@ and resolves through the canonical status route. `L12-VERIFY-OBS-001` still
 must run the hosted target stop/recovery proof with the manifest-issued BFF
 service JWT and retained BFF volume before hosted deployment closeout.
 
-The machine-readable acceptance and independent-review placeholder are in
-`evidence.json`.
+The machine-readable acceptance, content digest, delivery receipt checks, and
+independent-review placeholder are in `evidence.json`.
