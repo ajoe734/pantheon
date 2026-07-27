@@ -1722,8 +1722,23 @@ def _fetch_worker_base_ref(repo_root: Path, base_ref: str) -> tuple[bool, str | 
     return False, details or "git fetch failed"
 
 
-def _worker_base_ref_precondition(base_ref: str) -> tuple[bool, str | None]:
-    """Fail closed in live cycles unless the network fetch ran before admission."""
+def _worker_base_ref_precondition(
+    base_ref: str,
+    repo_root: Path | None = None,
+) -> tuple[bool, str | None]:
+    """Prove the worker base is ready from git, not from a per-loop context flag.
+
+    The per-loop ``_PREFETCHED_WORKER_BASE_REFS`` context records the fetch this
+    cycle performed before runtime admission.  It is a useful fast path but it
+    is not the invariant: after a provider probe, a worker failure, a redispatch,
+    or a split-root supervisor restart, a dispatch can cross into a cycle whose
+    context never listed the base even though ``origin/dev`` resolves fine in the
+    repository.  Treating the missing flag as proof of a missing fetch stalled
+    the scheduler with ``base_ref_not_prefetched:origin/dev``.
+
+    Recovery order: trust the context, else refresh the ref and require it to
+    resolve.  Fail closed only when the ref truly does not resolve.
+    """
 
     prefetched = _PREFETCHED_WORKER_BASE_REFS.get()
     if prefetched is None:
@@ -1732,7 +1747,26 @@ def _worker_base_ref_precondition(base_ref: str) -> tuple[bool, str | None]:
     normalized = str(base_ref or "").strip()
     if normalized in prefetched:
         return True, None
-    return False, f"base_ref_not_prefetched:{normalized or 'missing'}"
+    if not normalized:
+        return False, "base_ref_not_prefetched:missing"
+    if repo_root is None:
+        return False, f"base_ref_not_prefetched:{normalized}"
+
+    _fetched, fetch_error = _fetch_worker_base_ref(repo_root, normalized)
+    if not _git_ref_exists(repo_root, normalized):
+        return False, (
+            f"base_ref_unresolved:{normalized}:"
+            f"{fetch_error or 'ref missing after refresh'}"
+        )
+    # Cache the recovered ref for the rest of this cycle so a redispatch storm
+    # does not re-fetch once per worktree operation.
+    _PREFETCHED_WORKER_BASE_REFS.set(prefetched | {normalized})
+    console_log(
+        f"worker base {normalized} recovered outside the per-loop prefetch context "
+        f"(fetch_error={fetch_error or 'none'}); ref resolves, dispatch continues",
+        quiet=SUPERVISOR_LOG_QUIET,
+    )
+    return True, None
 
 
 def _quarantine_incomplete_worker_path(path: Path) -> Path | None:
@@ -1781,7 +1815,7 @@ def _create_worker_worktree(repo_root: Path, path: Path, branch: str, base_ref: 
         if _quarantine_incomplete_worker_path(path) is None:
             return False, f"Worker worktree path already exists and is not empty: {path}"
 
-    base_ready, base_error = _worker_base_ref_precondition(base_ref)
+    base_ready, base_error = _worker_base_ref_precondition(base_ref, repo_root)
     if not base_ready:
         return False, f"Failed to refresh worker base {base_ref}: {base_error}"
 
@@ -2008,7 +2042,7 @@ def _refresh_reused_worker_worktree(
     tracked changes.
     """
     base = base_ref.split("/", 1)[1] if base_ref.startswith("origin/") else base_ref
-    base_ready, base_error = _worker_base_ref_precondition(base_ref)
+    base_ready, base_error = _worker_base_ref_precondition(base_ref, repo_root)
     if not base_ready:
         return False, f"fetch_failed: {base_error}"
 
@@ -7331,6 +7365,137 @@ def _prepare_preempted_task_status_locked(
     return event
 
 
+MISSING_HANDOFF_EXIT_REASON = (
+    "Owner worker exited cleanly after preparing a PR head but never advanced the "
+    "task to review/handoff."
+)
+
+
+def worker_prepared_review_head(worker: dict[str, Any]) -> bool:
+    """True for an owner run that pushed a PR head and then exited cleanly.
+
+    That shape is not a plain provider failure: the run did the work and only
+    skipped the handoff transition. Redispatching the same owner reproduces the
+    same clean exit forever, which is the observed token loop.
+    """
+    if not str(worker.get("pr_url") or "").strip():
+        return False
+    dispatch_reason = str((worker.get("request_snapshot") or {}).get("reason") or "").strip()
+    return dispatch_reason in {
+        REASON_OWNED_READY,
+        REASON_OWNED_IN_PROGRESS,
+        REASON_OWNED_FINALIZE,
+    }
+
+
+def _prepare_missing_handoff_blocker_locked(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Record an actionable missing-handoff blocker for a prepared-but-unhanded task."""
+    if not config.get("paths", {}).get("status_file"):
+        return None
+
+    task_id = str(worker.get("task_id") or "").strip()
+    if not task_id:
+        return None
+    owner_agent = display_name_for(config, str(worker.get("agent_id") or worker.get("provider") or "")).strip()
+    if not owner_agent:
+        return None
+
+    status = load_status(config)
+    if status.get("status_activity_outbox") not in (None, {}, []):
+        return None
+    task = task_index_from_status(config, status).get(task_id)
+    if not task:
+        return None
+    if str(task.get("owner") or "").strip() != owner_agent:
+        return None
+
+    reviewer = str(task.get("reviewer") or "").strip()
+    waiting_for = reviewer or owner_agent
+    if any(
+        str(blocker.get("task_id") or "") == task_id
+        and str(blocker.get("status") or "") == "open"
+        and str(blocker.get("blocker_kind") or "") == "missing_handoff"
+        for blocker in (status.get("blockers") or [])
+    ):
+        return None
+
+    pr_url = str(worker.get("pr_url") or "").strip()
+    timestamp = utc_now()
+    message = (
+        f"{owner_agent} prepared {pr_url or 'a PR head'} for {task_id} and exited without "
+        f"moving the task to review/handoff. Redispatch is suspended to stop an "
+        f"owned_in_progress_dispatch loop: confirm the prepared head, then hand off to "
+        f"{waiting_for} (or reopen the task) through scripts/ai-status.sh."
+    )
+
+    task["status"] = "blocked"
+    task["waiting_for"] = waiting_for
+    task["last_update"] = timestamp
+    task["next"] = message
+
+    status.setdefault("blockers", []).append(
+        {
+            "task_id": task_id,
+            "owner": owner_agent,
+            "waiting_for": waiting_for,
+            "message": message,
+            "status": "open",
+            "created_at": timestamp,
+            "blocker_kind": "missing_handoff",
+            "pr_url": pr_url or None,
+            "worker_run_id": worker.get("run_id"),
+        }
+    )
+
+    event = {
+        "event_id": "supervisor-missing-handoff-"
+        + hashlib.sha256(
+            f"{task_id}\0{timestamp}\0{owner_agent}\0{pr_url}".encode("utf-8")
+        ).hexdigest(),
+        "ts": timestamp,
+        "agent": "Orchestrator",
+        "type": "task_missing_handoff_blocked",
+        "task_id": task_id,
+        "target_agent": owner_agent,
+        "waiting_for": waiting_for,
+        "pr_url": pr_url or None,
+        "message": message,
+    }
+    status["status_activity_outbox"] = _status_activity_outbox([event])
+    write_status(config, status, source="supervisor-missing-handoff")
+    return event
+
+
+def record_missing_handoff_blocker(config: dict[str, Any], worker: dict[str, Any]) -> dict[str, Any] | None:
+    if not config.get("paths", {}).get("status_file"):
+        return None
+    status_path = config_path(config, "status_file")
+    with canonical_task_state_lock_file(
+        status_path,
+        shared=False,
+        nonblocking=False,
+    ):
+        event = _prepare_missing_handoff_blocker_locked(config, worker)
+    if event is None:
+        return None
+    sync_status_pipeline(config)
+    write_activity_log(
+        config,
+        {
+            "type": "task_missing_handoff_blocked",
+            "provider": worker.get("provider"),
+            "task_id": event["task_id"],
+            "message": event["message"],
+            "worker_run_id": worker.get("run_id"),
+            "pr_url": event.get("pr_url"),
+        },
+    )
+    return event
+
+
 def sync_preempted_task_status(config: dict[str, Any], worker: dict[str, Any]) -> bool:
     if not config.get("paths", {}).get("status_file"):
         return False
@@ -9634,6 +9799,33 @@ def poll_worker_completion_stage(
         )
     }
     if task_status in redispatch_statuses:
+        if worker_prepared_review_head(worker):
+            # A clean owner exit that already pushed the review head is a missing
+            # handoff, not a provider failure. Reassigning or redispatching the
+            # same owner reproduces the same clean exit every tick; surface the
+            # concrete blocker instead and take the task out of owner dispatch.
+            blocker = record_missing_handoff_blocker(config, worker)
+            if blocker is not None:
+                worker["status"] = "failed"
+                worker["last_event_at"] = utc_now()
+                worker["last_error"] = MISSING_HANDOFF_EXIT_REASON
+                clear_task_failure_streaks_for_task(state, worker.get("task_id"))
+                write_activity_log(
+                    config,
+                    {
+                        "type": "worker_failed",
+                        "provider": worker.get("provider"),
+                        "task_id": worker.get("task_id"),
+                        "message": MISSING_HANDOFF_EXIT_REASON,
+                        "worker_run_id": worker["run_id"],
+                        "pr_url": worker.get("pr_url"),
+                        "session_url": worker.get("session_url"),
+                    },
+                )
+                finalize_queue_event_record(
+                    config, state, worker, "failed", MISSING_HANDOFF_EXIT_REASON
+                )
+                return {"changed": True, "stop": True}
         failure_count = record_task_failure_streak(
             state,
             worker,
