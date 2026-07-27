@@ -147,6 +147,18 @@
         "receipt_role": "current_delivery_receipt",
         "sha": "b1afb294c12d89cbae9dfd9ab28989801f8dba9a",
         "subject": "L12-DIST-001: bind current owner receipt"
+      },
+      {
+        "delivery_state": "current_manifest_anchor",
+        "note": "Records the v3 manifest and checksum that bind the green current owner receipt.",
+        "sha": "911617e11faa4ee35ba7897e0fab68c5d1352df6",
+        "subject": "L12-DIST-001: anchor current receipt manifest"
+      },
+      {
+        "delivery_state": "post_current_receipt_dev_refresh_merge",
+        "note": "Merged dev a6966b13d84430387da9c3a33fcf224c841bc5c6 after the receipt checks. The incoming delta touched only SUP-TASK-STATE-LOCK-LATENCY-001 evidence and changed none of the seven digest-bound artifacts.",
+        "sha": "4f76d97bc879e4fb1ca942c248e75e911847e9ea",
+        "subject": "Merge remote-tracking branch 'origin/dev' into task/L12-DIST-001"
       }
     ],
     "pull_request": {
@@ -479,8 +491,8 @@
     },
     "delivery_receipt_intermediate_state": {
       "blocking_for_this_task": false,
-      "containment": "Receipt b1afb294c12d89cbae9dfd9ab28989801f8dba9a carries the seven digest-bound artifacts with all required checks green; the evidence follow-up changes only evidence.json plus evidence.sha256.",
-      "description": "PR #4193 receipt head b1afb294c12d89cbae9dfd9ab28989801f8dba9a has all required receipt checks green and auto-merge disabled; final evidence-follow-up checks remain required before independent review.",
+      "containment": "Receipt b1afb294c12d89cbae9dfd9ab28989801f8dba9a carries the seven digest-bound artifacts with all required checks green; post-receipt merge 4f76d97bc879e4fb1ca942c248e75e911847e9ea added only unrelated supervisor evidence, and the task follow-up changes only evidence.json, evidence.sha256, and the task brief.",
+      "description": "PR #4193 receipt head b1afb294c12d89cbae9dfd9ab28989801f8dba9a has all required receipt checks green and auto-merge disabled; post-receipt dev refresh 4f76d97bc879e4fb1ca942c248e75e911847e9ea changed no bound bytes, and final evidence-follow-up checks remain required before independent review.",
       "expiry": "When the evidence follow-up head is pushed and all visible checks pass.",
       "owner": "Codex2",
       "recheck_trigger": "Before independent review.",
