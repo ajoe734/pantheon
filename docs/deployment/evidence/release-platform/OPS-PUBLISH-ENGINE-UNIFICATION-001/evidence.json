@@ -4,8 +4,8 @@
   "title": "Unify nightly publish cut engine across Pantheon and execute-plans",
   "owner": "Codex",
   "reviewer": "Codex2",
-  "status": "review_pending",
-  "generated_at": "2026-07-27T15:33:26Z",
+  "status": "review_approved",
+  "generated_at": "2026-07-27T16:06:10Z",
   "source_packet_id": "pkt_pantheon_batch_architecture_20260727_supervisor_autodrain_001",
   "scope": {
     "owned": [
@@ -56,8 +56,9 @@
         "number": 4255,
         "url": "https://github.com/ajoe734/pantheon/pull/4255"
       },
-      "review_head": null,
-      "merge_commit": null
+      "review_head": "885f9c34d2d83d08e1564089395fe337ea99b033",
+      "merge_commit": "33e1c4d64e4accceab4d803e7b4ce2324f44306a",
+      "merged_at": "2026-07-27T16:01:28Z"
     },
     "execute_plans": {
       "slug": "ajoe734/execute-plans",
@@ -69,8 +70,9 @@
         "number": 557,
         "url": "https://github.com/ajoe734/execute-plans/pull/557"
       },
-      "review_head": null,
-      "merge_commit": null
+      "review_head": "ec9ca4d7eb255b72366c43076ad477a3daa77fcf",
+      "merge_commit": "cbc16830a096077f978b4efe499dd8fa85f166f2",
+      "merged_at": "2026-07-27T16:01:21Z"
     }
   },
   "contract": {
@@ -110,8 +112,8 @@
     },
     {
       "criterion": "PR checks, independent review, merge, and evidence are complete without intermediate hosted deploy.",
-      "status": "pending",
-      "evidence": "Awaiting both task PRs, visible checks, Codex2 exact-head review, and merge."
+      "status": "passed",
+      "evidence": "Codex2 approved Pantheon head 885f9c34d2d83d08e1564089395fe337ea99b033 and execute-plans head ec9ca4d7eb255b72366c43076ad477a3daa77fcf after independent validation; PR #4255 merged as 33e1c4d64e4accceab4d803e7b4ce2324f44306a and PR #557 merged as cbc16830a096077f978b4efe499dd8fa85f166f2."
     }
   ],
   "validation": [
@@ -169,7 +171,7 @@
     "real_capital_or_broker_action": false
   },
   "review": {
-    "status": "pending",
+    "status": "review_approved",
     "reviewer": "Codex2",
     "required_scope": [
       "both exact PR heads",
@@ -177,6 +179,49 @@
       "publish-only no-dispatch boundary",
       "canonical documentation and evidence consistency"
     ],
-    "decision": null
+    "decision": {
+      "approved_at": "2026-07-27T15:58:52Z",
+      "pantheon_head": "885f9c34d2d83d08e1564089395fe337ea99b033",
+      "execute_plans_head": "ec9ca4d7eb255b72366c43076ad477a3daa77fcf",
+      "summary": "Exact-head review approved both PRs as open, clean, mergeable, and green. Independent validation reproduced historical rc=141 with 12,000 tags, proved repaired idempotency, passed Pantheon 78 tests plus execute-plans 4+19 tests, typecheck, and production build, and confirmed the matched publish-only contract with no deploy dispatch or hosted deployment."
+    }
+  },
+  "closeout": {
+    "owner": "Codex",
+    "merged_prs": [
+      {
+        "repository": "ajoe734/execute-plans",
+        "pr": 557,
+        "review_head": "ec9ca4d7eb255b72366c43076ad477a3daa77fcf",
+        "merge_commit": "cbc16830a096077f978b4efe499dd8fa85f166f2",
+        "base_branch": "dev"
+      },
+      {
+        "repository": "ajoe734/pantheon",
+        "pr": 4255,
+        "review_head": "885f9c34d2d83d08e1564089395fe337ea99b033",
+        "merge_commit": "33e1c4d64e4accceab4d803e7b4ce2324f44306a",
+        "base_branch": "dev"
+      }
+    ],
+    "merge_verification": "Both reviewed heads and merge commits are ancestors of their repository origin/dev refs.",
+    "validation": [
+      {
+        "repository": "ajoe734/pantheon",
+        "command": "bash scripts/git/test_nightly_publish.sh; .venv-pantheon/bin/python3 -m pytest -q scripts/test_nightly_publish_cut.py scripts/git/test_git_workflow_helpers.py tests/orchestrator/test_release_branch_discipline.py scripts/test_agora_compat_manifest.py",
+        "result": "12,000-tag many-tag/idempotency regression passed; 78 tests passed in 23.21s."
+      },
+      {
+        "repository": "ajoe734/execute-plans",
+        "command": "bash scripts/git/test_nightly_publish.sh; python3 scripts/git/test_publish_promote.py; npx vitest run src/test/deploy-safe-defaults.test.ts; npm run typecheck; VITE_GCP_IDENTITY_API_KEY=<format-valid non-secret test value> VITE_GCP_IDENTITY_PROJECT_ID=test-project VITE_GCP_IDENTITY_AUTH_DOMAIN=test.invalid npm run build",
+        "result": "12,000-tag many-tag/idempotency regression, 4 promotion tests, 19 deploy-safe tests, typecheck, and production build passed."
+      },
+      {
+        "repository": "cross-repo",
+        "command": "git merge-base --is-ancestor <review-head> origin/dev; git merge-base --is-ancestor <merge-commit> origin/dev",
+        "result": "Reviewed heads and merge commits are ancestors of both repository dev refs."
+      }
+    ],
+    "hosted_deployment": "not run; outside this publish-only task boundary"
   }
 }
