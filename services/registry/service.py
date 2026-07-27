@@ -209,6 +209,32 @@ def _ensure_strategy_spec_view(view: RegistryEntryView, registry_id: str) -> Reg
     return view
 
 
+def _ensure_strategy_spec_registration_matches(
+    view: RegistryEntryView,
+    create_payload: RegistryEntryCreate,
+    registry_id: str,
+) -> RegistryEntryView:
+    """Validate StrategySpec create-if-absent replay against existing content."""
+
+    view = _ensure_strategy_spec_view(view, registry_id)
+    entry = view.entry
+    if (
+        entry.strategy_id != create_payload.strategy_id
+        or entry.version != create_payload.version
+        or entry.lineage.to_dict() != create_payload.lineage.to_dict()
+        or entry.storage_ref.to_dict() != create_payload.storage_ref.to_dict()
+        or entry.checksum != create_payload.checksum
+        or entry.producer_run_id != create_payload.producer_run_id
+        or entry.evaluation_summary != create_payload.evaluation_summary
+        or entry.rollback_target != create_payload.rollback_target
+        or entry.metadata != create_payload.metadata
+    ):
+        raise RegistryError(
+            f"StrategySpec registry_id already exists with different content: {registry_id}"
+        )
+    return view
+
+
 def _ensure_strategy_artifact_view(
     view: RegistryEntryView,
     registry_id: str,
@@ -410,11 +436,17 @@ async def register_strategy_spec(payload: StrategySpecRegisterRequest):
     registry_service = get_registry_service()
     try:
         create_payload = _strategy_spec_register_payload(payload)
-        view, _created = registry_service.register_if_absent(
+        view, created = registry_service.register_if_absent(
             create_payload,
             registry_id,
         )
-        return _ensure_strategy_spec_view(view, registry_id)
+        if created:
+            return _ensure_strategy_spec_view(view, registry_id)
+        return _ensure_strategy_spec_registration_matches(
+            view,
+            create_payload,
+            registry_id,
+        )
     except RegistryError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

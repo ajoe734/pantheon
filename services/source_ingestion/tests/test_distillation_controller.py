@@ -118,7 +118,22 @@ def test_distillation_controller_tick_success(tmp_path, monkeypatch) -> None:
 
     def mock_register_strategy_spec(url: str, payload: dict) -> dict:
         registry_registrations.append(payload)
-        entry = {"registry_id": payload["registry_id"], "artifact_state": "draft"}
+        metadata = dict(payload.get("metadata") or {})
+        if isinstance(payload.get("strategy_spec"), dict):
+            metadata.setdefault("strategy_spec", payload["strategy_spec"])
+        entry = {
+            **payload,
+            "artifact_type": "strategy_spec",
+            "artifact_state": "draft",
+            "lineage": {
+                "parent_registry_ids": None,
+                **dict(payload.get("lineage") or {}),
+                "source_strategy_spec_id": None,
+            },
+            "metadata": metadata,
+        }
+        entry.pop("strategy_spec", None)
+        entry.pop("source_digest", None)
         registry_store[payload["registry_id"]] = {"entry": entry}
         return {"entry": entry}
 

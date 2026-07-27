@@ -138,6 +138,29 @@ Commands rerun in this task worktree with the checkout-scoped
   follow-up that names this receipt.
 - Closeout truth replay — failed closed only on the expected open independent
   review risk and missing reviewer verdict; no owner-evidence gap remained.
+
+## Reviewer-blocker repair addendum — 2026-07-27
+
+Independent review rejected exact head
+`62fecb4bb4c8f1fd55eb3ae014b7e6f746c91b50` because two idempotency paths
+accepted conflicting Registry content as terminal success:
+
+- StrategySpec same-id create-if-absent could return an existing entry with
+  different payload, checksum, seed lineage, or metadata.
+- `_make_registry_sync` treated any existing draft/candidate as
+  `already_terminal` without proving that the existing Registry row matched
+  the same source version, source digest, event version, distillation job,
+  seed-derived checksum, and embedded StrategySpec payload.
+
+This repair makes StrategySpec same-id registration fail closed on content
+collision and makes distillation Registry replay validate canonical readback
+for draft/candidate entries before it can acknowledge a job. Existing
+approved/retired entries still remain immutable and are not overwritten.
+
+Validation rerun in `/tmp/pantheon-4193-dist-repair.hPWFnF`:
+
+- `.venv/bin/python -m pytest -q services/registry/test_service.py services/source_ingestion/tests/test_distillation_controller.py services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py` — 113 passed, 2 warnings.
+- `git diff --check` — pass.
 - Negative control: the same two-process scenario with the JSONL lease stubbed
   out lost 1–2 of 40 seeds on every run, confirming the proof is not vacuous.
 

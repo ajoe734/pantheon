@@ -430,13 +430,7 @@ class TestFastAPIEndpoints:
 
         duplicate = self.client.post(
             "/api/registry/strategy-specs",
-            json={
-                **payload,
-                "strategy_spec": {
-                    **payload["strategy_spec"],
-                    "title": "A duplicate create must not replace approval",
-                },
-            },
+            json=payload,
         )
 
         assert duplicate.status_code == 200, duplicate.text
@@ -447,6 +441,43 @@ class TestFastAPIEndpoints:
         assert readback.status_code == 200, readback.text
         entry = readback.json()["entry"]
         assert entry["artifact_state"] == "approved"
+        assert (
+            entry["metadata"]["strategy_spec"]["title"]
+            == "Distilled momentum hypothesis"
+        )
+
+    def test_strategy_spec_same_id_registration_rejects_content_collision(self):
+        registry_id = "reg-strategy-spec-content-collision"
+        payload = {
+            "registry_id": registry_id,
+            "strategy_id": "strat-content-collision",
+            "version": "1.0.0",
+            "source_seed_id": "source-seed-original",
+            "strategy_spec": _minimal_strategy_spec("strat-content-collision"),
+        }
+        created = self.client.post("/api/registry/strategy-specs", json=payload)
+        assert created.status_code == 200, created.text
+
+        duplicate = self.client.post(
+            "/api/registry/strategy-specs",
+            json={
+                **payload,
+                "source_seed_id": "source-seed-conflicting",
+                "strategy_spec": {
+                    **payload["strategy_spec"],
+                    "title": "A duplicate create must not hide a collision",
+                },
+            },
+        )
+
+        assert duplicate.status_code == 400, duplicate.text
+        assert "different content" in duplicate.json()["detail"]
+        readback = self.client.get(
+            f"/api/registry/strategy-specs/{registry_id}"
+        )
+        assert readback.status_code == 200, readback.text
+        entry = readback.json()["entry"]
+        assert entry["metadata"]["source_seed_id"] == "source-seed-original"
         assert (
             entry["metadata"]["strategy_spec"]["title"]
             == "Distilled momentum hypothesis"

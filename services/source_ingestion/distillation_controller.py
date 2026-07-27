@@ -174,6 +174,73 @@ def _registry_artifact_state(entry: Mapping[str, Any]) -> str:
     return str(payload.get("artifact_state") or "").strip().lower()
 
 
+def _registry_entry_matches_expected(
+    entry: Mapping[str, Any],
+    expected: Mapping[str, Any],
+) -> bool:
+    """Validate that a Registry readback belongs to this exact source version."""
+
+    payload = _registry_entry_payload(entry)
+    compared_fields = (
+        "registry_id",
+        "strategy_id",
+        "version",
+        "checksum",
+        "producer_run_id",
+        "evaluation_summary",
+        "rollback_target",
+    )
+    for field in compared_fields:
+        if payload.get(field) != expected.get(field):
+            return False
+    if str(payload.get("artifact_type") or "") != "strategy_spec":
+        return False
+    if _drop_nulls(payload.get("lineage")) != _drop_nulls(expected.get("lineage")):
+        return False
+    if _drop_nulls(payload.get("storage_ref")) != _drop_nulls(expected.get("storage_ref")):
+        return False
+    payload_metadata = payload.get("metadata") or {}
+    expected_metadata = expected.get("metadata") or {}
+    if not isinstance(payload_metadata, Mapping) or not isinstance(
+        expected_metadata,
+        Mapping,
+    ):
+        return False
+    for key, value in expected_metadata.items():
+        if payload_metadata.get(key) != value:
+            return False
+    if payload_metadata.get("strategy_spec") != expected.get("strategy_spec"):
+        return False
+    expected_distillation = (expected.get("metadata") or {}).get("distillation")
+    payload_distillation = (payload.get("metadata") or {}).get("distillation")
+    if not isinstance(expected_distillation, Mapping) or not isinstance(
+        payload_distillation,
+        Mapping,
+    ):
+        return False
+    for field in (
+        "source_id",
+        "source_digest",
+        "source_event_version",
+        "distillation_job_id",
+    ):
+        if payload_distillation.get(field) != expected_distillation.get(field):
+            return False
+    return True
+
+
+def _drop_nulls(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {
+            key: _drop_nulls(item)
+            for key, item in value.items()
+            if item is not None
+        }
+    if isinstance(value, list):
+        return [_drop_nulls(item) for item in value]
+    return value
+
+
 def _versioned_registry_id(source: SourceRecord, job: DistillationJob) -> str:
     digest = (
         job.source_digest.removeprefix("sha256:")
@@ -240,6 +307,11 @@ def _make_registry_sync(
         source = request.source
         job = request.job
         registry_id = _versioned_registry_id(source, job)
+        payload = _build_registry_payload(
+            config=config,
+            request=request,
+            registry_id=registry_id,
+        )
         existing = _get_registry_entry(config.registry_url, registry_id)
         if existing is not None:
             state = _registry_artifact_state(existing)
@@ -249,6 +321,11 @@ def _make_registry_sync(
                     status="immutable",
                     reason=f"Registry artifact {registry_id} is immutable ({state})",
                 )
+            if not _registry_entry_matches_expected(existing, payload):
+                raise RuntimeError(
+                    f"Registry artifact {registry_id} exists with conflicting "
+                    f"distillation lineage/content for source {source.source_id}"
+                )
             # A stable versioned Registry identity makes this the crash-replay
             # readback path: the write landed before the worker ack did.
             return RegistrySyncResult(
@@ -257,11 +334,6 @@ def _make_registry_sync(
                 reason="versioned Registry draft already exists",
             )
 
-        payload = _build_registry_payload(
-            config=config,
-            request=request,
-            registry_id=registry_id,
-        )
         _register_strategy_spec_if_absent(config.registry_url, payload)
         readback = _get_registry_entry(config.registry_url, registry_id)
         if readback is None:
@@ -274,6 +346,10 @@ def _make_registry_sync(
                 registry_id=registry_id,
                 status="immutable",
                 reason=f"Registry artifact {registry_id} became immutable ({state})",
+            )
+        if not _registry_entry_matches_expected(readback, payload):
+            raise RuntimeError(
+                f"Registry write readback mismatched distillation lineage/content for {registry_id}"
             )
         return RegistrySyncResult(registry_id=registry_id, status="synced")
 

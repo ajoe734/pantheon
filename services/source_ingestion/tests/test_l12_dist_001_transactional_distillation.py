@@ -114,7 +114,22 @@ class _RecordingRegistry:
         if existing is not None:
             return existing
         self.writes.append(registry_id)
-        entry = {"registry_id": registry_id, "artifact_state": "draft"}
+        metadata = dict(payload.get("metadata") or {})
+        if isinstance(payload.get("strategy_spec"), dict):
+            metadata.setdefault("strategy_spec", payload["strategy_spec"])
+        entry = {
+            **payload,
+            "artifact_type": "strategy_spec",
+            "artifact_state": "draft",
+            "lineage": {
+                "parent_registry_ids": None,
+                **dict(payload.get("lineage") or {}),
+                "source_strategy_spec_id": None,
+            },
+            "metadata": metadata,
+        }
+        entry.pop("strategy_spec", None)
+        entry.pop("source_digest", None)
         self.entries[registry_id] = {"entry": entry}
         if self.drop_ack_after_write:
             # The write landed but the worker never sees the acknowledgement.
@@ -122,9 +137,15 @@ class _RecordingRegistry:
         return {"entry": entry}
 
     def approve(self, registry_id: str) -> None:
-        self.entries[registry_id] = {
-            "entry": {"registry_id": registry_id, "artifact_state": "approved"}
-        }
+        existing = self.entries.get(registry_id)
+        if existing is not None:
+            existing_entry = dict(existing["entry"])
+            existing_entry["artifact_state"] = "approved"
+            self.entries[registry_id] = {"entry": existing_entry}
+        else:
+            self.entries[registry_id] = {
+                "entry": {"registry_id": registry_id, "artifact_state": "approved"}
+            }
 
 
 @pytest.fixture()
@@ -649,6 +670,51 @@ class TestRegistryFailureIsTruthful:
         assert job.status == DistillationJobStatus.DONE.value
         assert job.registry_id == _registry_id_for(source)
         assert len(registry.entries) == 1
+
+    def test_existing_draft_with_conflicting_lineage_is_not_terminal(
+        self, tmp_path: Path, registry: _RecordingRegistry
+    ) -> None:
+        config = _controller_config(tmp_path, retry_base_seconds=0)
+        source = _normalized_source(
+            "reg-review-collision",
+            title="Original registry collision proof",
+        )
+        registry_id = _registry_id_for(source)
+        registry.entries[registry_id] = {
+            "entry": {
+                "registry_id": registry_id,
+                "artifact_type": "strategy_spec",
+                "artifact_state": "draft",
+                "strategy_id": "strat-conflicting-source",
+                "version": "1.0.0",
+                "lineage": {"source_run_ids": ["seed-b"]},
+                "storage_ref": {
+                    "backend": "inline",
+                    "path": "$.entry.metadata.strategy_spec",
+                },
+                "checksum": "sha256:conflicting",
+                "metadata": {
+                    "distillation": {
+                        "source_id": source.source_id,
+                        "source_digest": "sha256:conflicting",
+                        "source_event_version": "source_record.normalized.v2",
+                        "distillation_job_id": "distill-conflicting",
+                    },
+                    "strategy_spec": {"title": "Conflicting draft"},
+                },
+            }
+        }
+        _write_evidence(config, source)
+
+        result, error, _ = _run_tick(config, _DummyLoopWriter())
+
+        assert result is None
+        assert isinstance(error, DistillationControllerError)
+        assert error.stage == "registry_sync"
+        job = DistillationJobQueue(config.job_queue_path).get(source.source_id)
+        assert job.status == DistillationJobStatus.RETRY_WAIT.value
+        assert "conflicting distillation lineage/content" in (job.error or "")
+        assert registry.writes == []
 
     def test_outage_replay_keeps_identity_across_an_intervening_revision(
         self, tmp_path: Path
