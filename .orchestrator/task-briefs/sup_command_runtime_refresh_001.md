@@ -3,11 +3,11 @@
 Generated in the worker workspace because the supervisor root did not have a task brief file.
 
 ## Task
-- Title: Refresh governed supervisor command runtime without config changes
-- Status: todo
-- Owner: Claude
+- Title: Refresh installed supervisor command runtime safely
+- Status: in_progress
+- Owner: Codex
 - Reviewer: Codex2
-- Next: Wait for SUP-WORKER-TRUTH-RECONCILE-001 to merge; then supervisor dispatches Claude for serialized runtime refresh and Codex2 review.
+- Next: Human/Ops wait cleared by operator instruction: supervisor/runtime repair, status-command binding, PR/review validation, safe runtime refresh, and fleet dispatch do not need separate permission. Proceed without live config edits; preserve active leases or serialize safely; exact installed command runtime must support structured REVIEW_PR/REVIEW_HEAD_SHA binding before dependent review-gate tasks can close.
 
 ## Summary
 在 supervisor truth 修復合併後，將 governed command runtime 更新到精確 accepted dev；重用既有 config，不改 config，不中斷 active lease，保留 rollback。
