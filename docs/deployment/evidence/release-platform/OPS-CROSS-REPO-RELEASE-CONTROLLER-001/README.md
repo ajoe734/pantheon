@@ -98,7 +98,7 @@ post-merge release candidate, not an intermediate repair deployment.
 
 ## Review
 
-Owner: Codex2  
+Owner: Codex2
 Reviewer: Codex
 
 Independent exact-head review and both repository PR/merge identities are
