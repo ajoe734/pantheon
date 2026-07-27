@@ -1,3 +1,7 @@
+Revalidated by Codex after owner reassignment from Claude. The focused
+exact-head replacement, failed auto-merge revocation, and command_approve
+binding suites were rerun before this task branch was refreshed from dev.
+
 == python3 scripts/git/test_task_review_merge_gate.py
 ----------------------------------------------------------------------
 Ran 79 tests in 0.686s

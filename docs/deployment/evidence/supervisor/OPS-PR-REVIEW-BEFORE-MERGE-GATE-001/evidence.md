@@ -1,7 +1,13 @@
 # OPS-PR-REVIEW-BEFORE-MERGE-GATE-001 — Review-before-merge gate for task PRs
 
 Task: Gate task auto-merge on exact independent review when required
-Owner: Claude · Reviewer: Codex2 · Phase: Fleet delivery governance
+Owner: Codex · Reviewer: Codex2 · Phase: Fleet delivery governance
+
+Codex adopted the branch after Codex2 rejected predecessor head
+`190fb7fe8c95fa060a33e45edc0e6ac0a0e55a59`. Claude authored the existing
+implementation commits; Codex independently revalidated the corrected
+`7759ed36666ce62a7f912a9c85f74cf409cff095` behavior and owns the final
+evidence, handoff, and closeout.
 
 Scope rule honoured throughout: **no `.orchestrator/config.json` edit**, no
 hand-edited task board, no owner or reviewer action performed on behalf of
@@ -346,6 +352,15 @@ review findings against the modules as they stood at reviewed head `190fb7fe8`,
 of the regressions that pin them.
 
 ## 6. Residual risks
+
+**The governed command runtime has a bootstrap boundary.** At Codex adoption
+time `PANTHEON_COMMAND_RUNTIME_SHA` was
+`1434effdc88fb79abd0125351a5206af8fe4a7c7`; its `scripts/ai_status.py` did
+not yet contain the `REVIEW_PR` / `REVIEW_HEAD_SHA` binding added by this task.
+PR #4218 must therefore keep auto-merge disabled, receive independent Codex2
+review against the exact pushed head, and merge only that head. The repository
+delivery does not prove live activation: the installed runtime remains
+unproven until its normal refresh reports a merged SHA containing this change.
 
 **Gated PRs need an integrator pass to land.** Under `review_before_merge`
 nothing merges the PR automatically. After approval the merge comes from

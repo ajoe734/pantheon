@@ -5,9 +5,9 @@ Generated in the worker workspace because the supervisor root did not have a tas
 ## Task
 - Title: Gate task auto-merge on exact independent review when required
 - Status: in_progress
-- Owner: Claude
+- Owner: Codex
 - Reviewer: Codex2
-- Next: Review rejected at exact PR #4218 head 190fb7fe8c95fa060a33e45edc0e6ac0a0e55a59. Blocking findings: (1) approval is not structurally bound to the reviewed head. command_approve records only actor, timestamp, and free-text message; ApprovalRecord carries no approved head; evaluate_gate merely checks current head commit time <= approval time. Reproduced by approving bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb then replacing the PR head with cccccccccccccccccccccccccccccccccccccccc committed before approval: gate returned allow_merge=True reason=exact_head_approved. Required: record immutable PR/head and expected-base binding in canonical approval evidence, compare exact identities in the gate, and add an older/pre-dated head replacement regression. (2) auto_integrator.py ignores a failed gh pr merge --disable-auto on an approved gated PR and proceeds to direct --match-head-commit merge. Reproduced disable-auto return code 1; result still action=merged and emitted both commands. Required: failed revocation must block or wait and must never emit the direct merge; add a nonzero revocation regression. The existing 64 gate, 9 integrator, 52 workflow-helper, 24 triage, and 17 index-safety tests plus bash -n and py_compile pass, but omit these fail-open cases. Update evidence AC2/AC3 and revalidate. PR remained OPEN, autoMergeRequest=null, mergeStateStatus=BEHIND at review time.
+- Next: Codex adopted Claude's rejected PR #4218 implementation. The exact-head approval binding and failed auto-merge revocation findings are fixed in the task branch; focused gate, integrator, and status suites pass. Refresh the branch from current dev, re-run the full workflow validation, then hand the exact pushed head and evidence manifest to Codex2. The governed command runtime at adoption SHA 1434effdc88fb79abd0125351a5206af8fe4a7c7 predates this gate, so do not claim live activation before the merged runtime is refreshed.
 
 ## Summary
 讓需要獨立審查的任務在 reviewer 核准且 head 未變前不得 auto-merge；保留明確允許 merge 後審查的既有路徑。
