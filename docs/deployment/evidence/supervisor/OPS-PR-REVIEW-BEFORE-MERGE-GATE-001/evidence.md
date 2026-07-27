@@ -54,10 +54,14 @@ The latest exact-head review rejected
 `7d275dafdee4e2320d0bb897c72b0075523c06e0` because PR #4218 was behind
 current `dev`. Codex anchored that rejection at
 `6ea640bf655e8aea6f90f1639071a3c84aaa6a6d`, composed authoritative base
-`4580fc5d19b5bff8c0014006324c56d6368ec5dc`, and reran the required validation
-on compose commit `fac2040230d24497b747d2189c77fafb1a774382` (tree object
-`e78cbb5cdb6e21d9e9d48bbcd38d55e5c9ea6f5e`). The tested graph had zero
-base-only commits and 54 head-only commits.
+`4580fc5d19b5bff8c0014006324c56d6368ec5dc`, and safely pushed revalidated
+candidate `e918cbd8de14c4aaff0be4d16d950a590b3eacd8` with auto-merge disabled.
+Before reviewer handoff, `dev` advanced through PR #4265. Codex did not
+dispatch the stale candidate. The branch now composes authoritative base
+`4688bd252911b91ea0459a38a694c5faa53e3bbd`, and the required validation was
+rerun on compose commit `64d8a6c6a59d3035cc6b8d1eac29bf90a2550cab`
+(tree object `b8429eb957c4e54067e9a623264eb67c0375b873`). The tested graph had
+zero base-only commits and 56 head-only commits.
 
 Scope rule honoured throughout: **no `.orchestrator/config.json` edit**, no
 hand-edited task board, no owner or reviewer action performed on behalf of
@@ -432,9 +436,9 @@ The full map of PR → entry point → fixture is the `live_regressions` table i
 See `validation.txt` for the captured transcript.
 
 This pass ran against authoritative `origin/dev`
-`4580fc5d19b5bff8c0014006324c56d6368ec5dc` and validated compose commit
-`fac2040230d24497b747d2189c77fafb1a774382` (tree object
-`e78cbb5cdb6e21d9e9d48bbcd38d55e5c9ea6f5e`).
+`4688bd252911b91ea0459a38a694c5faa53e3bbd` and validated compose commit
+`64d8a6c6a59d3035cc6b8d1eac29bf90a2550cab` (tree object
+`b8429eb957c4e54067e9a623264eb67c0375b873`).
 
 ```
 .venv-pantheon/bin/python3 scripts/git/test_task_review_merge_gate.py

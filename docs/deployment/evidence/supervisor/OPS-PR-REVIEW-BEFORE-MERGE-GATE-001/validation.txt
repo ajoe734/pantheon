@@ -1,3 +1,45 @@
+Revalidated again by Codex on 2026-07-27 after dev advanced through PR #4265
+immediately after the safe push of e918cbd8de14c4aaff0be4d16d950a590b3eacd8.
+That pushed candidate retained autoMergeRequest=null and was not dispatched for
+review. Codex composed current origin/dev
+4688bd252911b91ea0459a38a694c5faa53e3bbd and validated compose commit
+64d8a6c6a59d3035cc6b8d1eac29bf90a2550cab (tree object
+b8429eb957c4e54067e9a623264eb67c0375b873). The tested graph had 0 base-only
+commits and 56 head-only commits.
+
+== .venv-pantheon/bin/python3 scripts/git/test_task_review_merge_gate.py
+Ran 91 tests in 7.462s
+OK
+
+== .venv-pantheon/bin/python3 scripts/git/test_auto_integrator.py
+Ran 9 tests in 0.004s
+OK
+
+== .venv-pantheon/bin/python3 scripts/git/test_git_workflow_helpers.py
+Ran 58 tests in 2.918s
+OK
+
+== .venv-pantheon/bin/python3 -m pytest -q scripts/git/test_task_git_helpers_refspec.py
+2 passed in 0.48s
+
+== .venv-pantheon/bin/python3 scripts/git/test_task_pr_triage.py
+Ran 24 tests in 0.005s
+OK
+
+== .venv-pantheon/bin/python3 scripts/git/test_index_safety.py
+Ran 17 tests in 4.155s
+OK
+
+== .venv-pantheon/bin/python3 scripts/test_ai_status.py
+Ran 144 tests in 19.613s
+OK
+
+== .venv-pantheon/bin/python3 -m pytest -q focused git/status matrix
+345 passed, 31 subtests passed in 70.94s
+
+== bash -n; py_compile; json.tool; git diff --check; check_commit_trailers
+OK
+
 Revalidated by Codex on 2026-07-27 after independent exact-head review rejected
 PR #4218 head 7d275dafdee4e2320d0bb897c72b0075523c06e0 as behind current
 origin/dev 4580fc5d19b5bff8c0014006324c56d6368ec5dc. Codex anchored the
