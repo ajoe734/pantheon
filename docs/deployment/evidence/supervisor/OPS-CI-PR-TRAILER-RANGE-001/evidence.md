@@ -144,3 +144,130 @@ PR #4215  new  origin/dev..3984f143a exit 0
 3. **An empty range passes.** If the base tip already contains the PR head — a
    re-run after auto-merge landed — nothing is scanned. Those commits were
    gated on the way in.
+
+## 6. Post-merge confirmation (live fleet, not a replay)
+
+Everything in §4 is a replay. This section is the repaired gate running on the
+real fleet after the delivery landed.
+
+Delivery: PR [#4217](https://github.com/ajoe734/pantheon/pull/4217) merged into
+`dev` at `2026-07-26T21:43:27Z` (merge commit `71aea154b`). PR #4217's own
+`Commit trailers` job already ran under the repaired resolver, because a
+`pull_request` workflow runs the workflow file from the PR's merge ref.
+
+Population: **every** `branch-ci.yml` run whose `created_at` falls in
+`2026-07-26T21:43:27Z .. 2026-07-26T23:19:29Z`, both bounds inclusive —
+**53 runs**, 30 `push` and 23 `pull_request`, across `dev` (7 runs) and seven
+task branches:
+
+| branch | runs |
+| --- | --- |
+| `dev` | 7 |
+| `task/L12-CAP-001` | 8 |
+| `task/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001` | 4 |
+| `task/OPS-L12-RUNTIME-GAP-DELTA-001` | 14 |
+| `task/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001` | 6 |
+| `task/OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001` | 4 |
+| `task/SUP-COMMAND-RUNTIME-REFRESH-001` | 6 |
+| `task/SUP-WORKER-TRUTH-RECONCILE-001` | 4 |
+
+**49 success, 4 failure, 0 cancelled.** This is not a sample: the
+`Commit trailers` job log of all 53 runs was downloaded and parsed, and every
+row is in `post-merge-run-audit.tsv` next to this file.
+
+> **Correction.** An earlier revision of this section reported *40 runs, 22
+> push, 18 pull_request, 36 success, six task branches*. Those totals are the
+> subwindow `created_at >= 22:15:51Z`, not the window the section claimed.
+> The omitted 13 runs also hid `task/SUP-WORKER-TRUTH-RECONCILE-001` and the
+> three pre-fix runs described in §6.1. Raised by Codex2 on 2026-07-27 and
+> corrected here by auditing the whole window.
+
+### 6.1 Not every run in the window ran the repaired gate
+
+A run created after the merge does not automatically execute the repaired
+workflow, and the audit has to say which one each run actually ran.
+
+A `push` run executes the `branch-ci.yml` in **the pushed head's own tree**, so
+a task branch that had not yet synced `dev` still ran the pre-#4217 resolver. A
+`pull_request` run executes the workflow file from `refs/pull/N/merge`, base
+merged with head, so it ran the repaired resolver as soon as `dev` carried the
+fix — even on a head that predates the merge. That asymmetry is visible in the
+data:
+
+| | runs |
+| --- | --- |
+| executed the repaired resolver | **50** |
+| executed the pre-fix resolver | **3** |
+| heads already containing merge `71aea154b` | 47 |
+| heads not containing it | 6 |
+
+The three pre-fix runs are all `push`, all `success`:
+
+| run | branch | old range | commits |
+| --- | --- | --- | --- |
+| 30221669820 | `OPS-L12-RUNTIME-GAP-DELTA-001` | `6445eacd6..5c39428dd` | 1 |
+| 30221804623 | `OPS-L12-RUNTIME-GAP-DELTA-001` | `5c39428dd..0bb6d7ffb` | 1 |
+| 30222138131 | `SUP-WORKER-TRUTH-RECONCILE-001` | `aa7076753..2d97f80e8` | 1 |
+
+Each scanned one branch-owned commit, so the old contract happened to sweep in
+nothing foreign here and produced no false failure. Their three paired
+`pull_request` runs on the *identical* heads (30221671216, 30221806024,
+30222139919) already resolved `origin/dev..<head>` under the repaired resolver.
+
+Run 30221804623 is also the cleanest live illustration of the AC3 widening: the
+pre-fix push range covered 1 commit, the newest push slice, while the repaired
+range for the same head, `origin/dev..0bb6d7ffb`, covers 2 — everything the
+branch owns.
+
+**Every claim below about the repaired contract is asserted over the 50 runs
+that executed it, not over all 53.**
+
+### 6.2 The contract holds in production
+
+Across the 50 repaired runs, the resolved range matches the §2 table with
+**zero deviations**:
+
+| shape | live resolved range | count | example |
+| --- | --- | --- | --- |
+| `pull_request` | `origin/dev..<pull_request.head.sha>` | 23 | run 30224958034 → `origin/dev..1ea220c43` |
+| push on `task/**` | `origin/dev..<github.sha>` | 20 | run 30224956120 → `origin/dev..1ea220c43` |
+| push on `dev` | unchanged `before..head` | 7 | run 30224998589 → `e376955ff..3ac69ff7f` |
+
+All 7 `dev` pushes still resolve from `github.event.before`, so AC3's
+"integration branches keep their previous decision path" is confirmed in
+production and not only in unit tests.
+
+### 6.3 The original blocker no longer blocks anything
+
+`0410a89f0` — `OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001: record isolation
+evidence (#4213)`, 79 chars — is **still on `dev`**. It was never rewritten or
+reverted; the range was fixed instead. It does not appear anywhere in any of
+the 53 job logs: not on either event shape, not on the seven task branches that
+were cut before it landed and would have inherited it under the old contract,
+and not in the three runs that still executed the pre-fix workflow.
+
+### 6.4 The four failures are the same true positive
+
+All four are `task/L12-CAP-001` (runs 30222792583 and 30222793958 at 22:16,
+then 30222823409 and 30222825355 at 22:17 after a re-push). Every one rejects
+the same commit:
+
+```
+[range] event=pull_request resolved=origin/dev..590512f55
+[trailers] 5dbc95673c4390f7ae140a89b8fe88b95cf81059:
+  - subject exceeds 72 chars (81)
+```
+
+`5dbc95673` is `L12-CAP-001: resolve review blockers for lossless signal
+execution & leader lease` — 81 chars, **branch-owned and not an ancestor of
+`origin/dev`**. That is the gate doing its job inside the narrowed range, which
+is the live counterpart of
+`test_repaired_range_still_fails_a_malformed_task_head`: scoping the range to
+the PR head removed the false failures without removing the true ones. The
+branch passed at 22:29:30 (runs 30223234029 and 30223235130) once its own
+subject was fixed.
+
+All four ran the repaired resolver, on `origin/dev..590512f55` and then
+`origin/dev..65e9719a5` after the re-push.
+
+No run in the full 53-run window failed on a commit its branch did not own.

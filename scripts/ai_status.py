@@ -74,7 +74,6 @@ from task_archive import (
     rebuild_archive_index,
     recent_terminal_summaries,
     task_satisfies_dependency,
-    terminal_outcome_for,
 )
 from multi_repo_registry import (
     repository_local_path,
@@ -89,7 +88,12 @@ from runtime_state import (
     load_runtime_state_snapshot,
     runtime_state_lock,
 )
-from rewrite.task_state_store import append_state_commit, load_events, project_latest_state
+from rewrite.task_state_store import (
+    append_state_commit,
+    load_events,
+    load_snapshot,
+    project_latest_state,
+)
 from common import (
     ActivityAuditInvariantError,
     DuplicateActivityJSONKeyError,
@@ -1441,12 +1445,15 @@ def load_state() -> dict[str, Any]:
     if store_mode == "authoritative":
         _validate_task_state_projection_binding(store_mode)
         event_path = _task_state_event_path(store_mode)
-        events = load_events(event_path)
-        if not events:
+        # One validated pass over the journal: load_events followed by
+        # project_latest_state replayed and revalidated every event twice, which
+        # is the bulk of what a plain note command used to spend.
+        snapshot = load_snapshot(event_path)
+        if not snapshot["event_count"]:
             raise SystemExit(
                 "Authoritative task-state journal is empty; refusing ai-status.json fallback."
             )
-        state = project_latest_state(events)
+        state = snapshot["state"]
         if not isinstance(state, dict) or not state:
             raise SystemExit("Authoritative task-state projection is not a non-empty object.")
         sync_canonical_document_metadata(state)
@@ -1906,11 +1913,29 @@ def assert_task_archive_root_binding() -> None:
         )
 
 
+def _status_archive_terminal_outcome(task: Any) -> str:
+    """Return the exact archive outcome, with one legacy compatibility case."""
+
+    if not isinstance(task, dict) or task.get("status") != "done":
+        return ""
+    if "terminal_outcome" not in task:
+        return "completed"
+    outcome = task.get("terminal_outcome")
+    if outcome in {"completed", "superseded"}:
+        return str(outcome)
+    return ""
+
+
 def archive_terminal_task_from_state(state: dict[str, Any], task: dict[str, Any], *, archived_at: str | None = None) -> dict[str, Any]:
     assert_task_archive_root_binding()
     task_id = str(task.get("id") or "").strip()
     if not task_id:
         raise SystemExit("Cannot archive a task without an id")
+    terminal_outcome = _status_archive_terminal_outcome(task)
+    if not terminal_outcome:
+        raise RuntimeError(
+            f"terminal task has invalid archive outcome: {task_id}"
+        )
     related_handoffs = [deepcopy(handoff) for handoff in state.get("handoffs", []) if handoff.get("task_id") == task_id]
     related_blockers = [deepcopy(blocker) for blocker in state.get("blockers", []) if blocker.get("task_id") == task_id]
     existing = archived_task_snapshot(task_id)
@@ -1925,7 +1950,7 @@ def archive_terminal_task_from_state(state: dict[str, Any], task: dict[str, Any]
         )
         or iso_now(),
         "terminal_status": "done",
-        "terminal_outcome": terminal_outcome_for(task) or "completed",
+        "terminal_outcome": terminal_outcome,
         "task": deepcopy(task),
         "handoffs": related_handoffs,
         "blockers": related_blockers,
@@ -2187,6 +2212,7 @@ def _status_archive_snapshot_is_valid(snapshot: Any) -> bool:
     }:
         return False
     task = snapshot.get("task")
+    terminal_outcome = _status_archive_terminal_outcome(task)
     return bool(
         snapshot.get("version") == 1
         and snapshot.get("terminal_status") == "done"
@@ -2195,7 +2221,8 @@ def _status_archive_snapshot_is_valid(snapshot: Any) -> bool:
         and isinstance(task, dict)
         and task.get("id") == snapshot.get("task_id")
         and task.get("status") == "done"
-        and snapshot.get("terminal_outcome") == terminal_outcome_for(task)
+        and terminal_outcome
+        and snapshot.get("terminal_outcome") == terminal_outcome
         and isinstance(snapshot.get("handoffs"), list)
         and isinstance(snapshot.get("blockers"), list)
     )

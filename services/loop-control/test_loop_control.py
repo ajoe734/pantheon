@@ -1,6 +1,4 @@
 import asyncio
-import os
-import unittest
 from datetime import datetime, timedelta, timezone
 import pytest
 import jsonschema
@@ -21,21 +19,9 @@ CONTROLLER_RECORD_FIELDS = conformance_module.CONTROLLER_RECORD_FIELDS
 assert_controller_record_conforms = conformance_module.assert_controller_record_conforms
 
 
-# Using the DSN available in the environment or default to local dev stack container address
-DB_DSN = os.environ.get("DATABASE_URL") or "postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon"
-
-
 @pytest.mark.asyncio
-async def test_store_crud_and_validation():
-    store = LoopControllerStore(DB_DSN)
-
-    # Clean up test record if exists
-    conn = await store.store.connect() if hasattr(store, "store") and hasattr(store.store, "connect") else None
-    # Let's do cleanup directly using asyncpg connection
-    import asyncpg
-    conn = await asyncpg.connect(DB_DSN)
-    await conn.execute("DELETE FROM loop_controller_records WHERE loop_id = 'test-loop-1'")
-    await conn.close()
+async def test_store_crud_and_validation(loop_control_db_dsn):
+    store = LoopControllerStore(loop_control_db_dsn)
 
     # 1. Validation test (missing required field: truth_level)
     invalid_record = {
@@ -102,21 +88,15 @@ async def test_store_crud_and_validation():
 
 
 @pytest.mark.asyncio
-async def test_writer_sdk():
+async def test_writer_sdk(loop_control_db_dsn):
     writer = LoopControllerWriter(
-        dsn=DB_DSN,
+        dsn=loop_control_db_dsn,
         tenant_id="default",
         environment="test",
         controller_id="ctrl-writer",
         controller_name="WriterController",
         deployment_sha="sha-writer"
     )
-
-    # Clean up
-    import asyncpg
-    conn = await asyncpg.connect(DB_DSN)
-    await conn.execute("DELETE FROM loop_controller_records WHERE loop_id = 'test-writer-loop'")
-    await conn.close()
 
     # Record heartbeat
     await writer.record_heartbeat(
@@ -129,7 +109,7 @@ async def test_writer_sdk():
     )
 
     # Fetch to check
-    store = LoopControllerStore(DB_DSN)
+    store = LoopControllerStore(loop_control_db_dsn)
     record = await store.get_record("test-writer-loop", "default", "test")
     assert record is not None
     assert record["controller_id"] == "ctrl-writer"
@@ -162,21 +142,21 @@ async def test_writer_sdk():
 
 
 @pytest.mark.asyncio
-async def test_lease_safety_and_stale_heartbeats():
+async def test_lease_safety_and_stale_heartbeats(loop_control_db_dsn):
     # 1. Lease safety
     writer1 = LoopControllerWriter(
-        DB_DSN,
+        loop_control_db_dsn,
         tenant_id="default",
         environment="test",
         controller_id="ctrl-lease-1",
         lease_duration_seconds=20,
     )
-    writer2 = LoopControllerWriter(DB_DSN, tenant_id="default", environment="test", controller_id="ctrl-lease-2")
-
-    import asyncpg
-    conn = await asyncpg.connect(DB_DSN)
-    await conn.execute("DELETE FROM loop_controller_records WHERE loop_id = 'test-lease-loop'")
-    await conn.close()
+    writer2 = LoopControllerWriter(
+        loop_control_db_dsn,
+        tenant_id="default",
+        environment="test",
+        controller_id="ctrl-lease-2",
+    )
 
     # Writer 1 locks lease for 10 seconds
     await writer1.record_heartbeat("test-lease-loop", lease_duration_seconds=10)
@@ -190,7 +170,7 @@ async def test_lease_safety_and_stale_heartbeats():
     await writer1.record_heartbeat("test-lease-loop", lease_duration_seconds=20)
 
     # 2. Stale heartbeat test
-    store = LoopControllerStore(DB_DSN)
+    store = LoopControllerStore(loop_control_db_dsn)
     rec_original = await store.get_record("test-lease-loop", "default", "test")
     original_heartbeat = rec_original["last_heartbeat_at"]
 
@@ -351,25 +331,17 @@ def test_projector_stale_heartbeat_and_query_text_do_not_manufacture_actual_stat
 
 
 @pytest.mark.asyncio
-async def test_concurrent_partial_updates_preserve_monotonic_fields():
+async def test_concurrent_partial_updates_preserve_monotonic_fields(
+    loop_control_db_dsn,
+):
     loop_id = "test-loop-concurrent"
     writer = LoopControllerWriter(
-        DB_DSN,
+        loop_control_db_dsn,
         tenant_id="tenant-concurrency",
         environment="test",
         controller_id="ctrl-concurrent",
         lease_duration_seconds=30,
     )
-
-    import asyncpg
-    conn = await asyncpg.connect(DB_DSN)
-    await conn.execute(
-        "DELETE FROM loop_controller_records WHERE loop_id=$1 AND tenant_id=$2 AND environment=$3",
-        loop_id,
-        "tenant-concurrency",
-        "test",
-    )
-    await conn.close()
 
     await writer.record_heartbeat(
         loop_id,
@@ -418,7 +390,9 @@ async def test_concurrent_partial_updates_preserve_monotonic_fields():
 
 
 @pytest.mark.asyncio
-async def test_store_isolates_same_loop_by_tenant_and_environment():
+async def test_store_isolates_same_loop_by_tenant_and_environment(
+    loop_control_db_dsn,
+):
     loop_id = "test-loop-isolation"
     scopes = (
         ("tenant-a", "dev"),
@@ -427,21 +401,13 @@ async def test_store_isolates_same_loop_by_tenant_and_environment():
     )
     writers = {
         scope: LoopControllerWriter(
-            DB_DSN,
+            loop_control_db_dsn,
             tenant_id=scope[0],
             environment=scope[1],
             controller_id=f"controller-{scope[0]}-{scope[1]}",
         )
         for scope in scopes
     }
-
-    import asyncpg
-    conn = await asyncpg.connect(DB_DSN)
-    await conn.execute(
-        "DELETE FROM loop_controller_records WHERE loop_id=$1",
-        loop_id,
-    )
-    await conn.close()
 
     for index, scope in enumerate(scopes):
         await writers[scope].record_heartbeat(
@@ -450,7 +416,7 @@ async def test_store_isolates_same_loop_by_tenant_and_environment():
             evidence_refs=[f"runtime:{scope[0]}:{scope[1]}"],
         )
 
-    store = LoopControllerStore(DB_DSN)
+    store = LoopControllerStore(loop_control_db_dsn)
     for index, scope in enumerate(scopes):
         record = await store.get_record(loop_id, scope[0], scope[1])
         assert record is not None
@@ -466,32 +432,24 @@ async def test_store_isolates_same_loop_by_tenant_and_environment():
 
 
 @pytest.mark.asyncio
-async def test_normal_writes_renew_fence_and_stale_generation_is_rejected():
+async def test_normal_writes_renew_fence_and_stale_generation_is_rejected(
+    loop_control_db_dsn,
+):
     loop_id = "test-loop-fenced-generation"
     old_writer = LoopControllerWriter(
-        DB_DSN,
+        loop_control_db_dsn,
         tenant_id="tenant-fence",
         environment="test",
         controller_id="stable-controller-id",
         lease_duration_seconds=30,
     )
     new_writer = LoopControllerWriter(
-        DB_DSN,
+        loop_control_db_dsn,
         tenant_id="tenant-fence",
         environment="test",
         controller_id="stable-controller-id",
         lease_duration_seconds=30,
     )
-
-    import asyncpg
-    conn = await asyncpg.connect(DB_DSN)
-    await conn.execute(
-        "DELETE FROM loop_controller_records WHERE loop_id=$1 AND tenant_id=$2 AND environment=$3",
-        loop_id,
-        "tenant-fence",
-        "test",
-    )
-    await conn.close()
 
     await old_writer.record_heartbeat(loop_id, lease_duration_seconds=2)
     first = await old_writer.store.get_record(loop_id, "tenant-fence", "test")
@@ -500,7 +458,8 @@ async def test_normal_writes_renew_fence_and_stale_generation_is_rejected():
     assert renewed["lease_expires_at"] > first["lease_expires_at"]
     assert renewed["lease_token"] == old_writer.lease_token
 
-    conn = await asyncpg.connect(DB_DSN)
+    import asyncpg
+    conn = await asyncpg.connect(loop_control_db_dsn)
     await conn.execute(
         """
         UPDATE loop_controller_records

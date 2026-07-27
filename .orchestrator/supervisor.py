@@ -6802,6 +6802,101 @@ def status_command_subprocess_context(config: dict[str, Any]) -> tuple[Path, dic
     return command_root / "scripts" / "ai_status.py", env
 
 
+DISPATCH_STATUS_WORKER_ENV_NAMES = (
+    "ORCH_RUN_ID",
+    "ORCH_TASK_ID",
+    "PANTHEON_WORKTREE_ROOT",
+    "ORCH_WORKSPACE_PATH",
+    "ORCH_RUNNER_STATUS_PATH",
+    "ORCH_HEARTBEAT_PATH",
+)
+
+
+def _worker_request_metadata(worker: dict[str, Any]) -> dict[str, Any]:
+    snapshot = worker.get("request_snapshot")
+    if not isinstance(snapshot, dict):
+        return {}
+    metadata = snapshot.get("metadata")
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _resolve_dispatch_status_path(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    return str(Path(raw).expanduser().resolve())
+
+
+def _runtime_worker_record_for_status_sync(
+    config: dict[str, Any],
+    run_id: str,
+) -> dict[str, Any]:
+    if not run_id or not (config.get("paths", {}) or {}).get("state_file"):
+        return {}
+    state = load_runtime_state(config)
+    workers = state.get("workers")
+    if not isinstance(workers, dict):
+        return {}
+    worker = workers.get(run_id)
+    return worker if isinstance(worker, dict) else {}
+
+
+def _apply_dispatch_status_worker_binding(
+    config: dict[str, Any],
+    env: dict[str, str],
+    *,
+    run_id: str,
+    task_id: str,
+) -> None:
+    for env_name in DISPATCH_STATUS_WORKER_ENV_NAMES:
+        env.pop(env_name, None)
+
+    lease_run_id = str(run_id or "").strip()
+    if not lease_run_id:
+        return
+
+    env["ORCH_RUN_ID"] = lease_run_id
+    env["ORCH_TASK_ID"] = task_id
+
+    worker = _runtime_worker_record_for_status_sync(config, lease_run_id)
+    if not worker:
+        return
+
+    worker_task_id = str(worker.get("task_id") or task_id).strip()
+    if worker_task_id:
+        env["ORCH_TASK_ID"] = worker_task_id
+
+    request_metadata = _worker_request_metadata(worker)
+    workspace_root = _resolve_dispatch_status_path(
+        worker.get("workspace_path") or request_metadata.get("workspace_path")
+    )
+    if workspace_root:
+        env["PANTHEON_WORKTREE_ROOT"] = workspace_root
+        env["ORCH_WORKSPACE_PATH"] = workspace_root
+
+    status_root = _resolve_dispatch_status_path(
+        worker.get("status_root") or request_metadata.get("status_root")
+    )
+    if status_root:
+        env["PANTHEON_STATUS_ROOT"] = status_root
+
+    worker_metadata = worker.get("metadata") if isinstance(worker.get("metadata"), dict) else {}
+    runner_status_path = _resolve_dispatch_status_path(
+        worker.get("runner_status_path")
+        or worker.get("status_path")
+        or worker_metadata.get("runner_status_path")
+    )
+    if runner_status_path:
+        env["ORCH_RUNNER_STATUS_PATH"] = runner_status_path
+
+    heartbeat_path = _resolve_dispatch_status_path(
+        worker.get("heartbeat_path")
+        or worker_metadata.get("heartbeat_path")
+    )
+    if heartbeat_path:
+        env["ORCH_HEARTBEAT_PATH"] = heartbeat_path
+
+
 def sync_status_pipeline(config: dict[str, Any]) -> bool:
     script, env = status_command_subprocess_context(config)
     if not script.exists():
@@ -6899,11 +6994,12 @@ def sync_dispatched_task_status(
     # auto worker and requires the supervisor-issued lease. Without ORCH_RUN_ID it took
     # the no-lease branch and raised "status command lease required for auto worker",
     # which failed every dispatch sync. Both call sites already hold the worker run id.
-    lease_run_id = str(run_id or "").strip()
-    if lease_run_id:
-        env["ORCH_RUN_ID"] = lease_run_id
-    else:
-        env.pop("ORCH_RUN_ID", None)
+    _apply_dispatch_status_worker_binding(
+        config,
+        env,
+        run_id=str(run_id or "").strip(),
+        task_id=task_id,
+    )
     result = subprocess.run(
         [sys.executable, str(script), command_name, task_id, message],
         cwd=str(config_path(config, "status_file").parent),
@@ -12288,6 +12384,71 @@ def dispatch_chair_review(
     return False
 
 
+RUNTIME_LOCK_HOLD_WARN_DEFAULT_SECONDS = 30.0
+
+
+def record_runtime_lock_hold(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    held_since: float,
+    *,
+    quiet: bool = False,
+) -> float:
+    """Publish how long this cycle owned the exclusive runtime-admission lock.
+
+    Every status command an auto worker runs takes the same lock shared, so this
+    number is the ceiling on how long ``approve``, ``assign``, and ``note`` can
+    be made to wait. Leaving it unmeasured is how a 771s hold stayed invisible
+    until reviewers noticed nine-minute stalls.
+    """
+
+    held_seconds = round(max(0.0, time.monotonic() - held_since), 3)
+    supervisor_state = state.setdefault("supervisor", {})
+    supervisor_state["runtime_lock_hold_seconds"] = held_seconds
+    peak = supervisor_state.get("runtime_lock_hold_peak_seconds")
+    if not isinstance(peak, (int, float)) or held_seconds > float(peak):
+        supervisor_state["runtime_lock_hold_peak_seconds"] = held_seconds
+    warn_after = float(
+        config.get("supervisor", {}).get(
+            "runtime_lock_hold_warn_after_seconds",
+            RUNTIME_LOCK_HOLD_WARN_DEFAULT_SECONDS,
+        )
+    )
+    exceeded = warn_after > 0 and held_seconds > warn_after
+    supervisor_state["runtime_lock_hold_exceeded"] = exceeded
+    if exceeded:
+        console_log(
+            f"runtime-admission lock held {held_seconds}s (> {warn_after}s); "
+            "concurrent approve/assign/note commands queued for that long",
+            quiet=quiet,
+        )
+    return held_seconds
+
+
+def probe_provider_reports(
+    config: dict[str, Any],
+    *,
+    quiet: bool = False,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Refresh provider capabilities outside every canonical lock.
+
+    ``load_provider_report`` shells out to ``gh`` for auth and version checks,
+    so it is an unbounded network wait. Run from inside the cycle it charged
+    that wait to the exclusive runtime-admission lock, where every reviewer,
+    approve, and worker status command was queued behind it. Nothing it touches
+    is runtime state, so it belongs before the lock is taken.
+    """
+
+    try:
+        previous = load_json(config_path(config, "provider_capabilities"), default={}) or {}
+    except KeyError:
+        previous = {}
+    report = _safe_phase("load_provider_report", load_provider_report, config, quiet=quiet)
+    if report is None:
+        report = previous or {}
+    return previous, report
+
+
 def run_once(
     config: dict[str, Any],
     *,
@@ -12297,6 +12458,7 @@ def run_once(
     verbose: bool = False,
     once: bool = False,
 ) -> bool:
+    provider_reports = probe_provider_reports(config, quiet=quiet)
     return _run_with_deferred_dispatch_status_syncs(
         config,
         lambda: _run_once_locked(
@@ -12306,6 +12468,7 @@ def run_once(
             quiet=quiet,
             verbose=verbose,
             once=once,
+            provider_reports=provider_reports,
         )
     )
 
@@ -12319,6 +12482,20 @@ def sync_task_state_shadow(config: dict[str, Any], state: dict[str, Any]) -> boo
     while ``ai-status.json`` remains authoritative. After cutover the direction
     reverses: the journal is authoritative and a divergent JSON board is
     repaired from its latest validated event, never imported into the journal.
+
+    Two properties are load-bearing here and were previously wrong:
+
+    ``caught_up`` reports parity, not work. It used to be assigned the
+    *divergence* predicate, so a healthy cycle published ``caught_up: false``
+    and a cycle that had just repaired a drifted board published
+    ``caught_up: true``. Whether a write was needed is now ``repaired``.
+
+    The journal is read exactly once. The old body replayed the whole log four
+    times inside the exclusive canonical lock -- ``load_events``,
+    ``project_latest_state``, then ``verify_projection`` which loaded and
+    projected it all over again -- so reconciliation cost scaled with journal
+    size four times per cycle while every reviewer, approve, and note command
+    queued behind that same lock.
     """
 
     runtime_env = task_state_store_runtime_env(config)
@@ -12339,33 +12516,43 @@ def sync_task_state_shadow(config: dict[str, Any], state: dict[str, Any]) -> boo
             file_state = load_json(status_file, default={})
             if not isinstance(file_state, dict):
                 raise RuntimeError("task state projection must be a JSON object")
+            snapshot = rewrite_task_state_store.load_snapshot(event_log)
             if mode == "authoritative":
-                events = rewrite_task_state_store.load_events(event_log)
-                if not events:
+                if not snapshot["event_count"]:
                     raise RuntimeError("authoritative task-state journal is empty")
-                canonical_state = rewrite_task_state_store.project_latest_state(events)
-                caught_up = (
+                canonical_state = snapshot["state"]
+                repaired = (
                     rewrite_task_state_store.sha256_json(file_state)
-                    != rewrite_task_state_store.sha256_json(canonical_state)
+                    != snapshot["state_sha256"]
                 )
-                if caught_up:
+                if repaired:
                     write_json(status_file, canonical_state)
-                report = rewrite_task_state_store.verify_projection(
-                    event_log,
-                    canonical_state,
-                )
+                    # Re-read rather than compare the value just written, so the
+                    # parity claim is about the board on disk and a repair that
+                    # silently failed to land cannot report itself as healthy.
+                    file_state = load_json(status_file, default={})
+                report = rewrite_task_state_store.verify_snapshot(snapshot, file_state)
             else:
                 canonical_state = file_state
-                before = rewrite_task_state_store.verify_projection(event_log, canonical_state)
-                caught_up = not before["ok"]
-                if caught_up:
-                    rewrite_task_state_store.append_state_commit(
+                repaired = not rewrite_task_state_store.verify_snapshot(
+                    snapshot,
+                    canonical_state,
+                )["ok"]
+                if repaired:
+                    committed = rewrite_task_state_store.append_state_commit(
                         event_log,
                         canonical_state,
                         source="supervisor-shadow-catchup",
                     )
-                report = rewrite_task_state_store.verify_projection(event_log, canonical_state)
-            if not report["ok"]:
+                    snapshot = {
+                        "event_count": int(committed["sequence"]),
+                        "last_event_id": str(committed["event_id"]),
+                        "state": committed["state"],
+                        "state_sha256": str(committed["state_sha256"]),
+                    }
+                report = rewrite_task_state_store.verify_snapshot(snapshot, canonical_state)
+            caught_up = bool(report["ok"])
+            if not caught_up:
                 raise RuntimeError(
                     f"task-state {mode} projection remains divergent after reconciliation"
                 )
@@ -12377,10 +12564,12 @@ def sync_task_state_shadow(config: dict[str, Any], state: dict[str, Any]) -> boo
             "last_checked_at": checked_at,
             "last_success_at": checked_at,
             "last_error": None,
+            # Parity after reconciliation, not "a write happened".
             "caught_up": caught_up,
+            "repaired": repaired,
             **report,
         }
-        return caught_up
+        return repaired
     except Exception as exc:  # per-phase isolation keeps the incumbent loop observable
         failure = {
             "mode": mode,
@@ -12388,7 +12577,9 @@ def sync_task_state_shadow(config: dict[str, Any], state: dict[str, Any]) -> boo
             "event_log": str(event_log),
             "last_checked_at": checked_at,
             "last_error": f"{type(exc).__name__}: {exc}",
+            # Parity was never established this cycle, and no repair is claimed.
             "caught_up": False,
+            "repaired": False,
         }
         for key in (
             "event_count",
@@ -12439,8 +12630,10 @@ def _run_once_locked(
     quiet: bool = False,
     verbose: bool = False,
     once: bool = False,
+    provider_reports: tuple[dict[str, Any], dict[str, Any]] | None = None,
 ) -> bool:
     write_supervisor_pid(config)
+    lock_held_since = time.monotonic()
     loop_started_at = utc_now()
     state = load_runtime_state(config)
     previous_heartbeat = state.get("supervisor", {}).get("last_heartbeat_at")
@@ -12468,13 +12661,14 @@ def _run_once_locked(
         pruned = _safe_phase("prune_stale_approvals", prune_stale_approvals, config, quiet=quiet)
         if pruned:
             changed = True
-        try:
-            previous_provider_report = load_json(config_path(config, "provider_capabilities"), default={}) or {}
-        except KeyError:
-            previous_provider_report = {}
-        provider_report = _safe_phase("load_provider_report", load_provider_report, config, quiet=quiet)
-        if provider_report is None:
-            provider_report = previous_provider_report or {}
+        # Probing here would put a gh auth round trip inside the exclusive
+        # runtime-admission hold; run_once supplies the reports it gathered
+        # before the lock was taken.
+        previous_provider_report, provider_report = (
+            provider_reports
+            if provider_reports is not None
+            else probe_provider_reports(config, quiet=quiet)
+        )
         changed = _safe_phase("reconcile_provider_auth_recovery", reconcile_provider_auth_recovery, config, state, previous_provider_report, provider_report, quiet=quiet) or changed
         changed = _safe_phase("drain_assistant_dev_packet_inbox", drain_assistant_dev_packet_inbox, config, state, quiet=quiet) or changed
         if watch:
@@ -12536,6 +12730,7 @@ def _run_once_locked(
             loop_finished_at=loop_finished_at,
             loop_error=None,
         )
+        record_runtime_lock_hold(config, state, lock_held_since, quiet=quiet)
         save_runtime_state(config, state)
         refresh_dashboard_runtime_artifacts(config)
         log_runtime_summary(
@@ -12560,6 +12755,7 @@ def _run_once_locked(
             loop_finished_at=loop_finished_at,
             loop_error=f"{type(exc).__name__}: {exc}",
         )
+        record_runtime_lock_hold(config, state, lock_held_since, quiet=quiet)
         save_runtime_state(config, state)
         refresh_dashboard_runtime_artifacts(config)
         raise

@@ -4,10 +4,15 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Scope PR commit-trailer CI to the exact task head
-- Status: todo
-- Owner: Claude
+- Status: review_approved
+- Owner: Codex
 - Reviewer: Codex2
-- Next: Repair the Branch CI pull_request range contract. Current failed run 30219467575 scans 03389c0..synthetic merge 0942107 and rejects dev commit 0410a89f0 even though it is not owned by PR #4211; #4215 shows the same contamination. Test exact stale-base and concurrent-dev-advance shapes. Do not edit config or weaken trailer validation.
+- Next: Owner closeout is ready after the reviewed delivery and evidence correction merged to `dev`; publish this task brief closeout record, then finalize the canonical task as `done`.
+
+## Closeout
+- Delivery PRs [#4217](https://github.com/ajoe734/pantheon/pull/4217), [#4230](https://github.com/ajoe734/pantheon/pull/4230), and [#4233](https://github.com/ajoe734/pantheon/pull/4233) are merged into `dev` with the required checks green.
+- Codex2 independently approved the corrected full-window evidence on 2026-07-27. The canonical `review_file` remains `docs/deployment/evidence/supervisor/OPS-CI-PR-TRAILER-RANGE-001/evidence.json`; closeout leaves that reviewed manifest and the implementation artifacts byte-identical to `origin/dev`.
+- Owner re-verified with `python3 -m unittest scripts.git.test_git_workflow_helpers` (52 tests), `python3 -m py_compile scripts/git/resolve_commit_trailer_range.py scripts/git/test_git_workflow_helpers.py`, YAML/JSON parsing, and the missing-PR-head fail-closed probe (exit 1 with empty stdout).
 
 ## Summary
 修正 PR trailer gate 掃到 integration base 與 synthetic merge commit 的錯誤範圍，避免別人的已合併 commit 阻塞所有 task PR。

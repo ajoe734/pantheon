@@ -4,6 +4,7 @@ import copy
 import importlib.util
 import json
 import os
+import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
@@ -99,6 +100,251 @@ def _fake_repo(tmp_path: Path) -> Path:
     root.mkdir()
     write_materializing_ai_status(root)
     return root
+
+
+def _git_stdout(root: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(root), *args],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.strip()
+
+
+def _authoritative_status_root(tmp_path: Path) -> tuple[Path, Path, dict]:
+    root = tmp_path / "status-root"
+    root.mkdir()
+    subprocess.run(
+        ["git", "init", "-q", str(root)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    state = AI_STATUS.default_state()
+    state["tasks"] = []
+    state["handoffs"] = []
+    state["blockers"] = []
+    state["wave_state"] = {"status": "open"}
+    (root / "ai-status.json").write_text(
+        json.dumps(state, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    event_log = tmp_path / "runtime" / "task-state-events.jsonl"
+    event_log.parent.mkdir()
+    AI_STATUS.append_state_commit(event_log, state, source="bridge-test-fixture")
+    return root, event_log, state
+
+
+def test_verified_bridge_uses_trusted_status_actor_without_worker_lease(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_root = _fake_repo(tmp_path)
+    packet = _signed("pkt_trusted_status_actor")
+    monkeypatch.setenv("ORCH_RUN_ID", "untrusted-worker-run")
+    monkeypatch.setenv("ORCH_TASK_ID", "UNRELATED-TASK")
+    monkeypatch.setenv("PANTHEON_WORKTREE_ROOT", str(tmp_path / "worker"))
+    monkeypatch.setenv("ORCH_WORKSPACE_PATH", str(tmp_path / "worker"))
+    monkeypatch.setenv(
+        "ORCH_RUNNER_STATUS_PATH",
+        str(tmp_path / ".orchestrator" / "worker-runtime" / "status" / "run.json"),
+    )
+    monkeypatch.setenv(
+        "ORCH_HEARTBEAT_PATH",
+        str(tmp_path / ".orchestrator" / "worker-runtime" / "heartbeats" / "run.json"),
+    )
+
+    result = dispatch_task_packet(
+        BridgeDispatchRequest(packet=packet, repoRoot=str(repo_root)),
+        key_store=KEY_STORE,
+    )
+
+    assert result.errors == []
+    call = json.loads(
+        (repo_root / "calls.jsonl").read_text(encoding="utf-8").splitlines()[0]
+    )
+    assert call["ai_name"] == "Human/Ops"
+    assert call["auto_worker_markers"] == {}
+    assert call["metadata"]["dev_bridge"]["actor"]["id"] == "management-ai"
+
+
+def test_untrusted_direct_status_mutation_still_requires_worker_lease(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AI_NAME", "Codex")
+    for marker in (
+        "ORCH_RUN_ID",
+        "ORCH_TASK_ID",
+        "PANTHEON_WORKTREE_ROOT",
+        "ORCH_WORKSPACE_PATH",
+        "ORCH_RUNNER_STATUS_PATH",
+        "ORCH_HEARTBEAT_PATH",
+    ):
+        monkeypatch.delenv(marker, raising=False)
+
+    with pytest.raises(RuntimeError, match="status command lease required"):
+        AI_STATUS.validate_active_status_command_lease(
+            "assign",
+            ["UNTRUSTED-TASK", "Codex", "Claude", "Untrusted mutation"],
+        )
+
+
+def test_supervisor_runtime_state_discovers_authoritative_journal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    status_root = tmp_path / "status-root"
+    runtime_dir = status_root / ".orchestrator"
+    runtime_dir.mkdir(parents=True)
+    event_log = tmp_path / "runtime" / "task-state-events.jsonl"
+    event_log.parent.mkdir()
+    event_log.touch()
+    (runtime_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "supervisor": {
+                    "task_state_shadow": {
+                        "mode": "authoritative",
+                        "ok": True,
+                        "event_log": str(event_log),
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    for name in (
+        "PANTHEON_STATUS_ROOT",
+        "PANTHEON_COMMAND_ROOT",
+        "PANTHEON_COMMAND_RUNTIME_SHA",
+        "PANTHEON_TASK_STATE_STORE_MODE",
+        "PANTHEON_TASK_STATE_EVENT_LOG",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    task_state_env = dev_bridge_dispatcher._runtime_task_state_env(
+        str(status_root)
+    )
+
+    assert task_state_env == {
+        "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
+        "PANTHEON_TASK_STATE_EVENT_LOG": str(event_log),
+    }
+    with patch.object(
+        dev_bridge_dispatcher,
+        "_code_repo_root",
+        return_value=REPO_ROOT,
+    ):
+        assert dev_bridge_dispatcher._governed_command_root(
+            str(status_root),
+            task_state_env=task_state_env,
+        ) == REPO_ROOT
+
+
+def test_supervisor_runtime_state_rejects_symlinked_journal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    status_root = tmp_path / "status-root"
+    runtime_dir = status_root / ".orchestrator"
+    runtime_dir.mkdir(parents=True)
+    real_event_log = tmp_path / "runtime" / "task-state-events.jsonl"
+    real_event_log.parent.mkdir()
+    real_event_log.touch()
+    linked_event_log = tmp_path / "linked-task-state-events.jsonl"
+    linked_event_log.symlink_to(real_event_log)
+    (runtime_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "supervisor": {
+                    "task_state_shadow": {
+                        "mode": "authoritative",
+                        "ok": True,
+                        "event_log": str(linked_event_log),
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    for name in (
+        "PANTHEON_STATUS_ROOT",
+        "PANTHEON_TASK_STATE_STORE_MODE",
+        "PANTHEON_TASK_STATE_EVENT_LOG",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    with pytest.raises(RuntimeError, match="symlink component"):
+        dev_bridge_dispatcher._runtime_task_state_env(str(status_root))
+
+
+def test_authoritative_bridge_dispatch_survives_next_projection_cycle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    status_root, event_log, initial_state = _authoritative_status_root(tmp_path)
+    command_sha = _git_stdout(REPO_ROOT, "rev-parse", "HEAD")
+    monkeypatch.setenv("PANTHEON_STATUS_ROOT", str(status_root))
+    monkeypatch.setenv("PANTHEON_COMMAND_ROOT", str(REPO_ROOT))
+    monkeypatch.setenv("PANTHEON_COMMAND_RUNTIME_SHA", command_sha)
+    monkeypatch.setenv("PANTHEON_COMMAND_REMOTE", "ajoe734/pantheon")
+    monkeypatch.setenv("PANTHEON_COMMAND_BASE_REF", "HEAD")
+    monkeypatch.setenv("PANTHEON_TASK_STATE_STORE_MODE", "authoritative")
+    monkeypatch.setenv("PANTHEON_TASK_STATE_EVENT_LOG", str(event_log))
+    for marker in (
+        "ORCH_RUN_ID",
+        "ORCH_TASK_ID",
+        "PANTHEON_WORKTREE_ROOT",
+        "ORCH_WORKSPACE_PATH",
+        "ORCH_RUNNER_STATUS_PATH",
+        "ORCH_HEARTBEAT_PATH",
+    ):
+        monkeypatch.delenv(marker, raising=False)
+    packet = _signed("pkt_authoritative_projection")
+    initial_event_count = AI_STATUS.load_snapshot(event_log)["event_count"]
+
+    queued = queue_task_packet(
+        packet,
+        repo_root=str(status_root),
+        key_store=KEY_STORE,
+    )
+    assert queued["status"] == "queued"
+    drained = drain_task_packet_inbox(repo_root=str(status_root), limit=1)
+
+    assert drained["processedCount"] == 1
+    assert drained["errorCount"] == 0
+    receipt = drained["packets"][0]
+    assert receipt["status"] == "processed"
+    assert receipt["result"]["admissionStatus"] == "admitted"
+    admission_path = status_root / receipt["result"]["admissionRecord"][
+        "admission_record_path"
+    ]
+    assert admission_path.is_file()
+    snapshot = AI_STATUS.load_snapshot(event_log)
+    assert snapshot["event_count"] > initial_event_count
+    assert any(
+        task.get("id") == packet.tasks[0].id
+        for task in snapshot["state"].get("tasks", [])
+    )
+
+    # Recreate the failure boundary: a stale file-only writer can place the
+    # old state on disk, but the next authoritative projection must restore
+    # the journaled bridge assignment rather than wash it out.
+    status_path = status_root / "ai-status.json"
+    status_path.write_text(
+        json.dumps(initial_state, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    status_path.write_text(
+        json.dumps(snapshot["state"], indent=2) + "\n",
+        encoding="utf-8",
+    )
+    projected = json.loads(status_path.read_text(encoding="utf-8"))
+    assert any(
+        task.get("id") == packet.tasks[0].id
+        for task in projected.get("tasks", [])
+    )
 
 
 def test_partial_dispatch_failure_is_retryable_and_only_full_success_marks_seen(

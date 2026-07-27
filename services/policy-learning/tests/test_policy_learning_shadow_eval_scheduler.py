@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 import tempfile
 from pathlib import Path
 from unittest import mock
+
+from conftest import authorized_client
 
 
 SERVICE_DIR = Path(__file__).resolve().parents[1]
@@ -55,6 +58,66 @@ def _load_service_module(data_dir: str):
         return module
     finally:
         sys.modules.pop("store", None)
+
+
+def _agora_record(
+    dataset_version_id: str,
+    *,
+    tenant_id: str = "tenant-a",
+    user_id: str = "user-a",
+    evidence_id: str | None = None,
+    content: dict | None = None,
+    order: int = 0,
+) -> dict:
+    """One row shaped like ``agora.agora_dataset_records``."""
+
+    resolved_evidence = evidence_id or f"ev-{dataset_version_id}"
+    return {
+        "evidence_id": resolved_evidence,
+        "dataset_version_id": dataset_version_id,
+        "dataset_kind": "learn",
+        "interaction_kind": "feedback",
+        "persona_id": "persona-1",
+        "session_id": "session-1",
+        "tenant_id": tenant_id,
+        "user_id": user_id,
+        "content": content
+        or {
+            "steps": [
+                {
+                    "observation": [0.9, 0.1, -0.2],
+                    "action": "buy_small",
+                    "reward": 0.3,
+                    "feedback_event_id": f"{resolved_evidence}-a",
+                },
+                {
+                    "observation": [-0.8, 0.2, 0.55],
+                    "action": "reduce_risk",
+                    "reward": 0.1,
+                    "feedback_event_id": f"{resolved_evidence}-b",
+                },
+            ]
+        },
+        "source_refs": ["artifact://source-1"],
+        "learning_eligible": True,
+        "captured_at": "2026-07-26T00:00:00Z",
+        "extracted_at": f"2026-07-26T00:00:{order:02d}Z",
+        "version": 1,
+    }
+
+
+def _install_memory_authority(svc, records: list[dict], *, tenant_id: str = "tenant-a"):
+    """Point the service at an in-memory Agora dataset authority.
+
+    Keeps the tests on the real product code path — discovery, resolution, and
+    lineage all run — without needing a live Postgres Agora owner.
+    """
+
+    from agora_dataset_authority import AgoraDatasetAuthority
+
+    svc.DATASET_AUTHORITY = AgoraDatasetAuthority(records=records)
+    os.environ["POLICY_LEARNING_AGORA_TENANT_ID"] = tenant_id
+    return svc.DATASET_AUTHORITY
 
 
 # ---------------------------------------------------------------------------
@@ -126,16 +189,16 @@ def test_scheduler_run_tick_handles_url_error() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_shadow_eval_tick_empty_datasets() -> None:
-    from fastapi.testclient import TestClient
-
+def test_shadow_eval_tick_empty_tenant_creates_no_candidates() -> None:
+    """A reachable authority holding no data for the tenant ticks empty."""
     with tempfile.TemporaryDirectory() as data_dir:
         svc = _load_service_module(data_dir)
-        client = TestClient(svc.app)
+        _install_memory_authority(svc, [_agora_record("dsv-other", tenant_id="tenant-z")])
+        client = authorized_client(svc.app)
 
         resp = client.post(
             "/api/policy-learning/shadow-eval-tick",
-            json={"tick_id": "tick-001", "eval_type": "shadow"},
+            json={"tick_id": "tick-001", "eval_type": "shadow", "tenant_id": "tenant-a"},
         )
         assert resp.status_code == 201
         payload = resp.json()
@@ -146,14 +209,35 @@ def test_shadow_eval_tick_empty_datasets() -> None:
         assert payload["skipped_count"] == 0
         assert payload["candidate_ids"] == []
         assert payload["production_training"] == "fail_closed"
+        assert payload["seed_fallback_used"] is False
+
+
+def test_shadow_eval_tick_fails_closed_without_dataset_authority() -> None:
+    """No authority means no candidates and no seed substitution."""
+    with tempfile.TemporaryDirectory() as data_dir:
+        svc = _load_service_module(data_dir)
+        from agora_dataset_authority import AgoraDatasetAuthority
+
+        svc.DATASET_AUTHORITY = AgoraDatasetAuthority(backend="", dsn="")
+        client = authorized_client(svc.app)
+
+        resp = client.post(
+            "/api/policy-learning/shadow-eval-tick",
+            json={"tick_id": "tick-unconfigured", "eval_type": "shadow"},
+        )
+        assert resp.status_code == 503
+        detail = resp.json()["detail"]
+        assert detail["status"] == "degraded"
+        assert detail["reason"] == "agora_authority_unconfigured"
+        assert detail["seed_fallback_used"] is False
+        assert detail["candidate_count"] == 0
+        assert client.get("/api/policy-learning/candidates").json() == []
 
 
 def test_shadow_eval_tick_with_dataset_refs() -> None:
-    from fastapi.testclient import TestClient
-
     with tempfile.TemporaryDirectory() as data_dir:
         svc = _load_service_module(data_dir)
-        client = TestClient(svc.app)
+        client = authorized_client(svc.app)
 
         dataset_refs = [
             {"id": "ds-trace-001", "type": "trace_dataset", "source": "agora_interaction"},
@@ -192,11 +276,9 @@ def test_shadow_eval_tick_with_dataset_refs() -> None:
 
 def test_shadow_eval_tick_idempotent_same_tick_id() -> None:
     """Duplicate ticks with same tick_id and same dataset refs must not create duplicates."""
-    from fastapi.testclient import TestClient
-
     with tempfile.TemporaryDirectory() as data_dir:
         svc = _load_service_module(data_dir)
-        client = TestClient(svc.app)
+        client = authorized_client(svc.app)
 
         dataset_refs = [{"id": "ds-idem-001", "type": "trace_dataset"}]
         body = {"tick_id": "tick-idem-001", "eval_type": "shadow", "dataset_refs": dataset_refs}
@@ -211,7 +293,8 @@ def test_shadow_eval_tick_idempotent_same_tick_id() -> None:
         payload = second.json()
         assert payload["candidate_count"] == 0
         assert payload["skipped_count"] == 1
-        assert "ds-idem-001" in payload["skipped_ids"]
+        # The repeat resolves to the same derived candidate id it skipped.
+        assert payload["skipped_ids"] == first.json()["candidate_ids"]
 
         # Exactly one candidate exists
         listed = client.get("/api/policy-learning/candidates", params={"tick_id": "tick-idem-001"})
@@ -219,11 +302,9 @@ def test_shadow_eval_tick_idempotent_same_tick_id() -> None:
 
 
 def test_shadow_eval_tick_different_tick_ids_create_separate_candidates() -> None:
-    from fastapi.testclient import TestClient
-
     with tempfile.TemporaryDirectory() as data_dir:
         svc = _load_service_module(data_dir)
-        client = TestClient(svc.app)
+        client = authorized_client(svc.app)
 
         dataset_refs = [{"id": "ds-multi-001", "type": "trace_dataset"}]
 
@@ -243,11 +324,9 @@ def test_shadow_eval_tick_different_tick_ids_create_separate_candidates() -> Non
 
 
 def test_shadow_eval_tick_respects_max_datasets() -> None:
-    from fastapi.testclient import TestClient
-
     with tempfile.TemporaryDirectory() as data_dir:
         svc = _load_service_module(data_dir)
-        client = TestClient(svc.app)
+        client = authorized_client(svc.app)
 
         dataset_refs = [
             {"id": f"ds-max-{i:03d}", "type": "trace_dataset"} for i in range(5)
@@ -267,11 +346,9 @@ def test_shadow_eval_tick_respects_max_datasets() -> None:
 
 def test_shadow_eval_tick_candidates_remain_fail_closed() -> None:
     """Shadow eval candidates must never activate production training automatically."""
-    from fastapi.testclient import TestClient
-
     with tempfile.TemporaryDirectory() as data_dir:
         svc = _load_service_module(data_dir)
-        client = TestClient(svc.app)
+        client = authorized_client(svc.app)
 
         dataset_refs = [{"id": "ds-gate-001", "type": "trace_dataset"}]
         resp = client.post(
@@ -290,22 +367,18 @@ def test_shadow_eval_tick_candidates_remain_fail_closed() -> None:
 
 
 def test_get_candidate_not_found() -> None:
-    from fastapi.testclient import TestClient
-
     with tempfile.TemporaryDirectory() as data_dir:
         svc = _load_service_module(data_dir)
-        client = TestClient(svc.app)
+        client = authorized_client(svc.app)
 
         resp = client.get("/api/policy-learning/candidates/nonexistent-id")
         assert resp.status_code == 404
 
 
 def test_list_candidates_filter_by_eval_type() -> None:
-    from fastapi.testclient import TestClient
-
     with tempfile.TemporaryDirectory() as data_dir:
         svc = _load_service_module(data_dir)
-        client = TestClient(svc.app)
+        client = authorized_client(svc.app)
 
         client.post(
             "/api/policy-learning/shadow-eval-tick",
@@ -337,23 +410,22 @@ def test_list_candidates_filter_by_eval_type() -> None:
 
 
 def test_worker_backlog_dlq_process_retry_replay_restart_endpoints() -> None:
-    from fastapi.testclient import TestClient
-
     with tempfile.TemporaryDirectory() as data_dir:
         svc = _load_service_module(data_dir)
-        client = TestClient(svc.app)
+        _install_memory_authority(
+            svc,
+            [_agora_record("dsv-limit-1", order=1), _agora_record("dsv-limit-2", order=2)],
+        )
+        client = authorized_client(svc.app)
 
         # 1. Propose candidates
         resp = client.post(
             "/api/policy-learning/shadow-eval-tick",
-            json={
-                "tick_id": "tick-worker-test",
-                "eval_type": "shadow",
-                "dataset_refs": [{"id": "ds-limit-1", "type": "trace_dataset"}, {"id": "ds-limit-2", "type": "trace_dataset"}],
-            },
+            json={"tick_id": "tick-worker-test", "eval_type": "shadow"},
         )
         assert resp.status_code == 201
-        
+        assert resp.json()["candidate_count"] == 2
+
         # 2. Check backlog
         backlog_resp = client.get("/api/policy-learning/worker/backlog")
         assert backlog_resp.status_code == 200
@@ -381,6 +453,7 @@ def test_worker_backlog_dlq_process_retry_replay_restart_endpoints() -> None:
             assert "evaluation_summary" in c
             assert "policy_weights" in c
             assert "lineage" in c
+            assert c["dataset_lineage"]["seed_fallback_used"] is False
 
         # 5. Test DLQ and Replay/Retry: manually put a failed candidate
         c1 = candidates[0]
@@ -415,63 +488,49 @@ def test_worker_backlog_dlq_process_retry_replay_restart_endpoints() -> None:
         assert retry_resp.status_code == 200
         assert retry_resp.json()["status"] == "processed"
 
-        # Fail both to test restart
-        for c in listed.json():
-            c["status"] = "failed"
-            c["error_message"] = "mock evaluation failure"
-            svc.store.put_candidate(c)
+        # Restart recovers leases orphaned by a crashed worker.  A DLQ entry is
+        # NOT silently re-run: it needs an explicit replay, so a poison
+        # candidate cannot loop forever across restarts.
+        orphan = listed.json()[0]
+        orphan["status"] = "claimed"
+        orphan["lease_owner"] = "worker-that-died"
+        orphan["lease_token"] = "lease-stale"
+        orphan["lease_expires_at"] = "2020-01-01T00:00:00Z"
+        svc.store.put_candidate(orphan)
+
+        poisoned = listed.json()[1]
+        poisoned["status"] = "failed"
+        poisoned["error_message"] = "mock evaluation failure"
+        svc.store.put_candidate(poisoned)
 
         restart_resp = client.post("/api/policy-learning/worker/restart")
         assert restart_resp.status_code == 200
-        assert restart_resp.json()["reset_count"] == 2
+        restart_payload = restart_resp.json()
+        assert restart_payload["released_count"] == 1
+        assert orphan["candidate_id"] in restart_payload["released_candidate_ids"]
+        # The released orphan was re-processed in the same cycle...
+        assert svc.store.get_candidate(orphan["candidate_id"])["status"] == "processed"
+        # ...while the DLQ entry stayed in the DLQ.
+        assert svc.store.get_candidate(poisoned["candidate_id"])["status"] == "failed"
 
         # Check readback
-        readback_resp = client.get(f"/api/policy-learning/worker/readback/{c1['candidate_id']}")
+        readback_resp = client.get(f"/api/policy-learning/worker/readback/{orphan['candidate_id']}")
         assert readback_resp.status_code == 200
         assert readback_resp.json()["status"] == "processed"
 
 
-def test_get_dataset_payload_postgres_loading() -> None:
-    import os
-    from unittest import mock
-    from types import SimpleNamespace
-    import json
-    import tempfile
-    
+def test_agora_dataset_resolution_covers_governed_content_shapes() -> None:
+    """Every governed Agora content shape resolves without seed substitution.
+
+    Replaces the old ``_get_dataset_payload`` Postgres test: dataset content no
+    longer arrives through the policy-learning store backend, it arrives
+    through the tenant-scoped Agora dataset authority.
+    """
+
     with tempfile.TemporaryDirectory() as data_dir:
         svc = _load_service_module(data_dir)
-        _get_dataset_payload = svc._get_dataset_payload
-        
-        # 1. Non-postgres backend fallback
-        with mock.patch.dict("os.environ", {"POLICY_LEARNING_STORE_BACKEND": "json"}):
-            res = _get_dataset_payload("ds-trace-persona1-session1")
-            assert res["dataset_id"] == "ds-trace-persona1-session1"
-            assert len(res["sessions"]) == 2  # default SEED_DATASET has 2 sessions
-        
-        # 2. Postgres backend with mocked psycopg returning matching records
-        class FakeCursor:
-            def __init__(self, rows):
-                self.rows = rows
-            def __enter__(self):
-                return self
-            def __exit__(self, exc_type, exc, tb):
-                pass
-            def execute(self, sql, params=None):
-                pass
-            def fetchall(self):
-                return self.rows
-                
-        class FakeConnection:
-            def __init__(self, rows):
-                self.rows = rows
-            def __enter__(self):
-                return self
-            def __exit__(self, exc_type, exc, tb):
-                pass
-            def cursor(self):
-                return FakeCursor(self.rows)
 
-        complete_dataset_content = {
+        sessions_content = {
             "strategy_id": "test-strat",
             "source_strategy_spec_id": "test-spec",
             "sessions": [
@@ -481,102 +540,73 @@ def test_get_dataset_payload_postgres_loading() -> None:
                     "actor_role": "operator",
                     "decision": "approve",
                     "target": {"registry_id": "reg-1"},
-                    "steps": [{"observation": [1.0, 2.0], "action": "buy"}]
+                    "steps": [{"observation": [1.0, 2.0], "action": "buy"}],
                 }
-            ]
+            ],
         }
-        
         single_session_content = {
             "trajectory_id": "t-200",
             "actor_id": "act-2",
             "actor_role": "approver",
             "decision": "edit",
-            "steps": [{"observation": [3.0, 4.0], "action": "sell"}]
+            "steps": [{"observation": [3.0, 4.0], "action": "sell"}],
         }
-
         single_transition_content = {
             "actor_id": "act-3",
             "actor_role": "operator",
             "decision": "approve",
             "observation": [5.0, 6.0],
-            "action": "hold"
+            "action": "hold",
         }
 
-        db_rows = [
-            (
-                "persona1", "session1",
-                json.dumps(complete_dataset_content),
-                json.dumps(["ref-1"]),
-                "ev-1"
-            ),
-            (
-                "persona1", "session1",
-                json.dumps(single_session_content),
-                None,
-                "ev-2"
-            ),
-            (
-                "persona1", "session1",
-                json.dumps(single_transition_content),
-                json.dumps(["ref-2"]),
-                "ev-3"
-            ),
-            (
-                "persona2", "session2",
-                json.dumps(complete_dataset_content),
-                None,
-                "ev-4"
-            )
-        ]
+        _install_memory_authority(
+            svc,
+            [
+                _agora_record("dsv-sessions", evidence_id="ev-1", content=sessions_content, order=1),
+                _agora_record("dsv-steps", evidence_id="ev-2", content=single_session_content, order=2),
+                _agora_record(
+                    "dsv-transition", evidence_id="ev-3", content=single_transition_content, order=3
+                ),
+                _agora_record("dsv-foreign", tenant_id="tenant-z", evidence_id="ev-4", order=4),
+            ],
+        )
 
-        fake_psycopg = SimpleNamespace(connect=lambda dsn: FakeConnection(db_rows))
+        def resolve(dataset_version_id: str):
+            return svc.resolve_candidate_dataset(
+                {"dataset_ref": {"dataset_version_id": dataset_version_id, "tenant_id": "tenant-a"}}
+            )
 
-        with (
-            mock.patch.dict(sys.modules, {"psycopg": fake_psycopg}),
-            mock.patch.dict(
-                "os.environ",
-                {
-                    "POLICY_LEARNING_STORE_BACKEND": "postgres",
-                    "POLICY_LEARNING_STORE_DSN": "postgresql://test",
-                }
-            )
-        ):
-            res = _get_dataset_payload("ds-trace-persona1-session1")
-            assert res["dataset_id"] == "ds-trace-persona1-session1"
-            assert res["strategy_id"] == "test-strat"
-            assert res["source_strategy_spec_id"] == "test-spec"
-            assert len(res["sessions"]) == 3
-            
-            assert res["sessions"][0]["trajectory_id"] == "t-100"
-            assert res["sessions"][0]["steps"][0]["observation"] == [1.0, 2.0]
-            
-            assert res["sessions"][1]["trajectory_id"] == "t-200"
-            assert res["sessions"][1]["actor_role"] == "approver"
-            assert res["sessions"][1]["decision"] == "edit"
-            
-            assert res["sessions"][2]["trajectory_id"] == "traj-ev-3"
-            assert res["sessions"][2]["actor_role"] == "operator"
-            assert res["sessions"][2]["steps"][0]["observation"] == [5.0, 6.0]
-            assert res["sessions"][2]["steps"][0]["action"] == "hold"
-            assert res["sessions"][2]["steps"][0]["feedback_event_id"] == "ev-3"
-            
-            assert "evidence://ev-1" in res["source_dataset_refs"]
-            assert "evidence://ev-2" in res["source_dataset_refs"]
-            assert "evidence://ev-3" in res["source_dataset_refs"]
-            assert "ref-1" in res["source_dataset_refs"]
-            assert "ref-2" in res["source_dataset_refs"]
-            
-        fake_psycopg_empty = SimpleNamespace(connect=lambda dsn: FakeConnection([]))
-        with (
-            mock.patch.dict(sys.modules, {"psycopg": fake_psycopg_empty}),
-            mock.patch.dict(
-                "os.environ",
-                {
-                    "POLICY_LEARNING_STORE_BACKEND": "postgres",
-                    "POLICY_LEARNING_STORE_DSN": "postgresql://test",
-                }
-            )
-        ):
-            res = _get_dataset_payload("ds-trace-persona1-session1")
-            assert res["dataset_id"] == "ds-trace-persona1-session1"
-            assert len(res["sessions"]) == 2
+        payload, lineage = resolve("dsv-sessions")
+        assert payload["dataset_id"] == "dsv-sessions"
+        assert payload["strategy_id"] == "test-strat"
+        assert payload["source_strategy_spec_id"] == "test-spec"
+        assert payload["sessions"][0]["trajectory_id"] == "t-100"
+        assert payload["sessions"][0]["steps"][0]["observation"] == [1.0, 2.0]
+        assert "agora://dataset-version/tenant-a/dsv-sessions" in payload["source_dataset_refs"]
+        assert "evidence://ev-1" in payload["source_dataset_refs"]
+        assert "artifact://source-1" in payload["source_dataset_refs"]
+        assert lineage["tenant_id"] == "tenant-a"
+        assert lineage["dataset_version_ids"] == ["dsv-sessions"]
+        assert lineage["seed_fallback_used"] is False
+        assert lineage["authoritative"] is True
+
+        payload, _ = resolve("dsv-steps")
+        assert payload["sessions"][0]["trajectory_id"] == "t-200"
+        assert payload["sessions"][0]["actor_role"] == "approver"
+        assert payload["sessions"][0]["decision"] == "edit"
+
+        payload, _ = resolve("dsv-transition")
+        assert payload["sessions"][0]["trajectory_id"] == "traj-ev-3"
+        assert payload["sessions"][0]["actor_role"] == "operator"
+        assert payload["sessions"][0]["steps"][0]["observation"] == [5.0, 6.0]
+        assert payload["sessions"][0]["steps"][0]["action"] == "hold"
+        assert payload["sessions"][0]["steps"][0]["feedback_event_id"] == "ev-3"
+
+        # A version owned by another tenant is invisible, and the failure is an
+        # error rather than a quiet fall back to the seed fixture.
+        try:
+            resolve("dsv-foreign")
+        except svc.DatasetResolutionError as exc:
+            assert exc.reason == "dataset_version_not_found"
+        else:  # pragma: no cover - guards the tenant isolation contract
+            raise AssertionError("cross-tenant dataset version must not resolve")

@@ -10,6 +10,7 @@ import os
 import json
 import subprocess
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
@@ -4811,6 +4812,58 @@ class DispatchStatusSyncTests(unittest.TestCase):
         self.assertTrue(changed)
         self.assertEqual(run_mock.call_args.kwargs["env"]["ORCH_RUN_ID"], "copilot-run-7")
 
+    def test_sync_dispatched_task_status_binds_worker_workspace_env(self) -> None:
+        event = {
+            "task_id": "APP-002-W1-FRONT-HANDOFF",
+            "target_agent": "copilot",
+            "target_display_name": "Copilot",
+            "reason": "owned_ready_dispatch",
+        }
+        workspace = self.root / "worker-worktrees" / "app-002"
+        workspace.mkdir(parents=True)
+        runner_status_path = self.root / ".orchestrator" / "worker-runtime" / "status" / "copilot-run-7.json"
+        heartbeat_path = self.root / ".orchestrator" / "worker-runtime" / "heartbeats" / "copilot-run-7.json"
+        runner_status_path.parent.mkdir(parents=True)
+        heartbeat_path.parent.mkdir(parents=True)
+        worker = {
+            "run_id": "copilot-run-7",
+            "task_id": "APP-002-W1-FRONT-HANDOFF",
+            "workspace_path": str(workspace),
+            "status_root": str(self.root),
+            "runner_status_path": str(runner_status_path),
+            "heartbeat_path": str(heartbeat_path),
+            "request_snapshot": {
+                "metadata": {
+                    "workspace_path": str(workspace),
+                    "status_root": str(self.root),
+                }
+            },
+        }
+        command_env = {
+            "PANTHEON_COMMAND_ROOT": str(self.root),
+            "PANTHEON_COMMAND_RUNTIME_SHA": "installed-sha",
+        }
+        self.config["paths"]["state_file"] = str(self.root / ".orchestrator" / "state.json")
+
+        with (
+            mock.patch.object(supervisor, "status_command_runtime_env", return_value=command_env),
+            mock.patch.object(supervisor, "load_runtime_state", return_value={"workers": {"copilot-run-7": worker}}),
+            mock.patch.object(supervisor.subprocess, "run", return_value=mock.Mock(returncode=0, stderr="", stdout="")) as run_mock,
+        ):
+            changed = supervisor.sync_dispatched_task_status(
+                self.config, event, run_id="copilot-run-7"
+            )
+
+        self.assertTrue(changed)
+        env = run_mock.call_args.kwargs["env"]
+        self.assertEqual(env["ORCH_RUN_ID"], "copilot-run-7")
+        self.assertEqual(env["ORCH_TASK_ID"], "APP-002-W1-FRONT-HANDOFF")
+        self.assertEqual(env["PANTHEON_WORKTREE_ROOT"], str(workspace.resolve()))
+        self.assertEqual(env["ORCH_WORKSPACE_PATH"], str(workspace.resolve()))
+        self.assertEqual(env["PANTHEON_STATUS_ROOT"], str(self.root.resolve()))
+        self.assertEqual(env["ORCH_RUNNER_STATUS_PATH"], str(runner_status_path.resolve()))
+        self.assertEqual(env["ORCH_HEARTBEAT_PATH"], str(heartbeat_path.resolve()))
+
     def test_sync_dispatched_task_status_without_run_id_does_not_inherit_lease(self) -> None:
         # A stray ORCH_RUN_ID in the supervisor environment must not be borrowed as a
         # lease for a dispatch we have no run id for.
@@ -4826,14 +4879,27 @@ class DispatchStatusSyncTests(unittest.TestCase):
         }
 
         with (
-            mock.patch.dict(supervisor.os.environ, {"ORCH_RUN_ID": "inherited-run"}, clear=False),
+            mock.patch.dict(
+                supervisor.os.environ,
+                {
+                    "ORCH_RUN_ID": "inherited-run",
+                    "ORCH_TASK_ID": "INHERITED-TASK",
+                    "PANTHEON_WORKTREE_ROOT": str(self.root / "inherited-worktree"),
+                    "ORCH_WORKSPACE_PATH": str(self.root / "inherited-worktree"),
+                    "ORCH_RUNNER_STATUS_PATH": str(self.root / "inherited-status.json"),
+                    "ORCH_HEARTBEAT_PATH": str(self.root / "inherited-heartbeat.json"),
+                },
+                clear=False,
+            ),
             mock.patch.object(supervisor, "status_command_runtime_env", return_value=command_env),
             mock.patch.object(supervisor.subprocess, "run", return_value=mock.Mock(returncode=0, stderr="", stdout="")) as run_mock,
         ):
             changed = supervisor.sync_dispatched_task_status(self.config, event)
 
         self.assertTrue(changed)
-        self.assertNotIn("ORCH_RUN_ID", run_mock.call_args.kwargs["env"])
+        env = run_mock.call_args.kwargs["env"]
+        for env_name in supervisor.DISPATCH_STATUS_WORKER_ENV_NAMES:
+            self.assertNotIn(env_name, env)
 
     def test_run_once_syncs_dispatch_after_releasing_runtime_lock(self) -> None:
         event = {
@@ -4874,6 +4940,9 @@ class DispatchStatusSyncTests(unittest.TestCase):
             mock.patch.object(supervisor, "runtime_state_lock", side_effect=runtime_lock),
             mock.patch.object(supervisor, "_run_once_locked", side_effect=locked_cycle),
             mock.patch.object(supervisor, "status_command_runtime_env", return_value=command_env),
+            # Provider probing is its own pre-lock step and shells out too; it is
+            # stubbed here so call_order records only the dispatch sync.
+            mock.patch.object(supervisor, "probe_provider_reports", return_value=({}, {})),
             mock.patch.object(supervisor.subprocess, "run", side_effect=status_command) as run_mock,
         ):
             changed = supervisor.run_once(self.config, watch=False)
@@ -4884,6 +4953,45 @@ class DispatchStatusSyncTests(unittest.TestCase):
             ["lock_enter", "locked_cycle", "lock_exit", "status_command"],
         )
         self.assertEqual(run_mock.call_args.kwargs["env"]["ORCH_RUN_ID"], "copilot-run-7")
+
+    def test_run_once_probes_providers_before_taking_the_runtime_lock(self) -> None:
+        """A gh auth probe must not be charged to the exclusive runtime lock.
+
+        Live symptom: supervisor PID 901543 held runtime-admission inode 807896
+        while reviewer and status processes queued, and the provider probe was
+        one of the unbounded external waits inside that hold.
+        """
+
+        call_order: list[str] = []
+
+        @contextlib.contextmanager
+        def runtime_lock(*_args: object, **_kwargs: object):
+            call_order.append("lock_enter")
+            try:
+                yield
+            finally:
+                call_order.append("lock_exit")
+
+        def locked_cycle(*_args: object, **kwargs: object) -> bool:
+            call_order.append("locked_cycle")
+            self.assertEqual(kwargs["provider_reports"], ({"previous": True}, {"fresh": True}))
+            return False
+
+        def probe(*_args: object, **_kwargs: object) -> tuple[dict, dict]:
+            call_order.append("provider_probe")
+            return ({"previous": True}, {"fresh": True})
+
+        with (
+            mock.patch.object(supervisor, "runtime_state_lock", side_effect=runtime_lock),
+            mock.patch.object(supervisor, "_run_once_locked", side_effect=locked_cycle),
+            mock.patch.object(supervisor, "probe_provider_reports", side_effect=probe),
+        ):
+            supervisor.run_once(self.config, watch=False)
+
+        self.assertEqual(
+            call_order,
+            ["provider_probe", "lock_enter", "locked_cycle", "lock_exit"],
+        )
 
     def test_sync_status_pipeline_uses_installed_command_runtime(self) -> None:
         command_env = {
@@ -4920,6 +5028,41 @@ class DispatchStatusSyncTests(unittest.TestCase):
 
         self.assertFalse(changed)
         run_mock.assert_not_called()
+
+
+class RuntimeLockHoldTests(unittest.TestCase):
+    """The exclusive hold is the ceiling on every worker status command's wait."""
+
+    def test_hold_within_budget_is_published_without_a_warning(self) -> None:
+        state: dict[str, object] = {}
+
+        held = supervisor.record_runtime_lock_hold(
+            {"supervisor": {"runtime_lock_hold_warn_after_seconds": 30}},
+            state,
+            time.monotonic(),
+        )
+
+        supervisor_state = state["supervisor"]
+        self.assertLess(held, 30)
+        self.assertEqual(supervisor_state["runtime_lock_hold_seconds"], held)
+        self.assertFalse(supervisor_state["runtime_lock_hold_exceeded"])
+
+    def test_multi_minute_hold_is_flagged_and_peak_is_retained(self) -> None:
+        """The live 771s hold left no trace in runtime state; it must now."""
+
+        state: dict[str, object] = {}
+        config = {"supervisor": {"runtime_lock_hold_warn_after_seconds": 30}}
+
+        supervisor.record_runtime_lock_hold(config, state, time.monotonic() - 771.0)
+        supervisor_state = state["supervisor"]
+        self.assertGreaterEqual(supervisor_state["runtime_lock_hold_seconds"], 771.0)
+        self.assertTrue(supervisor_state["runtime_lock_hold_exceeded"])
+        peak = supervisor_state["runtime_lock_hold_peak_seconds"]
+
+        # A later healthy cycle clears the flag but does not erase the peak.
+        supervisor.record_runtime_lock_hold(config, state, time.monotonic())
+        self.assertFalse(supervisor_state["runtime_lock_hold_exceeded"])
+        self.assertEqual(supervisor_state["runtime_lock_hold_peak_seconds"], peak)
 
 
 class TaskStateShadowCatchupTests(unittest.TestCase):
@@ -4999,6 +5142,171 @@ class TaskStateShadowCatchupTests(unittest.TestCase):
         self.assertEqual(store_state["mode"], "authoritative")
         self.assertTrue(store_state["ok"])
         self.assertTrue(store_state["caught_up"])
+
+    def test_caught_up_reports_parity_and_repaired_reports_the_write(self) -> None:
+        """caught_up used to be the divergence predicate, exactly inverted.
+
+        A healthy cycle published caught_up=false while a cycle that had just
+        rewritten a drifted board published caught_up=true, so the field could
+        not be used to tell whether the projection matched the journal.
+        """
+
+        canonical = self.write_status("todo")
+        supervisor.rewrite_task_state_store.append_state_commit(
+            self.event_log,
+            canonical,
+            source="migration",
+        )
+        self.config["task_state_store"]["mode"] = "authoritative"
+
+        # Board already matches the journal head: nothing to repair, and the
+        # projection is by definition caught up.
+        self.assertFalse(supervisor.sync_task_state_shadow(self.config, self.runtime_state))
+        shadow = self.runtime_state["supervisor"]["task_state_shadow"]
+        self.assertTrue(shadow["caught_up"])
+        self.assertFalse(shadow["repaired"])
+
+        # Drift the board; the cycle must repair it and still report parity.
+        self.write_status("done")
+        self.assertTrue(supervisor.sync_task_state_shadow(self.config, self.runtime_state))
+        shadow = self.runtime_state["supervisor"]["task_state_shadow"]
+        self.assertTrue(shadow["caught_up"])
+        self.assertTrue(shadow["repaired"])
+        self.assertEqual(
+            json.loads(self.status_file.read_text(encoding="utf-8")),
+            canonical,
+        )
+
+    def test_shadow_mode_reports_parity_and_repair_separately(self) -> None:
+        first = self.write_status("todo")
+
+        self.assertTrue(supervisor.sync_task_state_shadow(self.config, self.runtime_state))
+        shadow = self.runtime_state["supervisor"]["task_state_shadow"]
+        self.assertTrue(shadow["caught_up"])
+        self.assertTrue(shadow["repaired"])
+        self.assertEqual(shadow["event_count"], 1)
+
+        self.assertFalse(supervisor.sync_task_state_shadow(self.config, self.runtime_state))
+        shadow = self.runtime_state["supervisor"]["task_state_shadow"]
+        self.assertTrue(shadow["caught_up"])
+        self.assertFalse(shadow["repaired"])
+        self.assertEqual(
+            supervisor.rewrite_task_state_store.load_events(self.event_log)[0]["state"],
+            first,
+        )
+
+    def test_repair_that_never_lands_is_not_reported_as_caught_up(self) -> None:
+        """Parity is asserted about the board on disk, not the value written.
+
+        Comparing the journal head to the in-memory state just handed to
+        write_json would make the check tautological: any repair would report
+        success whether or not the file changed.
+        """
+
+        canonical = self.write_status("todo")
+        supervisor.rewrite_task_state_store.append_state_commit(
+            self.event_log,
+            canonical,
+            source="migration",
+        )
+        drifted = self.write_status("done")
+        self.config["task_state_store"]["mode"] = "authoritative"
+
+        with mock.patch.object(supervisor, "write_json"):
+            self.assertFalse(supervisor.sync_task_state_shadow(self.config, self.runtime_state))
+
+        shadow = self.runtime_state["supervisor"]["task_state_shadow"]
+        self.assertFalse(shadow["ok"])
+        self.assertFalse(shadow["caught_up"])
+        self.assertIn("remains divergent", shadow["last_error"])
+        self.assertEqual(
+            json.loads(self.status_file.read_text(encoding="utf-8")),
+            drifted,
+        )
+
+    def test_reconciliation_replays_the_journal_once_per_cycle(self) -> None:
+        """The reconciliation phase must not pay for the journal four times.
+
+        The previous body ran load_events, project_latest_state, and then
+        verify_projection -- which loaded and projected the log all over again --
+        inside the exclusive canonical lock. On the live 2050-event journal that
+        was four full replays per cycle while every reviewer and status command
+        queued on the same lock.
+        """
+
+        canonical = self.write_status("todo")
+        supervisor.rewrite_task_state_store.append_state_commit(
+            self.event_log,
+            canonical,
+            source="migration",
+        )
+        self.config["task_state_store"]["mode"] = "authoritative"
+
+        store = supervisor.rewrite_task_state_store
+        reads: list[str] = []
+        real_snapshot = store.load_snapshot
+        real_load_events = store.load_events
+
+        with (
+            mock.patch.object(
+                store,
+                "load_snapshot",
+                side_effect=lambda *a, **k: (reads.append("snapshot"), real_snapshot(*a, **k))[1],
+            ),
+            mock.patch.object(
+                store,
+                "load_events",
+                side_effect=lambda *a, **k: (reads.append("events"), real_load_events(*a, **k))[1],
+            ),
+        ):
+            supervisor.sync_task_state_shadow(self.config, self.runtime_state)
+
+        self.assertEqual(reads, ["snapshot"])
+
+    def test_reconciliation_report_describes_one_journal_generation(self) -> None:
+        """The projection report must not straddle two journal generations.
+
+        Live symptom: a verifier started around a lock handoff reported
+        event_count=2046 with the expected SHA taken from event 2045 and the
+        projected SHA from event 2046, because the board and the journal were
+        sampled in two separate lock windows. A stable rerun at event 2049 then
+        returned ok=true, so the failure looked like flapping truth.
+        """
+
+        canonical = self.write_status("todo")
+        supervisor.rewrite_task_state_store.append_state_commit(
+            self.event_log,
+            canonical,
+            source="migration",
+        )
+        self.config["task_state_store"]["mode"] = "authoritative"
+
+        store = supervisor.rewrite_task_state_store
+        real_snapshot = store.load_snapshot
+
+        def snapshot_then_append(*args: object, **kwargs: object) -> dict:
+            snapshot = real_snapshot(*args, **kwargs)
+            # A concurrent writer commits the moment our snapshot is taken.
+            store.append_state_commit(
+                self.event_log,
+                {"tasks": [{"id": "STATE-CATCHUP-001", "status": "review"}]},
+                source="concurrent-writer",
+            )
+            return snapshot
+
+        with mock.patch.object(store, "load_snapshot", side_effect=snapshot_then_append):
+            supervisor.sync_task_state_shadow(self.config, self.runtime_state)
+
+        shadow = self.runtime_state["supervisor"]["task_state_shadow"]
+        self.assertTrue(shadow["ok"])
+        self.assertTrue(shadow["caught_up"])
+        # Count, digests, and last event id all describe the snapshot the phase
+        # actually reconciled -- never a mix of the two generations.
+        self.assertEqual(shadow["event_count"], 1)
+        self.assertEqual(
+            shadow["projected_state_sha256"],
+            shadow["expected_state_sha256"],
+        )
 
     def test_authoritative_mode_reports_empty_journal_without_touching_file(self) -> None:
         expected = self.write_status("todo")

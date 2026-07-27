@@ -1,8 +1,9 @@
 """File-backed inbox for assistant DevTaskPacket supervisor pickup.
 
-The Web API emits signed packets but does not execute shell.  Repo-local
+The Web API emits signed packets but does not execute shell. Repo-local
 automation can queue those packets into this inbox; the supervisor drains it
-through the existing verifier-backed dispatcher.
+through the verifier-backed dispatcher and its installed governed status
+runtime binding.
 """
 from __future__ import annotations
 
@@ -283,7 +284,7 @@ def drain_task_packet_inbox(
     limit: Optional[int] = None,
     dry_run: bool = False,
 ) -> Dict[str, Any]:
-    """Drain queued packets through dispatch_task_packet()."""
+    """Drain queued packets through the verifier-backed governed dispatcher."""
     root = _repo_root(repo_root)
     inbox = _inbox_root(str(root), inbox_dir)
     max_items = max(0, int(limit)) if limit is not None else None

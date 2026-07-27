@@ -26,9 +26,9 @@ telemetry test module that reintroduces a bare sibling import fails here:
 Repository-root resolution contract
 -----------------------------------
 
-`services.telemetry.<module>` resolves only when the repository root is on
-`sys.path`. That is a property of Python's import system, not of these modules,
-so the contract this file fences is deliberately precise:
+`services.telemetry.<module>` resolves only when the repository is reachable
+from `sys.path`. That is a property of Python's import system, not of these
+modules, so the contract this file fences is deliberately precise:
 
 * with **no** ``PYTHONPATH`` at all, ``pytest <abs path>`` from a foreign working
   directory passes — pytest walks the ``__init__.py`` chain up to the first
@@ -39,18 +39,32 @@ so the contract this file fences is deliberately precise:
   execution and ``discover`` — passes when the working directory is the
   repository root, because the interpreter puts the working directory on
   ``sys.path``;
-* from a foreign working directory with neither ``PYTHONPATH`` nor the repository
-  root otherwise importable, ``python -m unittest services.telemetry.<module>``
-  and ``python <abs path>/test_<module>.py`` fail with
-  ``ModuleNotFoundError: No module named 'services'``. That residual is the
-  repository root not being importable; it is unrelated to the repaired defect
-  and is not fixable without exactly the process-global ``sys.path`` mutation
-  this task refuses to add. The tests below therefore assert the invariant that
-  matters — no failure in any environment is ever attributable to a bare sibling
-  import — instead of claiming an unconditional pass.
+* from a foreign working directory, dotted execution
+  (``python -m unittest services.telemetry.<module>``) and direct-file execution
+  (``python <abs path>/test_<module>.py``) pass **when the checkout is installed
+  as a distribution**, and only then. Nothing puts the repository on ``sys.path``
+  for them otherwise.
 
-Scope: test-loading only. This task does not change `capture.py`,
-`feedback_adapter.py`, or any configuration.
+That last clause used to be an open gap. It is closed by
+OPS-L12-PYTHON-PACKAGING-PROVISION-001: the root ``pyproject.toml`` declares the
+repository's three importable top-level names and
+``scripts/dev/provision_python_distribution.py`` installs them, so
+``TestAC2ModesUnderInstalledDistribution`` below now asserts an unconditional
+pass for every mode instead of recording an expected failure. That class
+provisions the interpreter it needs through the shipped script, so the proof is
+of the real provisioning path and does not depend on the ambient environment
+having been bootstrapped first.
+
+The installed distribution is what makes this fix compatible with the rest of
+the module's contract: it exports a name-to-directory mapping through a
+meta-path finder rather than putting the repository root on ``sys.path``, so it
+adds no process-global ``sys.path`` mutation, exports no repository-root module
+as a top-level name, and leaves ``services.telemetry.<module>`` as the single
+canonical identity for each module. ``TestInstalledDistributionIsCanonical``
+fences all three.
+
+Scope: test-loading only. Neither this task nor its predecessor changes
+`capture.py`, `feedback_adapter.py`, or any live runtime configuration.
 """
 from __future__ import annotations
 
@@ -65,6 +79,19 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TELEMETRY_DIR = REPO_ROOT / "services" / "telemetry"
+
+# The governed provisioning entry point that installs this checkout as a
+# distribution. The AC2 tests below drive the real script rather than writing a
+# `.pth` by hand, so a regression in provisioning fails the acceptance test.
+PROVISION_SCRIPT = REPO_ROOT / "scripts" / "dev" / "provision_python_distribution.py"
+
+# Top-level names the distribution is allowed to export, and repository-root
+# modules that must stay unexported. `cli`, `gate`, and `workflows` are the
+# dangerous ones: they are ordinary root-level .py files here and popular
+# distribution names on PyPI, so exporting them would create exactly the
+# top-level collision the packaging task is required to avoid.
+EXPORTED_TOP_LEVEL = ("integrations", "scripts", "services")
+UNEXPORTED_ROOT_MODULES = ("cli", "gate", "workflows", "conftest", "mlflow_adapter")
 
 # The two modules repaired by this task. They are named explicitly so the
 # regression stays anchored to the reported defect even as the package grows;
@@ -151,6 +178,95 @@ def _iter_tests(suite: unittest.TestSuite):
             yield from _iter_tests(item)
         else:
             yield item
+
+
+def _resolves_this_checkout(python: str) -> bool:
+    """Does ``python`` import ``services`` from this checkout unaided?
+
+    Unaided means: foreign working directory, no ``PYTHONPATH``. Only an
+    installed distribution can satisfy that.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        proc = _run(
+            [
+                python,
+                "-c",
+                "import importlib.util as u\n"
+                "spec = u.find_spec('services')\n"
+                "print(spec.origin if spec else '')\n",
+            ],
+            cwd=Path(tmp),
+            env=_child_env(repo_root_on_pythonpath=False),
+        )
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return False
+    try:
+        Path(proc.stdout.strip()).resolve().relative_to(REPO_ROOT)
+    except ValueError:
+        return False
+    return True
+
+
+# Memo plus an owning reference to the throwaway environment, so it survives for
+# the life of the process and is removed when the interpreter exits.
+_PROVISIONED: list[str] = []
+_PROVISIONED_TMPDIR: list[tempfile.TemporaryDirectory] = []
+
+
+def provisioned_interpreter() -> str:
+    """An interpreter with this checkout installed as a distribution.
+
+    Prefers the running interpreter when dev CI or the auto-worker test
+    bootstrap has already provisioned it — that is the normal case and costs
+    nothing. Otherwise it provisions a throwaway environment by invoking the
+    shipped ``scripts/dev/provision_python_distribution.py``, so the AC2 proof
+    below is always a proof about the real provisioning path and never depends
+    on the developer having bootstrapped first.
+
+    The script is invoked exactly as the guide documents — no
+    ``--dependency-python``, no ``PANTHEON_DEPENDENCY_PYTHON`` — so it has to
+    resolve the dependency interpreter on its own. That keeps the AC2 proof
+    honest on an auto-worker host, where ``sys.executable`` may well be the bare
+    system interpreter with no pytest in it.
+
+    Deliberately not a ``skipTest``: an environment where provisioning fails is
+    an environment where AC2 is unproven, and that must read as a failure.
+    """
+    if _PROVISIONED:
+        return _PROVISIONED[0]
+
+    if _resolves_this_checkout(sys.executable):
+        _PROVISIONED.append(sys.executable)
+        return _PROVISIONED[0]
+
+    holder = tempfile.TemporaryDirectory(prefix="pantheon-ac2-provision-")
+    _PROVISIONED_TMPDIR.append(holder)
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(PROVISION_SCRIPT),
+            "--venv-dir",
+            str(Path(holder.name) / "venv"),
+            "--quiet",
+            "--print-python",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=900,
+    )
+    if proc.returncode != 0:
+        raise AssertionError(
+            "provisioning the Pantheon distribution failed, so AC2 cannot be "
+            f"proven in this environment:\n{proc.stdout}{proc.stderr}"
+        )
+    python = proc.stdout.strip()
+    if not _resolves_this_checkout(python):
+        raise AssertionError(
+            f"provisioning reported success but {python} still does not import "
+            "services from this checkout"
+        )
+    _PROVISIONED.append(python)
+    return python
 
 
 def _loader_failures(suite: unittest.TestSuite) -> list[str]:
@@ -262,12 +378,8 @@ class TestTelemetryDiscoveryLoadsWithoutErrors(unittest.TestCase):
         self.assertEqual(leaked, [], f"bare sibling modules aliased into sys.modules: {leaked}")
 
 
-@unittest.skipIf(
-    os.environ.get(CHILD_SENTINEL) == "1",
-    "already running inside a spawned discovery child",
-)
-class TestTelemetryDiscoveryUnderForeignCwdAndHostileEnv(unittest.TestCase):
-    """Subprocess proof: no cwd dependence, no ambient-environment dependence."""
+class UnittestRunAssertions:
+    """Shared assertion for "a spawned ``unittest`` run actually passed"."""
 
     def assertUnittestRunPassed(self, proc: subprocess.CompletedProcess, *, expected: int | None = None):
         combined = proc.stdout + proc.stderr
@@ -281,6 +393,14 @@ class TestTelemetryDiscoveryUnderForeignCwdAndHostileEnv(unittest.TestCase):
         if expected is not None:
             self.assertEqual(ran, expected, combined)
         return ran
+
+
+@unittest.skipIf(
+    os.environ.get(CHILD_SENTINEL) == "1",
+    "already running inside a spawned discovery child",
+)
+class TestTelemetryDiscoveryUnderForeignCwdAndHostileEnv(UnittestRunAssertions, unittest.TestCase):
+    """Subprocess proof: no cwd dependence, no ambient-environment dependence."""
 
     def test_repo_root_discovery_of_repaired_modules_reports_no_loader_error(self):
         total = 0
@@ -365,24 +485,16 @@ class TestTelemetryDiscoveryUnderForeignCwdAndHostileEnv(unittest.TestCase):
     "already running inside a spawned discovery child",
 )
 class TestRepositoryRootResolutionWithoutPythonPath(unittest.TestCase):
-    """No-``PYTHONPATH`` proof, and the exact boundary of what that can mean.
+    """No-``PYTHONPATH`` proof for the modes that need no packaging at all.
 
     Every child here runs with no ``PYTHONPATH`` key in its environment, so
-    nothing injects the repository root on the modules' behalf. The tests split
-    into what genuinely passes that way and a residual that does not.
+    nothing injects the repository root on the modules' behalf, and every child
+    runs under the *ambient* interpreter — no distribution is assumed to be
+    installed. These three modes therefore hold on a bare checkout.
 
-    The two ``fails_only_on_services`` tests record an **unresolved gap** against
-    canonical acceptance criterion 2, which requires dotted and direct-file
-    execution to pass from any working directory. They do not certify that gap as
-    acceptable. Closing it needs the repository to be an installed distribution —
-    proven in
-    ``docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001/AC2_FEASIBILITY_PROOF.md``,
-    which enumerates every mechanism that could put the repository root on
-    ``sys.path`` and demonstrates that only a ``site-packages`` entry qualifies —
-    and that is a packaging decision outside this task's scope, pending a
-    Human/Ops ruling. What these two tests do assert is the narrower invariant
-    that holds in every environment: a failure may name ``services``, never a
-    bare sibling.
+    The two foreign-cwd modes that a bare checkout cannot satisfy live in
+    ``TestAC2ModesUnderInstalledDistribution`` below, where they are asserted to
+    pass outright under a provisioned interpreter.
     """
 
     def assertNoBareSiblingImportFailure(self, proc: subprocess.CompletedProcess) -> None:
@@ -471,39 +583,193 @@ class TestRepositoryRootResolutionWithoutPythonPath(unittest.TestCase):
                 total += int(match.group(1))
         self.assertEqual(total, EXPECTED_REPAIRED_TEST_COUNT)
 
-    def test_dotted_unittest_from_foreign_cwd_without_pythonpath_fails_only_on_services(self):
-        # Unresolved AC2 gap, not a claimed pass: with the repository root
-        # unreachable, the dotted form fails on `services` itself, before this
-        # package's code runs at all. If the repository is ever installed as a
-        # distribution (a site-packages .pth entry), this passes instead and the
-        # gap is closed — either way, the failure is never a bare sibling.
-        with tempfile.TemporaryDirectory() as tmp:
-            for module in REPAIRED_MODULES:
-                with self.subTest(module=module):
-                    proc = _run(
-                        [sys.executable, "-m", "unittest", f"services.telemetry.{module}"],
-                        cwd=Path(tmp),
-                        env=_child_env(repo_root_on_pythonpath=False),
-                    )
-                    self.assertNoBareSiblingImportFailure(proc)
 
-    def test_direct_file_execution_from_foreign_cwd_fails_only_on_services(self):
-        # Same unresolved AC2 gap for `python <abs path>/test_capture.py`:
-        # sys.path[0] is services/telemetry, so the package root is missing.
-        # Closing it inside the module would need a sys.path or sys.modules edit
-        # at import time, which
-        # test_repaired_modules_do_not_mutate_process_global_sys_path forbids and
-        # which would reintroduce the duplicate-module-identity hazard; an
-        # installed distribution closes it without touching this file.
+@unittest.skipIf(
+    os.environ.get(CHILD_SENTINEL) == "1",
+    "already running inside a spawned discovery child",
+)
+class TestAC2ModesUnderInstalledDistribution(UnittestRunAssertions, unittest.TestCase):
+    """Canonical AC2: all four execution modes pass, foreign cwd, no PYTHONPATH.
+
+    OPS-L12-PYTHON-PACKAGING-PROVISION-001. Every child below runs from a
+    temporary working directory with no ``PYTHONPATH`` key, under an interpreter
+    that has this checkout installed as a distribution — provisioned through
+    ``scripts/dev/provision_python_distribution.py``, the same entry point dev
+    CI and the auto-worker test bootstrap use.
+
+    These are pass assertions, not recorded gaps. If provisioning regresses,
+    every test here fails.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.python = provisioned_interpreter()
+
+    def test_m1_pytest_from_foreign_cwd(self):
+        # Deliberately not a skip. Provisioning selects a dependency interpreter
+        # and fails closed unless the environment it hands back can import
+        # pytest, so a pytest-less provisioned interpreter is a provisioning
+        # regression — the exact one this task was rejected on — and it must
+        # read as a failure of M1, not as an unproven mode.
+        probe = _run(
+            [self.python, "-c", "import pytest"], cwd=REPO_ROOT, env=_child_env()
+        )
+        self.assertEqual(
+            probe.returncode,
+            0,
+            "the provisioned interpreter cannot import pytest, so M1 is unrunnable; "
+            "scripts/dev/provision_python_distribution.py is required to fail closed "
+            f"rather than return it:\n{probe.stdout}{probe.stderr}",
+        )
+
         with tempfile.TemporaryDirectory() as tmp:
+            proc = _run(
+                [
+                    self.python,
+                    "-m",
+                    "pytest",
+                    "-q",
+                    # As in the ambient-interpreter proof: strip this
+                    # repository's pytest.ini and root conftest.py so the pass is
+                    # attributable to the installed distribution alone.
+                    "-c",
+                    os.devnull,
+                    "--noconftest",
+                    "-p",
+                    "no:cacheprovider",
+                ]
+                + [str(TELEMETRY_DIR / f"{module}.py") for module in REPAIRED_MODULES],
+                cwd=Path(tmp),
+                env=_child_env(repo_root_on_pythonpath=False),
+            )
+            combined = proc.stdout + proc.stderr
+            self.assertEqual(proc.returncode, 0, combined)
+            self.assertIn(f"{EXPECTED_REPAIRED_TEST_COUNT} passed", combined, combined)
+
+    def test_m2_dotted_unittest_from_foreign_cwd(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = _run(
+                [self.python, "-m", "unittest"]
+                + [f"services.telemetry.{module}" for module in REPAIRED_MODULES],
+                cwd=Path(tmp),
+                env=_child_env(repo_root_on_pythonpath=False),
+            )
+            self.assertUnittestRunPassed(proc, expected=EXPECTED_REPAIRED_TEST_COUNT)
+
+    def test_m3_direct_file_execution_from_foreign_cwd(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            total = 0
             for module in REPAIRED_MODULES:
                 with self.subTest(module=module):
                     proc = _run(
-                        [sys.executable, str(TELEMETRY_DIR / f"{module}.py")],
+                        [self.python, str(TELEMETRY_DIR / f"{module}.py")],
                         cwd=Path(tmp),
                         env=_child_env(repo_root_on_pythonpath=False),
                     )
-                    self.assertNoBareSiblingImportFailure(proc)
+                    total += self.assertUnittestRunPassed(proc)
+            self.assertEqual(total, EXPECTED_REPAIRED_TEST_COUNT)
+
+    def test_m4_unittest_discovery_from_the_repository_root(self):
+        total = 0
+        for module in REPAIRED_MODULES:
+            with self.subTest(module=module):
+                proc = _run(
+                    [
+                        self.python,
+                        "-m",
+                        "unittest",
+                        "discover",
+                        "-s",
+                        "services/telemetry",
+                        "-t",
+                        ".",
+                        "-p",
+                        f"{module}.py",
+                    ],
+                    cwd=REPO_ROOT,
+                    env=_child_env(repo_root_on_pythonpath=False),
+                )
+                total += self.assertUnittestRunPassed(proc)
+        self.assertEqual(total, EXPECTED_REPAIRED_TEST_COUNT)
+
+
+@unittest.skipIf(
+    os.environ.get(CHILD_SENTINEL) == "1",
+    "already running inside a spawned discovery child",
+)
+class TestInstalledDistributionIsCanonical(unittest.TestCase):
+    """The packaging fix must not buy AC2 at the cost of the other criteria.
+
+    An installed distribution could close AC2 the crude way — drop the whole
+    repository root onto ``sys.path`` via a plain ``.pth`` line. That would
+    export every root-level module (``cli``, ``gate``, ``workflows``) as a
+    top-level name and reintroduce the collision and duplicate-identity hazards
+    the predecessor task closed. The declared-package editable install does not,
+    and these tests hold it to that.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.python = provisioned_interpreter()
+
+    def _probe(self, source: str) -> str:
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = _run(
+                [self.python, "-c", source],
+                cwd=Path(tmp),
+                env=_child_env(repo_root_on_pythonpath=False),
+            )
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        return proc.stdout
+
+    def test_repository_root_is_not_placed_on_sys_path(self):
+        # The distribution exports a name-to-directory mapping through a
+        # meta-path finder. The repository root itself never reaches sys.path,
+        # so no process-global sys.path mutation is involved on any code path.
+        out = self._probe(
+            "import sys\n"
+            f"print('ON_PATH=' + str({str(REPO_ROOT)!r} in sys.path))\n"
+        )
+        self.assertIn("ON_PATH=False", out, out)
+
+    def test_only_the_declared_top_level_names_are_exported(self):
+        out = self._probe(
+            "import importlib.util as u\n"
+            f"for name in {list(EXPORTED_TOP_LEVEL + UNEXPORTED_ROOT_MODULES)!r}:\n"
+            "    spec = u.find_spec(name)\n"
+            "    print(name + '=' + ('yes' if spec else 'no'))\n"
+        )
+        found = dict(line.split("=", 1) for line in out.split())
+        for name in EXPORTED_TOP_LEVEL:
+            self.assertEqual(found.get(name), "yes", f"{name} must be importable: {out}")
+        for name in UNEXPORTED_ROOT_MODULES:
+            self.assertEqual(
+                found.get(name),
+                "no",
+                f"{name} is a repository-root module and must not become an "
+                f"importable top-level name: {out}",
+            )
+
+    def test_module_identity_is_canonical_and_unduplicated(self):
+        # Importing through the installed distribution must yield exactly the
+        # module objects under services.telemetry.*, with no bare sibling alias
+        # and no second copy loaded from a different path.
+        out = self._probe(
+            "import sys\n"
+            "import services.telemetry.capture as a\n"
+            "import services.telemetry.feedback_adapter as b\n"
+            "import services.telemetry.test_capture  # noqa: F401\n"
+            "import services.telemetry.test_feedback_adapter  # noqa: F401\n"
+            "print('CAPTURE=' + a.__file__)\n"
+            "print('ADAPTER=' + b.__file__)\n"
+            "print('SAME=' + str(sys.modules['services.telemetry.capture'] is a))\n"
+            "leaked = [n for n in ('capture', 'feedback_adapter') if n in sys.modules]\n"
+            "print('LEAKED=' + ','.join(sorted(leaked)))\n"
+        )
+        self.assertIn(f"CAPTURE={TELEMETRY_DIR / 'capture.py'}", out, out)
+        self.assertIn(f"ADAPTER={TELEMETRY_DIR / 'feedback_adapter.py'}", out, out)
+        self.assertIn("SAME=True", out, out)
+        self.assertIn("LEAKED=\n", out, out)
 
 
 if __name__ == "__main__":

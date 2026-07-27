@@ -48,6 +48,9 @@ REPO_OWNED_READY_DISPATCHER_POLICY = (
     "require_explicit_provider_accounts",
     "allow_legacy_provider_account_aliases",
 )
+REPO_OWNED_COORDINATION_POLICY = (
+    "enabled",
+)
 TASK_STATE_STORE_DEFAULT_FILENAME = "task-state-events.jsonl"
 
 
@@ -228,6 +231,22 @@ def apply_supervisor_lease_policy(
                 rendered_section[key] = copy.deepcopy(repo_section[key])
 
 
+def apply_coordination_policy(
+    repo_config: dict[str, Any], rendered: dict[str, Any]
+) -> None:
+    """Make the reviewed coordination publisher policy win over stale live overlays."""
+
+    repo_coordination = repo_config.get("coordination")
+    if repo_coordination is None:
+        return
+    rendered_coordination = rendered.setdefault("coordination", {})
+    if not isinstance(repo_coordination, dict) or not isinstance(rendered_coordination, dict):
+        raise ValueError("coordination config must be a JSON object")
+    for key in REPO_OWNED_COORDINATION_POLICY:
+        if key in repo_coordination:
+            rendered_coordination[key] = copy.deepcopy(repo_coordination[key])
+
+
 def apply_task_state_store(
     repo_config: dict[str, Any],
     rendered: dict[str, Any],
@@ -294,6 +313,7 @@ def build_live_config(
     apply_provider_account_schema(repo_config, rendered)
     apply_ready_dispatcher_policy(repo_config, rendered)
     apply_supervisor_lease_policy(repo_config, rendered)
+    apply_coordination_policy(repo_config, rendered)
     apply_task_state_store(
         repo_config,
         rendered,
