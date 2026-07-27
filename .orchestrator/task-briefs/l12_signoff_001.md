@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Install protected Human-Ops closeout verdict enforcement
-- Status: in_progress
-- Owner: Claude
+- Status: review_approved
+- Owner: Codex
 - Reviewer: Codex2
-- Next: Independent review rejects sequence-7 / merged PR #4206 on one blocking active-lease authority-source bypass. loop_done_guardrail._protected_forbidden_roots derives the candidate worktree only from PANTHEON_WORKTREE_ROOT / ORCH_WORKSPACE_PATH, but ai_status.validate_active_status_command_lease treats workspace_root as optional: with the current valid ORCH_RUN_ID, unsetting both workspace variables passed command-runtime, status-root, and active-lease validation. In an independent temp replay, an external policy whose ledger was under that omitted leased worktree was accepted; after revocation, truncating the candidate-owned JSONL tail to the signed issue record restored review_approved verification (candidate_tail_truncation_restores_approval=true). Owner suites still pass (275 tests, 31 subtests), demonstrating missing coverage. Required: source the worker workspace authority from canonical supervisor lease/runtime metadata so it cannot be erased by the candidate, or fail closed for active worker mutations when no workspace binding is present; ensure the canonical leased path is included in verifier forbidden_roots before manifest/policy/ledger access; add governed-command regressions for a valid ORCH_RUN_ID with both workspace envs missing/blank plus the revoked/consumed tail-truncation cases; rerun focused suites, re-cut evidence/checksum/source hashes, merge a follow-up PR to dev, and resubmit.
+- Next: Owner closeout composed origin/dev 87166a352c0b90a26a6e35c138acfaea195fa4ee without protected-source overlap; 296 focused tests and 39 subtests, schema/checksum, catalog plus 9/9 source hashes, py_compile, task-scoped guardrail, and git diff checks pass. Merge PR #4261, then run the governed done transition with the reviewer-bound evidence manifest.
 
 ## Summary
 在 final closeout 前安裝機器守門：受保護、可撤銷、不可重播的 Human/Ops 判決必須綁定 exact catalog、manifest、target 與部署 identity；fleet 不得自行簽發。

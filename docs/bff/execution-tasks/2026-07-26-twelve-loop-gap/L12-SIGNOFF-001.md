@@ -1,6 +1,6 @@
 # L12-SIGNOFF-001 — Install protected closeout authority
 
-Wave 2, lane `protected-human-ops-signoff`, owner `Claude`, reviewer `Codex2`; depends on `L12-FLEET-001` and external overlap owner `PPL-ALLOC-009`.
+Wave 2, lane `protected-human-ops-signoff`, owner `Codex`, reviewer `Codex2`; depends on `L12-FLEET-001` and external overlap owner `PPL-ALLOC-009`.
 
 Outcome: install a transition-time guard so only an authenticated authorized Human or Ops actor can issue the final verdict, bound to the exact catalog, task, manifest, target and FE/BFF deployment identities.
 
