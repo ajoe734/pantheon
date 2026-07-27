@@ -1,6 +1,6 @@
 # Track C Go/No-Go Packet: `persona-tw-equity` Paper Activation
 
-Task: `P0-TW-PAPER-ACTIVATE-001`  
+Task: `P0-TW-PAPER-ACTIVATE-001`
 Status: decision and contract packet only; this task executed none of the
 production calls below.
 
