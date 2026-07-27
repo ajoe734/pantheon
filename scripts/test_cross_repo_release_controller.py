@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -17,6 +18,13 @@ BACKEND_SHA = "a" * 40
 CANDIDATE_ID = "c" * 64
 MANIFEST_SHA = "d" * 64
 CONTROLLER_RUN_ID = "12345"
+ROOT = Path(__file__).resolve().parents[1]
+NONPROD_WORKFLOW = (
+    ROOT / ".github" / "workflows" / "nonprod-deploy.yml"
+).read_text(encoding="utf-8")
+COMPENSATION_SCRIPT = (
+    ROOT / "scripts" / "compensate_cross_repo_release.sh"
+).read_text(encoding="utf-8")
 
 
 def _run(
@@ -185,3 +193,68 @@ def test_invalid_or_branch_like_identity_is_rejected(
         coordinate_release(client, **kwargs)  # type: ignore[arg-type]
 
     assert client.dispatches == []
+
+
+def test_nonprod_workflow_seals_exact_dev_pair_before_any_switch() -> None:
+    header = NONPROD_WORKFLOW[: NONPROD_WORKFLOW.index("permissions:")]
+    deploy_job = NONPROD_WORKFLOW[
+        NONPROD_WORKFLOW.index("  deploy-dev:") :
+        NONPROD_WORKFLOW.index("  coordinate-dev-release:")
+    ]
+
+    assert '- "publish/v*"' not in header
+    assert "frontend_sha:" in header
+    assert (
+        "github.event_name == 'workflow_dispatch' && inputs.environment == 'dev'"
+        in deploy_job
+    )
+    assert (
+        'GITHUB_REF}" != "refs/heads/dev" || "${GITHUB_SHA}" != "${sha}"'
+        in deploy_job
+    )
+    assert (
+        "Out-of-order execute-plans candidate rejected: current dev is"
+        in deploy_job
+    )
+    generate = deploy_job.index(
+        "Generate immutable exact-pair admission before any dev switch"
+    )
+    seal = deploy_job.index(
+        "Seal exact-pair admission artifact before any dev switch"
+    )
+    switch = deploy_job.index("Deploy dev VM stack under lease")
+    assert generate < seal < switch
+    assert "agora_compat_manifest.py write" in deploy_job
+    assert "--frontend-runtime-commit" in deploy_job
+    assert "compatibility_status" not in deploy_job[generate:seal] or (
+        "--compatibility-status accepted" in deploy_job[generate:seal]
+    )
+    assert "release_candidate_id" in deploy_job
+    assert "compatibility_manifest_sha256" in deploy_job
+
+
+def test_rejected_frontend_transaction_restores_and_proves_exact_pair() -> None:
+    controller_job = NONPROD_WORKFLOW[
+        NONPROD_WORKFLOW.index("  coordinate-dev-release:") :
+        NONPROD_WORKFLOW.index("  deploy-staging-live:")
+    ]
+
+    assert "needs:\n      - deploy-dev" in controller_job
+    assert "cross_repo_release_controller.py" in controller_job
+    assert "CROSS_REPO_RELEASE_TOKEN" in controller_job
+    assert "continue-on-error: true" in controller_job
+    assert "compensate_cross_repo_release.sh" in controller_job
+    assert "steps.frontend_release.outcome != 'success'" in controller_job
+    assert "previous_backend_sha" in controller_job
+    assert "previous_frontend_sha" in controller_job
+    assert "release-compensation.json" in controller_job
+    assert "exit 75" in controller_job
+
+    assert "--component bff" in COMPENSATION_SCRIPT
+    assert "PANTHEON_ROLLBACK_BACKEND_SHA" in COMPENSATION_SCRIPT
+    assert "PANTHEON_ROLLBACK_FRONTEND_SHA" in COMPENSATION_SCRIPT
+    assert "${DEV_BFF_URL%/}/bff/version" in COMPENSATION_SCRIPT
+    assert "${DEV_FE_URL%/}/deployment.json" in COMPENSATION_SCRIPT
+    assert "pantheon.cross-repo-release-compensation.v1" in COMPENSATION_SCRIPT
+    assert '"outcome": "compensated"' in COMPENSATION_SCRIPT
+    assert "docker-compose.yml" not in COMPENSATION_SCRIPT

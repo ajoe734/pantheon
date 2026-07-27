@@ -1,4 +1,5 @@
 name: Pantheon Nonprod Deploy
+run-name: ${{ inputs.environment == 'dev' && format('Dev release {0} + {1}', inputs.ref || github.sha, inputs.frontend_sha) || github.event.head_commit.message || github.workflow }}
 
 on:
   workflow_dispatch:
@@ -23,7 +24,12 @@ on:
           - exec
           - all
       ref:
-        description: "Commit SHA, branch, or tag to deploy. Leave blank for the workflow ref."
+        description: "Dev requires the exact current Pantheon dev SHA; staging may also use a branch or tag."
+        required: false
+        default: ""
+        type: string
+      frontend_sha:
+        description: "Dev only: exact current execute-plans dev SHA for the paired release."
         required: false
         default: ""
         type: string
@@ -62,7 +68,6 @@ on:
         type: boolean
   push:
     branches:
-      - "publish/v*"
       - "master"
 
 permissions:
@@ -70,22 +75,31 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pantheon-nonprod-deploy-${{ github.event_name == 'push' && (startsWith(github.ref_name, 'publish/') && 'dev-auto' || 'staging-auto') || inputs.environment }}
+  group: pantheon-nonprod-deploy-${{ github.event_name == 'push' && 'staging-auto' || inputs.environment }}
   cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
   deploy-dev:
     name: Deploy dev under shared environment lease
-    if: ${{ (github.event_name == 'push' && startsWith(github.ref_name, 'publish/')) || (github.event_name == 'workflow_dispatch' && inputs.environment == 'dev') }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.environment == 'dev' }}
     runs-on: ubuntu-latest
     environment: dev
+    outputs:
+      backend_sha: ${{ steps.target.outputs.sha }}
+      frontend_sha: ${{ steps.frontend.outputs.sha }}
+      previous_backend_sha: ${{ steps.rollback_baseline.outputs.sha }}
+      previous_frontend_sha: ${{ steps.rollback_baseline.outputs.frontend_sha }}
+      release_candidate_id: ${{ steps.release_admission.outputs.release_candidate_id }}
+      compatibility_manifest_sha256: ${{ steps.release_admission.outputs.compatibility_manifest_sha256 }}
+      admission_artifact_digest: ${{ steps.release_admission_upload.outputs.artifact-digest }}
     env:
       TARGET_ENV: dev
-      TARGET_COMPONENT: ${{ github.event_name == 'push' && 'auto' || inputs.component }}
-      TARGET_REF: ${{ github.event_name == 'push' && github.sha || inputs.ref || github.sha }}
-      ALLOW_DIRTY: ${{ github.event_name == 'push' && 'false' || inputs.allow_dirty }}
-      DEV_AUTH_PROFILE: ${{ github.event_name == 'workflow_dispatch' && inputs.dev_auth_profile || 'strict' }}
-      PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ github.event_name == 'workflow_dispatch' && inputs.ppl_alloc_009_dev_proof_enabled || false }}
+      TARGET_COMPONENT: ${{ inputs.component }}
+      TARGET_REF: ${{ inputs.ref || github.sha }}
+      FRONTEND_SHA: ${{ inputs.frontend_sha }}
+      ALLOW_DIRTY: ${{ inputs.allow_dirty }}
+      DEV_AUTH_PROFILE: ${{ inputs.dev_auth_profile }}
+      PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ inputs.ppl_alloc_009_dev_proof_enabled }}
     steps:
       # This checkout is the immutable trust root for every lease operation.
       # It is intentionally separate from the requested deployment payload.
@@ -137,10 +151,10 @@ jobs:
           [[ "${sha}" =~ ^[0-9a-f]{40}$ ]]
           trusted_ref="$(git rev-parse refs/remotes/origin/dev)"
           [[ "${trusted_ref}" =~ ^[0-9a-f]{40}$ ]]
-          git merge-base --is-ancestor "${sha}" "${trusted_ref}" || {
-            echo "Dev payload ${sha} is not contained in protected origin/dev" >&2
+          if [[ "${sha}" != "${trusted_ref}" || "${GITHUB_REF}" != "refs/heads/dev" || "${GITHUB_SHA}" != "${sha}" ]]; then
+            echo "Dev release must run from the exact current Pantheon dev commit ${trusted_ref}; got payload=${sha} workflow_ref=${GITHUB_REF} workflow_sha=${GITHUB_SHA}" >&2
             exit 1
-          }
+          fi
           case "${TARGET_COMPONENT}" in
             auto|root|bff) ;;
             *) echo "Invalid dev deployment component: ${TARGET_COMPONENT}" >&2; exit 1 ;;
@@ -166,19 +180,150 @@ jobs:
           fi
           echo "sha=${sha}" >> "${GITHUB_OUTPUT}"
 
-      - name: Enforce exact Agora pair before any dev switch
+      - name: Resolve exact execute-plans dev payload
+        id: frontend
+        working-directory: .agora-frontend
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          requested="${FRONTEND_SHA,,}"
+          current="$(git rev-parse refs/remotes/origin/dev)"
+          [[ "${requested}" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "frontend_sha must be one exact lowercase 40-character commit SHA" >&2
+            exit 1
+          }
+          if [[ "${requested}" != "${current}" ]]; then
+            echo "Out-of-order execute-plans candidate rejected: current dev is ${current}, requested ${requested}" >&2
+            exit 1
+          fi
+          echo "sha=${requested}" >> "${GITHUB_OUTPUT}"
+
+      - name: Generate immutable exact-pair admission before any dev switch
+        id: release_admission
         working-directory: .agora-gate-controller
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
+          controller_sha="$(git rev-parse HEAD)"
+          [[ "${controller_sha}" == "${{ steps.target.outputs.sha }}" ]] || {
+            echo "The Pantheon gate controller must be the exact backend release commit." >&2
+            exit 1
+          }
           grep -Fxq \
             'PANTHEON_DEPLOY_CONTROLLER_CONTRACT_VERSION="dev-root-isolation-v1"' \
             scripts/deploy_nonprod_vm.sh
-          python3 scripts/agora_compat_manifest.py deployment-gate \
-            --manifest docs/contracts/agora/dev-compatibility-manifest.json \
+          evidence_dir="${RUNNER_TEMP%/}/pantheon-dev-release-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          manifest="${evidence_dir}/release-compatibility-manifest.json"
+          ledger="${evidence_dir}/release-candidate-ledger.json"
+          install -d -m 0700 "${evidence_dir}"
+          python3 scripts/agora_compat_manifest.py write \
+            --output "${manifest}" \
             --frontend-root "${GITHUB_WORKSPACE}/.agora-frontend" \
             --backend-dev-ref refs/remotes/origin/dev \
             --frontend-dev-ref refs/remotes/origin/dev \
-            --backend-runtime-commit "${{ steps.target.outputs.sha }}"
+            --backend-runtime-commit "${{ steps.target.outputs.sha }}" \
+            --frontend-runtime-commit "${{ steps.frontend.outputs.sha }}" \
+            --compatibility-status accepted
+          python3 scripts/agora_compat_manifest.py deployment-gate \
+            --manifest "${manifest}" \
+            --frontend-root "${GITHUB_WORKSPACE}/.agora-frontend" \
+            --backend-dev-ref refs/remotes/origin/dev \
+            --frontend-dev-ref refs/remotes/origin/dev \
+            --backend-runtime-commit "${{ steps.target.outputs.sha }}" \
+            --frontend-runtime-commit "${{ steps.frontend.outputs.sha }}" \
+            --evidence-out "${ledger}"
+          python3 - "${ledger}" "${evidence_dir}" >> "${GITHUB_OUTPUT}" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          ledger = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+          candidate = ledger.get("release_candidate") or {}
+          if candidate.get("compatibility_status") != "compatible":
+              raise SystemExit("release candidate is not compatible")
+          print(f"release_candidate_id={candidate['release_candidate_id']}")
+          print(
+              "compatibility_manifest_sha256="
+              f"{candidate['compatibility_manifest']['sha256']}"
+          )
+          print(f"evidence_dir={sys.argv[2]}")
+          PY
+
+      - name: Capture exact hosted FE and BFF rollback baseline
+        id: rollback_baseline
+        env:
+          DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io' }}
+          DEV_FE_URL: ${{ vars.DEV_FE_URL || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
+          EVIDENCE_DIR: ${{ steps.release_admission.outputs.evidence_dir }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          version_json="${EVIDENCE_DIR}/bff-version-before.json"
+          deployment_json="${EVIDENCE_DIR}/frontend-deployment-before.json"
+          curl --fail-with-body --silent --show-error \
+            --retry 3 --retry-all-errors --connect-timeout 10 --max-time 30 \
+            "${DEV_BFF_URL%/}/bff/version" > "${version_json}"
+          curl --fail-with-body --silent --show-error \
+            --retry 3 --retry-all-errors --connect-timeout 10 --max-time 30 \
+            "${DEV_FE_URL%/}/deployment.json" > "${deployment_json}"
+          previous="$(
+            python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("source_commit_sha") or "")' \
+              "${version_json}"
+          )"
+          previous_frontend="$(
+            python3 -c 'import json,sys; value=json.load(open(sys.argv[1], encoding="utf-8")); print(value.get("frontendSha") or value.get("commit") or "")' \
+              "${deployment_json}"
+          )"
+          [[ "${previous}" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "Hosted BFF did not report an exact rollback commit." >&2
+            exit 1
+          }
+          [[ "${previous_frontend}" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "Hosted frontend did not report an exact rollback commit." >&2
+            exit 1
+          }
+          git -C .agora-gate-controller merge-base --is-ancestor \
+            "${previous}" refs/remotes/origin/dev || {
+              echo "Hosted rollback commit ${previous} is not contained in Pantheon dev." >&2
+              exit 1
+            }
+          git -C .agora-frontend merge-base --is-ancestor \
+            "${previous_frontend}" refs/remotes/origin/dev || {
+              echo "Hosted frontend rollback commit ${previous_frontend} is not contained in execute-plans dev." >&2
+              exit 1
+            }
+          python3 - "${EVIDENCE_DIR}/rollback-baseline.json" "${previous}" "${previous_frontend}" \
+            "${{ steps.target.outputs.sha }}" "${{ steps.frontend.outputs.sha }}" \
+            "${{ steps.release_admission.outputs.release_candidate_id }}" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          pathlib.Path(sys.argv[1]).write_text(
+              json.dumps(
+                  {
+                      "schema_version": "pantheon.dev-release-rollback-baseline.v1",
+                      "previous_backend_sha": sys.argv[2],
+                      "previous_frontend_sha": sys.argv[3],
+                      "candidate_backend_sha": sys.argv[4],
+                      "candidate_frontend_sha": sys.argv[5],
+                      "release_candidate_id": sys.argv[6],
+                  },
+                  indent=2,
+                  sort_keys=True,
+              )
+              + "\n",
+              encoding="utf-8",
+          )
+          PY
+          echo "sha=${previous}" >> "${GITHUB_OUTPUT}"
+          echo "frontend_sha=${previous_frontend}" >> "${GITHUB_OUTPUT}"
+
+      - name: Seal exact-pair admission artifact before any dev switch
+        id: release_admission_upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pantheon-dev-release-admission-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.release_admission.outputs.evidence_dir }}
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Enforce dev auth deployment floor
         working-directory: .target
@@ -1142,13 +1287,244 @@ jobs:
         if: ${{ success() }}
         run: |
           {
-            echo "## Dev deployment"
+            echo "## Dev backend candidate"
             echo "- Payload: \`${{ steps.target.outputs.sha }}\`"
+            echo "- Frontend candidate: \`${{ steps.frontend.outputs.sha }}\`"
+            echo "- Release candidate: \`${{ steps.release_admission.outputs.release_candidate_id }}\`"
+            echo "- Compatibility manifest: \`${{ steps.release_admission.outputs.compatibility_manifest_sha256 }}\`"
+            echo "- Admission artifact digest: \`${{ steps.release_admission_upload.outputs.artifact-digest }}\`"
+            echo "- Rollback BFF baseline: \`${{ steps.rollback_baseline.outputs.sha }}\`"
+            echo "- Rollback FE baseline: \`${{ steps.rollback_baseline.outputs.frontend_sha }}\`"
             echo "- Lease: \`${{ steps.lease.outputs.lease_id }}\`"
             echo "- Controller: \`9e564718da8c39199a4c311f1a667b74226e3428\`"
             echo "- Target: \`dev/${TARGET_COMPONENT}\`"
             echo "- PPL-ALLOC-009 dev proof enabled: \`${PPL_ALLOC_009_DEV_PROOF_ENABLED}\`"
           } >> "${GITHUB_STEP_SUMMARY}"
+
+  coordinate-dev-release:
+    name: Admit and switch exact FE/BFF release
+    needs:
+      - deploy-dev
+    if: ${{ needs.deploy-dev.result == 'success' }}
+    runs-on: ubuntu-latest
+    environment: dev
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TARGET_ENV: dev
+      RELEASE_EVIDENCE_DIR: ${{ runner.temp }}/pantheon-cross-repo-release-${{ github.run_id }}-${{ github.run_attempt }}
+      DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io' }}
+      DEV_FE_URL: ${{ vars.DEV_FE_URL || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
+    steps:
+      - name: Checkout pinned lease controller
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          repository: ajoe734/pantheon
+          ref: 9e564718da8c39199a4c311f1a667b74226e3428
+          path: .lease-controller
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Checkout exact release controller
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          repository: ajoe734/pantheon
+          ref: ${{ needs.deploy-dev.outputs.backend_sha }}
+          path: .target
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Dispatch exact frontend gate and switch
+        id: frontend_release
+        continue-on-error: true
+        env:
+          CROSS_REPO_RELEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
+          BACKEND_SHA: ${{ needs.deploy-dev.outputs.backend_sha }}
+          FRONTEND_SHA: ${{ needs.deploy-dev.outputs.frontend_sha }}
+          RELEASE_CANDIDATE_ID: ${{ needs.deploy-dev.outputs.release_candidate_id }}
+          COMPATIBILITY_MANIFEST_SHA256: ${{ needs.deploy-dev.outputs.compatibility_manifest_sha256 }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          install -d -m 0700 "${RELEASE_EVIDENCE_DIR}"
+          controller_log="${RELEASE_EVIDENCE_DIR}/release-controller.log"
+          controller_evidence="${RELEASE_EVIDENCE_DIR}/release-controller-accepted.json"
+          set +e
+          python3 .target/scripts/cross_repo_release_controller.py \
+            --frontend-sha "${FRONTEND_SHA}" \
+            --backend-sha "${BACKEND_SHA}" \
+            --bff-base-url "${DEV_BFF_URL}" \
+            --release-candidate-id "${RELEASE_CANDIDATE_ID}" \
+            --compatibility-manifest-sha256 "${COMPATIBILITY_MANIFEST_SHA256}" \
+            --controller-run-id "${GITHUB_RUN_ID}" \
+            --evidence-out "${controller_evidence}" \
+            >"${controller_log}" 2>&1
+          controller_status=$?
+          set -e
+          if [[ "${controller_status}" -ne 0 ]]; then
+            python3 - \
+              "${RELEASE_EVIDENCE_DIR}/release-controller-rejected.json" \
+              "${controller_status}" <<'PY'
+            import json
+            import os
+            import pathlib
+            import sys
+
+            pathlib.Path(sys.argv[1]).write_text(
+                json.dumps(
+                    {
+                        "schema_version": "pantheon.cross-repo-release-controller-evidence.v1",
+                        "release_candidate_id": os.environ["RELEASE_CANDIDATE_ID"],
+                        "compatibility_manifest_sha256": os.environ[
+                            "COMPATIBILITY_MANIFEST_SHA256"
+                        ],
+                        "backend": {"commit": os.environ["BACKEND_SHA"]},
+                        "frontend": {"commit": os.environ["FRONTEND_SHA"]},
+                        "controller": {
+                            "repository": os.environ["GITHUB_REPOSITORY"],
+                            "workflow": "nonprod-deploy.yml",
+                            "run_id": os.environ["GITHUB_RUN_ID"],
+                        },
+                        "outcome": "rejected",
+                        "controller_exit_code": int(sys.argv[2]),
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            PY
+          fi
+          echo "evidence_dir=${RELEASE_EVIDENCE_DIR}" >> "${GITHUB_OUTPUT}"
+          echo "controller_log=${controller_log}" >> "${GITHUB_OUTPUT}"
+          exit "${controller_status}"
+
+      - name: Authenticate rollback to Google Cloud
+        if: ${{ steps.frontend_release.outcome != 'success' }}
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed
+        with:
+          workload_identity_provider: ${{ vars.DEV_GCP_WIF_PROVIDER || 'projects/317269804408/locations/global/workloadIdentityPools/pantheon-github-pool/providers/pantheon-github-provider' }}
+          service_account: ${{ vars.DEV_GCP_DEPLOY_SERVICE_ACCOUNT || 'pantheon-cloud-build@pantheon-lupin-dev-20260719.iam.gserviceaccount.com' }}
+
+      - name: Set up rollback Cloud SDK
+        if: ${{ steps.frontend_release.outcome != 'success' }}
+        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f
+
+      - name: Compensate rejected release to exact hosted baseline
+        id: compensation
+        if: ${{ steps.frontend_release.outcome != 'success' }}
+        continue-on-error: true
+        env:
+          PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
+          PANTHEON_LEASE_CONTROLLER_ROOT: ${{ github.workspace }}/.lease-controller
+          PANTHEON_RELEASE_REPO_ROOT: ${{ github.workspace }}/.target
+          PANTHEON_ROLLBACK_BACKEND_SHA: ${{ needs.deploy-dev.outputs.previous_backend_sha }}
+          PANTHEON_ROLLBACK_FRONTEND_SHA: ${{ needs.deploy-dev.outputs.previous_frontend_sha }}
+          PANTHEON_FAILED_BACKEND_SHA: ${{ needs.deploy-dev.outputs.backend_sha }}
+          PANTHEON_FAILED_FRONTEND_SHA: ${{ needs.deploy-dev.outputs.frontend_sha }}
+          PANTHEON_RELEASE_CANDIDATE_ID: ${{ needs.deploy-dev.outputs.release_candidate_id }}
+          PANTHEON_RELEASE_CONTROLLER_LOG: ${{ steps.frontend_release.outputs.controller_log }}
+          PANTHEON_ROLLBACK_EVIDENCE_OUT: ${{ env.RELEASE_EVIDENCE_DIR }}/release-compensation.json
+          GITHUB_TOKEN: ${{ github.token }}
+          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
+          DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
+          DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
+          DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR || '/home/lupin/pantheon' }}
+          PANTHEON_DEPLOY_WORKTREE_ROOT: ${{ vars.DEV_DEPLOY_WORKTREE_ROOT || '/home/lupin/pantheon-ci-deploy/managed-deploy-worktrees' }}
+          PANTHEON_DEV_SUPERVISOR_COMMAND_ROOT: ${{ vars.DEV_SUPERVISOR_COMMAND_ROOT || '/home/lupin/pantheon-ci-deploy/dev-root' }}
+          DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS: ${{ vars.DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS || '300' }}
+          DEV_BFF_CANONICAL_CORS_ORIGIN: ${{ vars.DEV_BFF_CANONICAL_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
+          DEV_BFF_CORS_ORIGINS: ${{ vars.DEV_BFF_CORS_ORIGINS || vars.DEV_BFF_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
+          DEV_BFF_AUTH_STUB: "false"
+          DEV_BFF_AUTH_MODE: strict
+          DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
+          DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
+          DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
+          DEV_BFF_JWKS_URI: ${{ vars.DEV_BFF_JWKS_URI || 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com' }}
+          DEV_BFF_OIDC_DISCOVERY_URL: ${{ vars.DEV_BFF_OIDC_DISCOVERY_URL }}
+          DEV_BFF_OIDC_ISSUER: ${{ vars.DEV_BFF_OIDC_ISSUER || 'https://securetoken.google.com/pantheon-lupin-dev-20260719' }}
+          DEV_BFF_OIDC_AUDIENCE: ${{ vars.DEV_BFF_OIDC_AUDIENCE || 'pantheon-lupin-dev-20260719' }}
+          DEV_BFF_OIDC_CLIENT_ID: ${{ secrets.DEV_BFF_OIDC_CLIENT_ID }}
+          DEV_BFF_OIDC_CLIENT_SECRET: ${{ secrets.DEV_BFF_OIDC_CLIENT_SECRET }}
+          DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1' }}
+          DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET }}
+          DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID || 'pantheon-dev-approver-v1' }}
+          DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET }}
+          DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID || 'pantheon-dev-risk-owner-v1' }}
+          DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID || 'pantheon-dev-operator-a-v1' }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID || 'pantheon-dev-operator-b-v1' }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET }}
+          DEV_BFF_MFA_REQUIRED: ${{ vars.DEV_BFF_MFA_REQUIRED || 'true' }}
+          DEV_BFF_MFA_CLAIMS: ${{ vars.DEV_BFF_MFA_CLAIMS || 'amr,acr,mfa,mfa_verified,firebase.sign_in_second_factor' }}
+          DEV_BFF_MFA_VALUES: ${{ vars.DEV_BFF_MFA_VALUES || 'true,1,yes,mfa,otp,totp,webauthn' }}
+          DEV_BFF_REQUIRE_EMAIL_VERIFIED: ${{ vars.DEV_BFF_REQUIRE_EMAIL_VERIFIED || 'true' }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_MFA_VERIFIED || 'false' }}
+          DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_MFA_VERIFIED || 'true' }}
+          DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED: ${{ vars.DEV_BFF_DEV_LOGIN_APPROVER_MFA_VERIFIED || 'true' }}
+          DEV_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED: ${{ vars.DEV_BFF_DEV_LOGIN_RISK_OWNER_MFA_VERIFIED || 'true' }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_A_MFA_VERIFIED || 'true' }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_B_MFA_VERIFIED || 'true' }}
+          DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH: ${{ secrets.DEV_ASSISTANT_CONTROL_PASSPHRASE_HASH }}
+          DEV_BFF_ROLE_CLAIMS: ${{ vars.DEV_BFF_ROLE_CLAIMS || 'roles,role' }}
+          DEV_BFF_ROLE_MAP: ${{ vars.DEV_BFF_ROLE_MAP || 'pantheon-operator=operator;pantheon-viewer=viewer;pantheon-reviewer=reviewer;pantheon-approver=approver;pantheon-risk-owner=risk_owner;pantheon-admin=admin' }}
+          DEV_BFF_ROLE_MAP_MODE: ${{ vars.DEV_BFF_ROLE_MAP_MODE || 'strict' }}
+          DEV_BFF_DEFAULT_ROLE: ${{ vars.DEV_BFF_DEFAULT_ROLE || 'viewer' }}
+          DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${{ secrets.DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN }}
+          DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: ${{ vars.DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED || 'true' }}
+          DEV_MANAGEMENT_AI_STORE_BACKEND: ${{ vars.DEV_MANAGEMENT_AI_STORE_BACKEND || 'postgres' }}
+          DEV_MANAGEMENT_AI_STORE_SCHEMA: ${{ vars.DEV_MANAGEMENT_AI_STORE_SCHEMA || 'management_ai' }}
+          DEV_MANAGEMENT_AI_DB_USER: ${{ vars.DEV_MANAGEMENT_AI_DB_USER || 'pantheon_management_ai' }}
+          DEV_MANAGEMENT_AI_DB_PASSWORD: ${{ secrets.DEV_MANAGEMENT_AI_DB_PASSWORD }}
+          DEV_MANAGEMENT_AI_DATABASE_URL: ${{ secrets.DEV_MANAGEMENT_AI_DATABASE_URL }}
+          DEV_MANAGEMENT_AI_ATTACH_BUCKET: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_BUCKET }}
+          DEV_MANAGEMENT_AI_ATTACH_LOCATION: ${{ vars.DEV_MANAGEMENT_AI_ATTACH_LOCATION || 'asia-east1' }}
+          DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ inputs.ppl_alloc_009_dev_proof_enabled }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: bash .target/scripts/compensate_cross_repo_release.sh
+
+      - name: Upload accepted or compensated release evidence
+        id: release_evidence_upload
+        if: ${{ always() && steps.frontend_release.outputs.evidence_dir != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pantheon-cross-repo-release-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.frontend_release.outputs.evidence_dir }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Enforce accepted or proven compensated outcome
+        if: ${{ always() }}
+        shell: /bin/bash --noprofile --norc -euo pipefail {0}
+        run: |
+          if [[ "${{ steps.frontend_release.outcome }}" == "success" ]]; then
+            {
+              echo "## Exact FE/BFF release accepted"
+              echo "- release candidate: \`${{ needs.deploy-dev.outputs.release_candidate_id }}\`"
+              echo "- backend: \`${{ needs.deploy-dev.outputs.backend_sha }}\`"
+              echo "- frontend: \`${{ needs.deploy-dev.outputs.frontend_sha }}\`"
+              echo "- compatibility manifest: \`${{ needs.deploy-dev.outputs.compatibility_manifest_sha256 }}\`"
+              echo "- admission artifact: \`${{ needs.deploy-dev.outputs.admission_artifact_digest }}\`"
+              echo "- transaction evidence: \`${{ steps.release_evidence_upload.outputs.artifact-digest }}\`"
+            } >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          if [[ "${{ steps.compensation.outcome }}" == "success" && \
+                -s "${RELEASE_EVIDENCE_DIR}/release-compensation.json" ]]; then
+            {
+              echo "## Exact FE/BFF release rejected and compensated"
+              echo "- rejected candidate: \`${{ needs.deploy-dev.outputs.release_candidate_id }}\`"
+              echo "- restored backend: \`${{ needs.deploy-dev.outputs.previous_backend_sha }}\`"
+              echo "- restored frontend: \`${{ needs.deploy-dev.outputs.previous_frontend_sha }}\`"
+              echo "- compensation evidence: \`${{ steps.release_evidence_upload.outputs.artifact-digest }}\`"
+            } >> "${GITHUB_STEP_SUMMARY}"
+            echo "Frontend admission or switch failed; exact hosted baseline was restored." >&2
+            exit 1
+          fi
+          echo "Frontend admission or switch failed and exact rollback proof is absent." >&2
+          exit 75
 
   deploy-staging-live:
     name: Deploy staging-live (independent environment)

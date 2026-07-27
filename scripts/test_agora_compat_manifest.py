@@ -572,15 +572,24 @@ def test_workflow_enforces_gate_before_any_deploy_switch() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
     gate_controller = workflow.index("Checkout accepted Agora gate controller")
     frontend_checkout = workflow.index("Checkout accepted Agora frontend history")
-    gate = workflow.index("Enforce exact Agora pair before any dev switch")
+    gate = workflow.index(
+        "Generate immutable exact-pair admission before any dev switch"
+    )
+    seal = workflow.index("Seal exact-pair admission artifact before any dev switch")
     deploy = workflow.index("Deploy dev VM stack under lease")
 
     assert gate_controller < gate
-    assert frontend_checkout < gate < deploy
-    gate_block = workflow[gate:deploy]
+    assert frontend_checkout < gate < seal < deploy
+    gate_block = workflow[gate:seal]
     assert "scripts/agora_compat_manifest.py" in gate_block
+    assert "agora_compat_manifest.py write" in gate_block
     assert "deployment-gate" in gate_block
     assert '--backend-runtime-commit "${{ steps.target.outputs.sha }}"' in gate_block
+    assert (
+        '--frontend-runtime-commit "${{ steps.frontend.outputs.sha }}"'
+        in gate_block
+    )
+    assert "--compatibility-status accepted" in gate_block
     assert "--allow-pending" not in gate_block
 
 

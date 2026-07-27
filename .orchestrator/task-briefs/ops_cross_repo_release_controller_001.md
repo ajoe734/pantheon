@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Coordinate exact FE/BFF release candidate and dev deployment switch
-- Status: todo
+- Status: in_progress
 - Owner: Codex2
 - Reviewer: Codex
-- Next: Auto-reassigned OPS-CROSS-REPO-RELEASE-CONTROLLER-001 away from unavailable lane Antigravity, Claude (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex2, reviewer Claude -> Codex.
+- Next: Codex2 resumed the exact-pair release controller from its durable anchors and is completing Pantheon orchestration, compensation evidence, and cross-repo validation.
 
 ## Summary
 建立 Pantheon backend 與 execute-plans frontend 的單一 dev release candidate controller：先產生 immutable FE/BFF pair ledger 與 compatibility admission，再一次切換 Pantheon-owned dev FE/BFF；不再每修一個症狀就單獨部署。runtime compose manifest 與 deploy_nonprod_vm.sh 由 L12-MANIFEST-001 compose，不在本任務 ownership 內。
