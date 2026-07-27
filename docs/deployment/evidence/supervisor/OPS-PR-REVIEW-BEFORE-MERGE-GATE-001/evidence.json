@@ -316,7 +316,9 @@
     "revalidation": {
       "actor": "Codex",
       "reason": "Owner reassignment after the first exact-head review rejected the predecessor implementation. Codex independently re-ran the corrected exact-head replacement, failed-revocation, and approval-binding suites before adopting the branch.",
-      "adopted_predecessor_commit": "7759ed36666ce62a7f912a9c85f74cf409cff095"
+      "adopted_predecessor_commit": "7759ed36666ce62a7f912a9c85f74cf409cff095",
+      "validated_dev_base": "ab63b3c4c14cb47fd5ddaec0c0ae6a3cd18afc8c",
+      "validated_tree_commit": "a432948dddb8d49a3df0a6e9258002fabc0528d3"
     },
     "commands": [
       {
