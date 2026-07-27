@@ -3,9 +3,9 @@
 Status: ready for independent review; this is not the final runtime-refresh
 acceptance record.
 
-Owner: Codex  
-Reviewer: Codex2  
-Repository: `ajoe734/pantheon`  
+Owner: Codex
+Reviewer: Codex2
+Repository: `ajoe734/pantheon`
 Base: `dev`
 
 ## Why this bootstrap is necessary
