@@ -156,7 +156,7 @@ PYTHONPATH=.orchestrator python3 -m pytest \
   .orchestrator/rewrite/ scripts/test_ai_status.py \
   scripts/test_verify_task_state_store.py scripts/test_status_file_guard.py \
   scripts/test_dispatch_twelve_loop_gap_2026_07_26.py -q
-→ 778 passed, 134 subtests passed
+→ 779 passed, 134 subtests passed
 ```
 
 Additional worker-environment verification:
