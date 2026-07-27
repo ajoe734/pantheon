@@ -15,8 +15,8 @@
     "review_file": "docs/deployment/evidence/supervisor/OPS-PROMOTE-PR-CI-TRIGGER-001/evidence.json",
     "narrative": "docs/deployment/evidence/supervisor/OPS-PROMOTE-PR-CI-TRIGGER-001/README.md"
   },
-  "status": "in_progress",
-  "generated_at": "2026-07-27T19:46:16Z",
+  "status": "review_approved",
+  "generated_at": "2026-07-27T20:01:33Z",
   "scope": {
     "owned": [
       "Branch CI exact-head workflow_dispatch contract for promote PRs",
@@ -259,10 +259,21 @@
     "ancestry_evidence": null
   },
   "review": {
-    "status": "pending",
+    "status": "review_approved",
     "reviewer": "Claude",
-    "reviewed_head": null,
-    "decision": null
+    "reviewed_head": "50c1a229f4d0bc31035a8dd67146e8dc5f28b211",
+    "reviewed_at": "2026-07-27T19:59:35Z",
+    "decision": "approved_with_required_closeout_followups",
+    "verification": {
+      "unittest": "22 PublishPromoteTests passed",
+      "pytest": "70 focused tests passed",
+      "live_read_only": "26 promote PRs discovered through REST; PR 4138 exact head had zero check runs; exact task head exposed all required check names"
+    },
+    "required_closeout_followups": [
+      "merge the REST follow-up after fresh-head CI, last-push approval, and Human/Ops external gates",
+      "record an actual fresh promote candidate with required checks and observed auto_merge_enabled",
+      "retire stale promote PRs only after accepted-release ancestry evidence is complete"
+    ]
   },
   "safety": {
     "force_push": false,

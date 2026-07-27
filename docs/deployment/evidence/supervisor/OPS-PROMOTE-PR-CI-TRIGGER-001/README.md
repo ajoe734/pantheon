@@ -108,6 +108,22 @@ Any owner-rescue push creates a new PR head, so the successful runs above are
 historical evidence for `ee04032de9e00cde74a948b5ba1389217bcccbc4`; the
 updated head must reacquire CI, last-push approval, and both external contexts.
 
+## Independent Review
+
+Claude independently reviewed exact head
+`50c1a229f4d0bc31035a8dd67146e8dc5f28b211` and approved the REST repair for
+owner closeout. The review reproduced all 22 `PublishPromoteTests`, the
+70-test focused pytest slice, and live read-only REST discovery. It also
+confirmed that the task head's eight successful check runs expose the three
+required context names.
+
+That approval does not satisfy the remaining live acceptance by itself.
+Closeout must still observe auto-merge on an actual fresh promote candidate
+after the follow-up reaches `dev`, and stale promote PRs may be retired only
+after the manifest records accepted-release ancestry. A fresh owner push also
+requires new CI and last-push approval; Human Ops retains ownership of the
+canonical review and root merge-freeze statuses.
+
 ## Live Proof and Stale-PR Retirement
 
 The immutable exact-candidate proof must be recorded only after the repair is
