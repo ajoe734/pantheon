@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: review_approved
 - Owner: Codex
 - Reviewer: Codex2
-- Next: Auto-reassigned OPS-PROMOTE-PR-CI-TRIGGER-001 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex2.
+- Next: Supervisor resumed OPS-PROMOTE-PR-CI-TRIGGER-001 for finalize after successful dispatch.
 
 ## Summary
 修復 promote/* PR 沒有 required checks 導致 auto-merge 永遠卡住的 CI/dispatch 治理缺口。
