@@ -592,7 +592,7 @@ def read_auto_merge_request(
             ],
             cwd=root,
         )
-    except (AutoIntegratorError, json.JSONDecodeError) as exc:
+    except (CommandFailure, AutoIntegratorError, json.JSONDecodeError) as exc:
         raise AutoIntegratorError(f"cannot verify autoMergeRequest after revocation: {exc}") from exc
     if not isinstance(payload, Mapping) or "autoMergeRequest" not in payload:
         raise AutoIntegratorError("cannot verify autoMergeRequest after revocation: malformed gh response")
