@@ -230,6 +230,11 @@ The supervisor loop should call the assistant dev bridge drain function and
 record processed task ids. A completed bridge smoke must have both a receipt and
 an `ai-task-archive/tasks/*.json` task record.
 
+The legacy `.orchestrator` coordination publisher is not part of this path. For
+current Pantheon-owned dev delivery it must remain disabled in repo-owned
+supervisor config; do not route Management AI/OpenClaw implementation packets
+through `lovable-ui-task` issue publishing or historical coordination bus flows.
+
 ## Agent Guardrails
 
 - Do not claim completion from a local-only frontend build.
