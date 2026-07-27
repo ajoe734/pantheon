@@ -1,6 +1,6 @@
 # L12-EVO-001 durable Evolution dispatch evidence
 
-Status: owner evidence ready for independent `Codex` review.
+Status: repaired owner evidence ready for independent `Codex2` review.
 
 This packet proves the repository implementation for complete Evolution input
 coverage, tenant-scoped decision authority, durable approved-action dispatch,
@@ -27,7 +27,9 @@ The schema-valid machine receipt is
 - Research actions create a real Research Orchestrator run. Queued work leaves
   the decision `approved`; only terminal readback can set `executed`.
 - Terminal downstream failure leaves the decision approved, dead-letters the
-  intent, and records one durable compensation obligation.
+  intent, and records one durable compensation obligation whether the receipt
+  arrives through the worker or the direct execute API. Duplicate direct
+  failure calls converge on the same DLQ attempt and compensation record.
 - Unsupported governance/deployment/runtime planes remain explicit DLQ records;
   they are never converted into synthetic executed state.
 - The Evolution API and dispatch worker share one configured backend. Production
@@ -36,6 +38,9 @@ The schema-valid machine receipt is
 - All four Evolution Compose processes have readiness/health coverage and a
   30-second stop grace period. Scheduler and threshold workers publish atomic
   heartbeat files and fail health on startup, error, or stale state.
+- Root Compose defaults the Evolution API, dispatcher, and scheduler to shared
+  token authentication and the same tenant authority; an unauthenticated caller
+  cannot inherit the default tenant merely by reaching the service.
 
 ## Validation
 
@@ -54,7 +59,7 @@ PANTHEON_RUNTIME_MANAGER_URL=http://runtime-manager:8081 \
   services/control-plane/governance/smoke_test_evolution_controller.py \
   scripts/test_evolution_daily_sweep_deploy_contract.py
 
-440 passed, 5 warnings in 94.36s
+441 passed, 5 warnings in 83.81s
 ```
 
 The five warnings are existing FastAPI/Starlette deprecation notices.
@@ -69,6 +74,6 @@ This task does not write `RuntimeBinding`, deployment, governance-target,
 broker, or capital state. Global Compose admission and hosted identity remain
 owned by `L12-MANIFEST-001`, `L12-VERIFY-OBS-001`, and `L12-HOSTED-001`.
 
-Owner `Codex2` and reviewer `Codex` remain distinct. The manifest has one owner
+Owner `Codex` and reviewer `Codex2` remain distinct. The manifest has one owner
 record and deliberately no formal reviewer verdict. Governed approval must bind
 this exact repository-relative manifest before owner closeout.

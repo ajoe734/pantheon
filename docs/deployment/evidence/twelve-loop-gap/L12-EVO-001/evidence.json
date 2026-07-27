@@ -3,7 +3,7 @@
   "schema_status": {
     "formal_schema_owner": "LOOP-PROD-002",
     "formalization_trigger": "L12-EVO-001 product-level owner evidence admission.",
-    "note": "Owner evidence only. The formal Codex reviewer verdict is intentionally absent until independent review occurs.",
+    "note": "Owner evidence only. The formal Codex2 reviewer verdict is intentionally absent until independent review occurs.",
     "status": "formalized"
   },
   "evidence_policy": {
@@ -16,16 +16,16 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-27T21:12:06Z",
-    "evidence_cut_semantics": "Owner evidence over implementation head 00f1ba98f85ea3937ee9edb1a590a2ff73fc4d6e after composing origin/dev 7f545a33bf41e5682dc67f50333c84b42f09d17e at merge head 7bccccb15bd76c15334812c209670094e1f15867. It closes the empty or invalid threshold-policy false-green found at d300f4eb5ba33616771068908eefe19a8f82cafa, binds canonical reviewer Codex, and does not assert hosted activation or an independent reviewer verdict.",
+    "evidence_cut_at": "2026-07-27T21:33:04Z",
+    "evidence_cut_semantics": "Repaired owner evidence over implementation anchor 01cf9ca7091313f89d01b601aee6eb0de98a55cc after composing origin/dev 58f7ee46a95b55fc7a88bd399cd40e55350fbf73 at merge head 48b67958681357fe25aa3abe501325bd7e64176e. It closes the reviewer-reproduced direct failed-receipt convergence and unauthenticated Compose-default false-greens, binds canonical reviewer Codex2, and does not assert hosted activation or an independent reviewer verdict.",
     "id": "L12-EVO-001",
     "overall_admission": "pass_owner_evidence_ready",
-    "owner": "Codex2",
+    "owner": "Codex",
     "phase": "Twelve Loop Remediation / Evolution",
     "product_level_required": true,
     "repository": "ajoe734/pantheon",
     "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-EVO-001/evidence.json",
-    "reviewer": "Codex",
+    "reviewer": "Codex2",
     "target_environment": "dev integration and separate-process local proof",
     "target_maturity": "reconciled",
     "task_branch": "task/L12-EVO-001",
@@ -134,6 +134,11 @@
         "delivery_state": "committed_on_task_branch",
         "sha": "00f1ba98f85ea3937ee9edb1a590a2ff73fc4d6e",
         "subject": "L12-EVO-001: anchor fail-closed threshold coverage"
+      },
+      {
+        "delivery_state": "committed_on_task_branch",
+        "sha": "01cf9ca7091313f89d01b601aee6eb0de98a55cc",
+        "subject": "L12-EVO-001: anchor failed receipt convergence"
       }
     ],
     "required_checks": []
@@ -142,7 +147,7 @@
     "commands": [
       {
         "command": "PANTHEON_RUNTIME_MANAGER_URL=http://runtime-manager:8081 .venv-pantheon/bin/python -m pytest -q services/evolution services/incidents services/postmortems services/control-plane/governance/test_evolution_decision.py services/control-plane/governance/test_evolution_controller.py services/control-plane/governance/test_evolution_dispatcher_invariants.py services/control-plane/governance/smoke_test_evolution_decision.py services/control-plane/governance/smoke_test_evolution_controller.py scripts/test_evolution_daily_sweep_deploy_contract.py",
-        "conclusion": "440 passed with five known FastAPI/Starlette deprecation warnings in 94.36 seconds after composing current dev.",
+        "conclusion": "441 passed with five known FastAPI/Starlette deprecation warnings in 83.81 seconds after composing current dev.",
         "result": "pass"
       },
       {
@@ -177,13 +182,13 @@
       },
       {
         "command": ".venv-pantheon/bin/python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge",
-        "conclusion": "All non-merge task commits through owner routing anchor a2c73a28bc6d8690bf0ea5a849b6a1ec904e1a8c carry valid task trailers.",
+        "conclusion": "All non-merge task commits through repair anchor 01cf9ca7091313f89d01b601aee6eb0de98a55cc carry valid task trailers.",
         "result": "pass"
       }
     ],
-    "validated_at": "2026-07-27T21:12:06Z",
-    "validated_base_sha": "7f545a33bf41e5682dc67f50333c84b42f09d17e",
-    "validated_head_sha": "7bccccb15bd76c15334812c209670094e1f15867"
+    "validated_at": "2026-07-27T21:33:04Z",
+    "validated_base_sha": "58f7ee46a95b55fc7a88bd399cd40e55350fbf73",
+    "validated_head_sha": "48b67958681357fe25aa3abe501325bd7e64176e"
   },
   "deployment": {
     "applicable": false,
@@ -225,6 +230,7 @@
         "Missing or unapproved baseline values produce explicit incomplete input coverage and no fabricated threshold candidate.",
         "Empty, missing, malformed, and all-disabled threshold configuration produces a configuration diagnostic, marks every otherwise-eligible artifact incomplete, and keeps assess_input_coverage, run_tick, and GET /api/evolution/input-coverage fail-closed.",
         "Unsupported execution planes are durably dead-lettered with a reason and leave the EvolutionDecision approved with no execution result.",
+        "A direct execute call that re-reads a terminal failed receipt leaves the decision approved, records compensation first, and compare-and-settles the same dispatch intent to the DLQ; duplicate calls cannot add an attempt or obligation.",
         "Production persistence posture refuses the JSON backend before application boot.",
         "Scheduler and threshold worker health stays unready before the first tick, becomes degraded on tick errors, and fails when stale."
       ],
@@ -248,7 +254,7 @@
     },
     "rollback_or_compensation": {
       "proof": [
-        "A terminal Research failure leaves the decision approved, dead-letters the outbox, and records one durable compensation obligation with the real Research run reference.",
+        "A terminal Research failure through either the worker or direct execute API leaves the decision approved, dead-letters the outbox, and records one durable compensation obligation with the real Research run reference.",
         "The compensation ledger survives reconstruction from disk and duplicate failure handling does not create a second obligation.",
         "Evolution never writes RuntimeBinding or downstream governance/deployment state directly."
       ],
@@ -272,7 +278,7 @@
       "status": "pass"
     },
     "rbac": {
-      "proof": "Review and approval continue to require the canonical action risk-tier actor roles; token auth rejects missing credentials and tenant/body scope mismatch.",
+      "proof": "Review and approval continue to require the canonical action risk-tier actor roles; root Compose defaults API, dispatcher, and scheduler to a shared non-empty token credential, and token auth rejects missing credentials and tenant/body scope mismatch.",
       "status": "pass"
     },
     "tenant_isolation": {
@@ -280,7 +286,7 @@
       "status": "pass"
     },
     "two_person_approval": {
-      "proof": "Owner Codex2 and reviewer Codex are distinct. This owner cut intentionally records no formal Codex verdict; independent review remains the only blocking closeout gate.",
+      "proof": "Owner Codex and reviewer Codex2 are distinct. This owner cut intentionally records no formal Codex2 verdict; independent review remains the only blocking closeout gate.",
       "status": "pass"
     }
   },
@@ -340,10 +346,10 @@
   "residual_risks": {
     "independent_review": {
       "blocking_for_this_task": true,
-      "containment": "Keep the task out of review_approved/done until Codex independently validates the committed manifest and implementation.",
-      "description": "The owner evidence is complete, but the required independent Codex verdict has not yet been recorded.",
-      "expiry": "On governed Codex approval or concrete changes-requested decision.",
-      "owner": "Codex",
+      "containment": "Keep the task out of review_approved/done until Codex2 independently validates the committed manifest and implementation.",
+      "description": "The repaired owner evidence is complete, but the required independent Codex2 verdict has not yet been recorded.",
+      "expiry": "On governed Codex2 approval or concrete changes-requested decision.",
+      "owner": "Codex2",
       "recheck_trigger": "Task enters review with the evidence commit and PR available.",
       "severity": "blocking"
     },
@@ -367,7 +373,7 @@
     },
     "lint_tooling": {
       "blocking_for_this_task": false,
-      "containment": "Retain compileall, 440 scoped tests, Compose config, and diff checks as the executable gates for this cut.",
+      "containment": "Retain compileall, 441 scoped tests, Compose config, and diff checks as the executable gates for this cut.",
       "description": "The worker dependency environment does not provide ruff, so the optional F/E9 lint command could not run.",
       "expiry": "When ruff is provisioned in the repository dependency environment.",
       "owner": "developer tooling",
@@ -444,6 +450,15 @@
       "reference": "7bccccb15bd76c15334812c209670094e1f15867",
       "sequence": 6,
       "sha": "7bccccb15bd76c15334812c209670094e1f15867",
+      "status": "ready_for_independent_review"
+    },
+    {
+      "actor": "Codex",
+      "kind": "post_reviewer_failure_repair_revalidation",
+      "recorded_at": "2026-07-27T21:33:04Z",
+      "reference": "01cf9ca7091313f89d01b601aee6eb0de98a55cc",
+      "sequence": 7,
+      "sha": "01cf9ca7091313f89d01b601aee6eb0de98a55cc",
       "status": "ready_for_independent_review"
     }
   ]
