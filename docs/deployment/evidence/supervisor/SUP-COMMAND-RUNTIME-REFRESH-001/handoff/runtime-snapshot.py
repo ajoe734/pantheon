@@ -59,7 +59,9 @@ def supervisor_processes() -> list[dict]:
         if not argv or not Path(argv[0]).name.startswith("python"):
             continue
         if "--config" not in argv or not any(
-            arg.endswith("/.orchestrator/supervisor.py") for arg in argv[1:]
+            arg == ".orchestrator/supervisor.py"
+            or arg.endswith("/.orchestrator/supervisor.py")
+            for arg in argv[1:]
         ):
             continue
         cmdline = " ".join(argv)
