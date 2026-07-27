@@ -20,7 +20,10 @@ because the integrator trusted a zero `--disable-auto` exit without reading
 live `autoMergeRequest` back. Codex added that mandatory readback, composed
 current authoritative base `125cf21c21d1570eba59904d809f774131f33d9e`, and
 revalidated implementation tree
-`86ce9f3028e11856179bb19838f2cfd1453426af` before this evidence-only refresh.
+`49e07cf7bc1a53d16ba3d6c32d95392ace13a95b` before this evidence-only refresh.
+That final implementation pass also normalizes the gate/integrator regression
+imports to one module identity so package-mode pytest and direct script
+execution exercise the same `CommandFailure` class.
 
 Scope rule honoured throughout: **no `.orchestrator/config.json` edit**, no
 hand-edited task board, no owner or reviewer action performed on behalf of
@@ -375,7 +378,7 @@ See `validation.txt` for the captured transcript.
 
 This pass ran against authoritative `origin/dev`
 `125cf21c21d1570eba59904d809f774131f33d9e` and validated tree
-`86ce9f3028e11856179bb19838f2cfd1453426af`.
+`49e07cf7bc1a53d16ba3d6c32d95392ace13a95b`.
 
 ```
 .venv-pantheon/bin/python3 scripts/git/test_task_review_merge_gate.py
@@ -395,6 +398,8 @@ bash -n scripts/git/task_finalize.sh scripts/git/safe_pr.sh   syntax ok
 py_compile task_review_merge_gate.py auto_integrator.py ai_status.py
                                                         compile ok
 git diff --check origin/dev...HEAD                         clean
+pytest combined focused matrix                              332 passed, 31 subtests
+check_commit_trailers origin/dev..HEAD --skip-merge         ok
 ```
 
 The pre-fix reproduction is `prefix-reproduction.txt`; its §1 shows the old

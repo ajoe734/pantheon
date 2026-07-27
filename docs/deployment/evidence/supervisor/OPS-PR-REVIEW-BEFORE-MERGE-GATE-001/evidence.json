@@ -333,7 +333,7 @@
   "validation": {
     "revalidation": {
       "actor": "Codex",
-      "reason": "Owner reassignment followed exact-head rejections that found approval-binding, archive-case, helper-revocation, and stale-base defects. The latest independent review rejected PR #4218 head dcd4b9cc because auto_integrator trusted a zero disable-auto exit without reading live autoMergeRequest back. Codex preserved the rejection, added mandatory readback with exit-zero/still-armed, unreadable, and nonzero/already-off regressions, explicitly composed current dev, and reran the full focused matrix.",
+      "reason": "Owner reassignment followed exact-head rejections that found approval-binding, archive-case, helper-revocation, and stale-base defects. The latest independent review rejected PR #4218 head dcd4b9cc because auto_integrator trusted a zero disable-auto exit without reading live autoMergeRequest back. Codex preserved the rejection, added mandatory readback with exit-zero/still-armed, unreadable, and nonzero/already-off regressions, normalized the gate/integrator regression imports to one module identity, explicitly composed current dev, and reran the full focused matrix.",
       "adopted_predecessor_commit": "7759ed36666ce62a7f912a9c85f74cf409cff095",
       "rejected_review_head": "5a9ad1643eba2580bf8a51c71a6f3a43ad8c57b6",
       "repair_anchor_commit": "e971a2c9441c0611fa7070f7554805e3ccfcb2b7",
@@ -344,7 +344,7 @@
       "revocation_readback_rejected_base": "6692d51c9bc5a48ffcbaac8cf817b635351a7c9a",
       "revocation_readback_anchor_commit": "aff6e98ae538db7d1593309d0431d12bfb271549",
       "validated_dev_base": "125cf21c21d1570eba59904d809f774131f33d9e",
-      "validated_tree_commit": "86ce9f3028e11856179bb19838f2cfd1453426af"
+      "validated_tree_commit": "49e07cf7bc1a53d16ba3d6c32d95392ace13a95b"
     },
     "commands": [
       {
@@ -365,6 +365,16 @@
       {
         "command": ".venv-pantheon/bin/python3 -m unittest -v scripts.git.test_task_review_merge_gate.IntegratorGateTests.test_successful_revocation_that_still_reads_armed_never_merges scripts.git.test_task_review_merge_gate.IntegratorGateTests.test_unreadable_revocation_readback_never_reaches_the_merge scripts.git.test_task_review_merge_gate.IntegratorGateTests.test_nonzero_revocation_can_continue_only_when_readback_proves_off",
         "conclusion": "Ran the three exact revocation-readback regressions - OK",
+        "result": "pass"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python -m pytest scripts/git/test_task_review_merge_gate.py scripts/git/test_auto_integrator.py -q",
+        "conclusion": "96 gate/integrator tests passed under package-mode pytest; verifies the regression fixtures use the same auto_integrator module identity",
+        "result": "pass"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python -m pytest scripts/git/test_task_review_merge_gate.py scripts/git/test_auto_integrator.py scripts/git/test_git_workflow_helpers.py scripts/git/test_task_pr_triage.py scripts/git/test_index_safety.py scripts/test_ai_status.py scripts/git/test_task_git_helpers_refspec.py -q",
+        "conclusion": "332 passed, 31 subtests passed after composing current dev",
         "result": "pass"
       },
       {
@@ -395,6 +405,11 @@
       {
         "command": "bash -n scripts/git/task_finalize.sh scripts/git/safe_pr.sh && .venv-pantheon/bin/python3 -m py_compile scripts/git/task_review_merge_gate.py scripts/git/auto_integrator.py scripts/ai_status.py && git diff --check origin/dev...HEAD",
         "conclusion": "shell syntax ok; all three Python modules compile; diff check clean",
+        "result": "pass"
+      },
+      {
+        "command": "python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge",
+        "conclusion": "commit trailers valid for the task branch range",
         "result": "pass"
       },
       {
