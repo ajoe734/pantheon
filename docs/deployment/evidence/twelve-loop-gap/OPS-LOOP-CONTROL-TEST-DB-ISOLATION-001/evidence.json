@@ -3,8 +3,8 @@
   "schema_status": {
     "formal_schema_owner": "LOOP-PROD-002",
     "formalization_trigger": "The task participates in the twelve-loop product evidence program.",
-    "note": "This manifest follows schemas/product-evidence.schema.json and does not claim independent approval before the reviewer records it.",
-    "status": "schema_valid_pending_independent_review"
+    "note": "This manifest follows schemas/product-evidence.schema.json and records the independent Codex approval of the implementation merged by PR #4241.",
+    "status": "formalized"
   },
   "evidence_policy": {
     "checksum_file": "docs/deployment/evidence/twelve-loop-gap/OPS-LOOP-CONTROL-TEST-DB-ISOLATION-001/evidence.sha256",
@@ -16,10 +16,10 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-27T12:46:46Z",
-    "evidence_cut_semantics": "Owner implementation and local proof are complete on the task branch; PR checks, independent Codex review, merge, and owner closeout remain pending.",
+    "evidence_cut_at": "2026-07-27T13:01:25Z",
+    "evidence_cut_semantics": "Independent reviewer evidence cut over implementation head 94c0af607ab9ab5033a6ddf482ec2d2b629db6bd, merged by PR #4241 as ab63b3c4c14cb47fd5ddaec0c0ae6a3cd18afc8c. Required checks and independent local/throwaway-PostgreSQL verification passed; only the evidence PR merge, governed review_approved transition, and owner closeout remain.",
     "id": "OPS-LOOP-CONTROL-TEST-DB-ISOLATION-001",
-    "overall_admission": "implementation_complete_pending_independent_review",
+    "overall_admission": "review_approved",
     "owner": "Codex2",
     "phase": "Twelve-loop verification hardening",
     "product_level_required": true,
@@ -71,19 +71,54 @@
   "implementation_delivery": {
     "anchor_commits": [
       {
-        "delivery_state": "task_branch_pending_pr",
+        "delivery_state": "merged",
         "note": "Per-suite schema isolation, ambient DSN refusal, legitimate-row digest guard, and DB test fixture conversion.",
         "sha": "ec8d955b8b055efb30b7e212a3048ce2eabc39e4",
         "subject": "OPS-LOOP-CONTROL-TEST-DB-ISOLATION-001: anchor DB fixture"
       },
       {
-        "delivery_state": "task_branch_pending_pr",
+        "delivery_state": "merged",
         "note": "Exact cleanup catalog, dry-run planning, Human/Ops plan binding, and cleanup regressions.",
         "sha": "4a7a87cdb71e12170dc4e7810b08239807b7c9ea",
         "subject": "OPS-LOOP-CONTROL-TEST-DB-ISOLATION-001: anchor cleanup guard"
       }
     ],
-    "required_checks": []
+    "pull_request": {
+      "base": "dev",
+      "head_sha": "94c0af607ab9ab5033a6ddf482ec2d2b629db6bd",
+      "merge_sha": "ab63b3c4c14cb47fd5ddaec0c0ae6a3cd18afc8c",
+      "merged_at": "2026-07-27T12:51:54Z",
+      "number": 4241,
+      "url": "https://github.com/ajoe734/pantheon/pull/4241"
+    },
+    "required_checks": [
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "94c0af607ab9ab5033a6ddf482ec2d2b629db6bd",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30267589514,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30267589514",
+        "workflow": "Branch CI Gate"
+      },
+      {
+        "conclusion": "success",
+        "event": "push",
+        "head_sha": "94c0af607ab9ab5033a6ddf482ec2d2b629db6bd",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30267586053,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30267586053",
+        "workflow": "Branch CI Gate"
+      }
+    ]
   },
   "validation": {
     "commands": [
@@ -121,11 +156,36 @@
         "command": "/home/lupin/pantheon/.venv/bin/python -m compileall -q <five task Python files> && git diff --check",
         "conclusion": "Both commands exited 0.",
         "result": "pass"
+      },
+      {
+        "command": "env -u DATABASE_URL -u PANTHEON_LOOP_CONTROL_TEST_DATABASE_URL /home/lupin/pantheon/.venv/bin/python -m pytest -q -p no:cacheprovider services/loop-control/test_db_isolation.py services/loop-control/test_loop_control.py scripts/test_cleanup_loop_control_test_rows.py",
+        "conclusion": "Independent Codex review rerun: 33 passed, 7 skipped in 4.41s.",
+        "result": "pass"
+      },
+      {
+        "command": "DATABASE_URL=postgresql://ambient-operator:<redacted>@127.0.0.1:9/pantheon_dev env -u PANTHEON_LOOP_CONTROL_TEST_DATABASE_URL /home/lupin/pantheon/.venv/bin/python -m pytest -q -p no:cacheprovider services/loop-control/test_db_isolation.py::test_real_fixture_preserves_legitimate_count_and_digest",
+        "conclusion": "Independent negative rerun produced the expected pytest exit 1 before asyncpg connection because only ambient DATABASE_URL was present.",
+        "result": "expected_refusal"
+      },
+      {
+        "command": "DATABASE_URL=<hostile-unreachable-ambient> PANTHEON_LOOP_CONTROL_TEST_DATABASE_URL=<localhost-throwaway-postgres> /home/lupin/pantheon/.venv/bin/python -m pytest -q -p no:cacheprovider services/loop-control/test_db_isolation.py services/loop-control/test_loop_control.py",
+        "conclusion": "Independent Codex throwaway PostgreSQL rerun: 28 passed in 5.46s; two legitimate public rows retained count/digest 2:d12e3a986af3b98f2afb82514fc2b9cc and no pantheon_loop_control_test_* schema remained.",
+        "result": "pass"
+      },
+      {
+        "command": "PANTHEON_LOOP_CONTROL_CLEANUP_DATABASE_URL=<localhost-throwaway-postgres-with-eight-candidates-two-canonical-rows-and-one-decoy> /home/lupin/pantheon/.venv/bin/python scripts/cleanup_loop_control_test_rows.py",
+        "conclusion": "Independent dry-run returned exactly 8 candidates; all 11 rows remained. source_ingestion, strategy_distillation, and the wrong-environment/controller decoy were excluded.",
+        "result": "pass"
+      },
+      {
+        "command": "jsonschema.validate(evidence.json, schemas/product-evidence.schema.json) && sha256sum -c evidence.sha256 && git diff --check",
+        "conclusion": "Independent reviewer evidence schema, companion checksums, and whitespace validation passed.",
+        "result": "pass"
       }
     ],
-    "validated_at": "2026-07-27T12:46:46Z",
+    "validated_at": "2026-07-27T13:01:25Z",
     "validated_base_sha": "fab71dd0c477e9f1d683c04efe32320e8fb0f593",
-    "validated_head_sha": "4a7a87cdb71e12170dc4e7810b08239807b7c9ea"
+    "validated_head_sha": "94c0af607ab9ab5033a6ddf482ec2d2b629db6bd"
   },
   "deployment": {
     "applicable": false,
@@ -198,8 +258,8 @@
       "status": "pass"
     },
     "two_person_approval": {
-      "proof": "Owner Codex2 and reviewer Codex are distinct. Approval remains pending and is not asserted by this evidence cut.",
-      "status": "pending"
+      "proof": "Owner Codex2 and independent reviewer Codex are distinct; Codex approved only after inspecting PR #4241, its green required checks, the merged diff, and independent negative/throwaway-PostgreSQL reruns.",
+      "status": "pass"
     }
   },
   "acceptance": [
@@ -258,8 +318,7 @@
       ],
       "id": "AC6",
       "statement": "The task is delivered by PR to dev with green checks and independent Codex review.",
-      "status": "pending",
-      "blocking_until": "Task PR checks, independent Codex review, merge to dev, and owner closeout"
+      "status": "pass"
     }
   ],
   "residual_risks": {
@@ -319,6 +378,15 @@
       "sequence": 1,
       "sha": "4a7a87cdb71e12170dc4e7810b08239807b7c9ea",
       "status": "implementation_complete_pending_independent_review"
+    },
+    {
+      "actor": "Codex",
+      "kind": "independent_review_approval",
+      "recorded_at": "2026-07-27T13:01:25Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4241",
+      "sequence": 2,
+      "sha": "94c0af607ab9ab5033a6ddf482ec2d2b629db6bd",
+      "status": "review_approved"
     }
   ]
 }
