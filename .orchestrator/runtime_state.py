@@ -135,6 +135,12 @@ def default_state() -> dict[str, Any]:
         "worker_worktree_cleanup": {
             "last_run": None,
         },
+        "auto_commit_archive": {
+            "pending_token": None,
+            "pending_since": None,
+            "last_run_at": None,
+            "last_error": None,
+        },
         "approvals": {
             "last_reconciled_at": None,
         },
@@ -222,6 +228,11 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state["worker_worktrees"].setdefault("leases", {})
     state.setdefault("worker_worktree_cleanup", {})
     state["worker_worktree_cleanup"].setdefault("last_run", None)
+    state.setdefault("auto_commit_archive", {})
+    state["auto_commit_archive"].setdefault("pending_token", None)
+    state["auto_commit_archive"].setdefault("pending_since", None)
+    state["auto_commit_archive"].setdefault("last_run_at", None)
+    state["auto_commit_archive"].setdefault("last_error", None)
     state.setdefault("approvals", {})
     state["approvals"].setdefault("last_reconciled_at", None)
     state.setdefault("underutilization", {})
