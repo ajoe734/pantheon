@@ -40,8 +40,8 @@ withdrew that handoff. Anchor `d8549af42d9dd5358b9b6b907c2d5f36aa4f4d20`
 now makes both PR helpers resolve a unique existing PR and prove its request
 off before changing the head, fail before push on unreadable or ambiguous
 lookup, and prove it off again after push/open. The final validation composes
-authoritative base `2644329db702068142d3e942a40b3bc5d76c0c1a` at tree
-`dba1c9129d5cd5b375874d5b3c419bfd62e6edc7`.
+authoritative base `b79d3a540a797fe69851f4dbb3a119ddb647cf9a` at tree
+`f22ea3561ca3578febd4402c39b4bd2643dbec8c`.
 
 The repaired helper was also exercised live on candidate
 `c6d38ea7e9b5bbc7f2480768120478894e522f38`: it resolved existing PR #4218,
@@ -404,8 +404,8 @@ The full map of PR → entry point → fixture is the `live_regressions` table i
 See `validation.txt` for the captured transcript.
 
 This pass ran against authoritative `origin/dev`
-`2644329db702068142d3e942a40b3bc5d76c0c1a` and validated tree
-`dba1c9129d5cd5b375874d5b3c419bfd62e6edc7`.
+`b79d3a540a797fe69851f4dbb3a119ddb647cf9a` and validated tree
+`f22ea3561ca3578febd4402c39b4bd2643dbec8c`.
 
 ```
 .venv-pantheon/bin/python3 scripts/git/test_task_review_merge_gate.py
