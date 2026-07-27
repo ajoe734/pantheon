@@ -40,6 +40,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from .executor import execute, ExecutionError, _signal_context_metadata, _signal_market_price
+from .pending_signal_store import ExecutionFence
 from .symbol_parser import SymbolParseError
 
 try:
@@ -69,6 +70,8 @@ class _ExecutionClaimHeartbeat:
         self._signal = signal
         self._interval = interval_seconds
         self._stop = threading.Event()
+        self._lease_lost = threading.Event()
+        self._loss_reason: str | None = None
         self._thread = threading.Thread(
             target=self._run,
             name=f"signal-claim-heartbeat-{signal.get('signal_id', 'unknown')}",
@@ -87,11 +90,26 @@ class _ExecutionClaimHeartbeat:
                 self._signal.get("signal_id", "<unknown>"),
             )
 
+    @property
+    def lease_lost(self) -> bool:
+        return self._lease_lost.is_set()
+
+    @property
+    def loss_reason(self) -> str | None:
+        return self._loss_reason
+
+    def _publish_lease_loss(self, reason: str) -> None:
+        self._loss_reason = reason
+        self._lease_lost.set()
+
     def _run(self) -> None:
         while not self._stop.wait(self._interval):
             try:
                 renewed = bool(self._renew(self._signal))
             except Exception as exc:  # noqa: BLE001 - lease ambiguity fails closed on reclaim
+                self._publish_lease_loss(
+                    f"renew_exception:{type(exc).__name__}:{exc}"
+                )
                 log.error(
                     "[%s] Claim heartbeat failed during execution: %s",
                     self._signal.get("signal_id", "<unknown>"),
@@ -99,6 +117,7 @@ class _ExecutionClaimHeartbeat:
                 )
                 return
             if not renewed:
+                self._publish_lease_loss("renew_returned_false")
                 log.error(
                     "[%s] Claim heartbeat lost ownership during execution",
                     self._signal.get("signal_id", "<unknown>"),
@@ -678,12 +697,72 @@ class SignalConsumer:
             self._remember_processed(signal["signal_id"])
             self._ack_signal(signal)
             return
+        execution_fence: ExecutionFence | None = None
+        begin_execution = getattr(self._store, "begin_execution", None)
+        if callable(begin_execution):
+            try:
+                candidate = begin_execution(signal)
+            except Exception as exc:  # noqa: BLE001 - ambiguous authority fails closed
+                log.error(
+                    "[%s] Unable to reserve execution authority; refusing side effect: %s",
+                    signal.get("signal_id", "<unknown>"),
+                    exc,
+                )
+                return
+            if isinstance(candidate, ExecutionFence):
+                execution_fence = candidate
+        if execution_fence is not None:
+            if execution_fence.status == "lost_claim":
+                log.warning(
+                    "[%s] Claim expired before execution reservation; refusing side effect",
+                    signal.get("signal_id", "<unknown>"),
+                )
+                return
+            if execution_fence.status == "in_progress":
+                log.error(
+                    "[%s] Execution already started under another claim; "
+                    "routing reclaimed copy to durable DLQ",
+                    signal.get("signal_id", "<unknown>"),
+                )
+                self._record_filtered_signal_noop(
+                    signal,
+                    algo,
+                    "execution_in_progress_elsewhere",
+                    extra_metadata={
+                        "execution_fence_status": execution_fence.status,
+                    },
+                    remember_processed=False,
+                )
+                self._enqueue_dlq(signal, "execution_in_progress_elsewhere")
+                return
+            if execution_fence.status == "completed":
+                self._record_filtered_signal_noop(
+                    signal,
+                    algo,
+                    "duplicate_signal_id",
+                    extra_metadata={
+                        "duplicate_signal_id": signal["signal_id"],
+                        "idempotent_replay": True,
+                        "execution_fence_status": execution_fence.status,
+                    },
+                )
+                self._ack_signal(signal)
+                return
+            if (
+                execution_fence.status != "acquired"
+                or not execution_fence.token
+            ):
+                log.error(
+                    "[%s] Invalid execution-fence result %r; refusing side effect",
+                    signal.get("signal_id", "<unknown>"),
+                    execution_fence,
+                )
+                return
         heartbeat = self._start_execution_claim_heartbeat(signal)
+        execution_succeeded = False
         try:
             execute(signal, algo)
-            # Mark as processed and ack only after successful execution
-            self._remember_processed(signal["signal_id"])
-            self._ack_signal(signal)
+            execution_succeeded = True
         except (ExecutionError, SymbolParseError) as exc:
             log.error("[%s] Execution failed: %s", signal["signal_id"], exc)
             self._record_execution_error_noop(signal, algo, exc)
@@ -696,6 +775,64 @@ class SignalConsumer:
         finally:
             if heartbeat is not None:
                 heartbeat.stop()
+        if not execution_succeeded:
+            return
+
+        lease_loss_reason = (
+            heartbeat.loss_reason
+            if heartbeat is not None and heartbeat.lease_lost
+            else None
+        )
+        if execution_fence is not None:
+            complete_execution = getattr(self._store, "complete_execution", None)
+            try:
+                committed = callable(complete_execution) and bool(
+                    complete_execution(
+                        signal["signal_id"],
+                        execution_fence.token,
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 - commit ambiguity stays recoverable
+                log.error(
+                    "[%s] Execution fence commit failed; retaining durable recovery: %s",
+                    signal.get("signal_id", "<unknown>"),
+                    exc,
+                )
+                self._enqueue_dlq(signal, f"execution_fence_commit_error: {exc}")
+                return
+            if not committed:
+                log.error(
+                    "[%s] Execution fence ownership changed before commit; "
+                    "retaining durable recovery",
+                    signal.get("signal_id", "<unknown>"),
+                )
+                self._enqueue_dlq(signal, "execution_fence_commit_refused")
+                return
+            self._processed_signal_ids.add(str(signal["signal_id"]))
+            if lease_loss_reason:
+                log.error(
+                    "[%s] Queue claim lease was lost during execution (%s); "
+                    "the durable execution token committed the single side effect",
+                    signal.get("signal_id", "<unknown>"),
+                    lease_loss_reason,
+                )
+            self._ack_signal(signal)
+            return
+
+        if lease_loss_reason:
+            log.error(
+                "[%s] Queue claim lease was lost during unfenced execution (%s); "
+                "refusing processed/ack commit",
+                signal.get("signal_id", "<unknown>"),
+                lease_loss_reason,
+            )
+            self._enqueue_dlq(
+                signal,
+                f"unfenced_execution_claim_lost: {lease_loss_reason}",
+            )
+            return
+        self._remember_processed(signal["signal_id"])
+        self._ack_signal(signal)
 
     def _record_execution_error_noop(self, signal: dict, algo: Any | None, exc: Exception) -> None:
         reason = _execution_error_reason(exc)

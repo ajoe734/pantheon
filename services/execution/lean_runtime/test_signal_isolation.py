@@ -718,6 +718,126 @@ class TestRedisPendingSignalStoreClaimVisibility(_RealRedisDockerTestCase):
         self.assertEqual(worker_a.queue_depth(), 0)
         self.assertTrue(worker_a.is_processed("sig-long-execution"))
 
+    def _assert_execution_fence_survives_heartbeat_loss(self, *, renew_failure: str) -> None:
+        from services.execution.lean_runtime.pending_signal_store import (
+            RedisPendingSignalStore,
+            binding_queue_key,
+        )
+
+        binding_id = f"b-heartbeat-{renew_failure}"
+        visibility_timeout = 0.1
+        signal_id = f"sig-heartbeat-{renew_failure}"
+        signal = _signal(
+            signal_id,
+            binding_id=binding_id,
+            runtime_id=f"rt-heartbeat-{renew_failure}",
+            capital_pool_id=f"pool-heartbeat-{renew_failure}",
+        )
+        worker_a = RedisPendingSignalStore(
+            self.redis_url,
+            queue_key=binding_queue_key(binding_id),
+            worker_id="worker-A",
+            visibility_timeout_seconds=visibility_timeout,
+        )
+        worker_b = RedisPendingSignalStore(
+            self.redis_url,
+            queue_key=binding_queue_key(binding_id),
+            worker_id="worker-B",
+            visibility_timeout_seconds=visibility_timeout,
+        )
+        worker_a.enqueue(signal)
+        consumer_a = SignalConsumer(
+            store_client=worker_a,
+            binding_id=binding_id,
+            runtime_id=f"rt-heartbeat-{renew_failure}",
+            capital_pool_id=f"pool-heartbeat-{renew_failure}",
+        )
+        consumer_b = SignalConsumer(
+            store_client=worker_b,
+            binding_id=binding_id,
+            runtime_id=f"rt-heartbeat-{renew_failure}",
+            capital_pool_id=f"pool-heartbeat-{renew_failure}",
+        )
+
+        execution_started = threading.Event()
+        lease_failure_observed = threading.Event()
+        release_execution = threading.Event()
+        executions: list[str] = []
+        drain_errors: list[BaseException] = []
+        renew_calls = 0
+        real_renew = worker_a.renew_claim
+
+        def fail_renew_after_execution_starts(claimed_signal):
+            nonlocal renew_calls
+            renew_calls += 1
+            if renew_calls == 1:
+                return real_renew(claimed_signal)
+            lease_failure_observed.set()
+            if renew_failure == "false":
+                return False
+            raise RuntimeError("simulated renew transport failure")
+
+        worker_a.renew_claim = fail_renew_after_execution_starts  # type: ignore[method-assign]
+
+        class _WorkerAlgo(_RecordingAlgo):
+            def __init__(self, worker_id: str) -> None:
+                super().__init__()
+                self.worker_id = worker_id
+
+        def blocked_execute(_signal_payload, algo):
+            executions.append(algo.worker_id)
+            if algo.worker_id == "worker-A":
+                execution_started.set()
+                if not release_execution.wait(timeout=3):
+                    raise TimeoutError("test did not release worker-A execution")
+
+        def drain_worker_a() -> None:
+            try:
+                consumer_a.drain(algo=_WorkerAlgo("worker-A"))
+            except BaseException as exc:  # noqa: BLE001 - surface thread failures in test
+                drain_errors.append(exc)
+
+        drain_thread = threading.Thread(target=drain_worker_a)
+        with patch(
+            "services.execution.lean_runtime.signal_consumer.execute",
+            side_effect=blocked_execute,
+        ):
+            drain_thread.start()
+            try:
+                self.assertTrue(execution_started.wait(timeout=2))
+                self.assertTrue(lease_failure_observed.wait(timeout=2))
+                time.sleep(visibility_timeout * 2.5)
+
+                # Worker B reclaims while worker A is still inside execute().
+                # The durable execution reservation must route B's copy to
+                # recovery without allowing a second executor call.
+                consumer_b.drain(algo=_WorkerAlgo("worker-B"))
+                self.assertEqual(len(executions), 1)
+                self.assertEqual(executions, ["worker-A"])
+                self.assertEqual(worker_a.inflight_depth(), 0)
+                self.assertEqual(worker_b.inflight_depth(), 0)
+                self.assertEqual(worker_a.queue_depth(), 0)
+                self.assertEqual(worker_b.dlq_depth(), 1)
+            finally:
+                release_execution.set()
+                drain_thread.join(timeout=3)
+
+        self.assertFalse(drain_thread.is_alive())
+        self.assertEqual(drain_errors, [])
+        self.assertEqual(len(executions), 1)
+        self.assertEqual(executions, ["worker-A"])
+        self.assertEqual(renew_calls, 2)
+        self.assertTrue(worker_a.is_processed(signal_id))
+        self.assertEqual(worker_a.queue_depth(), 0)
+        self.assertEqual(worker_a.inflight_depth(), 0)
+        self.assertEqual(worker_b.inflight_depth(), 0)
+
+    def test_execution_fence_blocks_reclaim_when_heartbeat_renew_returns_false(self):
+        self._assert_execution_fence_survives_heartbeat_loss(renew_failure="false")
+
+    def test_execution_fence_blocks_reclaim_when_heartbeat_renew_raises(self):
+        self._assert_execution_fence_survives_heartbeat_loss(renew_failure="exception")
+
     def test_claim_response_loss_remains_recoverable(self):
         signal = _signal(
             "sig-response-loss",
