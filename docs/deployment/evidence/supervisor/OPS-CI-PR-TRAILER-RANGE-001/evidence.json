@@ -1,0 +1,399 @@
+{
+  "schema_version": "supervisor_runtime_repair_evidence.v1",
+  "schema_status": {
+    "note": "Task-scoped owner evidence manifest for a CI gate range repair. This is not a product-level loop manifest: the task changes the Branch CI commit-range contract and its own regression suite, and claims no hosted activation, deployment, or capital authority.",
+    "product_level_required": false,
+    "status": "task_scoped"
+  },
+  "task": {
+    "id": "OPS-CI-PR-TRAILER-RANGE-001",
+    "title": "Scope PR commit-trailer CI to the exact task head",
+    "phase": "Fleet delivery governance",
+    "owner": "Claude",
+    "reviewer": "Codex2",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/OPS-CI-PR-TRAILER-RANGE-001",
+    "review_file": "docs/deployment/evidence/supervisor/OPS-CI-PR-TRAILER-RANGE-001/evidence.json",
+    "narrative": "docs/deployment/evidence/supervisor/OPS-CI-PR-TRAILER-RANGE-001/evidence.md",
+    "reproduction": "docs/deployment/evidence/supervisor/OPS-CI-PR-TRAILER-RANGE-001/live-range-reproduction.txt",
+    "post_merge_run_audit": "docs/deployment/evidence/supervisor/OPS-CI-PR-TRAILER-RANGE-001/post-merge-run-audit.tsv"
+  },
+  "scope": {
+    "owned_layer": "The Branch CI commit-trailer range contract only: how scripts/git/resolve_commit_trailer_range.py turns a GitHub event payload into a rev range, and how the trailers job in .github/workflows/branch-ci.yml feeds and consumes it.",
+    "not_changing": "scripts/git/check_commit_trailers.py is byte-identical: required trailers, the 72-char subject rule, the TASK-ID subject prefix rule, and the Merge/Revert/promote/hotfix/publish exemptions are all untouched. .orchestrator/config.json is untouched. The Runtime mirror guard and Smoke acceptance jobs, the push gate for dev, master, publish/** and promote/**, and the promote-PR / master promote-merge skips are untouched.",
+    "implementation_changed_files": [
+      ".github/workflows/branch-ci.yml",
+      "scripts/git/resolve_commit_trailer_range.py",
+      "scripts/git/test_git_workflow_helpers.py"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/supervisor/OPS-CI-PR-TRAILER-RANGE-001/evidence.json",
+      "docs/deployment/evidence/supervisor/OPS-CI-PR-TRAILER-RANGE-001/evidence.md",
+      "docs/deployment/evidence/supervisor/OPS-CI-PR-TRAILER-RANGE-001/live-range-reproduction.txt",
+      "docs/deployment/evidence/supervisor/OPS-CI-PR-TRAILER-RANGE-001/post-merge-run-audit.tsv"
+    ]
+  },
+  "observed_failures": [
+    {
+      "id": "OF1",
+      "summary": "Branch CI run 30219467575 failed PR #4211 on dev commit 0410a89f0, which is not reachable from that PR's head at all.",
+      "live_source": "https://github.com/ajoe734/pantheon/actions/runs/30219467575",
+      "event": "pull_request",
+      "scanned_range": "03389c0c7fca98b543ee8329e11042f99ed5a0f6..094210780bb569ba4d253db6286a9d8a5ee8e281",
+      "root_cause": "HEAD_SHA was github.sha, which on a pull_request event is GitHub's synthetic refs/pull/N/merge commit: the PR head merged into the current base tip. base.sha is frozen at PR creation, so the range spanned every dev commit that landed in between. The scan covered 11 commits, only 7 of which belong to PR #4211; it also swept in two commits owned by task/SUP-WORKER-TRUTH-RECONCILE-001."
+    },
+    {
+      "id": "OF2",
+      "summary": "Branch CI run 30219364096 failed the push on task/SUP-WORKER-TRUTH-RECONCILE-001 (PR #4215) on the same dev commit 0410a89f0.",
+      "live_source": "https://github.com/ajoe734/pantheon/actions/runs/30219364096",
+      "event": "push",
+      "scanned_range": "0ffc9404c21585539d5aea6ef0a5525e1da2fa92..3984f143a3b7f12e703e44d948da8e6d6388f206",
+      "root_cause": "A different shape with the same effect. The range was measured from github.event.before, the previous branch tip, so every commit the worker merged in while syncing the task branch with dev was inside the pushed range even though the branch does not own it. Here 0410a89f0 really is an ancestor of the pushed head."
+    },
+    {
+      "id": "OF3",
+      "summary": "The failure mode was fleet-wide, not PR-specific: any already-merged dev commit that predates the current gate rules blocks every task PR opened after it.",
+      "root_cause": "0410a89f0 is a squash-merge commit with a 79-char subject and valid trailers. It passed its own gate as a merge-commit subject on dev, then failed the same gate when re-scanned as an ordinary commit inside somebody else's range."
+    }
+  ],
+  "repair": {
+    "pull_request": "The range is always <base branch>..<github.event.pull_request.head.sha>. github.sha is never used as the head. Base candidates are tried tightest first: origin/<base ref>, <base ref>, then the event's base.sha. The live base tip is preferred over base.sha because base.sha is frozen at PR creation and would still admit base commits that arrived through a later sync merge.",
+    "push_work_branches": "task/** and hotfix/** are measured against their integration target (origin/dev, dev, origin/master, master) instead of github.event.before, so synced-in base commits leave the range. This also removes the force-push, rebase and new-branch special cases, since the target reference does not depend on the branch's previous tip.",
+    "push_integration_branches": "dev, master, publish/** and promote/** keep the previous contract: github.event.before when it is present, non-zero and an ancestor, then the merge base with their own target, then head^, then head.",
+    "fail_closed": "A pull_request event with no --pr-head-sha, an unavailable head object, or no resolvable base candidate is an error with exit 1 and no range on stdout. The workflow additionally refuses to run the gate when the resolved range is empty, so a resolver failure can never be read as 'nothing to check'.",
+    "hardening": "The resolved range now reaches check_commit_trailers.py through an environment variable instead of a ${{ }} expression interpolated into the shell body."
+  },
+  "acceptance": [
+    {
+      "id": "AC1",
+      "statement": "Pull request trailer gate scans only commits unique to the exact PR head and never rescans integration-base commits or the synthetic merge commit.",
+      "status": "pass",
+      "evidence_refs": [
+        "scripts/git/resolve_commit_trailer_range.py::resolve_pull_request_range",
+        "scripts/git/test_git_workflow_helpers.py::ResolveCommitTrailerRangeTests::test_pull_request_excludes_base_branch_and_ignores_synthetic_merge",
+        "scripts/git/test_git_workflow_helpers.py::PullRequestTrailerRangeLiveRegressionTests::test_repaired_range_judges_both_task_heads_independently",
+        "docs/deployment/evidence/supervisor/OPS-CI-PR-TRAILER-RANGE-001/live-range-reproduction.txt"
+      ],
+      "detail": "On the live PR #4211 payload the repaired resolver returns origin/dev..4e24e895f and the gate scans exactly the 7 commits of task/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001, exit 0. The synthetic merge 0942107 and dev commit 0410a89f0 are both absent."
+    },
+    {
+      "id": "AC2",
+      "statement": "Base movement, rebase, force-push, missing objects and deleted refs have deterministic fail-closed ranges.",
+      "status": "pass",
+      "evidence_refs": [
+        "scripts/git/test_git_workflow_helpers.py::ResolveCommitTrailerRangeTests::test_pull_request_fails_closed_without_a_pr_head_sha",
+        "scripts/git/test_git_workflow_helpers.py::ResolveCommitTrailerRangeTests::test_pull_request_fails_closed_when_the_head_object_is_missing",
+        "scripts/git/test_git_workflow_helpers.py::ResolveCommitTrailerRangeTests::test_pull_request_fails_closed_when_no_base_candidate_resolves",
+        "scripts/git/test_git_workflow_helpers.py::ResolveCommitTrailerRangeTests::test_pull_request_never_falls_back_to_the_head_parent",
+        "scripts/git/test_git_workflow_helpers.py::ResolveCommitTrailerRangeTests::test_task_push_falls_back_to_the_merge_base_without_a_remote_tracking_ref",
+        ".github/workflows/branch-ci.yml (empty RANGE aborts the gate)"
+      ],
+      "detail": "Base movement no longer changes a work branch's range at all, because the range is anchored on the target reference rather than on a recorded SHA. A rebase or force-push leaves the same origin/<target>..<head> form. Missing head objects and unresolvable bases raise ValueError, main() returns 1, no range is emitted, and the gate step exits 1 rather than scanning head^..head."
+    },
+    {
+      "id": "AC3",
+      "statement": "Push gates for task, dev, master, publish and promote retain their intended coverage.",
+      "status": "pass",
+      "evidence_refs": [
+        "scripts/git/test_git_workflow_helpers.py::ResolveCommitTrailerRangeTests::test_task_push_measures_against_dev_not_the_previous_branch_tip",
+        "scripts/git/test_git_workflow_helpers.py::ResolveCommitTrailerRangeTests::test_hotfix_push_measures_against_dev_as_well",
+        "scripts/git/test_git_workflow_helpers.py::ResolveCommitTrailerRangeTests::test_dev_push_keeps_measuring_from_the_previous_branch_tip",
+        "scripts/git/test_git_workflow_helpers.py::ResolveCommitTrailerRangeTests::test_publish_push_keeps_measuring_from_the_previous_branch_tip",
+        "scripts/git/test_git_workflow_helpers.py::ResolveCommitTrailerRangeTests::test_publish_push_still_measures_against_master_first",
+        "scripts/git/test_git_workflow_helpers.py::ResolveCommitTrailerRangeTests::test_dev_push_without_usable_base_checks_head_parent",
+        "scripts/git/test_git_workflow_helpers.py::ResolveCommitTrailerRangeTests::test_root_commit_without_usable_base_checks_head_revision"
+      ],
+      "detail": "Work-branch coverage widens rather than narrows: every commit the branch owns is checked on every push instead of only the newest push slice, which is the same set the PR gate already enforces. dev, master, publish/** and promote/** are byte-for-byte on the previous decision path, including the head^ and head fallbacks and the promote skips in the workflow."
+    },
+    {
+      "id": "AC4",
+      "statement": "Live regression reproduces PR 4211 and PR 4215 contamination by dev commit 0410a89f0, then proves both valid task heads are judged independently.",
+      "status": "pass",
+      "evidence_refs": [
+        "docs/deployment/evidence/supervisor/OPS-CI-PR-TRAILER-RANGE-001/live-range-reproduction.txt",
+        "scripts/git/test_git_workflow_helpers.py::PullRequestTrailerRangeLiveRegressionTests::test_old_range_contract_reproduces_the_dev_commit_contamination",
+        "scripts/git/test_git_workflow_helpers.py::PullRequestTrailerRangeLiveRegressionTests::test_old_push_contract_reproduces_the_4215_contamination",
+        "scripts/git/test_git_workflow_helpers.py::PullRequestTrailerRangeLiveRegressionTests::test_repaired_push_range_drops_the_synced_dev_commit",
+        "post_merge_confirmation (production counterpart, all 53 live runs in the window after the PR #4217 merge)",
+        "docs/deployment/evidence/supervisor/OPS-CI-PR-TRAILER-RANGE-001/post-merge-run-audit.tsv"
+      ],
+      "detail": "Replayed against real objects in an isolated clone with refs/remotes/origin/dev restored to 0410a89f0, the dev tip both runs saw. Old contracts reproduce exit 1 on 0410a89f0 for both PRs; the repaired contracts return exit 0 for both, and each task head is scanned alone. Ancestry is recorded too: 0410a89f0 is not reachable from PR #4211's head but is reachable from its synthetic merge, and is reachable from PR #4215's pushed head. Confirmed in production after merge: see post_merge_confirmation, where 0410a89f0 is still on dev and is rejected zero times across all 53 runs of the window on dev plus seven task branches, 50 of which executed the repaired resolver."
+    },
+    {
+      "id": "AC5",
+      "statement": "No waiver of required trailers, subject length or merge exemptions is introduced.",
+      "status": "pass",
+      "evidence_refs": [
+        "scripts/git/check_commit_trailers.py (unmodified by this task)",
+        "scripts/git/test_git_workflow_helpers.py::PullRequestTrailerRangeLiveRegressionTests::test_repaired_range_still_fails_a_malformed_task_head",
+        "scripts/git/test_git_workflow_helpers.py::CheckCommitTrailersTests"
+      ],
+      "detail": "Only the range changes; the validator is untouched, PANTHEON_TRAILER_CHECK_DISABLED is not set anywhere new, and a task head whose commit omits the Reviewer trailer still fails with exit 1 under the repaired range."
+    },
+    {
+      "id": "AC6",
+      "statement": "Focused unit and workflow tests, branch, commit, push, PR checks, independent review, merge and evidence archive complete.",
+      "status": "pending_reviewer",
+      "evidence_refs": [
+        "python3 -m unittest scripts.git.test_git_workflow_helpers (52 passed)",
+        "delivery (PR #4217 merged into dev at 2026-07-26T21:43:27Z, all three checks pass)",
+        "post_merge_confirmation (53 live runs audited in full, 49 success, 4 true-positive failures)",
+        "docs/deployment/evidence/supervisor/OPS-CI-PR-TRAILER-RANGE-001/post-merge-run-audit.tsv"
+      ],
+      "detail": "Unit, workflow-contract and live-git regression tests pass. Branch, commit, push and PR checks are complete: PR #4217 merged into dev with Commit trailers, Runtime mirror guard and Smoke acceptance all green, and its own Commit trailers job ran under the repaired resolver. The post-merge audit now covers every run in the stated window rather than a subwindow; see post_merge_confirmation.superseded_claim. Independent review by Codex2 is the one remaining item and is not asserted here."
+    }
+  ],
+  "verification": [
+    {
+      "command": "python3 -m unittest scripts.git.test_git_workflow_helpers",
+      "result": "52 passed (was 40 before this task)"
+    },
+    {
+      "command": "python3 -c \"import yaml; yaml.safe_load(open('.github/workflows/branch-ci.yml'))\"",
+      "result": "parses; trailers job steps unchanged in order and count"
+    },
+    {
+      "command": "python3 scripts/git/resolve_commit_trailer_range.py --event pull_request --base-sha <base> --head-sha <synthetic> --pr-head-sha <head> --ref-name 4211/merge --pr-base-ref dev",
+      "result": "range=origin/dev..4e24e895f59853391d269270673f57b9248964eb, exit 0"
+    },
+    {
+      "command": "python3 scripts/git/resolve_commit_trailer_range.py --event pull_request --base-sha <base> --head-sha <synthetic> --ref-name 4211/merge --pr-base-ref dev",
+      "result": "exit 1, 'refusing to scan from the synthetic merge commit', no range emitted"
+    },
+    {
+      "command": "isolated clone with refs/remotes/origin/dev reset to 0410a89f0, old vs repaired ranges for PR #4211 and PR #4215",
+      "result": "old: exit 1 on 0410a89f0 for both; repaired: exit 0 for both, scanning only the owning task's commits"
+    },
+    {
+      "command": "post-merge audit of every branch-ci.yml run created between the PR #4217 merge (2026-07-26T21:43:27Z) and 2026-07-26T23:19:29Z inclusive, reading the resolved range and rejected commits out of each Commit trailers job log",
+      "result": "53 runs (30 push, 23 pull_request) across dev and seven task branches: 49 success, 4 failure, 0 cancelled; 50 runs executed the repaired resolver and 3 pre-fix push runs on unsynced task heads did not; all 50 repaired ranges match the contract table with zero deviations; all four failures are one true positive on a branch-owned 81-char subject; 0410a89f0 is rejected zero times in all 53. Per-run rows in post-merge-run-audit.tsv"
+    },
+    {
+      "command": "git merge-base --is-ancestor 71aea154b <head_sha> for each of the 53 audited run heads",
+      "result": "47 heads already contained the PR #4217 merge, 6 did not; of those 6, the 3 pull_request runs still executed the repaired workflow from refs/pull/N/merge and the 3 push runs executed the pre-fix workflow from their own tree"
+    },
+    {
+      "command": "grep for 0410a89f0 across all 53 downloaded Commit trailers job logs",
+      "result": "zero matches in any run, on either event shape and under either workflow version"
+    }
+  ],
+  "delivery": {
+    "repository": "ajoe734/pantheon",
+    "pull_request": 4217,
+    "pull_request_url": "https://github.com/ajoe734/pantheon/pull/4217",
+    "state": "MERGED",
+    "base_branch": "dev",
+    "head_commit": "1e968f302e3b27285d78df0a42dfac2a24a80831",
+    "merge_commit": "71aea154b8a1ab6e652e02018f47c57f26513de0",
+    "merged_at": "2026-07-26T21:43:27Z",
+    "checks": "Commit trailers, Runtime mirror guard and Smoke acceptance all pass; the Commit trailers job on PR #4217 already ran under the repaired resolver because a pull_request workflow runs the workflow file from the PR merge ref"
+  },
+  "post_merge_confirmation": {
+    "note": "Live fleet behaviour after the delivery landed, not a replay. This is the production counterpart of the AC4 reproduction. Every run in the stated window is audited; the per-run table is in post-merge-run-audit.tsv.",
+    "method": "GitHub Actions API listing of every branch-ci.yml run whose created_at falls in the window (both bounds inclusive), then the Commit trailers job log of each run downloaded and parsed for its resolved range and rejected commits. No sampling and no truncation: 53 of 53 runs read.",
+    "window": {
+      "from": "2026-07-26T21:43:27Z",
+      "from_meaning": "PR #4217 merged_at",
+      "to": "2026-07-26T23:19:29Z",
+      "to_meaning": "last branch-ci.yml run of the audited fleet burst",
+      "bounds": "inclusive",
+      "runs": 53,
+      "push_runs": 30,
+      "pull_request_runs": 23,
+      "success": 49,
+      "failure": 4,
+      "cancelled": 0,
+      "branches": [
+        "dev",
+        "task/L12-CAP-001",
+        "task/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001",
+        "task/OPS-L12-RUNTIME-GAP-DELTA-001",
+        "task/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001",
+        "task/OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001",
+        "task/SUP-COMMAND-RUNTIME-REFRESH-001",
+        "task/SUP-WORKER-TRUTH-RECONCILE-001"
+      ],
+      "runs_by_branch": {
+        "dev": 7,
+        "task/L12-CAP-001": 8,
+        "task/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001": 4,
+        "task/OPS-L12-RUNTIME-GAP-DELTA-001": 14,
+        "task/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001": 6,
+        "task/OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001": 4,
+        "task/SUP-COMMAND-RUNTIME-REFRESH-001": 6,
+        "task/SUP-WORKER-TRUTH-RECONCILE-001": 4
+      }
+    },
+    "gate_version_split": {
+      "note": "A run created after the merge does not automatically execute the repaired workflow. A push run executes the branch-ci.yml that is in the pushed head's own tree, so a task branch that had not yet synced dev still ran the pre-#4217 resolver. A pull_request run executes the workflow file from refs/pull/N/merge (base + head), so it ran the repaired resolver as soon as dev carried it, even on a head that predates the merge.",
+      "runs_on_repaired_workflow": 50,
+      "runs_on_pre_fix_workflow": 3,
+      "heads_containing_the_fix_merge": 47,
+      "heads_not_containing_the_fix_merge": 6,
+      "pre_fix_runs": [
+        {
+          "run": 30221669820,
+          "created_at": "2026-07-26T21:43:31Z",
+          "event": "push",
+          "branch": "task/OPS-L12-RUNTIME-GAP-DELTA-001",
+          "head": "5c39428dda1d3c1e42fa926aa5f320467e1b8324",
+          "old_range": "6445eacd603f0bcfb8893508fbffe341a67dd309..5c39428dda1d3c1e42fa926aa5f320467e1b8324",
+          "commits_scanned": 1,
+          "conclusion": "success",
+          "note": "6445eacd6 is the dev tip immediately before the #4217 merge; the old resolver fell back to the merge base with dev. One branch-owned commit, no foreign commit in range, so the pre-fix contract produced no false failure here."
+        },
+        {
+          "run": 30221804623,
+          "created_at": "2026-07-26T21:47:36Z",
+          "event": "push",
+          "branch": "task/OPS-L12-RUNTIME-GAP-DELTA-001",
+          "head": "0bb6d7ffbef956a57f3a3b300056f77088837f2a",
+          "old_range": "5c39428dda1d3c1e42fa926aa5f320467e1b8324..0bb6d7ffbef956a57f3a3b300056f77088837f2a",
+          "commits_scanned": 1,
+          "conclusion": "success",
+          "note": "Measured from the previous branch tip, so only the newest push slice was scanned. The repaired range for the same head, origin/dev..0bb6d7ffb, covers 2 commits, which is the concrete AC3 widening: the repaired work-branch push gate checks everything the branch owns, not only what it just pushed."
+        },
+        {
+          "run": 30222138131,
+          "created_at": "2026-07-26T21:57:27Z",
+          "event": "push",
+          "branch": "task/SUP-WORKER-TRUTH-RECONCILE-001",
+          "head": "2d97f80e8965ae28859672a6d2b75261565fc727",
+          "old_range": "aa70767538baefc1a331b5e7ef51a0cad903c6b9..2d97f80e8965ae28859672a6d2b75261565fc727",
+          "commits_scanned": 1,
+          "conclusion": "success",
+          "note": "Same branch as observed failure OF2. One branch-owned commit in the pre-fix range; the paired pull_request run 30222139919 on the identical head already resolved origin/dev..2d97f80e8 under the repaired resolver."
+        }
+      ],
+      "paired_pull_request_runs_on_pre_fix_heads": [
+        {
+          "run": 30221671216,
+          "head": "5c39428dda1d3c1e42fa926aa5f320467e1b8324",
+          "resolved": "origin/dev..5c39428dda1d3c1e42fa926aa5f320467e1b8324"
+        },
+        {
+          "run": 30221806024,
+          "head": "0bb6d7ffbef956a57f3a3b300056f77088837f2a",
+          "resolved": "origin/dev..0bb6d7ffbef956a57f3a3b300056f77088837f2a"
+        },
+        {
+          "run": 30222139919,
+          "head": "2d97f80e8965ae28859672a6d2b75261565fc727",
+          "resolved": "origin/dev..2d97f80e8965ae28859672a6d2b75261565fc727"
+        }
+      ],
+      "consequence": "Claims about the repaired contract are asserted over the 50 runs that executed it, not over all 53. The three pre-fix push runs are reported because they are inside the window, and all three passed. The blocker claim below is asserted over all 53 runs, since a pre-fix range that had swept in 0410a89f0 would have failed."
+    },
+    "range_shape_totals": {
+      "note": "Counted over the 50 runs that executed the repaired resolver, from the resolved_range column of post-merge-run-audit.tsv.",
+      "pull_request_resolved_as_base_branch_to_pr_head": 23,
+      "task_push_resolved_as_origin_dev_to_head": 20,
+      "dev_push_resolved_as_before_to_head": 7,
+      "runs_deviating_from_the_contract_table": 0
+    },
+    "superseded_claim": {
+      "previous": "40 runs, 22 push, 18 pull_request, 36 success, 4 failure, dev plus six task branches",
+      "why_it_was_wrong": "Those totals are the subwindow created_at >= 2026-07-26T22:15:51Z, not the full window from the 21:43:27Z merge. The first 13 runs of the window were omitted, which also dropped task/SUP-WORKER-TRUTH-RECONCILE-001 from the branch set and hid the three pre-fix push runs entirely.",
+      "correction_route": "option (b): the full window is audited above and every run is listed in post-merge-run-audit.tsv.",
+      "raised_by": "Codex2, review of 2026-07-27"
+    },
+    "observed_ranges": [
+      {
+        "shape": "pull_request",
+        "run": 30224958034,
+        "resolved": "origin/dev..1ea220c43ac7ba20a95f0cdda34aaf3d0caa5784",
+        "matches_contract": "<base branch>..<pull_request.head.sha>"
+      },
+      {
+        "shape": "push on task/**",
+        "run": 30224956120,
+        "resolved": "origin/dev..1ea220c43ac7ba20a95f0cdda34aaf3d0caa5784",
+        "matches_contract": "<integration target>..<github.sha>"
+      },
+      {
+        "shape": "push on dev",
+        "run": 30224998589,
+        "resolved": "e376955ff8ac3555871932457865ed1fd0beee83..3ac69ff7f82e92577bec042a8bcef8f482a22122",
+        "matches_contract": "unchanged: github.event.before..head, confirming AC3 in production"
+      }
+    ],
+    "original_blocker": {
+      "commit": "0410a89f0",
+      "subject_length": 79,
+      "still_on_dev": true,
+      "rejections_in_window": 0,
+      "runs_checked": 53,
+      "detail": "The commit was never rewritten or reverted; the range was fixed instead. It does not appear in any of the 53 downloaded Commit trailers job logs, on either event shape, including the seven task branches that were cut before it landed and would have inherited it under the old contract, and including the three push runs that still executed the pre-fix workflow."
+    },
+    "failures": {
+      "count": 4,
+      "runs": [30222792583, 30222793958, 30222823409, 30222825355],
+      "branch": "task/L12-CAP-001",
+      "rejected_commit": "5dbc95673c4390f7ae140a89b8fe88b95cf81059",
+      "rejected_subject": "L12-CAP-001: resolve review blockers for lossless signal execution & leader lease",
+      "rejected_subject_length": 81,
+      "branch_owned": true,
+      "ancestor_of_origin_dev": false,
+      "classification": "true positive",
+      "resolved_ranges": [
+        "origin/dev..590512f55cefd13e071928cf5c9b062c5a39f0f4 (runs 30222792583 push, 30222793958 pull_request, 22:16)",
+        "origin/dev..65e9719a53cc8f37e344793ddd68f737aeab1dc4 (runs 30222823409 push, 30222825355 pull_request, 22:17, after a re-push)"
+      ],
+      "detail": "Live counterpart of test_repaired_range_still_fails_a_malformed_task_head: narrowing the range removed the false failures without removing the true ones. All four runs executed the repaired resolver and every one rejects the same branch-owned commit with 'subject exceeds 72 chars (81)'. The branch passed at 22:29:30 (runs 30223234029 and 30223235130) once its own subject was fixed. Across the full 53-run window, no run failed on a commit its branch did not own."
+    }
+  },
+  "residual_risk": [
+    {
+      "id": "RR1",
+      "summary": "The Runtime mirror guard job checks out at the default depth 1, so its git diff cannot resolve BASE_SHA or HEAD_SHA and is swallowed by `|| true`; the job is already a no-op on both events.",
+      "disposition": "observed and left alone; out of scope for this task because enabling it would begin enforcing the generated-file guard over history that has never been checked"
+    },
+    {
+      "id": "RR2",
+      "summary": "A work-branch push range is measured against the integration target as of CI time, so a commit that is on another task's branch but not yet on dev stays in range until it merges.",
+      "disposition": "intended; such a commit is genuinely not yet owned by the base branch, and the PR #4215 reproduction shows one (07747254e) passing the gate"
+    },
+    {
+      "id": "RR3",
+      "summary": "If the base branch tip already contains the PR head (for example a re-run after auto-merge landed), the resolved range is empty and the gate passes without scanning.",
+      "disposition": "accepted; those commits are already on the base branch and were gated on the way in"
+    }
+  ],
+  "record_log": [
+    {
+      "sequence": 1,
+      "actor": "Claude",
+      "role": "owner",
+      "decision": "evidence_ready",
+      "summary": "Both contamination shapes reproduced against real objects and repaired: the pull_request range is anchored on pull_request.head.sha instead of the synthetic merge commit, and the work-branch push range is anchored on the integration target instead of the previous branch tip. No trailer rule was weakened.",
+      "pending": "Independent review by Codex2 and merge into dev."
+    },
+    {
+      "sequence": 2,
+      "actor": "Claude",
+      "role": "owner",
+      "decision": "post_merge_confirmed",
+      "summary": "Task was preempted before review and restarted. The delivery had already merged as PR #4217, so this record adds production confirmation rather than new code: across the branch-ci runs in the 96 minutes after the merge, both repaired shapes resolve exactly as specified, dev pushes still measure from github.event.before, 0410a89f0 remains on dev and is rejected zero times, and the only four failures are one true positive on a branch-owned 81-char subject. Nothing in the repair or the scope boundary changed.",
+      "pending": "Independent review by Codex2, then owner closeout.",
+      "superseded_by": 3
+    },
+    {
+      "sequence": 3,
+      "actor": "Claude",
+      "role": "owner",
+      "decision": "post_merge_audit_corrected",
+      "summary": "Codex2's review found the sequence-2 population wrong: the manifest claimed 40 runs for the window 2026-07-26T21:43:27Z..23:19:29Z, but the workflow API returns 53. The 40-run totals were in fact the subwindow starting 22:15:51Z, which silently dropped the first 13 runs, the branch task/SUP-WORKER-TRUTH-RECONCILE-001, and the three push runs that still executed the pre-fix workflow. Corrected via the reviewer's option (b): all 53 runs are now audited and listed per-run in post-merge-run-audit.tsv, with the split between the 50 runs that executed the repaired resolver and the 3 that did not made explicit. The corrected data does not weaken any conclusion. 50 of 50 repaired ranges match the contract table, all four failures remain the one true positive on task/L12-CAP-001, and 0410a89f0 is now confirmed absent from 53 of 53 job logs rather than 40. The counts in sequence 2 are superseded by this record; the implementation, the scope boundary and the verification in AC1 through AC5 are unchanged.",
+      "corrected_fields": [
+        "post_merge_confirmation.window (runs, push_runs, pull_request_runs, success, branches)",
+        "post_merge_confirmation.original_blocker.detail",
+        "post_merge_confirmation.failures.detail",
+        "acceptance AC4.detail and AC4.evidence_refs",
+        "acceptance AC6.evidence_refs and AC6.detail",
+        "verification post-merge audit entry",
+        "evidence.md section 6"
+      ],
+      "pending": "Independent review by Codex2, then owner closeout."
+    }
+  ]
+}

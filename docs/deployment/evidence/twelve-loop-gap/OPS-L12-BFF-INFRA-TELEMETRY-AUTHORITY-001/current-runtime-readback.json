@@ -1,0 +1,170 @@
+{
+  "buffer_backend": "jetstream (real NATS JetStream, file storage, work queue)",
+  "environment": "bounded local nonprod telemetry over real HTTP on 127.0.0.1:18150 (durable) and :18151 (volatile refusal)",
+  "hosted_activation_claimed": false,
+  "observations": {
+    "binding_spoof_nested_depth_12": {
+      "code": "INFRA_BINDING_FIELD_FORBIDDEN",
+      "http": 400
+    },
+    "binding_spoof_nested_depth_40_mixed_containers": {
+      "code": "INFRA_BINDING_FIELD_FORBIDDEN",
+      "http": 400
+    },
+    "binding_spoof_on_infra_route": {
+      "code": "INFRA_BINDING_FIELD_FORBIDDEN",
+      "http": 400
+    },
+    "clean_deeply_nested_metadata_is_admitted": {
+      "duplicate": false,
+      "http": 202,
+      "nesting_levels": 40
+    },
+    "durable_broker_after_admission": {
+      "event_ids": [
+        "readback5-infra-001"
+      ],
+      "messages": 1,
+      "retention": "workqueue",
+      "storage": "file",
+      "stream": "PANTHEON_INFRA_HEALTH_READBACK5"
+    },
+    "durable_broker_after_crash": {
+      "event_ids": [
+        "readback5-infra-001",
+        "readback5-clean-deep-001",
+        "readback5-inflight-001"
+      ],
+      "messages": 3,
+      "retention": "workqueue",
+      "storage": "file",
+      "stream": "PANTHEON_INFRA_HEALTH_READBACK5"
+    },
+    "durable_broker_retained_admitted_event": {
+      "admitted_event_still_durable": true,
+      "after_crash_messages": 3,
+      "before_crash_messages": 3
+    },
+    "durable_ledger": {
+      "committed_event_ids": [
+        "readback5-clean-deep-001",
+        "readback5-inflight-001",
+        "readback5-infra-001"
+      ],
+      "open_or_expired_reservation_event_ids": [],
+      "record_count": 7
+    },
+    "event_id_conflict": {
+      "code": "INFRA_EVENT_ID_CONFLICT",
+      "http": 409
+    },
+    "healthz_metrics": {
+      "http": 200,
+      "infrastructure_health_buffer_durable": 1,
+      "infrastructure_health_schema_loaded": 1,
+      "overall_status": "ok"
+    },
+    "infra_event_on_trading_route": {
+      "http": 400,
+      "status_field": "rejected"
+    },
+    "missing_token": {
+      "http": 401
+    },
+    "payload_tenant_mismatch": {
+      "code": "TENANT_PAYLOAD_MISMATCH",
+      "http": 403
+    },
+    "process_crash_after_commit": {
+      "exitcode": -9,
+      "signal": "SIGKILL"
+    },
+    "restart_replay": {
+      "duplicate": true,
+      "health_http": 200,
+      "http": 202
+    },
+    "retry_replay": {
+      "duplicate": true,
+      "http": 202
+    },
+    "runtime_health_spoof_on_trading_route": {
+      "http": 400,
+      "status_field": "rejected"
+    },
+    "service_boot": {
+      "buffer_backend": "jetstream",
+      "health_http": 200,
+      "nats_url": "nats://127.0.0.1:14222"
+    },
+    "stats_after_restart": {
+      "http": 200,
+      "infrastructure_health": {
+        "admitted": 0,
+        "buffer_durability_defect": null,
+        "buffer_durable": true,
+        "buffer_type": "NatsJetStreamBuffer",
+        "conflicts": 0,
+        "duplicates": 1,
+        "fenced_rejections": 0,
+        "in_flight_rejections": 0,
+        "ledger": {
+          "committed_event_ids": 3,
+          "lease_seconds": 2.0,
+          "open_reservations": 0,
+          "path": "/tmp/infra-health-readback5-durable-96it9nxs/infrastructure_health_admissions.jsonl",
+          "recoverable_expired_reservations": 0
+        },
+        "non_durable_rejections": 0,
+        "rejected": 0,
+        "schema_loaded": true,
+        "schema_version": "pantheon.infrastructure-health/1"
+      }
+    },
+    "stranded_reservation_before_lease_expiry": {
+      "code": "INFRA_ADMISSION_IN_FLIGHT",
+      "http": 503,
+      "reservation_state": "reserved"
+    },
+    "stranded_reservation_recovered_after_lease": {
+      "duplicate": false,
+      "http": 202
+    },
+    "valid_ingest": {
+      "duplicate": false,
+      "event_id": "readback5-infra-001",
+      "fingerprint": "sha256:a18bb10b11a9c05a8a95a44e52090571bae6392b0513d08e2383d63a88a852ee",
+      "http": 202
+    },
+    "volatile_backend_admission": {
+      "code": "INFRA_BUFFER_NOT_DURABLE",
+      "http": 503,
+      "message": "Configured telemetry buffer 'InMemoryBuffer' is volatile; infrastructure health admission requires a durable broker so an admitted event survives process crash, restart, and replica failover"
+    },
+    "volatile_backend_boot": {
+      "buffer_backend": "memory",
+      "health_http": 200,
+      "infrastructure_health_buffer_durable": 0
+    },
+    "volatile_backend_ledger": {
+      "record_count": 0,
+      "reserved_or_committed_anything": false
+    },
+    "volatile_backend_metrics": {
+      "infrastructure_health_admitted": 0,
+      "infrastructure_health_buffer_durable": 0,
+      "infrastructure_health_non_durable_rejections": 1
+    },
+    "wrong_producer": {
+      "code": "PRODUCER_FORBIDDEN",
+      "http": 403
+    },
+    "wrong_tenant": {
+      "code": "TENANT_FORBIDDEN",
+      "http": 403
+    }
+  },
+  "observed_at": "2026-07-26T23:38:50.996783Z",
+  "runtime_manager_url": "http://127.0.0.1:1 (unreachable; binding lookups fail closed)",
+  "task_id": "OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001"
+}

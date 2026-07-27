@@ -1,8 +1,8 @@
 # L12-SIGNOFF-001 protected closeout evidence
 
 Status: owner evidence re-cut after the independent re-review rejected the
-merged PR #4183 plus follow-up PR #4205 delivery, ready for independent
-`Codex2` review of the next follow-up PR.
+sequence-7 cut and merged follow-up PR #4206, ready for independent `Codex2`
+review of the next follow-up PR.
 
 Owner is `Claude` and reviewer is `Codex2`, matching both the
 `assignment-revision-1` catalog and the canonical `ai-status.json` assignment.
@@ -89,7 +89,7 @@ instead of being admitted.
 Because PR #4183 was already merged and could not be amended, that remediation
 was delivered as follow-up PR #4205 against the same task branch.
 
-### Sequence-6 rejection (closed in this cut)
+### Sequence-6 rejection (closed in the sequence-7 cut, merged as PR #4206)
 
 The independent re-review rejected the merged PR #4205 delivery on a single
 blocking authority-boundary defect. Manifest resolution had been taught about
@@ -118,7 +118,51 @@ before any manifest, policy, or ledger access, so a relative or conflicting
 binding fails closed instead of quietly narrowing what counts as
 candidate-controlled.
 
-Because PR #4205 is already merged and cannot be amended, this remediation is
+Because PR #4205 was already merged and could not be amended, that remediation
+was delivered as follow-up PR #4206 against the same task branch.
+
+### Sequence-8 rejection (closed in this cut)
+
+The independent re-review rejected the merged PR #4206 delivery on a single
+blocking authority-source defect. The forbidden-root set had been widened to
+cover the task worktree, but the answer to *which directory is the task
+worktree* was still being read from `PANTHEON_WORKTREE_ROOT` /
+`ORCH_WORKSPACE_PATH` — variables that live in the candidate's own environment.
+
+A worker can simply unset both. `validate_active_status_command_lease` treated
+the workspace binding as optional, so with a current valid `ORCH_RUN_ID` an
+erased environment still passed command-runtime, status-root, and active-lease
+validation, and `_bound_workspace_roots` then returned nothing. The worktree
+dropped out of `forbidden_roots` and the sequence-6 bypass came back intact:
+the reviewer's replay accepted an external policy whose ledger lived under that
+omitted worktree, and truncating the candidate-owned JSONL tail to the signed
+issue record restored `review_approved` verification. Widening a boundary is
+worth nothing if the boundary's own coordinates are candidate-supplied.
+
+The authority now comes from central runtime state, which the supervisor writes
+outside every task worktree and the candidate cannot reach.
+`ai_status.active_lease_workspace_roots` reads the leased worktree from the
+worker record's `workspace_path` and from the `worker_worktrees` lease `path`,
+and `_bound_workspace_roots` merges those roots into whatever the environment
+claims. The union is the safe direction for both consumers: a wider forbidden
+set only rejects more, and a wider manifest search path is still sha256-bound
+to the signed verdict. An active run whose lease cannot be resolved raises
+before any manifest, policy, or ledger access rather than degrading to no
+boundary.
+
+The governed command fails closed on the same erasure. When the lease declares
+a worktree, `validate_active_status_command_lease` now requires a matching
+environment binding and rejects a missing or blank one, and the
+`worker_worktrees` lease `path` enforces that independently of the worker
+record's `workspace_path`.
+
+This was reproduced on the live dispatch lease, not only on a fixture. Running
+the validator with both workspace variables erased under the real
+`ORCH_RUN_ID` was **accepted** against the merged command root and **rejected**
+against this head, where the leased worktree was recovered from runtime state
+with the environment still erased.
+
+Because PR #4206 is already merged and cannot be amended, this remediation is
 delivered as a further follow-up PR against the same task branch.
 
 ## Authority and binding
@@ -169,45 +213,50 @@ The focused run at this head completed:
   scripts/test_loop_done_guardrail.py \
   scripts/test_ai_status.py
 
-275 passed, 1 warning, 31 subtests
+285 passed, 1 warning, 33 subtests
 ```
 
-The count rose from 269 in the sequence-5 cut by the six authority-boundary
-regressions added here, which contribute eight of the subtests: forbidden-root
-coverage, ledger-under-worktree rejection, policy-under-worktree rejection,
-revoked-verdict tail truncation, consumed-verdict tail truncation, and binding
-validation ordering.
+The count rose from 275 in the sequence-7 cut by nine lease-authority
+regressions added here: six in `scripts/test_loop_done_guardrail.py` — the
+leased root appearing in `forbidden_roots` with no environment binding, ledger
+and policy under the leased root, revoked and consumed tail truncation against
+the leased root, and the unresolvable-lease fail-closed ordering — and three in
+`scripts/test_ai_status.py`, one of which contributes the two new subtests for
+missing and blank workspace variables under a valid run lease, plus the
+worktree-lease-only authority case and `active_lease_workspace_roots` surviving
+an erased environment.
 
 Those regressions were replayed against the pre-fix `origin/dev`
-(`d54e1510ae64f4e8b0c3a5e20058a9ec93270939`, the merge of PR #4205) in a
-detached worktree with only the new test file copied in:
+(`5b8addf628c09f88ff8199080ab68429dbe7b531`, which contains the merge of
+PR #4206) in a detached worktree with only the two new test files copied in:
 
 ```text
-8 failed, 82 passed, 2 subtests passed
+9 failed, 214 passed, 31 subtests passed
 ```
 
-Every failure is an authority-boundary case, under both worker bindings where
-the case is parameterised. Inside
-`test_candidate_tail_truncation_cannot_restore_revoked_verdict` the pre-fix run
-still asserts successfully that truncation restores the revoked approval — the
-reviewer's `candidate_tail_truncation_restores_approval=true` finding
-reproduced verbatim — and fails only on the bound-root rejection that closes
-it. The binding-ordering case passes pre-fix, because manifest lookup already
-raised there; it is kept to pin the ordering against refactors that move the
-boundary derivation.
+plus both subtests of the erased-binding case reported as `SUBFAILED`. Every
+failure is a lease-authority case, and all nine pass at this head, so the
+regressions bind the fix rather than restating it.
 
-The sequence-4 pre-fix replay against
-`403e30bd985ea9b0c166180103a0ab64e4e35d4f` (`9 failed, 198 passed`) is retained
-in `evidence.json` as the proof for that earlier rejection.
+The live probe on the real dispatch lease, with both workspace variables
+erased under the current `ORCH_RUN_ID`, was accepted against the merged command
+root and rejected at this head with `status command workspace binding is
+required`; the same run recovered the leased worktree from supervisor runtime
+state. The probe only validates and mutates no canonical state.
 
-`scripts/loop_done_guardrail.py --evidence-root` replay of this manifest
-reports exactly one gap — the absent formal `Codex2` verdict — confirming the
-cut is otherwise `done`-eligible.
+The sequence-4 replay against `403e30bd985ea9b0c166180103a0ab64e4e35d4f`
+(`9 failed, 198 passed`) and the sequence-6 replay against
+`d54e1510ae64f4e8b0c3a5e20058a9ec93270939` (`8 failed, 82 passed`, including
+the `candidate_tail_truncation_restores_approval=true` assertion reproduced
+verbatim) are retained in `evidence.json` as the proofs for those earlier
+rejections.
 
-The broader `scripts/run-acceptance.sh smoke` run recorded in the sequence-3
-cut passed stage-0 validation and the complete smoke baseline, including
-data-plane, promotion, governance-saga, runtime-binding, telemetry, lineage,
-and BFF checks; this cut does not re-assert it at the new head.
-`py_compile` and `git diff --check` were re-run here and passed.
+`scripts/loop_done_guardrail.py --task-id L12-SIGNOFF-001 --evidence-root .`
+replay of this manifest reports exactly one gap — the absent formal `Codex2`
+verdict — confirming the cut is otherwise `done`-eligible.
+
+`scripts/run-acceptance.sh smoke`, `py_compile`, and `git diff --check` were
+all re-run at this head and passed; the smoke run completed stage-0 validation
+and the full smoke baseline.
 
 [`evidence.sha256`](evidence.sha256) covers the machine-readable manifest.
