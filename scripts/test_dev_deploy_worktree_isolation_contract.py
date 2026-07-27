@@ -153,7 +153,7 @@ def test_nonprod_deploy_uses_protected_controller_and_binds_both_roots() -> None
     )
 
     controller_gate = workflow.split(
-        "\n      - name: Enforce exact Agora pair before any dev switch",
+        "\n      - name: Generate immutable exact-pair admission before any dev switch",
         1,
     )[1].split(
         "\n      - name: Enforce dev auth deployment floor",
@@ -161,6 +161,9 @@ def test_nonprod_deploy_uses_protected_controller_and_binds_both_roots() -> None
     )[0]
     assert CONTRACT_VERSION in controller_gate
     assert "grep -Fxq" in controller_gate
+    assert "scripts/agora_compat_manifest.py write" in controller_gate
+    assert "scripts/agora_compat_manifest.py deployment-gate" in controller_gate
+    assert '--frontend-runtime-commit "${{ steps.frontend.outputs.sha }}"' in controller_gate
 
 
 def test_hosted_probes_follow_the_isolated_dev_root_worktree() -> None:
