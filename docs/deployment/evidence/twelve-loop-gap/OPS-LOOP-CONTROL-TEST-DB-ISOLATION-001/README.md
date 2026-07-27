@@ -7,8 +7,9 @@ state.
 - Reviewer: Codex
 - Phase: Twelve-loop verification hardening
 - Manifest: [`evidence.json`](evidence.json)
-- Delivery state: owner implementation complete; independent review and PR
-  merge are still required
+- Delivery state: implementation PR #4241 merged to `dev` as
+  `ab63b3c4c14cb47fd5ddaec0c0ae6a3cd18afc8c`; independent Codex review
+  approved the merged implementation, with owner closeout still required
 
 ## Root cause
 
@@ -77,3 +78,18 @@ authorized.
 The PostgreSQL proofs used disposable `postgres:16-alpine` containers bound
 only to `127.0.0.1` random ports. Both containers were stopped and removed.
 Exact commands and conclusions are in `evidence.json`.
+
+## Independent review
+
+Codex independently inspected the full PR #4241 diff and confirmed that the
+eight cleanup signatures match every row written by the pre-isolation real-DB
+tests. Both Branch CI Gate runs were green for Commit trailers, Runtime mirror
+guard, and Smoke acceptance at implementation head
+`94c0af607ab9ab5033a6ddf482ec2d2b629db6bd`.
+
+The reviewer reran the no-DB and cleanup suite (33 passed, 7 skipped), the
+ambient-only refusal, and the real suite against a separate localhost-only
+throwaway PostgreSQL instance (28 passed). Two pre-existing canonical rows kept
+the same count and digest, teardown left no generated schema, and a dry-run
+over eight candidates plus two canonical rows and one wrong-environment decoy
+returned only the eight exact candidates while leaving all 11 rows unchanged.
