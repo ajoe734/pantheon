@@ -81,6 +81,7 @@ from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Mapping, Sequence
+from urllib.parse import quote
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -345,6 +346,18 @@ def _load_json(path: Path) -> Any:
     return json.loads(text)
 
 
+def canonical_archive_task_path(root: Path, task_id: str) -> Path:
+    """Match ``task_archive.archive_task_path`` without importing its runtime.
+
+    The archive writer preserves task-id case and percent-escapes every
+    character except ``-_.``.  The merge gate is intentionally self-contained,
+    but its lookup must use that exact filename contract.
+    """
+
+    slug = quote(task_id, safe="-_.")
+    return root / "ai-task-archive" / "tasks" / f"{slug}.json"
+
+
 def load_task_contract(
     task_id: str,
     *,
@@ -373,7 +386,7 @@ def load_task_contract(
             if isinstance(raw, Mapping) and str(raw.get("id") or "").strip() == task_id:
                 return contract_from_task_row(raw, source="active")
 
-    archive = root / "ai-task-archive" / "tasks" / f"{task_id.lower()}.json"
+    archive = canonical_archive_task_path(root, task_id)
     if archive.is_file():
         try:
             record = _load_json(archive)

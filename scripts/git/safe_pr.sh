@@ -92,6 +92,22 @@ fail() {
   exit 1
 }
 
+read_auto_merge_state() {
+  local target="$1"
+  local state
+  if ! state=$(gh pr view "$target" --json autoMergeRequest --jq \
+    'if .autoMergeRequest == null then "off" else "armed" end' 2>>"$LOG"); then
+    return 1
+  fi
+  case "$state" in
+    off|armed) printf '%s\n' "$state" ;;
+    *)
+      echo "unexpected autoMergeRequest state: $state" >>"$LOG"
+      return 1
+      ;;
+  esac
+}
+
 trap 'echo; echo "FAILED — see $LOG for full transcript"; exit 1' ERR
 
 # --- 1. Fetch dev (short, just refs)
@@ -192,8 +208,23 @@ if [[ "$MERGE_POLICY" == "merge_then_review" ]]; then
   fi
 else
   step "withhold auto-merge"
-  gh pr merge "$EXISTING_PR" --disable-auto >>"$LOG" 2>&1 || true
-  ok "auto-merge off until the assigned reviewer approves this exact head"
+  if ! AUTO_MERGE_STATE=$(read_auto_merge_state "$EXISTING_PR"); then
+    fail "cannot verify autoMergeRequest; refusing fail-open finalization"
+  fi
+  if [[ "$AUTO_MERGE_STATE" == "armed" ]]; then
+    REVOKE_RC=0
+    gh pr merge "$EXISTING_PR" --disable-auto >>"$LOG" 2>&1 || REVOKE_RC=$?
+    if ! AUTO_MERGE_STATE=$(read_auto_merge_state "$EXISTING_PR"); then
+      fail "cannot verify autoMergeRequest after revocation"
+    fi
+    if [[ "$AUTO_MERGE_STATE" == "armed" ]]; then
+      echo "auto-merge remains armed after revocation (gh exit $REVOKE_RC)" >>"$LOG"
+      fail "auto-merge remains armed; refusing fail-open finalization"
+    fi
+    ok "standing auto-merge request revoked and verified off"
+  else
+    ok "auto-merge was already off"
+  fi
 fi
 
 trap - ERR

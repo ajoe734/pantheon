@@ -503,15 +503,22 @@ class UnreadableStateTests(unittest.TestCase):
             (root / "ai-status.json").write_text(json.dumps({"tasks": []}), encoding="utf-8")
             archive = root / "ai-task-archive" / "tasks"
             archive.mkdir(parents=True)
-            (archive / "abc-001.json").write_text(
-                json.dumps({"task_id": "ABC-001", "task": task_row(status="done")}),
+            task_id = "LUV-REACTIVATE-KW01-001"
+            (archive / f"{task_id}.json").write_text(
+                json.dumps(
+                    {
+                        "task_id": task_id,
+                        "task": task_row(id=task_id, status="done"),
+                    }
+                ),
                 encoding="utf-8",
             )
 
-            contract = gate.load_task_contract("ABC-001", status_root=root)
+            contract = gate.load_task_contract(task_id, status_root=root)
 
         self.assertEqual(contract.source, "archive")
         self.assertEqual(contract.policy, gate.POLICY_REVIEW_BEFORE_MERGE)
+        self.assertEqual(contract.task_id, task_id)
 
 
 class PrematureMergeRegressionTests(unittest.TestCase):
@@ -1767,10 +1774,27 @@ class IntegratorGateTests(unittest.TestCase):
         self.assertEqual(merge_commands, [["gh", "pr", "merge", "100", "--merge"]])
 
 
-FAKE_GH = """#!/usr/bin/env bash
+FAKE_GH = r"""#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$GH_LOG"
+if [[ "$1 $2" == "pr list" ]]; then
+  echo "1"
+  exit 0
+fi
+if [[ "$1 $2" == "pr merge" && " $* " == *" --disable-auto "* ]]; then
+  if [[ "${GH_REVOKE_FAIL:-0}" == "1" ]]; then
+    exit 1
+  fi
+  printf 'off\n' > "$GH_STATE_FILE"
+  exit 0
+fi
 if [[ "$1 $2" == "pr view" ]]; then
-  echo "https://github.example/pr/1"
+  if [[ " $* " == *" --json autoMergeRequest "* ]]; then
+    cat "$GH_STATE_FILE"
+  elif [[ " $* " == *" --json number "* ]]; then
+    echo "1"
+  else
+    echo "https://github.example/pr/1"
+  fi
 fi
 exit 0
 """
@@ -1779,7 +1803,12 @@ exit 0
 class TaskFinalizeShellTests(unittest.TestCase):
     """The PR-opening helper must ask the gate before granting merge authority."""
 
-    def _fixture(self, task: Mapping[str, Any]) -> tuple[Path, Path]:
+    def _fixture(
+        self,
+        task: Mapping[str, Any],
+        *,
+        committed_delivery: bool,
+    ) -> tuple[Path, Path]:
         tmp = Path(tempfile.mkdtemp(prefix="task-finalize-gate-"))
         self.addCleanup(shutil.rmtree, tmp, True)
         origin = tmp / "origin.git"
@@ -1793,18 +1822,33 @@ class TaskFinalizeShellTests(unittest.TestCase):
         helpers = repo / "scripts" / "git"
         helpers.mkdir(parents=True)
         source = Path(__file__).resolve().parent
-        for name in ("task_finalize.sh", "task_review_merge_gate.py"):
+        for name in (
+            "safe_pr.sh",
+            "task_finalize.sh",
+            "task_review_merge_gate.py",
+            "worker_commit.py",
+        ):
             (helpers / name).write_text((source / name).read_text(encoding="utf-8"), encoding="utf-8")
+        orchestrator = repo / ".orchestrator"
+        orchestrator.mkdir()
+        (orchestrator / "common.py").write_text(
+            (source.parents[1] / ".orchestrator" / "common.py").read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        (helpers / "safe_pr.sh").chmod(0o755)
         (helpers / "task_finalize.sh").chmod(0o755)
         (repo / "ai-status.json").write_text(json.dumps({"tasks": [task]}), encoding="utf-8")
         self._git(["add", "-A"], cwd=repo)
         self._git(["commit", "-m", "base", "--no-verify"], cwd=repo)
         self._git(["push", "-u", "origin", "dev"], cwd=repo)
 
-        self._git(["checkout", "-b", f"task/{task['id']}"], cwd=repo)
-        (repo / "delivery.txt").write_text("delivered\n", encoding="utf-8")
-        self._git(["add", "delivery.txt"], cwd=repo)
-        self._git(["commit", "-m", f"{task['id']}: deliver", "--no-verify"], cwd=repo)
+        if committed_delivery:
+            self._git(["checkout", "-b", f"task/{task['id']}"], cwd=repo)
+            (repo / "delivery.txt").write_text("delivered\n", encoding="utf-8")
+            self._git(["add", "delivery.txt"], cwd=repo)
+            self._git(["commit", "-m", f"{task['id']}: deliver", "--no-verify"], cwd=repo)
+        else:
+            (repo / "delivery.txt").write_text("delivered\n", encoding="utf-8")
 
         bin_dir = tmp / "bin"
         bin_dir.mkdir()
@@ -1816,13 +1860,39 @@ class TaskFinalizeShellTests(unittest.TestCase):
     def _git(args: Sequence[str], *, cwd: Path) -> None:
         subprocess.run(["git", *args], cwd=str(cwd), check=True, capture_output=True, text=True)
 
-    def _run_finalize(self, task: Mapping[str, Any]) -> str:
-        repo, tmp = self._fixture(task)
+    @staticmethod
+    def _fake_gh_env(
+        tmp: Path,
+        repo: Path,
+        *,
+        auto_merge_state: str,
+        revoke_fails: bool,
+    ) -> dict[str, str]:
         log = tmp / "gh.log"
         env = dict(os.environ)
         env["PATH"] = f"{tmp / 'bin'}:{env['PATH']}"
         env["GH_LOG"] = str(log)
+        state_file = tmp / "auto-merge-state"
+        state_file.write_text(auto_merge_state + "\n", encoding="utf-8")
+        env["GH_STATE_FILE"] = str(state_file)
+        env["GH_REVOKE_FAIL"] = "1" if revoke_fails else "0"
         env["PANTHEON_STATUS_ROOT"] = str(repo)
+        return env
+
+    def _run_finalize(
+        self,
+        task: Mapping[str, Any],
+        *,
+        auto_merge_state: str = "off",
+        revoke_fails: bool = False,
+    ) -> tuple[subprocess.CompletedProcess[str], str]:
+        repo, tmp = self._fixture(task, committed_delivery=True)
+        env = self._fake_gh_env(
+            tmp,
+            repo,
+            auto_merge_state=auto_merge_state,
+            revoke_fails=revoke_fails,
+        )
         proc = subprocess.run(
             ["bash", "scripts/git/task_finalize.sh", str(task["id"])],
             cwd=str(repo),
@@ -1830,25 +1900,123 @@ class TaskFinalizeShellTests(unittest.TestCase):
             capture_output=True,
             text=True,
         )
-        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        return log.read_text(encoding="utf-8")
+        return proc, (tmp / "gh.log").read_text(encoding="utf-8")
+
+    def _run_safe_pr(
+        self,
+        task: Mapping[str, Any],
+        *,
+        auto_merge_state: str = "off",
+        revoke_fails: bool = False,
+    ) -> tuple[subprocess.CompletedProcess[str], str]:
+        repo, tmp = self._fixture(task, committed_delivery=False)
+        message = tmp / "message.txt"
+        message.write_text(
+            f"{task['id']}: deliver fixture\n\n"
+            "LLM-Agent: Codex\n"
+            f"Task-ID: {task['id']}\n"
+            "Reviewer: Claude\n",
+            encoding="utf-8",
+        )
+        index_file = Path(f"/tmp/git-index-task-{task['id']}")
+        self.addCleanup(index_file.unlink, missing_ok=True)
+        env = self._fake_gh_env(
+            tmp,
+            repo,
+            auto_merge_state=auto_merge_state,
+            revoke_fails=revoke_fails,
+        )
+        proc = subprocess.run(
+            [
+                "bash",
+                "scripts/git/safe_pr.sh",
+                str(task["id"]),
+                "--message-file",
+                str(message),
+                "--scope",
+                "delivery.txt",
+            ],
+            cwd=str(repo),
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        return proc, (tmp / "gh.log").read_text(encoding="utf-8")
 
     def test_gated_task_pr_is_opened_without_any_auto_merge(self) -> None:
-        calls = self._run_finalize(task_row(id="ABC-001", status="in_progress"))
+        proc, calls = self._run_finalize(task_row(id="ABC-001", status="in_progress"))
 
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertIn("pr create", calls)
         self.assertNotIn("--label auto-merge", calls)
         self.assertNotIn("--auto --merge", calls)
+        self.assertNotIn("--disable-auto", calls)
+        self.assertIn("auto-merge was already off", proc.stdout)
+
+    def test_task_finalize_revokes_a_standing_request_and_verifies_it_off(self) -> None:
+        proc, calls = self._run_finalize(
+            task_row(id="ABC-001", status="in_progress"),
+            auto_merge_state="armed",
+        )
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertIn("pr merge task/ABC-001 --disable-auto", calls)
+        self.assertGreaterEqual(calls.count("--json autoMergeRequest"), 2)
+        self.assertIn("standing auto-merge request revoked and verified off", proc.stdout)
+
+    def test_task_finalize_fails_closed_when_revocation_leaves_request_armed(self) -> None:
+        proc, calls = self._run_finalize(
+            task_row(id="ABC-001", status="in_progress"),
+            auto_merge_state="armed",
+            revoke_fails=True,
+        )
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("pr merge task/ABC-001 --disable-auto", calls)
+        self.assertGreaterEqual(calls.count("--json autoMergeRequest"), 2)
+        self.assertIn("auto-merge remains armed", proc.stderr)
+        self.assertNotIn("open with auto-merge disabled", proc.stdout)
 
     def test_merge_then_review_task_still_enables_auto_merge(self) -> None:
-        calls = self._run_finalize(
+        proc, calls = self._run_finalize(
             task_row(id="ABC-001", status="in_progress", reviewer="Codex", merge_policy="merge_then_review")
         )
 
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertIn("--label auto-merge", calls)
         self.assertIn("pr merge task/ABC-001 --auto --merge", calls)
         self.assertNotIn("--disable-auto", calls)
+
+    def test_safe_pr_revokes_a_standing_request_and_verifies_it_off(self) -> None:
+        proc, calls = self._run_safe_pr(
+            task_row(id="ABC-001", status="in_progress"),
+            auto_merge_state="armed",
+        )
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("pr merge 1 --disable-auto", calls)
+        self.assertGreaterEqual(calls.count("--json autoMergeRequest"), 2)
+        self.assertIn("standing auto-merge request revoked and verified off", proc.stdout)
+
+    def test_safe_pr_fails_closed_when_revocation_leaves_request_armed(self) -> None:
+        proc, calls = self._run_safe_pr(
+            task_row(id="ABC-001", status="in_progress"),
+            auto_merge_state="armed",
+            revoke_fails=True,
+        )
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("pr merge 1 --disable-auto", calls)
+        self.assertGreaterEqual(calls.count("--json autoMergeRequest"), 2)
+        self.assertIn("auto-merge remains armed", proc.stdout + proc.stderr)
+        self.assertNotIn("DONE — task", proc.stdout)
+
+    def test_safe_pr_distinguishes_an_already_off_request(self) -> None:
+        proc, calls = self._run_safe_pr(task_row(id="ABC-001", status="in_progress"))
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertNotIn("--disable-auto", calls)
+        self.assertIn("auto-merge was already off", proc.stdout)
 
 
 if __name__ == "__main__":

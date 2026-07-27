@@ -101,6 +101,19 @@ if [[ "$MERGE_POLICY" != "merge_then_review" ]]; then
 fi
 echo "→ canonical merge policy: $MERGE_POLICY"
 
+read_auto_merge_state() {
+  local target="$1"
+  local state
+  if ! state=$(gh pr view "$target" --json autoMergeRequest --jq \
+    'if .autoMergeRequest == null then "off" else "armed" end' 2>/dev/null); then
+    return 1
+  fi
+  case "$state" in
+    off|armed) printf '%s\n' "$state" ;;
+    *) return 1 ;;
+  esac
+}
+
 echo "→ open PR $TASK_BRANCH → $DEV_BRANCH"
 PR_ARGS=(
   pr create
@@ -123,9 +136,28 @@ if [[ "$MERGE_POLICY" == "merge_then_review" ]]; then
   gh pr merge "$TASK_BRANCH" --auto --merge
 else
   # Fail closed against a stale auto-merge request left on this head by an
-  # earlier run or by a hand-edited PR.
+  # earlier run or by a hand-edited PR. Read back GitHub state because a
+  # failed `--disable-auto` call can otherwise leave the merge grant armed.
   echo "→ auto-merge withheld until the assigned reviewer approves this exact head"
-  gh pr merge "$TASK_BRANCH" --disable-auto >/dev/null 2>&1 || true
+  if ! AUTO_MERGE_STATE=$(read_auto_merge_state "$TASK_BRANCH"); then
+    echo "ERROR: cannot verify autoMergeRequest for $TASK_BRANCH; refusing fail-open finalization" >&2
+    exit 4
+  fi
+  if [[ "$AUTO_MERGE_STATE" == "armed" ]]; then
+    REVOKE_RC=0
+    gh pr merge "$TASK_BRANCH" --disable-auto >/dev/null 2>&1 || REVOKE_RC=$?
+    if ! AUTO_MERGE_STATE=$(read_auto_merge_state "$TASK_BRANCH"); then
+      echo "ERROR: cannot verify autoMergeRequest after revocation; refusing fail-open finalization" >&2
+      exit 4
+    fi
+    if [[ "$AUTO_MERGE_STATE" == "armed" ]]; then
+      echo "ERROR: auto-merge remains armed after revocation (gh exit $REVOKE_RC); refusing finalization" >&2
+      exit 4
+    fi
+    echo "✓ standing auto-merge request revoked and verified off"
+  else
+    echo "✓ auto-merge was already off"
+  fi
 fi
 
 PR_URL=$(gh pr view "$TASK_BRANCH" --json url -q '.url' 2>/dev/null || echo "")
