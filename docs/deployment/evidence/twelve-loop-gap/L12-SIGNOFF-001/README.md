@@ -1,13 +1,12 @@
 # L12-SIGNOFF-001 protected closeout evidence
 
-Status: owner evidence re-cut after the independent re-review rejected the
-sequence-7 cut and merged follow-up PR #4206, ready for independent `Codex2`
-review of the next follow-up PR.
+Status: owner evidence sequence 10 revalidated after the sequence-9 remediation
+merged as PR #4210, ready for independent `Codex2` review of the current
+follow-up PR.
 
-Owner is `Claude` and reviewer is `Codex2`, matching both the
-`assignment-revision-1` catalog and the canonical `ai-status.json` assignment.
-The earlier cut recorded owner `Codex`, which predated the operator-directed
-assignment revision.
+Owner is `Codex` and reviewer is `Codex2`, matching the current canonical task
+row and supervisor dispatch. Historical owner records remain append-only in
+`record_log`; sequence 10 is the current owner admission.
 
 This packet proves that protected product closeout decisions are signed by a
 configured Human/Ops authority, recorded in a lock-protected append-only
@@ -121,7 +120,7 @@ candidate-controlled.
 Because PR #4205 was already merged and could not be amended, that remediation
 was delivered as follow-up PR #4206 against the same task branch.
 
-### Sequence-8 rejection (closed in this cut)
+### Sequence-8 rejection (closed in the sequence-9 cut, merged as PR #4210)
 
 The independent re-review rejected the merged PR #4206 delivery on a single
 blocking authority-source defect. The forbidden-root set had been widened to
@@ -162,8 +161,21 @@ the validator with both workspace variables erased under the real
 against this head, where the leased worktree was recovered from runtime state
 with the environment still erased.
 
-Because PR #4206 is already merged and cannot be amended, this remediation is
-delivered as a further follow-up PR against the same task branch.
+Because PR #4206 was already merged and could not be amended, this remediation
+was delivered and merged as follow-up PR #4210 against the same task branch.
+
+### Sequence-10 owner revalidation
+
+After supervisor recovery reassigned the active owner from `Claude` to `Codex`,
+the owner evidence was replayed on current `origin/dev`
+`6ae436c546942df1ba0a762d7167b456dfedabc8`. The protected-verdict source is
+unchanged except for later compatible `ai_status` and test additions already
+merged on `dev`; the four focused suites now pass with 294 tests and 39
+subtests. A read-only live-lease probe with both workspace variables erased
+recovered this task worktree from supervisor runtime state and rejected the
+mutation as missing its workspace binding. The current source hashes, merged
+PR #4210 receipt, task ownership, and task packet were re-cut here. This remains
+owner evidence, not an inherited or self-issued reviewer verdict.
 
 ## Authority and binding
 
@@ -204,7 +216,7 @@ issuance TTL by evaluating it at the recorded consumption time.
 
 ## Validation
 
-The focused run at this head completed:
+The focused run on the current dev integration completed:
 
 ```text
 /home/lupin/pantheon/.venv/bin/pytest -q \
@@ -213,11 +225,11 @@ The focused run at this head completed:
   scripts/test_loop_done_guardrail.py \
   scripts/test_ai_status.py
 
-285 passed, 1 warning, 33 subtests
+294 passed, 1 warning, 39 subtests
 ```
 
-The count rose from 275 in the sequence-7 cut by nine lease-authority
-regressions added here: six in `scripts/test_loop_done_guardrail.py` — the
+The sequence-9 count rose from 275 in the sequence-7 cut by nine
+lease-authority regressions: six in `scripts/test_loop_done_guardrail.py` — the
 leased root appearing in `forbidden_roots` with no environment binding, ledger
 and policy under the leased root, revoked and consumed tail truncation against
 the leased root, and the unresolvable-lease fail-closed ordering — and three in
@@ -256,7 +268,9 @@ replay of this manifest reports exactly one gap — the absent formal `Codex2`
 verdict — confirming the cut is otherwise `done`-eligible.
 
 `scripts/run-acceptance.sh smoke`, `py_compile`, and `git diff --check` were
-all re-run at this head and passed; the smoke run completed stage-0 validation
-and the full smoke baseline.
+all re-run at the sequence-9 head and passed; the smoke run completed stage-0
+validation and the full smoke baseline. Sequence 10 then re-ran the four
+focused suites after merging current `origin/dev`; 294 tests and 39 subtests
+passed.
 
 [`evidence.sha256`](evidence.sha256) covers the machine-readable manifest.

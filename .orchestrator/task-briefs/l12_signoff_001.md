@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: in_progress
 - Owner: Codex
 - Reviewer: Codex2
-- Next: Human/Ops fleet recovery: reassigned closeout/review path to active supervisor lanes. Codex2 must perform exact security review of canonical lease metadata, revoke/consume, and ledger-tail truncation before approval; do not mark done without formal verdict.
+- Next: Owner evidence sequence 10 revalidated on current dev; Codex2 must perform exact security review of canonical lease metadata, revoke/consume, and ledger-tail truncation before approval. Do not mark done without the formal verdict.
 
 ## Summary
 在 final closeout 前安裝機器守門：受保護、可撤銷、不可重播的 Human/Ops 判決必須綁定 exact catalog、manifest、target 與部署 identity；fleet 不得自行簽發。
