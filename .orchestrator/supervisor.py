@@ -11275,7 +11275,22 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             str(value).lower()
             for value in ready_dispatch_settings(config).get("worker_terminal_statuses", ["done", "review_approved"])
         }
-        if runner_succeeded and task_status in terminal_statuses:
+        dispatch_reason = str(
+            (worker.get("request_snapshot") or {}).get("reason") or ""
+        ).strip()
+        finalize_statuses = normalized_status_set(
+            ready_dispatch_settings(config).get("finalize_statuses"),
+            ["review_approved"],
+        )
+        finalize_still_open = (
+            dispatch_reason == REASON_OWNED_FINALIZE
+            and task_status in finalize_statuses
+        )
+        if (
+            runner_succeeded
+            and task_status in terminal_statuses
+            and not finalize_still_open
+        ):
             worker["status"] = "completed"
             worker["last_event_at"] = worker.get("runner_finished_at") or utc_now()
             clear_task_failure_streak(state, worker=worker)
