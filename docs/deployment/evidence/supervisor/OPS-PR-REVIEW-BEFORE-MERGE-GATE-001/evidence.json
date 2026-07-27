@@ -350,7 +350,7 @@
   "validation": {
     "revalidation": {
       "actor": "Codex",
-      "reason": "Owner reassignment followed exact-head rejections that found approval-binding, archive-case, helper-revocation, stale-base, revocation-readback, and immutable-head integration defects. After Codex repaired the earlier paths, live finalization of f93ab06e exposed that task_finalize pushed an existing PR head and then exited at gh pr create before autoMergeRequest readback/revocation. PR #4218 was already off and did not merge; Codex withdrew the handoff, moved existing-PR discovery and revocation before push in both helpers, added pre-receive regressions plus unreadable/ambiguous lookup guards, proved the repaired existing-PR path live on c6d38ea7, and reran the full matrix. Later stale-base reviews were composed without rewriting reviewed history. The latest independent review rejected exact head 9d54d773c67588cb28ea63da838deee352ec744a because the gated integrator still rebased an already-current merge-rich graph and reproduced a false conflict. Codex anchored the finding, changed the gated path to ancestry-check and smoke the reviewer-bound oid directly, added a real-git merge-rich regression, composed current dev a6966b13d84430387da9c3a33fcf224c841bc5c6, and reran the required individual and combined validation on compose commit 8aaf154ca07e4d46f706a50a259e2c0d6fd553c1.",
+      "reason": "Owner reassignment followed exact-head rejections that found approval-binding, archive-case, helper-revocation, stale-base, revocation-readback, and immutable-head integration defects. After Codex repaired the earlier paths, live finalization of f93ab06e exposed that task_finalize pushed an existing PR head and then exited at gh pr create before autoMergeRequest readback/revocation. PR #4218 was already off and did not merge; Codex withdrew the handoff, moved existing-PR discovery and revocation before push in both helpers, added pre-receive regressions plus unreadable/ambiguous lookup guards, proved the repaired existing-PR path live on c6d38ea7, and reran the full matrix. Later stale-base reviews were composed without rewriting reviewed history. The latest independent review rejected exact head 9d54d773c67588cb28ea63da838deee352ec744a because the gated integrator still rebased an already-current merge-rich graph and reproduced a false conflict. Codex anchored the finding, changed the gated path to ancestry-check and smoke the reviewer-bound oid directly, added a real-git merge-rich regression, composed current dev b81edf76dfc14087dd7d5e3a6599448cb9d0bb09, and reran the required individual and combined validation on compose commit 8d142e58a983ee9ea0def27091a295a1937ea461.",
       "adopted_predecessor_commit": "7759ed36666ce62a7f912a9c85f74cf409cff095",
       "rejected_review_head": "5a9ad1643eba2580bf8a51c71a6f3a43ad8c57b6",
       "repair_anchor_commit": "e971a2c9441c0611fa7070f7554805e3ccfcb2b7",
@@ -373,11 +373,11 @@
       "superseded_pushed_head": "e918cbd8de14c4aaff0be4d16d950a590b3eacd8",
       "superseded_pushed_base": "4580fc5d19b5bff8c0014006324c56d6368ec5dc",
       "superseded_pushed_reason": "Dev advanced through PR #4265 after the safe push but before reviewer handoff; this head was never dispatched for review.",
-      "validated_dev_base": "a6966b13d84430387da9c3a33fcf224c841bc5c6",
-      "validated_tree_commit": "8aaf154ca07e4d46f706a50a259e2c0d6fd553c1",
-      "validated_tree_object": "20066c3384d2dd3f209857f7b3b3280253da088a",
+      "validated_dev_base": "b81edf76dfc14087dd7d5e3a6599448cb9d0bb09",
+      "validated_tree_commit": "8d142e58a983ee9ea0def27091a295a1937ea461",
+      "validated_tree_object": "30a297772138e9655e2840fee624764f5adc3ced",
       "validated_base_only_commit_count": 0,
-      "validated_head_only_commit_count": 60,
+      "validated_head_only_commit_count": 63,
       "post_containment_dev_base": "4974824687ef5c3acf665fa22a4306e5d3d664f1",
       "post_containment_compose_commit": "8a05394974f88b95a686aeb62add7b14f9fe6cc6",
       "post_containment_reason": "#4263/#4264 repeated the same unreviewed auto-merge race while old helpers were still installed; dev branch protection was temporarily held by the `Pantheon canonical review gate` status and this branch was revalidated on the new base.",
@@ -414,7 +414,7 @@
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/git/test_task_review_merge_gate.py scripts/git/test_auto_integrator.py scripts/git/test_git_workflow_helpers.py scripts/git/test_task_git_helpers_refspec.py scripts/git/test_task_pr_triage.py scripts/git/test_index_safety.py scripts/test_ai_status.py",
-        "conclusion": "346 passed, 31 subtests passed on compose commit 8aaf154ca07e4d46f706a50a259e2c0d6fd553c1 after composing current dev a6966b13d84430387da9c3a33fcf224c841bc5c6",
+        "conclusion": "346 passed, 31 subtests passed on compose commit 8d142e58a983ee9ea0def27091a295a1937ea461 after composing current dev b81edf76dfc14087dd7d5e3a6599448cb9d0bb09",
         "result": "pass"
       },
       {
@@ -459,7 +459,7 @@
       },
       {
         "command": ".venv-pantheon/bin/python3 scripts/test_ai_status.py",
-        "conclusion": "Ran 144 tests - OK on compose commit 8aaf154ca07e4d46f706a50a259e2c0d6fd553c1 after composing current dev a6966b13d84430387da9c3a33fcf224c841bc5c6",
+        "conclusion": "Ran 144 tests - OK on compose commit 8d142e58a983ee9ea0def27091a295a1937ea461 after composing current dev b81edf76dfc14087dd7d5e3a6599448cb9d0bb09",
         "result": "pass"
       },
       {
