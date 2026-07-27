@@ -37,6 +37,7 @@ The reconciled source of truth is:
 
 - [Twelve-loop master gap inventory](archive/TWELVE_LOOP_GAP_INVENTORY_2026-07-26.md)
 - [Parallel fleet execution plan](archive/PARALLEL_FLEET_EXECUTION_PLAN_2026-07-26.md)
+- [Current-state fleet and twelve-loop gap overlay, 2026-07-27](archive/CURRENT_STATE_FLEET_GAP_OVERLAY_2026-07-27.md)
 - `docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/tasks.json`
 
 ## Baseline verdict
