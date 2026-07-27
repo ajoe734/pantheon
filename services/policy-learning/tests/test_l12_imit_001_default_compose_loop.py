@@ -69,6 +69,48 @@ _INTERPOLATED_PREFIXES = (
 
 SEED_MARKERS = ("alpha-mean-reversion", "traj-smoke-2026-05-16", "trader-01")
 
+# The direct routes inbound authority protects.  Kept here rather than imported
+# from the sibling proof module so this module stays runnable on its own.
+PROTECTED_ROUTES = (
+    ("POST", "/api/policy-learning/shadow-eval-tick", {"tick_id": "tick-published-credential"}),
+    ("GET", "/api/policy-learning/candidates", None),
+    ("GET", "/api/policy-learning/candidates/sic-anything", None),
+    ("GET", "/api/policy-learning/candidates/sic-anything/governance", None),
+    ("POST", "/api/policy-learning/candidates/sic-anything/promote", None),
+    ("GET", "/api/policy-learning/worker/backlog", None),
+    ("GET", "/api/policy-learning/worker/claims", None),
+    ("GET", "/api/policy-learning/worker/degraded", None),
+    ("GET", "/api/policy-learning/worker/dlq", None),
+    ("GET", "/api/policy-learning/worker/readback/sic-anything", None),
+    ("POST", "/api/policy-learning/worker/claim", {}),
+    ("POST", "/api/policy-learning/worker/process", {}),
+    ("POST", "/api/policy-learning/worker/restart", {}),
+    ("POST", "/api/policy-learning/worker/retry/sic-anything", {}),
+    ("POST", "/api/policy-learning/worker/dlq/sic-anything/replay", {}),
+)
+
+
+def _inbound_authority_module():
+    """Load ``inbound_authority`` under a private name.
+
+    ``_compose_service`` deliberately evicts the shared ``inbound_authority``
+    entry from ``sys.modules``, so the constant-level proofs load their own copy
+    instead of depending on whether a compose proof ran first.  The module reads
+    its environment on every call, so a separate instance behaves identically.
+    """
+
+    name = "policy_learning_compose_test_inbound_authority"
+    spec = importlib.util.spec_from_file_location(name, SERVICE_DIR / "inbound_authority.py")
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    if str(_REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(_REPO_ROOT))
+    # Registered before execution because the module defines dataclasses, which
+    # resolve their annotations through ``sys.modules[cls.__module__]``.
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
 
 @pytest.fixture(autouse=True)
 def policy_learning_service_auth() -> Iterator[None]:
@@ -720,3 +762,222 @@ def test_the_published_compose_token_is_refused_on_a_deployment_posture() -> Non
                         )
 
             assert svc.store.list_candidates() == []
+
+
+# ---------------------------------------------------------------------------
+# Proof 5 — no repository-published credential authenticates a deployment
+# ---------------------------------------------------------------------------
+#
+# The compose default is not the only credential this repository publishes.
+# ``.env.example`` ships a fill-me-in ``POLICY_LEARNING_SERVICE_TOKEN``, and an
+# operator who copies that file into a staging or production stack without
+# editing the line is running on a value anyone with a checkout can read.  The
+# two proofs below cover that: the first pins what the repository actually
+# publishes to what the service refuses, the second drives the exact published
+# ``.env.example`` value through every protected route on an enforced posture
+# and then shows an operator-minted secret still works on the same routes.
+
+
+def _env_example_service_token() -> str:
+    """The literal ``POLICY_LEARNING_SERVICE_TOKEN`` shipped in .env.example."""
+
+    for line in (_REPO_ROOT / ".env.example").read_text(encoding="utf-8").splitlines():
+        name, separator, value = line.partition("=")
+        if separator and name.strip() == "POLICY_LEARNING_SERVICE_TOKEN":
+            return value.strip()
+    raise AssertionError(".env.example no longer declares POLICY_LEARNING_SERVICE_TOKEN")
+
+
+def _compose_service_token_defaults() -> set[str]:
+    """Every ``${POLICY_LEARNING_SERVICE_TOKEN:-...}`` default in compose."""
+
+    compose = yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))
+    defaults: set[str] = set()
+    for service in compose["services"].values():
+        declared = service.get("environment") or {}
+        raw = declared.get("POLICY_LEARNING_SERVICE_TOKEN")
+        if raw is None:
+            continue
+        # Render with an empty environment: that is the default an operator who
+        # sets nothing actually gets.
+        rendered = _interpolate(str(raw), {})
+        if rendered:
+            defaults.add(rendered)
+    assert defaults, "docker-compose.yml no longer declares POLICY_LEARNING_SERVICE_TOKEN"
+    return defaults
+
+
+def test_every_repository_published_service_token_is_one_the_service_refuses() -> None:
+    """The refusal list cannot drift behind what the repository ships.
+
+    ``inbound_authority`` has to carry these values as constants — a container
+    has no ``.env.example`` to consult at runtime — so the guard against a new
+    published default quietly becoming an accepted deployment secret is this
+    test reading the tracked files and checking them against that list.
+    """
+
+    inbound_authority = _inbound_authority_module()
+
+    published = set(_compose_service_token_defaults()) | {_env_example_service_token()}
+
+    assert published, "no published policy-learning credential found to check"
+    for value in sorted(published):
+        assert value in inbound_authority.PUBLISHED_SERVICE_TOKENS, (
+            f"{value!r} is published in this repository but is not in "
+            "PUBLISHED_SERVICE_TOKENS, so a staging/prod deployment would "
+            "accept it as a real credential"
+        )
+        assert inbound_authority.is_published_service_token(value)
+
+    # The constants are the published values, not a superset someone widened.
+    assert set(inbound_authority.PUBLISHED_SERVICE_TOKENS) == published
+    assert inbound_authority.ENV_EXAMPLE_SERVICE_TOKEN == _env_example_service_token()
+
+    # An operator-minted secret is untouched by the rule.
+    assert inbound_authority.is_published_service_token("s3cr3t-minted-by-ops") is False
+    assert inbound_authority.is_published_service_token("") is False
+
+
+def test_the_env_example_placeholder_cannot_authenticate_a_deployment() -> None:
+    """The exact published .env.example value is refused on staging/prod.
+
+    This is the deployment an operator most plausibly ships by accident: they
+    copied ``.env.example``, filled in the database and the tenant, and left the
+    credential line as published.  Every protected route must answer 401, and a
+    real minted secret must still work on those same routes so the refusal is
+    the placeholder being rejected, not the service being broken.
+    """
+
+    example_token = _env_example_service_token()
+
+    with tempfile.TemporaryDirectory() as data_dir:
+        with _compose_service(
+            {
+                "POLICY_LEARNING_DATA_DIR": data_dir,
+                "POLICY_LEARNING_CANDIDATE_AUTHORITY": "json",
+                "DATABASE_URL": "",
+                # The operator's own .env, copied from the example unedited.
+                "POLICY_LEARNING_SERVICE_TOKEN": example_token,
+            }
+        ) as svc:
+            from fastapi.testclient import TestClient
+
+            tenant_id = os.environ["POLICY_LEARNING_AGORA_TENANT_ID"]
+            inbound = sys.modules["inbound_authority"]
+            assert example_token == inbound.ENV_EXAMPLE_SERVICE_TOKEN
+            assert example_token != inbound.LOCAL_DEV_SERVICE_TOKEN
+
+            client = TestClient(svc.app)
+            placeholder_headers = {
+                "Authorization": f"Bearer {example_token}",
+                "X-Tenant-Id": tenant_id,
+            }
+
+            # On the dev posture it is still a working local credential, but the
+            # configuration names it for what it is rather than calling it a
+            # deployment secret.
+            assert svc.authority_configuration()["service_token_scope"] == "published_placeholder"
+            accepted = client.post(
+                "/api/policy-learning/worker/restart",
+                json={},
+                headers=placeholder_headers,
+            )
+            assert accepted.status_code < 400, accepted.text
+
+            minted = "ops-minted-policy-learning-6f2c1d9a"
+            for posture in ("staging", "prod"):
+                with mock.patch.dict(os.environ, {"PANTHEON_PERSISTENCE_POSTURE": posture}):
+                    configuration = svc.authority_configuration()
+                    assert configuration["service_token_configured"] is False, posture
+                    assert configuration["service_token_scope"] == "none", posture
+                    assert configuration["configured"] is False, posture
+
+                    # Negative: the published placeholder authenticates nothing.
+                    for method, path, body in PROTECTED_ROUTES:
+                        refused = client.request(
+                            method, path, json=body, headers=placeholder_headers
+                        )
+                        assert refused.status_code == 401, (
+                            f"{posture} {method} {path} answered {refused.status_code} "
+                            "for the published .env.example credential"
+                        )
+
+                    # Positive control: the same routes on the same posture, with
+                    # an operator-minted secret, authenticate normally.
+                    with mock.patch.dict(
+                        os.environ, {"POLICY_LEARNING_SERVICE_TOKEN": minted}
+                    ):
+                        configuration = svc.authority_configuration()
+                        assert configuration["service_token_configured"] is True, posture
+                        assert configuration["service_token_scope"] == "deployment_secret", posture
+
+                        for method, path, body in PROTECTED_ROUTES:
+                            answered = client.request(
+                                method,
+                                path,
+                                json=body,
+                                headers={
+                                    "Authorization": f"Bearer {minted}",
+                                    "X-Tenant-Id": tenant_id,
+                                },
+                            )
+                            assert answered.status_code != 401, (
+                                f"{posture} {method} {path} refused an operator-minted "
+                                "secret with 401"
+                            )
+
+                        # And the placeholder is still refused while the minted
+                        # secret is the configured one, so the two are not
+                        # interchangeable.
+                        still_refused = client.post(
+                            "/api/policy-learning/shadow-eval-tick",
+                            json={"tick_id": f"tick-{posture}-placeholder"},
+                            headers=placeholder_headers,
+                        )
+                        assert still_refused.status_code == 401, posture
+
+
+@pytest.mark.parametrize(
+    "unedited",
+    [
+        "REPLACE_ME_POLICY_LEARNING_SERVICE_TOKEN",
+        "changeme",
+        "change-me-please",
+        "your-service-token-here",
+        "example-token",
+        "placeholder",
+        "secret",
+        "TBD",
+    ],
+)
+def test_unedited_placeholder_shapes_are_refused_on_a_deployment_posture(unedited: str) -> None:
+    """Fill-me-in values other than the two this repository ships are refused.
+
+    A template copied out of a runbook or a chart is the same failure as the
+    ``.env.example`` copy above; the posture rule is not a list of two strings.
+    """
+
+    inbound_authority = _inbound_authority_module()
+
+    assert inbound_authority.is_published_service_token(unedited) is True
+
+    with mock.patch.dict(
+        os.environ,
+        {
+            "POLICY_LEARNING_SERVICE_TOKEN": unedited,
+            "PANTHEON_PERSISTENCE_POSTURE": "prod",
+        },
+    ):
+        assert inbound_authority.service_token() == ""
+        assert inbound_authority.authority_configuration()["service_token_configured"] is False
+
+    # The same value is still usable on a developer posture: this rule is about
+    # what a deployment may authenticate on, not about breaking local work.
+    with mock.patch.dict(
+        os.environ,
+        {
+            "POLICY_LEARNING_SERVICE_TOKEN": unedited,
+            "PANTHEON_PERSISTENCE_POSTURE": "dev",
+        },
+    ):
+        assert inbound_authority.service_token() == unedited
