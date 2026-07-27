@@ -197,7 +197,7 @@ context; they no longer define the acceptance result.
 - Serial provider probes made each healthy cycle take roughly two minutes.
   Lease renewal remained within the 600-second worker window throughout.
 
-The remaining gate is independent Codex2 review of the exact final evidence PR
-head. The reviewer must bind `REVIEW_PR` and the full `REVIEW_HEAD_SHA`, record
+The remaining gate is independent Codex2 review of the exact PR #4257 head.
+The reviewer must bind `REVIEW_PR=4257` and the full `REVIEW_HEAD_SHA`, record
 this manifest as `REVIEW_FILE`, and approve only that head. The owner may run
 `done` only after the reviewed PR is merged into `dev`.

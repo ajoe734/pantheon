@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Refresh installed supervisor command runtime safely
-- Status: review_approved
+- Status: review
 - Owner: Codex
 - Reviewer: Codex2
-- Next: Bootstrap review approved for PR #4254 exact head 5d1f069dc902c0692310879c02fedad4bc131b68 only: remote head matches, PR is CLEAN with autoMergeRequest=null and all visible Branch CI checks successful; independent reruns passed ai-status 142, ReviewApprovedWorkflow 30, runtime-pin 7, py_compile, and git diff --check. Read-only live snapshot confirmed sole supervisor PID 4138635 at configured 6692d51c root, active worker runtime/lease parity, and authoritative projection caught_up with equal hashes. This is not final runtime-refresh acceptance: owner must merge the exact bootstrap head, install the accepted binding runtime without config changes, execute rollback/roll-forward proof, replace the legacy partial evidence, and request the documented final Codex2 exact-head review.
+- Next: Final runtime proof is complete in PR #4257 with auto-merge disabled: candidate 29054ab270d552a56ed071cedf3f45150e948b6a is live after an executed rollback/roll-forward drill, config sha256 stayed byte-identical, leases and queue owners remained coherent without duplicate dispatch, and authoritative projection checks passed. Codex2 must independently review the exact final PR head, bind REVIEW_PR=4257 plus the full REVIEW_HEAD_SHA and evidence.json REVIEW_FILE, and approve only that head before merge and owner done.
 
 ## Summary
 在 supervisor truth 修復合併後，將 governed command runtime 更新到精確 accepted dev；重用既有 config，不改 config，不中斷 active lease，保留 rollback。

@@ -218,7 +218,7 @@
     "reviewer": "Codex2",
     "required_binding": {
       "review_file": "docs/deployment/evidence/supervisor/SUP-COMMAND-RUNTIME-REFRESH-001/evidence.json",
-      "pull_request": "to be assigned after final evidence push",
+      "pull_request": 4257,
       "head_sha": "must be the full exact PR head reviewed by Codex2",
       "base": "dev",
       "head_branch": "task/SUP-COMMAND-RUNTIME-REFRESH-001"
