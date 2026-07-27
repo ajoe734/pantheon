@@ -360,6 +360,8 @@ See `validation.txt` for the captured transcript.
 python3 scripts/git/test_task_review_merge_gate.py     Ran  84 tests - OK
 python3 scripts/git/test_auto_integrator.py            Ran   9 tests - OK
 python3 scripts/git/test_git_workflow_helpers.py       Ran  52 tests - OK
+.venv-pantheon/bin/python3 -m pytest -q scripts/git/test_task_git_helpers_refspec.py
+                                                        2 tests - OK
 python3 scripts/git/test_task_pr_triage.py             Ran  24 tests - OK
 python3 scripts/git/test_index_safety.py               Ran  17 tests - OK
 python3 scripts/test_ai_status.py                      Ran 141 tests - OK
