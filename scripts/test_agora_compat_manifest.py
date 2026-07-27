@@ -350,6 +350,83 @@ def test_deployment_gate_binds_both_actual_runtime_payloads_and_writes_evidence(
     assert evidence["frontend"]["runtime_commit"] == manifest["frontend"]["runtime_commit"]
     assert len(evidence["backend"]["tree"]) == 40
     assert len(evidence["frontend"]["tree"]) == 40
+    release_candidate = evidence["release_candidate"]
+    assert release_candidate["schema_version"] == "pantheon.dev-release-candidate.v1"
+    assert release_candidate["compatibility_status"] == "compatible"
+    assert release_candidate["compatibility_manifest"] == {
+        "contract_family": "agora.v1.13",
+        "manifest_version": "1.0",
+        "sha256": _sha256(output),
+        "source_status": "accepted",
+    }
+    assert release_candidate["backend"] == {
+        "repository": "ajoe734/pantheon",
+        "branch": "dev",
+        "commit": manifest["backend"]["runtime_commit"],
+        "tree": evidence["backend"]["tree"],
+    }
+    assert release_candidate["frontend"] == {
+        "repository": "ajoe734/execute-plans",
+        "branch": "dev",
+        "commit": manifest["frontend"]["runtime_commit"],
+        "tree": evidence["frontend"]["tree"],
+    }
+    identity = {
+        key: value
+        for key, value in release_candidate.items()
+        if key != "release_candidate_id"
+    }
+    assert release_candidate["release_candidate_id"] == _load_module().canonical_json_sha256(
+        identity
+    )
+
+
+def test_release_candidate_id_is_deterministic_and_pair_sensitive(
+    accepted_manifest: dict[str, object],
+    tmp_path: Path,
+) -> None:
+    output = accepted_manifest["path"]
+    frontend = accepted_manifest["frontend"]
+    assert isinstance(output, Path)
+    assert isinstance(frontend, dict)
+    frontend_root = frontend["root"]
+    assert isinstance(frontend_root, Path)
+    manifest = json.loads(output.read_text(encoding="utf-8"))
+    first_path = tmp_path / "first-gate.json"
+    second_path = tmp_path / "second-gate.json"
+
+    first = _gate(
+        output,
+        frontend_root,
+        backend_runtime_commit=manifest["backend"]["runtime_commit"],
+        frontend_runtime_commit=manifest["frontend"]["runtime_commit"],
+        evidence_out=first_path,
+    )
+    second = _gate(
+        output,
+        frontend_root,
+        backend_runtime_commit=manifest["backend"]["runtime_commit"],
+        frontend_runtime_commit=manifest["frontend"]["runtime_commit"],
+        evidence_out=second_path,
+    )
+
+    assert first.returncode == 0, first.stderr
+    assert second.returncode == 0, second.stderr
+    first_evidence = json.loads(first_path.read_text(encoding="utf-8"))
+    second_evidence = json.loads(second_path.read_text(encoding="utf-8"))
+    assert (
+        first_evidence["release_candidate"]["release_candidate_id"]
+        == second_evidence["release_candidate"]["release_candidate_id"]
+    )
+    changed_identity = dict(first_evidence["release_candidate"])
+    changed_identity.pop("release_candidate_id")
+    changed_identity["frontend"] = {
+        **changed_identity["frontend"],
+        "commit": "f" * 40,
+    }
+    assert _load_module().canonical_json_sha256(changed_identity) != first_evidence[
+        "release_candidate"
+    ]["release_candidate_id"]
 
 
 @pytest.mark.parametrize("owner", ["backend", "frontend"])
@@ -495,15 +572,24 @@ def test_workflow_enforces_gate_before_any_deploy_switch() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
     gate_controller = workflow.index("Checkout accepted Agora gate controller")
     frontend_checkout = workflow.index("Checkout accepted Agora frontend history")
-    gate = workflow.index("Enforce exact Agora pair before any dev switch")
+    gate = workflow.index(
+        "Generate immutable exact-pair admission before any dev switch"
+    )
+    seal = workflow.index("Seal exact-pair admission artifact before any dev switch")
     deploy = workflow.index("Deploy dev VM stack under lease")
 
     assert gate_controller < gate
-    assert frontend_checkout < gate < deploy
-    gate_block = workflow[gate:deploy]
+    assert frontend_checkout < gate < seal < deploy
+    gate_block = workflow[gate:seal]
     assert "scripts/agora_compat_manifest.py" in gate_block
+    assert "agora_compat_manifest.py write" in gate_block
     assert "deployment-gate" in gate_block
     assert '--backend-runtime-commit "${{ steps.target.outputs.sha }}"' in gate_block
+    assert (
+        '--frontend-runtime-commit "${{ steps.frontend.outputs.sha }}"'
+        in gate_block
+    )
+    assert "--compatibility-status accepted" in gate_block
     assert "--allow-pending" not in gate_block
 
 

@@ -1,13 +1,13 @@
 # L12-SIGNOFF-001 protected closeout evidence
 
-Status: owner evidence re-cut after the independent re-review rejected the
-sequence-7 cut and merged follow-up PR #4206, ready for independent `Codex2`
-review of the next follow-up PR.
+Status: owner evidence sequence 17 revalidated after strict branch protection
+refused the sequence-12 reviewed head and later non-overlapping supervisor and
+release evidence PRs advanced `dev`, ready for a fresh independent `Codex2`
+review of the new immutable head.
 
-Owner is `Claude` and reviewer is `Codex2`, matching both the
-`assignment-revision-1` catalog and the canonical `ai-status.json` assignment.
-The earlier cut recorded owner `Codex`, which predated the operator-directed
-assignment revision.
+Owner is `Codex` and reviewer is `Codex2`, matching the current canonical task
+row and supervisor dispatch. Historical owner and reviewer records remain
+append-only in `record_log`; sequence 17 is the current owner admission.
 
 This packet proves that protected product closeout decisions are signed by a
 configured Human/Ops authority, recorded in a lock-protected append-only
@@ -27,7 +27,9 @@ policy is provisioned by the owning deployment lane.
 `schemas/product-evidence.schema.json`. Its
 `overall_admission=pass_owner_evidence_ready` means the implementation and
 owner proof are ready for independent review; it does not assert that Codex2
-has approved the task. The formal reviewer verdict must be appended to
+has approved the current head. Sequence 12 records the prior exact-head
+approval as immutable history, but strict branch protection refused that stale
+base after `dev` advanced. A fresh formal reviewer verdict must be appended to
 `record_log` before governed closeout can succeed.
 
 The implementation is intentionally limited to the verdict governance
@@ -121,7 +123,7 @@ candidate-controlled.
 Because PR #4205 was already merged and could not be amended, that remediation
 was delivered as follow-up PR #4206 against the same task branch.
 
-### Sequence-8 rejection (closed in this cut)
+### Sequence-8 rejection (closed in the sequence-9 cut, merged as PR #4210)
 
 The independent re-review rejected the merged PR #4206 delivery on a single
 blocking authority-source defect. The forbidden-root set had been widened to
@@ -162,8 +164,77 @@ the validator with both workspace variables erased under the real
 against this head, where the leased worktree was recovered from runtime state
 with the environment still erased.
 
-Because PR #4206 is already merged and cannot be amended, this remediation is
-delivered as a further follow-up PR against the same task branch.
+Because PR #4206 was already merged and could not be amended, this remediation
+was delivered and merged as follow-up PR #4210 against the same task branch.
+
+### Sequence-10 owner revalidation
+
+After supervisor recovery reassigned the active owner from `Claude` to `Codex`,
+the owner evidence was replayed on current `origin/dev`
+`6ae436c546942df1ba0a762d7167b456dfedabc8`. The protected-verdict source is
+unchanged except for later compatible `ai_status` and test additions already
+merged on `dev`; the four focused suites now pass with 294 tests and 39
+subtests. A read-only live-lease probe with both workspace variables erased
+recovered this task worktree from supervisor runtime state and rejected the
+mutation as missing its workspace binding. The current source hashes, merged
+PR #4210 receipt, task ownership, and task packet were re-cut here. This remains
+owner evidence, not an inherited or self-issued reviewer verdict.
+
+### Sequence-11 exact-head revalidation
+
+Codex2's security review of sequence 10 otherwise passed, but correctly
+rejected approval because PR #4261 moved from the dispatched exact head after a
+post-handoff `origin/dev` merge. The owner preserved that finding in an anchor,
+composed `origin/dev` `4974824687ef5c3acf665fa22a4306e5d3d664f1`,
+refreshed the two compatible `ai_status` source hashes, and re-ran the four
+focused suites at 296 tests and 39 subtests. Sequence 11 is the final owner
+admission before a new exact-head handoff; it carries no inherited or
+self-issued reviewer verdict.
+
+### Sequence-12 approval and sequences 13-17 stale-base revalidation
+
+Codex2 independently approved the sequence-11 owner cut and committed that
+formal verdict as sequence 12. Before PR #4261 could merge, the independently
+reviewed supervisor PR #4257 landed on `dev` as
+`4580fc5d19b5bff8c0014006324c56d6368ec5dc`. GitHub then reported PR #4261
+`BEHIND`, and strict branch protection refused to merge the reviewed head.
+The owner did not use admin override, auto-merge, or the stale review binding.
+
+Sequence 13 preserves the sequence-12 verdict as history, composes the new
+`dev` tip normally, and re-runs the four focused suites at 296 tests and 39
+subtests. The nine protected-verdict source artifacts and canonical catalog
+digest are byte-identical to sequence 11; the new base adds only task-scoped
+supervisor refresh evidence.
+
+Before sequence 13 was pushed, the final pre-push ancestry gate caught one
+more `dev` advance: L12-IMIT closeout reconciliation PR #4265 merged as
+`4688bd252911b91ea0459a38a694c5faa53e3bbd`. Its two added files do not overlap
+this task or the protected-verdict sources. Sequence 14 composes that tip and
+repeats the 296-test, 39-subtest matrix. Sequence 14 is the current owner
+admission at that cut.
+
+After sequence 14 was pushed, supervisor task-state lock latency PR #4266
+advanced `dev` to `a6966b13d84430387da9c3a33fcf224c841bc5c6`. Its three
+changed files are confined to the `SUP-TASK-STATE-LOCK-LATENCY-001` task brief
+and evidence packet; they do not overlap this task or the protected-verdict
+sources. Sequence 15 composes that tip and repeats the 296-test, 39-subtest
+matrix. Sequence 15 is the owner admission at that cut.
+
+After sequence 15 passed eight fresh CI checks, cross-repository release
+controller PR #4268 advanced `dev` to
+`b854c2bdeba672d107314c51c7588455be96221e`. Its 13 changed files are confined
+to release workflow, controller, deployment documentation, tests, and its own
+task evidence; they do not overlap this task or the protected-verdict sources.
+Sequence 16 composes that tip and repeats the 296-test, 39-subtest matrix.
+Sequence 16 is the owner admission at that cut.
+
+After sequence 16 passed eight fresh CI checks, release-controller evidence
+finalization PR #4272 advanced `dev` to
+`5a2fc69a3b432e0d1bc528981d66a2ee32defa71`. Its three changed files are
+confined to that task's brief and evidence packet; they do not overlap this
+task or the protected-verdict sources. Sequence 17 composes that tip and
+repeats the 296-test, 39-subtest matrix. Sequence 17 is the current owner
+admission and requires a fresh Codex2 verdict bound to the new PR head.
 
 ## Authority and binding
 
@@ -204,7 +275,7 @@ issuance TTL by evaluating it at the recorded consumption time.
 
 ## Validation
 
-The focused run at this head completed:
+The focused run on the current dev integration completed:
 
 ```text
 /home/lupin/pantheon/.venv/bin/pytest -q \
@@ -213,11 +284,11 @@ The focused run at this head completed:
   scripts/test_loop_done_guardrail.py \
   scripts/test_ai_status.py
 
-285 passed, 1 warning, 33 subtests
+296 passed, 1 warning, 39 subtests
 ```
 
-The count rose from 275 in the sequence-7 cut by nine lease-authority
-regressions added here: six in `scripts/test_loop_done_guardrail.py` — the
+The sequence-9 count rose from 275 in the sequence-7 cut by nine
+lease-authority regressions: six in `scripts/test_loop_done_guardrail.py` — the
 leased root appearing in `forbidden_roots` with no environment binding, ledger
 and policy under the leased root, revoked and consumed tail truncation against
 the leased root, and the unresolvable-lease fail-closed ordering — and three in
@@ -251,12 +322,26 @@ the `candidate_tail_truncation_restores_approval=true` assertion reproduced
 verbatim) are retained in `evidence.json` as the proofs for those earlier
 rejections.
 
+At sequence 11,
 `scripts/loop_done_guardrail.py --task-id L12-SIGNOFF-001 --evidence-root .`
-replay of this manifest reports exactly one gap — the absent formal `Codex2`
-verdict — confirming the cut is otherwise `done`-eligible.
+reported exactly one gap: the then-absent formal `Codex2` verdict. The
+sequence-17 target row now passes evidence truth replay because sequence 12
+remains append-only review history. That replay does not authorize reuse of
+the stale PR-head binding; the canonical GitHub review gate still requires a
+fresh Codex2 verdict for the new exact head.
 
 `scripts/run-acceptance.sh smoke`, `py_compile`, and `git diff --check` were
-all re-run at this head and passed; the smoke run completed stage-0 validation
-and the full smoke baseline.
+all re-run at the sequence-9 head and passed; the smoke run completed stage-0
+validation and the full smoke baseline. Sequence 10 then re-ran the four
+focused suites after merging current `origin/dev`; 294 tests and 39 subtests
+passed. Sequence 11 re-ran them after its pre-review `dev` composition; 296
+tests and 39 subtests passed. Sequences 13 through 17 repeated the same
+296-test, 39-subtest matrix after composing `dev` at
+`4580fc5d19b5bff8c0014006324c56d6368ec5dc`,
+`4688bd252911b91ea0459a38a694c5faa53e3bbd`, and
+`a6966b13d84430387da9c3a33fcf224c841bc5c6`, followed by
+`b854c2bdeba672d107314c51c7588455be96221e` and
+`5a2fc69a3b432e0d1bc528981d66a2ee32defa71`; all nine
+protected-verdict source hashes remained unchanged.
 
 [`evidence.sha256`](evidence.sha256) covers the machine-readable manifest.
