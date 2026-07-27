@@ -24,7 +24,9 @@ mkdir -p \
 cp "$ROOT_DIR/scripts/git/nightly_publish.sh" "$SEED_DIR/scripts/git/nightly_publish.sh"
 cp "$ROOT_DIR/scripts/release_branch_discipline.py" "$SEED_DIR/scripts/release_branch_discipline.py"
 cp "$ROOT_DIR/.orchestrator/config.json" "$SEED_DIR/.orchestrator/config.json"
-cp "$ROOT_DIR/.orchestrator/release-state.json" "$SEED_DIR/.orchestrator/release-state.json"
+RELEASE_STATE_SOURCE="$ROOT_DIR/.orchestrator/release-state.json"
+RELEASE_STATE_FIXTURE="$SEED_DIR/.orchestrator/release-state.json"
+cp "$RELEASE_STATE_SOURCE" "$RELEASE_STATE_FIXTURE"
 
 git -C "$SEED_DIR" add \
   scripts/git/nightly_publish.sh \
