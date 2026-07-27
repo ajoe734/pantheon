@@ -4612,6 +4612,89 @@ class PortableStateRenderingTests(unittest.TestCase):
             {item["type"] for item in mismatches},
         )
 
+    def test_dashboard_flags_merged_delivery_that_still_needs_closeout(self) -> None:
+        task = {
+            "id": "L12-BFF-001",
+            "owner": "Codex2",
+            "reviewer": "Codex",
+            "status": "in_progress",
+            "source_ref": {
+                "pr": 4274,
+                "head_sha": "c" * 40,
+                "base": "dev",
+            },
+            "next": (
+                "Human/Ops delivery update: PR #4274 exact head "
+                f"{'4' * 40} passed local focused suite; merged to dev as "
+                f"{'7' * 40} at 2026-07-27T22:14:45Z. Canonical task "
+                "still needs formal closeout evidence/archive."
+            ),
+            "last_update": "2026-07-27T22:15:09Z",
+        }
+        resolver = mock.Mock()
+        resolver.source.return_value = "active"
+
+        _workers, mismatches = ai_status.detect_truth_mismatches(
+            {"tasks": [task]},
+            [],
+            [],
+            {"pending": []},
+            resolver,
+            {},
+        )
+
+        by_type = {item["type"]: item for item in mismatches}
+        self.assertEqual(
+            by_type["delivery_merged_needs_closeout"]["id"],
+            "delivery-merged-needs-closeout:L12-BFF-001",
+        )
+        self.assertEqual(
+            by_type["delivery_merged_needs_closeout"]["delivery_evidence"]["merge_commit"],
+            "7" * 40,
+        )
+        self.assertIn("正式 closeout", by_type["delivery_merged_needs_closeout"]["resolution_hint"])
+        self.assertEqual(
+            by_type["delivery_binding_stale"]["delivery_evidence"]["recorded_head_sha"],
+            "c" * 40,
+        )
+        self.assertEqual(
+            by_type["delivery_binding_stale"]["delivery_evidence"]["evidence_head_sha"],
+            "4" * 40,
+        )
+
+    def test_dashboard_uses_structured_delivery_evidence_for_closeout_drift(self) -> None:
+        task = {
+            "id": "L12-DIST-001",
+            "owner": "Codex2",
+            "reviewer": "Codex",
+            "status": "review",
+            "delivery": {
+                "head_merged_to_target": True,
+                "merge_target_branch": "dev",
+                "merge_target_sha": "1" * 40,
+            },
+            "last_update": "2026-07-27T22:10:42Z",
+        }
+        resolver = mock.Mock()
+        resolver.source.return_value = "active"
+
+        _workers, mismatches = ai_status.detect_truth_mismatches(
+            {"tasks": [task]},
+            [],
+            [],
+            {"pending": []},
+            resolver,
+            {},
+        )
+
+        mismatch = next(
+            item for item in mismatches
+            if item["type"] == "delivery_merged_needs_closeout"
+        )
+        self.assertEqual(mismatch["severity"], "high")
+        self.assertEqual(mismatch["delivery_evidence"]["source"], "delivery")
+        self.assertEqual(mismatch["delivery_evidence"]["merge_commit"], "1" * 40)
+
     def test_related_live_sidecar_worker_does_not_flag_parent_as_without_worker(self) -> None:
         state = {
             "updated_at": "2026-04-15T15:32:45Z",
