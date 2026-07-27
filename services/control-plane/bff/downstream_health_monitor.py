@@ -42,7 +42,7 @@ log = logging.getLogger(__name__)
 INFRASTRUCTURE_HEALTH_SCHEMA_VERSION = "pantheon.infrastructure-health/1"
 INFRASTRUCTURE_HEALTH_PRODUCER = "control-plane-bff"
 INFRASTRUCTURE_HEALTH_PATH = "/api/v1/telemetry/infrastructure-health"
-INFRASTRUCTURE_INCIDENT_PATH = "/api/incidents/infrastructure-health"
+INFRASTRUCTURE_INCIDENT_PATH = "/api/incidents/consume-infrastructure-health"
 
 # Compatibility exports.  They are deliberately empty/non-trading and must
 # never be copied into an infrastructure event or incident request.
@@ -424,6 +424,16 @@ class _DurableHealthStore:
                     ON delivery_outbox(status, next_attempt_at, claim_until);
                 CREATE INDEX IF NOT EXISTS delivery_outbox_event_idx
                     ON delivery_outbox(event_id);
+                CREATE TABLE IF NOT EXISTS delivery_replay_audit (
+                    replay_id TEXT PRIMARY KEY,
+                    actor_id TEXT NOT NULL,
+                    approval_ref TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    event_id TEXT,
+                    channel TEXT,
+                    replayed_count INTEGER NOT NULL,
+                    replayed_at TEXT NOT NULL
+                );
                 """
             )
             if legacy_table is not None:
@@ -1011,6 +1021,9 @@ class _DurableHealthStore:
     def replay_dead_letters(
         self,
         *,
+        actor_id: str,
+        approval_ref: str,
+        reason: str,
         event_id: Optional[str] = None,
         channel: Optional[str] = None,
     ) -> int:
@@ -1028,6 +1041,7 @@ class _DurableHealthStore:
             *params,
         ]
         with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             cursor = connection.execute(
                 f"""
                 UPDATE delivery_outbox
@@ -1038,7 +1052,39 @@ class _DurableHealthStore:
                 """,
                 tuple(update_params),
             )
-        return cursor.rowcount
+            replayed = cursor.rowcount
+            connection.execute(
+                """
+                INSERT INTO delivery_replay_audit(
+                    replay_id, actor_id, approval_ref, reason, event_id,
+                    channel, replayed_count, replayed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    f"health-replay-{uuid.uuid4().hex}",
+                    actor_id,
+                    approval_ref,
+                    reason,
+                    event_id,
+                    channel,
+                    replayed,
+                    _utc_now_rfc3339(),
+                ),
+            )
+            connection.commit()
+        return replayed
+
+    def list_replay_audit(self, *, limit: int = 20) -> List[Dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM delivery_replay_audit
+                ORDER BY replayed_at DESC, replay_id DESC
+                LIMIT ?
+                """,
+                (max(1, min(int(limit), 100)),),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def delivery_counts(self) -> Dict[str, int]:
         counts = {
@@ -1434,6 +1480,7 @@ class DownstreamHealthMonitor:
                 "instance_id": self._instance_id,
             },
             "delivery": self._store.delivery_counts(),
+            "delivery_replays": self._store.list_replay_audit(),
             "incidents": self._store.list_incidents(),
         }
 
@@ -2069,10 +2116,16 @@ class DownstreamHealthMonitor:
     def replay_dead_letters(
         self,
         *,
+        actor_id: str,
+        approval_ref: str,
+        reason: str,
         event_id: Optional[str] = None,
         channel: Optional[str] = None,
     ) -> Dict[str, Any]:
         replayed = self._store.replay_dead_letters(
+            actor_id=actor_id,
+            approval_ref=approval_ref,
+            reason=reason,
             event_id=event_id,
             channel=channel,
         )
@@ -2082,6 +2135,8 @@ class DownstreamHealthMonitor:
             "delivered_now": delivered,
             "event_id": event_id,
             "channel": channel,
+            "actor_id": actor_id,
+            "approval_ref": approval_ref,
             "delivery": self._store.delivery_counts(),
         }
 
