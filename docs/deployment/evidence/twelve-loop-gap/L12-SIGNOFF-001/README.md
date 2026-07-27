@@ -1,12 +1,12 @@
 # L12-SIGNOFF-001 protected closeout evidence
 
-Status: owner evidence sequence 11 revalidated after the sequence-9 remediation
-merged as PR #4210 and the latest `dev` composition, ready for independent
-`Codex2` review of the final immutable follow-up PR head.
+Status: owner evidence sequence 13 revalidated after strict branch protection
+refused the sequence-12 reviewed head when a concurrent supervisor PR advanced
+`dev`, ready for a fresh independent `Codex2` review of the new immutable head.
 
 Owner is `Codex` and reviewer is `Codex2`, matching the current canonical task
-row and supervisor dispatch. Historical owner records remain append-only in
-`record_log`; sequence 11 is the current owner admission.
+row and supervisor dispatch. Historical owner and reviewer records remain
+append-only in `record_log`; sequence 13 is the current owner admission.
 
 This packet proves that protected product closeout decisions are signed by a
 configured Human/Ops authority, recorded in a lock-protected append-only
@@ -26,7 +26,9 @@ policy is provisioned by the owning deployment lane.
 `schemas/product-evidence.schema.json`. Its
 `overall_admission=pass_owner_evidence_ready` means the implementation and
 owner proof are ready for independent review; it does not assert that Codex2
-has approved the task. The formal reviewer verdict must be appended to
+has approved the current head. Sequence 12 records the prior exact-head
+approval as immutable history, but strict branch protection refused that stale
+base after `dev` advanced. A fresh formal reviewer verdict must be appended to
 `record_log` before governed closeout can succeed.
 
 The implementation is intentionally limited to the verdict governance
@@ -188,6 +190,22 @@ focused suites at 296 tests and 39 subtests. Sequence 11 is the final owner
 admission before a new exact-head handoff; it carries no inherited or
 self-issued reviewer verdict.
 
+### Sequence-12 approval and sequence-13 stale-base revalidation
+
+Codex2 independently approved the sequence-11 owner cut and committed that
+formal verdict as sequence 12. Before PR #4261 could merge, the independently
+reviewed supervisor PR #4257 landed on `dev` as
+`4580fc5d19b5bff8c0014006324c56d6368ec5dc`. GitHub then reported PR #4261
+`BEHIND`, and strict branch protection refused to merge the reviewed head.
+The owner did not use admin override, auto-merge, or the stale review binding.
+
+Sequence 13 preserves the sequence-12 verdict as history, composes the new
+`dev` tip normally, and re-runs the four focused suites at 296 tests and 39
+subtests. The nine protected-verdict source artifacts and canonical catalog
+digest are byte-identical to sequence 11; the new base adds only task-scoped
+supervisor refresh evidence. Sequence 13 is a new owner admission and requires
+a fresh Codex2 verdict bound to the new PR head.
+
 ## Authority and binding
 
 The BFF boundary accepts only authenticated JWT or JWT-backed cookie sessions,
@@ -274,15 +292,21 @@ the `candidate_tail_truncation_restores_approval=true` assertion reproduced
 verbatim) are retained in `evidence.json` as the proofs for those earlier
 rejections.
 
+At sequence 11,
 `scripts/loop_done_guardrail.py --task-id L12-SIGNOFF-001 --evidence-root .`
-replay of this manifest reports exactly one gap — the absent formal `Codex2`
-verdict — confirming the cut is otherwise `done`-eligible.
+reported exactly one gap: the then-absent formal `Codex2` verdict. The
+sequence-13 target row now passes evidence truth replay because sequence 12
+remains append-only review history. That replay does not authorize reuse of
+the stale PR-head binding; the canonical GitHub review gate still requires a
+fresh Codex2 verdict for the new exact head.
 
 `scripts/run-acceptance.sh smoke`, `py_compile`, and `git diff --check` were
 all re-run at the sequence-9 head and passed; the smoke run completed stage-0
 validation and the full smoke baseline. Sequence 10 then re-ran the four
 focused suites after merging current `origin/dev`; 294 tests and 39 subtests
-passed. Sequence 11 re-ran them after the final pre-review `dev` composition;
-296 tests and 39 subtests passed.
+passed. Sequence 11 re-ran them after its pre-review `dev` composition; 296
+tests and 39 subtests passed. Sequence 13 repeated the same 296-test,
+39-subtest matrix after composing `dev` `4580fc5d19b5bff8c0014006324c56d6368ec5dc`;
+all nine protected-verdict source hashes remained unchanged.
 
 [`evidence.sha256`](evidence.sha256) covers the machine-readable manifest.
