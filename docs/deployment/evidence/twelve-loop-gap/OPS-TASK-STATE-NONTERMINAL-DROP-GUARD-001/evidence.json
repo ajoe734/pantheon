@@ -1,0 +1,252 @@
+{
+  "task_id": "OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001",
+  "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+  "title": "Reject nonterminal task-state collapse to empty snapshot",
+  "phase": "Twelve Loop Remediation / Orchestrator state integrity",
+  "owner": "Claude",
+  "reviewer": "Codex2",
+  "repository": "ajoe734/pantheon",
+  "task_branch": "task/OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001",
+  "base_branch": "dev",
+  "created_at": "2026-07-26T22:20:00Z",
+  "updated_at": "2026-07-27T00:35:00Z",
+  "incident": {
+    "gap_id": "GAP-001",
+    "delta_document": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/POST_DISPATCH_RUNTIME_GAP_DELTA.md",
+    "summary": "Sequence 1592 of the authoritative task-state journal held 22 nonterminal twelve-loop tasks. Sequence 1593 committed an empty board, superseding all 22 at once; sequences 1594-1595 recovered the catalog by append-only replay."
+  },
+  "scope": {
+    "owned_layer": "The task-state journal transition guard in .orchestrator/rewrite/task_state_store.py, its regression suite, the projection verifier live-task count, and the root pytest scrub of inherited task-state environment bindings.",
+    "not_changing": "Hash-chain and event-digest validation, journal storage layout, .orchestrator/config.json, supervisor dispatch policy, and the ai_status archive/prune flow.",
+    "implementation_changed_files": [
+      ".orchestrator/rewrite/task_state_store.py",
+      ".orchestrator/rewrite/test_task_state_store.py",
+      "conftest.py",
+      "scripts/test_verify_task_state_store.py",
+      "scripts/verify_task_state_store.py"
+    ],
+    "evidence_changed_files": [
+      ".orchestrator/task-briefs/ops_task_state_nonterminal_drop_guard_001.md",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001/evidence.sha256"
+    ]
+  },
+  "superseded_approach": {
+    "rejected_rule": "previous_nonterminal > 0 and new_nonterminal == 0",
+    "why_rejected": "The count-only rule was merged and then rejected in review because it also refuses the legitimate completion of the final task on the board: the last nonterminal row moving to done drives the nonterminal count to zero without any task being removed.",
+    "replacement": "Identity-aware comparison of the previous and new task rows. A commit is refused when task identities that were still live disappear from the board, classified as disappearance when some live identities survive and as mass replacement when none do."
+  },
+  "delivered_guard": {
+    "entry_point": ".orchestrator/rewrite/task_state_store.validate_state_transition",
+    "enforced_before": "append_state_commit opens the journal for writing, so a refused commit never reaches the file",
+    "terminal_statuses": ["done", "supersede", "superseded", "cancelled", "canceled"],
+    "fail_closed_rules": [
+      "A blank, unknown, or unreadable status is treated as live work.",
+      "A task row that is not an object, or whose id is missing or blank, is counted as untrackable live work and protected by population comparison.",
+      "A tasks container that is not a list hides an unknown amount of live work and is protected the same way.",
+      "Dropping the tasks key entirely is treated as removing every live identity."
+    ],
+    "permitted_without_a_marker": [
+      "First bootstrap, which has no predecessor identity to preserve.",
+      "The final nonterminal task transitioning to a terminal status, because identity is retained.",
+      "Archiving rows that were already terminal in the predecessor state, including a fully terminal board draining to empty."
+    ],
+    "drain_marker": {
+      "state_key": "task_state_drain",
+      "required_audit_fields": ["reason", "actor", "approved_at"],
+      "audit_field_contract": "reason and actor must be non-empty strings. approved_at must be a non-empty string that parses as an ISO 8601 timestamp with an explicit UTC offset and is not in the future relative to the commit clock.",
+      "task_ids": "Must be a list of unique non-empty strings whose stripped set equals exactly the live task ids removed by this commit.",
+      "rejected_marker_forms": [
+        "A marker that is not an object.",
+        "A marker missing, blanking, or non-string typing any audit field, including a numeric or boolean reason/actor/approved_at.",
+        "A marker whose approved_at does not parse as an ISO 8601 timestamp, or parses without a timezone offset, such as a date-only or naive value.",
+        "A marker whose approved_at is in the future, such as 2099-01-01T00:00:00Z.",
+        "A marker whose task_ids is not a list of non-empty task id strings.",
+        "A marker whose task_ids repeats an id, which inflates apparent coverage without adding evidence.",
+        "A marker that names a task still present on the board, which would pre-authorize a future drop.",
+        "A marker that does not cover every removed task id.",
+        "A marker that names an id that was not a live removal in this commit, such as a never-existing id padded next to the real one.",
+        "A marker carried forward byte-identically from the previous commit, which would disable the guard permanently.",
+        "A marker without allow_unidentified when rows lacking a task id are removed."
+      ],
+      "accepted_marker_forms": [
+        "approved_at as Z, +00:00, a non-UTC offset such as +09:00, or with fractional seconds, provided it is not in the future.",
+        "approved_at stamped at commit time by utc_now(), so the not-future rule does not refuse a fresh approval.",
+        "task_ids equal to the removed live-id set, including an empty list when the only removal is rows without a task id and allow_unidentified is true."
+      ]
+    }
+  },
+  "review_rounds": [
+    {
+      "round": 1,
+      "reviewer": "Codex2",
+      "reviewed_head": "fb5f8c58b30fb3bdcf6ad7be03c5e2281a7773a3",
+      "pull_request": 4224,
+      "decision": "changes_requested",
+      "finding": "The declared suites passed and CI was green, but validate_state_transition accepted non-auditable drain markers. With only live task A removed, the guard accepted task_ids [A, NEVER_EXISTED], duplicate task_ids [A, A], approved_at set to a non-timestamp or to the future value 2099-01-01T00:00:00Z, and non-string reason/actor values, because the audit fields were coerced with str(value or '') and the id set was only checked for coverage, not for equality.",
+      "remediation": {
+        "code": "_drain_marker_audit_rejection now requires reason, actor, and approved_at to be non-empty str instances; _parse_audit_timestamp requires an ISO 8601 value with an explicit UTC offset and refuses a naive or unparseable one; a parsed approved_at later than datetime.now(timezone.utc) is refused as an approval that was never granted. _drain_marker_ids refuses a repeated id, and the marker id set must now equal the removed live-id set exactly: coverage is still checked first, then any id that was not a live removal in this commit is refused.",
+        "tests": [
+          "test_drain_marker_must_be_explicit_and_audited gained negative cases pads-with-an-id-that-was-never-live, duplicate-task-ids, non-string-task-id, non-string-reason, non-string-actor, non-string-approved-at, unparseable-approved-at, naive-approved-at, date-only-approved-at, and future-approved-at.",
+          "test_drain_marker_for_unidentified_rows_must_not_name_phantom_ids covers a padded id on the allow_unidentified path.",
+          "The still-legal marker forms are pinned by test_drain_marker_accepts_past_timezone_aware_approvals (Z, +00:00, +09:00, fractional seconds) and test_drain_marker_accepts_an_approval_stamped_at_commit_time, so the not-future rule cannot become a false rejection."
+        ],
+        "parent_commit": "fb5f8c58b30fb3bdcf6ad7be03c5e2281a7773a3",
+        "hardening_commit": "4503b8757fe7d3813b0c52fc0c79d52313fd50a9"
+      }
+    },
+    {
+      "round": 2,
+      "reviewer": "Codex2",
+      "reviewed_head": "2e8e1d7286bceb548362302b8be9f917d941102e",
+      "pull_request": 4224,
+      "decision": "changes_requested",
+      "finding": "Behavior was accepted at that head — 159 focused, 133 plus 25 ai_status subtests, 399 supervisor tests, and all six Branch CI Gate checks green — but the committed manifest was stale and unbindable. verification.integrated_head was a593091043717da8c6c2ddd186b7314d21cb377f, which predates hardening commit 4503b8757fe7d3813b0c52fc0c79d52313fd50a9 and the reviewed head 2e8e1d72; integrated_dev_head was the abbreviated 6578ef968, which predates branch merge base 8d1b5077996a2d27aafb83ff5756f0290d0e90bc and dev 643181a067ec5c344faac0766c69de0d5cfb32eb. The manifest also carried no final head or base and no immutable blob identity for the source, test, or evidence files, so nothing in it pinned the artifact the reviewer had read. The PR was OPEN/BEHIND, unmerged, with auto-merge disabled.",
+      "remediation": {
+        "code": "None. No implementation, test, or verifier file changed in this round; the blob identities under source_identity are byte-identical to the reviewed head 2e8e1d72, which a reviewer can confirm with git ls-tree at the final head.",
+        "refresh": "The branch was refreshed from dev by merging 643181a067ec5c344faac0766c69de0d5cfb32eb, producing integration head 8878dc217ae70cbd7127509cb4e1f8174963e7b4. The PR merge state moved from BEHIND to CLEAN.",
+        "manifest": "verification now records the exact full integration head, the exact full dev head and merge base, the hardening commit, and the immutable git blob ids of every source, test, and evidence file. All three local suites and all six Branch CI Gate checks were re-run at that exact head and are recorded under verification.commands and ci.",
+        "parent_commit": "2e8e1d7286bceb548362302b8be9f917d941102e",
+        "recut_commit": "2ab2ca7c03e89174531cbbcb73da73fa52e93ef7",
+        "recut_commit_result": "The recut landed as docs-only commit 2ab2ca7c03e89174531cbbcb73da73fa52e93ef7 on top of verified head 8878dc217ae70cbd7127509cb4e1f8174963e7b4. Both Branch CI Gate runs at 2ab2ca7c0 (push 30226361956, pull_request 30226362879) concluded success, so all six checks pass at that head, and all three local suites were re-run green there. That result is now recorded under verification and ci below; this manifest revision is the docs-only commit above 2ab2ca7c0."
+      }
+    }
+  ],
+  "acceptance": [
+    {
+      "criterion": "Replay sequence 1592 with 22 tasks followed by an empty state and reject before append",
+      "status": "pass",
+      "proof": ".orchestrator/rewrite/test_task_state_store.py::test_incident_replay_rejects_the_empty_snapshot_after_sequence_1592 seeds a hash-chained journal of 1592 events whose head carries 22 nonterminal tasks, asserts the empty commit is refused as a mass replacement, asserts the journal bytes are unchanged and still at sequence 1592, and then commits the recovery board at sequence 1593 linked to the surviving event hash."
+    },
+    {
+      "criterion": "Allow first bootstrap and a fully terminal explicitly evidenced drain without weakening hash-chain validation",
+      "status": "pass",
+      "proof": "test_allow_first_bootstrap_with_empty_or_no_tasks, test_allow_drain_when_all_previous_tasks_were_terminal, test_completing_and_archiving_the_last_task_stays_possible, test_terminal_rows_may_be_archived_while_live_work_remains, test_audited_drain_marker_authorizes_real_task_removal, test_drain_marker_accepts_past_timezone_aware_approvals, test_drain_marker_accepts_an_approval_stamped_at_commit_time, and test_guard_rejection_does_not_weaken_hash_chain_validation, which shows a journal edited to force the collapse still fails digest validation. The explicitly evidenced drain is only accepted through a marker whose audit fields and id set survive the checks listed under delivered_guard.drain_marker; the sixteen negative cases in test_drain_marker_must_be_explicit_and_audited plus test_drain_marker_for_unidentified_rows_must_not_name_phantom_ids pin the rejected forms. validate_event, the event digest, and the previous-event hash chain are untouched by this task."
+    },
+    {
+      "criterion": "Inherited live PANTHEON_TASK_STATE_EVENT_LOG cannot be used by tests or task worktrees",
+      "status": "pass",
+      "proof": "conftest.scrub_inherited_task_state_env drops PANTHEON_TASK_STATE_STORE_MODE and PANTHEON_TASK_STATE_EVENT_LOG at pytest_configure and again at pytest_runtest_setup. test_root_conftest_scrubs_an_inherited_live_event_log asserts the scrub contract, test_inherited_live_task_state_env_is_absent_during_tests asserts the resulting process state, and test_task_worktree_pytest_run_cannot_reach_an_inherited_live_event_log runs a child pytest with an authoritative binding exported and asserts the bound journal path is never created. _prepare_parent additionally refuses a relative event log path, which would otherwise mint a private journal inside the task worktree."
+    },
+    {
+      "criterion": "Rejected writes leave journal and projection unchanged and parity remains verifiable",
+      "status": "pass",
+      "proof": "test_unrelated_workers_not_superseded_and_parity_preserved_after_rejected_drop and the incident replay both compare the journal bytes before and after the refused commit, and scripts/test_verify_task_state_store.py::test_verifier_reports_parity_after_rejected_nonterminal_drop re-runs the verifier after a refused commit and asserts exit 0 with ok true."
+    },
+    {
+      "criterion": "Regression covers unrelated workers not being superseded after a rejected empty snapshot",
+      "status": "pass",
+      "proof": "test_unrelated_workers_not_superseded_and_parity_preserved_after_rejected_drop projects the journal after the refusal and asserts both task rows keep their in_progress and todo statuses and that the worker records are preserved. test_partial_nonterminal_disappearance_is_rejected covers the single-task variant."
+    },
+    {
+      "criterion": "Relevant tests PR checks independent review and merge to dev are required",
+      "status": "pending_review",
+      "proof": "All three local suites re-ran green at the exact verified head 2ab2ca7c03e89174531cbbcb73da73fa52e93ef7 (159; 133 plus 25 subtests; 399), and all six Branch CI Gate checks pass at that same head across the push and pull_request runs recorded under ci. PR #4224 is refreshed from dev 643181a067ec5c344faac0766c69de0d5cfb32eb and reports CLEAN. The head returns to Codex2 for independent review; the merge into dev remains outstanding at the time of this cut."
+    }
+  ],
+  "verification": {
+    "python": "/home/lupin/pantheon/.venv/bin/python3",
+    "verified_head": "2ab2ca7c03e89174531cbbcb73da73fa52e93ef7",
+    "verified_head_parents": {
+      "task_branch": "8878dc217ae70cbd7127509cb4e1f8174963e7b4"
+    },
+    "base_branch_head": "643181a067ec5c344faac0766c69de0d5cfb32eb",
+    "merge_base_with_dev": "643181a067ec5c344faac0766c69de0d5cfb32eb",
+    "superseded_heads": {
+      "round_1_reviewed_head": "fb5f8c58b30fb3bdcf6ad7be03c5e2281a7773a3",
+      "hardening_commit": "4503b8757fe7d3813b0c52fc0c79d52313fd50a9",
+      "round_2_reviewed_head": "2e8e1d7286bceb548362302b8be9f917d941102e",
+      "round_2_integration_merge": "8878dc217ae70cbd7127509cb4e1f8174963e7b4",
+      "stale_integration_merge": "a593091043717da8c6c2ddd186b7314d21cb377f",
+      "stale_dev_head": "6578ef968f7e0374b046de0afb5b07ce2f81558e"
+    },
+    "manifest_commit_note": "A manifest cannot record the git id of the commit that carries it, so the binding is stated structurally. verified_head 2ab2ca7c03e89174531cbbcb73da73fa52e93ef7 is the pushed head where every check under verification.commands and ci was actually observed. This manifest revision is committed directly on top of it and changes only three paths: this file, evidence.sha256, and the task brief .orchestrator/task-briefs/ops_task_state_nonterminal_drop_guard_001.md. No implementation, test, or verifier file changes in it. A reviewer can confirm the reviewed artifact at whatever the final PR head is with: git diff --name-only 2ab2ca7c03e89174531cbbcb73da73fa52e93ef7 <final-head> (must list only those three docs paths) and git ls-tree -r <final-head> -- .orchestrator/rewrite/task_state_store.py .orchestrator/rewrite/test_task_state_store.py conftest.py scripts/verify_task_state_store.py scripts/test_verify_task_state_store.py (must match source_identity.blobs, which are also byte-identical to round-2 reviewed head 2e8e1d72).",
+    "source_identity": {
+      "resolved_at_commit": "2ab2ca7c03e89174531cbbcb73da73fa52e93ef7",
+      "blob_algorithm": "git blob sha1 (git ls-tree -r)",
+      "blobs": {
+        ".orchestrator/rewrite/task_state_store.py": "dee49ce7b8facb953478155181112b6d4f098cc0",
+        ".orchestrator/rewrite/test_task_state_store.py": "40f150035fd446e4d3bbc120a6be7b4e7cc27a33",
+        "conftest.py": "2c362971fe5f80ec528dcc958d25de9f40952ef3",
+        "scripts/verify_task_state_store.py": "80eceac581e9247124d397f90622460ce96d0241",
+        "scripts/test_verify_task_state_store.py": "11e8d20f5312f444ebb46041cf4fdb22d6717e32"
+      },
+      "unchanged_since_reviewed_head": "2e8e1d7286bceb548362302b8be9f917d941102e",
+      "evidence_manifest_identity": "docs/deployment/evidence/twelve-loop-gap/OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001/evidence.sha256 carries the sha256 of this file; a git blob id for evidence.json cannot be self-recorded inside evidence.json, so evidence.sha256 is the binding identity for this manifest. The round-2 reviewed-head manifest blob was d94d7bbbef003f988d4dc28e8bbd8e0b071f6e1d with sha256 38df0b1994ff682d6bad573fe6067c0a9c2d79e33fd2282de5906dd8c17dcf1c; the superseded recut at 2ab2ca7c0 had sha256 77b550aaedabcf77ecf27cc53f035c4cd80311dc06a8d5af60ba4f3ff07744c8."
+    },
+    "commands": [
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/pytest .orchestrator/rewrite scripts/test_verify_task_state_store.py -q",
+        "result": "159 passed",
+        "head": "2ab2ca7c03e89174531cbbcb73da73fa52e93ef7"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/pytest scripts/test_ai_status.py -q",
+        "result": "133 passed, 25 subtests passed",
+        "head": "2ab2ca7c03e89174531cbbcb73da73fa52e93ef7"
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator /home/lupin/pantheon/.venv/bin/pytest .orchestrator/test_supervisor.py -q",
+        "result": "399 passed",
+        "head": "2ab2ca7c03e89174531cbbcb73da73fa52e93ef7"
+      }
+    ],
+    "earlier_verified_heads": [
+      {
+        "head": "8878dc217ae70cbd7127509cb4e1f8174963e7b4",
+        "suites": "159; 133 plus 25 subtests; 399",
+        "ci_runs": [30226177755, 30226178863],
+        "note": "Round-2 integration merge of dev 643181a06 into 2e8e1d72. Same three suites and same six checks, all green. Its source blobs are identical to those recorded under source_identity."
+      }
+    ]
+  },
+  "ci": {
+    "pull_request": 4224,
+    "head": "2ab2ca7c03e89174531cbbcb73da73fa52e93ef7",
+    "merge_state_status": "CLEAN",
+    "workflow": "Branch CI Gate",
+    "runs": [
+      {
+        "event": "push",
+        "id": 30226361956,
+        "conclusion": "success",
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30226361956",
+        "checks": ["Commit trailers", "Runtime mirror guard", "Smoke acceptance"]
+      },
+      {
+        "event": "pull_request",
+        "id": 30226362879,
+        "conclusion": "success",
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30226362879",
+        "checks": ["Commit trailers", "Runtime mirror guard", "Smoke acceptance"]
+      }
+    ],
+    "all_checks_pass": true,
+    "note": "Six checks total, three per workflow run, all pass at head 2ab2ca7c03e89174531cbbcb73da73fa52e93ef7. The docs-only commit that carries this manifest revision re-triggers the same gate; its result is visible on the final PR head and touches no source file, per manifest_commit_note."
+  },
+  "known_limitations": [
+    "scripts/ai_status.py prune_archived_active_tasks removes an active row whose id already has an archive snapshot. When such a row is still nonterminal that is a real removal, so the guard now refuses it until the caller supplies an audited drain marker. This repair path is outside this task's artifact scope and is left to a follow-up in ai_status.py; the normal done flow is unaffected because a task row is archived and pruned only after it is already terminal in the predecessor commit.",
+    "The drain marker is a store-level contract only. No config, dispatch policy, or status command was changed to emit one."
+  ],
+  "compliance_declarations": {
+    "config_modified": false,
+    "hash_chain_validation_weakened": false,
+    "hosted_deployed": false,
+    "twelve_loop_completed": false,
+    "baseline_catalog_modified": false
+  },
+  "commits": {
+    "superseded_anchor": "a965d821fc4d234642e79c9f198cb063fb2b5c99",
+    "superseded_pull_request": 4199,
+    "implementation_anchor": "7aa1a256e415cc8f34627b258ec2fceaf72350c7",
+    "round_1_evidence": "fb5f8c58b30fb3bdcf6ad7be03c5e2281a7773a3",
+    "round_1_hardening": "4503b8757fe7d3813b0c52fc0c79d52313fd50a9",
+    "dev_integration_merges": [
+      "a593091043717da8c6c2ddd186b7314d21cb377f",
+      "2e8e1d7286bceb548362302b8be9f917d941102e",
+      "8878dc217ae70cbd7127509cb4e1f8174963e7b4"
+    ],
+    "latest_dev_integration_merge": "8878dc217ae70cbd7127509cb4e1f8174963e7b4",
+    "round_2_evidence_recut": "2ab2ca7c03e89174531cbbcb73da73fa52e93ef7"
+  }
+}
