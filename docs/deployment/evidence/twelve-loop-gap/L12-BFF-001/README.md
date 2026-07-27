@@ -2,6 +2,9 @@
 
 Status: BFF implementation ready; current IncidentCase authority dependency blocked.
 
+Draft delivery: [PR #4274](https://github.com/ajoe734/pantheon/pull/4274)
+targets `dev` and intentionally remains draft while AC5 is blocked.
+
 The BFF health controller now emits the strict non-trading
 `pantheon.infrastructure-health/1` contract, enumerates the complete configured
 downstream registry, and persists probe windows, target state, error-rate

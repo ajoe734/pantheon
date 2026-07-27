@@ -16,7 +16,7 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-27T18:57:00Z",
+    "evidence_cut_at": "2026-07-27T19:07:09Z",
     "evidence_cut_semantics": "BFF-owned implementation and focused integration validation are complete. Overall admission remains blocked because the current incidents owner has no non-trading infrastructure-health consume authority; no fake RuntimeBinding fallback or reviewer approval is asserted.",
     "id": "L12-BFF-001",
     "overall_admission": "blocked_dependency",
@@ -94,6 +94,12 @@
         "subject": "L12-BFF-001: anchor strict health integration proof"
       }
     ],
+    "pull_request": {
+      "base": "dev",
+      "head_sha": "5dd0d949c8de311a00e476fc3e42976c2e151fc5",
+      "number": 4274,
+      "url": "https://github.com/ajoe734/pantheon/pull/4274"
+    },
     "required_checks": []
   },
   "validation": {
@@ -331,6 +337,15 @@
       "reference": "docs/deployment/evidence/twelve-loop-gap/L12-BFF-001/README.md",
       "sequence": 1,
       "sha": "feeb580f80b2c49c24ca2636871b3ef1bb804ab3",
+      "status": "blocked_dependency"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "draft_pull_request_opened_dependency_blocked",
+      "recorded_at": "2026-07-27T19:07:09Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4274",
+      "sequence": 2,
+      "sha": "5dd0d949c8de311a00e476fc3e42976c2e151fc5",
       "status": "blocked_dependency"
     }
   ]
