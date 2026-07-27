@@ -1,11 +1,11 @@
 # L12-IMIT Closeout Reconciliation
 
-Task ID: `L12-IMIT-CLOSEOUT-RECONCILE-001`  
-Owner: `Codex`  
-Reviewer: `Codex2`  
-Evidence state: `owner_evidence_ready`  
-Verified at: `2026-07-27T17:02:44Z`  
-Repository: `ajoe734/pantheon`  
+Task ID: `L12-IMIT-CLOSEOUT-RECONCILE-001`
+Owner: `Codex`
+Reviewer: `Codex2`
+Evidence state: `owner_evidence_ready`
+Verified at: `2026-07-27T17:02:44Z`
+Repository: `ajoe734/pantheon`
 Base: `dev`
 
 ## Decision
