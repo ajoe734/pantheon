@@ -3,22 +3,21 @@
 **Title:** Provision installed Python package for telemetry AC2
 **Owner:** Claude · **Reviewer:** Codex2 · **Phase:** Twelve-loop closure
 **Repository:** `ajoe734/pantheon` · **Branch:** `task/OPS-L12-PYTHON-PACKAGING-PROVISION-001`
-**Base:** merged dev tip `7fedefb28` · **Validated head:** `4aab5cca4` (PR
+**Base:** merged dev tip `4cb436f80` · **Validated head:** `36b3750eb` (PR
 [#4232](https://github.com/ajoe734/pantheon/pull/4232))
-**First cut:** dev tip `643181a06`, head `c72842d9d` — superseded by the re-cut below.
+**Superseded cuts:** head `c72842d9d` on dev `643181a06`; head `4aab5cca4` on dev `7fedefb28`.
 
 > **Status: owner-asserted pass, pending independent review.** All four canonical
-> execution modes now pass from a foreign working directory with no `PYTHONPATH`.
-> The reviewer verdict is **not** asserted here — see *Review status* below.
+> execution modes pass from a foreign working directory with no `PYTHONPATH`, and
+> the documented worker bootstrap now works from the auto-worker's default
+> dependency-free interpreter. The reviewer verdict is **not** asserted here —
+> see *Review status* below.
 
-> **Re-cut on a synced head.** After the first cut, `dev` advanced twice and PR #4232
-> went `BEHIND`. Two conflict-free dev merges — `0a5f32db4`, then `4aab5cca4` onto
-> dev tip `7fedefb28` — brought the branch back to `CLEAN`. Between them they landed
-> OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001 and OPS-CI-PR-TRAILER-RANGE-001, which is
-> why the full telemetry count moved; **they changed no file this task owns**, so all
-> six implementation artifacts are byte-identical across both epochs.
-> `integrity.source_artifact_sha256_by_epoch` now pins both epochs so a reviewer can
-> check that mechanically. Every result below was re-observed at `4aab5cca4`.
+> **Third cut, answering an AC2 rejection.** Codex2 rejected AC2 in the real
+> auto-worker dispatch, and the rejection was right. This cut answers it with an
+> implementation change, not an argument. Both earlier epochs are **superseded**:
+> `integrity.source_artifact_sha256_by_epoch` now carries exactly one epoch,
+> because this cut changes four of the six files those epochs pinned.
 
 The machine-readable manifest is `evidence.json`; `evidence.sha256` pins it and
 this README. This README is the human summary and does not outrank the manifest.
@@ -37,14 +36,15 @@ distinction matters when reading this directory:
 
 The four-mode requirement is **AC3** in this manifest, matching this task's own
 canonical acceptance list. Where this README says "the four modes" it means the
-predecessor's AC2, which is this task's AC3.
+predecessor's AC2, which is this task's AC3. The rejection described below was
+against **this task's AC2**, the provisioning criterion.
 
 ## Why this task exists
 
 The Human/Ops in-progress audit of OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001 at
 `2026-07-26T22:41:34Z` rejected that task's attempt to narrow its acceptance and
 required either an implementation that makes every named mode pass, or a formal
-impossibility proof plus a scope revision. That task produced
+impossibility proof plus scope revision. That task produced
 [`AC2_FEASIBILITY_PROOF.md`](../OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001/AC2_FEASIBILITY_PROOF.md),
 which proved the requirement satisfiable by exactly one mechanism:
 
@@ -57,10 +57,78 @@ which proved the requirement satisfiable by exactly one mechanism:
 It offered two options. Human/Ops chose **Option A — authorize packaging**, and
 created this task to own it. This delivery is that mechanism.
 
+## The rejection, and what it found
+
+Codex2's dispatch ran the bootstrap exactly as `AI_COLLABORATION_GUIDE.md`
+documented it, on a real auto-worker host:
+
+```bash
+python3 scripts/dev/provision_python_distribution.py --quiet --print-python
+"$PANTHEON_PY" -m pytest ...
+```
+
+The first line exited `0`. The second died with `No module named pytest`.
+
+The cause was a wrong assumption, not a wrong mechanism. Provisioning installs
+import *paths*; the dependencies were inherited from **whichever interpreter
+invoked the script**. On an auto-worker host `command -v python3` is
+`/usr/bin/python3`, which has no pytest and no service dependency — so
+provisioning verified the three exported names, reported success, and handed
+back an environment that could not run the command the guide printed on the very
+next line. It only worked in the first two cuts because the owner had run it
+from the fleet `.venv`.
+
+That is a silent-success hole in a governed entry point, and the reviewer was
+right to call it AC2 rather than an environment quirk. `validation.commands[0]`
+reproduces the failure at the rejected head `ad719d9c2`;
+`validation.commands[1]` and `[2]` are the identical commands passing here.
+
+## The fix: a dependency-interpreter selection contract
+
+Provisioning no longer assumes the caller has the dependencies. It resolves a
+**dependency interpreter** separately, probing each candidate for `pytest` from a
+foreign cwd with no `PYTHONPATH` before accepting it:
+
+| # | Candidate | Why |
+|---|---|---|
+| 1 | `--dependency-python` | explicit operator choice |
+| 2 | `$PANTHEON_DEPENDENCY_PYTHON` | governed environment override |
+| 3 | the interpreter running the script | the dev-CI and fleet-environment path |
+| 4 | `$VIRTUAL_ENV` | the caller is inside an activated environment |
+| 5 | `<checkout>/.venv` | a checkout-local environment |
+| 6 | `<main worktree>/.venv` | derived from `git rev-parse --git-common-dir` |
+
+Row 6 is the one that answers the rejection: **every auto worker runs in a linked
+git worktree** whose dependencies live in the main checkout, and that derivation
+is how a bare `python3` in a worktree finds them. No supervisor or worker
+configuration is read to do it.
+
+Three properties make this a contract rather than a heuristic:
+
+- **It fails closed.** If no candidate qualifies, provisioning exits non-zero and
+  prints the whole candidate table with the reason each entry was rejected, both
+  remedies, and a pointer to the guide (`validation.commands[9]`). It never
+  returns an interpreter that cannot run the next documented command.
+- **An explicit choice is authoritative.** `--dependency-python` and
+  `$PANTHEON_DEPENDENCY_PYTHON` are never silently replaced by a fallback
+  (`validation.commands[10]`); a silent fallback is how the wrong environment
+  gets used unnoticed.
+- **The result is re-proved, not assumed.** `.venv-pantheon` is created *by* the
+  selected interpreter — so its version matches the site directories it
+  inherits — and every run ends by verifying that the interpreter it hands back
+  can import `pytest` from a foreign cwd with no `PYTHONPATH`.
+
+One subtlety is worth a reviewer's attention, because getting it wrong silently
+reopens the defect: candidates are deduplicated on their **absolute** path, never
+their resolved one. A venv interpreter is a symlink to the base interpreter that
+built it, so resolving would collapse every environment on the host into a single
+candidate and drop the only one that has the dependencies. That is fenced by
+`TestDependencyInterpreterContract::test_venv_interpreters_are_not_deduplicated_into_their_base`.
+
 ## The four modes
 
-Every command below ran from a foreign working directory under `env -i`, so no
-`PYTHONPATH` key existed in the environment at all.
+Every command below ran from a foreign working directory with no `PYTHONPATH`
+key in the environment at all.
 
 | Mode | Command | Before (dev `643181a06`) | After |
 |---|---|---|---|
@@ -72,18 +140,26 @@ Every command below ran from a foreign working directory under `env -i`, so no
 M2 and M3 were the gap. The pass is attributable to the installed distribution
 and nothing else: the same two commands under an **unprovisioned** interpreter,
 in the same environment, still fail with `ModuleNotFoundError: No module named
-'services'` (`validation.commands[8]`).
+'services'` (`validation.commands[6]` and `[7]`).
+
+**M1 changed status in this cut.** It used to `skipTest` when the provisioned
+interpreter had no pytest — which on the worker host meant the mode was
+*unproven* while the run still printed `OK`. It is now a hard assertion, and
+provisioning is required to fail closed rather than return such an interpreter.
+`validation.commands[8]` runs the whole AC2 module under the bare
+`/usr/bin/python3`: 20 tests, `OK`, and the only two skips are the two tests that
+are about the *ambient* interpreter by design.
 
 ## What was delivered
 
 | File | Role |
 |---|---|
-| `pyproject.toml` | The `pantheon-repo` distribution. Explicit `packages.find` allowlist exporting exactly `services`, `integrations`, `scripts`. No dependencies, no pytest config, no package data. |
-| `scripts/dev/provision_python_distribution.py` | The single governed install entry point, shared by dev CI and the auto-worker test bootstrap. |
-| `scripts/dev/test_provision_python_distribution.py` | Fast static packaging contract: the allowlist stays an allowlist, the config boundaries hold, the exported names agree across files, the script fails closed. |
-| `services/telemetry/test_discovery_imports.py` | The two tests that recorded M2/M3 as an expected failure are replaced by `TestAC2ModesUnderInstalledDistribution` (all four modes, unconditional pass) and `TestInstalledDistributionIsCanonical`. 15 → 20 tests. |
-| `.github/workflows/branch-ci.yml` | New `Python packaging provision` job: install `requirements.txt`, provision through the same script, run both suites. |
-| `AI_COLLABORATION_GUIDE.md` | § 3 *Python Test Environment Provisioning* — the worker bootstrap and its rules. |
+| `pyproject.toml` | The `pantheon-repo` distribution. Explicit `packages.find` allowlist exporting exactly `services`, `integrations`, `scripts`. No dependencies, no pytest config, no package data. **Unchanged by this cut.** |
+| `scripts/dev/provision_python_distribution.py` | The single governed install entry point, shared by dev CI and the auto-worker test bootstrap. This cut adds the dependency-interpreter selection contract, `--dependency-python`, `--recreate`, and the closing dependency verification. |
+| `scripts/dev/test_provision_python_distribution.py` | Fast static packaging contract, plus `TestDependencyInterpreterContract`: seven tests that drive the real script from a purpose-built dependency-free interpreter. 13 → 20 tests. |
+| `services/telemetry/test_discovery_imports.py` | `TestAC2ModesUnderInstalledDistribution` (all four modes) and `TestInstalledDistributionIsCanonical`. This cut turns M1's pytest skip into a hard assertion. 20 tests. |
+| `.github/workflows/branch-ci.yml` | `Python packaging provision` job: install `requirements.txt`, provision through the same script, run both suites. **Unchanged by this cut** — it already runs the new tests. |
+| `AI_COLLABORATION_GUIDE.md` | § 3 *Python Test Environment Provisioning*, now including *Where the dependencies come from*. |
 
 ## Two design decisions a reviewer should check
 
@@ -97,7 +173,15 @@ and never know. That is precisely the duplicate-module-identity hazard this task
 is required not to introduce. Two rules close it: the default target is a
 checkout-scoped `.venv-pantheon`, and every run verifies from a foreign cwd with
 no `PYTHONPATH` that each exported name resolves *inside this checkout*, failing
-closed and naming the offending path otherwise (`validation.commands[12]`).
+closed and naming the offending path otherwise.
+
+Dependency inheritance does not weaken that. The inherited site directories are
+written into a `.pth`, and `site.addpackage` appends the listed directories to
+`sys.path` **without** recursing into their own `.pth` files — so a Pantheon
+editable install belonging to a *different* checkout in the dependency
+environment is inherited as neither a path entry nor a finder. Anything inside
+the checkout is dropped from the inheritance list outright, and
+`verify_checkout_binding` re-proves the mapping on every run regardless.
 
 `.venv-pantheon/` matches the existing `.venv-*/` rule in `.gitignore`, so
 provisioning a worker worktree does not dirty it. No `.gitignore` change was
@@ -114,71 +198,76 @@ editable install does not. Observed under the provisioned interpreter
 - the repository root is **not** on `sys.path` — the distribution installs a
   meta-path finder with an explicit three-name mapping, so there is no
   process-global `sys.path` mutation on any code path;
-- `cli`, `gate`, `workflows`, `conftest`, `mlflow_adapter`, `main`, `capture`,
-  and `telemetry` all resolve to `None`;
-- `top_level.txt` contains exactly three lines.
+- `cli`, `gate`, `workflows`, `conftest`, `mlflow_adapter` all resolve to `None`;
+- the allowlist exports exactly three names.
 
 `TestInstalledDistributionIsCanonical` fences all three, so a future switch to a
 cruder mechanism fails the suite.
 
 ## Verification
 
-| Run | Result |
-|---|---|
-| Baseline `pytest services/telemetry -q` at dev `643181a06` (throwaway worktree, removed after) | 296 passed, 1 skipped |
-| `pytest services/telemetry -q` at head `c72842d9d` | **301 passed, 1 skipped** — exactly +5, matching the 15 → 20 growth of the one changed module |
-| `pytest services/telemetry/test_discovery_imports.py -q` | 20 passed, **0 skipped** |
-| `pytest scripts/dev/test_provision_python_distribution.py -q` | 13 passed |
-| CI rehearsal: the packaging job's exact step sequence in a from-scratch virtualenv | 33 passed |
-| Fail-closed paths: unprovisioned `--check-only`, `--mode current` on the shared interpreter, cross-checkout binding | exit 1 with a specific message in all three |
-| Rootdir regression | `rootdir: <repo>`, `configfile: pytest.ini` — unchanged |
-
-Re-observed at the synced head `4aab5cca4`:
+Observed at head `36b3750eb` on merged dev tip `4cb436f80`.
 
 | Run | Result |
 |---|---|
-| `pytest services/telemetry/test_discovery_imports.py -q` — the four modes and the unprovisioned control | 20 passed, 20 subtests, 0 skipped |
-| `pytest scripts/test_ops_l12_python_packaging_provision_evidence.py scripts/dev/test_provision_python_distribution.py -q` | 23 passed, 13 subtests |
-| `pytest services/telemetry -q` | 353 passed, 1 skipped |
-| Exact-head required checks on PR #4232 (runs `30228827007` pull_request, `30228825268` push) | all four Branch CI Gate jobs **success** on both events |
-| Implementation digests at `4aab5cca4` vs the `c72842d9d` epoch | identical for all six files |
+| **The rejection, at the rejected head `ad719d9c2`** — documented bootstrap from `/usr/bin/python3`, then `-m pytest` | provisioning exit `0`, then **`No module named pytest`** |
+| **The same commands here** | provisioning exit `0` naming `<main worktree>/.venv` as the dependency source, then **40 passed, 23 subtests** |
+| Control: `/usr/bin/python3 -c 'import pytest'` | `ModuleNotFoundError` — nothing ambient is certifying the result |
+| Baseline `pytest services/telemetry -q` at dev `4cb436f80` (throwaway worktree, removed after) | 348 passed, 1 skipped |
+| `pytest services/telemetry -q` under the bootstrapped interpreter | **353 passed, 1 skipped** — exactly +5, matching the 15 → 20 growth of the one changed module |
+| `python3 -m unittest services.telemetry.test_discovery_imports -v` under the **bare system interpreter** | Ran 20, `OK (skipped=2)`; M1 passes, the two skips are the ambient-interpreter tests |
+| `pytest scripts/dev/test_provision_python_distribution.py -q` (fleet interpreter) | 20 passed, 3 subtests |
+| Unprovisioned M2 / M3 controls | `FAILED (errors=1)` / `No module named 'services'` |
+| Fail-closed paths: no qualifying candidate, an explicit candidate without the deps, `--mode current` on the shared interpreter | exit 1 with a specific, actionable message in all three |
+| Exact-head required checks on PR #4232 (runs `30231402274` pull_request, `30231401041` push) | all four Branch CI Gate jobs **success** on both events |
 
-The telemetry count rose from 301 to 353 because the sync brought in
-OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001's `test_infrastructure_health_ingest.py`
-and its siblings, not because this task changed: none of its six files differ
-between the two epochs. The single skip is pre-existing and unrelated
+The single skip is pre-existing and unrelated
 (`test_l12_tel_001_durable_ingest.py:255`, needs `PANTHEON_TEST_NATS_URL`); it is
-identical in the baseline, post-change, and synced-head runs.
+identical in the baseline and post-change runs.
 
 ## What is not claimed
 
 - **No reviewer verdict.** Codex2's independent decision must be appended to
-  `record_log` before `done`. Auto-merge is deliberately **not** enabled on PR
-  #4232 so that no merge can precede that decision.
-- **No merge commit.** PR #4232 is open, `CLEAN` and `MERGEABLE` at the time of
-  this re-cut. A manifest cannot contain the merge commit of the PR that
+  `record_log` before `done`. Auto-merge has never been enabled on PR #4232 so
+  that no merge can precede that decision.
+- **No merge commit.** A manifest cannot contain the merge commit of the PR that
   introduces it; the governed closeout checkpoint binds that.
+- **Only one source epoch.** The two earlier epochs are superseded, not dropped
+  for convenience: this cut changes four of the six files they pinned, and the
+  gate checks every recorded digest against the committed bytes, so carrying
+  them would describe trees that no longer exist. They remain readable in this
+  file's git history and in `record_log`.
 - **The new packaging job is not a branch-protection required check.** Adding it
   is a repository-settings change this task does not own. Recorded as a residual
   risk.
+- **Discovery is host-shaped.** The candidate list encodes where Pantheon
+  dependencies live on the hosts this repository runs on. A host that keeps them
+  elsewhere gets a loud failure and two authoritative overrides, not a guess.
+  Recorded as a residual risk.
 - **No live supervisor configuration was read or written**, and no supervisor
   process-control action was requested. `services/telemetry/capture.py` and
-  `feedback_adapter.py` are byte-identical to dev `643181a06`.
+  `feedback_adapter.py` are byte-identical to dev.
 
 ## Review status
 
 Awaiting Codex2. The reviewer's independent check should target, at minimum:
 
-1. that `validation.commands[8]` — the unprovisioned control — actually fails,
-   so the M2/M3 passes are attributable to the distribution;
-2. that the allowlist exports three names and no more, on the current tree;
-3. that `evidence.sha256` matches the committed bytes, and that
+1. **the rejection is actually fixed** — run the guide's own command from the
+   worker default interpreter, with no `PANTHEON_DEPENDENCY_PYTHON` and no
+   `PYTHONPATH`, and confirm `"$PANTHEON_PY" -m pytest` now runs. This is
+   `validation.commands[1]` and `[2]`, and it is the load-bearing check;
+2. **the failure mode is closed, not moved** — `validation.commands[9]` and
+   `[10]`: no qualifying candidate, and an explicit candidate without the
+   dependencies, must both exit non-zero with a named diagnostic rather than
+   returning an interpreter;
+3. that `validation.commands[6]` and `[7]` — the unprovisioned controls — still
+   fail, so the M2/M3 passes remain attributable to the distribution;
+4. that the allowlist exports three names and no more, on the current tree;
+5. that `evidence.sha256` matches the committed bytes and
    `integrity.source_artifact_sha256_by_epoch` matches the implementation files
-   at **both** epochs, `c72842d9d` and `4aab5cca4` (the gate checks both
-   mechanically, and their agreement is what makes the sync a no-op for review);
-4. that nothing under `.orchestrator/` or any live supervisor config is in the
-   diff;
-5. that the two sync merges really are confined to other lanes' files —
-   `git diff --stat 7bf1fd5f5..4aab5cca4 -- pyproject.toml scripts/dev
-   .github/workflows/branch-ci.yml AI_COLLABORATION_GUIDE.md
-   services/telemetry/test_discovery_imports.py` is empty.
+   at the single epoch `36b3750eb` (the gate checks this mechanically);
+6. that nothing under `.orchestrator/` or any live supervisor config is in the
+   diff, and that `pyproject.toml`, `.github/workflows/branch-ci.yml`,
+   `services/telemetry/capture.py` and `feedback_adapter.py` are untouched by
+   this cut — `git diff --stat ad719d9c2..36b3750eb --` over those paths is
+   empty.
