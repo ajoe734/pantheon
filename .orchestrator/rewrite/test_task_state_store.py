@@ -838,6 +838,51 @@ def test_unusable_checkpoint_degrades_to_full_replay(tmp_path: Path) -> None:
     assert json.loads(checkpoint.read_text(encoding="utf-8"))["event_count"] == 1
 
 
+def test_checkpoint_head_must_equal_the_actual_prefix_tail(tmp_path: Path) -> None:
+    """A checkpoint-only write cannot substitute an internally valid state."""
+
+    path = tmp_path / "task-state-events.jsonl"
+    real_state = board(("REAL-001", "review"))
+    store.append_state_commit(path, real_state, source="test")
+    checkpoint_path = store._checkpoint_path(path)
+    checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+
+    forged_state = board(("FORGED-001", "done"))
+    forged_event = {
+        "version": store.EVENT_VERSION,
+        "type": store.EVENT_TYPE_STATE_COMMITTED,
+        "sequence": 1,
+        "committed_at": "2026-07-27T00:00:00Z",
+        "source": "forged-checkpoint-only",
+        "previous_event_sha256": None,
+        "state_sha256": store.sha256_json(forged_state),
+        "state": forged_state,
+    }
+    event_sha256 = store.sha256_json(forged_event)
+    forged_event["event_sha256"] = event_sha256
+    forged_event["event_id"] = f"task-state-{event_sha256}"
+    store.validate_event(
+        forged_event,
+        expected_sequence=1,
+        previous_sha256=None,
+    )
+
+    # The journal and its exact prefix digest stay untouched. Only the derived
+    # cache is edited, using a fully self-consistent forged event.
+    journal_before = path.read_bytes()
+    checkpoint["last_event"] = forged_event
+    checkpoint_path.write_text(json.dumps(checkpoint), encoding="utf-8")
+
+    accelerated = store.load_snapshot(path)
+
+    assert path.read_bytes() == journal_before
+    assert accelerated["resumed_from_checkpoint"] is False
+    assert accelerated["state"] == real_state
+    assert accelerated["state"] != forged_state
+    repaired_checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+    assert repaired_checkpoint["last_event"]["state"] == real_state
+
+
 def test_append_does_not_replay_the_journal_to_read_back_its_own_line(
     tmp_path: Path, monkeypatch
 ) -> None:

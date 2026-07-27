@@ -8,6 +8,7 @@ import tempfile
 import unittest
 import os
 import json
+import signal
 import subprocess
 import sys
 import time
@@ -1694,7 +1695,15 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             )
             self.assertIn("original_path=", (quarantined[0] / "ORCHESTRATOR_QUARANTINE.txt").read_text(encoding="utf-8"))
             run.assert_called_once_with(
-                ["git", "worktree", "add", "-b", "task/AG-WS-OPS-002", str(worktree_path), "origin/dev"],
+                [
+                    "git",
+                    "worktree",
+                    "add",
+                    "-b",
+                    "task/AG-WS-OPS-002",
+                    str(worktree_path),
+                    "origin/dev",
+                ],
                 cwd=repo_root,
                 capture_output=True,
                 text=True,
@@ -2253,7 +2262,15 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             "message": "wake",
         }
         state = {"queue": {"events": {}}, "workers": {}}
-        request = object()
+        request = supervisor.DeliveryRequest(
+            agent_id="codex",
+            provider="codex",
+            delivery_mode="codex",
+            message="wake",
+            task_id="BUS-VAL-004",
+            reason="owned_in_progress_dispatch",
+            metadata={"workspace_path": "/tmp/workers/bus-val-004"},
+        )
         delivery = {"manual_confirmation_required": False, "auto_delivered": True}
 
         with (
@@ -2272,7 +2289,10 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         build_request.assert_called_once_with(self.config, queue_payload)
         start_worker.assert_called_once()
         sync_dispatched_task_status.assert_called_once_with(
-            self.config, queue_payload, run_id="run-123"
+            self.config,
+            queue_payload,
+            run_id="run-123",
+            workspace_path="/tmp/workers/bus-val-004",
         )
 
     def test_process_queue_skips_second_event_when_task_worker_is_active(self) -> None:
@@ -4695,6 +4715,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                     "run_id": "gemini-run-1",
                     "queue_event_id": "evt-current",
                     "status": "running",
+                    "workspace_path": "/tmp/workers/p3-001",
                 }
             },
         }
@@ -4711,8 +4732,13 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         record = state["queue"]["events"]["evt-current"]
         self.assertEqual(record["status"], "started")
         self.assertEqual(record["run_id"], "gemini-run-1")
-        sync_dispatched_task_status.assert_called_once_with(
-            self.config, queue_payload, run_id="gemini-run-1"
+        self.assertEqual(
+            sync_dispatched_task_status.call_args.kwargs["run_id"],
+            "gemini-run-1",
+        )
+        self.assertEqual(
+            Path(sync_dispatched_task_status.call_args.kwargs["workspace_path"]),
+            Path("/tmp/workers/p3-001"),
         )
 
 
@@ -4800,17 +4826,58 @@ class DispatchStatusSyncTests(unittest.TestCase):
             "PANTHEON_COMMAND_ROOT": str(self.root),
             "PANTHEON_COMMAND_RUNTIME_SHA": "installed-sha",
         }
+        workspace = self.root / "worker"
+        workspace.mkdir()
 
         with (
+            mock.patch.dict(
+                supervisor.os.environ,
+                {
+                    "PANTHEON_WORKTREE_ROOT": "/tmp/inherited-other-worker",
+                    "ORCH_WORKSPACE_PATH": "/tmp/inherited-other-worker",
+                },
+                clear=False,
+            ),
             mock.patch.object(supervisor, "status_command_runtime_env", return_value=command_env),
             mock.patch.object(supervisor.subprocess, "run", return_value=mock.Mock(returncode=0, stderr="", stdout="")) as run_mock,
         ):
             changed = supervisor.sync_dispatched_task_status(
-                self.config, event, run_id="copilot-run-7"
+                self.config,
+                event,
+                run_id="copilot-run-7",
+                workspace_path=workspace,
             )
 
         self.assertTrue(changed)
-        self.assertEqual(run_mock.call_args.kwargs["env"]["ORCH_RUN_ID"], "copilot-run-7")
+        command_process_env = run_mock.call_args.kwargs["env"]
+        self.assertEqual(command_process_env["ORCH_RUN_ID"], "copilot-run-7")
+        self.assertEqual(command_process_env["PANTHEON_WORKTREE_ROOT"], str(workspace))
+        self.assertEqual(command_process_env["ORCH_WORKSPACE_PATH"], str(workspace))
+
+    def test_sync_dispatched_task_status_rejects_run_id_without_workspace(self) -> None:
+        event = {
+            "task_id": "APP-002-W1-FRONT-HANDOFF",
+            "target_agent": "copilot",
+            "target_display_name": "Copilot",
+            "reason": "owned_ready_dispatch",
+        }
+
+        with (
+            mock.patch.object(supervisor.subprocess, "run") as run_mock,
+            mock.patch.object(supervisor, "write_activity_log") as activity_log,
+        ):
+            changed = supervisor.sync_dispatched_task_status(
+                self.config,
+                event,
+                run_id="copilot-run-7",
+            )
+
+        self.assertFalse(changed)
+        run_mock.assert_not_called()
+        self.assertIn(
+            "has no workspace binding",
+            activity_log.call_args.args[1]["message"],
+        )
 
     def test_sync_dispatched_task_status_binds_worker_workspace_env(self) -> None:
         event = {
@@ -4851,7 +4918,10 @@ class DispatchStatusSyncTests(unittest.TestCase):
             mock.patch.object(supervisor.subprocess, "run", return_value=mock.Mock(returncode=0, stderr="", stdout="")) as run_mock,
         ):
             changed = supervisor.sync_dispatched_task_status(
-                self.config, event, run_id="copilot-run-7"
+                self.config,
+                event,
+                run_id="copilot-run-7",
+                workspace_path=workspace,
             )
 
         self.assertTrue(changed)
@@ -4928,6 +4998,7 @@ class DispatchStatusSyncTests(unittest.TestCase):
                 self.config,
                 event,
                 run_id="copilot-run-7",
+                workspace_path=self.root,
             )
             self.assertFalse(changed)
             return False
@@ -4953,6 +5024,14 @@ class DispatchStatusSyncTests(unittest.TestCase):
             ["lock_enter", "locked_cycle", "lock_exit", "status_command"],
         )
         self.assertEqual(run_mock.call_args.kwargs["env"]["ORCH_RUN_ID"], "copilot-run-7")
+        self.assertEqual(
+            run_mock.call_args.kwargs["env"]["PANTHEON_WORKTREE_ROOT"],
+            str(self.root),
+        )
+        self.assertEqual(
+            run_mock.call_args.kwargs["env"]["ORCH_WORKSPACE_PATH"],
+            str(self.root),
+        )
 
     def test_run_once_probes_providers_before_taking_the_runtime_lock(self) -> None:
         """A gh auth probe must not be charged to the exclusive runtime lock.
@@ -4991,6 +5070,190 @@ class DispatchStatusSyncTests(unittest.TestCase):
         self.assertEqual(
             call_order,
             ["provider_probe", "lock_enter", "locked_cycle", "lock_exit"],
+        )
+
+    def test_run_once_fetches_worker_base_before_taking_runtime_lock(self) -> None:
+        """The exact origin/dev network refresh must precede admission."""
+
+        call_order: list[str] = []
+
+        @contextlib.contextmanager
+        def runtime_lock(*_args: object, **_kwargs: object):
+            call_order.append("lock_enter")
+            try:
+                yield
+            finally:
+                call_order.append("lock_exit")
+
+        def fetch_base(_repo_root: Path, base_ref: str) -> tuple[bool, None]:
+            self.assertEqual(base_ref, "origin/dev")
+            call_order.append("fetch_base")
+            return True, None
+
+        def locked_cycle(*_args: object, **_kwargs: object) -> bool:
+            call_order.append("locked_cycle")
+            self.assertEqual(
+                supervisor._worker_base_ref_precondition("origin/dev"),
+                (True, None),
+            )
+            return False
+
+        with (
+            mock.patch.object(supervisor, "probe_provider_reports", return_value=({}, {})),
+            mock.patch.object(supervisor, "load_runtime_state_snapshot", return_value={}),
+            mock.patch.object(supervisor, "pending_worker_base_refs", return_value={"origin/dev"}),
+            mock.patch.object(supervisor, "_fetch_worker_base_ref", side_effect=fetch_base),
+            mock.patch.object(supervisor, "sync_github_bus", return_value=False),
+            mock.patch.object(supervisor, "runtime_state_lock", side_effect=runtime_lock),
+            mock.patch.object(supervisor, "_run_once_locked", side_effect=locked_cycle),
+        ):
+            changed = supervisor.run_once(self.config, watch=False)
+
+        self.assertFalse(changed)
+        self.assertEqual(
+            call_order,
+            ["fetch_base", "lock_enter", "locked_cycle", "lock_exit"],
+        )
+
+    def test_run_once_syncs_github_bus_before_taking_the_runtime_lock(self) -> None:
+        """No gh/API subprocess may extend the exclusive admission hold."""
+
+        call_order: list[str] = []
+
+        @contextlib.contextmanager
+        def runtime_lock(*_args: object, **_kwargs: object):
+            call_order.append("lock_enter")
+            try:
+                yield
+            finally:
+                call_order.append("lock_exit")
+
+        def github_sync(
+            _config: dict[str, object],
+            runtime_snapshot: dict[str, object],
+        ) -> bool:
+            call_order.append("github_sync")
+            self.assertEqual(runtime_snapshot, {"snapshot": True})
+            return True
+
+        def locked_cycle(*_args: object, **kwargs: object) -> bool:
+            call_order.append("locked_cycle")
+            self.assertTrue(kwargs["prelock_changed"])
+            return True
+
+        with (
+            mock.patch.object(supervisor, "probe_provider_reports", return_value=({}, {})),
+            mock.patch.object(
+                supervisor,
+                "load_runtime_state_snapshot",
+                return_value={"snapshot": True},
+            ),
+            mock.patch.object(supervisor, "sync_github_bus", side_effect=github_sync),
+            mock.patch.object(supervisor, "runtime_state_lock", side_effect=runtime_lock),
+            mock.patch.object(supervisor, "_run_once_locked", side_effect=locked_cycle),
+        ):
+            changed = supervisor.run_once(self.config, watch=False)
+
+        self.assertTrue(changed)
+        self.assertEqual(
+            call_order,
+            ["github_sync", "lock_enter", "locked_cycle", "lock_exit"],
+        )
+
+    def test_run_once_confirms_worker_termination_after_runtime_lock_release(self) -> None:
+        """SIGTERM is immediate; confirm_kill's poll sleeps are deferred."""
+
+        call_order: list[str] = []
+
+        @contextlib.contextmanager
+        def runtime_lock(*_args: object, **_kwargs: object):
+            call_order.append("lock_enter")
+            try:
+                yield
+            finally:
+                call_order.append("lock_exit")
+
+        def send_signal(pid: int, sent_signal: int) -> None:
+            self.assertEqual((pid, sent_signal), (4242, signal.SIGTERM))
+            call_order.append("sigterm")
+
+        def confirm_kill(pid: int, **_kwargs: object) -> bool:
+            self.assertEqual(pid, 4242)
+            self.assertTrue(_kwargs["term_already_sent"])
+            self.assertTrue(_kwargs["is_alive"](pid))
+            call_order.append("confirm_kill")
+            return True
+
+        def locked_cycle() -> bool:
+            self.assertTrue(supervisor.terminate_worker_pid(4242))
+            return True
+
+        with (
+            mock.patch.object(supervisor, "runtime_state_lock", side_effect=runtime_lock),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "worker_pid_start_ticks", return_value=777),
+            mock.patch.object(supervisor.os, "kill", side_effect=send_signal),
+            mock.patch.object(
+                supervisor.rewrite_worker_lifecycle,
+                "confirm_kill",
+                side_effect=confirm_kill,
+            ),
+        ):
+            changed = supervisor._run_with_deferred_dispatch_status_syncs(
+                self.config,
+                locked_cycle,
+            )
+
+        self.assertTrue(changed)
+        self.assertEqual(
+            call_order,
+            ["lock_enter", "sigterm", "lock_exit", "confirm_kill"],
+        )
+
+    def test_deferred_termination_does_not_signal_a_reused_pid(self) -> None:
+        """The lock-release confirmer is bound to the worker's start time."""
+
+        call_order: list[str] = []
+        start_ticks = iter([111, 222])
+
+        def confirm_kill(pid: int, **kwargs: object) -> bool:
+            self.assertEqual(pid, 4242)
+            call_order.append("confirm_kill")
+            # PID 4242 now belongs to a different process. The identity-bound
+            # liveness callback must report the original worker gone.
+            self.assertFalse(kwargs["is_alive"](pid))
+            return True
+
+        with (
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(
+                supervisor,
+                "worker_pid_start_ticks",
+                side_effect=lambda _pid: next(start_ticks),
+            ),
+            mock.patch.object(
+                supervisor.os,
+                "kill",
+                side_effect=lambda _pid, sent_signal: call_order.append(
+                    f"signal:{sent_signal}"
+                ),
+            ),
+            mock.patch.object(
+                supervisor.rewrite_worker_lifecycle,
+                "confirm_kill",
+                side_effect=confirm_kill,
+            ),
+        ):
+            self.assertTrue(
+                supervisor._run_with_deferred_dispatch_status_syncs(
+                    self.config,
+                    lambda: supervisor.terminate_worker_pid(4242),
+                )
+            )
+
+        self.assertEqual(
+            call_order,
+            [f"signal:{signal.SIGTERM}", "confirm_kill"],
         )
 
     def test_sync_status_pipeline_uses_installed_command_runtime(self) -> None:
@@ -6210,12 +6473,22 @@ class SupervisorRuntimeAdmissionLockTests(unittest.TestCase):
         locked_operation_source = inspect.getsource(
             supervisor._run_with_deferred_dispatch_status_syncs
         )
+        locked_cycle_source = inspect.getsource(supervisor._run_once_locked)
         queue_writer_source = inspect.getsource(supervisor.save_event_queue)
 
         self.assertIn("_run_with_deferred_dispatch_status_syncs(", run_once_source)
         self.assertIn("lambda: _run_once_locked(", run_once_source)
+        self.assertIn('"sync_github_bus"', run_once_source)
+        self.assertNotIn('"sync_github_bus"', locked_cycle_source)
+        self.assertNotIn("probe_provider_reports", locked_cycle_source)
+        self.assertIn("_fetch_worker_base_ref", run_once_source)
+        self.assertNotIn("_fetch_worker_base_ref", locked_cycle_source)
         self.assertIn(
             "with runtime_state_lock(config, shared=False",
+            locked_operation_source,
+        )
+        self.assertIn(
+            "for pid, expected_start_ticks, term_sent in deferred_terminations",
             locked_operation_source,
         )
         self.assertEqual(
@@ -10272,6 +10545,88 @@ class WorktreeDirtClassificationTests(unittest.TestCase):
         subprocess.run(["git", "add", "."], cwd=repo, check=True)
         subprocess.run(["git", "commit", "-qm", message], cwd=repo, check=True)
 
+    def test_worker_base_fetch_updates_origin_dev_with_master_only_refspec(self) -> None:
+        """An explicit branch fetch must update the ref freshness checks consume."""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            origin = root / "origin.git"
+            source = root / "source"
+            consumer = root / "consumer"
+            subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+            source.mkdir()
+            consumer.mkdir()
+            subprocess.run(["git", "init", "-q", "-b", "master"], cwd=source, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=source, check=True)
+            subprocess.run(["git", "config", "user.name", "Test User"], cwd=source, check=True)
+            (source / "tracked.txt").write_text("initial\n", encoding="utf-8")
+            self._commit_all(source, "initial")
+            initial_sha = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=source,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+            subprocess.run(["git", "remote", "add", "origin", str(origin)], cwd=source, check=True)
+            subprocess.run(["git", "push", "-q", "origin", "master"], cwd=source, check=True)
+            subprocess.run(["git", "checkout", "-q", "-b", "dev"], cwd=source, check=True)
+            subprocess.run(["git", "push", "-q", "origin", "dev"], cwd=source, check=True)
+
+            subprocess.run(["git", "init", "-q"], cwd=consumer, check=True)
+            subprocess.run(["git", "remote", "add", "origin", str(origin)], cwd=consumer, check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "config",
+                    "remote.origin.fetch",
+                    "+refs/heads/master:refs/remotes/origin/master",
+                ],
+                cwd=consumer,
+                check=True,
+            )
+            subprocess.run(["git", "fetch", "-q", "origin", "master"], cwd=consumer, check=True)
+            subprocess.run(
+                ["git", "update-ref", "refs/remotes/origin/dev", initial_sha],
+                cwd=consumer,
+                check=True,
+            )
+
+            (source / "tracked.txt").write_text("advanced\n", encoding="utf-8")
+            self._commit_all(source, "advance dev")
+            advanced_sha = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=source,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+            subprocess.run(["git", "push", "-q", "origin", "dev"], cwd=source, check=True)
+
+            # This is the live failure shape: FETCH_HEAD advances, but the
+            # master-only configured refspec leaves origin/dev untouched.
+            subprocess.run(["git", "fetch", "-q", "origin", "dev"], cwd=consumer, check=True)
+            stale_sha = subprocess.run(
+                ["git", "rev-parse", "origin/dev"],
+                cwd=consumer,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+            self.assertEqual(stale_sha, initial_sha)
+
+            fetched, error = supervisor._fetch_worker_base_ref(consumer, "origin/dev")
+
+            self.assertTrue(fetched, error)
+            refreshed_sha = subprocess.run(
+                ["git", "rev-parse", "origin/dev"],
+                cwd=consumer,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+            self.assertEqual(refreshed_sha, advanced_sha)
+
     def test_clean_status(self) -> None:
         self.assertEqual(supervisor._classify_worktree_dirt(""), ("clean", []))
         self.assertEqual(supervisor._classify_worktree_dirt("\n  \n"), ("clean", []))
@@ -10378,6 +10733,8 @@ class WorktreeDirtClassificationTests(unittest.TestCase):
             subprocess.run(["git", "checkout", "-q", "-b", "task/OPS-GATEFIX-001"], cwd=repo, check=True)
             # Modified-but-unstaged real change (the common superseded-run residue).
             (repo / "svc.py").write_text("unstaged worker WIP\n", encoding="utf-8")
+            fetched, fetch_error = supervisor._fetch_worker_base_ref(repo, "origin/dev")
+            self.assertTrue(fetched, fetch_error)
 
             ok, detail = supervisor._refresh_reused_worker_worktree(
                 repo, repo, "origin/dev",
