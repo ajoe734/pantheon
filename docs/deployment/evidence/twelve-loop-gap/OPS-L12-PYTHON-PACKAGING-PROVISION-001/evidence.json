@@ -16,11 +16,11 @@
     },
     "task": {
         "base_branch": "dev",
-        "evidence_cut_at": "2026-07-27T02:12:09Z",
+        "evidence_cut_at": "2026-07-27T12:42:18Z",
         "evidence_cut_semantics": "Owner third cut on task/OPS-L12-PYTHON-PACKAGING-PROVISION-001, taken at implementation head 36b3750eb5e4af593bedf822e28b59e53cb3cdfb on merged dev tip 4cb436f80f82657cbd58a8527a3ca374f41253aa. It supersedes the two earlier cuts entirely, including their epoch digests, because this cut changes implementation files that those epochs pinned. The first cut was taken at head c72842d9de8afeae46d8953174b18698bd2c10e3 on dev tip 643181a067ec5c344faac0766c69de0d5cfb32eb; the second re-cut it at 4aab5cca40a6815876beb8d77972bb71d12d757d on dev tip 7fedefb281dd416e0412e935c48e866438f56e6d after two conflict-free dev merges, and asserted the same digests for both epochs because those merges changed no owned file. Codex2 then rejected AC2 in the actual auto-worker dispatch, and the rejection was correct: on that head the documented bootstrap started with plain python3, which on an auto-worker host is /usr/bin/python3 with no pytest, so provisioning reported success and returned an interpreter whose very next documented command died with 'No module named pytest'. validation.commands[0] reproduces that failure at the rejected head ad719d9c25b84813231731dedaefe405406d926a and validation.commands[1] shows the same command passing at this head. Because scripts/dev/provision_python_distribution.py, its contract test, services/telemetry/test_discovery_imports.py and AI_COLLABORATION_GUIDE.md all changed, integrity.source_artifact_sha256_by_epoch now carries exactly one epoch - this one. Carrying the superseded epochs forward would make the manifest describe trees that no longer exist and would fail scripts/test_ops_l12_python_packaging_provision_evidence.py, which checks every recorded digest against the committed bytes. The prior epoch shas remain readable in the git history of this file and in record_log. One self-reference is impossible and is stated rather than hidden: every sha recorded here, including implementation_delivery.pull_request.head_sha, is 36b3750eb5e4af593bedf822e28b59e53cb3cdfb as it stood at cut time. The evidence commit carrying this cut is a child of that head and changes no implementation file - it touches only this evidence directory and the task brief - so it moves the pull-request head without moving anything the exact-head check conclusions are about. The terminal binding of the pull-request head and merge commit is recorded in the governed closeout checkpoint, not in this file.",
         "id": "OPS-L12-PYTHON-PACKAGING-PROVISION-001",
         "overall_admission": "owner_asserted_pass_pending_independent_review",
-        "owner": "Claude",
+        "owner": "Codex",
         "phase": "Twelve-loop closure",
         "product_level_required": false,
         "repository": "ajoe734/pantheon",
@@ -38,7 +38,7 @@
             "The repository at dev 643181a06 has no pyproject.toml, setup.py, or setup.cfg anywhere; `git ls-files` matches none of them, so the repository was not installable and `services` was reachable only through the working directory or PYTHONPATH.",
             "pytest.ini at dev 643181a06 - the pytest configuration and rootdir anchor, which this task must not displace.",
             "requirements.txt at dev 643181a06 - the declared root-level test dependency file, which this task must not duplicate or supersede.",
-            "ai-status.json row OPS-L12-PYTHON-PACKAGING-PROVISION-001 - owner Claude, reviewer Codex2, status todo, and the six canonical acceptance criteria this manifest answers one by one."
+            "ai-status.json row OPS-L12-PYTHON-PACKAGING-PROVISION-001 - current owner Codex after governed reassignment from implementation author Claude, reviewer Codex2, status in_progress, and the six canonical acceptance criteria this manifest answers one by one."
         ],
         "desired_state": [
             ".orchestrator/task-briefs/ops_l12_python_packaging_provision_001.md - task brief and acceptance scope of record.",
@@ -48,7 +48,7 @@
         "task_packet": ".orchestrator/task-briefs/ops_l12_python_packaging_provision_001.md"
     },
     "scope": {
-        "authoritative_write_owner": "Claude (task owner) for the root packaging declaration, the provisioning entry point, the dev CI provisioning job, the telemetry import-integrity regression module, and this task's evidence artifacts. This task owns no runtime, service, or deployment surface. No independent reviewer verdict is asserted by this cut.",
+        "authoritative_write_owner": "Codex is the current task owner after the governed reassignment from Claude and owns review handoff and finalization. Claude remains the recorded author of the root packaging declaration, provisioning entry point, dev CI provisioning job, telemetry import-integrity regression module, and the third evidence cut; those historical record_log entries are preserved. This task owns no runtime, service, or deployment surface. No independent reviewer verdict is asserted by this owner-adoption update.",
         "composes_with": [
             "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001 - this task supplies the Option A mechanism its AC2_FEASIBILITY_PROOF.md identified as the only admissible one, and converts the two boundary tests that task left recording an unresolved gap into unconditional pass assertions.",
             "merged dev tip 4cb436f80f82657cbd58a8527a3ca374f41253aa - the base this delivery is branched from and verified against. The two earlier bases, 643181a067ec5c344faac0766c69de0d5cfb32eb and 7fedefb281dd416e0412e935c48e866438f56e6d, are superseded.",
@@ -323,7 +323,7 @@
             "status": "pass"
         },
         "two_person_approval": {
-            "proof": "Owner Claude and reviewer Codex2 are distinct and match the canonical ai-status.json row. No reviewer verdict is asserted by this cut: at cut time the task branch was not yet pushed and no review had been requested. Codex2's independent decision must be appended to record_log before done.",
+            "proof": "Current owner Codex and reviewer Codex2 are distinct and match the canonical ai-status.json row after the governed owner reassignment from implementation author Claude. No reviewer verdict is asserted by this owner-adoption update. Codex2's independent decision must be appended to record_log before done.",
             "status": "pass"
         }
     },
@@ -633,6 +633,15 @@
             "sha": "36b3750eb5e4af593bedf822e28b59e53cb3cdfb",
             "status": "owner_asserted_pass_pending_independent_review",
             "sequence": 15
+        },
+        {
+            "actor": "Codex",
+            "kind": "owner_reassignment_adoption",
+            "recorded_at": "2026-07-27T12:42:18Z",
+            "reference": "Governed task row reassigned final ownership from Claude to Codex while preserving Claude as the implementation and evidence-cut actor. Codex adopted the validated head and the responsibility for Codex2 review handoff and closeout; no implementation assertion or reviewer verdict changed.",
+            "sha": "6773c64ee4166198456f573f406a9bd364cfdef7",
+            "status": "owner_asserted_pass_pending_independent_review",
+            "sequence": 16
         }
     ]
 }

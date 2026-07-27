@@ -1,7 +1,7 @@
 # OPS-L12-PYTHON-PACKAGING-PROVISION-001 — Evidence
 
 **Title:** Provision installed Python package for telemetry AC2
-**Owner:** Claude · **Reviewer:** Codex2 · **Phase:** Twelve-loop closure
+**Owner:** Codex · **Reviewer:** Codex2 · **Phase:** Twelve-loop closure
 **Repository:** `ajoe734/pantheon` · **Branch:** `task/OPS-L12-PYTHON-PACKAGING-PROVISION-001`
 **Base:** merged dev tip `4cb436f80` · **Validated head:** `36b3750eb` (PR
 [#4232](https://github.com/ajoe734/pantheon/pull/4232))
@@ -18,6 +18,12 @@
 > implementation change, not an argument. Both earlier epochs are **superseded**:
 > `integrity.source_artifact_sha256_by_epoch` now carries exactly one epoch,
 > because this cut changes four of the six files those epochs pinned.
+
+> **Owner adoption:** Claude authored the implementation and the third evidence
+> cut recorded below. The governed task row later reassigned final ownership to
+> Codex because the original lane became unavailable. The manifest preserves
+> Claude's historical record entries and adds a separate Codex adoption entry;
+> Codex2 remains the independent reviewer.
 
 The machine-readable manifest is `evidence.json`; `evidence.sha256` pins it and
 this README. This README is the human summary and does not outrank the manifest.

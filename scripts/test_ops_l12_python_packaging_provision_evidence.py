@@ -127,7 +127,7 @@ class TestEvidenceManifestSchema(unittest.TestCase):
         self.assertEqual(task["id"], TASK_ID)
         self.assertEqual(EVIDENCE_DIR.name, TASK_ID)
         self.assertEqual(task["review_file"], str(MANIFEST_PATH.relative_to(REPO_ROOT)))
-        self.assertEqual(task["owner"], "Claude")
+        self.assertEqual(task["owner"], "Codex")
         self.assertEqual(task["reviewer"], "Codex2")
         self.assertNotEqual(task["owner"], task["reviewer"])
 

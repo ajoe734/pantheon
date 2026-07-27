@@ -5,9 +5,9 @@ Generated in the worker workspace because the supervisor root did not have a tas
 ## Task
 - Title: Provision installed Python package for telemetry AC2
 - Status: in_progress
-- Owner: Claude
+- Owner: Codex
 - Reviewer: Codex2
-- Next: The AC2 rejection is answered by an implementation change and re-cut at head `36b3750eb`; awaiting Codex2's independent review. PR [#4232](https://github.com/ajoe734/pantheon/pull/4232) is OPEN at that head on merged dev tip `4cb436f80`, with all four Branch CI Gate jobs green on both the pull_request run 30231402274 and the push run 30231401041. Auto-merge has never been enabled, because AC6 requires the independent decision to precede any merge.
+- Next: Codex adopted the already-validated repair after the governed owner reassignment from Claude. The evidence authority metadata and checksum are refreshed for the current owner; PR [#4232](https://github.com/ajoe734/pantheon/pull/4232) remains OPEN, its prior evidence head `6773c64ee` has all four Branch CI Gate jobs green on both pull_request and push runs, and auto-merge remains disabled pending Codex2's independent review of the narrow owner-adoption follow-up.
 
 ## Summary
 建立可安裝的 Pantheon Python distribution 與受治理測試環境 provisioning，讓 telemetry discovery AC2 在 foreign cwd、無 PYTHONPATH 下四種執行模式全部通過；不得修改 live supervisor config。
@@ -70,23 +70,28 @@ a purpose-built dependency-free interpreter.
 
 No live supervisor configuration was read or written, and
 `services/telemetry/capture.py` and `feedback_adapter.py` are byte-identical to
-the base dev tip.
+the validated dev base.
 
 ## Evidence epochs
 
-`integrity.source_artifact_sha256_by_epoch` now carries exactly one epoch,
-`36b3750eb`. The two earlier cuts — `c72842d9d` on dev `643181a06`, and
-`4aab5cca4` on dev `7fedefb28` — are superseded, because this cut changes four
-of the six implementation files they pinned and the evidence gate checks every
-recorded digest against the committed bytes. Their shas remain in `record_log`
-and in the git history of the manifest.
+`integrity.source_artifact_sha256_by_epoch` carries exactly one implementation
+epoch, `36b3750eb`. The two earlier cuts — `c72842d9d` on dev `643181a06`, and
+`4aab5cca4` on dev `7fedefb28` — are superseded, because the third cut changes
+four of the six implementation files they pinned and the evidence gate checks
+every recorded digest against the committed bytes. Their shas remain in
+`record_log` and in the git history of the manifest.
+
+The governed owner reassignment does not rewrite those historical epochs:
+Claude remains the recorded implementation and evidence-cut actor, while Codex
+is the current owner responsible for review handoff and finalization.
 
 ## Review request for Codex2
 
 Review target: `docs/deployment/evidence/twelve-loop-gap/OPS-L12-PYTHON-PACKAGING-PROVISION-001/evidence.json`
-and its `evidence.sha256`, at head `36b3750eb`. The evidence README
-§ *Review status* lists six specific checks. The load-bearing one is the first:
-run the guide's own command from the worker default interpreter, with no
+and its `evidence.sha256`, at PR head `6773c64ee` plus the current owner's narrow
+evidence-authority adoption commit. The evidence README § *Review status* lists
+six specific checks. The load-bearing one is the first: run the guide's own
+command from the worker default interpreter, with no
 `PANTHEON_DEPENDENCY_PYTHON` and no `PYTHONPATH`, and confirm
 `"$PANTHEON_PY" -m pytest` now runs — that is the exact sequence that failed in
 the previous dispatch.
