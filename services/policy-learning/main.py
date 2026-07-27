@@ -1181,16 +1181,12 @@ def restart_worker(
 
     Only claims whose lease has expired return to the backlog; a candidate held
     by a live worker keeps its owner, so a restart of one worker cannot steal
-    in-flight work from its peer.  Terminal candidates are left alone.
+    in-flight work from its peer.  Terminal candidates are left alone, and the
+    recovery sweep stays inside the authenticated tenant.
     """
     claim = body or WorkerClaimBody()
     bind_tenant(authority, claim.tenant_id)
-    released = store.release_expired_leases()
-    tenant_released = [
-        candidate_id
-        for candidate_id in released
-        if candidate_tenant_id(store.get_candidate(candidate_id) or {}) == authority.tenant_id
-    ]
+    released = store.release_expired_leases(tenant_id=authority.tenant_id)
     result = run_worker_cycle(
         worker_id=claim.worker_id,
         batch_size=claim.batch_size,
@@ -1200,8 +1196,8 @@ def restart_worker(
     return {
         "status": "ok",
         "tenant_id": authority.tenant_id,
-        "released_count": len(tenant_released),
-        "released_candidate_ids": tenant_released,
+        "released_count": len(released),
+        "released_candidate_ids": released,
         **result,
     }
 
