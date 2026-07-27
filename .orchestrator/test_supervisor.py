@@ -618,6 +618,21 @@ class DetectWorkerFailureTests(unittest.TestCase):
         self.assertEqual(result["kind"], "tool_auth")
         self.assertFalse(result["transient"])
 
+    def test_classifies_require_authenticated_gh_session_as_tool_auth(self) -> None:
+        config = {"worker_retry": {"transient_error_patterns": ["429", "resource_exhausted", "rate limit"]}}
+        worker = {"provider": "codex2-1"}
+
+        for reason in (
+            "Require authenticated gh session. Run gh auth status.",
+            "Require authenticated `gh` session. Run `gh auth status`.",
+        ):
+            with self.subTest(reason=reason):
+                result = supervisor.classify_worker_failure(config, worker, reason)
+
+                self.assertEqual(result["kind"], "tool_auth")
+                self.assertFalse(result["transient"])
+                self.assertFalse(supervisor.should_pause_dispatch_for_failure_kind(result["kind"]))
+
     def test_auth_failures_pause_provider_dispatch(self) -> None:
         self.assertTrue(supervisor.should_pause_dispatch_for_failure_kind("auth"))
 
