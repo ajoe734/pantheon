@@ -3,7 +3,7 @@
   "schema_status": {
     "formal_schema_owner": "LOOP-PROD-002",
     "formalization_trigger": "L12-EVO-001 product-level owner evidence admission.",
-    "note": "Owner evidence only. The formal Claude reviewer verdict is intentionally absent until independent review occurs.",
+    "note": "Owner evidence only. The formal Codex reviewer verdict is intentionally absent until independent review occurs.",
     "status": "formalized"
   },
   "evidence_policy": {
@@ -16,8 +16,8 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-27T18:37:09Z",
-    "evidence_cut_semantics": "Owner evidence over the merged-current-dev implementation head fdcb121bdb50e8f53e9062dbe73bf096300b68fb, rebound to canonical reviewer Claude after the fleet reassignment. It proves repository and separate-process behavior and does not assert hosted activation or an independent reviewer verdict.",
+    "evidence_cut_at": "2026-07-27T20:49:52Z",
+    "evidence_cut_semantics": "Owner evidence over implementation head 00f1ba98f85ea3937ee9edb1a590a2ff73fc4d6e after composing origin/dev b81edf76dfc14087dd7d5e3a6599448cb9d0bb09. It closes the empty or invalid threshold-policy false-green found at d300f4eb5ba33616771068908eefe19a8f82cafa, binds canonical reviewer Codex, and does not assert hosted activation or an independent reviewer verdict.",
     "id": "L12-EVO-001",
     "overall_admission": "pass_owner_evidence_ready",
     "owner": "Codex2",
@@ -25,7 +25,7 @@
     "product_level_required": true,
     "repository": "ajoe734/pantheon",
     "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-EVO-001/evidence.json",
-    "reviewer": "Claude",
+    "reviewer": "Codex",
     "target_environment": "dev integration and separate-process local proof",
     "target_maturity": "reconciled",
     "task_branch": "task/L12-EVO-001",
@@ -129,6 +129,11 @@
         "delivery_state": "committed_on_task_branch",
         "sha": "72af617ab6e2c95b815a60a697b1966adb13419a",
         "subject": "L12-EVO-001: anchor worker health contract"
+      },
+      {
+        "delivery_state": "committed_on_task_branch",
+        "sha": "00f1ba98f85ea3937ee9edb1a590a2ff73fc4d6e",
+        "subject": "L12-EVO-001: anchor fail-closed threshold coverage"
       }
     ],
     "required_checks": []
@@ -137,7 +142,7 @@
     "commands": [
       {
         "command": "PANTHEON_RUNTIME_MANAGER_URL=http://runtime-manager:8081 .venv-pantheon/bin/python -m pytest -q services/evolution services/incidents services/postmortems services/control-plane/governance/test_evolution_decision.py services/control-plane/governance/test_evolution_controller.py services/control-plane/governance/test_evolution_dispatcher_invariants.py services/control-plane/governance/smoke_test_evolution_decision.py services/control-plane/governance/smoke_test_evolution_controller.py scripts/test_evolution_daily_sweep_deploy_contract.py",
-        "conclusion": "431 passed with five known FastAPI/Starlette deprecation warnings in 112.60 seconds.",
+        "conclusion": "440 passed with five known FastAPI/Starlette deprecation warnings in 103.07 seconds.",
         "result": "pass"
       },
       {
@@ -169,11 +174,16 @@
         "command": "Human/Ops compose revalidation after merging origin/dev 5a2fc69a3b432e0d1bc528981d66a2ee32defa71: scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge; git diff --check; /home/lupin/pantheon/.venv/bin/python -m pytest services/control-plane/governance/test_evolution_decision.py services/control-plane/governance/test_evolution_controller.py services/control-plane/governance/test_evolution_dispatcher_invariants.py services/evolution/test_l12_evo_001_downstream_integration.py services/evolution/test_l12_evo_001_process_recovery.py services/evolution/test_worker_health.py services/evolution/test_dispatch_worker.py",
         "conclusion": "Commit trailer gate and diff whitespace passed; 87 focused evolution/governance tests passed with one FastAPI/Starlette deprecation warning.",
         "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge",
+        "conclusion": "All non-merge task commits through implementation head 00f1ba98f85ea3937ee9edb1a590a2ff73fc4d6e carry valid task trailers.",
+        "result": "pass"
       }
     ],
-    "validated_at": "2026-07-27T19:06:26Z",
-    "validated_base_sha": "5a2fc69a3b432e0d1bc528981d66a2ee32defa71",
-    "validated_head_sha": "92cb3800065b04eeb5f8fed00e9055490a664097"
+    "validated_at": "2026-07-27T20:49:52Z",
+    "validated_base_sha": "b81edf76dfc14087dd7d5e3a6599448cb9d0bb09",
+    "validated_head_sha": "00f1ba98f85ea3937ee9edb1a590a2ff73fc4d6e"
   },
   "deployment": {
     "applicable": false,
@@ -213,6 +223,7 @@
     "failure_and_degraded_behavior": {
       "proof": [
         "Missing or unapproved baseline values produce explicit incomplete input coverage and no fabricated threshold candidate.",
+        "Empty, missing, malformed, and all-disabled threshold configuration produces a configuration diagnostic, marks every otherwise-eligible artifact incomplete, and keeps assess_input_coverage, run_tick, and GET /api/evolution/input-coverage fail-closed.",
         "Unsupported execution planes are durably dead-lettered with a reason and leave the EvolutionDecision approved with no execution result.",
         "Production persistence posture refuses the JSON backend before application boot.",
         "Scheduler and threshold worker health stays unready before the first tick, becomes degraded on tick errors, and fails when stale."
@@ -269,7 +280,7 @@
       "status": "pass"
     },
     "two_person_approval": {
-      "proof": "Owner Codex2 and reviewer Claude are distinct. This owner cut intentionally records no formal Claude verdict; independent review remains the only blocking closeout gate.",
+      "proof": "Owner Codex2 and reviewer Codex are distinct. This owner cut intentionally records no formal Codex verdict; independent review remains the only blocking closeout gate.",
       "status": "pass"
     }
   },
@@ -281,7 +292,7 @@
         "services/evolution/config/threshold_sweep_baselines.json"
       ],
       "id": "acceptance-1",
-      "statement": "Every evaluated monitored artifact must expose numeric drawdown and an approved positive expected baseline; incomplete inputs are surfaced and cannot fabricate a candidate.",
+      "statement": "Every evaluated monitored artifact must expose numeric drawdown and an approved positive expected baseline; empty or invalid threshold policy and incomplete inputs are surfaced fail-closed and cannot fabricate a candidate.",
       "status": "pass"
     },
     {
@@ -329,10 +340,10 @@
   "residual_risks": {
     "independent_review": {
       "blocking_for_this_task": true,
-      "containment": "Keep the task out of review_approved/done until Claude independently validates the committed manifest and implementation.",
-      "description": "The owner evidence is complete, but the required independent Claude verdict has not yet been recorded.",
-      "expiry": "On governed Claude approval or concrete changes-requested decision.",
-      "owner": "Claude",
+      "containment": "Keep the task out of review_approved/done until Codex independently validates the committed manifest and implementation.",
+      "description": "The owner evidence is complete, but the required independent Codex verdict has not yet been recorded.",
+      "expiry": "On governed Codex approval or concrete changes-requested decision.",
+      "owner": "Codex",
       "recheck_trigger": "Task enters review with the evidence commit and PR available.",
       "severity": "blocking"
     },
@@ -356,7 +367,7 @@
     },
     "lint_tooling": {
       "blocking_for_this_task": false,
-      "containment": "Retain compileall, 431 scoped tests, Compose config, and diff checks as the executable gates for this cut.",
+      "containment": "Retain compileall, 440 scoped tests, Compose config, and diff checks as the executable gates for this cut.",
       "description": "The worker dependency environment does not provide ruff, so the optional F/E9 lint command could not run.",
       "expiry": "When ruff is provisioned in the repository dependency environment.",
       "owner": "developer tooling",
@@ -406,6 +417,15 @@
       "reference": "92cb3800065b04eeb5f8fed00e9055490a664097",
       "sequence": 3,
       "sha": "92cb3800065b04eeb5f8fed00e9055490a664097",
+      "status": "ready_for_independent_review"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "owner_evidence_threshold_coverage_fix",
+      "recorded_at": "2026-07-27T20:49:52Z",
+      "reference": "00f1ba98f85ea3937ee9edb1a590a2ff73fc4d6e",
+      "sequence": 4,
+      "sha": "00f1ba98f85ea3937ee9edb1a590a2ff73fc4d6e",
       "status": "ready_for_independent_review"
     }
   ]
