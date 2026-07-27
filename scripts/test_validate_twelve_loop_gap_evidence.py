@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -465,7 +466,7 @@ def test_v4_receipt_substitution_with_resealed_checksum_is_rejected(staged: Path
     rejections = _validate(staged)
     rules = _rules(rejections)
 
-    # The seven pre-existing rules are all satisfied by the doctored manifest.
+    # The eight other rules are all satisfied by the doctored manifest.
     assert rules == {"receipt_commit_artifacts"}, [rejection.render() for rejection in rejections]
 
     details = " | ".join(rejection.detail for rejection in rejections)
@@ -534,3 +535,272 @@ def test_receipt_verification_reads_blobs_not_the_working_tree(staged: Path) -> 
     assert "receipt_commit_artifacts" in _rules(rejections)
     # The v4 commit has no validator scripts at all, which no rebind can fix.
     assert any("does not contain bound artifact scripts/" in rejection.detail for rejection in rejections)
+
+
+# ---------------------------------------------------------------------------
+# current_cut_consistency
+#
+# The v7 cut carried a verifiable receipt and an unrecut narrative: prose that
+# still called the document v6, still cited journal sequences 2046 and 2014,
+# still counted seven rules, and still described PR #4203 as red while the same
+# manifest recorded it green at a newer head.  Eight rules passed it, because
+# not one of them read prose.  These cases pin each of those shapes.
+# ---------------------------------------------------------------------------
+
+STALE_SNAPSHOT_SEQUENCE = 2046
+STALE_AC4_STATEMENT = (
+    "The CAP evidence-only false closeout and the DIST malformed-trailer blockage are recorded with "
+    "their reproduced defects and mapped to the canonical reopen/fix tasks L12-CAP-001 (Codex / Claude, "
+    "in_progress since 2026-07-26T21:58:01Z, PR #4203 open with failing Commit trailers and BEHIND) and "
+    "L12-DIST-001 (Claude / Antigravity, in_progress, PR #4193 open with failing Commit trailers)."
+)
+
+
+def _current_command_index(manifest: dict) -> int:
+    for index, entry in enumerate(manifest["validation"]["commands"]):
+        if entry.get("claim_scope") == "current":
+            return index
+    raise AssertionError("manifest records no current-scope command")
+
+
+def _acceptance(manifest: dict, identifier: str) -> dict:
+    return next(clause for clause in manifest["acceptance"] if clause["id"] == identifier)
+
+
+def test_missing_version_declaration_is_rejected(staged: Path) -> None:
+    """The cut names its version once, at the head of evidence_cut_semantics."""
+
+    manifest = _load(staged)
+    manifest["task"]["evidence_cut_semantics"] = "This cut supersedes the previous ones."
+    _store(staged, manifest)
+
+    rejections = _validate(staged)
+    assert "current_cut_consistency" in _rules(rejections)
+    assert any("does not open with" in rejection.detail for rejection in rejections)
+
+
+def test_ambiguous_snapshot_declaration_is_rejected(staged: Path) -> None:
+    """Two unmarked sequences in the authority line leave no single snapshot."""
+
+    manifest = _load(staged)
+    authorities = manifest["authorities"]["actual_state"]
+    authorities[0] = authorities[0] + f" Also verified through sequence {STALE_SNAPSHOT_SEQUENCE}."
+    _store(staged, manifest)
+
+    rejections = _validate(staged)
+    assert "current_cut_consistency" in _rules(rejections)
+    assert any("unmarked journal" in rejection.detail for rejection in rejections)
+
+
+def test_stale_version_token_in_a_current_claim_is_rejected(staged: Path) -> None:
+    """The exact v7 shape: behavioral_proof still naming the previous cut."""
+
+    manifest = _load(staged)
+    manifest["behavioral_proof"]["duplicate_safety"]["proof"][0] = (
+        "The delta document is versioned 7.0.0 and its correction sections enumerate every superseded claim."
+    )
+    _store(staged, manifest)
+
+    rejections = _validate(staged)
+    assert "current_cut_consistency" in _rules(rejections)
+    assert any("states version" in rejection.detail for rejection in rejections)
+
+
+def test_short_form_stale_cut_name_is_rejected(staged: Path) -> None:
+    manifest = _load(staged)
+    manifest["residual_risks"]["independent_review"]["description"] = (
+        "The v7 recut has not yet been independently reviewed by Codex2."
+    )
+    _store(staged, manifest)
+
+    rejections = _validate(staged)
+    assert "current_cut_consistency" in _rules(rejections)
+    assert any("names cut" in rejection.detail for rejection in rejections)
+
+
+def test_historical_marker_keeps_a_superseded_version_legal(staged: Path) -> None:
+    """The marker is the sanctioned way to keep a historical claim, not a hole.
+
+    Same sentence as the rejection above, with the stale token labelled: the
+    rule must fall silent, or every correction section would become unwritable.
+    """
+
+    manifest = _load(staged)
+    manifest["residual_risks"]["independent_review"]["description"] = (
+        "The v7 (historical) recut was rejected by Codex2; this recut has not yet been reviewed."
+    )
+    _store(staged, manifest)
+
+    assert "current_cut_consistency" not in _rules(_validate(staged))
+
+
+def test_stale_journal_sequence_in_a_current_claim_is_rejected(staged: Path) -> None:
+    """authorities.actual_state[0] naming the sequence the previous cut used."""
+
+    manifest = _load(staged)
+    authorities = manifest["authorities"]["actual_state"]
+    authorities[0] = re.sub(
+        r"sequence \d+", f"sequence {STALE_SNAPSHOT_SEQUENCE}", authorities[0]
+    )
+    assert f"sequence {STALE_SNAPSHOT_SEQUENCE}" in authorities[0]
+    _store(staged, manifest)
+
+    rejections = _validate(staged)
+    assert "current_cut_consistency" in _rules(rejections)
+    assert any("cites journal" in rejection.detail for rejection in rejections)
+
+
+def test_dropping_the_journal_sequence_is_rejected(staged: Path) -> None:
+    """Deleting the stale sequence must not be a cheaper fix than refreshing it."""
+
+    manifest = _load(staged)
+    manifest["deployment"]["identity_admission"]["proof"] = (
+        "Owner Claude and reviewer Codex2 match the canonical task row and the task brief header."
+    )
+    _store(staged, manifest)
+
+    rejections = _validate(staged)
+    assert "current_cut_consistency" in _rules(rejections)
+    assert any("carries no unmarked journal sequence" in rejection.detail for rejection in rejections)
+
+
+def test_superseded_receipt_sha_in_a_current_claim_is_rejected(staged: Path) -> None:
+    """residual_risks still naming the previous cut's delivery receipt."""
+
+    manifest = _load(staged)
+    superseded = next(
+        anchor["sha"]
+        for anchor in manifest["implementation_delivery"]["anchor_commits"]
+        if validator.is_superseded_state(anchor.get("delivery_state"))
+    )
+    risk = manifest["residual_risks"]["delivery_receipt_intermediate_state"]
+    risk["description"] = (
+        f"At delivery receipt commit {superseded} the tree carries the new artifacts with the previous "
+        "evidence.json, so the validator regression suite fails at that one intermediate commit."
+    )
+    _store(staged, manifest)
+
+    rejections = _validate(staged)
+    assert "current_cut_consistency" in _rules(rejections)
+    assert any("which is the superseded commit" in rejection.detail for rejection in rejections)
+
+
+def test_unbound_pull_request_state_claim_is_rejected(staged: Path) -> None:
+    """The exact stale-AC4 shape: a PR state quoted with no head behind it."""
+
+    manifest = _load(staged)
+    _acceptance(manifest, "AC4")["statement"] = STALE_AC4_STATEMENT
+    _store(staged, manifest)
+
+    rejections = _validate(staged)
+    assert "current_cut_consistency" in _rules(rejections)
+    assert any("without quoting that head" in rejection.detail for rejection in rejections)
+
+
+def test_pull_request_claim_bound_to_the_observed_head_is_accepted(staged: Path) -> None:
+    """A PR claim stays legal when it carries the head the cut observed it at."""
+
+    manifest = _load(staged)
+    heads = validator.observed_pull_request_heads(manifest)
+    assert heads, "manifest records no pull-request observation on a current command entry"
+    number, observed = sorted(heads.items())[0]
+    head = sorted(observed)[0]
+    _acceptance(manifest, "AC4")["statement"] = (
+        f"Pull request #{number} was observed at head {head} for this cut."
+    )
+    _store(staged, manifest)
+
+    rejections = [
+        rejection for rejection in _validate(staged) if "pull request" in rejection.detail
+    ]
+    assert rejections == [], [rejection.render() for rejection in rejections]
+
+
+def test_stale_rule_count_in_a_current_claim_is_rejected(staged: Path) -> None:
+    manifest = _load(staged)
+    manifest["evidence_policy"]["mutation_rule"] = (
+        "scripts/validate_twelve_loop_gap_evidence.py must return zero rejections over all seven rules "
+        "before handoff."
+    )
+    _store(staged, manifest)
+
+    rejections = _validate(staged)
+    assert "current_cut_consistency" in _rules(rejections)
+    assert any("counts" in rejection.detail for rejection in rejections)
+
+
+def test_command_entry_without_a_claim_scope_is_rejected(staged: Path) -> None:
+    manifest = _load(staged)
+    manifest["validation"]["commands"][0].pop("claim_scope", None)
+    _store(staged, manifest)
+
+    rejections = _validate(staged)
+    assert "current_cut_consistency" in _rules(rejections)
+    assert any("claim_scope" in rejection.detail for rejection in rejections)
+
+
+def test_historical_command_entry_must_say_which_cut_it_belongs_to(staged: Path) -> None:
+    manifest = _load(staged)
+    entry = next(
+        entry for entry in manifest["validation"]["commands"] if entry.get("claim_scope") == "historical"
+    )
+    entry.pop("historical_note")
+    _store(staged, manifest)
+
+    rejections = _validate(staged)
+    assert "current_cut_consistency" in _rules(rejections)
+    assert any("records no historical_note" in rejection.detail for rejection in rejections)
+
+
+def test_stale_claim_hidden_in_a_current_command_entry_is_rejected(staged: Path) -> None:
+    """A current command entry is prose too, and is held to the same cut."""
+
+    manifest = _load(staged)
+    index = _current_command_index(manifest)
+    manifest["validation"]["commands"][index]["note"] = (
+        f"Verified against journal sequence {STALE_SNAPSHOT_SEQUENCE}."
+    )
+    _store(staged, manifest)
+
+    rejections = _validate(staged)
+    assert "current_cut_consistency" in _rules(rejections)
+    assert any("cites journal" in rejection.detail for rejection in rejections)
+
+
+def test_removing_a_current_claim_field_is_rejected(staged: Path) -> None:
+    """Enrolment lives in the validator, so deleting the field is not an escape."""
+
+    manifest = _load(staged)
+    manifest["residual_risks"].pop("independent_review")
+    _store(staged, manifest)
+
+    rejections = _validate(staged)
+    assert "current_cut_consistency" in _rules(rejections)
+    assert any("does not resolve" in rejection.detail for rejection in rejections)
+
+
+def test_two_delivery_receipts_leave_the_cut_undeclared(staged: Path) -> None:
+    """The receipt is derived from the anchors, so it must be unambiguous."""
+
+    manifest = _load(staged)
+    anchors = manifest["implementation_delivery"]["anchor_commits"]
+    second = next(anchor for anchor in anchors if anchor.get("receipt_role") != validator.RECEIPT_ROLE)
+    second["receipt_role"] = validator.RECEIPT_ROLE
+    _store(staged, manifest)
+
+    rejections = _validate(staged)
+    assert "current_cut_consistency" in _rules(rejections)
+    assert any("exactly one anchor must carry" in rejection.detail for rejection in rejections)
+
+
+def test_schema_version_names_are_not_read_as_cut_names(staged: Path) -> None:
+    """``loop_catalog.v2`` is a schema name; only a bare ``vN`` names a cut."""
+
+    manifest = _load(staged)
+    manifest["integrity"]["self_hash_reason"] = (
+        manifest["integrity"]["self_hash_reason"]
+        + " The registry it cites is loop_catalog.v2 and this manifest is loop_product_evidence.v1."
+    )
+    _store(staged, manifest)
+
+    assert "current_cut_consistency" not in _rules(_validate(staged))

@@ -52,6 +52,28 @@ check is offline -- ``git ls-tree`` and ``git cat-file`` only -- and fails close
 when git is unavailable, the commit is unknown, a path is absent, or a digest
 disagrees.
 
+The v7 cut was rejected for a defect none of the eight rules above can see: the
+receipt proof was sound, but the manifest's *prose* had not been recut with it.
+``authorities.actual_state[0]`` still named journal sequence 2046, two proof
+fields still named sequence 2014, ``behavioral_proof`` still said the document
+was v6 with seven rules, and an acceptance clause still described PR #4203 as
+failing and BEHIND while the cut's own observation table recorded that PR green
+and CLEAN at a newer head.  Every one of those is a claim about the *current*
+cut, and every rule so far reads structured fields only, so schema, checksum and
+all eight rules passed a manifest that contradicted itself in plain text.
+``current_cut_consistency`` closes this by reading the cut's own identity out of
+the fields that already carry it -- the version from the opening sentence of
+``task.evidence_cut_semantics``, the canonical snapshot from
+``authorities.actual_state[0]``, the receipt from the anchor holding
+``receipt_role``, the rule count from this file -- and then requiring the
+enrolled prose fields to agree with it: version tokens, journal-sequence tokens,
+rule counts, superseded commit shas and mutable pull-request references are all
+checked against that single declaration.
+A claim that genuinely belongs to a superseded cut has to say so, by writing the
+literal marker ``(historical)`` immediately after the stale token; anything else
+is a rejection.  The enrolled paths are fixed in this file rather than named by
+the manifest, so a later recut cannot dodge the rule by deleting a field.
+
 Usage::
 
     python3 scripts/validate_twelve_loop_gap_evidence.py <evidence.json> \
@@ -106,7 +128,74 @@ RULES = (
     "receipt_commit_artifacts",
     "mutable_observation_binding",
     "companion_checksum",
+    "current_cut_consistency",
 )
+
+# ---------------------------------------------------------------------------
+# current_cut_consistency
+# ---------------------------------------------------------------------------
+
+# Written immediately after a token to say "this names a superseded cut on
+# purpose".  Fixed here, not in the manifest, so the escape hatch cannot be
+# widened by the document it polices.
+HISTORICAL_MARKER = "(historical)"
+
+# The cut declares itself in fields the manifest already has to carry, so there
+# is no separate block to keep in sync (and none to get wrong): the version is
+# the first sentence of ``task.evidence_cut_semantics``, the canonical snapshot
+# is the sequence named by ``authorities.actual_state[0]``, the receipt is the
+# anchor holding ``receipt_role``, and the rule count is this file's own.
+CUT_VERSION_DECLARATION = re.compile(r"\AOwner evidence cut v(\d+\.\d+\.\d+)\.")
+VERSION_DECLARATION_PATH = "task.evidence_cut_semantics"
+SNAPSHOT_DECLARATION_PATH = "authorities.actual_state[0]"
+
+# Fields that speak about the cut being delivered *now*.  Enrolment lives here
+# rather than in the manifest so a later recut cannot quietly drop a field it
+# would rather not keep current; a path that no longer resolves is a rejection.
+CURRENT_CLAIM_PATHS = (
+    "schema_status.formalization_trigger",
+    "evidence_policy.mutation_rule",
+    "task.evidence_cut_semantics",
+    "authorities.actual_state[0]",
+    "behavioral_proof.duplicate_safety.proof[*]",
+    "behavioral_proof.failure_and_degraded_behavior.proof[*]",
+    "deployment.identity_admission.proof",
+    "security_and_safety.two_person_approval.proof",
+    "acceptance[*].statement",
+    "residual_risks.independent_review.description",
+    "residual_risks.canonical_snapshot_age.description",
+    "residual_risks.delivery_receipt_intermediate_state.description",
+    "integrity.self_hash_reason",
+)
+
+# Fields whose whole job is to date the canonical snapshot.  Dropping the
+# sequence instead of refreshing it would satisfy the token check vacuously.
+SEQUENCE_REQUIRED_PATHS = (
+    "authorities.actual_state[0]",
+    "deployment.identity_admission.proof",
+    "security_and_safety.two_person_approval.proof",
+    "residual_risks.canonical_snapshot_age.description",
+)
+
+CLAIM_SCOPES = ("current", "historical")
+
+# ``v7.0.0`` / ``7.0.0``.  The trailing guard keeps dotted quads (an IP address,
+# a four-part build number) from reading as a three-part version.
+VERSION_TOKEN = re.compile(r"(?<![.\w])v?(\d+\.\d+\.\d+)(?![.\d])")
+# ``v6`` as a bare cut name.  ``loop_catalog.v2`` and ``loop_product_evidence.v1``
+# are schema names, not cut names, so a leading dot disqualifies the match.
+SHORT_VERSION_TOKEN = re.compile(r"(?<![.\w])v(\d+)(?![.\d])")
+SEQUENCE_TOKEN = re.compile(r"\b(?:sequence|seq)\s+(\d{3,6})\b")
+NUMBER_WORDS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+    "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
+}
+RULE_COUNT_TOKEN = re.compile(
+    r"\b(" + "|".join(NUMBER_WORDS) + r"|\d+)\s+(?:new\s+)?(?:fail-closed\s+)?(?:rejection\s+)?rules?\b",
+    re.IGNORECASE,
+)
+HEX_TOKEN = re.compile(r"\b[0-9a-f]{7,40}\b")
+PR_REFERENCE = re.compile(r"#(\d{3,6})\b")
 
 
 @dataclass(frozen=True)
@@ -675,6 +764,322 @@ def check_mutable_observation_binding(manifest: dict[str, Any]) -> list[Rejectio
     return rejections
 
 
+def _path_parts(spec: str) -> list[Any]:
+    """``acceptance[*].statement`` -> ``['acceptance', '*', 'statement']``."""
+
+    parts: list[Any] = []
+    for token in re.findall(r"[^.\[\]]+|\[\d+\]|\[\*\]", spec):
+        if token.startswith("["):
+            inner = token[1:-1]
+            parts.append("*" if inner == "*" else int(inner))
+        else:
+            parts.append(token)
+    return parts
+
+
+def resolve_claim_path(manifest: dict[str, Any], spec: str) -> list[tuple[str, Any]] | None:
+    """``[(label, value)]`` for ``spec``, or ``None`` when it does not resolve.
+
+    ``None`` is deliberately distinct from an empty list: a path that vanished
+    and a path that resolves to nothing are both rejections, and the caller
+    reports them with the same "does not resolve" wording.
+    """
+
+    def walk(node: Any, parts: list[Any], label: str) -> list[tuple[str, Any]] | None:
+        if not parts:
+            return [(label, node)]
+        head, rest = parts[0], parts[1:]
+        if head == "*":
+            if not isinstance(node, list) or not node:
+                return None
+            collected: list[tuple[str, Any]] = []
+            for index, item in enumerate(node):
+                found = walk(item, rest, f"{label}[{index}]")
+                if found is None:
+                    return None
+                collected += found
+            return collected
+        if isinstance(head, int):
+            if not isinstance(node, list) or len(node) <= head:
+                return None
+            return walk(node[head], rest, f"{label}[{head}]")
+        if not isinstance(node, dict) or head not in node:
+            return None
+        return walk(node[head], rest, f"{label}.{head}" if label else head)
+
+    return walk(manifest, _path_parts(spec), "")
+
+
+def _is_marked_historical(text: str, end: int) -> bool:
+    """True when ``HISTORICAL_MARKER`` follows the match that ended at ``end``."""
+
+    return text[end:].lstrip(" \t").startswith(HISTORICAL_MARKER)
+
+
+def _unmarked(pattern: re.Pattern[str], text: str) -> list[re.Match[str]]:
+    return [match for match in pattern.finditer(text) if not _is_marked_historical(text, match.end())]
+
+
+def _current_claim_strings(manifest: dict[str, Any]) -> tuple[list[tuple[str, str]], list[Rejection]]:
+    """Every enrolled current-claim string, plus rejections for what is missing.
+
+    ``validation.commands`` entries join the enrolled set by declaring
+    ``claim_scope: current``; the fixed paths are always enrolled.
+    """
+
+    strings: list[tuple[str, str]] = []
+    rejections: list[Rejection] = []
+
+    for spec in CURRENT_CLAIM_PATHS:
+        resolved = resolve_claim_path(manifest, spec)
+        if resolved is None:
+            rejections.append(
+                Rejection(
+                    "current_cut_consistency",
+                    f"current-claim path {spec} does not resolve; a field the rule polices cannot be "
+                    "removed to escape it",
+                )
+            )
+            continue
+        for label, value in resolved:
+            if not isinstance(value, str):
+                rejections.append(
+                    Rejection("current_cut_consistency", f"current-claim path {label} is not a string")
+                )
+                continue
+            strings.append((label, value))
+
+    commands = manifest.get("validation", {}).get("commands", []) or []
+    current_commands = 0
+    for index, entry in enumerate(commands):
+        label = f"validation.commands[{index}]"
+        if not isinstance(entry, dict):
+            rejections.append(Rejection("current_cut_consistency", f"{label} is not an object"))
+            continue
+        scope = entry.get("claim_scope")
+        if scope not in CLAIM_SCOPES:
+            rejections.append(
+                Rejection(
+                    "current_cut_consistency",
+                    f"{label}.claim_scope is {scope!r}; every command entry must declare "
+                    f"{list(CLAIM_SCOPES)} so a superseded pass claim cannot sit unlabelled beside a "
+                    "current one",
+                )
+            )
+            continue
+        if scope == "historical":
+            note = entry.get("historical_note")
+            if not isinstance(note, str) or not note.strip():
+                rejections.append(
+                    Rejection(
+                        "current_cut_consistency",
+                        f"{label} is claim_scope=historical but records no historical_note saying which "
+                        "superseded cut it belongs to",
+                    )
+                )
+            continue
+        current_commands += 1
+        for field in ("command", "conclusion", "note"):
+            value = entry.get(field)
+            if isinstance(value, str) and value:
+                strings.append((f"{label}.{field}", value))
+
+    if commands and not current_commands:
+        rejections.append(
+            Rejection(
+                "current_cut_consistency",
+                "no validation.commands entry is claim_scope=current; the manifest records no command "
+                "run against the cut it delivers",
+            )
+        )
+    return strings, rejections
+
+
+def observed_pull_request_heads(manifest: dict[str, Any]) -> dict[str, set[str]]:
+    """``{pr number: {head sha}}`` over observations on current command entries.
+
+    Enrolment is derived, not declared: a pull request the cut actually observed
+    is one whose state can be quoted, so any current claim quoting it has to
+    carry the head that quote came from.
+    """
+
+    heads: dict[str, set[str]] = {}
+    for entry in manifest.get("validation", {}).get("commands", []) or []:
+        if not isinstance(entry, dict) or entry.get("claim_scope") != "current":
+            continue
+        for observation in entry.get("observations", []) or []:
+            if not isinstance(observation, dict):
+                continue
+            number = observation.get("pull_request")
+            head = observation.get("head_sha")
+            if isinstance(number, int) and isinstance(head, str) and BARE_COMMIT_SHA.match(head.strip()):
+                heads.setdefault(str(number), set()).add(head.strip())
+    return heads
+
+
+def check_current_cut_consistency(manifest: dict[str, Any]) -> list[Rejection]:
+    """Prose about the current cut must agree with the cut the manifest declares.
+
+    The v7 rejection was not a missing proof but an unrecut narrative: the
+    receipt was verifiable, yet the manifest still called itself v6, still
+    quoted journal sequence 2046 and 2014, still counted seven rules, and still
+    described a pull request as red that its own observation table recorded
+    green.  Nothing structural contradicted anything, so eight rules passed.
+
+    This rule derives one declaration of the cut from the manifest's own
+    structure and holds the enrolled prose to it.  A token that genuinely belongs to a superseded cut
+    stays legal by carrying ``(historical)`` immediately after it, which is the
+    marking the reviewer asked for rather than an exemption from it.
+    """
+
+    rejections: list[Rejection] = []
+    rule_count = len(RULES)
+
+    version: str | None = None
+    declared = resolve_claim_path(manifest, VERSION_DECLARATION_PATH)
+    semantics = declared[0][1] if declared and isinstance(declared[0][1], str) else None
+    match = CUT_VERSION_DECLARATION.match(semantics) if semantics else None
+    if match is None:
+        rejections.append(
+            Rejection(
+                "current_cut_consistency",
+                f"{VERSION_DECLARATION_PATH} does not open with 'Owner evidence cut vX.Y.Z.'; the cut "
+                "declares its version in exactly one place, and prose is checked against that",
+            )
+        )
+    else:
+        version = match.group(1)
+
+    sequence: int | None = None
+    snapshot = resolve_claim_path(manifest, SNAPSHOT_DECLARATION_PATH)
+    snapshot_text = snapshot[0][1] if snapshot and isinstance(snapshot[0][1], str) else None
+    declared_sequences = (
+        {int(found.group(1)) for found in _unmarked(SEQUENCE_TOKEN, snapshot_text)} if snapshot_text else set()
+    )
+    if len(declared_sequences) != 1:
+        rejections.append(
+            Rejection(
+                "current_cut_consistency",
+                f"{SNAPSHOT_DECLARATION_PATH} names {sorted(declared_sequences)} unmarked journal "
+                "sequences; the canonical snapshot this cut verified through must be exactly one "
+                f"sequence, with any earlier one marked {HISTORICAL_MARKER}",
+            )
+        )
+    else:
+        sequence = declared_sequences.pop()
+
+    delivery = manifest.get("implementation_delivery", {}) or {}
+    receipts = [
+        anchor
+        for anchor in delivery.get("anchor_commits", []) or []
+        if isinstance(anchor, dict) and anchor.get("receipt_role") == RECEIPT_ROLE
+    ]
+    receipt_shas = sorted(sha for sha in (anchor.get("sha") for anchor in receipts) if isinstance(sha, str))
+    declared_receipt = receipt_shas[0] if len(receipt_shas) == 1 else None
+    if declared_receipt is None:
+        rejections.append(
+            Rejection(
+                "current_cut_consistency",
+                f"exactly one anchor must carry receipt_role={RECEIPT_ROLE!r}; found {receipt_shas}",
+            )
+        )
+
+    superseded = {
+        anchor.get("sha")
+        for anchor in delivery.get("anchor_commits", []) or []
+        if isinstance(anchor, dict)
+        and isinstance(anchor.get("sha"), str)
+        and is_superseded_state(anchor.get("delivery_state"))
+    }
+    pr_heads = observed_pull_request_heads(manifest)
+
+    strings, enrolment_rejections = _current_claim_strings(manifest)
+    rejections += enrolment_rejections
+
+    for label, text in strings:
+        if version is not None:
+            for found in _unmarked(VERSION_TOKEN, text):
+                if found.group(1) != version:
+                    rejections.append(
+                        Rejection(
+                            "current_cut_consistency",
+                            f"{label} states version {found.group(0)!r} while this cut declares "
+                            f"{version}; mark a superseded version with {HISTORICAL_MARKER} or recut the claim",
+                        )
+                    )
+            major = version.split(".")[0]
+            for found in _unmarked(SHORT_VERSION_TOKEN, text):
+                if found.group(1) != major:
+                    rejections.append(
+                        Rejection(
+                            "current_cut_consistency",
+                            f"{label} names cut {found.group(0)!r} while the current cut is v{major}; "
+                            f"mark a superseded cut with {HISTORICAL_MARKER}",
+                        )
+                    )
+        if sequence is not None:
+            for found in _unmarked(SEQUENCE_TOKEN, text):
+                if int(found.group(1)) != sequence:
+                    rejections.append(
+                        Rejection(
+                            "current_cut_consistency",
+                            f"{label} cites journal {found.group(0)!r} while this cut declares journal "
+                            f"sequence {sequence}; a stale snapshot must carry {HISTORICAL_MARKER}",
+                        )
+                    )
+        for found in _unmarked(RULE_COUNT_TOKEN, text):
+            raw = found.group(1).lower()
+            counted = NUMBER_WORDS.get(raw, int(raw) if raw.isdigit() else None)
+            if counted is not None and counted != rule_count:
+                rejections.append(
+                    Rejection(
+                        "current_cut_consistency",
+                        f"{label} counts {found.group(0)!r} while the validator ships {rule_count} rules",
+                    )
+                )
+        for found in _unmarked(HEX_TOKEN, text):
+            token = found.group(0)
+            stale = sorted(sha for sha in superseded if isinstance(sha, str) and sha.startswith(token))
+            if stale:
+                rejections.append(
+                    Rejection(
+                        "current_cut_consistency",
+                        f"{label} names {token!r}, which is the superseded commit {stale[0]}; a current "
+                        f"claim must name {declared_receipt} or mark the reference {HISTORICAL_MARKER}",
+                    )
+                )
+        quoted_hex = {hit.group(0) for hit in HEX_TOKEN.finditer(text)}
+        for found in _unmarked(PR_REFERENCE, text):
+            number = found.group(1)
+            observed = pr_heads.get(number)
+            if not observed:
+                continue
+            if not any(head.startswith(token) for head in observed for token in quoted_hex):
+                rejections.append(
+                    Rejection(
+                        "current_cut_consistency",
+                        f"{label} states something about pull request #{number}, which this cut observed "
+                        f"at {sorted(observed)}, without quoting that head; an unbound pull-request claim "
+                        "is exactly the stale AC4 shape",
+                    )
+                )
+
+    resolved_by_spec = {spec: resolve_claim_path(manifest, spec) for spec in SEQUENCE_REQUIRED_PATHS}
+    for spec, resolved in resolved_by_spec.items():
+        if resolved is None:
+            continue  # already reported by the enrolment pass
+        for label, value in resolved:
+            if isinstance(value, str) and not _unmarked(SEQUENCE_TOKEN, value):
+                rejections.append(
+                    Rejection(
+                        "current_cut_consistency",
+                        f"{label} carries no unmarked journal sequence; dating the canonical snapshot is "
+                        "this field's purpose, so dropping the sequence is not a way to keep it current",
+                    )
+                )
+    return rejections
+
+
 def check_companion_checksum(manifest: dict[str, Any], manifest_path: Path, repo_root: Path) -> list[Rejection]:
     relative = manifest.get("integrity", {}).get("companion_checksum_path")
     if not relative:
@@ -724,6 +1129,7 @@ def validate(
     rejections += check_receipt_commit_artifacts(manifest, git_root if git_root is not None else repo_root)
     rejections += check_mutable_observation_binding(manifest)
     rejections += check_companion_checksum(manifest, manifest_path, repo_root)
+    rejections += check_current_cut_consistency(manifest)
     return rejections
 
 
