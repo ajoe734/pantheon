@@ -5,7 +5,7 @@
   "owner": "Codex2",
   "reviewer": "Codex",
   "status": "review",
-  "generated_at": "2026-07-27T18:08:43Z",
+  "generated_at": "2026-07-27T18:12:51Z",
   "source_packet_id": "pkt_pantheon_batch_architecture_20260727_supervisor_autodrain_001",
   "scope": {
     "owned": [
@@ -40,7 +40,10 @@
         "cf96362373991277b2c1bd389f9ac7fbe40fd825"
       ],
       "review_head": null,
-      "pr": null,
+      "pr": {
+        "number": 4268,
+        "url": "https://github.com/ajoe734/pantheon/pull/4268"
+      },
       "merge_commit": null
     },
     "execute_plans": {
@@ -53,7 +56,10 @@
         "1081deb765c5313731ae5813ee6f3d618e7103cd"
       ],
       "review_head": null,
-      "pr": null,
+      "pr": {
+        "number": 558,
+        "url": "https://github.com/ajoe734/execute-plans/pull/558"
+      },
       "merge_commit": null
     }
   },
