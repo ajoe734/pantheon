@@ -1383,6 +1383,82 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(pending[0]["to"], "Codex")
         self.assertIn("finalize", pending[0]["message"].lower())
 
+    def _approval_events(self) -> list[dict]:
+        lines = self._test_log_file.read_text(encoding="utf-8").splitlines()
+        return [
+            json.loads(line)
+            for line in lines
+            if line.strip() and json.loads(line).get("type") == "review_approved"
+        ]
+
+    def test_approve_records_the_reviewed_pr_head_binding(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {
+                "AI_NAME": "Claude",
+                "REVIEW_PR": "#4218",
+                "REVIEW_HEAD_SHA": "B" * 40,
+            },
+            clear=False,
+        ):
+            ai_status.command_approve(
+                self.state,
+                ["REG-002", "Approved the exact head."],
+            )
+
+        expected = {
+            "pr": 4218,
+            "head_sha": "b" * 40,
+            "head_branch": "task/REG-002",
+            "base": "dev",
+        }
+        task = ai_status.get_task(self.state, "REG-002")
+        self.assertEqual(task["review_binding"], expected)
+        events = self._approval_events()
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["review_binding"], expected)
+
+    def test_approve_without_a_binding_warns_but_still_approves(self) -> None:
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
+            ai_status.command_approve(self.state, ["REG-002", "Approved."])
+
+        task = ai_status.get_task(self.state, "REG-002")
+        self.assertEqual(task["status"], "review_approved")
+        self.assertNotIn("review_binding", task)
+        self.assertNotIn("review_binding", self._approval_events()[0])
+
+    def test_approve_refuses_an_abbreviated_head_sha(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {
+                "AI_NAME": "Claude",
+                "REVIEW_PR": "4218",
+                "REVIEW_HEAD_SHA": "190bf7fe8",
+            },
+            clear=False,
+        ):
+            with self.assertRaisesRegex(SystemExit, "40-hex"):
+                ai_status.command_approve(
+                    self.state,
+                    ["REG-002", "Approved."],
+                )
+
+        self.assertEqual(ai_status.get_task(self.state, "REG-002")["status"], "review")
+
+    def test_approve_refuses_a_head_sha_without_a_pr_number(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {"AI_NAME": "Claude", "REVIEW_HEAD_SHA": "b" * 40},
+            clear=False,
+        ):
+            with self.assertRaisesRegex(SystemExit, "REVIEW_PR"):
+                ai_status.command_approve(
+                    self.state,
+                    ["REG-002", "Approved."],
+                )
+
+        self.assertEqual(ai_status.get_task(self.state, "REG-002")["status"], "review")
+
     def test_approve_protected_task_verifies_before_review_approved(self) -> None:
         self.state["tasks"][0]["requires_human_ops_signoff"] = True
         verdict_ref = {
