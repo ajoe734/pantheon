@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Install protected Human-Ops closeout verdict enforcement
-- Status: in_progress
+- Status: review_approved
 - Owner: Codex
 - Reviewer: Codex2
-- Next: Sequence-14 owner evidence composes origin/dev 4688bd252911b91ea0459a38a694c5faa53e3bbd after a final pre-push gate caught concurrent PR #4265. The nine protected-verdict source hashes are unchanged; 296 focused tests and 39 subtests, py_compile, schema/checksum, catalog/source hashes, merge ancestry, and git diff checks pass. Codex2 must review PR #4261 at the new exact immutable head named in the canonical handoff and append a fresh verdict; sequence-12 approval must not be reused.
+- Next: Owner closeout composed origin/dev 87166a352c0b90a26a6e35c138acfaea195fa4ee without protected-source overlap; 296 focused tests and 39 subtests, schema/checksum, catalog plus 9/9 source hashes, py_compile, task-scoped guardrail, and git diff checks pass. Merge PR #4261, then run the governed done transition with the reviewer-bound evidence manifest.
 
 ## Summary
 在 final closeout 前安裝機器守門：受保護、可撤銷、不可重播的 Human/Ops 判決必須綁定 exact catalog、manifest、target 與部署 identity；fleet 不得自行簽發。
