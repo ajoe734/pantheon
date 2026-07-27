@@ -41,15 +41,28 @@ def proc_field(pid: int, name: str) -> str:
         return ""
 
 
+def proc_argv(pid: int) -> list[str]:
+    try:
+        raw = (Path("/proc") / str(pid) / "cmdline").read_bytes()
+    except OSError:
+        return []
+    return [part.decode(errors="ignore") for part in raw.split(b"\0") if part]
+
+
 def supervisor_processes() -> list[dict]:
     found = []
     for entry in Path("/proc").iterdir():
         if not entry.name.isdigit():
             continue
-        cmdline = proc_field(int(entry.name), "cmdline")
-        if "supervisor.py" not in cmdline or "worker_runner" in cmdline:
-            continue
         pid = int(entry.name)
+        argv = proc_argv(pid)
+        if not argv or not Path(argv[0]).name.startswith("python"):
+            continue
+        if "--config" not in argv or not any(
+            arg.endswith("/.orchestrator/supervisor.py") for arg in argv[1:]
+        ):
+            continue
+        cmdline = " ".join(argv)
         try:
             cwd = os.readlink(f"/proc/{pid}/cwd")
         except OSError:
@@ -88,9 +101,19 @@ def roots() -> list[dict]:
     return out
 
 
-def projection_report(event_log: str) -> dict:
+def configured_supervisor_root(config: dict) -> str:
+    command = config.get("watchdog", {}).get("supervisor_command") or []
+    for arg in command:
+        if str(arg).endswith("/.orchestrator/supervisor.py"):
+            return str(Path(arg).parent.parent)
+    return ""
+
+
+def projection_report(event_log: str, configured_root: str) -> dict:
     """Verify the authoritative journal projection against the canonical board."""
-    root = os.environ.get("SNAPSHOT_RUNTIME_ROOT") or str(DEPLOY / "dev-root-bdbd0a99bf68")
+    root = os.environ.get("SNAPSHOT_RUNTIME_ROOT") or configured_root
+    if not root:
+        return {"error": "live config does not identify a supervisor runtime root"}
     code = (
         "import json,sys;sys.path.insert(0,%r);"
         "from rewrite import task_state_store as s;"
@@ -198,7 +221,10 @@ def main() -> int:
         "active_workers": sorted(workers, key=lambda item: item["run_id"]),
         "queue_records": sorted(queue, key=lambda item: item["event_id"]),
         "worktree_leases": [lease for lease in leases if not lease.get("released_at")],
-        "projection": projection_report(str(DEPLOY / "runtime" / "task-state-events.jsonl")),
+        "projection": projection_report(
+            str(DEPLOY / "runtime" / "task-state-events.jsonl"),
+            configured_supervisor_root(config),
+        ),
     }
     print(json.dumps(payload, indent=2, sort_keys=False))
     return 0

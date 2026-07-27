@@ -6164,6 +6164,64 @@ def command_supersede(state: dict[str, Any], args: list[str]) -> None:
     )
 
 
+APPROVAL_BINDING_KEY = "review_binding"
+APPROVAL_HEAD_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
+DEFAULT_APPROVAL_BASE_BRANCH = "dev"
+
+
+def resolve_approval_binding(task: dict[str, Any]) -> dict[str, Any]:
+    """Bind an approval to the exact pull-request head the reviewer inspected."""
+
+    task_id = str(task.get("id") or "").strip()
+    raw_pr = os.environ.get("REVIEW_PR", "").strip().lstrip("#")
+    raw_head = os.environ.get("REVIEW_HEAD_SHA", "").strip()
+    base_branch = (
+        os.environ.get("REVIEW_BASE", "").strip() or DEFAULT_APPROVAL_BASE_BRANCH
+    )
+    head_branch = (
+        os.environ.get("REVIEW_HEAD_BRANCH", "").strip() or f"task/{task_id}"
+    )
+
+    owner = str(task.get("owner") or "").strip().casefold()
+    reviewer = str(task.get("reviewer") or "").strip().casefold()
+    independent = bool(reviewer) and reviewer != owner
+
+    if not raw_pr and not raw_head:
+        if independent:
+            print(
+                f"warning: {task_id} is approved without a reviewed-head binding. "
+                "If this task has a PR, the review-before-merge gate will refuse to "
+                "merge it (approval_head_binding_missing). Re-approve with "
+                "REVIEW_PR=<pr-number> and REVIEW_HEAD_SHA=<40-hex head oid> "
+                f"(optionally REVIEW_BASE, default {DEFAULT_APPROVAL_BASE_BRANCH!r}).",
+                file=sys.stderr,
+            )
+        return {}
+
+    if not raw_pr:
+        raise SystemExit(
+            "REVIEW_HEAD_SHA was supplied without REVIEW_PR; both are required."
+        )
+    if not raw_head:
+        raise SystemExit(
+            "REVIEW_PR was supplied without REVIEW_HEAD_SHA; both are required."
+        )
+    if not raw_pr.isdigit() or int(raw_pr) <= 0:
+        raise SystemExit(f"REVIEW_PR must be a positive PR number, got {raw_pr!r}")
+    if not APPROVAL_HEAD_SHA_RE.match(raw_head):
+        raise SystemExit(
+            f"REVIEW_HEAD_SHA must be a full 40-hex commit oid, got {raw_head!r}. "
+            "An abbreviated sha cannot be compared exactly."
+        )
+
+    return {
+        "pr": int(raw_pr),
+        "head_sha": raw_head.lower(),
+        "head_branch": head_branch,
+        "base": base_branch,
+    }
+
+
 def command_approve(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: approve <task-id> <message>")
@@ -6180,6 +6238,7 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
 
     review_notes = parse_delimited_env("REVIEW_NOTES_ZH")
     review_file = os.environ.get("REVIEW_FILE", "").strip()
+    binding = resolve_approval_binding(task)
     transition_candidate = dict(task)
     if review_notes:
         transition_candidate["review_notes_zh"] = review_notes
@@ -6199,6 +6258,10 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
         task["review_notes_zh"] = review_notes
     if review_file:
         task["review_file"] = review_file
+    if binding:
+        task[APPROVAL_BINDING_KEY] = dict(binding)
+    else:
+        task.pop(APPROVAL_BINDING_KEY, None)
     if verdict_ref is not None:
         task["protected_closeout_verdict"] = verdict_ref
     mark_blockers_resolved(state, task_id)
@@ -6210,7 +6273,16 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
         timestamp=timestamp,
         message=message,
     )
-    append_log({"ts": timestamp, "agent": actor, "type": "review_approved", "task_id": task_id, "message": message})
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": actor,
+            "type": "review_approved",
+            "task_id": task_id,
+            "message": message,
+            **({APPROVAL_BINDING_KEY: dict(binding)} if binding else {}),
+        }
+    )
 
 
 def command_sync(state: dict[str, Any], _args: list[str]) -> None:

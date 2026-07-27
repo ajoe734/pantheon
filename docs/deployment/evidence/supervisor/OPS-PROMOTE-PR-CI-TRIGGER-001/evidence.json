@@ -1,0 +1,216 @@
+{
+  "schema_version": "pantheon.supervisor-task-evidence.v1",
+  "task": {
+    "id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+    "title": "Repair promote PR CI trigger and auto-merge path",
+    "phase": "Repository Merge Governance",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/OPS-PROMOTE-PR-CI-TRIGGER-001",
+    "depends_on": [
+      "OPS-PUBLISH-ENGINE-UNIFICATION-001"
+    ],
+    "review_file": "docs/deployment/evidence/supervisor/OPS-PROMOTE-PR-CI-TRIGGER-001/evidence.json",
+    "narrative": "docs/deployment/evidence/supervisor/OPS-PROMOTE-PR-CI-TRIGGER-001/README.md"
+  },
+  "status": "in_progress",
+  "generated_at": "2026-07-27T16:31:15Z",
+  "scope": {
+    "owned": [
+      "Branch CI exact-head workflow_dispatch contract for promote PRs",
+      "publish-promote action permission and dispatch call",
+      "maximal existing promote PR missing-check repair",
+      "fresh candidate proof and evidence-based stale PR retirement"
+    ],
+    "not_changing": [
+      "release tag or publish snapshot immutability",
+      "master required-status configuration",
+      "deployment admission and hosted switching",
+      "broker or capital authority"
+    ],
+    "composes_with": [
+      "OPS-PUBLISH-ENGINE-UNIFICATION-001",
+      "OPS-CROSS-REPO-RELEASE-CONTROLLER-001"
+    ]
+  },
+  "incident": {
+    "observed_at": "2026-07-27T16:18:00Z",
+    "publish_workflow_run": {
+      "id": 30193738289,
+      "url": "https://github.com/ajoe734/pantheon/actions/runs/30193738289",
+      "event": "schedule",
+      "conclusion": "success",
+      "created_at": "2026-07-26T07:57:56Z"
+    },
+    "representative_pr": {
+      "number": 4138,
+      "url": "https://github.com/ajoe734/pantheon/pull/4138",
+      "branch": "promote/v2026.07.26.2",
+      "head": "cb90dc479214c6ff0779aff70f915593ec9196c4",
+      "merge_state": "BLOCKED",
+      "auto_merge_enabled": true,
+      "status_check_count": 0
+    },
+    "master_required_status_checks": {
+      "strict": true,
+      "app_id": 15368,
+      "contexts": [
+        "Commit trailers",
+        "Runtime mirror guard",
+        "Smoke acceptance"
+      ]
+    },
+    "open_promote_pr_inventory": {
+      "count": 26,
+      "all_auto_merge_enabled": true,
+      "all_zero_checks": true,
+      "pr_numbers": [
+        4039,
+        4048,
+        4052,
+        4057,
+        4059,
+        4065,
+        4069,
+        4071,
+        4076,
+        4082,
+        4085,
+        4090,
+        4092,
+        4095,
+        4098,
+        4108,
+        4112,
+        4113,
+        4116,
+        4122,
+        4125,
+        4126,
+        4129,
+        4132,
+        4137,
+        4138
+      ]
+    },
+    "root_cause": "publish-promote creates branches and pull requests with its GITHUB_TOKEN; those mutations do not recursively emit push or pull_request workflow runs, so Branch CI never attaches the three required contexts to the promote head"
+  },
+  "implementation": {
+    "anchor_commit": "a61c7a0318c32788cdd3c7123d70364ddae8f999",
+    "files": [
+      ".github/workflows/branch-ci.yml",
+      ".github/workflows/publish-promote.yml",
+      "scripts/git/publish_promote.py",
+      "scripts/git/test_git_workflow_helpers.py"
+    ],
+    "contract": {
+      "dispatch_event": "workflow_dispatch",
+      "workflow": "branch-ci.yml",
+      "required_inputs": [
+        "expected_head_sha",
+        "promote_pr_number"
+      ],
+      "dispatch_ref": "exact promote/* branch",
+      "guards": [
+        "expected_head_sha is a full lowercase 40-character commit SHA",
+        "github.ref_name starts with promote/",
+        "github.sha equals expected_head_sha in both independent required jobs"
+      ],
+      "caller_permission": "actions: write",
+      "idempotency": "existing PRs with all required context names are not redispatched",
+      "backlog_selection": "bulk discovery selects only a maximal non-superseded existing promote candidate; one exact-branch lookup obtains its check rollup and dispatches only when required contexts are missing",
+      "bulk_lookup": "omits statusCheckRollup to avoid GraphQL fanout across the 1,000-row query",
+      "bulk_lookup_incident_runs": [
+        30284788017,
+        30284856368
+      ]
+    }
+  },
+  "validation": [
+    {
+      "command": "python3 -m unittest scripts.git.test_git_workflow_helpers.PublishPromoteTests -v",
+      "result": "20 passed"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/git/test_git_workflow_helpers.py scripts/test_nightly_publish_cut.py tests/orchestrator/test_release_branch_discipline.py",
+      "result": "68 passed in 11.86s"
+    },
+    {
+      "command": "python3 -m py_compile scripts/git/publish_promote.py scripts/git/test_git_workflow_helpers.py",
+      "result": "passed"
+    },
+    {
+      "command": "parse .github/workflows/branch-ci.yml and .github/workflows/publish-promote.yml; git diff --check",
+      "result": "passed"
+    }
+  ],
+  "delivery": {
+    "implementation_pr": 4258,
+    "implementation_head": "2e9c52a948ecdbc712d010d087bd1389776988ee",
+    "implementation_merge_commit": "6ae436c546942df1ba0a762d7167b456dfedabc8",
+    "implementation_checks": {
+      "push_run": 30284547771,
+      "pull_request_run": 30284551850,
+      "required_contexts": {
+        "Commit trailers": "success",
+        "Runtime mirror guard": "success",
+        "Smoke acceptance": "success"
+      }
+    },
+    "bulk_lookup_followup_pr": null,
+    "bulk_lookup_followup_head": null,
+    "bulk_lookup_followup_merge_commit": null
+  },
+  "live_proof": {
+    "status": "pending_bulk_lookup_followup_merge",
+    "preliminary_publish_cut_run": 30284714199,
+    "preliminary_release_tag": "release/v2026.07.27.2",
+    "preliminary_release_commit": "6ae436c546942df1ba0a762d7167b456dfedabc8",
+    "preliminary_promote_runs": [
+      {
+        "run": 30284788017,
+        "result": "fail_closed_without_pr",
+        "detail": "bulk GraphQL query returned HTTP 502"
+      },
+      {
+        "run": 30284856368,
+        "result": "fail_closed_without_pr",
+        "detail": "bulk GraphQL query returned HTTP 502"
+      }
+    ],
+    "release_tag": null,
+    "release_commit": null,
+    "promote_branch": null,
+    "promote_pr": null,
+    "promote_head": null,
+    "branch_ci_run": null,
+    "required_check_conclusions": null,
+    "auto_merge_enabled": null,
+    "master_merge_commit": null,
+    "release_reachable_from_master": null
+  },
+  "stale_pr_retirement": {
+    "status": "pending_live_proof",
+    "rule": "close only an older open promote PR whose release tag is an ancestor of the accepted fresh release and is reachable from master after the fresh candidate merges",
+    "closed_pr_numbers": [],
+    "retained_pr_numbers": [],
+    "ancestry_evidence": null
+  },
+  "review": {
+    "status": "pending",
+    "reviewer": "Codex",
+    "reviewed_head": null,
+    "decision": null
+  },
+  "safety": {
+    "force_push": false,
+    "direct_push_to_dev_or_master": false,
+    "release_or_publish_ref_rewritten": false,
+    "shared_workflow_disabled": false,
+    "unrelated_run_cancelled": false,
+    "hosted_deployment": false,
+    "real_capital_or_broker_action": false
+  }
+}
