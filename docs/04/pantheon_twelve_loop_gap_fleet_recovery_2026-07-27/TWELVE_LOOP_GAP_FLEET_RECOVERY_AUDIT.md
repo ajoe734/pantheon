@@ -221,7 +221,7 @@ snapshot.
 | `OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001` / PR #4273 | Reviewer approved the repaired telemetry evidence; closeout composed latest `dev`, merged PR #4273 as `db658d8dc88dfc1e9abd6cec55e9c7e86b9a269a`, and archived the canonical task `done` | Closed. Telemetry discovery import no longer blocks the twelve-loop recovery frontier. |
 | `L12-EVO-001` / PR #4267 | Independent reviewer rejected exact head `6a534392c81d0eca58d08f289f3a9e1dd033e992` | Real acceptance blocker: direct failed downstream receipt leaves decision `executed/failed`, no compensation, and pending outbox; root compose also defaults evolution auth to disabled/empty token, contradicting tenant-authority evidence. |
 | `L12-DIST-001` / PR #4193 | Independent reviewer rejected exact head `62fecb4bb4c8f1fd55eb3ae014b7e6f746c91b50` | Real acceptance blocker: Registry idempotency accepts same-id StrategySpec with different payload/lineage as terminal success, violating source/draft lineage and terminal-write proof. |
-| `L12-GITHUB-REVIEW-BRIDGE-001` | Worker implemented status-side GitHub review evidence plumbing, but also hit missing merge-gate file assumptions in its task worktree | Review bridge must be reconciled with the actual merge-gate code path on current `dev`; branch-protection proof remains incomplete. |
+| `L12-GITHUB-REVIEW-BRIDGE-001` | Core GitHub review bridge PR #4280 merged as `16296c35fd2e604f3ecf2d06dec80da0040ee8e0`; follow-up PR #4281 remains open for exact-head reopen binding fail-closed coverage | Core bridge is landed, but control-plane closeout is not complete until #4281 passes review, CI, merge, and archival. |
 | `L12-FLEET-WORKER-OUTCOME-001` | Worker added missing-worker/retry outcome tests; the same live run then exposed repeated stale auth-pause classification for Codex workers | Outcome tracking must include provider-pause classification tests for Codex model-cache/usage/auth distinctions and avoid indefinite false auth pauses. |
 
 ### Addendum conclusion
@@ -234,7 +234,8 @@ program is still not complete. The remaining blockers are now more precise:
 1. Evolution loop failed on real terminal failure compensation and default
    tenant-auth posture.
 2. Distillation loop failed on Registry idempotency/lineage verification.
-3. GitHub review bridge is still incomplete for branch-protection proof.
+3. GitHub review bridge closeout still has follow-up PR #4281 open for
+   exact-head reopen binding.
 4. Fleet provider health classification still produces false indefinite auth
    pauses.
 

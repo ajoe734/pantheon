@@ -93,8 +93,10 @@ supervisor-managed workers. It changed the execution state:
   direct failed-receipt compensation and default compose tenant authority.
 - PR #4193 / `L12-DIST-001` was reopened with a concrete Registry
   idempotency/lineage failure.
-- `L12-GITHUB-REVIEW-BRIDGE-001` and `L12-FLEET-WORKER-OUTCOME-001` remain
-  active control-plane repairs.
+- `L12-GITHUB-REVIEW-BRIDGE-001` landed core bridge PR #4280 as
+  `16296c35fd2e604f3ecf2d06dec80da0040ee8e0`; follow-up PR #4281 remains open
+  for exact-head reopen binding.
+- `L12-FLEET-WORKER-OUTCOME-001` remains an active control-plane repair.
 
 This update does not change the machine-readable task catalog. It clarifies the
 current dispatch frontier: do not create duplicate tasks for these reopened
