@@ -79,6 +79,10 @@ def _make_worker(tmp_path: Path) -> tuple[DistillationWorker, DistillationJobQue
     return worker, queue, seed_store
 
 
+def _versioned_bundle_id(source: SourceRecord) -> str:
+    return _stable_bundle_id(source.source_id, source_version_digest(source))
+
+
 # ---------------------------------------------------------------------------
 # AC-1: New normalized sources enqueue distillation jobs
 # ---------------------------------------------------------------------------
@@ -136,7 +140,7 @@ class TestEnqueueFromSourceRecord:
 
         worker.run_pending({source.source_id: source})
 
-        bundle_id = _stable_bundle_id(source.source_id)
+        bundle_id = _versioned_bundle_id(source)
         seeds = seed_store.list_by_bundle(bundle_id)
         assert len(seeds) == 1
         seed = seeds[0]
@@ -190,7 +194,7 @@ class TestMutableDraftOnly:
 
         assert result2.processed == 1
         assert result2.refreshed == 1
-        bundle_id = _stable_bundle_id(source.source_id)
+        bundle_id = _versioned_bundle_id(source)
         seeds = seed_store.list_by_bundle(bundle_id)
         assert len(seeds) == 1
         assert seeds[0].status == StrategySpecSeedStatus.DRAFT
@@ -205,7 +209,7 @@ class TestMutableDraftOnly:
         worker.run_pending(records_map)
 
         # Advance the seed to ACCEPTED
-        bundle_id = _stable_bundle_id(source.source_id)
+        bundle_id = _versioned_bundle_id(source)
         seeds = seed_store.list_by_bundle(bundle_id)
         seed = seeds[0]
         seed_store.record_review_decision(
@@ -234,7 +238,7 @@ class TestMutableDraftOnly:
         worker.enqueue_from_source_record(source)
         worker.run_pending(records_map)
 
-        bundle_id = _stable_bundle_id(source.source_id)
+        bundle_id = _versioned_bundle_id(source)
         seeds = seed_store.list_by_bundle(bundle_id)
         seed_store.record_review_decision(
             seeds[0].seed_id,
@@ -278,7 +282,7 @@ class TestIdempotency:
         result2 = worker.run_pending(records_map)
 
         assert result2.processed == 0
-        bundle_id = _stable_bundle_id(source.source_id)
+        bundle_id = _versioned_bundle_id(source)
         assert len(seed_store.list_by_bundle(bundle_id)) == 1
 
     def test_catch_up_is_idempotent(self, tmp_path: Path) -> None:

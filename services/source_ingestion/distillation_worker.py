@@ -62,10 +62,6 @@ _IMMUTABLE_SEED_STATUSES: frozenset[str] = frozenset(
 )
 
 
-def _utc_now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
 def _canonical_json(value: Mapping[str, Any]) -> str:
     return json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
 
@@ -839,11 +835,19 @@ class DistillationJobQueue:
                 row = self._select_job(connection, job_id)
                 if row is None:
                     raise DistillationError(f"DistillationJob not found: {job_id}")
-                if claim_token is not None and (
-                    str(row["status"]) != DistillationJobStatus.LEASED.value
-                    or str(row["lease_token"] or "") != claim_token
-                ):
-                    raise DistillationError(f"stale distillation lease completion: {job_id}")
+                if claim_token is not None:
+                    if (
+                        str(row["status"]) != DistillationJobStatus.LEASED.value
+                        or str(row["lease_token"] or "") != claim_token
+                    ):
+                        raise DistillationError(
+                            f"stale distillation lease completion: {job_id}"
+                        )
+                    lease_expires_at = row["lease_expires_at"]
+                    if lease_expires_at is None or float(lease_expires_at) <= now:
+                        raise DistillationError(
+                            f"expired distillation lease completion: {job_id}"
+                        )
                 attempts = int(row["attempts"]) + (0 if str(row["status"]) == "leased" else 1)
                 connection.execute(
                     """
@@ -982,6 +986,11 @@ class DistillationJobQueue:
                     or str(row["lease_token"] or "") != str(job.lease_token or "")
                 ):
                     raise DistillationError(f"stale distillation lease failure: {job.job_id}")
+                lease_expires_at = row["lease_expires_at"]
+                if lease_expires_at is None or float(lease_expires_at) <= effective_now:
+                    raise DistillationError(
+                        f"expired distillation lease failure: {job.job_id}"
+                    )
                 attempts = int(row["attempts"])
                 dead_letter = permanent or attempts >= int(row["max_attempts"])
                 status = (
@@ -1321,7 +1330,7 @@ class DistillationWorker:
                 self._queue.mark_failed(
                     job.job_id,
                     error=f"SourceRecord not found: {job.source_id}",
-                    processed_at=now or _utc_now(),
+                    processed_at=now,
                     claim_token=job.lease_token,
                 )
                 failed += 1
@@ -1436,23 +1445,19 @@ class DistillationWorker:
         or ``failed``. The second reports Registry delivery state when a
         terminal Registry sink is configured.
         """
-        ts = now or _utc_now()
-
         if source.status == SourceRecordStatus.REJECTED:
             self._queue.mark_skipped(
                 job.job_id,
                 reason=f"source {source.source_id} is rejected",
-                processed_at=ts,
+                processed_at=now,
                 claim_token=job.lease_token,
             )
             return "skipped", None
 
         # Check existing seed status to enforce mutable-draft-only invariant.
-        version_key = (
-            job.source_digest
-            if job.source_digest and self._queue.version_count(source.source_id) > 1
-            else None
-        )
+        # A versioned job's materialization identity is fixed at admission.
+        # It must not change when another revision is admitted before replay.
+        version_key = job.source_digest or None
         bundle_id = _stable_bundle_id(source.source_id, version_key)
         existing_seeds = self._seed_store.list_by_bundle(bundle_id)
         if existing_seeds:
@@ -1463,7 +1468,7 @@ class DistillationWorker:
                     job.job_id,
                     reason=f"seed {seed.seed_id} is in immutable status {seed_status!r}",
                     seed_id=seed.seed_id,
-                    processed_at=ts,
+                    processed_at=now,
                     claim_token=job.lease_token,
                 )
                 return "skipped", "immutable"
@@ -1489,7 +1494,7 @@ class DistillationWorker:
                 job,
                 error=str(exc),
                 base_delay_seconds=self._retry_base_seconds,
-                now=ts,
+                now=now,
             )
             return "failed", failure_status.value
 
@@ -1510,7 +1515,7 @@ class DistillationWorker:
                     job,
                     error=f"registry_sync_failed: {type(exc).__name__}: {exc}",
                     base_delay_seconds=self._retry_base_seconds,
-                    now=ts,
+                    now=now,
                 )
                 return "failed", failure_status.value
             if registry_result.status == "immutable":
@@ -1519,7 +1524,7 @@ class DistillationWorker:
                     reason=registry_result.reason or "Registry artifact is immutable",
                     seed_id=result.seed.seed_id,
                     registry_id=registry_result.registry_id,
-                    processed_at=ts,
+                    processed_at=now,
                     claim_token=job.lease_token,
                 )
                 return "skipped", "immutable"
@@ -1531,7 +1536,7 @@ class DistillationWorker:
                         or f"non-terminal Registry result: {registry_result.status}"
                     ),
                     base_delay_seconds=self._retry_base_seconds,
-                    now=ts,
+                    now=now,
                 )
                 return "failed", failure_status.value
             registry_id = registry_result.registry_id
@@ -1544,7 +1549,7 @@ class DistillationWorker:
             job.job_id,
             seed_id=result.seed.seed_id,
             registry_id=registry_id,
-            processed_at=ts,
+            processed_at=now,
             claim_token=job.lease_token,
         )
         return ("refreshed" if is_refresh else "created"), delivery

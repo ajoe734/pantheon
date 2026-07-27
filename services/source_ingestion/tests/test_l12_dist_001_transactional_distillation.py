@@ -417,6 +417,65 @@ class TestConcurrentWorkers:
         queue.mark_done(job.job_id, seed_id="seed-fresh", claim_token=second.lease_token)
         assert queue.get(job.source_id).seed_id == "seed-fresh"
 
+    def test_expired_lease_cannot_commit_any_terminal_outcome_before_reclaim(
+        self, tmp_path: Path
+    ) -> None:
+        clock = [1_000.0]
+        queue = DistillationJobQueue(
+            tmp_path / "queue.sqlite3",
+            now=lambda: clock[0],
+            default_max_attempts=1,
+        )
+        sources = [
+            _normalized_source(f"src-expired-{suffix}")
+            for suffix in ("done", "failed", "skipped", "dead-letter")
+        ]
+        for source in sources:
+            queue.enqueue_source_record(source)
+        claimed = queue.claim_due(worker_id="expired-worker", lease_seconds=1, limit=10)
+        assert len(claimed) == 4
+
+        clock[0] += 2
+        terminal_actions = (
+            lambda job: queue.mark_done(
+                job.job_id,
+                seed_id="seed-stale",
+                claim_token=job.lease_token,
+            ),
+            lambda job: queue.mark_failed(
+                job.job_id,
+                error="stale failure",
+                claim_token=job.lease_token,
+            ),
+            lambda job: queue.mark_skipped(
+                job.job_id,
+                reason="stale skip",
+                claim_token=job.lease_token,
+            ),
+        )
+        for job, action in zip(claimed[:3], terminal_actions, strict=True):
+            with pytest.raises(DistillationError, match="expired distillation lease"):
+                action(job)
+        with pytest.raises(DistillationError, match="expired distillation lease"):
+            queue.mark_retry_or_dead_letter(
+                claimed[3],
+                error="stale dead letter",
+                base_delay_seconds=0,
+                permanent=True,
+            )
+
+        assert all(
+            queue.get(source.source_id).status == DistillationJobStatus.LEASED.value
+            for source in sources
+        )
+
+        reclaimed = queue.claim_due(worker_id="recovery-worker", lease_seconds=60, limit=10)
+        assert len(reclaimed) == 4
+        assert all(
+            fresh.lease_token != stale.lease_token
+            for fresh, stale in zip(reclaimed, claimed, strict=True)
+        )
+
     def test_revised_content_is_a_distinct_versioned_job(self, tmp_path: Path) -> None:
         queue = DistillationJobQueue(tmp_path / "queue.sqlite3")
         original = _normalized_source("src-rev-001", title="Momentum factor v1")
@@ -533,6 +592,73 @@ class TestRegistryFailureIsTruthful:
         assert job.status == DistillationJobStatus.DONE.value
         assert job.registry_id == _registry_id_for(source)
         assert len(registry.entries) == 1
+
+    def test_outage_replay_keeps_identity_across_an_intervening_revision(
+        self, tmp_path: Path
+    ) -> None:
+        calls: list[tuple[str, str, str, str | None]] = []
+
+        def registry_sync(request: RegistrySyncRequest) -> RegistrySyncResult:
+            calls.append(
+                (
+                    request.job.source_digest,
+                    request.seed.seed_id,
+                    request.evidence_bundle.evidence_bundle_id,
+                    request.version_key,
+                )
+            )
+            if len(calls) == 1:
+                raise RuntimeError("registry outage")
+            return RegistrySyncResult(
+                registry_id=_registry_id_for(request.source),
+                status="synced",
+            )
+
+        queue_path = tmp_path / "queue.sqlite3"
+        seed_path = tmp_path / "seeds.jsonl"
+        worker = make_distillation_worker(
+            queue_path=queue_path,
+            seed_store_path=seed_path,
+            created_by="identity-worker",
+            retry_base_seconds=0,
+            registry_sync=registry_sync,
+        )
+        queue = DistillationJobQueue(queue_path)
+        original = _normalized_source(
+            "src-intervening-revision",
+            title="Intervening revision v1",
+        )
+        revised = _normalized_source(
+            "src-intervening-revision",
+            title="Intervening revision v2",
+        )
+
+        original_job = worker.enqueue_from_source_record(original)
+        first = worker.run_pending(None)
+        assert first.retried == 1
+        original_seed_id = StrategySpecSeedStore(seed_path).list_all()[0].seed_id
+
+        revised_job = worker.enqueue_from_source_record(revised)
+        second = worker.run_pending(None)
+
+        assert second.processed == 2
+        assert len(calls) == 3
+        first_attempt, original_replay, revised_delivery = calls
+        assert first_attempt[0] == original_job.source_digest
+        assert original_replay[0] == original_job.source_digest
+        assert first_attempt[1:] == original_replay[1:]
+        assert first_attempt[3] == original_job.source_digest
+        assert revised_delivery[0] == revised_job.source_digest
+        assert revised_delivery[1] != original_seed_id
+        assert revised_delivery[2] != first_attempt[2]
+
+        jobs = DistillationJobQueue(queue_path).list_all()
+        assert len(jobs) == 2
+        assert all(job.status == DistillationJobStatus.DONE.value for job in jobs)
+        assert queue.get(
+            original.source_id, original_job.source_digest
+        ).seed_id == original_seed_id
+        assert len(StrategySpecSeedStore(seed_path).list_all()) == 2
 
 
 # ---------------------------------------------------------------------------
