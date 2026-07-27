@@ -16,7 +16,12 @@ This module makes those routes *trusted* and *tenant-bound*:
   tenant authority carried by the verified token, never from the request body;
 * a body or path that names a different tenant is rejected rather than
   silently re-bound, so a caller cannot smuggle a cross-tenant scope past the
-  header check.
+  header check;
+* under a staging or production persistence posture, no credential this
+  repository publishes — the compose default, the ``.env.example`` placeholder,
+  or any other unedited fill-me-in value — counts as configured, so a
+  deployment that never minted its own secret fails closed rather than
+  authenticating anyone holding a checkout.
 
 The policy-learning JWT settings are deliberately *not* inherited from
 ``PANTHEON_RUNTIME_*``: policy-learning is its own authority boundary and must
@@ -52,6 +57,45 @@ DEFAULT_ALLOWED_ROLES = "policy-learning-service"
 # its own ``POLICY_LEARNING_SERVICE_TOKEN`` fails closed instead of accepting a
 # credential anyone can read off GitHub.
 LOCAL_DEV_SERVICE_TOKEN = "pantheon-local-policy-learning-service"
+
+# ``.env.example`` ships this fill-me-in value for the same variable.  Copying
+# the example file into a deployment without editing that line is the ordinary
+# way a stack ends up running on a credential that is published in the
+# repository, so it is refused on an enforced posture exactly like the compose
+# default above.  The compose default at least still authenticates a developer
+# laptop; this one authenticates nothing anywhere.
+ENV_EXAMPLE_SERVICE_TOKEN = "replace-me-policy-learning-service-token"
+
+# Every value for ``POLICY_LEARNING_SERVICE_TOKEN`` this repository publishes.
+# ``tests/test_l12_imit_001_default_compose_loop.py`` pins this tuple to what
+# the tracked ``docker-compose.yml`` and ``.env.example`` actually contain, so
+# a newly published default cannot silently become an accepted deployment
+# secret.
+PUBLISHED_SERVICE_TOKENS = (LOCAL_DEV_SERVICE_TOKEN, ENV_EXAMPLE_SERVICE_TOKEN)
+
+# Fill-me-in shapes an operator leaves behind when a template is copied but not
+# completed.  Matched against the token lowercased with ``_``/whitespace folded
+# to ``-``, so ``REPLACE_ME_TOKEN`` is refused as readily as the exact example
+# value.  This is deliberately a *fail-closed* rule: a deployment whose real
+# secret happens to start "example-" is told it is unconfigured, which is the
+# safe direction to be wrong in.
+_PLACEHOLDER_TOKEN_PREFIXES = (
+    "replace-me",
+    "replaceme",
+    "change-me",
+    "changeme",
+    "placeholder",
+    "example",
+    "sample",
+    "dummy",
+    "todo",
+    "your-",
+)
+
+# Tokens that are nothing but the name of the thing they are standing in for.
+_PLACEHOLDER_TOKENS = frozenset(
+    {"secret", "token", "password", "changeit", "test", "none", "unset", "tbd"}
+)
 
 _TENANT_CLAIM_KEYS = (
     "allowed_tenants",
@@ -177,15 +221,47 @@ def _enforced_posture() -> bool:
     return validate_persistence_posture("policy-learning", require_object_store=False).enforced
 
 
+def _normalized_token(value: str) -> str:
+    return re.sub(r"[\s_]+", "-", value.strip().lower())
+
+
+def is_published_service_token(value: Any) -> bool:
+    """True when ``value`` is a credential anyone with a checkout already has.
+
+    That covers both values this repository publishes verbatim
+    (:data:`PUBLISHED_SERVICE_TOKENS`) and the fill-me-in shapes an operator
+    leaves behind when a template is copied but never completed.  Such a value
+    is not a weak secret, it is a *public* one, so on an enforced posture it is
+    treated as no credential at all rather than as a credential to warn about.
+    """
+
+    token = _clean(value)
+    if not token:
+        return False
+    published = False
+    for known in PUBLISHED_SERVICE_TOKENS:
+        # Compared without an early return so the check does not reveal which
+        # published value was supplied.  Both are public, but the habit is the
+        # one the rest of this module keeps.
+        published |= hmac.compare_digest(token, known)
+    if published:
+        return True
+    normalized = _normalized_token(token)
+    if normalized in _PLACEHOLDER_TOKENS:
+        return True
+    return normalized.startswith(_PLACEHOLDER_TOKEN_PREFIXES)
+
+
 def service_token() -> str:
     """The usable in-cluster service token, or ``""`` when there is none.
 
-    The published compose default is deliberately downgraded to "no token" on a
-    staging or production posture: see :data:`LOCAL_DEV_SERVICE_TOKEN`.
+    Any repository-published or placeholder value is deliberately downgraded to
+    "no token" on a staging or production posture: see
+    :func:`is_published_service_token`.
     """
 
     configured = _clean(os.getenv(SERVICE_TOKEN_ENV))
-    if configured and hmac.compare_digest(configured, LOCAL_DEV_SERVICE_TOKEN) and _enforced_posture():
+    if configured and is_published_service_token(configured) and _enforced_posture():
         return ""
     return configured
 
@@ -317,15 +393,22 @@ def authority_configuration() -> dict[str, Any]:
     )
     resolved_token = service_token()
     service_token_configured = bool(resolved_token)
+    if not resolved_token:
+        token_scope = "none"
+    elif hmac.compare_digest(resolved_token, LOCAL_DEV_SERVICE_TOKEN):
+        token_scope = "local_dev_default"
+    elif is_published_service_token(resolved_token):
+        # Reachable only on a dev/lenient posture: an unedited template value is
+        # still a working credential locally, but it is named for what it is so
+        # a readiness check can see it before the deployment posture flips.
+        token_scope = "published_placeholder"
+    else:
+        token_scope = "deployment_secret"
     return {
         "mode": mode,
         "jwt_verifier_configured": verifier_configured,
         "service_token_configured": service_token_configured,
-        "service_token_scope": (
-            "local_dev_default"
-            if resolved_token and hmac.compare_digest(resolved_token, LOCAL_DEV_SERVICE_TOKEN)
-            else ("deployment_secret" if resolved_token else "none")
-        ),
+        "service_token_scope": token_scope,
         "service_tenants_configured": bool(_split_values(os.getenv(SERVICE_TENANTS_ENV))),
         "allowed_roles": list(allowed_roles()),
         "tenant_header": TENANT_HEADER,
@@ -336,7 +419,9 @@ def authority_configuration() -> dict[str, Any]:
 
 __all__ = [
     "ALLOWED_ROLES_ENV",
+    "ENV_EXAMPLE_SERVICE_TOKEN",
     "LOCAL_DEV_SERVICE_TOKEN",
+    "PUBLISHED_SERVICE_TOKENS",
     "PolicyLearningAuthority",
     "PolicyLearningAuthorityError",
     "SERVICE_TENANTS_ENV",
@@ -346,6 +431,7 @@ __all__ = [
     "allowed_roles",
     "authority_configuration",
     "bind_tenant",
+    "is_published_service_token",
     "resolve_authority",
     "service_token",
 ]
