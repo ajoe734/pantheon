@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Coordinate exact FE/BFF release candidate and dev deployment switch
-- Status: in_progress
+- Status: review
 - Owner: Codex2
 - Reviewer: Codex
-- Next: Codex2 resumed the exact-pair release controller from its durable anchors and is completing Pantheon orchestration, compensation evidence, and cross-repo validation.
+- Next: Pantheon PR #4268 and execute-plans PR #558 contain the complete exact-pair controller, compensation, docs, and evidence. All visible checks pass, including the execute-plans integration gate; 64 directly affected Pantheon tests and 58 frontend tests plus typecheck pass on the review heads. Ready for Codex independent exact-head review. No hosted release was dispatched.
 
 ## Summary
 建立 Pantheon backend 與 execute-plans frontend 的單一 dev release candidate controller：先產生 immutable FE/BFF pair ledger 與 compatibility admission，再一次切換 Pantheon-owned dev FE/BFF；不再每修一個症狀就單獨部署。runtime compose manifest 與 deploy_nonprod_vm.sh 由 L12-MANIFEST-001 compose，不在本任務 ownership 內。
