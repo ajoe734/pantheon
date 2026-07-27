@@ -105,8 +105,10 @@ def test_payloads_must_come_from_their_protected_delivery_branches() -> None:
 
     assert "fetch-depth: 0" in dev
     assert "refs/remotes/origin/dev" in dev
-    assert 'git merge-base --is-ancestor "${sha}" "${trusted_ref}"' in dev
-    assert "not contained in protected origin/dev" in dev
+    assert '"${sha}" != "${trusted_ref}"' in dev
+    assert '"${GITHUB_REF}" != "refs/heads/dev"' in dev
+    assert '"${GITHUB_SHA}" != "${sha}"' in dev
+    assert "Out-of-order execute-plans candidate rejected" in dev
     assert "fetch-depth: 0" in staging
     assert "refs/remotes/origin/master" in staging
     assert 'git merge-base --is-ancestor "${sha}" "${trusted_ref}"' in staging
@@ -237,9 +239,9 @@ def test_token_steps_use_a_fixed_sanitized_path_and_clear_shell_git_injection() 
 def test_all_third_party_actions_are_full_sha_pinned() -> None:
     workflow = _workflow()
 
-    assert workflow.count(f"actions/checkout@{CHECKOUT_SHA}") == 5
-    assert workflow.count(f"google-github-actions/auth@{AUTH_SHA}") == 2
-    assert workflow.count(f"google-github-actions/setup-gcloud@{GCLOUD_SHA}") == 2
+    assert workflow.count(f"actions/checkout@{CHECKOUT_SHA}") == 7
+    assert workflow.count(f"google-github-actions/auth@{AUTH_SHA}") == 3
+    assert workflow.count(f"google-github-actions/setup-gcloud@{GCLOUD_SHA}") == 3
     for line in workflow.splitlines():
         if "uses:" in line:
             ref = line.rsplit("@", 1)[-1]
