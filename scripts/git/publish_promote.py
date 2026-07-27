@@ -164,7 +164,7 @@ def list_open_promote_prs(main_branch: str) -> tuple[dict[str, dict], str | None
             "--limit",
             "1000",
             "--json",
-            "number,url,headRefName,mergeStateStatus,headRefOid,statusCheckRollup",
+            "number,url,headRefName,mergeStateStatus,headRefOid",
         ],
         capture_output=True,
         text=True,
@@ -462,9 +462,12 @@ def discover(
             candidate["disposition"] = "superseded"
             candidate["superseded_by"] = successor["version"]
         elif candidate.get("existing_pr"):
-            missing = missing_required_promote_checks(candidate["existing_pr"])
-            candidate["missing_required_checks"] = missing
-            candidate["disposition"] = "ci_repair" if missing else "existing_pr"
+            # Keep the bulk PR lookup cheap. Asking GraphQL for
+            # statusCheckRollup across up to 1,000 PRs caused repeatable 502s
+            # in runs 30284788017 and 30284856368. The action step performs one
+            # exact-branch lookup and dispatches only when that PR head is
+            # actually missing a required context.
+            candidate["disposition"] = "existing_pr"
             terminal_snapshots.append(candidate)
         else:
             candidate["disposition"] = "eligible"
@@ -504,16 +507,17 @@ def cmd_discover(args: argparse.Namespace) -> int:
         release_prefix=settings["release_tag_prefix"],
         version_format=settings["version_format"],
     )
-    eligible = [
+    eligible = [c for c in candidates if c["disposition"] == "eligible"]
+    actionable = [
         c
         for c in candidates
-        if c["disposition"] in {"eligible", "ci_repair"}
+        if c["disposition"] in {"eligible", "existing_pr"}
     ]
     if args.github_output:
         with open(args.github_output, "a") as fh:
-            fh.write(f"candidate_count={len(eligible)}\n")
+            fh.write(f"candidate_count={len(actionable)}\n")
             fh.write("candidates<<__EOC__\n")
-            fh.write(json.dumps(eligible))
+            fh.write(json.dumps(actionable))
             fh.write("\n__EOC__\n")
             fh.write("dispositions<<__EOD__\n")
             fh.write(json.dumps(candidates))
@@ -525,6 +529,7 @@ def cmd_discover(args: argparse.Namespace) -> int:
                 "counts": dict(Counter(c["disposition"] for c in candidates)),
                 "all": candidates,
                 "eligible": eligible,
+                "actionable": actionable,
             },
             indent=2,
         )
