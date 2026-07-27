@@ -5663,6 +5663,12 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
             binding = resolve_approval_binding(task, warn_if_unbound=False)
         elif isinstance(task.get(APPROVAL_BINDING_KEY), Mapping):
             binding = dict(task[APPROVAL_BINDING_KEY])
+        elif task_has_pr_review_target(task):
+            raise SystemExit(
+                f"{task_id} is PR-backed but reviewer reopen has no exact-head "
+                "binding. Set REVIEW_PR and REVIEW_HEAD_SHA so the rejection "
+                "also closes the GitHub review gate."
+            )
         if binding:
             github_review_bridge = bridge_github_review_decision(
                 task,
