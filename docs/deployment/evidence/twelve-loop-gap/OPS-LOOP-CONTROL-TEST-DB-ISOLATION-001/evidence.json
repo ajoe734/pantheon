@@ -1,0 +1,392 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "The task participates in the twelve-loop product evidence program.",
+    "note": "This manifest follows schemas/product-evidence.schema.json and records the independent Codex approval of the implementation merged by PR #4241.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/OPS-LOOP-CONTROL-TEST-DB-ISOLATION-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Owner implementation evidence may be appended before review; only the independent reviewer may record approval.",
+    "recording_mode": "task_scoped_append_only_review_log",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-27T13:01:25Z",
+    "evidence_cut_semantics": "Independent reviewer evidence cut over implementation head 94c0af607ab9ab5033a6ddf482ec2d2b629db6bd, merged by PR #4241 as ab63b3c4c14cb47fd5ddaec0c0ae6a3cd18afc8c. Required checks and independent local/throwaway-PostgreSQL verification passed; only the evidence PR merge, governed review_approved transition, and owner closeout remain.",
+    "id": "OPS-LOOP-CONTROL-TEST-DB-ISOLATION-001",
+    "overall_admission": "review_approved",
+    "owner": "Codex2",
+    "phase": "Twelve-loop verification hardening",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/OPS-LOOP-CONTROL-TEST-DB-ISOLATION-001/evidence.json",
+    "reviewer": "Codex",
+    "target_environment": "local_and_ci_test_execution_only",
+    "target_maturity": "test_database_isolation",
+    "task_branch": "task/OPS-LOOP-CONTROL-TEST-DB-ISOLATION-001",
+    "title": "Isolate loop-control database tests from live dev state"
+  },
+  "authorities": {
+    "actual_state": [
+      "services/loop-control/conftest.py",
+      "services/loop-control/test_db_isolation.py",
+      "services/loop-control/test_loop_control.py",
+      "scripts/cleanup_loop_control_test_rows.py",
+      "scripts/test_cleanup_loop_control_test_rows.py"
+    ],
+    "desired_state": [
+      ".orchestrator/task-briefs/ops_loop_control_test_db_isolation_001.md",
+      "canonical ai-status task acceptance criteria"
+    ],
+    "task_packet": ".orchestrator/task-briefs/ops_loop_control_test_db_isolation_001.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "This task owns only loop-control test DB selection and schema lifecycle, the exact legacy-test contamination cleanup guard, their regressions, and task evidence.",
+    "composes_with": [
+      "L12-CTRL-001 canonical controller truth substrate",
+      "LOOP-PROD-002 product evidence admission",
+      "Human/Ops plan-bound authorization for any future live cleanup"
+    ],
+    "evidence_changed_files": [
+      ".orchestrator/task-briefs/ops_loop_control_test_db_isolation_001.md",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-LOOP-CONTROL-TEST-DB-ISOLATION-001/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-LOOP-CONTROL-TEST-DB-ISOLATION-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-LOOP-CONTROL-TEST-DB-ISOLATION-001/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "services/loop-control/conftest.py",
+      "services/loop-control/test_db_isolation.py",
+      "services/loop-control/test_loop_control.py",
+      "scripts/cleanup_loop_control_test_rows.py",
+      "scripts/test_cleanup_loop_control_test_rows.py"
+    ],
+    "not_changing": "No loop-controller runtime store semantics, production migration, deployment configuration, hosted service, broker/capital authority, canonical architecture document, or live database content is changed.",
+    "owned_layer": "Fail-closed loop-control DB test selection, unique schema lifecycle and legitimate-row snapshot guard, plus dry-run-first exact contamination cleanup authorization."
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "delivery_state": "merged",
+        "note": "Per-suite schema isolation, ambient DSN refusal, legitimate-row digest guard, and DB test fixture conversion.",
+        "sha": "ec8d955b8b055efb30b7e212a3048ce2eabc39e4",
+        "subject": "OPS-LOOP-CONTROL-TEST-DB-ISOLATION-001: anchor DB fixture"
+      },
+      {
+        "delivery_state": "merged",
+        "note": "Exact cleanup catalog, dry-run planning, Human/Ops plan binding, and cleanup regressions.",
+        "sha": "4a7a87cdb71e12170dc4e7810b08239807b7c9ea",
+        "subject": "OPS-LOOP-CONTROL-TEST-DB-ISOLATION-001: anchor cleanup guard"
+      }
+    ],
+    "pull_request": {
+      "base": "dev",
+      "head_sha": "94c0af607ab9ab5033a6ddf482ec2d2b629db6bd",
+      "merge_sha": "ab63b3c4c14cb47fd5ddaec0c0ae6a3cd18afc8c",
+      "merged_at": "2026-07-27T12:51:54Z",
+      "number": 4241,
+      "url": "https://github.com/ajoe734/pantheon/pull/4241"
+    },
+    "required_checks": [
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "94c0af607ab9ab5033a6ddf482ec2d2b629db6bd",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30267589514,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30267589514",
+        "workflow": "Branch CI Gate"
+      },
+      {
+        "conclusion": "success",
+        "event": "push",
+        "head_sha": "94c0af607ab9ab5033a6ddf482ec2d2b629db6bd",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30267586053,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30267586053",
+        "workflow": "Branch CI Gate"
+      }
+    ]
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "env -u DATABASE_URL -u PANTHEON_LOOP_CONTROL_TEST_DATABASE_URL /home/lupin/pantheon/.venv/bin/python -m pytest -q -p no:cacheprovider services/loop-control/test_db_isolation.py services/loop-control/test_loop_control.py",
+        "conclusion": "21 passed, 7 skipped in 2.66s. All pure isolation and controller tests pass; real DB cases skip without an explicit task-specific DSN.",
+        "result": "pass"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python -m pytest -q -p no:cacheprovider scripts/test_cleanup_loop_control_test_rows.py",
+        "conclusion": "12 passed in 0.97s.",
+        "result": "pass"
+      },
+      {
+        "command": "DATABASE_URL=postgresql://ambient-operator:<redacted>@127.0.0.1:9/pantheon_dev PANTHEON_LOOP_CONTROL_TEST_DATABASE_URL=postgresql://loop_test:<redacted>@127.0.0.1:<random-port>/loop_control_test /home/lupin/pantheon/.venv/bin/python -m pytest -q -p no:cacheprovider services/loop-control/test_db_isolation.py services/loop-control/test_loop_control.py",
+        "conclusion": "28 passed in 8.82s against a localhost-only postgres:16-alpine throwaway database. The hostile ambient URL was not contacted.",
+        "result": "pass"
+      },
+      {
+        "command": "DATABASE_URL=postgresql://ambient-operator:<redacted>@127.0.0.1:9/pantheon_dev env -u PANTHEON_LOOP_CONTROL_TEST_DATABASE_URL /home/lupin/pantheon/.venv/bin/python -m pytest -q -p no:cacheprovider services/loop-control/test_db_isolation.py::test_real_fixture_preserves_legitimate_count_and_digest",
+        "conclusion": "Expected exit 1 before connection: fixture reported that DATABASE_URL is ambient dev/production state and requires PANTHEON_LOOP_CONTROL_TEST_DATABASE_URL.",
+        "result": "expected_refusal"
+      },
+      {
+        "command": "PostgreSQL count/content digest and generated-schema readback before and after the 28-test real-DB suite",
+        "conclusion": "public.loop_controller_records remained 2 rows with digest dd08f4fd1dd5ace67e32912bea472663; source_ingestion and strategy_distillation were unchanged; no pantheon_loop_control_test_* schema remained.",
+        "result": "pass"
+      },
+      {
+        "command": "PANTHEON_LOOP_CONTROL_CLEANUP_DATABASE_URL=<throwaway-postgres> /home/lupin/pantheon/.venv/bin/python scripts/cleanup_loop_control_test_rows.py",
+        "conclusion": "Dry-run over 8 exact legacy-test signatures plus 2 legitimate canonical rows returned exactly 8 candidates, excluded both canonical loop IDs, and left all 10 rows unchanged.",
+        "result": "pass"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python -m compileall -q <five task Python files> && git diff --check",
+        "conclusion": "Both commands exited 0.",
+        "result": "pass"
+      },
+      {
+        "command": "env -u DATABASE_URL -u PANTHEON_LOOP_CONTROL_TEST_DATABASE_URL /home/lupin/pantheon/.venv/bin/python -m pytest -q -p no:cacheprovider services/loop-control/test_db_isolation.py services/loop-control/test_loop_control.py scripts/test_cleanup_loop_control_test_rows.py",
+        "conclusion": "Independent Codex review rerun: 33 passed, 7 skipped in 4.41s.",
+        "result": "pass"
+      },
+      {
+        "command": "DATABASE_URL=postgresql://ambient-operator:<redacted>@127.0.0.1:9/pantheon_dev env -u PANTHEON_LOOP_CONTROL_TEST_DATABASE_URL /home/lupin/pantheon/.venv/bin/python -m pytest -q -p no:cacheprovider services/loop-control/test_db_isolation.py::test_real_fixture_preserves_legitimate_count_and_digest",
+        "conclusion": "Independent negative rerun produced the expected pytest exit 1 before asyncpg connection because only ambient DATABASE_URL was present.",
+        "result": "expected_refusal"
+      },
+      {
+        "command": "DATABASE_URL=<hostile-unreachable-ambient> PANTHEON_LOOP_CONTROL_TEST_DATABASE_URL=<localhost-throwaway-postgres> /home/lupin/pantheon/.venv/bin/python -m pytest -q -p no:cacheprovider services/loop-control/test_db_isolation.py services/loop-control/test_loop_control.py",
+        "conclusion": "Independent Codex throwaway PostgreSQL rerun: 28 passed in 5.46s; two legitimate public rows retained count/digest 2:d12e3a986af3b98f2afb82514fc2b9cc and no pantheon_loop_control_test_* schema remained.",
+        "result": "pass"
+      },
+      {
+        "command": "PANTHEON_LOOP_CONTROL_CLEANUP_DATABASE_URL=<localhost-throwaway-postgres-with-eight-candidates-two-canonical-rows-and-one-decoy> /home/lupin/pantheon/.venv/bin/python scripts/cleanup_loop_control_test_rows.py",
+        "conclusion": "Independent dry-run returned exactly 8 candidates; all 11 rows remained. source_ingestion, strategy_distillation, and the wrong-environment/controller decoy were excluded.",
+        "result": "pass"
+      },
+      {
+        "command": "jsonschema.validate(evidence.json, schemas/product-evidence.schema.json) && sha256sum -c evidence.sha256 && git diff --check",
+        "conclusion": "Independent reviewer evidence schema, companion checksums, and whitespace validation passed.",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-07-27T13:01:25Z",
+    "validated_base_sha": "fab71dd0c477e9f1d683c04efe32320e8fb0f593",
+    "validated_head_sha": "94c0af607ab9ab5033a6ddf482ec2d2b629db6bd"
+  },
+  "deployment": {
+    "applicable": false,
+    "environment": "local developer and CI test execution only",
+    "public_bff_base_url": "not_applicable_test_only_change",
+    "publish_cut": {
+      "reason": "No hosted runtime or frontend surface is changed.",
+      "status": "not_applicable"
+    },
+    "canonical_root_deploy": {
+      "reason": "Test fixtures, cleanup tooling, regressions, and evidence only.",
+      "status": "not_applicable"
+    },
+    "identity_admission": {
+      "proof": "Runtime identity admission is unchanged; test DB access requires a new explicit task-specific variable.",
+      "status": "pass"
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "hosted_activation_claimed": false,
+      "reason": "No hosted surface is affected or exercised.",
+      "status": "not_applicable"
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "proof": "Every suite gets a UUID schema, so repeated or concurrent runs cannot collide on controller primary keys.",
+      "status": "pass"
+    },
+    "failure_and_degraded_behavior": {
+      "proof": "An ambient DATABASE_URL without the explicit test DSN fails before asyncpg.connect; no fallback default remains.",
+      "status": "pass"
+    },
+    "request_receipt_downstream_correlation": {
+      "proof": "The production LoopControllerStore and LoopControllerWriter are exercised unchanged against the schema-pinned DSN.",
+      "status": "pass"
+    },
+    "restart_and_recovery": {
+      "proof": "Each fixture setup creates a fresh schema and each teardown drops it, verifies absence, and compares legitimate table count/digest snapshots.",
+      "status": "pass"
+    },
+    "rollback_or_compensation": {
+      "proof": "No live cleanup was run. Future apply mode locks the approved candidates and rolls back if the deleted count differs from the plan.",
+      "status": "pass"
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "proof": "Only localhost-only throwaway PostgreSQL containers were used. DATABASE_URL is ignored by both the fixture and cleanup command.",
+      "status": "pass"
+    },
+    "hosted_frontend": {
+      "status": "not_applicable"
+    },
+    "mfa": {
+      "proof": "Future live cleanup requires separate Human/Ops evidence; this task did not perform that operation.",
+      "status": "not_applicable"
+    },
+    "no_live_capital": {
+      "proof": "No broker, trading, allocation, deployment, or capital path is touched.",
+      "status": "pass"
+    },
+    "rbac": {
+      "proof": "No service RBAC changes; the cleanup utility adds a stricter offline Human/Ops evidence gate.",
+      "status": "pass"
+    },
+    "tenant_isolation": {
+      "proof": "Tests execute in a generated schema and cleanup predicates require exact tenant and environment values.",
+      "status": "pass"
+    },
+    "two_person_approval": {
+      "proof": "Owner Codex2 and independent reviewer Codex are distinct; Codex approved only after inspecting PR #4241, its green required checks, the merged diff, and independent negative/throwaway-PostgreSQL reruns.",
+      "status": "pass"
+    }
+  },
+  "acceptance": [
+    {
+      "evidence_refs": [
+        "services/loop-control/conftest.py#resolve_explicit_test_database_url",
+        "validation.commands[3]"
+      ],
+      "id": "AC1",
+      "statement": "The loop-control tests fail closed when they inherit a Pantheon dev or production DATABASE_URL.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/loop-control/conftest.py#loop_control_db_isolation",
+        "validation.commands[2]",
+        "validation.commands[4]"
+      ],
+      "id": "AC2",
+      "statement": "Real database tests require an explicit test DSN, use a unique schema, and leave no rows or schema behind.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/loop-control/test_db_isolation.py#test_real_fixture_preserves_legitimate_count_and_digest",
+        "validation.commands[4]"
+      ],
+      "id": "AC3",
+      "statement": "A regression captures the legitimate loop_controller_records count and digest before and after the suite and proves they are unchanged.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "scripts/cleanup_loop_control_test_rows.py#CONTAMINATION_SIGNATURES",
+        "scripts/test_cleanup_loop_control_test_rows.py",
+        "validation.commands[5]"
+      ],
+      "id": "AC4",
+      "statement": "The cleanup utility is dry-run by default and targets only enumerated test contamination rows.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "scripts/cleanup_loop_control_test_rows.py#validate_human_ops_evidence",
+        "scripts/cleanup_loop_control_test_rows.py#PRESERVED_CANONICAL_LOOP_IDS",
+        "validation.commands[1]"
+      ],
+      "id": "AC5",
+      "statement": "Human/Ops evidence is required before live cleanup and legitimate source_ingestion and strategy_distillation rows are preserved.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "implementation_delivery.required_checks",
+        "record_log"
+      ],
+      "id": "AC6",
+      "statement": "The task is delivered by PR to dev with green checks and independent Codex review.",
+      "status": "pass"
+    }
+  ],
+  "residual_risks": {
+    "future_live_cleanup_requires_human_evidence": {
+      "blocking_for_this_task": false,
+      "containment": "The utility remains dry-run unless --apply and a current plan-bound Human/Ops evidence document are both supplied.",
+      "description": "This task proves the cleanup guard but deliberately does not authorize or perform cleanup in Pantheon dev.",
+      "expiry": "When Human/Ops separately approves a specific live cleanup plan",
+      "owner": "Human/Ops",
+      "recheck_trigger": "Any request to run the utility with --apply",
+      "severity": "medium"
+    },
+    "explicit_database_requires_schema_privilege": {
+      "blocking_for_this_task": false,
+      "containment": "CI and local proof must use a dedicated test role allowed to create and drop schemas; no fallback to public is permitted.",
+      "description": "A restricted PostgreSQL role without CREATE on the database cannot run the real-DB tests.",
+      "expiry": "When the test database role is provisioned",
+      "owner": "CI/Operations",
+      "recheck_trigger": "Real-DB test fixture reports insufficient schema privilege",
+      "severity": "low"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/twelve-loop-gap/OPS-LOOP-CONTROL-TEST-DB-ISOLATION-001/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-LOOP-CONTROL-TEST-DB-ISOLATION-001/evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/twelve-loop-gap/OPS-LOOP-CONTROL-TEST-DB-ISOLATION-001/evidence.sha256",
+    "hosted_semantic_sha256": {
+      "reason": "No hosted readback exists for a test-only change.",
+      "status": "not_applicable"
+    },
+    "manifest_path": "docs/deployment/evidence/twelve-loop-gap/OPS-LOOP-CONTROL-TEST-DB-ISOLATION-001/evidence.json",
+    "normalized_hosted_readback": {
+      "reason": "No hosted readback exists for a test-only change.",
+      "status": "not_applicable"
+    },
+    "self_hash_omitted": true,
+    "self_hash_reason": "The manifest cannot contain its own digest; evidence.sha256 binds the normalized owner evidence cut and the merge commit will bind it again.",
+    "source_artifact_sha256_by_epoch": {
+      "4a7a87cdb71e12170dc4e7810b08239807b7c9ea": {
+        "scripts/cleanup_loop_control_test_rows.py": "f70cfed292ad0d6fb76110ed2e8edc4e7267a7414505edfb66b2bb1b7985331b",
+        "scripts/test_cleanup_loop_control_test_rows.py": "86d102dd5d8abda20d44d603dc3fa0c409504942a9c42f8619b7b677071da493",
+        "services/loop-control/conftest.py": "dd4e346d4dc0f51b3dc1887672b7d1ead79f4f739affeee3f79e253e76aa38db",
+        "services/loop-control/test_db_isolation.py": "7f1ec8f091b905d995282e9273b7bf0dd233143139410c69fe63d1a148a6925b",
+        "services/loop-control/test_loop_control.py": "8e6fe72d3c63efc42780a37d5bddcf6feea61e81b7833caca8e3c2285de3f71a"
+      }
+    }
+  },
+  "record_log": [
+    {
+      "actor": "Codex2",
+      "kind": "owner_implementation_ready",
+      "recorded_at": "2026-07-27T12:46:46Z",
+      "reference": "Anchors ec8d955b8 and 4a7a87cdb; local no-DB, real-PostgreSQL, negative ambient, and cleanup proofs recorded.",
+      "sequence": 1,
+      "sha": "4a7a87cdb71e12170dc4e7810b08239807b7c9ea",
+      "status": "implementation_complete_pending_independent_review"
+    },
+    {
+      "actor": "Codex",
+      "kind": "independent_review_approval",
+      "recorded_at": "2026-07-27T13:01:25Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4241",
+      "sequence": 2,
+      "sha": "94c0af607ab9ab5033a6ddf482ec2d2b629db6bd",
+      "status": "review_approved"
+    }
+  ]
+}
