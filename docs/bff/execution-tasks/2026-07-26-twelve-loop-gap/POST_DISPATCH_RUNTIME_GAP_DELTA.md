@@ -1,6 +1,6 @@
 # Twelve-Loop Post-Dispatch Runtime Gap Delta
 
-Document Version: `8.0.0`
+Document Version: `9.0.0`
 Date: `2026-07-27`
 Task ID: `OPS-L12-RUNTIME-GAP-DELTA-001`
 Owner: `Claude`
@@ -21,8 +21,8 @@ Program: `pantheon-twelve-loop-gap-2026-07-26`
 - `docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/ROUND3_ACCEPTANCE_EVIDENCE_AUDIT.md`
 - `docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/tasks.json`（25-task catalog）
 
-本版（v8.0.0）取代 v1.0.0（已由 PR #4200 合併進 `dev`）、v2.0.0、v3.0.0、v4.0.0、
-v5.0.0、v6.0.0 與 v7.0.0 的內容主張。v1–v3 由 owner `Antigravity` 撰寫：v1.0.0 於 journal seq 1685 由
+本版（v9.0.0）取代 v1.0.0（已由 PR #4200 合併進 `dev`）、v2.0.0、v3.0.0、v4.0.0、
+v5.0.0、v6.0.0、v7.0.0 與 v8.0.0 的內容主張。v1–v3 由 owner `Antigravity` 撰寫：v1.0.0 於 journal seq 1685 由
 `Human/Ops` 獨立否決，v2.0.0 與 v3.0.0 由當時的 reviewer `Claude` 判為事實錯誤且未進入
 PR。journal seq 1943（`2026-07-26T21:12:08Z`，`Human/Ops`）將本 task 改派為 owner
 `Claude` / reviewer `Codex2`。v4.0.0 由新 owner 交付於 PR `#4221`，被 `Human/Ops` 否決
@@ -59,10 +59,26 @@ v7.0.0 交付於 PR `#4221` head `04332822e44922d64a4a403cfe6223f311e9954b`，�
 文件為 v6 與「七條規則」、仍把 `#4203` 寫成 trailers 失敗且 `BEHIND`，而同一份 manifest
 的觀測表已記錄該 PR 為綠。這些全部是**關於當前 cut 的主張**，而既有八條規則只讀結構化
 欄位、不讀敘述，於是 schema、checksum 與八條規則同時放行了一份自相矛盾的 manifest。
-v8.0.0 新增第九條規則 `current_cut_consistency`：把當前 cut 的版本、交付收據、canonical
-快照序號與規則數集中宣告於 `evidence.json` 的 `current_cut`，並要求被列管的敘述欄位與該
-宣告一致；確實屬於舊版的字樣必須在其後緊接字面標記 `(historical)`，否則即為拒絕（§7.7）。
-v1–v7 中被推翻的具體主張逐條列於 §7。
+v8.0.0 (historical) 新增第九條規則 `current_cut_consistency`：它**不**新增
+宣告區塊，而是把當前 cut 的身分從 manifest 既有結構導出——版本取自
+`task.evidence_cut_semantics` 的開頭句、canonical 快照序號取自
+`authorities.actual_state[0]`、交付收據取自帶 `receipt_role` 的那一個 anchor、規則數取自
+驗證器自身——再要求被列管的敘述欄位與該身分一致；確實屬於舊版的字樣必須在其後緊接字面
+標記 `(historical)`，否則即為拒絕（§7.7）。
+
+v8.0.0 (historical) 交付於 PR `#4221` head
+`a5de47447b607a2f561b852fc40bf33035ffcba0`，被 reviewer `Codex2` 第六次否決。schema、
+checksum、九條 (historical) 規則、77 個測試、dispatch valid/25、收據檢查與 baseline /
+catalog diff 全數通過，被否決的是**同一種缺陷換了一個 artifact**：出問題的不是 manifest，
+而是 manifest 用 content digest 綁住的**本文件**。當時的 §1 寫著 cut 身分宣告於
+`evidence.json` 的一個名為 `current_cut` 的欄位——那個欄位不存在、也從未存在，同一份文件
+的 §7.7 反而正確地寫著身分是從既有結構導出的；§3.4 則仍稱本版只掃描到 seq 2014
+(historical)，與本 cut 的邊界 seq 2191 及 manifest 自己的掃描命令矛盾。九條規則沒有一條
+會發現這件事，因為**九條規則全部只讀 manifest，沒有一條打開 manifest 綁定的文件**。
+v9.0.0 新增第十條規則 `bound_document_consistency`：直接讀取被 content digest 綁定的
+delta 文件，拒絕「宣告於某個不存在的 manifest 欄位」與「與本 cut 宣告不符的掃描邊界」
+兩類主張，並要求文件至少明載一次本 cut 的邊界（§7.8）。v1–v8 中被推翻的具體主張逐條
+列於 §7。
 
 本文件**不宣稱**十二循環已完成、已 hosted 啟用、或本 task 已完成。
 
@@ -154,8 +170,12 @@ seq 1645 的基線是 **23 total / 20 nonterminal / 16 L12**（不是 22，也�
 
 ### 3.4 全 journal 空快照普查
 
-在 seq 1..2014 的全量掃描中，`state.tasks` 為空的提交共 **9 筆**（v4.0.0 掃描到 seq 1952
-時同為 9 筆；本版把掃描邊界推進到 2014 後計數不變）：
+在 seq 1..2191 的全量掃描中，`state.tasks` 為空的提交共 **9 筆**。這個掃描邊界與 §2、
+§3.6 宣告的 canonical 快照邊界是同一個 seq 2191，不是另一次較早的掃描：v4.0.0
+(historical) 掃描到 seq 1952 (historical) 時為 9 筆，v5.0.0 (historical) 推進到
+seq 2014 (historical)、v6.0.0 (historical) 推進到 seq 2046 (historical)、v7.0.0
+(historical) 推進到 seq 2142 (historical)、本版推進到 seq 2191，計數自始未變——9 筆全部
+落在 `2026-07-26T16:09:03Z` 之前，其後至 seq 2191 的 541 筆事件沒有再出現空快照：
 
 | Seq | committed_at (UTC) | source |
 | ---: | :--- | :--- |
@@ -297,6 +317,7 @@ v5.0.0 (historical) 卻仍以舊 head 敘述，這正是該版被否決的第一
 | `#4203` | `task/L12-CAP-001` | `2cc1a2e6af3cca1d274c8a2ef87648c13e2affa8` @ `2026-07-27T01:18:38Z` | OPEN / `BEHIND`（`01:18:58Z` 重讀） | `Runtime mirror guard` / `Commit trailers` / `Smoke acceptance` 全 success（`2026-07-27T00:36:41Z`–`00:37:41Z`，run `30227826889` / `30227828295`） |
 | `#4211` | `task/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001` | `8c4d727296d575cf49b9d3a6e1b7a222396063e3` @ `2026-07-27T01:18:39Z` | **MERGED** | 合併前三項全 success（`2026-07-27T00:01:40Z`–`00:02:37Z`） |
 | `#4221` | `task/OPS-L12-RUNTIME-GAP-DELTA-001` | `04332822e44922d64a4a403cfe6223f311e9954b` @ `2026-07-27T01:18:40Z` | OPEN / `BEHIND`、`autoMergeRequest` 為 `null` | 此為 v7.0.0 (historical) 被 `Codex2` 否決的最終 head（§7.7） |
+| `#4221` | `task/OPS-L12-RUNTIME-GAP-DELTA-001` | `a5de47447b607a2f561b852fc40bf33035ffcba0` @ `2026-07-27T02:51:22Z` | OPEN / `BEHIND`（`02:51:31Z` 重讀）、`autoMergeRequest` 為 `null` | 此為 v8.0.0 (historical) 被 `Codex2` 否決的最終 head（§7.8）；該 head 的三項必要檢查於 `2026-07-27T01:50:38Z`–`01:51:32Z` 全 success |
 
 `#4203` 與 `#4211` 的 head 在前一版之後又各自前進（v7.0.0 (historical) 分別記為
 `945f47dce…` 與同一個 `8c4d72729…`，觀測於 `2026-07-27T00:19:47Z` / `00:19:48Z`）。
@@ -304,15 +325,17 @@ v5.0.0 (historical) 卻仍以舊 head 敘述，這正是該版被否決的第一
 觀測時點為真，本表則另立 `2026-07-27T01:18:3xZ` 的觀測。v5.0.0 (historical) 之所以被
 否決，是因為它把已過期的值寫成 cut 當下的真值，而不是因為值會變。
 
-本表各列綁定的觀測時點為 `2026-07-27T01:18:3xZ`。`evidence.json` 另記一組 v8.0.0 cut
-時點（`2026-07-27T01:37:46Z`）的觀測，其中 `#4203` 已為 `MERGED`（`mergedAt`
-`2026-07-27T01:25:19Z`）。兩組觀測都只主張各自時點為真，依 §2.1 不互相取代；本文件不為
-每一次 PR 前進重切一版，否則 §7.5 終止的遞迴會從另一端回來。`#4203` 的合併不改變 Gap 6
-的「仍缺證據」：合併後的產品證據仍未取得。
+本表 `#4193` / `#4203` / `#4211` 三列綁定的觀測時點為 `2026-07-27T01:18:3xZ`，`#4221`
+另有 `2026-07-27T02:51:22Z` 的一列。`evidence.json` 另記兩組 cut 時點的觀測：v8.0.0
+(historical) cut 的 `2026-07-27T01:37:46Z`（其中 `#4203` 已為 `MERGED`，`mergedAt`
+`2026-07-27T01:25:19Z`），以及本版 cut 的觀測。各組觀測都只主張各自時點為真，依 §2.1
+不互相取代；本文件不為每一次 PR 前進重切一版，否則 §7.5 終止的遞迴會從另一端回來。
+`#4203` 的合併不改變 Gap 6 的「仍缺證據」：合併後的產品證據仍未取得。
 
-`#4221` 自身在本表的觀測時點為 `BEHIND`：`dev` 已前進到
-`7fedefb281dd416e0412e935c48e866438f56e6d`。本版在收據 commit 之前先合入該 `dev` tip，
-因此 `BEHIND` 是**本表觀測時點的事實**，不是最終 head 的狀態；最終 head 的
+`#4221` 自身在兩次觀測時點都是 `BEHIND`：v7 (historical) 那次是 `dev` 前進到
+`7fedefb281dd416e0412e935c48e866438f56e6d`，v8 (historical) 那次是 `dev` 在其
+`a5de47447…` 之後又再前進。每一版都在收據 commit 之前先合入當期 `dev` tip，因此
+`BEHIND` 是**該次觀測時點的事實**，不是最終 head 的狀態；最終 head 的
 `mergeStateStatus` 由 reviewer 於 §7.5 所述的 PR 留言時點自行重讀。
 
 這些觀測**不改變任一 gap 的「仍缺證據」**：PR 轉綠代表 CI 檢查通過，不代表該 task 的
@@ -752,11 +775,12 @@ v4.0.0 由本 task 的新 owner 交付於 PR `#4221`，並被 `Human/Ops` 於
 在 v5.0.0 之後又被推進了一次，見 §7.4 第 1 項）：
 
 1. **過期的 canonical 快照**：v4.0.0 的所有 owner / reviewer / status 取自 journal
-   seq 1952（`2026-07-26T21:19:49Z`）。該快照在送審時已被後續事件取代。v5.0.0 改以
-   seq 2014 (historical)（`2026-07-26T22:13:08Z`）為準；v6.0.0 (historical) 推進到
-   seq 2046 (historical)（`2026-07-26T22:50:08Z`）、v7.0.0 (historical) 推進到
-   seq 2142 (historical)（`2026-07-27T00:13:26Z`），本版再推進到 seq 2191
-   （`2026-07-27T01:18:27Z`），並在 §2 / §2.1 / §3.6 / §5 前言明載查證邊界與時點語意。
+   seq 1952 (historical)（`2026-07-26T21:19:49Z`）。該快照在送審時已被後續事件取代。
+   v5.0.0 改以 seq 2014 (historical)（`2026-07-26T22:13:08Z`）為準；v6.0.0 (historical)
+   推進到 seq 2046 (historical)（`2026-07-26T22:50:08Z`）、v7.0.0 (historical) 推進到
+   seq 2142 (historical)（`2026-07-27T00:13:26Z`）、v8.0.0 (historical) 推進到
+   seq 2191（`2026-07-27T01:18:27Z`），本版**刻意停在同一個 seq 2191**（理由見 §7.8
+   末段），並在 §2 / §2.1 / §3.4 / §3.6 / §5 前言明載查證邊界與時點語意。
 2. **`L12-CAP-001` 事實錯誤**：v4.0.0 記為 owner `Antigravity` / reviewer `Claude` /
    status `blocked`。canonical row 實為 owner `Codex` / reviewer `Claude`，status 於
    seq 2191 為 `review_approved`（`last_update` `2026-07-27T01:15:57Z`；
@@ -790,10 +814,11 @@ commit sha 無法在 commit 之前得知，因此把交付 bytes 綁在 commit s
 4. `.orchestrator/task-briefs/ops_l12_runtime_gap_delta_001.md` **刻意排除**於綁定之外：
    它由 supervisor 於每次派工重新產生，納入綁定會產生與交付無關的失效。
 
-驗證器 `scripts/validate_twelve_loop_gap_evidence.py` 對這份 evidence 執行**九條
+驗證器 `scripts/validate_twelve_loop_gap_evidence.py` 對這份 evidence 執行**十條
 fail-closed 拒絕規則**（v5.0.0 (historical) 為五條，v6.0.0 (historical) 新增
 `current_delivery_checks` 與 `mutable_observation_binding`，v7.0.0 (historical) 新增
-`receipt_commit_artifacts`，本版新增 `current_cut_consistency`），並由
+`receipt_commit_artifacts`，v8.0.0 (historical) 新增 `current_cut_consistency`，本版新增
+`bound_document_consistency`），並由
 `scripts/test_validate_twelve_loop_gap_evidence.py` 以迴歸測試逐條覆蓋：
 
 | 規則 | 拒絕條件 | 對應缺陷 |
@@ -807,13 +832,18 @@ fail-closed 拒絕規則**（v5.0.0 (historical) 為五條，v6.0.0 (historical)
 | **`mutable_observation_binding`** | 任一讀取 `gh pr` / `gh run` / `gh api` / `gh search` 的 `validation.commands[]` 缺少 `observed_at` 或 `observations[]`，或任一觀測缺少 `subject`、缺少可解析的 `observed_at`、或其 `head_sha` 不是 40-hex 小寫 commit sha | §7.4 第 1 項 |
 | `companion_checksum` | `evidence.json` 的實際 sha256 與 `evidence.sha256` 記載不符，或 companion 檔案缺少該筆記錄 | 封存 §7.3 第 3 點的那一環 |
 | **`current_cut_consistency`** | `task.evidence_cut_semantics` 未以 `Owner evidence cut vX.Y.Z.` 開頭；或 `authorities.actual_state[0]` 未剛好載明一個未標記的 journal 序號；或帶有 `receipt_role` 的 anchor 不是剛好一個；或任一被列管的敘述欄位不存在；或任一 `validation.commands[]` 未宣告 `claim_scope`（`historical` 者未附 `historical_note`）；或被列管敘述中出現與該宣告不符且未標記 `(historical)` 的版本字樣、journal 序號、規則數、已被 superseded 的 commit sha；或引用了本 cut 觀測過的 PR 卻未同時引用該次觀測的 head | §7.7 |
+| **`bound_document_consistency`** | content digest 綁定的 Markdown 文件不是剛好一份、不在樹上、或 `authorities.actual_state[0]` 無法導出唯一序號；或該文件中出現「宣告於 `evidence.json` 的 `<欄位>`」而該欄位在 manifest 中無法解析；或任一載有掃描邊界字樣（`查證截止` / `查證邊界` / `掃描邊界` / `全量掃描` / `推進到` 及其英文對應）的句子引用了與宣告不符且未標記 `(historical)` 的序號；或全文從未以宣告的序號載明本 cut 的邊界 | §7.8 |
 
 前八條規則中，除 `receipt_commit_artifacts` 之外都只讀 manifest 自身的**結構化斷言**，
 因此都可以用「改寫 manifest」來滿足；`receipt_commit_artifacts` 是唯一一條把 manifest 的
 主張拿去對**外部不可竄改來源**（git object store）核對的規則。
-`current_cut_consistency` 補的是另一個維度：它是唯一一條讀**敘述文字**的規則。前八條
+`current_cut_consistency` 補的是另一個維度：它是第一條讀**敘述文字**的規則。前八條
 規則能證明收據為真，卻證明不了 manifest 的散文有跟著這次交付重切——v7.0.0 (historical)
 就是在「收據可驗證、敘述未重切」的狀態下被否決的（§7.7）。
+`bound_document_consistency` 補的是第三個維度：**取材面**。前九條規則的輸入全部是
+`evidence.json`，而 content digest 綁定的三個 artifact 裡有兩支 script 與一份本文件；
+被交付、被審查、被引用的散文主要在文件裡，卻沒有任何一條規則打開它。v8.0.0
+(historical) 就是在「manifest 內部完全一致、文件自相矛盾」的狀態下被否決的（§7.8）。
 
 驗證器只讀不寫：它不修改工作樹，也不觸碰任何 status plane，且**完全離線**——唯一的外部
 呼叫是 `git --no-optional-locks -C <git-root> ls-tree` / `cat-file`，不存取網路，也不需要 GitHub
@@ -974,7 +1004,8 @@ manifest 內部自相矛盾。`Codex2` 逐項列出的缺陷：
 敘述文字**。schema 只檢查鍵的存在與型別，checksum 只檢查 bytes 是否被動過，八條規則只
 檢查結構化欄位之間的關係——三者對「散文說的是上一版」完全無感。
 
-本版新增第九條規則 `current_cut_consistency`，其設計取向是**只宣告一次、再逐句核對**：
+v8.0.0 (historical) 新增第九條規則 `current_cut_consistency`，其設計取向是**只宣告一次、
+再逐句核對**（本版沿用，未改動）：
 
 1. **不新增宣告區塊**。`schemas/product-evidence.schema.json` 的
    `additionalProperties` 為 `false`，而本 task 明訂不修改該 schema（§1、
@@ -997,8 +1028,8 @@ manifest 內部自相矛盾。`Codex2` 逐項列出的缺陷：
    `delivery_receipt_intermediate_state`、`integrity.self_hash_reason`，以及每一個宣告
    `claim_scope: current` 的 `validation.commands[]` 的 `command` / `conclusion` /
    `note`。
-4. 在這些文字裡，下列字樣一律與導出的宣告對帳：版本字樣（`v8.0.0` 與 `v8` 兩種
-   寫法）、journal 序號（`sequence NNNN` / `seq NNNN`）、規則數（`nine rules` 一類）、
+4. 在這些文字裡，下列字樣一律與導出的宣告對帳：版本字樣（`v9.0.0` 與 `v9` 兩種
+   寫法）、journal 序號（`sequence NNNN` / `seq NNNN`）、規則數（`ten rules` 一類）、
    已被 `delivery_state` 標為 superseded 的 commit sha（含縮寫前綴）。`loop_catalog.v2`
    這類以點號起首的 schema 名稱不視為版本字樣，四段式數字（如 IP）不視為三段版本號。
 5. **PR 主張必須綁 head**：本 cut 觀測過的 PR（由 `claim_scope: current` 命令項的
@@ -1049,6 +1080,83 @@ manifest 內部自相矛盾。`Codex2` 逐項列出的缺陷：
 外部系統：它能證明敘述與本 cut 一致，不能證明敘述描述的事件真的發生過——那由前八條規則
 與 §5.0 的時點觀測承擔。
 
+### 7.8 對 v8.0.0 的更正：被綁定卻沒有被讀過的文件
+
+v8.0.0 (historical) 交付於 PR `#4221` 最終 head
+`a5de47447b607a2f561b852fc40bf33035ffcba0`，由 reviewer `Codex2` 否決。這一次連
+**敘述面**都是成立的——但只在 `evidence.json` 之內成立：schema 通過、`sha256sum -c`
+通過、九條 (historical) 規則零拒絕、77 個迴歸與 dispatcher 測試通過、
+`--validate-only` 回報 valid/25、收據 commit 的三個 blob 逐一相符、baseline 與 25-task
+catalog 的 diff 為空。
+
+被否決的是**本文件**，也就是 `validation.validated_head_sha` 這個 content digest 綁定的
+三個 artifact 之一。`Codex2` 列出的兩項：
+
+| 位置 | v8.0.0 (historical) 寫的 | 同一份交付其他地方記載的 |
+| :--- | :--- | :--- |
+| §1 | 本 cut 的身分「集中宣告於 `evidence.json` 的 `current_cut` (historical)」 | manifest 沒有 `current_cut` 這個鍵，schema 的 `additionalProperties` 為 `false` 也不允許它存在；同一份文件的 §7.7 第 1 點正確地寫著身分**從既有結構導出** |
+| §3.4 | 「在 seq 1..2014 (historical) 的全量掃描中」「本版把掃描邊界推進到 2014 (historical) 後計數不變」 | 本 cut 的邊界為 seq 2191（§2、§3.6），`validation.commands` 的掃描命令也載明 `bounded at journal sequence 2191` |
+
+這兩項的形狀與 §7.7 是同一種——**關於當前 cut 的主張沒有跟著重切**——只是換了一個
+artifact。第一項尤其說明問題不在筆誤：它指向一個**從未存在的欄位**，讀者若照著去找會
+一無所獲，而文件自己在 60 行之外把正確的機制寫對了。九條規則沒有一條能發現，因為
+**九條規則的輸入全部是 `evidence.json`**。
+
+本版新增第十條規則 `bound_document_consistency`，其設計取向是**讀被綁的那份文件，並且
+只問 manifest 答得出來的問題**：
+
+1. **讀哪一份不由作者指定**。文件路徑從 `integrity.source_artifact_sha256_by_epoch`
+   導出：被綁定 artifact 中副檔名為 `.md` 的那一份，必須剛好一份，否則 fail closed。
+   換言之，被檢查的一定是**被 digest 綁住、且會進收據 commit** 的那份文件，不是另一份
+   未被綁定的副本。
+2. **只列管兩類主張**，因為只有這兩類能由 manifest 判定真偽：
+   - 「宣告於 `evidence.json` 的 `<欄位>`」這種**指路**主張——該欄位必須能在 manifest 中
+     解析（用的是 §7.7 同一支 `resolve_claim_path`）。指向不存在的鍵即為拒絕；本節上表
+     那種**逐字引用舊版錯誤**的寫法，與 §7.7 一樣以緊接的 `(historical)` 標記保持合法。
+   - **掃描／查證邊界**主張——句中未標記的序號必須等於 `authorities.actual_state[0]`
+     導出的那一個序號，也就是 §7.7 用的同一個宣告。兩條規則因此不可能各自對到不同的 cut。
+3. **只有帶邊界字樣的句子會被檢查**。§3 各節逐筆列出的 715、1593、1606…… 是
+   **事件**序號而非邊界，不受列管；把它們一律標記 `(historical)` 既不正確也無意義。判定字樣
+   （`查證截止` / `查證邊界` / `掃描邊界` / `全量掃描` / `推進到` / `推進至` 及
+   `scan boundary` / `bounded at` / `scanned through` / `advanced to`）寫死在驗證器內。
+4. **刪號碼不是解法**：全文必須至少有一句以宣告的序號載明本 cut 的邊界，否則拒絕。
+   §7.7 的教訓是「刪欄位不能規避規則」，這裡是它在文件面的對應。
+5. **句子的邊界依文件結構切分**：表格列與標題各自成句，其餘連續非空行視為一個被硬換行
+   斷開的段落並還原。文件以中文硬換行，`掃描` 與 `邊界` 常被拆到兩行；若照一般作法用
+   空白 join，被檢查的字樣本身就會被拆散。同理，序號比對在文件面另用一組樣式：CJK 在
+   Unicode 屬於 word character，`seq NNNN時` 這種換行還原結果在 `\b` 下不成立，
+   manifest 面的英文樣式會漏掉它。
+6. **`(historical)` 標記沿用同一個字面值**，因此 §7.1–§7.8 這類逐版更正段落照樣可寫。
+
+迴歸測試以**這次否決的精確形狀**覆蓋：
+
+- `test_nonexistent_manifest_field_named_as_the_cut_declaration_is_rejected` 以 §1 的
+  `current_cut` 原文為輸入；`test_resolvable_manifest_field_reference_is_accepted` 證明
+  指向真實欄位（`integrity.source_artifact_sha256_by_epoch`）不會被誤判；
+- `test_stale_scan_boundary_in_the_bound_document_is_rejected` 重現 §3.4 的
+  `seq 1..2014 (historical)` 與 `推進到 2014 (historical)`；
+  `test_historically_marked_scan_boundary_is_accepted` 證明標記後即合法；
+- `test_journal_event_sequences_are_not_read_as_scan_boundaries` 是非誤報測試：§3.1–§3.4
+  的事件序號不得被當成邊界；
+- `test_dropping_every_scan_boundary_is_rejected` 覆蓋「刪號碼」這條規避路徑；
+- `test_bound_document_missing_from_the_tree_is_rejected` 與
+  `test_two_bound_documents_leave_the_document_undefined` 覆蓋兩種 fail-closed 前提；
+- `test_wrapped_boundary_phrase_is_still_matched` 與
+  `test_cjk_terminated_sequence_token_is_still_matched` 鎖住第 5 點的兩個切分細節，
+  避免日後有人把它們「簡化」回會漏判的寫法。
+
+**本版為何不推進 canonical 快照序號**：v9.0.0 是對 v8.0.0 (historical) 的**純敘述更正**，
+交付的事實集合與 v8.0.0 (historical) 相同。若同時把邊界推到新的序號，reviewer 就必須在
+「敘述是否已重切」與「事實是否已改變」兩件事混在一起的 diff 上判斷，而這正是前幾版反覆
+出錯的地方。因此本版把 canonical 快照固定在 seq 2191，讓 v8 → v9 的 diff 只包含被否決的
+兩處敘述、新規則與其迴歸測試。這是**刻意**的選擇，不是遺漏；seq 2191 的時點語意與
+其後 journal 仍在前進的事實，依 §2.1 與 §8「Snapshot Freshness」照舊成立。
+
+**這條規則的邊界**：與 §7.7 相同，它比對的是文件敘述與 manifest 導出的宣告，屬於**跨
+artifact 的內部一致性**，不是外部真值。它能保證「文件與 manifest 指向同一個 cut、且不會
+叫人去找不存在的欄位」，不能保證那個 cut 是最新的，也不能檢查文件裡未被列管的其餘散文
+——那仍由 reviewer 承擔。把它讀成「文件已被全面驗證」會是新的過度宣稱。
+
 ---
 
 ## 8. Operational Boundaries
@@ -1076,15 +1184,19 @@ manifest 內部自相矛盾。`Codex2` 逐項列出的缺陷：
 >   檢查全綠。這只表示分支 CI 通過，Gap 6 與 Gap 8 的「仍缺證據」一項未減。
 > - **Self-Declared Receipt ≠ Verified Receipt**：`evidence.json` 對交付收據的描述是
 >   manifest 的自述，可被改寫；只有 `receipt_commit_artifacts` 以 git object 核對過的
->   部分才是被證明的（§7.6）。同理，本文件對九條規則的敘述不取代規則本身——請以
+>   部分才是被證明的（§7.6）。同理，本文件對十條規則的敘述不取代規則本身——請以
 >   `python3 scripts/validate_twelve_loop_gap_evidence.py … --json` 的實際輸出為準。
 > - **Internal Consistency ≠ External Truth**：`current_cut_consistency` 保證 manifest
 >   的敘述全部指向它自己宣告的那一個 cut（版本、收據、序號、規則數、PR head），
->   **不**保證那個宣告是最新的外部事實。快照新鮮度仍由 §2 的重讀命令與 reviewer
->   判斷（§7.7 末段）。
-> - **Validator Scope**：這九條規則只覆蓋**本 task 的 evidence manifest**，不是全站
->   evidence gate；分支 CI 不執行它（§7.5），因此它是審查工具，不是自動化防護。把它
->   誤讀為「所有 evidence 都已被此規則保護」會是新的過度宣稱。
+>   `bound_document_consistency` 把同一個宣告延伸到被 digest 綁定的本文件（指路欄位、
+>   掃描邊界），兩者**都不**保證那個宣告是最新的外部事實。快照新鮮度仍由 §2 的重讀命令
+>   與 reviewer 判斷（§7.7、§7.8 末段）。
+> - **Bound Document ≠ Fully Checked Document**：`bound_document_consistency` 只列管本
+>   文件的兩類主張（指向 manifest 欄位、掃描邊界）。本文件其餘散文——gap 敘述、根因、
+>   §7 各節的歷史更正——沒有任何規則在讀，仍完全依賴 reviewer（§7.8 末段）。
+> - **Validator Scope**：這十條規則只覆蓋**本 task 的 evidence manifest 與它綁定的
+>   delta 文件**，不是全站 evidence gate；分支 CI 不執行它（§7.5），因此它是審查工具，
+>   不是自動化防護。把它誤讀為「所有 evidence 都已被此規則保護」會是新的過度宣稱。
 
 ---
 

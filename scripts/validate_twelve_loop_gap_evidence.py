@@ -74,6 +74,23 @@ literal marker ``(historical)`` immediately after the stale token; anything else
 is a rejection.  The enrolled paths are fixed in this file rather than named by
 the manifest, so a later recut cannot dodge the rule by deleting a field.
 
+The v8 cut was rejected for the same class of defect one artifact over.  Nine
+rules, the schema and the checksum all passed while the *digest-bound delta
+document* -- the very bytes ``validated_head_sha`` covers -- still said the cut
+declares its identity in ``evidence.json``'s ``current_cut`` (a key the manifest
+does not have, and never had: section 7.7 of the same document correctly says
+the identity is derived from existing structure), and still said this version
+scanned the journal only through sequence 2014 when the cut's boundary, and the
+manifest's own scan command, were sequence 2191.  Every rule so far reads the
+manifest; none of them opens the document whose digest the manifest binds.
+``bound_document_consistency`` closes this by reading that document and holding
+two of its claim classes to the manifest: a sentence that says the cut declares
+something in a named ``evidence.json`` field must name a field that resolves,
+and any sentence that states how far this cut scanned must cite the sequence
+``authorities.actual_state[0]`` declares.  The same ``(historical)`` marker
+keeps genuinely superseded boundaries legal, and at least one boundary sentence
+has to cite the declared sequence, so deleting the numbers is not an escape.
+
 Usage::
 
     python3 scripts/validate_twelve_loop_gap_evidence.py <evidence.json> \
@@ -129,6 +146,7 @@ RULES = (
     "mutable_observation_binding",
     "companion_checksum",
     "current_cut_consistency",
+    "bound_document_consistency",
 )
 
 # ---------------------------------------------------------------------------
@@ -196,6 +214,51 @@ RULE_COUNT_TOKEN = re.compile(
 )
 HEX_TOKEN = re.compile(r"\b[0-9a-f]{7,40}\b")
 PR_REFERENCE = re.compile(r"#(\d{3,6})\b")
+
+# ---------------------------------------------------------------------------
+# bound_document_consistency
+# ---------------------------------------------------------------------------
+
+# The delta document is the only Markdown artifact the content digest binds.
+# Requiring exactly one keeps the rule from silently picking a file when a later
+# recut binds several, which would be the point at which "the document" stops
+# being a well-defined thing to read.
+BOUND_DOCUMENT_SUFFIX = ".md"
+
+# "the cut declares X in ``evidence.json``'s ``<field>``".  The possessive is
+# what makes this a claim about where a declaration *lives*; the document
+# mentions the manifest constantly, and only this shape asserts a field exists.
+DECLARED_IN_MANIFEST_FIELD = re.compile(
+    r"`evidence\.json`\s*(?:的|'s|’s)\s*`([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+|\[\d+\]|\[\*\])*)`"
+)
+
+# A sentence carrying one of these is claiming how far this cut read the
+# journal.  Sentences that merely quote a sequence -- the per-event rows of the
+# journal audit, for instance -- are not boundary claims and are left alone.
+BOUNDARY_PHRASES = (
+    "查證截止",
+    "查證邊界",
+    "掃描邊界",
+    "全量掃描",
+    "推進到",
+    "推進至",
+    "scan boundary",
+    "bounded at",
+    "scanned through",
+    "advanced to",
+)
+
+# ``seq 2191`` in the document.  ``SEQUENCE_TOKEN``'s trailing ``\b`` is right
+# for the manifest's English prose but wrong here: CJK is word-constituent, so
+# ``seq 1952時`` -- what a hard wrap between ``1952`` and ``時`` becomes -- has no
+# boundary after the digits and would slip through.
+DOCUMENT_SEQUENCE_TOKEN = re.compile(r"(?<![A-Za-z])(?:sequence|seq)\s+(\d{3,6})(?!\d)")
+# ``seq 1..2191`` -- a scan written as a range declares its boundary at the top.
+SEQUENCE_RANGE_TOKEN = re.compile(r"(?<![A-Za-z])(?:sequence|seq)\s+\d{1,6}\s*\.\.\s*(\d{3,6})(?!\d)")
+# ``推進到 2191`` / ``推進到 seq 2191`` / ``bounded at sequence 2191``.
+BOUNDARY_ADVANCE_TOKEN = re.compile(
+    r"(?:推進到|推進至|advanced to|bounded at|scanned through)\s*(?:seq(?:uence)?\s+)?(\d{3,6})(?!\d)"
+)
 
 
 @dataclass(frozen=True)
@@ -1080,6 +1143,180 @@ def check_current_cut_consistency(manifest: dict[str, Any]) -> list[Rejection]:
     return rejections
 
 
+def declared_snapshot_sequence(manifest: dict[str, Any]) -> int | None:
+    """The one unmarked journal sequence ``authorities.actual_state[0]`` names.
+
+    ``None`` when the path is absent or names anything other than exactly one
+    unmarked sequence -- the same condition ``current_cut_consistency`` rejects
+    on, so the manifest and the document it binds are measured against one cut
+    or against none.
+    """
+
+    snapshot = resolve_claim_path(manifest, SNAPSHOT_DECLARATION_PATH)
+    text = snapshot[0][1] if snapshot and isinstance(snapshot[0][1], str) else None
+    if not text:
+        return None
+    found = {int(match.group(1)) for match in _unmarked(SEQUENCE_TOKEN, text)}
+    return found.pop() if len(found) == 1 else None
+
+
+def bound_document_relative(manifest: dict[str, Any]) -> str | None:
+    """The single Markdown artifact covered by the content digest, or ``None``."""
+
+    documents = sorted(
+        relative
+        for relative in bound_relative_paths(manifest)
+        if relative.endswith(BOUND_DOCUMENT_SUFFIX)
+    )
+    return documents[0] if len(documents) == 1 else None
+
+
+def _join_wrapped(lines: list[str]) -> str:
+    """Rejoin hard-wrapped prose without inventing or swallowing separators.
+
+    The document wraps CJK mid-phrase (``掃描`` / ``邊界`` on either side of a
+    line break), so a blind ``" ".join`` would split the very phrases this rule
+    matches on.  A space is inserted only between two ASCII word characters,
+    where the break really did stand for one.
+    """
+
+    joined = ""
+    for line in lines:
+        if joined and re.match(r"\w", joined[-1], re.ASCII) and re.match(r"\w", line[:1], re.ASCII):
+            joined += " "
+        joined += line
+    return joined
+
+
+def document_units(text: str) -> list[tuple[int, str]]:
+    """``(line number, text)`` for each sentence-bearing unit of the document.
+
+    Table rows and headings stand alone because each makes its own claim; every
+    other run of non-blank lines is one wrapped paragraph.
+    """
+
+    units: list[tuple[int, str]] = []
+    pending: list[str] = []
+    start = 0
+
+    def flush() -> None:
+        nonlocal pending, start
+        if pending:
+            units.append((start, _join_wrapped(pending)))
+            pending = []
+
+    for number, raw in enumerate(text.splitlines(), start=1):
+        line = raw.strip()
+        if not line:
+            flush()
+            continue
+        if line.startswith("|") or line.startswith("#"):
+            flush()
+            units.append((number, line))
+            continue
+        if not pending:
+            start = number
+        pending.append(line)
+    flush()
+    return units
+
+
+def check_bound_document_consistency(manifest: dict[str, Any], repo_root: Path) -> list[Rejection]:
+    """The digest-bound document must agree with the manifest that binds it.
+
+    ``validated_head_sha`` is a digest over the delta document, so the document
+    is delivered evidence, not commentary -- yet every rule before this one
+    reads only the manifest.  The v8 cut passed nine rules while the bound
+    document told the reader to look for the cut identity in a manifest key that
+    does not exist and reported a scan boundary two cuts old.
+
+    Two claim classes are enrolled, both of which the manifest can settle:
+
+    * a sentence asserting that something is declared in a named
+      ``evidence.json`` field must name a field that resolves in this manifest,
+      unless it carries ``(historical)`` -- the correction sections quote the
+      superseded claim verbatim, and quoting it is exactly how the record stays
+      readable;
+    * a sentence stating how far this cut scanned must cite the sequence
+      ``authorities.actual_state[0]`` declares, unless the stale sequence
+      carries ``(historical)``.
+
+    At least one boundary sentence must cite the declared sequence, so deleting
+    the numbers fails the rule rather than satisfying it vacuously.
+    """
+
+    relative = bound_document_relative(manifest)
+    if relative is None:
+        return [
+            Rejection(
+                "bound_document_consistency",
+                "the content digest must bind exactly one "
+                f"{BOUND_DOCUMENT_SUFFIX} document for this rule to read; "
+                f"found {sorted(p for p in bound_relative_paths(manifest) if p.endswith(BOUND_DOCUMENT_SUFFIX))}",
+            )
+        ]
+
+    document = repo_root / relative
+    if not document.is_file():
+        return [Rejection("bound_document_consistency", f"bound document is missing from the tree: {relative}")]
+
+    sequence = declared_snapshot_sequence(manifest)
+    if sequence is None:
+        return [
+            Rejection(
+                "bound_document_consistency",
+                f"{SNAPSHOT_DECLARATION_PATH} does not name exactly one unmarked journal sequence, so "
+                f"{relative} has no declared boundary to be checked against",
+            )
+        ]
+
+    rejections: list[Rejection] = []
+    text = document.read_text(encoding="utf-8")
+    cited_declared = False
+
+    for number, unit in document_units(text):
+        label = f"{relative}:{number}"
+
+        for found in _unmarked(DECLARED_IN_MANIFEST_FIELD, unit):
+            field = found.group(1)
+            if resolve_claim_path(manifest, field) is None:
+                rejections.append(
+                    Rejection(
+                        "bound_document_consistency",
+                        f"{label} says the cut declares itself in evidence.json's {field!r}, but that "
+                        "field does not resolve in the manifest; describe where the identity actually "
+                        "comes from instead of naming a key the manifest does not carry",
+                    )
+                )
+
+        if not any(phrase in unit for phrase in BOUNDARY_PHRASES):
+            continue
+        for pattern in (DOCUMENT_SEQUENCE_TOKEN, SEQUENCE_RANGE_TOKEN, BOUNDARY_ADVANCE_TOKEN):
+            for found in _unmarked(pattern, unit):
+                cited = int(found.group(1))
+                if cited == sequence:
+                    cited_declared = True
+                    continue
+                rejections.append(
+                    Rejection(
+                        "bound_document_consistency",
+                        f"{label} states a scan boundary of {cited} while this cut declares journal "
+                        f"sequence {sequence}; recut the sentence or mark the old boundary "
+                        f"{HISTORICAL_MARKER}",
+                    )
+                )
+
+    if not cited_declared:
+        rejections.append(
+            Rejection(
+                "bound_document_consistency",
+                f"{relative} never states its scan boundary as journal sequence {sequence}; the bound "
+                "document has to say how far this cut read, not merely avoid contradicting it",
+            )
+        )
+    return rejections
+
+
 def check_companion_checksum(manifest: dict[str, Any], manifest_path: Path, repo_root: Path) -> list[Rejection]:
     relative = manifest.get("integrity", {}).get("companion_checksum_path")
     if not relative:
@@ -1130,6 +1367,7 @@ def validate(
     rejections += check_mutable_observation_binding(manifest)
     rejections += check_companion_checksum(manifest, manifest_path, repo_root)
     rejections += check_current_cut_consistency(manifest)
+    rejections += check_bound_document_consistency(manifest, repo_root)
     return rejections
 
 

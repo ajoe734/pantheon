@@ -815,3 +815,197 @@ def test_schema_version_names_are_not_read_as_cut_names(staged: Path) -> None:
     _store(staged, manifest)
 
     assert "current_cut_consistency" not in _rules(_validate(staged))
+
+
+# ---------------------------------------------------------------------------
+# bound_document_consistency
+#
+# The v8 cut was internally consistent -- inside evidence.json.  The delta
+# document that ``validated_head_sha`` binds still told the reader the cut
+# identity was declared in a ``current_cut`` key the manifest has never had, and
+# still reported its journal scan as bounded at sequence 2014 when the cut's
+# boundary was 2191.  Nine rules passed it, because not one of them opened the
+# document.  These cases pin both shapes, and the non-false-positive cases that
+# make the rule usable on a document full of legitimate historical sequences.
+# ---------------------------------------------------------------------------
+
+STALE_SCAN_BOUNDARY = 2014
+
+
+def _document(root: Path) -> Path:
+    manifest = _load(root)
+    relative = validator.bound_document_relative(manifest)
+    assert relative is not None, "the manifest must bind exactly one markdown document"
+    return root / relative
+
+
+def _rewrite_document(root: Path, text: str) -> None:
+    """Replace the bound document's bytes and rebind the digest around them."""
+
+    _document(root).write_text(text, encoding="utf-8")
+    _rebind(root)
+
+
+def _document_details(rejections) -> list[str]:
+    return [r.detail for r in rejections if r.rule == "bound_document_consistency"]
+
+
+def test_nonexistent_manifest_field_named_as_the_cut_declaration_is_rejected(staged: Path) -> None:
+    """The v8 defect verbatim: §1 pointed at ``evidence.json``'s ``current_cut``."""
+
+    text = _document(staged).read_text(encoding="utf-8")
+    _rewrite_document(
+        staged,
+        text + "\n把當前 cut 的版本、交付收據與快照序號集中宣告於 `evidence.json` 的 `current_cut`。\n",
+    )
+
+    rejections = _validate(staged)
+    assert "bound_document_consistency" in _rules(rejections)
+    assert any("'current_cut'" in detail and "does not resolve" in detail for detail in _document_details(rejections))
+
+
+def test_resolvable_manifest_field_reference_is_accepted(staged: Path) -> None:
+    """Pointing at a field that exists is the normal case, not a rejection."""
+
+    text = _document(staged).read_text(encoding="utf-8")
+    _rewrite_document(
+        staged,
+        text + "\n被綁定檔案的 sha256 記入 `evidence.json` 的 `integrity.source_artifact_sha256_by_epoch`。\n",
+    )
+
+    assert "bound_document_consistency" not in _rules(_validate(staged))
+
+
+def test_historically_marked_declaration_reference_is_accepted(staged: Path) -> None:
+    """Correction sections quote the superseded claim; the marker keeps that legal."""
+
+    text = _document(staged).read_text(encoding="utf-8")
+    _rewrite_document(
+        staged,
+        text + "\n前一版寫的是「宣告於 `evidence.json` 的 `current_cut` (historical)」，該欄位並不存在。\n",
+    )
+
+    assert "bound_document_consistency" not in _rules(_validate(staged))
+
+
+def test_stale_scan_boundary_in_the_bound_document_is_rejected(staged: Path) -> None:
+    """The other v8 defect: §3.4 reported a scan two cuts old."""
+
+    text = _document(staged).read_text(encoding="utf-8")
+    _rewrite_document(
+        staged,
+        text
+        + f"\n在 seq 1..{STALE_SCAN_BOUNDARY} 的全量掃描中，空快照共 9 筆"
+        f"（本版把掃描邊界推進到 {STALE_SCAN_BOUNDARY} 後計數不變）。\n",
+    )
+
+    rejections = _validate(staged)
+    assert "bound_document_consistency" in _rules(rejections)
+    details = _document_details(rejections)
+    assert len(details) == 2, details
+    assert all(f"scan boundary of {STALE_SCAN_BOUNDARY}" in detail for detail in details)
+
+
+def test_historically_marked_scan_boundary_is_accepted(staged: Path) -> None:
+    """A boundary that genuinely belongs to an earlier cut only has to say so."""
+
+    text = _document(staged).read_text(encoding="utf-8")
+    _rewrite_document(
+        staged,
+        text + f"\nv5.0.0 (historical) 把掃描邊界推進到 seq {STALE_SCAN_BOUNDARY} (historical)。\n",
+    )
+
+    assert "bound_document_consistency" not in _rules(_validate(staged))
+
+
+def test_journal_event_sequences_are_not_read_as_scan_boundaries(staged: Path) -> None:
+    """§3 lists the empty-snapshot events themselves; those are not boundaries."""
+
+    text = _document(staged).read_text(encoding="utf-8")
+    _rewrite_document(
+        staged,
+        text + "\nseq 1593 提交了空快照，seq 1594 以 append-only 方式復原，seq 1595 由 `Human/Ops` 確認。\n",
+    )
+
+    assert "bound_document_consistency" not in _rules(_validate(staged))
+
+
+def test_dropping_every_scan_boundary_is_rejected(staged: Path) -> None:
+    """Deleting the numbers must fail the rule, not satisfy it vacuously."""
+
+    text = _document(staged).read_text(encoding="utf-8")
+    sequence = validator.declared_snapshot_sequence(_load(staged))
+    _rewrite_document(staged, re.sub(rf"\b{sequence}\b", "該次快照", text))
+
+    rejections = _validate(staged)
+    assert "bound_document_consistency" in _rules(rejections)
+    assert any("never states its scan boundary" in detail for detail in _document_details(rejections))
+
+
+def test_wrapped_boundary_phrase_is_still_matched(staged: Path) -> None:
+    """The document hard-wraps CJK, so ``掃描`` / ``邊界`` can land on two lines."""
+
+    text = _document(staged).read_text(encoding="utf-8")
+    _rewrite_document(
+        staged,
+        text + f"\n本版把掃描\n邊界推進到 {STALE_SCAN_BOUNDARY} 後計數不變。\n",
+    )
+
+    rejections = _validate(staged)
+    assert "bound_document_consistency" in _rules(rejections)
+    assert any(f"scan boundary of {STALE_SCAN_BOUNDARY}" in detail for detail in _document_details(rejections))
+
+
+def test_cjk_terminated_sequence_token_is_still_matched(staged: Path) -> None:
+    """CJK is word-constituent, so ``seq 2014時`` has no ``\\b`` after the digits."""
+
+    text = _document(staged).read_text(encoding="utf-8")
+    _rewrite_document(
+        staged,
+        text + f"\n本版查證截止於 seq {STALE_SCAN_BOUNDARY}時，計數不變。\n",
+    )
+
+    rejections = _validate(staged)
+    assert "bound_document_consistency" in _rules(rejections)
+    assert any(f"scan boundary of {STALE_SCAN_BOUNDARY}" in detail for detail in _document_details(rejections))
+
+
+def test_bound_document_missing_from_the_tree_is_rejected(staged: Path) -> None:
+    """An unreadable document is unverifiable, so the rule fails closed."""
+
+    document = _document(staged)
+    document.unlink()
+
+    rejections = _validate(staged)
+    assert "bound_document_consistency" in _rules(rejections)
+    assert any("bound document is missing" in detail for detail in _document_details(rejections))
+
+
+def test_two_bound_documents_leave_the_document_undefined(staged: Path) -> None:
+    """With two markdown artifacts bound, "the document" stops being well defined."""
+
+    manifest = _load(staged)
+    bound = manifest["integrity"]["source_artifact_sha256_by_epoch"]
+    original = validator.bound_document_relative(manifest)
+    duplicate = str(Path(original).with_name("SECOND_DOCUMENT.md"))
+    (staged / duplicate).write_text("# second\n", encoding="utf-8")
+    bound[duplicate] = validator.sha256_file(staged / duplicate)
+    _store(staged, manifest, reseal=False)
+    _rebind(staged)
+
+    rejections = _validate(staged)
+    assert "bound_document_consistency" in _rules(rejections)
+    assert any("exactly one" in detail for detail in _document_details(rejections))
+
+
+def test_an_undeclarable_snapshot_leaves_the_document_unmeasurable(staged: Path) -> None:
+    """Without one declared sequence there is nothing to hold the document to."""
+
+    manifest = _load(staged)
+    authorities = manifest["authorities"]["actual_state"]
+    authorities[0] = authorities[0] + f" Also verified through sequence {STALE_SNAPSHOT_SEQUENCE}."
+    _store(staged, manifest)
+
+    rejections = _validate(staged)
+    assert "bound_document_consistency" in _rules(rejections)
+    assert any("no declared boundary" in detail for detail in _document_details(rejections))
