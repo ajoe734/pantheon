@@ -18,6 +18,8 @@ class FakeRunner(auto_integrator.CommandRunner):
         merged_pr: Mapping[str, Any] | None = None,
         merge_base_returncode: int = 0,
         disable_auto_clears_request: bool = True,
+        disable_auto_returncode: int = 0,
+        auto_merge_read_fails: bool = False,
     ) -> None:
         super().__init__()
         self.pr = dict(pr) if pr is not None else None
@@ -25,6 +27,8 @@ class FakeRunner(auto_integrator.CommandRunner):
         self.rebase_returncode = rebase_returncode
         self.merge_base_returncode = merge_base_returncode
         self.disable_auto_clears_request = disable_auto_clears_request
+        self.disable_auto_returncode = disable_auto_returncode
+        self.auto_merge_read_fails = auto_merge_read_fails
 
     def _pr_for_command_state(self, command: Sequence[str]) -> Mapping[str, Any] | None:
         if "--state" not in command:
@@ -48,6 +52,8 @@ class FakeRunner(auto_integrator.CommandRunner):
             stdout = "[]" if pr is None else '[{"number": %s}]' % pr["number"]
             return completed(command, stdout=stdout)
         if command[:3] == ["gh", "pr", "view"]:
+            if command[-2:] == ["--json", "autoMergeRequest"] and self.auto_merge_read_fails:
+                raise auto_integrator.CommandFailure(command, 1, "readback unavailable")
             number = command[3]
             for pr in (self.pr, self.merged_pr):
                 if pr is not None and str(pr.get("number")) == number:
@@ -68,7 +74,10 @@ class FakeRunner(auto_integrator.CommandRunner):
         if command[:3] == ["gh", "pr", "merge"]:
             if "--disable-auto" in command and self.disable_auto_clears_request and self.pr is not None:
                 self.pr = {**self.pr, "autoMergeRequest": None}
-            return completed(command)
+            return completed(
+                command,
+                returncode=self.disable_auto_returncode if "--disable-auto" in command else 0,
+            )
         if "scripts/ai_status.py" in joined:
             return completed(command)
         return completed(command)

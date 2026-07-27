@@ -1607,26 +1607,6 @@ class IntegratorGateTests(unittest.TestCase):
             any("scripts/ai_status.py" in " ".join(command) and "done" in command for command in runner.commands)
         )
 
-    @staticmethod
-    def _failing_disable_auto(runner: Any) -> None:
-        """Make `gh pr merge --disable-auto` return 1 on this runner."""
-
-        original_run = runner.run
-
-        def run(args: Sequence[str], **kwargs: Any):  # type: ignore[override]
-            command = [str(arg) for arg in args]
-            if command[:3] == ["gh", "pr", "merge"] and "--disable-auto" in command:
-                runner.commands.append(command)
-                try:
-                    from test_auto_integrator import completed
-                except ModuleNotFoundError:
-                    from scripts.git.test_auto_integrator import completed
-
-                return completed(command, returncode=1)
-            return original_run(args, **kwargs)
-
-        runner.run = run  # type: ignore[method-assign]
-
     def test_failed_auto_merge_revocation_never_reaches_the_merge(self) -> None:
         """An armed merge grant the integrator could not revoke blocks the pass.
 
@@ -1634,8 +1614,11 @@ class IntegratorGateTests(unittest.TestCase):
         independently holds authority to land whatever head stands next.
         """
 
-        runner = self._runner(open_pr(autoMergeRequest={"enabledAt": "2026-07-26T11:45:00Z"}))
-        self._failing_disable_auto(runner)
+        runner = self._runner(
+            open_pr(autoMergeRequest={"enabledAt": "2026-07-26T11:45:00Z"}),
+            disable_auto_clears_request=False,
+            disable_auto_returncode=1,
+        )
 
         result = auto_integrator.integrate_candidate(
             self.candidate,
@@ -1647,18 +1630,73 @@ class IntegratorGateTests(unittest.TestCase):
 
         self.assertEqual(result.action, "blocked")
         self.assertIn("--disable-auto` failed", result.detail)
+        self.assertIn("readback still shows autoMergeRequest armed", result.detail)
         merge_commands = [c for c in runner.commands if c[:3] == ["gh", "pr", "merge"]]
         self.assertEqual(merge_commands, [["gh", "pr", "merge", "100", "--disable-auto"]])
+        self.assertIn(["gh", "pr", "view", "100", "--json", "autoMergeRequest"], runner.commands)
         self.assertFalse(any("--match-head-commit" in command for command in runner.commands))
         self.assertFalse(
             any("scripts/ai_status.py" in " ".join(command) and "done" in command for command in runner.commands)
         )
 
+    def test_nonzero_revocation_can_continue_only_when_readback_proves_off(self) -> None:
+        """The live grant, not the command exit status, is authoritative."""
+
+        runner = self._runner(
+            open_pr(autoMergeRequest={"enabledAt": "2026-07-26T11:45:00Z"}),
+            disable_auto_returncode=1,
+        )
+
+        result = auto_integrator.integrate_candidate(
+            self.candidate,
+            self.settings,
+            runner,
+            execute=True,
+            gate=self._gate(tasks=[task_row()], events=[approval_event()]),
+        )
+
+        self.assertEqual(result.action, "merged")
+        self.assertIn(["gh", "pr", "view", "100", "--json", "autoMergeRequest"], runner.commands)
+        merge_commands = [c for c in runner.commands if c[:3] == ["gh", "pr", "merge"]]
+        self.assertEqual(
+            merge_commands,
+            [
+                ["gh", "pr", "merge", "100", "--disable-auto"],
+                ["gh", "pr", "merge", "100", "--merge", "--match-head-commit", "b" * 40],
+            ],
+        )
+
+    def test_unreadable_revocation_readback_never_reaches_the_merge(self) -> None:
+        """A command result cannot replace the required live state proof."""
+
+        runner = self._runner(
+            open_pr(autoMergeRequest={"enabledAt": "2026-07-26T11:45:00Z"}),
+            auto_merge_read_fails=True,
+        )
+
+        result = auto_integrator.integrate_candidate(
+            self.candidate,
+            self.settings,
+            runner,
+            execute=True,
+            gate=self._gate(tasks=[task_row()], events=[approval_event()]),
+        )
+
+        self.assertEqual(result.action, "blocked")
+        self.assertIn("cannot verify autoMergeRequest after revocation", result.detail)
+        merge_commands = [c for c in runner.commands if c[:3] == ["gh", "pr", "merge"]]
+        self.assertEqual(merge_commands, [["gh", "pr", "merge", "100", "--disable-auto"]])
+        self.assertIn(["gh", "pr", "view", "100", "--json", "autoMergeRequest"], runner.commands)
+        self.assertFalse(any("--match-head-commit" in command for command in runner.commands))
+
     def test_failed_revocation_on_an_unapproved_pr_still_reports_the_gate_reason(self) -> None:
         """A gate refusal is the more precise diagnosis; it must not be masked."""
 
-        runner = self._runner(open_pr(autoMergeRequest={"enabledAt": "2026-07-26T11:31:00Z"}))
-        self._failing_disable_auto(runner)
+        runner = self._runner(
+            open_pr(autoMergeRequest={"enabledAt": "2026-07-26T11:31:00Z"}),
+            disable_auto_clears_request=False,
+            disable_auto_returncode=1,
+        )
 
         result = auto_integrator.integrate_candidate(
             self.candidate,
@@ -1673,6 +1711,7 @@ class IntegratorGateTests(unittest.TestCase):
         self.assertIn("still set on this PR", result.detail)
         merge_commands = [c for c in runner.commands if c[:3] == ["gh", "pr", "merge"]]
         self.assertEqual(merge_commands, [["gh", "pr", "merge", "100", "--disable-auto"]])
+        self.assertIn(["gh", "pr", "view", "100", "--json", "autoMergeRequest"], runner.commands)
 
     def test_gated_pr_needing_a_rebase_is_not_force_pushed(self) -> None:
         runner = self._runner(open_pr(mergeStateStatus="BEHIND"))

@@ -51,10 +51,12 @@ For each eligible task, capped by `max_tasks_per_run`:
    merge-state probes, whatever the gate decided - a PR that ends up `waiting`
    because it is `BEHIND` must not keep one. A gated PR that is not approved is
    then blocked at this step.
-6. If that revocation failed, block. An armed merge grant the integrator could
-   not withdraw means GitHub may land the next head on its own, so the pass
-   stops before any merge call is emitted - approval of this head does not make
-   it safe to merge alongside a standing grant.
+6. Read `autoMergeRequest` back after every revocation attempt. The command
+   exit status is diagnostic only: zero can leave the grant armed, while
+   nonzero can race with another actor that already turned it off. If the
+   readback is unavailable or still armed, block before any merge call is
+   emitted - approval of this head does not make it safe to merge alongside a
+   standing grant.
 7. Require green GitHub status rollup.
 8. Fetch `origin/dev` and the task branch.
 9. Create a temporary detached worktree for the task branch.

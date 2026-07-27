@@ -182,11 +182,12 @@ Six further rules come from the 2026-07-26 live regressions on PRs #4201,
   that newer head at 23:14:41Z. A gated PR therefore has any standing
   auto-merge request revoked before its exact-head merge, and an approved
   head is refused outright while a request that predates it is still armed.
-- **A revocation that failed stops the pass.** If
-  `gh pr merge --disable-auto` returns nonzero the grant is still armed, so
-  the integrator blocks before emitting any merge call — including on the
-  approved path. Merging beside a grant we could not withdraw leaves GitHub
-  free to land the next head.
+- **Every revocation attempt is read back.** The
+  `gh pr merge --disable-auto` exit status is not merge authority: zero can
+  leave the server-side grant armed, while nonzero can race with another actor
+  that already turned it off. The integrator re-reads `autoMergeRequest` after
+  every attempted revocation and blocks before emitting any merge call when
+  that read is unavailable or still armed — including on the approved path.
 - **Risk and payload claims waive nothing.** #4227 was Stage-1
   docs-and-evidence only with the live swap still blocked. A `risk`,
   `payload`, `docs_only`, or `review_waived` field on the task row is
