@@ -1,200 +1,161 @@
 # SUP-TASK-STATE-LOCK-LATENCY-001 — evidence
 
-Bound supervisor task-state lock latency and projection truth.
+Task-scoped evidence for bounding supervisor task-state/runtime-admission
+latency while preserving journal, lease, and process-identity safety.
 
-| | |
+| Field | Value |
 |---|---|
 | Owner | Codex |
 | Reviewer | Codex2 |
-| Phase | Supervisor Runtime Repair |
+| Branch | `task/SUP-TASK-STATE-LOCK-LATENCY-001` |
+| Candidate | `611b2a480d2537eab1ff45c2f9faa29e450a8171` |
+| Review state | Pending fresh independent review |
 
-## What was actually wrong
+## Incident and root cause
 
-The multi-minute stalls were not lock bypass, config drift, or a stuck worker.
-They were **replay cost paid under the canonical lock**.
+The live incident involved supervisor PID 901543, a 771-second tick
+(22:35:04Z–22:47:55Z), a subsequent roughly 517-second exclusive hold, and a
+reviewer reopen that waited about nine minutes on runtime-admission inode
+807896. Human/Ops note commands over the roughly 157 MB / 2050-event journal
+took about 55–90 seconds.
 
-Every read of the authoritative journal replayed and revalidated the whole log,
-and `validate_event` canonically re-serializes each event's full state twice
-(once for `state_sha256`, once for the event digest, which embeds the state).
-The callers then stacked those passes:
+The original journal path repeatedly replayed and revalidated the entire file:
+status reads, append head lookup/readback, the many `common.load_status` calls in
+one supervisor cycle, and projection verification all duplicated the same
+work. Network and process waits then compounded the problem because some were
+still reachable from `_run_once_locked`.
 
-| Caller | Full journal replays, before |
-|---|---|
-| `ai_status.load_state` | 2 (`load_events` + `project_latest_state`) |
-| `task_state_store.append_state_commit` | 2 (head lookup + full-replay readback) |
-| `common.load_status` (many times per cycle) | 2 |
-| `supervisor.sync_task_state_shadow` | 4 (`load_events`, `project_latest_state`, then `verify_projection` doing both again) |
+The failed Codex2 review after merged PRs #4239, #4250, and #4253 identified
+three remaining defects:
 
-So one governed status command replayed a ~157MB / 2050-event journal four
-times, and the supervisor's reconciliation phase did the same four times per
-cycle **while holding the exclusive canonical task-state lock**. That is the
-771s tick heartbeat (22:35:04Z → 22:47:55Z) and the ~517s hold that followed,
-with reviewer and status processes queued on runtime-admission inode 807896.
+- `auto_commit_archive.py` and squash-merge PR lookup could still run network
+  subprocesses under runtime admission;
+- deferred termination could act without a process start-tick identity and
+  report a worker terminal before post-lock confirmation;
+- the previous contention evidence was synthetic and did not invoke real
+  governed commands or the full supervisor cycle.
 
-Two correctness defects sat on the same surface:
+## Delivered boundaries
 
-* `caught_up` was assigned the *divergence* predicate — exactly inverted. A
-  healthy cycle published `caught_up: false`; a cycle that had just rewritten a
-  drifted board published `caught_up: true`.
-* `verify_projection(path, expected)` re-read the journal in its own lock
-  window. Paired with a board read taken earlier, a report could straddle two
-  journal generations — the observed transient `event_count=2046` with the
-  expected SHA from event 2045 and the projected SHA from event 2046, which a
-  stable rerun at event 2049 then contradicted with `ok=true`.
+### Runtime and network work
 
-## What changed
+- Provider probes, GitHub bus sync, exact worker-base fetches, ownerless
+  squash-merge PR lookup, and task-state projection reconciliation occur before
+  exclusive runtime admission.
+- Ownerless PR metadata is bound to the exact task, owner, reviewer, worker run,
+  dispatch time, delivery head, branch, and status generation. The locked
+  consumer rejects stale or missing snapshots and cannot fall back to `gh`.
+- Auto-archive is tokenized under the lock, executed afterward, then applied
+  under a new short lock only if the pending token and timestamp are still
+  current.
+- Derived `current-work`/dashboard/docs-site rendering occurs after canonical
+  task and runtime locks. A separate derived-view lock plus current-projection
+  digest prevents an older command from overwriting newer views.
 
-`.orchestrator/rewrite/task_state_store.py`
+### Journal and projection truth
 
-* `load_snapshot(path)` — one lock window, one validated pass, returning the
-  event count, head event id, projected state, and its digest as a single
-  consistent record.
-* **Validated-prefix checkpoint** (`<journal>.checkpoint.json`). Validation is a
-  pure function of the journal bytes, so a verdict for a byte range stays valid
-  while that range is unchanged. The checkpoint is honoured only when a SHA-256
-  over the exact prefix it claims still matches on disk, and its recorded head
-  event is self-validated. Every byte is still hashed on every read; only the
-  per-event digest work for already-validated events is skipped. Any mismatch,
-  truncation, corruption, or `PANTHEON_TASK_STATE_STORE_FULL_REPLAY=1` degrades
-  to a full replay.
-* The journal is `mmap`-ed rather than copied into the heap; hashing 160MB
-  costs less than reading it into a `bytes` object did.
-* `verify_snapshot(snapshot, expected)` — pure and lock-free, so a report cannot
-  span two generations. `verify_projection` is now a thin wrapper over it.
-* `append_state_commit` reads back exactly the bytes it wrote at their offset
-  and checks the resulting file size, instead of replaying the whole journal to
-  inspect its last line.
-* A checkpoint head must equal the actual last JSONL event in the byte prefix
-  whose digest it claims. An internally valid forged checkpoint event therefore
-  degrades to a full replay and self-repair.
+- `load_snapshot` returns event count, last event identity, projected state, and
+  state SHA from one stable journal generation.
+- The validated-prefix checkpoint still binds its cached head to the actual
+  journal prefix. A process-local cache reuses a fully validated snapshot only
+  while device, inode, size, mtime-ns, and ctime-ns identify the same journal
+  generation; append, rewrite, truncate, or replacement forces validation.
+  `PANTHEON_TASK_STATE_STORE_FULL_REPLAY=1` bypasses acceleration.
+- A governed authoritative mutation holds one journal writer lock and advances
+  one rolling snapshot across its outbox saves. Sequence, previous-event SHA,
+  file/directory fsync, exact append readback, and nonterminal-drop validation
+  remain enforced.
+- `caught_up` now means parity after reconciliation. `repaired` separately
+  records whether the cycle wrote a repair.
 
-`.orchestrator/supervisor.py`
+### Worker termination
 
-* `sync_task_state_shadow` reads the journal **once**, reports `caught_up` as
-  parity-after-reconciliation, and adds a separate `repaired` flag for whether a
-  write was needed. The phase's return value (the cycle's "changed" signal) is
-  now `repaired`.
-* `probe_provider_reports` runs the provider capability probe — which shells out
-  to `gh` for auth and version checks — **before** the cycle takes the exclusive
-  runtime-admission lock.
-* `record_runtime_lock_hold` publishes `runtime_lock_hold_seconds`,
-  `runtime_lock_hold_peak_seconds`, and `runtime_lock_hold_exceeded` on every
-  cycle, with a console warning past
-  `supervisor.runtime_lock_hold_warn_after_seconds` (default 30s). The live 771s
-  hold left no trace in runtime state; an equivalent regression now does.
-* `sync_github_bus` consumes an atomic runtime snapshot before runtime
-  admission, so its `gh` network subprocesses no longer extend the exclusive
-  lock hold.
-* Worker termination sends at most one initial `SIGTERM` while the decision is
-  current, then performs `confirm_kill` polling after the lock is released. The
-  deferred confirmation is bound to Linux process start ticks so PID reuse
-  cannot signal an unrelated process.
-* Dispatch status sync carries the exact worker `ORCH_RUN_ID`,
-  `PANTHEON_WORKTREE_ROOT`, and `ORCH_WORKSPACE_PATH`. A run id without both
-  workspace bindings is refused before spawning the status command; inherited
-  lease variables are cleared first.
-* Pending worker worktree base refs are fetched with an explicit
-  `refs/heads/<base>:refs/remotes/origin/<base>` refspec before runtime
-  admission. The locked phase consumes only a locally refreshed ref and fails
-  closed if prefetch did not succeed.
+- A live PID without `worker_pid_start_ticks` fails closed and receives no
+  signal.
+- The locked phase only schedules `(pid, start_ticks)`. `SIGTERM`, grace
+  polling, and escalation happen after runtime admission is released and stop
+  if the numeric PID has been reused.
+- A worker stays nonterminal until a later cycle observes that post-lock
+  confirmation actually removed the process.
 
-`.orchestrator/rewrite/worker_lifecycle.py`
+## End-to-end benchmark
 
-* `confirm_kill(term_already_sent=True)` starts the grace interval without
-  sending a duplicate `SIGTERM`.
+`task_state_lock_latency_bench.py` builds an isolated coordination root and a
+2050-event, 141,402,624-byte (134.852 MiB) journal. The current path launches:
 
-`scripts/git/{task_start.sh,task_finalize.sh,safe_pr.sh}`
+- four concurrent worker processes;
+- eight real `scripts/ai-status.sh` mutations: two each of `approve`, `assign`,
+  `note`, and `reopen`;
+- six commands with exact worker/runtime/worktree leases and two Human/Ops
+  assigns;
+- a separate process continuously executing the full `supervisor.run_once`.
 
-* Task branch fetches use an explicit remote-tracking destination, so a checkout
-  configured to fetch only `master` cannot leave `origin/dev` stale while
-  advancing only `FETCH_HEAD`.
-
-`scripts/verify_task_state_store.py`
-
-* Samples the board and the journal inside **one** canonical task-state lock
-  domain, closing the two-window race. `--full-replay` forces the deep audit.
-
-`scripts/ai_status.py`, `.orchestrator/common.py`
-
-* Both authoritative read paths use `load_snapshot` — one validated pass instead
-  of two.
-
-## Measurements
-
-`bench-report.json`, produced by `task_state_lock_latency_bench.py` on a
-2050-event / 159.5MB fixture (live: 2050 events / ~157MB):
+The harness refuses dirty candidate executable paths and records the exact
+candidate SHA. It verifies every command exit, supervisor overlap, final event
+count, and exact journal/projection SHA parity.
 
 | Shape | Legacy p95 | Current p95 |
-|---|---|---|
-| Read board + commit, uncontended | 14.844s | **0.263s** |
-| Read board + commit, 4 concurrent commands during an active supervisor cycle | 63.463s | **1.179s** |
+|---|---:|---:|
+| Snapshot/commit microbenchmark, uncontended | 19.588s | 0.124s |
+| Real governed commands during full supervisor cycles | 78.651s | **1.662s** |
 
-The refreshed legacy contended figure (59.737s p50 / 63.463s p95) reproduces
-the live observation that each note command took roughly 55-90s. The current
-contended p95 of 1.179s is under the 2s target, with no lock bypass, no config
-edit, and no live worker termination. A cold first read with no checkpoint
-present costs 3.281s once, after which reads are checkpoint-accelerated.
+The current run completed 8/8 commands, overlapped 10 full `run_once` calls,
+finished at event 2066, and reported `exact_projection: true`. All current
+command latencies were at or below 1.662 seconds. The formal report has
+`meets_target: true`.
 
-Reproduce:
+Reproduce from a clean committed candidate:
 
 ```bash
-PYTHONPATH=.orchestrator python3 \
+PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 \
   docs/deployment/evidence/supervisor/SUP-TASK-STATE-LOCK-LATENCY-001/task_state_lock_latency_bench.py \
-  --events 2050 --task-rows 34 --samples 8 \
-  --contention-workers 4 --contention-commands 2 --contention-seconds 45
+  --events 2050 --task-rows 30 --samples 8 \
+  --contention-workers 4 --contention-commands 2 \
+  --contention-seconds 45 \
+  --json docs/deployment/evidence/supervisor/SUP-TASK-STATE-LOCK-LATENCY-001/bench-report.json
 ```
 
-Exit status is 0 only when both the uncontended and contended p95 are under 2s.
-The harness builds its fixture in a scratch directory and never touches
-canonical state.
-
-## Verification
-
-```
-PYTHONPATH=.orchestrator python3 -m pytest \
-  .orchestrator/test_supervisor.py .orchestrator/test_runtime_state.py \
-  .orchestrator/rewrite/ scripts/test_ai_status.py \
-  scripts/test_verify_task_state_store.py scripts/test_status_file_guard.py \
-  scripts/test_dispatch_twelve_loop_gap_2026_07_26.py -q
-→ 780 passed, 134 subtests passed
-```
-
-Additional worker-environment and task-helper verification:
+## Validation
 
 ```text
-PYTHONPATH=.orchestrator python3 -m pytest \
-  .orchestrator/test_adapter_fallback_policy.py \
-  .orchestrator/test_worker_runner_heartbeat.py \
-  scripts/git/test_task_git_helpers_refspec.py -q
-→ 39 passed
+env -u PANTHEON_STATUS_ROOT \
+    -u PANTHEON_TASK_STATE_STORE_MODE \
+    -u PANTHEON_TASK_STATE_EVENT_LOG \
+    PYTHONPATH=.orchestrator \
+    .venv-pantheon/bin/python3 -m pytest -q \
+      .orchestrator/test_supervisor.py \
+      .orchestrator/test_runtime_state.py \
+      .orchestrator/rewrite/test_task_state_store.py \
+      .orchestrator/rewrite/test_worker_lifecycle.py \
+      scripts/test_ai_status.py
+→ 680 passed, 82 subtests passed in 119.08s
 ```
 
-New regressions:
+Key regressions cover:
 
-* `test_task_state_store.py` — checkpoint reuse and tail-only parsing;
-  checkpointed result identical to a forced full replay; edited history rejected
-  despite a checkpoint; truncation not served from a stale checkpoint;
-  unusable checkpoint degrades and self-repairs; append does not replay the
-  journal for its own readback; read-then-commit costs one pass; short write
-  detected; `verify_snapshot` reports one generation.
-* `test_supervisor.py` — `caught_up`/`repaired` separated in both authoritative
-  and shadow mode; reconciliation replays the journal once per cycle; the report
-  describes one generation even when a commit lands mid-phase; provider probes
-  and GitHub bus run before the runtime lock is taken; exact worktree base
-  prefetch also runs before admission; dispatch sync propagates both workspace
-  bindings; missing bindings fail closed; worker termination polling runs after
-  lock release and is PID-reuse safe; lock-hold budget published and flagged.
+- post-lock auto-archive execution and stale-token rejection;
+- prelock ownerless PR lookup, no locked network fallback, and stale identity
+  rejection;
+- missing start ticks, PID reuse, post-lock confirmation, and nonterminal
+  worker state;
+- stable snapshot cache invalidation, forced full replay parity, history
+  tamper/truncation/corrupt checkpoint rejection, short append detection, and
+  multi-save monotonic hash chaining;
+- task-state reconciliation before runtime admission and correct
+  `caught_up`/`repaired` semantics;
+- stale derived-view suppression.
 
-## Second-pass live failures closed
+## Non-interference and delivery state
 
-Four dispatches between 12:35Z and 14:42Z started real workers but immediately
-failed their governed status sync because the supervisor supplied
-`ORCH_RUN_ID` without either workspace binding. That path now propagates the
-same resolved worktree used by the Claude/Codex adapters and refuses incomplete
-or inherited lease identity.
+- No `.orchestrator/config.json` or live deployment configuration was changed.
+- No live worker was signalled or killed.
+- Canonical status updates used the governed installed command with
+  `AI_NAME=Codex`; no status, activity-log, or current-work file was hand
+  edited.
+- The benchmark uses scratch state only.
+- Generated dashboard test artifacts and two empty test lock sidecars were
+  removed before staging.
 
-A separate worker reproduced a stale-base failure: with
-`remote.origin.fetch=+refs/heads/master:refs/remotes/origin/master`, plain
-`git fetch origin dev` advanced `FETCH_HEAD` while leaving `origin/dev` stale.
-The integration regression builds that repository shape, proves the stale ref,
-then proves the explicit refspec advances `origin/dev` to the exact remote tip.
+Implementation, benchmark, and owner validation are complete. A fresh PR,
+required checks, Codex2 independent review, merge, and owner closeout are still
+required; this evidence does not claim review approval.
