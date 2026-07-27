@@ -19,7 +19,7 @@
     "evidence_cut_at": "2026-07-27T03:02:00Z",
     "evidence_cut_semantics": "Owner evidence cut v9.0.0. Supersedes v1.0.0 (historical) (merged by PR #4200), the unreviewed v2.0.0 (historical) / v3.0.0 (historical) recuts, v4.0.0 (historical) (commits 5c39428dda1d3c1e42fa926aa5f320467e1b8324 (historical) and 0bb6d7ffbef956a57f3a3b300056f77088837f2a (historical)), v5.0.0 (historical) (head 5a9ed0c9957529467fce0b7afa0338546987ee4b (historical)), v6.0.0 (historical) (head b3f8edad0b5ac078ada3dd791b8166dbaf58cf9e (historical)), v7.0.0 (historical) (final head 04332822e44922d64a4a403cfe6223f311e9954b (historical), receipt 63d4d60372741af77943f24c2833db0c15e2e051 (historical)), and v8.0.0 (historical) (final head a5de47447b607a2f561b852fc40bf33035ffcba0 (historical), receipt 6874ea5aeaae05577bf94ffea9de8e7a52a6d005 (historical)). The first four were rejected by Human/Ops; v6.0.0 (historical) was rejected by reviewer Codex2 because every rule read the manifest's own description of the delivery receipt rather than the receipt itself; v7.0.0 (historical) because the receipt proof held while this manifest's prose still described the previous cut; v8.0.0 (historical) because this manifest's prose was recut while the delta document it binds was not, and no rule opened that document. This cut is a narrative recut of v8.0.0 (historical) at the same canonical boundary, journal sequence 2191: the fact set is unchanged and the snapshot is deliberately not advanced, so the diff a reviewer reads contains the two rejected passages, the new rule and its regression suite, and nothing else. Every mutable GitHub fact is recorded as a point-in-time observation bound to an exact head and observed_at, never as the cut's current truth. The delivered bytes are bound by content digest over the three artifacts finalized in delivery receipt commit cd9a7c0f12996a2b64e61056be34c97b2b994a19, whose required checks are recorded below and whose tree is verified offline by rule receipt_commit_artifacts; the evidence pair is deliberately outside that digest so this commit cannot invalidate it.",
     "id": "OPS-L12-RUNTIME-GAP-DELTA-001",
-    "overall_admission": "in_progress",
+    "overall_admission": "review_approved",
     "owner": "Claude",
     "phase": "operations / twelve-loop post-dispatch audit",
     "product_level_required": true,
@@ -767,9 +767,25 @@
             "value": "Runtime mirror guard success 2026-07-27T02:57:23Z; Commit trailers success 2026-07-27T02:57:28Z; Smoke acceptance success 2026-07-27T02:58:07Z; run 30233384772"
           }
         ]
+      },
+      {
+        "command": "AI_NAME=Codex \"$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh\" show OPS-L12-RUNTIME-GAP-DELTA-001 and gh pr view 4221 --repo ajoe734/pantheon --json headRefOid,autoMergeRequest,mergeStateStatus,statusCheckRollup",
+        "result": "pass",
+        "claim_scope": "current",
+        "observed_at": "2026-07-27T13:03:13Z",
+        "conclusion": "The governed canonical row is review_approved with owner Codex, reviewer Codex2, and this manifest bound as review_file. Codex2 approved PR #4221 at exact head 5e305c4f2b214a86dfee9b3e3be324f34eb6d8ed after independently rerunning schema, checksum, all ten evidence rules, the 89 validator/dispatcher tests, dispatch validate-only valid/25, the authoritative journal checks, and the baseline/catalog no-diff checks. GitHub still reports autoMergeRequest null; all six Branch CI check records on that exact head are success. The merge-state read returned UNKNOWN transiently and is not used as approval or delivery proof; merge and archive remain owner closeout steps.",
+        "observations": [
+          {
+            "subject": "pull_request:4221 exact head independently approved by Codex2 with six Branch CI checks success and autoMergeRequest null",
+            "pull_request": 4221,
+            "head_sha": "5e305c4f2b214a86dfee9b3e3be324f34eb6d8ed",
+            "observed_at": "2026-07-27T13:03:13Z",
+            "value": "review_approved at 2026-07-27T12:57:43Z; Commit trailers success x2, Runtime mirror guard success x2, Smoke acceptance success x2; autoMergeRequest=null"
+          }
+        ]
       }
     ],
-    "validated_at": "2026-07-27T03:02:00Z",
+    "validated_at": "2026-07-27T13:03:13Z",
     "validated_base_sha": "d65b87eecac09ffafa5653cf05ebeb5d526546d5",
     "validated_head_sha": "content-digest:sha256:2824f87833588791347f1ea04e3b1fdd59c6c891a5206c7441d0e7ddc4f55c9f"
   },
@@ -937,8 +953,8 @@
         "scripts/test_validate_twelve_loop_gap_evidence.py"
       ],
       "id": "AC7",
-      "statement": "product-evidence schema validation, evidence sha256 verification, and the ten fail-closed rejection rules all pass. The independent review gate belongs to Codex2 and has not yet been exercised on this cut.",
-      "status": "partial_pending_independent_review"
+      "statement": "product-evidence schema validation, evidence sha256 verification, and the ten fail-closed rejection rules all pass. Codex2 independently approved the unchanged v9.0.0 bound cut on PR #4221 exact head 5e305c4f2b214a86dfee9b3e3be324f34eb6d8ed at 2026-07-27T12:57:43Z after reproducing those checks and the authoritative journal and no-diff claims.",
+      "status": "pass"
     },
     {
       "evidence_refs": [
@@ -946,8 +962,8 @@
         "https://github.com/ajoe734/pantheon/pull/4221"
       ],
       "id": "AC8",
-      "statement": "branch, commit, push, PR, checks, merge, and archive complete for this recut. Branch, commit and push are done; the delivery receipt head cd9a7c0f12996a2b64e61056be34c97b2b994a19 has all three required checks green; the evidence commit that follows is pushed to the same PR and its checks are reported in the handoff rather than in this manifest, because recording them here would restart the circularity section 7.5 terminates. Merge and archive wait on Codex2.",
-      "status": "pending"
+      "statement": "Branch, commit, push, PR, review, and exact-head checks are complete for this recut. The delivery receipt head cd9a7c0f12996a2b64e61056be34c97b2b994a19 has all three required checks green, and Codex2 independently approved PR #4221 at exact head 5e305c4f2b214a86dfee9b3e3be324f34eb6d8ed with all six Branch CI records successful. Merge, governed done, archive, and publication metadata remain owner Codex closeout steps; no task completion is claimed before they finish.",
+      "status": "pending_owner_closeout"
     },
     {
       "evidence_refs": [
@@ -971,13 +987,13 @@
       "severity": "high"
     },
     "independent_review": {
-      "blocking_for_this_task": true,
-      "containment": "Task is handed to Codex2 for review with auto-merge disabled. No done transition is attempted and no completion is claimed.",
-      "description": "The v9.0.0 recut has not yet been independently reviewed by Codex2.",
-      "expiry": "Upon Codex2 review decision",
+      "blocking_for_this_task": false,
+      "containment": "Codex2 independently re-ran the bounded validation and approved PR #4221 exact head 5e305c4f2b214a86dfee9b3e3be324f34eb6d8ed. Auto-merge remains disabled and owner Codex is completing the required merge-first closeout.",
+      "description": "The v9.0.0 recut was independently approved by Codex2 on PR #4221 exact head 5e305c4f2b214a86dfee9b3e3be324f34eb6d8ed at 2026-07-27T12:57:43Z. The reviewer confirmed the schema and companion checksum, ten rules with zero rejections, 89 validator/dispatcher tests, dispatch valid/25, the authoritative journal facts, the twelve historical v8 (historical) command indexes, and empty baseline/catalog diffs; no hosted activation or task completion was approved.",
+      "expiry": "Resolved by the Codex2 review_approved decision at 2026-07-27T12:57:43Z",
       "owner": "Codex2",
       "recheck_trigger": "Task PR review",
-      "severity": "medium"
+      "severity": "low"
     },
     "canonical_snapshot_age": {
       "blocking_for_this_task": false,
@@ -1393,6 +1409,41 @@
       "kind": "owner_evidence_recut_v9",
       "status": "in_progress",
       "reference": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-RUNTIME-GAP-DELTA-001/evidence.json; adds rule bound_document_consistency so the delta document the content digest binds is held to the same declared cut as this manifest, rebinds the head digest to the v9.0.0 artifacts, and marks the five v8.0.0 (historical) command entries historical, bringing the historical total to eighteen."
+    },
+    {
+      "sequence": 41,
+      "recorded_at": "2026-07-27T12:44:52Z",
+      "actor": "Codex",
+      "kind": "owner_adopted_v9_bound_cut",
+      "sha": "2345e3351821fe7eaac60668397387cf12cf8ae2",
+      "status": "in_progress",
+      "reference": "git committer date of 2345e3351821fe7eaac60668397387cf12cf8ae2. Codex accepted the later ownership assignment, independently revalidated the sealed v9 evidence cut, and preserved Claude as the owner recorded by the immutable journal sequence 2191 snapshot."
+    },
+    {
+      "sequence": 42,
+      "recorded_at": "2026-07-27T12:46:51Z",
+      "actor": "GitHub Actions",
+      "kind": "required_checks_green_on_review_head",
+      "sha": "5e305c4f2b214a86dfee9b3e3be324f34eb6d8ed",
+      "status": "success",
+      "reference": "Branch CI runs 30267258439 and 30267260025 on exact head 5e305c4f2b214a86dfee9b3e3be324f34eb6d8ed: Commit trailers success twice, Runtime mirror guard success twice, and Smoke acceptance success twice; last completion at 2026-07-27T12:46:51Z."
+    },
+    {
+      "sequence": 43,
+      "recorded_at": "2026-07-27T12:57:43Z",
+      "actor": "Codex2",
+      "kind": "independent_review_approved",
+      "sha": "5e305c4f2b214a86dfee9b3e3be324f34eb6d8ed",
+      "status": "review_approved",
+      "reference": "Governed canonical review_approved decision for PR #4221 exact head 5e305c4f2b214a86dfee9b3e3be324f34eb6d8ed. Codex2 confirmed schema and companion checksum, ten rules with zero rejections, 89 validator/dispatcher tests, dispatch valid/25 with catalog sha256 8c7610b0e6bbba31c36cb0ecd1ddce4bf843fc6de89dcaecc4a5e3154af8933d, journal sequence facts, the twelve v8 historical command indexes, and empty baseline/catalog diffs; no hosted activation or task completion was approved."
+    },
+    {
+      "sequence": 44,
+      "recorded_at": "2026-07-27T13:03:13Z",
+      "actor": "Codex",
+      "kind": "owner_closeout_manifest_recut",
+      "status": "review_approved",
+      "reference": "Owner closeout append after Codex2 approval: transcribed the exact-head review decision into the already bound review_file, advanced AC7 and the independent-review residual to their approved state, and left the v9 digest-bound document and validator pair unchanged. Merge, governed done, archive, and publication remain pending."
     }
   ]
 }
