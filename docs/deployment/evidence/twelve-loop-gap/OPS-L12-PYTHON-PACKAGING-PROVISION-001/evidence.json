@@ -3,7 +3,7 @@
     "schema_status": {
         "formal_schema_owner": "LOOP-PROD-002",
         "formalization_trigger": "OPS-L12-PYTHON-PACKAGING-PROVISION-001 owner cut. The task exists because the Human/Ops in-progress audit of OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001 at 2026-07-26T22:41:34Z rejected an acceptance narrowing and required either an implementation that makes every named AC2 mode pass or a formal impossibility proof plus scope revision. The feasibility proof committed by that task proved AC2 achievable by exactly one mechanism and offered two options; Human/Ops chose Option A, authorize packaging, and created this task to own it.",
-        "note": "Owner third cut for a packaging and test-environment-provisioning delivery, taken after an independent AC2 rejection that this cut answers with an implementation change rather than an argument. It supplies the mechanism the predecessor proved to be the only admissible one, asserts that all four canonical AC2 modes pass, and adds the dependency-interpreter selection contract that makes the documented worker bootstrap work from a dependency-free default interpreter and fail closed with a named diagnostic when it cannot. Three conventions are explicit: this manifest does not contain its own digest (see integrity.self_hash_reason); it cannot contain the merge commit of the pull request that introduces it, so that terminal binding is recorded in the governed status checkpoint at closeout; and it records exactly one source epoch, because the earlier epochs pinned files this cut changed (see task.evidence_cut_semantics). The independent reviewer verdict from Codex2 is intentionally absent from this cut; scope.authoritative_write_owner and security_and_safety.two_person_approval state that explicitly rather than implying approval.",
+        "note": "Owner third cut for a packaging and test-environment-provisioning delivery, taken after an independent AC2 rejection that this cut answers with an implementation change rather than an argument. It supplies the mechanism the predecessor proved to be the only admissible one, asserts that all four canonical AC2 modes pass, and adds the dependency-interpreter selection contract that makes the documented worker bootstrap work from a dependency-free default interpreter and fail closed with a named diagnostic when it cannot. Three conventions are explicit: this manifest does not contain its own digest (see integrity.self_hash_reason); it cannot contain the merge commit of the pull request that introduces it, so that terminal binding is recorded in the governed status checkpoint at closeout; and it records exactly one source epoch, because the earlier epochs pinned files this cut changed (see task.evidence_cut_semantics). Codex2 subsequently completed the independent review at PR head dd64fd9d4833766eeb32e7a18901a65a73a5df49; acceptance AC6 and record_log sequence 17 bind that decision without rewriting Claude's implementation history or Codex's owner-adoption record.",
         "status": "formalized"
     },
     "evidence_policy": {
@@ -16,10 +16,10 @@
     },
     "task": {
         "base_branch": "dev",
-        "evidence_cut_at": "2026-07-27T12:42:18Z",
+        "evidence_cut_at": "2026-07-27T13:02:56Z",
         "evidence_cut_semantics": "Owner third cut on task/OPS-L12-PYTHON-PACKAGING-PROVISION-001, taken at implementation head 36b3750eb5e4af593bedf822e28b59e53cb3cdfb on merged dev tip 4cb436f80f82657cbd58a8527a3ca374f41253aa. It supersedes the two earlier cuts entirely, including their epoch digests, because this cut changes implementation files that those epochs pinned. The first cut was taken at head c72842d9de8afeae46d8953174b18698bd2c10e3 on dev tip 643181a067ec5c344faac0766c69de0d5cfb32eb; the second re-cut it at 4aab5cca40a6815876beb8d77972bb71d12d757d on dev tip 7fedefb281dd416e0412e935c48e866438f56e6d after two conflict-free dev merges, and asserted the same digests for both epochs because those merges changed no owned file. Codex2 then rejected AC2 in the actual auto-worker dispatch, and the rejection was correct: on that head the documented bootstrap started with plain python3, which on an auto-worker host is /usr/bin/python3 with no pytest, so provisioning reported success and returned an interpreter whose very next documented command died with 'No module named pytest'. validation.commands[0] reproduces that failure at the rejected head ad719d9c25b84813231731dedaefe405406d926a and validation.commands[1] shows the same command passing at this head. Because scripts/dev/provision_python_distribution.py, its contract test, services/telemetry/test_discovery_imports.py and AI_COLLABORATION_GUIDE.md all changed, integrity.source_artifact_sha256_by_epoch now carries exactly one epoch - this one. Carrying the superseded epochs forward would make the manifest describe trees that no longer exist and would fail scripts/test_ops_l12_python_packaging_provision_evidence.py, which checks every recorded digest against the committed bytes. The prior epoch shas remain readable in the git history of this file and in record_log. One self-reference is impossible and is stated rather than hidden: every sha recorded here, including implementation_delivery.pull_request.head_sha, is 36b3750eb5e4af593bedf822e28b59e53cb3cdfb as it stood at cut time. The evidence commit carrying this cut is a child of that head and changes no implementation file - it touches only this evidence directory and the task brief - so it moves the pull-request head without moving anything the exact-head check conclusions are about. The terminal binding of the pull-request head and merge commit is recorded in the governed closeout checkpoint, not in this file.",
         "id": "OPS-L12-PYTHON-PACKAGING-PROVISION-001",
-        "overall_admission": "owner_asserted_pass_pending_independent_review",
+        "overall_admission": "review_approved",
         "owner": "Codex",
         "phase": "Twelve-loop closure",
         "product_level_required": false,
@@ -38,7 +38,7 @@
             "The repository at dev 643181a06 has no pyproject.toml, setup.py, or setup.cfg anywhere; `git ls-files` matches none of them, so the repository was not installable and `services` was reachable only through the working directory or PYTHONPATH.",
             "pytest.ini at dev 643181a06 - the pytest configuration and rootdir anchor, which this task must not displace.",
             "requirements.txt at dev 643181a06 - the declared root-level test dependency file, which this task must not duplicate or supersede.",
-            "ai-status.json row OPS-L12-PYTHON-PACKAGING-PROVISION-001 - current owner Codex after governed reassignment from implementation author Claude, reviewer Codex2, status in_progress, and the six canonical acceptance criteria this manifest answers one by one."
+            "Governed task row OPS-L12-PYTHON-PACKAGING-PROVISION-001 - current owner Codex after governed reassignment from implementation author Claude, reviewer Codex2, status review at the independently reviewed candidate, and the six canonical acceptance criteria this manifest answers one by one."
         ],
         "desired_state": [
             ".orchestrator/task-briefs/ops_l12_python_packaging_provision_001.md - task brief and acceptance scope of record.",
@@ -48,7 +48,7 @@
         "task_packet": ".orchestrator/task-briefs/ops_l12_python_packaging_provision_001.md"
     },
     "scope": {
-        "authoritative_write_owner": "Codex is the current task owner after the governed reassignment from Claude and owns review handoff and finalization. Claude remains the recorded author of the root packaging declaration, provisioning entry point, dev CI provisioning job, telemetry import-integrity regression module, and the third evidence cut; those historical record_log entries are preserved. This task owns no runtime, service, or deployment surface. No independent reviewer verdict is asserted by this owner-adoption update.",
+        "authoritative_write_owner": "Codex is the current task owner after the governed reassignment from Claude and owns finalization. Claude remains the recorded author of the root packaging declaration, provisioning entry point, dev CI provisioning job, telemetry import-integrity regression module, and the third evidence cut; those historical record_log entries are preserved. This task owns no runtime, service, or deployment surface. Codex2 independently approved the reviewed candidate at record_log sequence 17; that reviewer decision is separate from and does not rewrite the owner-adoption update.",
         "composes_with": [
             "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001 - this task supplies the Option A mechanism its AC2_FEASIBILITY_PROOF.md identified as the only admissible one, and converts the two boundary tests that task left recording an unresolved gap into unconditional pass assertions.",
             "merged dev tip 4cb436f80f82657cbd58a8527a3ca374f41253aa - the base this delivery is branched from and verified against. The two earlier bases, 643181a067ec5c344faac0766c69de0d5cfb32eb and 7fedefb281dd416e0412e935c48e866438f56e6d, are superseded.",
@@ -323,7 +323,7 @@
             "status": "pass"
         },
         "two_person_approval": {
-            "proof": "Current owner Codex and reviewer Codex2 are distinct and match the canonical ai-status.json row after the governed owner reassignment from implementation author Claude. No reviewer verdict is asserted by this owner-adoption update. Codex2's independent decision must be appended to record_log before done.",
+            "proof": "Current owner Codex and reviewer Codex2 are distinct and match the governed task row after the owner reassignment from implementation author Claude. Codex2 independently reproduced the bare-system bootstrap, positive suites, negative controls, integrity gate, checksum, and exact-head CI before recording review approval at record_log sequence 17. Owner closeout and merge remain separate.",
             "status": "pass"
         }
     },
@@ -402,16 +402,17 @@
             "status": "pass"
         },
         {
-            "blocking_until": "Codex2 records an independent decision on this manifest and on evidence.sha256 at head 36b3750eb5e4af593bedf822e28b59e53cb3cdfb, and that decision is appended to record_log. Auto-merge has never been enabled on pull request 4232, so no merge can precede that decision. The most load-bearing checks for this cut are validation.commands[0] against [1] - the same command failing at the rejected head and passing here - and validation.commands[4], which shows the host's default python3 has no pytest, so nothing ambient is certifying the result.",
+            "blocking_until": "Nothing. Codex2 independently reviewed the implementation epoch 36b3750eb5e4af593bedf822e28b59e53cb3cdfb and the evidence/checksum at PR head dd64fd9d4833766eeb32e7a18901a65a73a5df49 before auto-merge or merge, then recorded the decision at record_log sequence 17. PR #4232 remained open with auto-merge disabled throughout review.",
             "evidence_refs": [
                 "integrity.checksum_coverage",
                 "integrity.source_artifact_sha256_by_epoch",
                 "scripts/test_ops_l12_python_packaging_provision_evidence.py",
-                "security_and_safety.two_person_approval"
+                "security_and_safety.two_person_approval",
+                "record_log[16]"
             ],
             "id": "AC6",
             "statement": "Evidence and checksum are independently reviewed by Codex2 before auto-merge or merge",
-            "status": "pending_independent_review"
+            "status": "pass"
         }
     ],
     "residual_risks": {
@@ -453,8 +454,8 @@
         },
         "whole_services_collect_only_does_not_complete": {
             "blocking_for_this_task": false,
-            "containment": "Attribution is settled rather than assumed: validation.commands[20] repeats the run with services/telemetry - the only directory this task touches - excluded, and it still does not complete, so the stall is entirely outside this change. What this task does touch was collected and run directly: services/telemetry collects 302 tests in 4.66s and runs 301 passed / 1 skipped, and the scripts testpath collects 1552 tests in 36.90s including both new modules.",
-            "description": "`pytest --collect-only -q` over the whole services testpath does not finish; it was terminated by a 900s cap (validation.commands[19]) and by an earlier unbounded attempt after roughly forty minutes. No collection total is claimed for that tree. This is a pre-existing condition of the repository at dev 643181a06.",
+            "containment": "The current evidence does not use whole-services collection to prove an acceptance criterion. The task-owned telemetry tree was run directly at review with 353 passed / 1 skipped / 35 subtests, and the task-focused packaging/discovery suites passed with 40 passed / 23 subtests.",
+            "description": "The first owner cut recorded that `pytest --collect-only -q` over the whole services testpath did not complete before its cap, including when services/telemetry was excluded. Those detailed command records were removed when the superseded evidence epochs were replaced, so this current cut deliberately makes no indexed validation.commands reference or whole-services collection claim.",
             "expiry": "next root pytest harness task",
             "owner": "unassigned",
             "recheck_trigger": "Any change to conftest.py import-root activation, pytest.ini testpaths, or a report of slow full-suite collection",
@@ -642,6 +643,15 @@
             "sha": "6773c64ee4166198456f573f406a9bd364cfdef7",
             "status": "owner_asserted_pass_pending_independent_review",
             "sequence": 16
+        },
+        {
+            "actor": "Codex2",
+            "kind": "independent_review_approved",
+            "recorded_at": "2026-07-27T13:02:56Z",
+            "reference": "Independent review of PR #4232 at candidate dd64fd9d4833766eeb32e7a18901a65a73a5df49. A fresh /usr/bin/python3 bootstrap with PANTHEON_DEPENDENCY_PYTHON, VIRTUAL_ENV and PYTHONPATH absent selected the main-worktree dependency interpreter and passed the packaging/discovery suites (40 passed, 23 subtests); the bare interpreter directly drove the discovery module (20 tests, 2 intended ambient-pytest skips); full telemetry passed (353 passed, 1 pre-existing skip, 35 subtests); unprovisioned M2/M3 and both unsafe dependency/current-mode controls failed as required; the finalized evidence gate passed (10 passed, 36 subtests), checksum/source digests matched, and push/pull_request runs 30267610432 and 30267613436 had all four jobs green. Auto-merge stayed disabled. Two stale non-acceptance residual-risk command indexes were corrected during this evidence-only review.",
+            "sha": "dd64fd9d4833766eeb32e7a18901a65a73a5df49",
+            "status": "approved",
+            "sequence": 17
         }
     ]
 }

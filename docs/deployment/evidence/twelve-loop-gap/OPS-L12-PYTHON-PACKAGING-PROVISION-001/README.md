@@ -3,15 +3,16 @@
 **Title:** Provision installed Python package for telemetry AC2
 **Owner:** Codex · **Reviewer:** Codex2 · **Phase:** Twelve-loop closure
 **Repository:** `ajoe734/pantheon` · **Branch:** `task/OPS-L12-PYTHON-PACKAGING-PROVISION-001`
-**Base:** merged dev tip `4cb436f80` · **Validated head:** `36b3750eb` (PR
+**Base:** merged dev tip `4cb436f80` · **Validated implementation head:** `36b3750eb`
+· **Independently reviewed PR head:** `dd64fd9d4` (PR
 [#4232](https://github.com/ajoe734/pantheon/pull/4232))
 **Superseded cuts:** head `c72842d9d` on dev `643181a06`; head `4aab5cca4` on dev `7fedefb28`.
 
-> **Status: owner-asserted pass, pending independent review.** All four canonical
-> execution modes pass from a foreign working directory with no `PYTHONPATH`, and
-> the documented worker bootstrap now works from the auto-worker's default
-> dependency-free interpreter. The reviewer verdict is **not** asserted here —
-> see *Review status* below.
+> **Status: independent review approved.** Codex2 independently reproduced the
+> bare-system worker bootstrap, all four canonical execution modes, the
+> fail-closed controls, checksum/source integrity, and the full telemetry result
+> before recording the decision below. PR #4232 remains unmerged with auto-merge
+> disabled; owner closeout is still required.
 
 > **Third cut, answering an AC2 rejection.** Codex2 rejected AC2 in the real
 > auto-worker dispatch, and the rejection was right. This cut answers it with an
@@ -233,9 +234,6 @@ identical in the baseline and post-change runs.
 
 ## What is not claimed
 
-- **No reviewer verdict.** Codex2's independent decision must be appended to
-  `record_log` before `done`. Auto-merge has never been enabled on PR #4232 so
-  that no merge can precede that decision.
 - **No merge commit.** A manifest cannot contain the merge commit of the PR that
   introduces it; the governed closeout checkpoint binds that.
 - **Only one source epoch.** The two earlier epochs are superseded, not dropped
@@ -256,24 +254,32 @@ identical in the baseline and post-change runs.
 
 ## Review status
 
-Awaiting Codex2. The reviewer's independent check should target, at minimum:
+Codex2 approved the evidence at PR head `dd64fd9d4833766eeb32e7a18901a65a73a5df49`
+on 2026-07-27 after these independent observations:
 
-1. **the rejection is actually fixed** — run the guide's own command from the
-   worker default interpreter, with no `PANTHEON_DEPENDENCY_PYTHON` and no
-   `PYTHONPATH`, and confirm `"$PANTHEON_PY" -m pytest` now runs. This is
-   `validation.commands[1]` and `[2]`, and it is the load-bearing check;
-2. **the failure mode is closed, not moved** — `validation.commands[9]` and
-   `[10]`: no qualifying candidate, and an explicit candidate without the
-   dependencies, must both exit non-zero with a named diagnostic rather than
-   returning an interpreter;
-3. that `validation.commands[6]` and `[7]` — the unprovisioned controls — still
-   fail, so the M2/M3 passes remain attributable to the distribution;
-4. that the allowlist exports three names and no more, on the current tree;
-5. that `evidence.sha256` matches the committed bytes and
-   `integrity.source_artifact_sha256_by_epoch` matches the implementation files
-   at the single epoch `36b3750eb` (the gate checks this mechanically);
-6. that nothing under `.orchestrator/` or any live supervisor config is in the
-   diff, and that `pyproject.toml`, `.github/workflows/branch-ci.yml`,
-   `services/telemetry/capture.py` and `feedback_adapter.py` are untouched by
-   this cut — `git diff --stat ad719d9c2..36b3750eb --` over those paths is
-   empty.
+- the guide's bootstrap started from `/usr/bin/python3`, with
+  `PANTHEON_DEPENDENCY_PYTHON`, `VIRTUAL_ENV`, and `PYTHONPATH` absent, selected
+  `<main worktree>/.venv`, and provisioned a fresh interpreter;
+- the packaging/discovery suites passed with `40 passed, 23 subtests`; the same
+  bare interpreter drove the discovery module directly with `Ran 20 tests, OK
+  (skipped=2)`, where both skips are the intended ambient-pytest checks;
+- the full telemetry suite passed with `353 passed, 1 skipped, 35 subtests`; the
+  single skip is the pre-existing NATS crash probe;
+- unprovisioned M2/M3 controls still failed on `No module named 'services'`,
+  while an explicit dependency interpreter without pytest and unsafe
+  `--mode current` both exited 1 with their governed diagnostics;
+- the finalized manifest gate passed with `10 passed, 36 subtests`,
+  `evidence.sha256`
+  matched both companion files, source digests matched the single implementation
+  epoch, and the checkout gained no install artifact;
+- push run `30267610432` and pull-request run `30267613436` each reported all
+  four Branch CI Gate jobs successful at the reviewed head. Auto-merge remained
+  disabled.
+
+The review also corrected two stale residual-risk references to removed
+`validation.commands[19]` and `[20]`; that historical whole-services collection
+note is non-blocking and is not used to prove any acceptance criterion. The only
+`.orchestrator/` PR change is this task's brief; live supervisor config and the
+runtime telemetry modules remain outside the diff. GitHub currently marks the PR
+behind the moving `dev` branch, so branch synchronization and merge remain owner
+closeout work and are not claimed by this review.
