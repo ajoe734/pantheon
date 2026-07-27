@@ -128,6 +128,12 @@
       "summary": "task_finalize.sh and safe_pr.sh swallowed `gh pr merge --disable-auto` failure and then printed that auto-merge was off. A standing autoMergeRequest could remain armed after either helper returned success.",
       "live_source": "Codex2 independent review of PR #4218 head 5a9ad1643eba2580bf8a51c71a6f3a43ad8c57b6; helper lines formerly ending in `|| true`",
       "root_cause": "Neither helper read autoMergeRequest before or after revocation, so it could not distinguish already-off from failed-and-still-armed state."
+    },
+    {
+      "id": "OF16",
+      "summary": "The same merge-boundary failure repeated on 2026-07-27 while PR #4218 was awaiting exact-head review: #4259, #4260, #4263, and #4264 merged to dev with latestReviews=[]. #4264 merged during the manual auto-merge revocation race window.",
+      "live_source": "gh pr view 4259/4260/4263/4264 --json mergedAt,mergeCommit,latestReviews,autoMergeRequest; dev head advanced to 4974824687ef5c3acf665fa22a4306e5d3d664f1",
+      "root_cause": "The installed dev helpers still predated this branch, so GitHub could finalize an already-granted auto-merge before the helper/integrator gate was merged and installed."
     }
   ],
   "live_regressions": [
@@ -330,7 +336,7 @@
     "owner_or_reviewer_impersonation": "none; every fixture is recorded state supplied as test data",
     "publish_promote_path": "untouched; promote/<v> PRs are not task/<TASK-ID> PRs and do not call these helpers",
     "hotfix_path": "untouched for the same reason",
-    "branch_protection": "unchanged; the gate runs off GitHub, in the canonical task contract",
+    "branch_protection": "repository files in this PR do not mutate branch protection. During the 2026-07-27 live race window, Ops temporarily required the `Pantheon canonical review gate` status on dev with admin enforcement; that external hold is containment until OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001 productizes the GitHub-level check.",
     "merge_then_review_path": "preserved byte-for-byte when the canonical contract permits the declaration",
     "fail_direction": "every unresolvable read, ambiguity, or error withholds merge authority; nothing widens it"
   },
@@ -354,7 +360,10 @@
       "pre_push_revocation_anchor_commit": "d8549af42d9dd5358b9b6b907c2d5f36aa4f4d20",
       "live_pre_push_probe_head": "c6d38ea7e9b5bbc7f2480768120478894e522f38",
       "validated_dev_base": "b79d3a540a797fe69851f4dbb3a119ddb647cf9a",
-      "validated_tree_commit": "f22ea3561ca3578febd4402c39b4bd2643dbec8c"
+      "validated_tree_commit": "f22ea3561ca3578febd4402c39b4bd2643dbec8c",
+      "post_containment_dev_base": "4974824687ef5c3acf665fa22a4306e5d3d664f1",
+      "post_containment_compose_commit": "8a05394974f88b95a686aeb62add7b14f9fe6cc6",
+      "post_containment_reason": "#4263/#4264 repeated the same unreviewed auto-merge race while old helpers were still installed; dev branch protection was temporarily held by the `Pantheon canonical review gate` status and this branch was revalidated on the new base."
     },
     "commands": [
       {
@@ -384,7 +393,7 @@
       },
       {
         "command": "/home/lupin/pantheon/.venv/bin/python -m pytest scripts/git/test_task_review_merge_gate.py scripts/git/test_auto_integrator.py scripts/git/test_git_workflow_helpers.py scripts/git/test_task_pr_triage.py scripts/git/test_index_safety.py scripts/test_ai_status.py scripts/git/test_task_git_helpers_refspec.py -q",
-        "conclusion": "343 passed, 31 subtests passed after composing current dev",
+        "conclusion": "345 passed, 31 subtests passed after composing current dev through 4974824687ef5c3acf665fa22a4306e5d3d664f1",
         "result": "pass"
       },
       {
@@ -429,7 +438,7 @@
       },
       {
         "command": ".venv-pantheon/bin/python3 scripts/test_ai_status.py",
-        "conclusion": "Ran 142 tests - OK after composing current dev",
+        "conclusion": "Ran 144 tests - OK after composing current dev",
         "result": "pass"
       },
       {

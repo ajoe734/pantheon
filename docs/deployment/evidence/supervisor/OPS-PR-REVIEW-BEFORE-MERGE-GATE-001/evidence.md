@@ -164,6 +164,25 @@ at merge time is auditable afterwards. Closing the hole entirely would require
 branch protection to demand a review, which is a config change this task is
 explicitly forbidden to make.
 
+### 1.2.1 Live containment after the same race repeated
+
+The same class repeated on 2026-07-27 while this PR was awaiting exact-head
+review: #4259, #4260, #4263, and #4264 all merged to `dev` with
+`latestReviews=[]`. #4263 was granted auto-merge at 16:49:15Z and merged at
+16:51:47Z; #4264 still merged at 16:55:10Z during the manual revocation
+window. That does not change the permanent scope of this task: the code here
+removes merge grants from Pantheon helpers and makes the integrator refuse any
+head that lacks canonical reviewer approval.
+
+Because the currently installed helpers on `dev` were still old code, Ops
+applied a temporary repository-level hold at 2026-07-27T16:58Z: branch
+protection for `dev` now requires the status context
+`Pantheon canonical review gate`, with admin enforcement enabled, in addition
+to the existing CI contexts. This is a live containment guard for the race
+window, not a replacement for
+`OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001`, which must productize the
+GitHub-level exact-head attestation after this helper gate is merged.
+
 Section 4 of `prefix-reproduction.txt` replays all eight from recorded state.
 
 ### 1.3 Fail-open cases the reviewed implementations still had
@@ -404,8 +423,8 @@ The full map of PR → entry point → fixture is the `live_regressions` table i
 See `validation.txt` for the captured transcript.
 
 This pass ran against authoritative `origin/dev`
-`b79d3a540a797fe69851f4dbb3a119ddb647cf9a` and validated tree
-`f22ea3561ca3578febd4402c39b4bd2643dbec8c`.
+`4974824687ef5c3acf665fa22a4306e5d3d664f1` and validated tree
+`8a05394974f88b95a686aeb62add7b14f9fe6cc6`.
 
 ```
 .venv-pantheon/bin/python3 scripts/git/test_task_review_merge_gate.py
@@ -420,7 +439,7 @@ This pass ran against authoritative `origin/dev`
                                                        Ran  24 tests - OK
 .venv-pantheon/bin/python3 scripts/git/test_index_safety.py
                                                        Ran  17 tests - OK
-.venv-pantheon/bin/python3 scripts/test_ai_status.py   Ran 142 tests - OK
+.venv-pantheon/bin/python3 scripts/test_ai_status.py   Ran 144 tests - OK
 four exact integrator revocation-readback cases           all OK
 bash -n task_finalize.sh safe_pr.sh nightly_publish.sh        syntax ok
 py_compile task_review_merge_gate.py auto_integrator.py ai_status.py
