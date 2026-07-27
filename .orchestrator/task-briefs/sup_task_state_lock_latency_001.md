@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Bound supervisor task-state lock latency and projection truth
-- Status: todo
-- Owner: Claude
+- Status: in_progress
+- Owner: Codex
 - Reviewer: Codex2
-- Next: Extend the live reproduction beyond the prior 669s loop. Supervisor PID 901543 tick heartbeat 22:35:04Z completed 22:47:55Z (771s) while reviewer/status processes queued on runtime-admission inode 807896; the task-state reviewer reopen waited about 9 minutes. The next exclusive hold was observed from at least 22:50:27Z until 22:59:04Z (~517s); Codex2 BFF reopen PID 480495 waited from about 22:51:17Z and committed only at 22:59:45Z. A verifier begun around the 22:48 lock handoff transiently reported event_count=2046 with expected SHA from event 2045 and projected SHA from event 2046 while the concurrent append landed, then a stable rerun at event 2049 returned ok=true; cover this lock-domain/snapshot race explicitly. Even lock-free Human/Ops note commands over the ~157MB/2050-event journal each required roughly 55-90s. Preserve these measurements in the regression fixture; target p95 <2s without lock bypass, config edit, or worker kill.
+- Next: Root continuation: second-pass supervisor/worker repair for missing PANTHEON_WORKTREE_ROOT/ORCH_WORKSPACE_PATH dispatch-sync binding and stale origin/dev refspec. Continue in a clean task worktree; no live deploy or manual worker kill.
 
 ## Summary
 縮短 supervisor task-state/runtime-admission 鎖持有時間，修正 caught_up 語意，讓 approve/assign 與 heartbeat 不再被數分鐘 projection 阻塞。

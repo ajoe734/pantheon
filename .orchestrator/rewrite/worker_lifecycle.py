@@ -50,6 +50,7 @@ def confirm_kill(
     term_grace_seconds: float = 2.0,
     kill_grace_seconds: float = 1.0,
     poll_interval: float = 0.1,
+    term_already_sent: bool = False,
 ) -> bool:
     """SIGTERM → wait term_grace → SIGKILL → wait kill_grace → verify.
 
@@ -57,15 +58,21 @@ def confirm_kill(
     the worker terminated). Never raises: a signal OSError (already reaped, or not
     ours) is resolved by a final liveness check. Injecting is_alive/send_signal/
     sleep/monotonic keeps it pure and deterministically testable.
+
+    ``term_already_sent`` supports callers that must make the stop decision
+    atomically under a state lock but defer this helper's poll/sleep window until
+    after releasing it. In that mode the grace period starts immediately without
+    sending a duplicate SIGTERM.
     """
     if not pid:
         return False
     if not is_alive(pid):
         return True
-    try:
-        send_signal(pid, signal.SIGTERM)
-    except OSError:
-        return not is_alive(pid)
+    if not term_already_sent:
+        try:
+            send_signal(pid, signal.SIGTERM)
+        except OSError:
+            return not is_alive(pid)
     if _wait_until_gone(pid, term_grace_seconds, is_alive=is_alive, sleep=sleep,
                         monotonic=monotonic, poll_interval=poll_interval):
         return True
