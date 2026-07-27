@@ -3,7 +3,7 @@
   "schema_status": {
     "formal_schema_owner": "LOOP-PROD-002",
     "formalization_trigger": "L12-DIST-001 product-level review-file admission gate.",
-    "note": "Owner implementation and refreshed acceptance cut over PR #4193. The formal independent reviewer verdict is intentionally absent until Codex approves.",
+    "note": "Owner implementation, reviewer-requested corrections, and refreshed acceptance cut over PR #4193. The formal independent reviewer verdict is intentionally absent until Codex approves.",
     "status": "formalized"
   },
   "evidence_policy": {
@@ -16,8 +16,8 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-27T17:48:10Z",
-    "evidence_cut_semantics": "Owner evidence cut v3.0.0. At authoritative journal sequence 2667, Codex2 refreshed the completed transactional distillation implementation onto dev 4688bd252911b91ea0459a38a694c5faa53e3bbd and reran its acceptance proof. Delivery receipt b1afb294c12d89cbae9dfd9ab28989801f8dba9a binds the seven finalized artifacts at content-digest:sha256:2feb5dbc40c9e0d3a878d6eb4e9fcd9edb0f6b5d6edb38615e58ab3c532a4bb5. PR #4193 at head b1afb294c12d89cbae9dfd9ab28989801f8dba9a had all required receipt checks successful and auto-merge disabled when observed at 2026-07-27T17:47:59Z. Independent reviewer approval is intentionally not asserted by this owner cut.",
+    "evidence_cut_at": "2026-07-27T21:17:37Z",
+    "evidence_cut_semantics": "Owner evidence cut v4.0.0. At authoritative journal sequence 2976, Codex2 composed the approve-before-POST and committed-snapshot corrections onto dev 7f545a33bf41e5682dc67f50333c84b42f09d17e and reran the complete acceptance proof. Delivery receipt 6f87f1dad65a5849bbbff5c4958d42e50e37003e binds the nine finalized artifacts at content-digest:sha256:08d60a275e0e784a8f3c393455d7bfcb03627bafe95ead4c577e46385e9e2d65. PR #4193 at head 6f87f1dad65a5849bbbff5c4958d42e50e37003e had all required receipt checks successful and auto-merge disabled when observed at 2026-07-27T21:17:37Z. Independent reviewer approval is intentionally not asserted by this owner cut.",
     "id": "L12-DIST-001",
     "overall_admission": "pass",
     "owner": "Codex2",
@@ -33,7 +33,7 @@
   },
   "authorities": {
     "actual_state": [
-      "/home/lupin/pantheon-ci-deploy/runtime/task-state-events.jsonl (append-only authoritative task-state journal; this cut verified through sequence 2667 at 2026-07-27T17:44:34Z)",
+      "/home/lupin/pantheon-ci-deploy/runtime/task-state-events.jsonl (append-only authoritative task-state journal; this cut verified through sequence 2976 at 2026-07-27T20:58:44Z)",
       "StrategySpec mutable draft",
       "Registry terminal readback",
       "distillation DLQ"
@@ -57,6 +57,8 @@
       "docs/deployment/evidence/twelve-loop-gap/L12-DIST-001/evidence.sha256"
     ],
     "implementation_changed_files": [
+      "services/registry/service.py",
+      "services/registry/test_service.py",
       "services/source_ingestion/distillation_controller.py",
       "services/source_ingestion/distillation_worker.py",
       "services/source_ingestion/registry/jsonl_store.py",
@@ -142,9 +144,8 @@
       },
       {
         "bound_content_digest": "content-digest:sha256:2feb5dbc40c9e0d3a878d6eb4e9fcd9edb0f6b5d6edb38615e58ab3c532a4bb5",
-        "delivery_state": "current_receipt_checks_green",
-        "note": "Carries the digest-bound README plus the six implementation/test artifacts. All three required Branch CI jobs are green on this exact head; the later evidence pair is outside the content digest.",
-        "receipt_role": "current_delivery_receipt",
+        "delivery_state": "superseded_by_reviewer_correction_receipt",
+        "note": "Historical v3 receipt. Independent review of a later exact head exposed the Registry TOCTOU overwrite and caller-map snapshot substitution defects.",
         "sha": "b1afb294c12d89cbae9dfd9ab28989801f8dba9a",
         "subject": "L12-DIST-001: bind current owner receipt"
       },
@@ -159,49 +160,75 @@
         "note": "Merged dev a6966b13d84430387da9c3a33fcf224c841bc5c6 after the receipt checks. The incoming delta touched only SUP-TASK-STATE-LOCK-LATENCY-001 evidence and changed none of the seven digest-bound artifacts.",
         "sha": "4f76d97bc879e4fb1ca942c248e75e911847e9ea",
         "subject": "Merge remote-tracking branch 'origin/dev' into task/L12-DIST-001"
+      },
+      {
+        "delivery_state": "superseded_reviewer_rejected_head",
+        "note": "Independent review reproduced an approve-before-POST overwrite and a v1 job processing v2 caller-map content; both findings are fixed by the later correction receipt.",
+        "sha": "5934ed6d8e4dc797fb5dbd34a8fc9636b3acdb1c",
+        "subject": "L12-DIST-001: finalize exact-head review handoff"
+      },
+      {
+        "delivery_state": "reviewer_correction_anchor",
+        "note": "Introduces atomic StrategySpec create-if-absent delivery, committed-snapshot replay, and the exact negative regressions.",
+        "sha": "77cd3a0214956b3c52145af24c46015260e03b74",
+        "subject": "L12-DIST-001: anchor atomic Registry and snapshot fences"
+      },
+      {
+        "delivery_state": "current_receipt_base_dev_merge",
+        "note": "Merged current dev 7f545a33bf41e5682dc67f50333c84b42f09d17e before the final complete acceptance rerun.",
+        "sha": "a1aca8d522227e364bbafaf2bc789f319f93d566",
+        "subject": "Merge remote-tracking branch 'origin/dev' into task/L12-DIST-001"
+      },
+      {
+        "bound_content_digest": "content-digest:sha256:08d60a275e0e784a8f3c393455d7bfcb03627bafe95ead4c577e46385e9e2d65",
+        "delivery_state": "current_receipt_checks_green",
+        "note": "Carries the digest-bound README plus eight implementation/test artifacts. Commit trailers, Runtime mirror guard, Smoke acceptance, and Python packaging provision are green on this exact head; the later evidence pair is outside the content digest.",
+        "receipt_role": "current_delivery_receipt",
+        "sha": "6f87f1dad65a5849bbbff5c4958d42e50e37003e",
+        "subject": "L12-DIST-001: bind final correction delivery receipt"
       }
     ],
     "pull_request": {
       "base": "dev",
-      "head_sha": "b1afb294c12d89cbae9dfd9ab28989801f8dba9a",
+      "head_sha": "6f87f1dad65a5849bbbff5c4958d42e50e37003e",
       "number": 4193,
       "url": "https://github.com/ajoe734/pantheon/pull/4193"
     },
     "required_checks": [
       {
-        "completed_at": "2026-07-27T17:46:57Z",
+        "completed_at": "2026-07-27T21:16:30Z",
         "conclusion": "success",
         "event": "pull_request",
-        "head_sha": "b1afb294c12d89cbae9dfd9ab28989801f8dba9a",
-        "run_id": 30290748455,
-        "url": "https://github.com/ajoe734/pantheon/actions/runs/30290748455",
+        "head_sha": "6f87f1dad65a5849bbbff5c4958d42e50e37003e",
+        "run_id": 30306134639,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30306134639",
         "workflow": "Commit trailers"
       },
       {
-        "completed_at": "2026-07-27T17:46:54Z",
+        "completed_at": "2026-07-27T21:16:28Z",
         "conclusion": "success",
         "event": "pull_request",
-        "head_sha": "b1afb294c12d89cbae9dfd9ab28989801f8dba9a",
-        "run_id": 30290748455,
-        "url": "https://github.com/ajoe734/pantheon/actions/runs/30290748455",
+        "head_sha": "6f87f1dad65a5849bbbff5c4958d42e50e37003e",
+        "run_id": 30306134639,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30306134639",
         "workflow": "Runtime mirror guard"
       },
       {
-        "completed_at": "2026-07-27T17:47:43Z",
+        "completed_at": "2026-07-27T21:17:11Z",
         "conclusion": "success",
         "event": "pull_request",
-        "head_sha": "b1afb294c12d89cbae9dfd9ab28989801f8dba9a",
-        "run_id": 30290748455,
-        "url": "https://github.com/ajoe734/pantheon/actions/runs/30290748455",
+        "head_sha": "6f87f1dad65a5849bbbff5c4958d42e50e37003e",
+        "run_id": 30306134639,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30306134639",
         "workflow": "Smoke acceptance"
       },
       {
-        "completed_at": "2026-07-27T17:47:21Z",
+        "completed_at": "2026-07-27T21:16:58Z",
         "conclusion": "success",
         "event": "pull_request",
-        "head_sha": "b1afb294c12d89cbae9dfd9ab28989801f8dba9a",
-        "run_id": 30290748455,
-        "url": "https://github.com/ajoe734/pantheon/actions/runs/30290748455",
+        "head_sha": "6f87f1dad65a5849bbbff5c4958d42e50e37003e",
+        "run_id": 30306134639,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30306134639",
         "workflow": "Python packaging provision"
       }
     ]
@@ -210,26 +237,27 @@
     "commands": [
       {
         "command": ".venv-pantheon/bin/python3 -m pytest services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestConcurrentWorkers::test_expired_lease_cannot_commit_any_terminal_outcome_before_reclaim services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestCrashReplay services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestRegistryFailureIsTruthful::test_registry_outage_fails_the_tick_and_parks_a_durable_retry services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestRegistryFailureIsTruthful::test_registry_recovery_replays_the_parked_job_to_done services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestRegistryFailureIsTruthful::test_outage_replay_keeps_identity_across_an_intervening_revision services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestRealSourceToRegistryService::test_real_service_outage_then_recovery_replays_once -q",
-        "claim_scope": "current",
+        "claim_scope": "historical",
         "conclusion": "8 passed. Exact expiry, crash-before/after, simulated and real outage recovery, and intervening-revision identity regressions.",
+        "historical_note": "Historical focused selection from the v3.0.0 cut; every selected test was included in the current complete focused suite.",
         "result": "pass"
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest services/source_ingestion -q",
         "claim_scope": "current",
-        "conclusion": "The first full run had one failure in the unchanged L12-SRC multi-process reconciliation race. That isolated case then passed 3/3, and the complete rerun passed 754 tests with 2 skipped.",
+        "conclusion": "757 passed, 2 skipped after composing current dev and the reviewer-requested corrections.",
         "result": "pass"
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest services/registry services/research/strategy_spec -q",
         "claim_scope": "current",
-        "conclusion": "229 passed. Regression cover for the shared JsonlRegistryStore lease and the seed conversion path.",
+        "conclusion": "230 passed. Regression cover includes atomic same-id StrategySpec registration, the shared JsonlRegistryStore lease, and the seed conversion path.",
         "result": "pass"
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_distillation_controller.py -q",
         "claim_scope": "current",
-        "conclusion": "62 passed after the final dev refresh merge 014c9b9fa6bc56c061fe1acaed8adfa45140170f.",
+        "conclusion": "65 passed after current dev merge a1aca8d522227e364bbafaf2bc789f319f93d566, including both reviewer-requested negative regressions.",
         "result": "pass"
       },
       {
@@ -246,8 +274,9 @@
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest services/source_ingestion/tests/test_multi_process_source_reconciliation.py::test_two_process_workers_create_one_connector_schedule_run_and_source_record -q (repeated 3x after one full-suite race failure)",
-        "claim_scope": "current",
+        "claim_scope": "historical",
         "conclusion": "1 passed on each of three consecutive isolated runs. The test and its reconciler are unchanged by this task, and the subsequent complete source-ingestion rerun was green.",
+        "historical_note": "Historical stability follow-up from the v3.0.0 cut; the current complete source-ingestion suite passed without a retry.",
         "result": "pass"
       },
       {
@@ -259,23 +288,23 @@
       },
       {
         "claim_scope": "current",
-        "command": "gh api repos/ajoe734/pantheon/pulls/4193 && gh run view 30290748455 --repo ajoe734/pantheon --json headSha,jobs,conclusion",
-        "conclusion": "At head b1afb294c12d89cbae9dfd9ab28989801f8dba9a, PR #4193 had auto-merge disabled, merge state blocked only on its independent review gate, and successful Commit trailers, Runtime mirror guard, Smoke acceptance, and Python packaging provision jobs.",
+        "command": "gh api repos/ajoe734/pantheon/pulls/4193 && gh run view 30306134639 --repo ajoe734/pantheon --json headSha,jobs,conclusion",
+        "conclusion": "At head 6f87f1dad65a5849bbbff5c4958d42e50e37003e, PR #4193 had auto-merge disabled, merge state blocked only on its independent review gate, and successful Commit trailers, Runtime mirror guard, Smoke acceptance, and Python packaging provision jobs.",
         "observations": [
           {
-            "head_sha": "b1afb294c12d89cbae9dfd9ab28989801f8dba9a",
-            "observed_at": "2026-07-27T17:47:59Z",
+            "head_sha": "6f87f1dad65a5849bbbff5c4958d42e50e37003e",
+            "observed_at": "2026-07-27T21:17:37Z",
             "pull_request": 4193,
-            "subject": "PR #4193 receipt head and Branch CI Gate run 30290748455"
+            "subject": "PR #4193 correction receipt head and Branch CI Gate run 30306134639"
           }
         ],
-        "observed_at": "2026-07-27T17:47:59Z",
+        "observed_at": "2026-07-27T21:17:37Z",
         "result": "pass"
       }
     ],
-    "validated_at": "2026-07-27T17:48:10Z",
-    "validated_base_sha": "4688bd252911b91ea0459a38a694c5faa53e3bbd",
-    "validated_head_sha": "content-digest:sha256:2feb5dbc40c9e0d3a878d6eb4e9fcd9edb0f6b5d6edb38615e58ab3c532a4bb5"
+    "validated_at": "2026-07-27T21:17:37Z",
+    "validated_base_sha": "7f545a33bf41e5682dc67f50333c84b42f09d17e",
+    "validated_head_sha": "content-digest:sha256:08d60a275e0e784a8f3c393455d7bfcb03627bafe95ead4c577e46385e9e2d65"
   },
   "deployment": {
     "applicable": false,
@@ -285,7 +314,7 @@
     },
     "environment": "dev integration",
     "identity_admission": {
-      "proof": "At authoritative journal sequence 2667, only normalized SourceRecord versions are admitted to the ledger; a rejected record is refused and leaves no outbox row. Job identity is the content digest of the normalized version, and a contradicting payload under the same identity aborts the whole admission transaction.",
+      "proof": "At authoritative journal sequence 2976, only normalized SourceRecord versions are admitted to the ledger; a rejected record is refused and leaves no outbox row. Job identity is the content digest of the normalized version, and a contradicting payload under the same identity aborts the whole admission transaction.",
       "status": "pass"
     },
     "public_bff_base_url": "not_applicable_internal_distillation_worker",
@@ -329,7 +358,7 @@
     "request_receipt_downstream_correlation": {
       "proof": [
         "A job is acknowledged only after a terminal Registry readback; the write response alone never completes the job.",
-        "The source snapshot is committed in the same transaction as the outbox event, so replay reads the exact version the event meant rather than a later in-memory revision.",
+        "The source snapshot is committed in the same transaction as the outbox event, and versioned jobs always reload that snapshot, so a caller map containing a later revision cannot substitute the event's payload.",
         "Materialization identity is digest-keyed at admission and does not depend on the later source version count.",
         "metadata.distillation carries source_id, source_digest, source_event_version, and distillation_job_id into the Registry entry, preserving source-to-draft lineage.",
         "The Registry sink receives the exact evidence item and bundle the seed was materialized from, keeping the registered artifact inside the StrategySpecSeed lineage."
@@ -351,7 +380,7 @@
       "proof": [
         "Admission is a single BEGIN IMMEDIATE transaction: a contradicting payload under an existing version identity rolls back, leaving the committed version and outbox unchanged.",
         "Exhausted delivery compensates into a durable dead-letter table that retains the committed payload and supports operator redispatch, which clears the dead letter with redrive attribution.",
-        "Registry artifacts in approved or retired state are never mutated; the job is marked skipped instead.",
+        "Registry artifacts in approved or retired state are never mutated; StrategySpec creation is atomic create-if-absent, and the job is marked skipped even when approval lands after the controller probe but before its POST.",
         "This slice grants no broker, deployment, runtime-control, or live-capital mutation authority."
       ],
       "status": "pass"
@@ -382,7 +411,7 @@
       "status": "not_applicable"
     },
     "two_person_approval": {
-      "proof": "At authoritative journal sequence 2667, owner Codex2 and reviewer Codex are distinct. The prior Claude/Antigravity owner cut remains in record_log as history; the formal current independent approval must be appended after Codex review and before done.",
+      "proof": "At authoritative journal sequence 2976, owner Codex2 and reviewer Codex are distinct. The prior Claude/Antigravity owner cut remains in record_log as history; the formal current independent approval must be appended after Codex review and before done.",
       "status": "pass"
     }
   },
@@ -417,11 +446,13 @@
     },
     {
       "evidence_refs": [
+        "services/registry/service.py",
+        "services/registry/test_service.py::TestFastAPIEndpoints::test_strategy_spec_same_id_registration_never_overwrites_approval",
         "services/source_ingestion/distillation_controller.py",
         "services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py::TestApprovedArtifactsAreImmutable"
       ],
       "id": "AC4",
-      "statement": "Approved immutable artifacts remain unchanged, including when approval lands between the probe and the terminal readback.",
+      "statement": "Approved immutable artifacts remain unchanged, including when approval lands after the controller probe but before its atomic create-if-absent POST.",
       "status": "pass"
     },
     {
@@ -455,7 +486,7 @@
     },
     "registry_sink_single_writer": {
       "blocking_for_this_task": false,
-      "containment": "Registry identity is the versioned registry_id, so a concurrent duplicate write is resolved by readback into already_terminal rather than a second draft.",
+      "containment": "Registry identity is the versioned registry_id, and atomic create-if-absent returns any existing entry unchanged; terminal readback resolves a concurrent duplicate into already_terminal rather than a second draft.",
       "description": "Two workers processing two versions of the same source can call the Registry concurrently; ordering between versions is not serialized.",
       "expiry": "When per-source ordering is required by a downstream consumer.",
       "owner": "L12-DIST-001 follow-up",
@@ -474,7 +505,7 @@
     "independent_review": {
       "blocking_for_this_task": true,
       "containment": "Auto-merge remains disabled and the owner cut does not assert a reviewer verdict.",
-      "description": "At authoritative journal sequence 2667, Codex independent review is still absent; review remains the only closeout-truth rejection after owner proof.",
+      "description": "At authoritative journal sequence 2976, Codex independent review is still absent; review remains the only closeout-truth rejection after owner proof.",
       "expiry": "When Codex records an exact-head review decision in this manifest and through the governed status command.",
       "owner": "Codex",
       "recheck_trigger": "Before merge or any review_approved transition.",
@@ -483,7 +514,7 @@
     "canonical_snapshot_age": {
       "blocking_for_this_task": false,
       "containment": "The owner narrative and manifest both declare the same fixed journal boundary.",
-      "description": "This owner cut is bounded at authoritative journal sequence 2667; later ownership, reviewer, or lifecycle events require a refreshed evidence cut before approval.",
+      "description": "This owner cut is bounded at authoritative journal sequence 2976; later ownership, reviewer, or lifecycle events require a refreshed evidence cut before approval.",
       "expiry": "At the independent review observation.",
       "owner": "Codex2",
       "recheck_trigger": "Immediately before reviewer approval.",
@@ -491,8 +522,8 @@
     },
     "delivery_receipt_intermediate_state": {
       "blocking_for_this_task": false,
-      "containment": "Receipt b1afb294c12d89cbae9dfd9ab28989801f8dba9a carries the seven digest-bound artifacts with all required checks green; post-receipt merge 4f76d97bc879e4fb1ca942c248e75e911847e9ea added only unrelated supervisor evidence, and the task follow-up changes only evidence.json, evidence.sha256, and the task brief.",
-      "description": "PR #4193 receipt head b1afb294c12d89cbae9dfd9ab28989801f8dba9a has all required receipt checks green and auto-merge disabled; post-receipt dev refresh 4f76d97bc879e4fb1ca942c248e75e911847e9ea changed no bound bytes, and final evidence-follow-up checks remain required before independent review.",
+      "containment": "Receipt 6f87f1dad65a5849bbbff5c4958d42e50e37003e carries the nine digest-bound artifacts with all required checks green; the task follow-up changes only evidence.json and evidence.sha256.",
+      "description": "PR #4193 correction receipt head 6f87f1dad65a5849bbbff5c4958d42e50e37003e has all required receipt checks green and auto-merge disabled; final evidence-follow-up checks remain required before independent review.",
       "expiry": "When the evidence follow-up head is pushed and all visible checks pass.",
       "owner": "Codex2",
       "recheck_trigger": "Before independent review.",
@@ -515,15 +546,17 @@
       "two_process_concurrency_proof": true
     },
     "self_hash_omitted": true,
-    "self_hash_reason": "The seven finalized artifacts are bound by a non-circular content digest carried by receipt b1afb294c12d89cbae9dfd9ab28989801f8dba9a; evidence.json and its companion checksum are deliberately outside that digest so the manifest does not hash itself.",
+    "self_hash_reason": "The nine finalized artifacts are bound by a non-circular content digest carried by receipt 6f87f1dad65a5849bbbff5c4958d42e50e37003e; evidence.json and its companion checksum are deliberately outside that digest so the manifest does not hash itself.",
     "source_artifact_sha256_by_epoch": {
-      "docs/deployment/evidence/twelve-loop-gap/L12-DIST-001/README.md@v3.0.0": "a15e63e91ae68e341ef8d2ece42a201b7b5374645f5267aeff58dbcd56a6d16e",
-      "services/source_ingestion/distillation_controller.py@v3.0.0": "c6a53cd98a8005c73212d27002929d172aed07aefe78bc72d6eb2942ea0017fa",
-      "services/source_ingestion/distillation_worker.py@v3.0.0": "ec4c6d69c4b7c48c415cc335822b53f0161707a73a0eeed6a4e2ea25712c7558",
-      "services/source_ingestion/registry/jsonl_store.py@v3.0.0": "58934030133aa59da3b46f5aa31b3da8ed14f9a91eb9befa42349ccc2e6d3c65",
-      "services/source_ingestion/tests/test_distillation_controller.py@v3.0.0": "948f4210d42023357094bb450714ebeae3776845b79f1bda9247bccf76b78eac",
-      "services/source_ingestion/tests/test_distillation_worker.py@v3.0.0": "ef6a03f6a308956c9805d9ac310ed384a344dda0b11faafc86a96ada9e4a337b",
-      "services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py@v3.0.0": "6fc430acb8678bf3e5f089e1af05393e4ecac928efe2d761348517c8ea0b6d79"
+      "docs/deployment/evidence/twelve-loop-gap/L12-DIST-001/README.md@v4.0.0": "941c4b54953a0ffd0d181d9141346cbf358491ee0b88231bdf41c5436387f5f4",
+      "services/registry/service.py@v4.0.0": "b0a0ea52921a54be0e48de18c43547cb0feb9478efe5cd4ef0f0714af523a910",
+      "services/registry/test_service.py@v4.0.0": "1eb57b83ae2e4a9489171fd6dfa7e8cec80b3713085e06902ccc4a668229d04a",
+      "services/source_ingestion/distillation_controller.py@v4.0.0": "9362c31ed897f0dc356fb987cc94ec184ec9b8c3d92137aba1e6c975e85423b1",
+      "services/source_ingestion/distillation_worker.py@v4.0.0": "6a8b5802637f8b1052342d58972fd7e8b983bbce3f5fbc9024a1bf5024686fe4",
+      "services/source_ingestion/registry/jsonl_store.py@v4.0.0": "58934030133aa59da3b46f5aa31b3da8ed14f9a91eb9befa42349ccc2e6d3c65",
+      "services/source_ingestion/tests/test_distillation_controller.py@v4.0.0": "aff6e05ddf020b13171c51094138361e3ca9cc020f475aee0c0362c24d2cb414",
+      "services/source_ingestion/tests/test_distillation_worker.py@v4.0.0": "f81f97335869dafdf8ca445bbf8df22a3a3be7576cbe1b2179b417c58314c8ce",
+      "services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py@v4.0.0": "10e164f20a830190150316ef3a00206ff84e1055cf782dc80a4c0108f10b6aac"
     }
   },
   "record_log": [
@@ -552,6 +585,15 @@
       "reference": "https://github.com/ajoe734/pantheon/pull/4193",
       "sequence": 3,
       "sha": "b1afb294c12d89cbae9dfd9ab28989801f8dba9a",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "owner_reviewer_corrections_ready",
+      "recorded_at": "2026-07-27T21:17:37Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4193",
+      "sequence": 4,
+      "sha": "6f87f1dad65a5849bbbff5c4958d42e50e37003e",
       "status": "pass"
     }
   ]
