@@ -57,6 +57,15 @@ identity that pressed merge or enabled auto-merge, green CI, and any risk
 or payload claim recorded on the task row are all ignored.  Every Pantheon
 agent pushes through one GitHub account, so GitHub-side identity cannot
 distinguish an owner from a reviewer at all.
+
+An approval is structurally bound to what it approved.  `scripts/ai_status.py`
+records the reviewed PR number, head sha, head branch and expected base inside
+the immutable `review_approved` audit event, and this module compares those
+exact identities against the PR standing now.  A timestamp comparison alone was
+not enough: approving head `bbbb...` and then replacing the PR head with an
+*older* commit `cccc...` -- committed before the approval, so "not newer than
+the approval" still held -- opened the gate for a head no reviewer ever saw.
+An approval that carries no binding is unusable, not permissive.
 """
 
 from __future__ import annotations
@@ -127,6 +136,10 @@ ACTIVITY_ARCHIVE_SUBDIR = Path("archive") / "logs"
 ACTIVITY_LEGACY_ARCHIVE_SUBDIR = Path(".orchestrator") / "logs" / "activity-log-archive"
 
 OID_RE = re.compile(r"^[0-9a-f]{40}$")
+#: Key carrying the reviewed PR identity on a `review_approved` audit event and
+#: on the canonical task row.  `scripts/ai_status.py::command_approve` writes
+#: it; nothing else may.
+APPROVAL_BINDING_KEY = "review_binding"
 #: Approval events are recorded by the same wrapper that stamps the task row,
 #: so a small amount of clock skew between the two is tolerable; anything
 #: beyond this is treated as a non-credible timestamp.
@@ -392,6 +405,11 @@ class ApprovalRecord:
     revoked_at_text: str = ""
     revocation_type: str = ""
     scan_error: str = ""
+    approved_pr_number: int | None = None
+    approved_head_sha: str = ""
+    approved_head_branch: str = ""
+    approved_base_branch: str = ""
+    binding_error: str = ""
 
     @property
     def present(self) -> bool:
@@ -400,6 +418,21 @@ class ApprovalRecord:
     @property
     def revoked(self) -> bool:
         return bool(self.revocation_type)
+
+    @property
+    def binding_present(self) -> bool:
+        """True only when the approval names the PR, head, and base it covers.
+
+        A free-text approval message is not a binding: the reviewer may have
+        typed the head into it, but nothing compares it and nothing stops the
+        head from being replaced afterwards.
+        """
+
+        return bool(
+            self.approved_pr_number is not None
+            and self.approved_head_sha
+            and self.approved_base_branch
+        )
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -410,7 +443,67 @@ class ApprovalRecord:
             "revoked_at": self.revoked_at_text,
             "revocation_type": self.revocation_type,
             "scan_error": self.scan_error,
+            "approved_pr_number": self.approved_pr_number,
+            "approved_head_sha": self.approved_head_sha,
+            "approved_head_branch": self.approved_head_branch,
+            "approved_base_branch": self.approved_base_branch,
+            "binding_present": self.binding_present,
+            "binding_error": self.binding_error,
         }
+
+
+def normalize_pr_number(value: Any) -> int | None:
+    """Read a PR number from canonical evidence or a GitHub payload."""
+
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    text = str(value or "").strip().lstrip("#")
+    if not text.isdigit():
+        return None
+    number = int(text)
+    return number if number > 0 else None
+
+
+def parse_approval_binding(event: Mapping[str, Any]) -> tuple[dict[str, Any], str]:
+    """Extract the reviewed PR identity recorded on an approval event.
+
+    Returns ``({}, "")`` for a legacy approval that carries no binding at all,
+    and ``({}, "<problem>")`` when a binding is present but unusable.  Both
+    resolve to "do not merge"; they are distinguished so the operator is told
+    whether to re-approve or to repair a corrupted audit line.
+    """
+
+    raw = event.get(APPROVAL_BINDING_KEY)
+    if raw is None:
+        return {}, ""
+    if not isinstance(raw, Mapping):
+        return {}, f"{APPROVAL_BINDING_KEY} is not an object"
+
+    head_sha = str(raw.get("head_sha") or "").strip().lower()
+    if not head_sha:
+        return {}, f"{APPROVAL_BINDING_KEY} carries no head_sha"
+    if not OID_RE.match(head_sha):
+        return {}, f"{APPROVAL_BINDING_KEY}.head_sha {head_sha!r} is not a 40-hex oid"
+
+    pr_number = normalize_pr_number(raw.get("pr"))
+    if pr_number is None:
+        return {}, f"{APPROVAL_BINDING_KEY} carries no usable pr number"
+
+    base_branch = str(raw.get("base") or "").strip()
+    if not base_branch:
+        return {}, f"{APPROVAL_BINDING_KEY} carries no expected base branch"
+
+    return (
+        {
+            "pr": pr_number,
+            "head_sha": head_sha,
+            "head_branch": str(raw.get("head_branch") or "").strip(),
+            "base": base_branch,
+        },
+        "",
+    )
 
 
 def _is_rejection_note(message: Any) -> bool:
@@ -499,12 +592,18 @@ def load_approval_record(
         timestamp_text = str(event.get("ts") or "").strip()
         if event_type == APPROVAL_EVENT_TYPE:
             approved_at = parse_timestamp(timestamp_text)
+            binding, binding_error = parse_approval_binding(event)
             approval = ApprovalRecord(
                 task_id=task_id,
                 reviewer=str(event.get("agent") or "").strip(),
                 approved_at=approved_at,
                 approved_at_text=timestamp_text,
                 message=str(event.get("message") or ""),
+                approved_pr_number=binding.get("pr"),
+                approved_head_sha=str(binding.get("head_sha") or ""),
+                approved_head_branch=str(binding.get("head_branch") or ""),
+                approved_base_branch=str(binding.get("base") or ""),
+                binding_error=binding_error,
             )
             revocation = None
             continue
@@ -537,6 +636,11 @@ def load_approval_record(
         revoked_by=revocation[0],
         revoked_at_text=revocation[1],
         revocation_type=revocation[2],
+        approved_pr_number=approval.approved_pr_number,
+        approved_head_sha=approval.approved_head_sha,
+        approved_head_branch=approval.approved_head_branch,
+        approved_base_branch=approval.approved_base_branch,
+        binding_error=approval.binding_error,
     )
 
 
@@ -807,6 +911,67 @@ def evaluate_gate(
             head_oid=head_oid,
         )
 
+    # The approval must name what it approved.  Timestamps alone cannot tell an
+    # unchanged head from a head that was swapped for an older commit, so the
+    # recorded PR identity is compared exactly before anything else is trusted.
+    if approval.binding_error:
+        return block(
+            contract,
+            approval,
+            "approval_binding_unusable",
+            f"the review_approved record for {contract.task_id} carries an unusable "
+            f"binding: {approval.binding_error}",
+            head_oid=head_oid,
+        )
+    if not approval.binding_present:
+        return block(
+            contract,
+            approval,
+            "approval_head_binding_missing",
+            f"the review_approved record for {contract.task_id} names no PR, head sha, "
+            "and base branch; an unbound approval cannot prove which commit was "
+            "reviewed. Re-approve with REVIEW_PR and REVIEW_HEAD_SHA set to the "
+            "exact reviewed head",
+            head_oid=head_oid,
+        )
+    if approval.approved_head_sha != head_oid:
+        return block(
+            contract,
+            approval,
+            "approval_head_mismatch",
+            f"reviewer {contract.reviewer} approved head {approval.approved_head_sha} "
+            f"but the PR head is {head_oid}; this exact commit was never reviewed",
+            head_oid=head_oid,
+        )
+    pr_number = normalize_pr_number(pr.get("number"))
+    if pr_number != approval.approved_pr_number:
+        return block(
+            contract,
+            approval,
+            "approval_pr_mismatch",
+            f"approval covers PR #{approval.approved_pr_number} but this decision is "
+            f"about PR #{pr_number if pr_number is not None else pr.get('number')!r}",
+            head_oid=head_oid,
+        )
+    if approval.approved_base_branch != str(pr.get("baseRefName") or "").strip():
+        return block(
+            contract,
+            approval,
+            "approval_base_mismatch",
+            f"approval expects base {approval.approved_base_branch!r} but the PR "
+            f"targets {str(pr.get('baseRefName') or '')!r}",
+            head_oid=head_oid,
+        )
+    if approval.approved_head_branch and approval.approved_head_branch != expected_branch:
+        return block(
+            contract,
+            approval,
+            "approval_head_branch_mismatch",
+            f"approval covers head branch {approval.approved_head_branch!r} but the "
+            f"canonical task branch is {expected_branch!r}",
+            head_oid=head_oid,
+        )
+
     if str(pr.get("state") or "").strip().upper() == "MERGED":
         merged_at = parse_timestamp(pr.get("mergedAt"))
         if merged_at is None:
@@ -881,7 +1046,9 @@ def evaluate_gate(
         reason="exact_head_approved",
         detail=(
             f"reviewer {contract.reviewer} approved {contract.task_id} at "
-            f"{approval.approved_at_text}; head {head_oid} is unchanged since then"
+            f"{approval.approved_at_text}, bound to PR #{approval.approved_pr_number} "
+            f"head {approval.approved_head_sha} onto {approval.approved_base_branch}; "
+            f"that is exactly the head standing now"
         ),
         head_oid=head_oid,
         approved_at=approval.approved_at_text,

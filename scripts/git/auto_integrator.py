@@ -745,7 +745,8 @@ def integrate_candidate(
     # base was holding it back, and it would have merged the moment the base
     # caught up. Revoke first, then classify.
     revoked = False
-    if gated and has_auto_merge_request(pr):
+    revocation_attempted = gated and has_auto_merge_request(pr)
+    if revocation_attempted:
         revoked = disable_auto_merge(number, runner, root=root, execute=execute)
     if gated and not decision.allow_merge:
         detail = (
@@ -772,6 +773,35 @@ def integrate_candidate(
             else None
         )
         return IntegrationResult(candidate.task_id, "blocked", detail, number, url, unblock, not execute, runner.commands[:])
+
+    if revocation_attempted and execute and not revoked:
+        # The gate approved this head, but `gh pr merge --disable-auto` failed,
+        # so the merge grant is still armed. Proceeding would emit a direct
+        # `--match-head-commit` merge while GitHub independently holds authority
+        # to land whatever head stands next -- exactly the fail-open shape this
+        # module exists to prevent. Stop before any merge call is emitted.
+        detail = (
+            f"PR #{number} is approved for head {decision.head_oid} but "
+            "`gh pr merge --disable-auto` failed, so a pending auto-merge request is "
+            "still armed on it. Refusing to merge with a standing merge grant; revoke "
+            "it manually and re-run the integrator."
+        )
+        unblock = (
+            open_unblock_task(
+                candidate,
+                "auto-merge-revocation-failed",
+                detail,
+                settings,
+                runner,
+                root=root,
+                execute=execute,
+            )
+            if open_unblock
+            else None
+        )
+        return IntegrationResult(
+            candidate.task_id, "blocked", detail, number, url, unblock, not execute, runner.commands[:]
+        )
 
     checks = summarize_status_rollup(pr.get("statusCheckRollup"))
     if checks.state == "red":

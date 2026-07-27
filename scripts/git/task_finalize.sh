@@ -138,7 +138,14 @@ if [[ -n "$PR_URL" ]]; then
   echo "  $PR_URL"
 fi
 if [[ "$MERGE_POLICY" != "merge_then_review" ]]; then
-  echo "  next: assigned reviewer approves this exact head, then"
-  echo "        python3 scripts/git/auto_integrator.py --execute --task-id $TASK_ID"
+  # The approval has to name this exact head: the gate compares the recorded
+  # binding against the PR standing at merge time, so an unbound approval
+  # cannot land the PR.
+  PR_NUMBER=$(gh pr view "$TASK_BRANCH" --json number -q '.number' 2>/dev/null || echo "")
+  HEAD_SHA=$(git rev-parse HEAD)
+  echo "  next: assigned reviewer approves this exact head with"
+  echo "        AI_NAME=<reviewer> REVIEW_PR=${PR_NUMBER:-<pr-number>} REVIEW_HEAD_SHA=$HEAD_SHA \\"
+  echo "          \"\$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh\" approve $TASK_ID \"<review evidence>\""
+  echo "        then python3 scripts/git/auto_integrator.py --execute --task-id $TASK_ID"
 fi
 echo "  (wait for the PR to merge before running scripts/ai-status.sh done)"

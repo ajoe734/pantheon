@@ -43,6 +43,19 @@ def task_row(**overrides: Any) -> dict[str, Any]:
     return row
 
 
+def approval_binding(**overrides: Any) -> dict[str, Any]:
+    """The PR identity `ai_status.py::command_approve` stamps on an approval."""
+
+    binding = {
+        "pr": 100,
+        "head_sha": "b" * 40,
+        "head_branch": "task/ABC-001",
+        "base": "dev",
+    }
+    binding.update(overrides)
+    return binding
+
+
 def approval_event(**overrides: Any) -> dict[str, Any]:
     event = {
         "ts": "2026-07-26T12:00:00Z",
@@ -50,9 +63,33 @@ def approval_event(**overrides: Any) -> dict[str, Any]:
         "type": "review_approved",
         "task_id": "ABC-001",
         "message": "Independent review approved the exact head.",
+        "review_binding": approval_binding(),
     }
     event.update(overrides)
     return event
+
+
+#: The PR identities `command_approve` would stamp on the live-regression
+#: approvals below. The PR numbers, shas and branches are the recorded ones;
+#: only the binding wrapper is new, because on 2026-07-26 nothing recorded it.
+BINDING_4225 = {
+    "pr": 4225,
+    "head_sha": "3c2d883700afc3e92568a013bb8e11ec8539031b",
+    "head_branch": "task/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001",
+    "base": "dev",
+}
+BINDING_4227 = {
+    "pr": 4227,
+    "head_sha": "5fb21c80ba21fcdfd9f304d66b57f56362f9dc60",
+    "head_branch": "task/SUP-COMMAND-RUNTIME-REFRESH-001",
+    "base": "dev",
+}
+BINDING_4230 = {
+    "pr": 4230,
+    "head_sha": "1bb2b839bad3258d7c5fe353e957e6a5fec08545",
+    "head_branch": "task/OPS-CI-PR-TRAILER-RANGE-001",
+    "base": "dev",
+}
 
 
 def open_pr(**overrides: Any) -> dict[str, Any]:
@@ -148,6 +185,142 @@ class ApprovedPathTests(unittest.TestCase):
         self.assertEqual(decision.reason, "declared_head_sha_mismatch")
 
 
+class ApprovalBindingTests(unittest.TestCase):
+    """The approval must name what it approved, and the gate must compare it.
+
+    Before the binding existed the gate only asked "is the head newer than the
+    approval?". That question cannot see a head *replaced* with an older
+    commit, which is how an unreviewed commit stayed mergeable.
+    """
+
+    def test_pre_dated_head_replacement_is_refused(self) -> None:
+        """The reported fail-open: approve `b...`, then swap in older `c...`.
+
+        `c` was committed at 11:00, before the 12:00 approval, so every
+        timestamp rule still held and the gate returned
+        `allow_merge=True reason=exact_head_approved` for a commit no reviewer
+        ever saw.
+        """
+
+        replaced = open_pr(
+            headRefOid="c" * 40,
+            commits=[{"oid": "c" * 40, "committedDate": "2026-07-26T11:00:00Z"}],
+        )
+
+        decision = decide(pr=replaced)
+
+        self.assertFalse(decision.allow_merge)
+        self.assertFalse(decision.allow_auto_merge)
+        self.assertEqual(decision.reason, "approval_head_mismatch")
+        self.assertEqual(decision.approval["approved_head_sha"], "b" * 40)
+        self.assertEqual(decision.head_oid, "c" * 40)
+        self.assertTrue(decision.revoke_auto_merge)
+
+    def test_pre_dated_head_replacement_survives_a_matching_commit_history(self) -> None:
+        """Rewriting the PR's commit list does not rebuild the approval."""
+
+        decision = decide(
+            pr=open_pr(
+                headRefOid="c" * 40,
+                commits=[
+                    {"oid": "b" * 40, "committedDate": "2026-07-26T11:30:00Z"},
+                    {"oid": "c" * 40, "committedDate": "2026-07-26T11:00:00Z"},
+                ],
+            )
+        )
+
+        self.assertFalse(decision.allow_merge)
+        self.assertEqual(decision.reason, "approval_head_mismatch")
+
+    def test_unbound_approval_cannot_open_the_gate(self) -> None:
+        """A legacy approval with no binding is unusable, not permissive."""
+
+        event = approval_event()
+        event.pop("review_binding")
+
+        decision = decide(events=[event])
+
+        self.assertFalse(decision.allow_merge)
+        self.assertEqual(decision.reason, "approval_head_binding_missing")
+        self.assertFalse(decision.approval["binding_present"])
+
+    def test_a_head_named_only_in_the_approval_message_is_not_a_binding(self) -> None:
+        """Free text is not compared; only the recorded binding is."""
+
+        event = approval_event(message=f"Approved head {'c' * 40}.")
+        event.pop("review_binding")
+
+        decision = decide(events=[event], pr=open_pr(headRefOid="c" * 40))
+
+        self.assertFalse(decision.allow_merge)
+        self.assertEqual(decision.reason, "approval_head_binding_missing")
+
+    def test_malformed_binding_is_unusable(self) -> None:
+        decision = decide(
+            events=[approval_event(review_binding=approval_binding(head_sha="b" * 12))]
+        )
+
+        self.assertFalse(decision.allow_merge)
+        self.assertEqual(decision.reason, "approval_binding_unusable")
+        self.assertIn("40-hex", decision.approval["binding_error"])
+
+    def test_binding_without_a_pr_number_is_unusable(self) -> None:
+        binding = approval_binding()
+        binding.pop("pr")
+
+        decision = decide(events=[approval_event(review_binding=binding)])
+
+        self.assertFalse(decision.allow_merge)
+        self.assertEqual(decision.reason, "approval_binding_unusable")
+
+    def test_binding_for_another_pr_blocks(self) -> None:
+        """Two open PRs can carry the same head; the approval names only one."""
+
+        decision = decide(events=[approval_event(review_binding=approval_binding(pr=101))])
+
+        self.assertFalse(decision.allow_merge)
+        self.assertEqual(decision.reason, "approval_pr_mismatch")
+
+    def test_binding_expecting_another_base_blocks(self) -> None:
+        decision = decide(
+            events=[approval_event(review_binding=approval_binding(base="master"))]
+        )
+
+        self.assertFalse(decision.allow_merge)
+        self.assertEqual(decision.reason, "approval_base_mismatch")
+
+    def test_binding_naming_another_head_branch_blocks(self) -> None:
+        decision = decide(
+            events=[approval_event(review_binding=approval_binding(head_branch="task/XYZ-009"))]
+        )
+
+        self.assertFalse(decision.allow_merge)
+        self.assertEqual(decision.reason, "approval_head_branch_mismatch")
+
+    def test_binding_head_sha_is_compared_case_insensitively(self) -> None:
+        decision = decide(
+            events=[approval_event(review_binding=approval_binding(head_sha="B" * 40))]
+        )
+
+        self.assertTrue(decision.allow_merge)
+        self.assertEqual(decision.reason, "exact_head_approved")
+
+    def test_a_string_pr_number_still_binds(self) -> None:
+        decision = decide(events=[approval_event(review_binding=approval_binding(pr="#100"))])
+
+        self.assertTrue(decision.allow_merge)
+        self.assertEqual(decision.approval["approved_pr_number"], 100)
+
+    def test_the_approved_decision_reports_what_it_was_bound_to(self) -> None:
+        decision = decide()
+
+        self.assertTrue(decision.allow_merge)
+        self.assertEqual(decision.approval["approved_head_sha"], "b" * 40)
+        self.assertEqual(decision.approval["approved_pr_number"], 100)
+        self.assertEqual(decision.approval["approved_base_branch"], "dev")
+        self.assertIn("b" * 40, decision.detail)
+
+
 class FailClosedTests(unittest.TestCase):
     def test_missing_task_state_blocks(self) -> None:
         decision = decide(tasks=[], events=[])
@@ -216,6 +389,25 @@ class FailClosedTests(unittest.TestCase):
                     {"oid": "d" * 40, "committedDate": "2026-07-26T12:15:00Z"},
                 ],
             )
+        )
+
+        self.assertFalse(decision.allow_merge)
+        self.assertEqual(decision.reason, "approval_head_mismatch")
+
+    def test_newer_head_blocks_even_if_the_binding_names_it(self) -> None:
+        """The timestamp check stays live behind the exact-identity comparison.
+
+        If the recorded binding itself named a head committed after the
+        approval, the audit line and the clock disagree; that is not a state
+        the gate may resolve in favour of merging.
+        """
+
+        decision = decide(
+            events=[approval_event(review_binding=approval_binding(head_sha="d" * 40))],
+            pr=open_pr(
+                headRefOid="d" * 40,
+                commits=[{"oid": "d" * 40, "committedDate": "2026-07-26T12:15:00Z"}],
+            ),
         )
 
         self.assertFalse(decision.allow_merge)
@@ -422,6 +614,12 @@ class PrematureMergeRegressionTests(unittest.TestCase):
                     "type": "review_approved",
                     "task_id": "OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001",
                     "message": "Independent review approved after the fact.",
+                    "review_binding": {
+                        "pr": 4213,
+                        "head_sha": "9e484e2522cd8778b85a4c880e4cd33d07ef401f",
+                        "head_branch": "task/OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001",
+                        "base": "dev",
+                    },
                 }
             ],
             reviewer="Codex2",
@@ -774,6 +972,7 @@ class LiveMergeGovernanceRegressionTests(unittest.TestCase):
                     "type": "review_approved",
                     "task_id": self.TASK_4222,
                     "message": "Approved head 3c2d883700afc3e92568a013bb8e11ec8539031b.",
+                    "review_binding": BINDING_4225,
                 },
                 {
                     "ts": "2026-07-26T22:52:13Z",
@@ -807,6 +1006,7 @@ class LiveMergeGovernanceRegressionTests(unittest.TestCase):
                     "type": "review_approved",
                     "task_id": self.TASK_4222,
                     "message": "Approved head 3c2d883700afc3e92568a013bb8e11ec8539031b.",
+                    "review_binding": BINDING_4225,
                 },
                 {
                     "ts": "2026-07-26T22:52:13Z",
@@ -910,6 +1110,7 @@ class LiveMergeGovernanceRegressionTests(unittest.TestCase):
                     "type": "review_approved",
                     "task_id": self.TASK_4227,
                     "message": "Approved head 5fb21c80ba21fcdfd9f304d66b57f56362f9dc60.",
+                    "review_binding": BINDING_4227,
                 },
             ),
         )
@@ -1109,6 +1310,7 @@ class LiveMergeGovernanceRegressionTests(unittest.TestCase):
                     "type": "review_approved",
                     "task_id": self.TASK_4230,
                     "message": "Approved head 1bb2b839bad3258d7c5fe353e957e6a5fec08545.",
+                    "review_binding": BINDING_4230,
                 },
             ),
         )
@@ -1146,6 +1348,7 @@ class LiveMergeGovernanceRegressionTests(unittest.TestCase):
                     "type": "review_approved",
                     "task_id": self.TASK_4230,
                     "message": "Approved head 1bb2b839bad3258d7c5fe353e957e6a5fec08545.",
+                    "review_binding": BINDING_4230,
                 },
                 {
                     "ts": "2026-07-26T23:35:00Z",
@@ -1249,13 +1452,23 @@ class LiveMergeGovernanceRegressionTests(unittest.TestCase):
                     "type": "review_approved",
                     "task_id": self.TASK_4201,
                     "message": "Approved head dc5d7128bad1717b23b6c750076b0cb47a213ae3.",
+                    "review_binding": {
+                        "pr": 4201,
+                        "head_sha": "dc5d7128bad1717b23b6c750076b0cb47a213ae3",
+                        "head_branch": f"task/{self.TASK_4201}",
+                        "base": "dev",
+                    },
                 },
             ),
         )
 
         self.assertFalse(decision.allow_merge)
-        self.assertEqual(decision.reason, "head_changed_after_approval")
+        self.assertEqual(decision.reason, "approval_head_mismatch")
         self.assertEqual(decision.head_oid, refreshed_head)
+        self.assertEqual(
+            decision.approval["approved_head_sha"],
+            "dc5d7128bad1717b23b6c750076b0cb47a213ae3",
+        )
 
     def test_a_payload_claim_cannot_downgrade_the_declared_policy(self) -> None:
         contract = gate.contract_from_task_row(
@@ -1357,6 +1570,70 @@ class IntegratorGateTests(unittest.TestCase):
                 ["gh", "pr", "merge", "100", "--merge", "--match-head-commit", "b" * 40],
             ],
         )
+
+    @staticmethod
+    def _failing_disable_auto(runner: Any) -> None:
+        """Make `gh pr merge --disable-auto` return 1 on this runner."""
+
+        original_run = runner.run
+
+        def run(args: Sequence[str], **kwargs: Any):  # type: ignore[override]
+            command = [str(arg) for arg in args]
+            if command[:3] == ["gh", "pr", "merge"] and "--disable-auto" in command:
+                runner.commands.append(command)
+                from test_auto_integrator import completed
+
+                return completed(command, returncode=1)
+            return original_run(args, **kwargs)
+
+        runner.run = run  # type: ignore[method-assign]
+
+    def test_failed_auto_merge_revocation_never_reaches_the_merge(self) -> None:
+        """An armed merge grant the integrator could not revoke blocks the pass.
+
+        Approving this exact head does not make it safe to merge while GitHub
+        independently holds authority to land whatever head stands next.
+        """
+
+        runner = self._runner(open_pr(autoMergeRequest={"enabledAt": "2026-07-26T11:45:00Z"}))
+        self._failing_disable_auto(runner)
+
+        result = auto_integrator.integrate_candidate(
+            self.candidate,
+            self.settings,
+            runner,
+            execute=True,
+            gate=self._gate(tasks=[task_row()], events=[approval_event()]),
+        )
+
+        self.assertEqual(result.action, "blocked")
+        self.assertIn("--disable-auto` failed", result.detail)
+        merge_commands = [c for c in runner.commands if c[:3] == ["gh", "pr", "merge"]]
+        self.assertEqual(merge_commands, [["gh", "pr", "merge", "100", "--disable-auto"]])
+        self.assertFalse(any("--match-head-commit" in command for command in runner.commands))
+        self.assertFalse(
+            any("scripts/ai_status.py" in " ".join(command) and "done" in command for command in runner.commands)
+        )
+
+    def test_failed_revocation_on_an_unapproved_pr_still_reports_the_gate_reason(self) -> None:
+        """A gate refusal is the more precise diagnosis; it must not be masked."""
+
+        runner = self._runner(open_pr(autoMergeRequest={"enabledAt": "2026-07-26T11:31:00Z"}))
+        self._failing_disable_auto(runner)
+
+        result = auto_integrator.integrate_candidate(
+            self.candidate,
+            self.settings,
+            runner,
+            execute=True,
+            gate=self._gate(tasks=[task_row()], events=[]),
+        )
+
+        self.assertEqual(result.action, "blocked")
+        self.assertIn("approval_record_missing", result.detail)
+        self.assertIn("still set on this PR", result.detail)
+        merge_commands = [c for c in runner.commands if c[:3] == ["gh", "pr", "merge"]]
+        self.assertEqual(merge_commands, [["gh", "pr", "merge", "100", "--disable-auto"]])
 
     def test_gated_pr_needing_a_rebase_is_not_force_pushed(self) -> None:
         runner = self._runner(open_pr(mergeStateStatus="BEHIND"))

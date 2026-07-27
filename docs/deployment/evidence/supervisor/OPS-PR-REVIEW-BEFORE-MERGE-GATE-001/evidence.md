@@ -119,6 +119,45 @@ explicitly forbidden to make.
 
 Section 4 of `prefix-reproduction.txt` replays all eight from recorded state.
 
+### 1.3 Two fail-open cases the first implementation still had
+
+Independent review at exact head `190fb7fe8` rejected the first implementation
+with two reproduced fail-open cases. Both are now closed, and both are replayed
+against the pre-fix modules in §5 of `prefix-reproduction.txt`.
+
+**The approval was not structurally bound to the reviewed head.**
+`command_approve` recorded only actor, timestamp and free-text message, and
+`ApprovalRecord` carried no approved head, so the gate could only ask *is the
+head newer than the approval?* That question cannot see a head **replaced with
+an older commit**. Approving `bbbb…` and then setting the PR head to `cccc…`,
+committed *before* the approval, left every timestamp rule satisfied:
+
+```
+-> allow_merge=True reason=exact_head_approved
+   reviewer Claude approved ABC-001 at 2026-07-26T12:00:00Z;
+   head cccccccc… is unchanged since then
+```
+
+A reviewer typing the head into the approval message did not help: nothing
+compared it. The fix records the reviewed PR number, head sha, head branch and
+expected base inside the immutable `review_approved` audit event and compares
+those exact identities in the gate.
+
+**A failed auto-merge revocation did not stop the merge.**
+`disable_auto_merge` returns `False` when `gh pr merge --disable-auto` exits
+nonzero, and on the approved path the integrator ignored that and went on to
+the direct `--match-head-commit` merge:
+
+```
+-> action=merged
+   gh pr merge 100 --disable-auto            (returncode 1, ignored)
+   gh pr merge 100 --merge --match-head-commit bbbbbbbb…
+```
+
+The armed request survives that merge attempt, so GitHub kept independent
+authority to land whatever head stood next. The integrator now blocks before
+emitting any merge call when a revocation it attempted did not succeed.
+
 ## 2. The gate
 
 `scripts/git/task_review_merge_gate.py` is the single canonical authority. It
@@ -162,17 +201,49 @@ For a gated task the gate opens only when **all** of the following hold:
 5. the PR head is the exact `task/<TASK-ID>` branch, the base is `dev`, the PR
    is not a draft, and the head oid is a resolvable 40-hex sha;
 6. if the row declares `github.head_sha`, the PR head equals it exactly;
-7. the newest commit on the PR head is **not** newer than the approval — a head
+7. the approval carries a `review_binding` naming the reviewed PR number, head
+   sha and expected base, and **every one of those identities matches the PR
+   standing now** — see § 2.3;
+8. the newest commit on the PR head is **not** newer than the approval — a head
    pushed after approval is a head nobody reviewed;
-8. the approval timestamp is not in the future beyond a 120 s skew allowance;
-9. for an already-merged PR, `mergedAt` is not earlier than the approval — a
-   late approval cannot retroactively bless a premature merge;
-10. no auto-merge request is armed that was enabled *before* the current head
+9. the approval timestamp is not in the future beyond a 120 s skew allowance;
+10. for an already-merged PR, `mergedAt` is not earlier than the approval — a
+    late approval cannot retroactively bless a premature merge;
+11. no auto-merge request is armed that was enabled *before* the current head
     was committed — merge authority granted for a commit that is no longer the
     head is what landed PR #4227.
 
 Anything else, including an unreadable status file or an unparseable
 timestamp, resolves to *do not merge, do not enable auto-merge*.
+
+### 2.3 What the approval is bound to
+
+`scripts/ai_status.py::command_approve` reads `REVIEW_PR`, `REVIEW_HEAD_SHA`,
+and optionally `REVIEW_BASE` (default `dev`) and `REVIEW_HEAD_BRANCH` (default
+`task/<TASK-ID>`), validates them, and writes them as `review_binding` into
+both the immutable `review_approved` audit event and the canonical task row.
+An abbreviated sha, a non-numeric PR, or one of the pair without the other is
+refused outright — an identity that cannot be compared exactly is not a
+binding.
+
+The gate compares each identity against the live PR and blocks with a distinct
+reason: `approval_head_mismatch`, `approval_pr_mismatch`,
+`approval_base_mismatch`, `approval_head_branch_mismatch`,
+`approval_binding_unusable` (a malformed binding), or
+`approval_head_binding_missing` (no binding at all).
+
+Both helpers print the exact `approve` invocation with the PR number and head
+sha filled in, so the reviewer does not have to assemble it.
+
+Two deliberate asymmetries:
+
+* `approve` **warns** rather than refusing when no binding is supplied, because
+  not every task produces a PR and a reviewer must still be able to approve
+  one that does not. The refusal belongs to the merge gate, which is only ever
+  consulted for a task that has a PR.
+* An unbound approval is therefore *unusable*, not permissive. Approvals
+  recorded before this change block with `approval_head_binding_missing`; the
+  recovery is one re-approval naming the head.
 
 Every decision, allowed or blocked, also carries an `auto_merge_request`
 summary (`present`, `enabled_at`, `enabled_by`, `outlived_head`) and sets
@@ -192,11 +263,17 @@ path, so a broken canonical read can only withhold merge authority, never widen
 it. Under `merge_then_review` the previous label + `--auto --merge` behaviour is
 byte-for-byte preserved.
 
-Both helpers print the follow-up command that actually lands a gated PR:
+Both helpers print the follow-up commands that actually land a gated PR — the
+approval that binds this exact head, then the integrator pass:
 
 ```bash
+AI_NAME=<reviewer> REVIEW_PR=<pr-number> REVIEW_HEAD_SHA=<40-hex head oid> \
+  "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" approve <TASK-ID> "<review evidence>"
 python3 scripts/git/auto_integrator.py --execute --task-id <TASK-ID>
 ```
+
+The PR number and head sha are resolved and substituted by the helper, so the
+reviewer copies a complete command rather than looking the head up by hand.
 
 ### `auto_integrator.py`
 
@@ -206,6 +283,12 @@ waiting for checks to turn green. For a gated task the integrator:
 
 * blocks and opens an `INTEGRATION-UNBLOCK-*-REVIEW-GATE-*` task when the gate
   refuses, revoking any pending auto-merge request first;
+* blocks — before emitting any merge call, on the approved path included — when
+  a revocation it attempted failed. `gh pr merge --disable-auto` returning
+  nonzero means the merge grant is still armed and GitHub can still land the
+  next head on its own; approval of *this* head does not make it safe to merge
+  alongside a standing grant. A gate refusal keeps its own more precise reason,
+  so this guard adds a failure mode rather than masking one;
 * never force-pushes a rebase (`allow_push=False`), because replacing the head
   would discard the reviewed commit; if the branch needs a refreshed head the
   result is `waiting` with an explicit "owner refreshes, reviewer re-approves"
@@ -225,8 +308,8 @@ and block, instead of silently resolving to the first row returned by GitHub.
 | # | Acceptance statement | Status | Where proven |
 |---|----------------------|--------|--------------|
 | 1 | A canonical review-before-merge task never enables or performs merge before exact assigned reviewer approval | pass | `TaskFinalizeShellTests`, `IntegratorGateTests::test_unapproved_gated_pr_is_never_merged_and_auto_merge_is_revoked`, `prefix-reproduction.txt` §1–§2 |
-| 2 | Approval is bound to exact PR head, expected base, reviewer identity, and a non-stale timestamp | pass | `ApprovedPathTests`, `FailClosedTests::test_head_change_after_approval_blocks`, `::test_wrong_base_branch_blocks`, `::test_approval_by_another_agent_blocks`, `::test_future_approval_timestamp_blocks` |
-| 3 | Reviewer rejection, head change, missing state, GitHub ambiguity, and concurrent finalize all fail closed | pass | `FailClosedTests`, `UnreadableStateTests`, `IntegratorGateTests::test_concurrent_open_prs_for_one_task_branch_fail_closed`, `--match-head-commit` on the merge call |
+| 2 | Approval is bound to exact PR head, expected base, reviewer identity, and a non-stale timestamp | pass | `ApprovalBindingTests` (the recorded binding, compared exactly), `ai_status` `::test_approve_records_the_reviewed_pr_head_binding`, `ApprovedPathTests`, `FailClosedTests::test_head_change_after_approval_blocks`, `::test_wrong_base_branch_blocks`, `::test_approval_by_another_agent_blocks`, `::test_future_approval_timestamp_blocks` |
+| 3 | Reviewer rejection, head change, missing state, GitHub ambiguity, and concurrent finalize all fail closed | pass | `FailClosedTests`, `UnreadableStateTests`, `ApprovalBindingTests::test_pre_dated_head_replacement_is_refused`, `IntegratorGateTests::test_concurrent_open_prs_for_one_task_branch_fail_closed`, `::test_failed_auto_merge_revocation_never_reaches_the_merge`, `--match-head-commit` on the merge call |
 | 4 | Tasks explicitly governed as merge-then-review retain their documented integration behavior | pass | `PolicyResolutionTests`, `IntegratorGateTests::test_merge_then_review_task_keeps_its_documented_behavior`, `TaskFinalizeShellTests::test_merge_then_review_task_still_enables_auto_merge` |
 | 5 | Regression fixtures cover PRs #4212, #4213 and #4214 without impersonating owner or reviewer | pass | `PrematureMergeRegressionTests` (recorded state replayed as data only) |
 | 6 | Focused workflow tests cover branch, commit, push, PR, checks, independent review, merge, and evidence archive | pass | `validation.txt` |
@@ -244,18 +327,23 @@ The full map of PR → entry point → fixture is the `live_regressions` table i
 See `validation.txt` for the captured transcript.
 
 ```
-python3 scripts/git/test_task_review_merge_gate.py     Ran 64 tests - OK
-python3 scripts/git/test_auto_integrator.py            Ran  9 tests - OK
-python3 scripts/git/test_git_workflow_helpers.py       Ran 52 tests - OK
-python3 scripts/git/test_task_pr_triage.py             Ran 24 tests - OK
-python3 scripts/git/test_index_safety.py               Ran 17 tests - OK
+python3 scripts/git/test_task_review_merge_gate.py     Ran  79 tests - OK
+python3 scripts/git/test_auto_integrator.py            Ran   9 tests - OK
+python3 scripts/git/test_git_workflow_helpers.py       Ran  52 tests - OK
+python3 scripts/git/test_task_pr_triage.py             Ran  24 tests - OK
+python3 scripts/git/test_index_safety.py               Ran  17 tests - OK
+python3 scripts/test_ai_status.py                      Ran 137 tests - OK
 bash -n scripts/git/task_finalize.sh scripts/git/safe_pr.sh   syntax ok
+py_compile task_review_merge_gate.py auto_integrator.py ai_status.py   compile ok
 ```
 
 The pre-fix reproduction is `prefix-reproduction.txt`; its §1 shows the old
 helper enabling auto-merge on an unreviewed task and §2 shows the new helper
 refusing on the identical fixture. §3 replays PRs #4212/#4213/#4214 and §4
-replays the eight later live regressions.
+replays the eight later live regressions. §5 reproduces the two 2026-07-27
+review findings against the modules as they stood at reviewed head `190fb7fe8`,
+§6 shows the same two fixtures refused after the fix, and §7 is the verbose run
+of the regressions that pin them.
 
 ## 6. Residual risks
 
@@ -267,6 +355,20 @@ running, approved PRs sit open rather than merging. This is the intended
 fail-closed direction — an unmerged approved PR is recoverable, a merged
 unreviewed commit is not — but it is a real operational dependency and both
 helpers now print the exact command.
+
+**Approvals recorded before this change cannot open the gate.** They carry no
+`review_binding`, so a gated PR whose only approval predates this delivery
+blocks with `approval_head_binding_missing` until the reviewer re-approves
+naming the head. This is a one-time cost paid in re-approvals, and it fails in
+the safe direction, but it does mean any task sitting in `review_approved` with
+an open PR at cutover needs one extra reviewer action.
+
+**A failed revocation stalls an otherwise mergeable PR.** When
+`gh pr merge --disable-auto` fails for an environmental reason — a `gh` auth
+blip, a transient GitHub error — an approved, green PR now blocks rather than
+merging. That is deliberate: the alternative is merging while a grant we could
+not withdraw is still armed. The recovery is to revoke the request by hand and
+re-run the integrator, and the blocked result says exactly that.
 
 **Approval events are matched by task id in the audit.** A rotation that loses
 both the active tail and the archived `.gz` for an approval would make the gate

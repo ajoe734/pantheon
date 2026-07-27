@@ -95,3 +95,66 @@ test_unapproved_gated_pr_is_never_merged_and_auto_merge_is_revoked (test_task_re
 Ran 31 tests in 0.008s
 
 OK
+
+========================================================================
+SECTION 5 - PRE-FIX at reviewed head 190fb7fe8, the two 2026-07-27
+           independent-review findings, reproduced as reported
+========================================================================
+-- finding 1: approval is not bound to the reviewed head [prefix]
+   reviewer approved head bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb at 2026-07-26T12:00:00Z
+   PR head replaced with cccccccccccccccccccccccccccccccccccccccc, committed 2026-07-26T11:00:00Z (BEFORE the approval)
+   -> allow_merge=True reason=exact_head_approved
+      reviewer Claude approved ABC-001 at 2026-07-26T12:00:00Z; head cccccccccccccccccccccccccccccccccccccccc is unchanged since then
+
+-- finding 2: `gh pr merge --disable-auto` returns 1 on an approved gated PR [prefix]
+   -> action=merged
+      Merged the reviewer-approved head bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb of PR #100 into dev and reconciled ABC-001 to done.
+   gh pr merge calls emitted:
+     gh pr merge 100 --disable-auto
+     gh pr merge 100 --merge --match-head-commit bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+========================================================================
+SECTION 6 - POST-FIX, same two fixtures
+========================================================================
+-- finding 1: approval is not bound to the reviewed head [postfix]
+   reviewer approved head bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb at 2026-07-26T12:00:00Z
+   PR head replaced with cccccccccccccccccccccccccccccccccccccccc, committed 2026-07-26T11:00:00Z (BEFORE the approval)
+   -> allow_merge=False reason=approval_head_mismatch
+      reviewer Claude approved head bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb but the PR head is cccccccccccccccccccccccccccccccccccccccc; this exact commit was never reviewed
+
+-- finding 2: `gh pr merge --disable-auto` returns 1 on an approved gated PR [postfix]
+   -> action=blocked
+      PR #100 is approved for head bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb but `gh pr merge --disable-auto` failed, so a pending auto-merge request is still armed on it. Refusing to merge with a standing merge grant; revoke it manually and re-run the integrator.
+   gh pr merge calls emitted:
+     gh pr merge 100 --disable-auto
+     (no merge call beyond the failed revocation)
+
+========================================================================
+SECTION 7 - regressions that now pin both findings
+========================================================================
+test_a_head_named_only_in_the_approval_message_is_not_a_binding (test_task_review_merge_gate.ApprovalBindingTests.test_a_head_named_only_in_the_approval_message_is_not_a_binding)
+Free text is not compared; only the recorded binding is. ... ok
+test_a_string_pr_number_still_binds (test_task_review_merge_gate.ApprovalBindingTests.test_a_string_pr_number_still_binds) ... ok
+test_binding_expecting_another_base_blocks (test_task_review_merge_gate.ApprovalBindingTests.test_binding_expecting_another_base_blocks) ... ok
+test_binding_for_another_pr_blocks (test_task_review_merge_gate.ApprovalBindingTests.test_binding_for_another_pr_blocks)
+Two open PRs can carry the same head; the approval names only one. ... ok
+test_binding_head_sha_is_compared_case_insensitively (test_task_review_merge_gate.ApprovalBindingTests.test_binding_head_sha_is_compared_case_insensitively) ... ok
+test_binding_naming_another_head_branch_blocks (test_task_review_merge_gate.ApprovalBindingTests.test_binding_naming_another_head_branch_blocks) ... ok
+test_binding_without_a_pr_number_is_unusable (test_task_review_merge_gate.ApprovalBindingTests.test_binding_without_a_pr_number_is_unusable) ... ok
+test_malformed_binding_is_unusable (test_task_review_merge_gate.ApprovalBindingTests.test_malformed_binding_is_unusable) ... ok
+test_pre_dated_head_replacement_is_refused (test_task_review_merge_gate.ApprovalBindingTests.test_pre_dated_head_replacement_is_refused)
+The reported fail-open: approve `b...`, then swap in older `c...`. ... ok
+test_pre_dated_head_replacement_survives_a_matching_commit_history (test_task_review_merge_gate.ApprovalBindingTests.test_pre_dated_head_replacement_survives_a_matching_commit_history)
+Rewriting the PR's commit list does not rebuild the approval. ... ok
+test_the_approved_decision_reports_what_it_was_bound_to (test_task_review_merge_gate.ApprovalBindingTests.test_the_approved_decision_reports_what_it_was_bound_to) ... ok
+test_unbound_approval_cannot_open_the_gate (test_task_review_merge_gate.ApprovalBindingTests.test_unbound_approval_cannot_open_the_gate)
+A legacy approval with no binding is unusable, not permissive. ... ok
+test_failed_auto_merge_revocation_never_reaches_the_merge (test_task_review_merge_gate.IntegratorGateTests.test_failed_auto_merge_revocation_never_reaches_the_merge)
+An armed merge grant the integrator could not revoke blocks the pass. ... ok
+test_failed_revocation_on_an_unapproved_pr_still_reports_the_gate_reason (test_task_review_merge_gate.IntegratorGateTests.test_failed_revocation_on_an_unapproved_pr_still_reports_the_gate_reason)
+A gate refusal is the more precise diagnosis; it must not be masked. ... ok
+
+----------------------------------------------------------------------
+Ran 14 tests in 0.003s
+
+OK

@@ -51,20 +51,24 @@ For each eligible task, capped by `max_tasks_per_run`:
    merge-state probes, whatever the gate decided - a PR that ends up `waiting`
    because it is `BEHIND` must not keep one. A gated PR that is not approved is
    then blocked at this step.
-6. Require green GitHub status rollup.
-7. Fetch `origin/dev` and the task branch.
-8. Create a temporary detached worktree for the task branch.
-9. Rebase that worktree onto `origin/dev`.
-10. Run configured smoke commands.
-11. Merge-then-review tasks only: if the rebase changed the task branch and
+6. If that revocation failed, block. An armed merge grant the integrator could
+   not withdraw means GitHub may land the next head on its own, so the pass
+   stops before any merge call is emitted - approval of this head does not make
+   it safe to merge alongside a standing grant.
+7. Require green GitHub status rollup.
+8. Fetch `origin/dev` and the task branch.
+9. Create a temporary detached worktree for the task branch.
+10. Rebase that worktree onto `origin/dev`.
+11. Run configured smoke commands.
+12. Merge-then-review tasks only: if the rebase changed the task branch and
     `--execute` is active, push with `--force-with-lease` and enable
     auto-merge so CI can re-run. A gated task branch is never pushed; if it
     needs a refreshed head the result is `waiting` and the owner must rebase
     and obtain a new approval for the new head.
-12. If no push was needed and the PR is still mergeable, run `gh pr merge`,
+13. If no push was needed and the PR is still mergeable, run `gh pr merge`,
     with `--match-head-commit <approved-oid>` for a gated task so a concurrent
     finalize cannot slip a different head into the merge.
-13. After merge, run `scripts/ai_status.py done` as the task owner so the normal
+14. After merge, run `scripts/ai_status.py done` as the task owner so the normal
     delivery gate archives the task.
 
 ## Configuration

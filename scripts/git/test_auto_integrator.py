@@ -114,8 +114,12 @@ def green_pr(number: int = 44) -> dict[str, Any]:
     }
 
 
-def approved_gate(task_id: str = "ABC-001") -> auto_integrator.ReviewGate:
-    """Canonical state where the assigned reviewer approved the exact head."""
+def approved_gate(task_id: str = "ABC-001", pr_number: int = 44) -> auto_integrator.ReviewGate:
+    """Canonical state where the assigned reviewer approved the exact head.
+
+    The approval carries the PR identity binding `command_approve` records;
+    without it the gate refuses the merge, which is the point of the binding.
+    """
 
     return auto_integrator.ReviewGate(
         state={
@@ -136,6 +140,12 @@ def approved_gate(task_id: str = "ABC-001") -> auto_integrator.ReviewGate:
                 "type": "review_approved",
                 "task_id": task_id,
                 "message": "Independent review approved.",
+                "review_binding": {
+                    "pr": pr_number,
+                    "head_sha": APPROVED_HEAD,
+                    "head_branch": f"task/{task_id}",
+                    "base": "dev",
+                },
             }
         ],
     )
@@ -280,7 +290,7 @@ class IntegrationPlanTests(unittest.TestCase):
             auto_integrator.Settings(),
             runner,
             execute=True,
-            gate=approved_gate(),
+            gate=approved_gate(pr_number=55),
         )
 
         self.assertEqual(result.action, "reconciled_done")

@@ -133,18 +133,30 @@ or PR field can open it.
 | row declares `merge_policy: merge_then_review` **and** requires no independent review | `merge_then_review` | `--label auto-merge` + `gh pr merge --auto --merge`, unchanged |
 | task row missing, unreadable, or gate error | `review_before_merge` | fail closed: auto-merge is never enabled |
 
-Under `review_before_merge` the merge is performed after approval by:
+Under `review_before_merge` the approval must name the exact head it
+covers, and the merge is performed afterwards by the integrator:
 
 ```bash
+AI_NAME=<reviewer> REVIEW_PR=<pr-number> REVIEW_HEAD_SHA=<40-hex head oid> \
+  "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" approve <TASK-ID> "<review evidence>"
 python3 scripts/git/auto_integrator.py --execute --task-id <TASK-ID>
 ```
+
+`approve` records that PR number, head sha, expected base (`REVIEW_BASE`,
+default `dev`) and head branch as a `review_binding` on both the immutable
+`review_approved` audit event and the task row; `task_finalize.sh` and
+`safe_pr.sh` print the command with the values already filled in. The gate
+compares each identity against the PR standing at merge time. An approval
+that carries no binding cannot open the gate — the merge blocks with
+`approval_head_binding_missing` and the reviewer re-approves naming the
+head.
 
 The integrator merges only the exact head the assigned reviewer approved
 (`gh pr merge --match-head-commit <oid>`), never enables auto-merge, and
 never force-pushes a rebase over the reviewed head. Reviewer rejection, a
-head change after approval, an approval by anyone other than the assigned
-reviewer, missing canonical state, and two open PRs on one task branch all
-fail closed.
+head change after approval, a head *replaced* with an older commit, an
+approval by anyone other than the assigned reviewer, missing canonical
+state, and two open PRs on one task branch all fail closed.
 
 Six further rules come from the 2026-07-26 live regressions on PRs #4201,
 #4217, #4222, #4225, #4226, #4227 and #4230:
@@ -170,6 +182,11 @@ Six further rules come from the 2026-07-26 live regressions on PRs #4201,
   that newer head at 23:14:41Z. A gated PR therefore has any standing
   auto-merge request revoked before its exact-head merge, and an approved
   head is refused outright while a request that predates it is still armed.
+- **A revocation that failed stops the pass.** If
+  `gh pr merge --disable-auto` returns nonzero the grant is still armed, so
+  the integrator blocks before emitting any merge call — including on the
+  approved path. Merging beside a grant we could not withdraw leaves GitHub
+  free to land the next head.
 - **Risk and payload claims waive nothing.** #4227 was Stage-1
   docs-and-evidence only with the live swap still blocked. A `risk`,
   `payload`, `docs_only`, or `review_waived` field on the task row is

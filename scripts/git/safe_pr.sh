@@ -203,7 +203,10 @@ echo "DONE — task $TASK_ID on $TASK_BRANCH"
 echo "  PR: https://github.com/ajoe734/pantheon/pull/${EXISTING_PR:-?}"
 echo "  log: $LOG"
 if [[ "$MERGE_POLICY" != "merge_then_review" ]]; then
-  echo "  next: assigned reviewer approves this exact head, then"
-  echo "        python3 scripts/git/auto_integrator.py --execute --task-id $TASK_ID"
+  # An approval that does not name this PR and head cannot open the gate.
+  echo "  next: assigned reviewer approves this exact head with"
+  echo "        AI_NAME=<reviewer> REVIEW_PR=${EXISTING_PR:-<pr-number>} REVIEW_HEAD_SHA=$(git rev-parse HEAD) \\"
+  echo "          \"\$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh\" approve $TASK_ID \"<review evidence>\""
+  echo "        then python3 scripts/git/auto_integrator.py --execute --task-id $TASK_ID"
 fi
 echo "  wait for the PR to merge before running scripts/ai-status.sh done"
