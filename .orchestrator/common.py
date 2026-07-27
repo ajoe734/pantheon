@@ -4605,12 +4605,15 @@ def load_status(config: dict[str, Any]) -> dict[str, Any]:
         from rewrite import task_state_store
 
         event_log = runtime_env[TASK_STATE_EVENT_LOG_ENV]
-        events = task_state_store.load_events(event_log)
-        if not events:
+        # One validated pass. Pairing load_events with project_latest_state
+        # replayed and revalidated the whole journal twice, and this runs many
+        # times per supervisor cycle.
+        snapshot = task_state_store.load_snapshot(event_log)
+        if not snapshot["event_count"]:
             raise RuntimeError(
                 "authoritative task-state journal is empty; refusing ai-status.json fallback"
             )
-        state = task_state_store.project_latest_state(events)
+        state = snapshot["state"]
         if not isinstance(state, dict) or not state:
             raise RuntimeError("authoritative task-state projection is not a non-empty object")
         return state
