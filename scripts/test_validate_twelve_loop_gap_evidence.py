@@ -11,7 +11,7 @@ import json
 import shutil
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -136,17 +136,24 @@ def test_future_validated_at_is_rejected(staged: Path) -> None:
 
 
 def test_past_timestamps_are_accepted_at_a_later_check_instant(staged: Path) -> None:
-    """A timestamp is only rejected for being ahead of the check instant."""
+    """A timestamp is only rejected for being ahead of the check instant.
+
+    The "late" instant is derived from the manifest rather than hardcoded: every
+    recut adds later record_log entries, so a fixed date would silently start
+    failing on the manifest's own freshness instead of on the rule under test.
+    """
 
     manifest = _load(staged)
-    manifest["validation"]["validated_at"] = "2026-07-26T22:00:00Z"
+    probe = "2026-07-26T22:00:00Z"
+    manifest["validation"]["validated_at"] = probe
     _store(staged, manifest)
     _rebind(staged)
 
-    late = validator.parse_iso("2026-07-27T00:00:00Z")
+    latest = max(validator.parse_iso(raw) for _label, raw in validator.timestamp_fields(_load(staged)))
+    late = latest + timedelta(minutes=1)
     assert "future_timestamp" not in _rules(_validate(staged, now=late))
 
-    early = validator.parse_iso("2026-07-26T21:49:00Z")
+    early = validator.parse_iso(probe) - timedelta(minutes=11)
     assert "future_timestamp" in _rules(_validate(staged, now=early))
 
 

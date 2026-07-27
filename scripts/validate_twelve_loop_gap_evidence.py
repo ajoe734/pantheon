@@ -208,7 +208,7 @@ def parse_iso(value: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
-def _timestamp_fields(manifest: dict[str, Any]) -> list[tuple[str, str]]:
+def timestamp_fields(manifest: dict[str, Any]) -> list[tuple[str, str]]:
     """Every timestamp the manifest asserts as already-observed fact."""
 
     found: list[tuple[str, str]] = []
@@ -241,7 +241,7 @@ def _timestamp_fields(manifest: dict[str, Any]) -> list[tuple[str, str]]:
 
 def check_future_timestamps(manifest: dict[str, Any], now: datetime) -> list[Rejection]:
     rejections = []
-    for label, raw in _timestamp_fields(manifest):
+    for label, raw in timestamp_fields(manifest):
         try:
             observed = parse_iso(raw)
         except ValueError:
