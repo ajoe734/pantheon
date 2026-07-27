@@ -304,6 +304,12 @@ v5.0.0 (historical) 卻仍以舊 head 敘述，這正是該版被否決的第一
 觀測時點為真，本表則另立 `2026-07-27T01:18:3xZ` 的觀測。v5.0.0 (historical) 之所以被
 否決，是因為它把已過期的值寫成 cut 當下的真值，而不是因為值會變。
 
+本表各列綁定的觀測時點為 `2026-07-27T01:18:3xZ`。`evidence.json` 另記一組 v8.0.0 cut
+時點（`2026-07-27T01:37:46Z`）的觀測，其中 `#4203` 已為 `MERGED`（`mergedAt`
+`2026-07-27T01:25:19Z`）。兩組觀測都只主張各自時點為真，依 §2.1 不互相取代；本文件不為
+每一次 PR 前進重切一版，否則 §7.5 終止的遞迴會從另一端回來。`#4203` 的合併不改變 Gap 6
+的「仍缺證據」：合併後的產品證據仍未取得。
+
 `#4221` 自身在本表的觀測時點為 `BEHIND`：`dev` 已前進到
 `7fedefb281dd416e0412e935c48e866438f56e6d`。本版在收據 commit 之前先合入該 `dev` tip，
 因此 `BEHIND` 是**本表觀測時點的事實**，不是最終 head 的狀態；最終 head 的
@@ -922,10 +928,13 @@ v7.0.0 的修正是新增第八條規則 `receipt_commit_artifacts`（§7.3 表�
 迴歸測試以**這次否決的精確形狀**覆蓋，而非近似形狀：
 
 - `test_v4_receipt_substitution_with_resealed_checksum_is_rejected` 以本 manifest 為輸入，
-  執行上述四步編輯（含重封 checksum，並一併把 `current_cut.delivery_receipt_sha` 也搬到
-  被替換的 commit，使替換在 manifest 內部完全自洽），斷言**只有**
-  `receipt_commit_artifacts` 拒絕（即證明其餘八條規則確實全部通過），且拒絕訊息同時含有
-  `9ac925e0…` 的摘要衝突與兩支 validator script 的 `does not contain bound artifact` 缺失。
+  執行上述四步編輯（含重封 checksum），斷言拒絕的規則**恰為** `receipt_commit_artifacts`
+  與 `current_cut_consistency` 兩條——亦即 `receipt_commit_artifacts` 之前既有的七條規則
+  確實全部通過——且 `receipt_commit_artifacts` 的訊息同時含有 `9ac925e0…` 的摘要衝突與
+  兩支 validator script 的 `does not contain bound artifact` 缺失。第九條規則從相反方向
+  攔住同一個替換：第 3 步把真正的收據改寫成 superseded，而 manifest 的敘述仍指名它
+  （§7.7 第 4 點），於是敘述與被宣告的 cut 立刻不一致。這是**兩條規則、兩個取材面**，
+  不是同一條規則報兩次。
 - `test_receipt_verification_reads_blobs_not_the_working_tree` 更進一步：把工作樹的本文件
   換成 `5c39428` 的精確 v4 bytes 並完整 rebind，使 `head_binding` 與
   `companion_checksum` 都通過，仍然被 `receipt_commit_artifacts` 拒絕——因為該 commit

@@ -466,8 +466,19 @@ def test_v4_receipt_substitution_with_resealed_checksum_is_rejected(staged: Path
     rejections = _validate(staged)
     rules = _rules(rejections)
 
-    # The eight other rules are all satisfied by the doctored manifest.
-    assert rules == {"receipt_commit_artifacts"}, [rejection.render() for rejection in rejections]
+    # The seven rules that shipped before receipt_commit_artifacts are all
+    # satisfied by the doctored manifest -- that is the point of the case.  Two
+    # rules catch the swap, from opposite directions: receipt_commit_artifacts
+    # reads git and finds the wrong bytes, while current_cut_consistency notices
+    # that the manifest's prose still names the receipt this edit just demoted.
+    assert rules == {"receipt_commit_artifacts", "current_cut_consistency"}, [
+        rejection.render() for rejection in rejections
+    ]
+    assert any(
+        "which is the superseded commit" in rejection.detail
+        for rejection in rejections
+        if rejection.rule == "current_cut_consistency"
+    )
 
     details = " | ".join(rejection.detail for rejection in rejections)
     # Both halves of the git-object contradiction must be reported.
