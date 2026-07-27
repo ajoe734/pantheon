@@ -28,6 +28,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG_FILE = ROOT / ".orchestrator" / "config.json"
@@ -123,62 +124,94 @@ def publish_ref_matches_tag(version: str, publish_prefix: str, release_prefix: s
     return publish.stdout.strip() == release.stdout.strip()
 
 
-def find_open_promote_pr(promote_branch: str) -> tuple[dict | None, str | None]:
-    """Return the open PR for a promote branch, failing closed on API errors."""
+def _gh_api_rows(endpoint: str, jq_filter: str) -> tuple[list[dict], str | None]:
+    """Return paginated REST rows without relying on GitHub GraphQL."""
+
     proc = subprocess.run(
         [
             "gh",
-            "pr",
-            "list",
-            "--head",
-            promote_branch,
-            "--state",
-            "open",
-            "--json",
-            "number,url,mergeStateStatus,headRefOid,statusCheckRollup",
+            "api",
+            "--paginate",
+            "--method",
+            "GET",
+            endpoint,
+            "--jq",
+            jq_filter,
         ],
         capture_output=True,
         text=True,
         cwd=ROOT,
     )
     if proc.returncode != 0:
-        return None, _result_detail(proc)
+        return [], _result_detail(proc)
+    rows: list[dict] = []
     try:
-        rows = json.loads(proc.stdout or "[]")
+        for line in proc.stdout.splitlines():
+            if line.strip():
+                row = json.loads(line)
+                if isinstance(row, dict):
+                    rows.append(row)
     except json.JSONDecodeError:
-        return None, "GitHub returned invalid JSON while looking up an existing PR"
-    return (rows[0] if rows else None), None
+        return [], "GitHub REST API returned invalid JSON"
+    return rows, None
+
+
+def _list_open_pull_rows(main_branch: str | None = None) -> tuple[list[dict], str | None]:
+    query = "state=open&per_page=100"
+    if main_branch:
+        query += f"&base={quote(main_branch, safe='')}"
+    return _gh_api_rows(
+        f"repos/{{owner}}/{{repo}}/pulls?{query}",
+        ".[] | {number,html_url,head:{ref:.head.ref,sha:.head.sha}} | @json",
+    )
+
+
+def _required_check_rollup(head_sha: str) -> tuple[list[dict], str | None]:
+    return _gh_api_rows(
+        f"repos/{{owner}}/{{repo}}/commits/{head_sha}/check-runs?per_page=100",
+        ".check_runs[] | {name,status,conclusion} | @json",
+    )
+
+
+def _normalize_pull(row: dict) -> dict:
+    head = row.get("head") or {}
+    return {
+        "number": row.get("number"),
+        "url": row.get("html_url"),
+        "headRefName": head.get("ref"),
+        "headRefOid": head.get("sha"),
+    }
+
+
+def find_open_promote_pr(promote_branch: str) -> tuple[dict | None, str | None]:
+    """Return the open PR for a promote branch, failing closed on API errors."""
+    rows, error = _list_open_pull_rows()
+    if error:
+        return None, error
+    for raw in rows:
+        pr = _normalize_pull(raw)
+        if pr["headRefName"] != promote_branch:
+            continue
+        head_sha = str(pr.get("headRefOid") or "")
+        if not head_sha:
+            return None, "existing promote PR did not expose an exact head SHA"
+        checks, check_error = _required_check_rollup(head_sha)
+        if check_error:
+            return None, check_error
+        pr["statusCheckRollup"] = checks
+        return pr, None
+    return None, None
 
 
 def list_open_promote_prs(main_branch: str) -> tuple[dict[str, dict], str | None]:
     """Load the promote PR backlog in one API call for hourly discovery."""
-    proc = subprocess.run(
-        [
-            "gh",
-            "pr",
-            "list",
-            "--base",
-            main_branch,
-            "--state",
-            "open",
-            "--limit",
-            "1000",
-            "--json",
-            "number,url,headRefName,mergeStateStatus,headRefOid",
-        ],
-        capture_output=True,
-        text=True,
-        cwd=ROOT,
-    )
-    if proc.returncode != 0:
-        return {}, _result_detail(proc)
-    try:
-        rows = json.loads(proc.stdout or "[]")
-    except json.JSONDecodeError:
-        return {}, "GitHub returned invalid JSON while listing promote PRs"
+    rows, error = _list_open_pull_rows(main_branch)
+    if error:
+        return {}, error
+    normalized = [_normalize_pull(row) for row in rows]
     return {
         row["headRefName"]: row
-        for row in rows
+        for row in normalized
         if str(row.get("headRefName", "")).startswith("promote/")
     }, None
 
@@ -189,32 +222,18 @@ def fetch_blocking_issue_map(
     """Load version-specific and global regression blockers in one API call."""
     if not os.environ.get("GH_TOKEN"):
         return {}, [], None
-    proc = subprocess.run(
-        [
-            "gh",
-            "issue",
-            "list",
-            "--state",
-            "open",
-            "--limit",
-            "1000",
-            "--json",
-            "number,title,labels",
-        ],
-        capture_output=True,
-        text=True,
-        cwd=ROOT,
+    issues, error = _gh_api_rows(
+        "repos/{owner}/{repo}/issues?state=open&per_page=100",
+        ".[] | {number,title,labels,pull_request} | @json",
     )
-    if proc.returncode != 0:
-        return {}, [], _result_detail(proc)
-    try:
-        issues = json.loads(proc.stdout or "[]")
-    except json.JSONDecodeError:
-        return {}, [], "GitHub returned invalid JSON while listing regression issues"
+    if error:
+        return {}, [], error
 
     by_version: dict[str, list[str]] = {}
     global_blockers: list[str] = []
     for issue in issues:
+        if issue.get("pull_request"):
+            continue
         names = {label.get("name", "") for label in issue.get("labels", [])}
         summary = f"#{issue['number']} {issue['title']}"
         for name in names:

@@ -987,10 +987,11 @@ class PublishPromoteTests(unittest.TestCase):
         self.assertIn('[[ "$REF_NAME" != promote/* ]]', workflow)
         self.assertIn('[[ "$HEAD_SHA" != "$EXPECTED_HEAD_SHA" ]]', workflow)
         self.assertIn("actions: write", publish_workflow)
+        self.assertIn("checks: read", publish_workflow)
 
     def test_bulk_promote_pr_lookup_omits_expensive_status_rollup(self) -> None:
         completed = subprocess.CompletedProcess(
-            ["gh", "pr", "list"], returncode=0, stdout="[]", stderr=""
+            ["gh", "api"], returncode=0, stdout="", stderr=""
         )
         with mock.patch.object(
             publish_promote.subprocess, "run", return_value=completed
@@ -998,8 +999,67 @@ class PublishPromoteTests(unittest.TestCase):
             rows, error = publish_promote.list_open_promote_prs("master")
         self.assertEqual((rows, error), ({}, None))
         command = run.call_args.args[0]
-        json_fields = command[command.index("--json") + 1]
-        self.assertNotIn("statusCheckRollup", json_fields)
+        self.assertEqual(command[:2], ["gh", "api"])
+        self.assertIn("--paginate", command)
+        self.assertNotIn("graphql", command)
+        self.assertNotIn("statusCheckRollup", " ".join(command))
+
+    def test_exact_promote_lookup_uses_rest_check_runs(self) -> None:
+        pull = {
+            "number": 42,
+            "html_url": "https://example.invalid/42",
+            "head": {"ref": "promote/v2026.20.0", "sha": "d" * 40},
+        }
+        checks = [{"name": "Commit trailers", "status": "completed"}]
+        with (
+            mock.patch.object(
+                publish_promote,
+                "_list_open_pull_rows",
+                return_value=([pull], None),
+            ),
+            mock.patch.object(
+                publish_promote,
+                "_required_check_rollup",
+                return_value=(checks, None),
+            ) as check_lookup,
+        ):
+            pr, error = publish_promote.find_open_promote_pr("promote/v2026.20.0")
+        self.assertIsNone(error)
+        self.assertEqual(pr["number"], 42)
+        self.assertEqual(pr["statusCheckRollup"], checks)
+        check_lookup.assert_called_once_with("d" * 40)
+
+    def test_regression_issue_lookup_uses_rest_and_ignores_pull_requests(self) -> None:
+        issues = [
+            {
+                "number": 7,
+                "title": "block release",
+                "labels": [{"name": "regression/v2026.20.0"}],
+                "pull_request": None,
+            },
+            {
+                "number": 8,
+                "title": "PR label is not a blocker issue",
+                "labels": [{"name": "regression/v2026.20.0"}],
+                "pull_request": {"url": "https://example.invalid/pr/8"},
+            },
+        ]
+        with (
+            mock.patch.dict(os.environ, {"GH_TOKEN": "test-token"}),
+            mock.patch.object(
+                publish_promote,
+                "_gh_api_rows",
+                return_value=(issues, None),
+            ) as api,
+        ):
+            by_version, global_blockers, error = (
+                publish_promote.fetch_blocking_issue_map("regression/", [])
+            )
+        self.assertIsNone(error)
+        self.assertEqual(global_blockers, [])
+        self.assertEqual(by_version, {"v2026.20.0": ["#7 block release"]})
+        self.assertIn("/issues?", api.call_args.args[0])
+        self.assertNotIn("graphql", api.call_args.args[0])
 
     def test_open_prs_continues_after_candidate_conflict(self) -> None:
         candidates = [{"version": "v1"}, {"version": "v2"}]

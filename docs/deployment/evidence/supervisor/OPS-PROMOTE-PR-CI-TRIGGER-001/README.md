@@ -28,8 +28,8 @@ jobs validate that binding before running. The runtime mirror checkout is
 full-history so its dispatched diff cannot silently collapse because a parent
 is absent.
 
-`publish-promote.yml` receives only the `actions: write` permission needed to
-dispatch that workflow. `publish_promote.py`:
+`publish-promote.yml` receives `actions: write` to dispatch that workflow and
+`checks: read` for the exact-head idempotency lookup. `publish_promote.py`:
 
 - keeps bulk open-PR discovery lightweight and selects only the maximal open
   candidate for an exact lookup;
@@ -48,24 +48,27 @@ runs passed all three required contexts. Publish-cut run `30284714199` then
 created `release/v2026.07.27.2` at that exact merge without dispatching a
 deployment.
 
-Two evaluations of that fresh snapshot failed closed
+Three evaluations of the `.2` and `.3` fresh snapshots failed closed
 before opening a PR because the first implementation asked GraphQL for
 `statusCheckRollup` across the 1,000-row bulk lookup. Runs `30284788017` and
-`30284856368` both received HTTP 502. The follow-up moves that expensive field
-to the single exact-candidate lookup and retains the same missing-context
-decision at the action boundary. A new release will be cut after the follow-up
-merges so the live proof covers the corrected bytes rather than reusing the
-known-bad `v2026.07.27.2` snapshot.
+`30284856368` received HTTP 502 with the rollup field, and run `30285398658`
+proved the runner's GraphQL path still returned 502 after that field was
+removed. The final follow-up replaces promote PR, exact-head check-run, and
+regression issue discovery with paginated REST calls while preserving
+fail-closed errors and exact-candidate idempotency. A new release will be cut
+after that follow-up merges so the live proof covers the corrected bytes.
 
 ## Validation Before Publication
 
 - `python3 -m unittest scripts.git.test_git_workflow_helpers.PublishPromoteTests -v`
-  — 20 passed.
+  — 22 passed.
 - provisioned checkout-local interpreter, then
   `pytest -q scripts/git/test_git_workflow_helpers.py scripts/test_nightly_publish_cut.py tests/orchestrator/test_release_branch_discipline.py`
-  — 68 passed.
+  — 70 passed.
 - `python3 -m py_compile` on the helper and test module — passed.
 - workflow YAML parse and `git diff --check` — passed.
+- live read-only REST smoke — 26 promote PRs listed; exact PR `#4138`
+  returned head and zero checks without an API error.
 
 ## Live Proof and Stale-PR Retirement
 
