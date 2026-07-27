@@ -11328,6 +11328,14 @@ class CachedProviderCapabilityLoopTests(unittest.TestCase):
             (agy_home / ".gemini" / "antigravity-cli" / "antigravity-oauth-token").write_text(
                 "token", encoding="utf-8"
             )
+            stub_bin = root / "bin"
+            stub_bin.mkdir()
+            codex_cli = stub_bin / "codex"
+            codex_cli.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            codex_cli.chmod(0o755)
+            agy_cli = stub_bin / "agy"
+            agy_cli.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            agy_cli.chmod(0o755)
             recent = (
                 datetime.now(timezone.utc) - timedelta(seconds=60)
             ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -11376,15 +11384,15 @@ class CachedProviderCapabilityLoopTests(unittest.TestCase):
                 "providers": {
                     "codex": {
                         "delivery_mode": "codex",
-                        "codex": {"cli": "codex", "codex_home": str(codex_home)},
+                        "codex": {"cli": str(codex_cli), "codex_home": str(codex_home)},
                     },
                     "codex2": {
                         "delivery_mode": "codex",
-                        "codex": {"cli": "codex", "codex_home": str(codex_home)},
+                        "codex": {"cli": str(codex_cli), "codex_home": str(codex_home)},
                     },
                     "antigravity": {
                         "delivery_mode": "antigravity",
-                        "antigravity": {"cli": "agy", "home": str(agy_home)},
+                        "antigravity": {"cli": str(agy_cli), "home": str(agy_home)},
                     },
                 },
             }

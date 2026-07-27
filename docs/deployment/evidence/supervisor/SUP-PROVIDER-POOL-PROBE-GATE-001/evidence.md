@@ -1,6 +1,6 @@
 # SUP-PROVIDER-POOL-PROBE-GATE-001 — provider pool probe gate and root coherence
 
-Owner: Claude2 · Reviewer: Codex2 · Repository: `ajoe734/pantheon` · Base: `dev`
+Owner: Claude2 · Reviewer: Claude · Repository: `ajoe734/pantheon` · Base: `dev`
 Task branch: `task/SUP-PROVIDER-POOL-PROBE-GATE-001`
 
 ## What was wrong
