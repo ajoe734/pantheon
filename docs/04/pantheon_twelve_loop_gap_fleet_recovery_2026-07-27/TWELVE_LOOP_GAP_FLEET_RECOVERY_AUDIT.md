@@ -218,7 +218,7 @@ snapshot.
 | Workstream | Live outcome | Updated gap |
 |---|---|---|
 | `L12-CURRENT-GAP-FLEET-AUDIT-20260727` / PR #4269 | Reviewer-approved exact head `5acc84f67972bbd3f63157250b50753c2199a35c`; merged to `dev` as `58f7ee46a95b55fc7a88bd399cd40e55350fbf73`; canonical task archived `done` | Closed point-in-time audit only. This does not prove twelve-loop operability. |
-| `OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001` / PR #4273 | Reviewer approved exact head `5ce0b9a58924bb47f9c2b369fc30821411051e81`; finalize worker produced a newer head `f91ed836aba84bd86bfd64ce0b1ce187f96be7de`; PR became `BEHIND` after #4269 merged | Needs latest-`dev` compose, exact-head CI, and final closeout. |
+| `OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001` / PR #4273 | Reviewer approved the repaired telemetry evidence; closeout composed latest `dev`, merged PR #4273 as `db658d8dc88dfc1e9abd6cec55e9c7e86b9a269a`, and archived the canonical task `done` | Closed. Telemetry discovery import no longer blocks the twelve-loop recovery frontier. |
 | `L12-EVO-001` / PR #4267 | Independent reviewer rejected exact head `6a534392c81d0eca58d08f289f3a9e1dd033e992` | Real acceptance blocker: direct failed downstream receipt leaves decision `executed/failed`, no compensation, and pending outbox; root compose also defaults evolution auth to disabled/empty token, contradicting tenant-authority evidence. |
 | `L12-DIST-001` / PR #4193 | Independent reviewer rejected exact head `62fecb4bb4c8f1fd55eb3ae014b7e6f746c91b50` | Real acceptance blocker: Registry idempotency accepts same-id StrategySpec with different payload/lineage as terminal success, violating source/draft lineage and terminal-write proof. |
 | `L12-GITHUB-REVIEW-BRIDGE-001` | Worker implemented status-side GitHub review evidence plumbing, but also hit missing merge-gate file assumptions in its task worktree | Review bridge must be reconciled with the actual merge-gate code path on current `dev`; branch-protection proof remains incomplete. |
@@ -234,9 +234,8 @@ program is still not complete. The remaining blockers are now more precise:
 1. Evolution loop failed on real terminal failure compensation and default
    tenant-auth posture.
 2. Distillation loop failed on Registry idempotency/lineage verification.
-3. Telemetry closeout needs recompose after `dev` advanced.
-4. GitHub review bridge is still incomplete for branch-protection proof.
-5. Fleet provider health classification still produces false indefinite auth
+3. GitHub review bridge is still incomplete for branch-protection proof.
+4. Fleet provider health classification still produces false indefinite auth
    pauses.
 
 Therefore the correct status is **fleet active, delivery incomplete, twelve
