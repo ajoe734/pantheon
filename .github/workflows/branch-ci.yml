@@ -1,10 +1,13 @@
 name: Branch CI Gate
 
 # Gate every push and PR that participates in the task / publish / master
-# pipeline. Runs commit-trailer checks, runtime-mirror guard, and a fast
-# smoke acceptance. The three jobs below ("Commit trailers", "Runtime
-# mirror guard", "Smoke acceptance") are the required status checks on
-# the dev and master branch protections.
+# pipeline. Promote PRs created by publish-promote use the explicit
+# workflow_dispatch path because GitHub does not recursively emit pull_request
+# events for a PR created with that workflow's GITHUB_TOKEN. Runs
+# commit-trailer checks, runtime-mirror guard, and a fast smoke acceptance.
+# The three jobs below ("Commit trailers", "Runtime mirror guard", "Smoke
+# acceptance") are the required status checks on the dev and master branch
+# protections.
 
 on:
   push:
@@ -18,6 +21,16 @@ on:
     branches:
       - "dev"
       - "master"
+  workflow_dispatch:
+    inputs:
+      expected_head_sha:
+        description: "Exact promote PR head that must receive the required checks"
+        required: true
+        type: string
+      promote_pr_number:
+        description: "Promote PR number for audit output"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -31,6 +44,28 @@ jobs:
     name: Commit trailers
     runs-on: ubuntu-latest
     steps:
+      - name: Validate explicit promote dispatch
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          EXPECTED_HEAD_SHA: ${{ inputs.expected_head_sha }}
+          HEAD_SHA: ${{ github.sha }}
+          PROMOTE_PR_NUMBER: ${{ inputs.promote_pr_number }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [[ ! "$EXPECTED_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "expected_head_sha must be a full lowercase commit SHA" >&2
+            exit 1
+          fi
+          if [[ "$REF_NAME" != promote/* ]]; then
+            echo "manual Branch CI dispatch is restricted to promote/* refs" >&2
+            exit 1
+          fi
+          if [[ "$HEAD_SHA" != "$EXPECTED_HEAD_SHA" ]]; then
+            echo "dispatch head mismatch for promote PR #${PROMOTE_PR_NUMBER}: expected ${EXPECTED_HEAD_SHA}, got ${HEAD_SHA}" >&2
+            exit 1
+          fi
+          echo "Validated exact promote PR #${PROMOTE_PR_NUMBER} head ${HEAD_SHA}"
+
       - name: Checkout
         uses: actions/checkout@v6
         with:
@@ -96,7 +131,31 @@ jobs:
     name: Runtime mirror guard
     runs-on: ubuntu-latest
     steps:
+      - name: Validate explicit promote dispatch
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          EXPECTED_HEAD_SHA: ${{ inputs.expected_head_sha }}
+          HEAD_SHA: ${{ github.sha }}
+          PROMOTE_PR_NUMBER: ${{ inputs.promote_pr_number }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [[ ! "$EXPECTED_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "expected_head_sha must be a full lowercase commit SHA" >&2
+            exit 1
+          fi
+          if [[ "$REF_NAME" != promote/* ]]; then
+            echo "manual Branch CI dispatch is restricted to promote/* refs" >&2
+            exit 1
+          fi
+          if [[ "$HEAD_SHA" != "$EXPECTED_HEAD_SHA" ]]; then
+            echo "dispatch head mismatch for promote PR #${PROMOTE_PR_NUMBER}: expected ${EXPECTED_HEAD_SHA}, got ${HEAD_SHA}" >&2
+            exit 1
+          fi
+          echo "Validated exact promote PR #${PROMOTE_PR_NUMBER} head ${HEAD_SHA}"
+
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
