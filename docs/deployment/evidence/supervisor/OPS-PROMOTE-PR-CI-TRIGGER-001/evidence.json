@@ -16,7 +16,7 @@
     "narrative": "docs/deployment/evidence/supervisor/OPS-PROMOTE-PR-CI-TRIGGER-001/README.md"
   },
   "status": "review_approved",
-  "generated_at": "2026-07-27T20:01:33Z",
+  "generated_at": "2026-07-27T20:03:43Z",
   "scope": {
     "owned": [
       "Branch CI exact-head workflow_dispatch contract for promote PRs",
@@ -163,6 +163,32 @@
     "base_update_merge_commit": "8f4731aa86cbe99da6b535fa565a1dcb84474c40",
     "scope_changed": false,
     "validation_repeated": true
+  },
+  "closeout_preparation": {
+    "review_evidence_anchor_commit": "7301f6e7a05145a1937f95d889f3af4be82b7072",
+    "base_commit": "b81edf76dfc14087dd7d5e3a6599448cb9d0bb09",
+    "base_update_merge_commit": "a73a639c9db350943c4b4adff0dd92523799ec81",
+    "validated_at": "2026-07-27T20:03:43Z",
+    "validation": {
+      "unittest": "22 PublishPromoteTests passed",
+      "pytest": "70 focused tests passed in 8.65s",
+      "compile": "publish_promote.py and test_git_workflow_helpers.py passed py_compile",
+      "artifact_parse": "branch-ci.yml, publish-promote.yml, and evidence.json parsed",
+      "diff_check": "git diff --check origin/dev...HEAD passed",
+      "live_read_only": {
+        "open_promote_pr_count": 26,
+        "representative_pr": 4138,
+        "representative_head": "cb90dc479214c6ff0779aff70f915593ec9196c4",
+        "representative_check_count": 0,
+        "reviewed_head_check_count": 8,
+        "reviewed_head_check_names": [
+          "Commit trailers",
+          "Python packaging provision",
+          "Runtime mirror guard",
+          "Smoke acceptance"
+        ]
+      }
+    }
   },
   "delivery": {
     "implementation_pr": 4258,

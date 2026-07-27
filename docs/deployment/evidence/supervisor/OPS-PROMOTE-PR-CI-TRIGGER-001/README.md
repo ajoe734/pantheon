@@ -124,6 +124,22 @@ after the manifest records accepted-release ancestry. A fresh owner push also
 requires new CI and last-push approval; Human Ops retains ownership of the
 canonical review and root merge-freeze statuses.
 
+## Owner Closeout Preparation
+
+After the independent review, Codex anchored the reviewed decision as
+`7301f6e7a05145a1937f95d889f3af4be82b7072` and merged current `origin/dev`
+`b81edf76dfc14087dd7d5e3a6599448cb9d0bb09` through conflict-free merge
+`a73a639c9db350943c4b4adff0dd92523799ec81`. The composed tree passed the
+same 22-test unittest slice and 70-test pytest slice, `py_compile`, workflow
+YAML and evidence JSON parsing, and `git diff --check`.
+
+The repeated live read-only smoke still listed 26 open promote PRs and found
+PR `#4138` at exact head
+`cb90dc479214c6ff0779aff70f915593ec9196c4` with zero checks. The previously
+reviewed task head still exposed eight successful check runs whose names
+include every required context. No release, promote PR, stale PR, branch
+protection, or external status was mutated by this verification.
+
 ## Live Proof and Stale-PR Retirement
 
 The immutable exact-candidate proof must be recorded only after the repair is
