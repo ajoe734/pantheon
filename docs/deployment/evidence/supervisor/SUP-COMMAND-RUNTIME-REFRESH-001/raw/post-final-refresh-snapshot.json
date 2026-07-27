@@ -1,0 +1,245 @@
+{
+  "label": "post-final-refresh-reconciled",
+  "captured_at": "2026-07-27T16:05:54Z",
+  "live_config": {
+    "path": "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json",
+    "sha256": "adab474b01b99630041cb06d565ae9dbfd7d52badc1d9e612b7cb8d4129de77e",
+    "size_bytes": 39755,
+    "mtime": "2026-07-27T15:19:25Z",
+    "watchdog_supervisor_command": [
+      "/usr/bin/python3.12",
+      "-u",
+      "/home/lupin/pantheon-ci-deploy/dev-root-6692d51c9bc5/.orchestrator/supervisor.py",
+      "--config",
+      "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json",
+      "--verbose"
+    ],
+    "task_state_store": {
+      "mode": "authoritative",
+      "event_log": "/home/lupin/pantheon-ci-deploy/runtime/task-state-events.jsonl"
+    },
+    "worker_runtime": {
+      "worker_lease_seconds": 600,
+      "queue_lease_seconds": 1800,
+      "heartbeat_stale_seconds": 300,
+      "heartbeat_grace_seconds": 60,
+      "work_progress_stale_seconds": 360,
+      "runner_heartbeat_interval_seconds": 15
+    }
+  },
+  "origin_dev": "33e1c4d64e4accceab4d803e7b4ce2324f44306a",
+  "roots": [
+    {
+      "root": "/home/lupin/pantheon-ci-deploy/dev-root",
+      "head": "6a0281e8f8996883faae3ddaab7505b2ddc68ac1",
+      "head_tree": "5119a669e27a6cc41fe64188b1ead9339bdcd795",
+      "dirty_entries": 10,
+      "remote": "https://github.com/ajoe734/pantheon.git"
+    },
+    {
+      "root": "/home/lupin/pantheon-ci-deploy/dev-root-1434effdc88f",
+      "head": "1434effdc88fb79abd0125351a5206af8fe4a7c7",
+      "head_tree": "ba05528ba11d512c22196f5f9f717a75e8eadc68",
+      "dirty_entries": 10,
+      "remote": "https://github.com/ajoe734/pantheon.git"
+    },
+    {
+      "root": "/home/lupin/pantheon-ci-deploy/dev-root-29054ab270d5",
+      "head": "29054ab270d552a56ed071cedf3f45150e948b6a",
+      "head_tree": "a8d7dcc6fa23ad02e1e62f1f8eb13cfc73cce466",
+      "dirty_entries": 1,
+      "remote": "https://github.com/ajoe734/pantheon.git"
+    },
+    {
+      "root": "/home/lupin/pantheon-ci-deploy/dev-root-2dc7c7e583f3",
+      "head": "2dc7c7e583f3d8bde6b08bdba6d588230c5fe8b5",
+      "head_tree": "c6a95df7078ccdfd2d3999764263717959e729b4",
+      "dirty_entries": 0,
+      "remote": "https://github.com/ajoe734/pantheon.git"
+    },
+    {
+      "root": "/home/lupin/pantheon-ci-deploy/dev-root-6692d51c9bc5",
+      "head": "6692d51c9bc5a48ffcbaac8cf817b635351a7c9a",
+      "head_tree": "fa55d946a09b8311de7b37e4348405267378fecd",
+      "dirty_entries": 4,
+      "remote": "https://github.com/ajoe734/pantheon.git"
+    },
+    {
+      "root": "/home/lupin/pantheon-ci-deploy/dev-root-6c7a942fb756",
+      "head": "6c7a942fb7561d8e9b4a24c6fbb6a1ca6a1968f4",
+      "head_tree": "3cc00aa701a5ad3c821c1e2d6fcbbfe1f91b7ab5",
+      "dirty_entries": 0,
+      "remote": "https://github.com/ajoe734/pantheon.git"
+    },
+    {
+      "root": "/home/lupin/pantheon-ci-deploy/dev-root-87b17c1107dd",
+      "head": "87b17c1107ddaf93dcb138f05efcc25fbe1e95e0",
+      "head_tree": "4efbf4667d0959f14f2538a1ffc59eb1e874b07b",
+      "dirty_entries": 7,
+      "remote": "https://github.com/ajoe734/pantheon.git"
+    },
+    {
+      "root": "/home/lupin/pantheon-ci-deploy/dev-root-920bdbf70229",
+      "head": "920bdbf70229e997f07f9dd4987227c0dff04433",
+      "head_tree": "9bfd80fe990bbe1bdf871554456750f8e2dd6965",
+      "dirty_entries": 0,
+      "remote": "https://github.com/ajoe734/pantheon.git"
+    },
+    {
+      "root": "/home/lupin/pantheon-ci-deploy/dev-root-b1283352fd54",
+      "head": "b1283352fd545ad99f9f5b3d969c20a85c6dbd6f",
+      "head_tree": "86a117c74ce63d2cd32e36a88ac3c7e586a68f71",
+      "dirty_entries": 0,
+      "remote": "https://github.com/ajoe734/pantheon.git"
+    },
+    {
+      "root": "/home/lupin/pantheon-ci-deploy/dev-root-bdbd0a99bf68",
+      "head": "bdbd0a99bf68e6a635d9bd936782c659298b7bb7",
+      "head_tree": "d207d16e8c1cb68b15e81e8a4dd3e102273f55bf",
+      "dirty_entries": 24,
+      "remote": "https://github.com/ajoe734/pantheon.git"
+    },
+    {
+      "root": "/home/lupin/pantheon-ci-deploy/dev-root-d054bd49cb48",
+      "head": "6578ef968f7e0374b046de0afb5b07ce2f81558e",
+      "head_tree": "55680b29ccb50ab5c1771ddd9f10590f1ba774c9",
+      "dirty_entries": 0,
+      "remote": "https://github.com/ajoe734/pantheon.git"
+    },
+    {
+      "root": "/home/lupin/pantheon-ci-deploy/dev-root-eecb96fa3826",
+      "head": "eecb96fa3826e8e3527a77da7f187a32b33c6c93",
+      "head_tree": "4d935a347ce133fd1aadedb6bbc25a9c5ca04a1d",
+      "dirty_entries": 4,
+      "remote": "https://github.com/ajoe734/pantheon.git"
+    }
+  ],
+  "supervisor_processes": [
+    {
+      "pid": 395813,
+      "cwd": "/home/lupin/pantheon-ci-deploy/dev-root-29054ab270d5",
+      "cmdline": "/usr/bin/python3.12 -u .orchestrator/supervisor.py --config /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json --verbose",
+      "ps": "Mon Jul 27 16:00:23 2026       05:32 00:00:21 Ss"
+    }
+  ],
+  "admission_lock": {
+    "lock": "/home/lupin/pantheon/.orchestrator/runtime-admission.lock",
+    "inode": "807896",
+    "proc_locks_rows": [
+      "26: FLOCK  ADVISORY  WRITE 395813 08:01:807896 0 EOF"
+    ]
+  },
+  "supervisor_state": {
+    "pid": 395813,
+    "lifecycle": "running",
+    "last_heartbeat_at": "2026-07-27T16:05:46Z",
+    "loop_started_at": null,
+    "mode_status": "active",
+    "task_state_shadow": {
+      "mode": "authoritative",
+      "ok": true,
+      "event_log": "/home/lupin/pantheon-ci-deploy/runtime/task-state-events.jsonl",
+      "last_checked_at": "2026-07-27T16:02:56Z",
+      "last_success_at": "2026-07-27T16:02:56Z",
+      "last_error": null,
+      "caught_up": true,
+      "repaired": false,
+      "event_count": 2459,
+      "last_event_id": "task-state-12438abb07f9d19fca6a3ca80a96aab08ba240da813473663c3739eb85f38220",
+      "projected_state_sha256": "bfa776bcca4dc49e5382b6b7c52b129d8601f909a45863bcfe763163f86da9e4",
+      "expected_state_sha256": "bfa776bcca4dc49e5382b6b7c52b129d8601f909a45863bcfe763163f86da9e4",
+      "nonterminal_task_count": 23
+    }
+  },
+  "active_workers": [
+    {
+      "run_id": "codex-20260727T153814Z-c75627e2",
+      "provider": "codex1-4",
+      "agent_id": "codex1_4",
+      "task_id": "SUP-TASK-STATE-LOCK-LATENCY-001",
+      "status": "running",
+      "pid": 153307,
+      "pid_alive": true,
+      "lease_acquired_at": "2026-07-27T15:38:14Z",
+      "lease_expires_at": "2026-07-27T16:15:46Z",
+      "last_heartbeat_at": "2026-07-27T16:05:32Z",
+      "queue_event_id": "evt-20260727T153730Z-92574640",
+      "command_root": "/home/lupin/pantheon-ci-deploy/dev-root-6692d51c9bc5",
+      "command_sha": "6692d51c9bc5a48ffcbaac8cf817b635351a7c9a"
+    },
+    {
+      "run_id": "codex-20260727T155522Z-287c37d9",
+      "provider": "codex1-1",
+      "agent_id": "codex1_1",
+      "task_id": "SUP-COMMAND-RUNTIME-REFRESH-001",
+      "status": "running",
+      "pid": 338842,
+      "pid_alive": true,
+      "lease_acquired_at": "2026-07-27T15:55:22Z",
+      "lease_expires_at": "2026-07-27T16:15:46Z",
+      "last_heartbeat_at": "2026-07-27T16:05:39Z",
+      "queue_event_id": "evt-20260727T155509Z-50968f9a",
+      "command_root": "/home/lupin/pantheon-ci-deploy/dev-root-6692d51c9bc5",
+      "command_sha": "6692d51c9bc5a48ffcbaac8cf817b635351a7c9a"
+    },
+    {
+      "run_id": "codex-20260727T155827Z-5eb6b0bf",
+      "provider": "codex1-2",
+      "agent_id": "codex1_2",
+      "task_id": "OPS-PUBLISH-ENGINE-UNIFICATION-001",
+      "status": "running",
+      "pid": 373886,
+      "pid_alive": true,
+      "lease_acquired_at": "2026-07-27T15:58:27Z",
+      "lease_expires_at": "2026-07-27T16:15:46Z",
+      "last_heartbeat_at": "2026-07-27T16:05:43Z",
+      "queue_event_id": "evt-20260727T155811Z-5bda59d6",
+      "command_root": "/home/lupin/pantheon-ci-deploy/dev-root-6692d51c9bc5",
+      "command_sha": "6692d51c9bc5a48ffcbaac8cf817b635351a7c9a"
+    }
+  ],
+  "queue_records": [
+    {
+      "event_id": "evt-20260727T153730Z-92574640",
+      "status": "started",
+      "task_id": null,
+      "lease_owner": "codex-20260727T153814Z-c75627e2",
+      "lease_expires_at": "2026-07-27T16:35:46Z"
+    },
+    {
+      "event_id": "evt-20260727T155509Z-50968f9a",
+      "status": "started",
+      "task_id": null,
+      "lease_owner": "codex-20260727T155522Z-287c37d9",
+      "lease_expires_at": "2026-07-27T16:35:46Z"
+    },
+    {
+      "event_id": "evt-20260727T155811Z-5bda59d6",
+      "status": "started",
+      "task_id": null,
+      "lease_owner": "codex-20260727T155827Z-5eb6b0bf",
+      "lease_expires_at": "2026-07-27T16:35:46Z"
+    },
+    {
+      "event_id": "evt-20260727T155812Z-8cf1822e",
+      "status": "failed",
+      "task_id": null,
+      "lease_owner": "codex-20260727T155838Z-265d74f6",
+      "lease_expires_at": "2026-07-27T16:32:54Z"
+    }
+  ],
+  "worktree_leases": [],
+  "projection": {
+    "event_count": 2461,
+    "projected_sha256": "a43281c07a66419e5a6bf4e4fbea8ad67893e72c0b7698815cf1a04508f3f30c",
+    "board_sha256": "a43281c07a66419e5a6bf4e4fbea8ad67893e72c0b7698815cf1a04508f3f30c",
+    "verify": {
+      "ok": true,
+      "event_count": 2461,
+      "last_event_id": "task-state-b98e6511e2461a29b9d2fd9b7062be4590dbba20d3488e514d3eb974be443f70",
+      "projected_state_sha256": "a43281c07a66419e5a6bf4e4fbea8ad67893e72c0b7698815cf1a04508f3f30c",
+      "expected_state_sha256": "a43281c07a66419e5a6bf4e4fbea8ad67893e72c0b7698815cf1a04508f3f30c",
+      "nonterminal_task_count": 23
+    }
+  }
+}
