@@ -4,7 +4,7 @@ Bound supervisor task-state lock latency and projection truth.
 
 | | |
 |---|---|
-| Owner | Claude |
+| Owner | Codex |
 | Reviewer | Codex2 |
 | Phase | Supervisor Runtime Repair |
 
@@ -64,6 +64,9 @@ Two correctness defects sat on the same surface:
 * `append_state_commit` reads back exactly the bytes it wrote at their offset
   and checks the resulting file size, instead of replaying the whole journal to
   inspect its last line.
+* A checkpoint head must equal the actual last JSONL event in the byte prefix
+  whose digest it claims. An internally valid forged checkpoint event therefore
+  degrades to a full replay and self-repair.
 
 `.orchestrator/supervisor.py`
 
@@ -79,6 +82,32 @@ Two correctness defects sat on the same surface:
   cycle, with a console warning past
   `supervisor.runtime_lock_hold_warn_after_seconds` (default 30s). The live 771s
   hold left no trace in runtime state; an equivalent regression now does.
+* `sync_github_bus` consumes an atomic runtime snapshot before runtime
+  admission, so its `gh` network subprocesses no longer extend the exclusive
+  lock hold.
+* Worker termination sends at most one initial `SIGTERM` while the decision is
+  current, then performs `confirm_kill` polling after the lock is released. The
+  deferred confirmation is bound to Linux process start ticks so PID reuse
+  cannot signal an unrelated process.
+* Dispatch status sync carries the exact worker `ORCH_RUN_ID`,
+  `PANTHEON_WORKTREE_ROOT`, and `ORCH_WORKSPACE_PATH`. A run id without both
+  workspace bindings is refused before spawning the status command; inherited
+  lease variables are cleared first.
+* Pending worker worktree base refs are fetched with an explicit
+  `refs/heads/<base>:refs/remotes/origin/<base>` refspec before runtime
+  admission. The locked phase consumes only a locally refreshed ref and fails
+  closed if prefetch did not succeed.
+
+`.orchestrator/rewrite/worker_lifecycle.py`
+
+* `confirm_kill(term_already_sent=True)` starts the grace interval without
+  sending a duplicate `SIGTERM`.
+
+`scripts/git/{task_start.sh,task_finalize.sh,safe_pr.sh}`
+
+* Task branch fetches use an explicit remote-tracking destination, so a checkout
+  configured to fetch only `master` cannot leave `origin/dev` stale while
+  advancing only `FETCH_HEAD`.
 
 `scripts/verify_task_state_store.py`
 
@@ -97,14 +126,14 @@ Two correctness defects sat on the same surface:
 
 | Shape | Legacy p95 | Current p95 |
 |---|---|---|
-| Read board + commit, uncontended | 20.9s | **0.261s** |
-| Read board + commit, 4 concurrent commands during an active supervisor cycle | 71.3s | **1.153s** |
+| Read board + commit, uncontended | 14.844s | **0.263s** |
+| Read board + commit, 4 concurrent commands during an active supervisor cycle | 63.463s | **1.179s** |
 
-The legacy contended figure (66.6s p50 / 71.3s p95) reproduces the live
-observation that each note command took roughly 55-90s. The current contended
-p95 of 1.153s is under the 2s target, with no lock bypass, no config edit, and
-no worker termination. A cold first read with no checkpoint present costs 3.53s
-once, after which reads are checkpoint-accelerated.
+The refreshed legacy contended figure (59.737s p50 / 63.463s p95) reproduces
+the live observation that each note command took roughly 55-90s. The current
+contended p95 of 1.179s is under the 2s target, with no lock bypass, no config
+edit, and no live worker termination. A cold first read with no checkpoint
+present costs 3.281s once, after which reads are checkpoint-accelerated.
 
 Reproduce:
 
@@ -127,7 +156,16 @@ PYTHONPATH=.orchestrator python3 -m pytest \
   .orchestrator/rewrite/ scripts/test_ai_status.py \
   scripts/test_verify_task_state_store.py scripts/test_status_file_guard.py \
   scripts/test_dispatch_twelve_loop_gap_2026_07_26.py -q
-→ 791 passed, 76 subtests passed
+→ 778 passed, 134 subtests passed
+```
+
+Additional worker-environment verification:
+
+```text
+PYTHONPATH=.orchestrator python3 -m pytest \
+  .orchestrator/test_adapter_fallback_policy.py \
+  .orchestrator/test_worker_runner_heartbeat.py -q
+→ 37 passed
 ```
 
 New regressions:
@@ -141,22 +179,21 @@ New regressions:
 * `test_supervisor.py` — `caught_up`/`repaired` separated in both authoritative
   and shadow mode; reconciliation replays the journal once per cycle; the report
   describes one generation even when a commit lands mid-phase; provider probes
-  run before the runtime lock is taken; lock-hold budget published and flagged.
+  and GitHub bus run before the runtime lock is taken; exact worktree base
+  prefetch also runs before admission; dispatch sync propagates both workspace
+  bindings; missing bindings fail closed; worker termination polling runs after
+  lock release and is PID-reuse safe; lock-hold budget published and flagged.
 
-## Scope not covered by this task
+## Second-pass live failures closed
 
-Acceptance item 1 names three classes of unbounded wait under the exclusive
-runtime-admission lock. Provider probes are now outside it, and the journal
-replay that made every hold multi-minute is gone. Two residual waits remain
-inside the lock and are **not** addressed here, because both need a subsystem
-split rather than a lock change:
+Four dispatches between 12:35Z and 14:42Z started real workers but immediately
+failed their governed status sync because the supervisor supplied
+`ORCH_RUN_ID` without either workspace binding. That path now propagates the
+same resolved worktree used by the Claude/Codex adapters and refuses incomplete
+or inherited lease identity.
 
-* `sync_github_bus` runs `gh` network subprocesses inside the cycle. Removing it
-  from the hold requires splitting `github_bus.sync_github_bus` into a network
-  fetch and a state apply, so only the apply runs under the lock.
-* `terminate_worker_pid` → `rewrite_worker_lifecycle.confirm_kill` polls with
-  sleeps (bounded to a few seconds) from `poll_workers` and `process_queue`.
-
-Both are now visible rather than silent: any cycle whose hold exceeds the
-configured budget publishes `runtime_lock_hold_exceeded` and logs the hold
-duration. Recommend a follow-up task for the `github_bus` fetch/apply split.
+A separate worker reproduced a stale-base failure: with
+`remote.origin.fetch=+refs/heads/master:refs/remotes/origin/master`, plain
+`git fetch origin dev` advanced `FETCH_HEAD` while leaving `origin/dev` stale.
+The integration regression builds that repository shape, proves the stale ref,
+then proves the explicit refspec advances `origin/dev` to the exact remote tip.

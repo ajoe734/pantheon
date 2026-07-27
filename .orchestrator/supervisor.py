@@ -12582,23 +12582,28 @@ def run_once(
     except Exception:
         github_runtime_snapshot = {}
     prefetched_worker_base_refs: set[str] = set()
-    repo_root = config_path(config, "status_file").parent
-    for base_ref in pending_worker_base_refs(config, github_runtime_snapshot):
-        fetched, fetch_error = _fetch_worker_base_ref(repo_root, base_ref)
-        if fetched:
-            prefetched_worker_base_refs.add(base_ref)
-            continue
-        write_activity_log(
-            config,
-            {
-                "type": "worker_worktree_base_refresh_failed",
-                "message": (
-                    f"Worker base {base_ref} could not be refreshed before "
-                    f"runtime admission: {fetch_error}"
-                ),
-                "base_ref": base_ref,
-            },
-        )
+    required_worker_base_refs = pending_worker_base_refs(
+        config,
+        github_runtime_snapshot,
+    )
+    if required_worker_base_refs:
+        repo_root = config_path(config, "status_file").parent
+        for base_ref in required_worker_base_refs:
+            fetched, fetch_error = _fetch_worker_base_ref(repo_root, base_ref)
+            if fetched:
+                prefetched_worker_base_refs.add(base_ref)
+                continue
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_worktree_base_refresh_failed",
+                    "message": (
+                        f"Worker base {base_ref} could not be refreshed before "
+                        f"runtime admission: {fetch_error}"
+                    ),
+                    "base_ref": base_ref,
+                },
+            )
     github_bus_changed = bool(
         _safe_phase(
             "sync_github_bus",
