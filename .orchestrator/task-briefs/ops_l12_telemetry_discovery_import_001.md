@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Eliminate telemetry unittest discovery loader errors
-- Status: todo
+- Status: in_progress
 - Owner: Codex
 - Reviewer: Codex2
-- Next: Chair reassigned owner from Claude to Codex: The task remained blocked after Codex was temporarily auth-paused; that pause expired at 2026-07-27T18:29:28Z, Codex GitHub access is healthy, the task is a bounded rerunnable test/evidence repair rather than a human gate, and Codex is distinct from reviewer Codex2. Task returned to todo for a blocked-owner rescue dispatch.
+- Next: Codex adopted the lane, verified the completed packaging dependency, re-cut the task evidence with AC2 passing, and is preparing the repair PR for Codex2 independent review.
 
 ## Summary
 修正 telemetry 完整 unittest discovery 的兩個裸模組 import error，讓乾淨 repo-root 與 package discovery 都能零 loader error。
