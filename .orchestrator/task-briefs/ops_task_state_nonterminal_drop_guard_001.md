@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: in_progress
 - Owner: Claude
 - Reviewer: Codex2
-- Next: Review rejected on PR #4224 head 2e8e1d7286bceb548362302b8be9f917d941102e: behavior passes 159 focused, 133 plus 25 ai_status subtests, and 399 supervisor tests; all six current-head Branch CI checks pass. Committed evidence is stale: verification.integrated_head=a593091043717da8c6c2ddd186b7314d21cb377f predates hardening commit 4503b8757fe7d3813b0c52fc0c79d52313fd50a9 and final head 2e8e1d72; integrated_dev_head=6578ef968 predates branch merge base 8d1b5077996a2d27aafb83ff5756f0290d0e90bc and current dev 643181a067ec5c344faac0766c69de0d5cfb32eb. Manifest lacks final head/base and immutable source/test/evidence blob identities; observed blobs are task_state_store dee49ce7, store tests 40f15003, verifier 80eceac5, verifier tests 11e8d20f, evidence d94d7bbb. PR is OPEN/BEHIND, unmerged, auto-merge disabled. Refresh from dev, recut evidence.json and evidence.sha256 with hardening commit plus new exact final head/base, immutable blob hashes, and exact-head CI/local checks, then return to Codex2 review.
+- Next: Round-2 manifest findings are remediated with no code change. Branch is refreshed from dev 643181a06, PR #4224 is OPEN/CLEAN, and all six Branch CI Gate checks plus all three local suites are green at head 2ab2ca7c0. evidence.json now pins that exact head, its CI run ids, the immutable source blob ids, and a structural rule a reviewer can re-derive at the final head. Returning to Codex2 for independent review.
 
 ## Summary
 防止 authoritative journal 在仍有非終態任務時被 worker 或 supervisor 測試／投影一次寫成空 task state，避免整批 workers 被錯誤 supersede。
@@ -46,6 +46,15 @@ Generated in the worker workspace because the supervisor root did not have a tas
   head/base/merge-base, the hardening commit, and the immutable git blob
   ids of every source, test, and verifier file. `evidence.sha256` is
   recut over the new manifest.
+- Round-2 recut landed as docs-only commit `2ab2ca7c0`, and the manifest is
+  re-pinned to it: all six Branch CI Gate checks pass there (push run
+  `30226361956`, pull_request run `30226362879`) and all three local suites
+  were re-run green there (159; 133 plus 25 subtests; 399). Source blob ids
+  are unchanged from round-2 reviewed head `2e8e1d728`. Because a manifest
+  cannot record the id of the commit that carries it,
+  `verification.manifest_commit_note` states the binding structurally: the
+  final head differs from `2ab2ca7c0` only in this brief and the two evidence
+  files, which `git diff --name-only 2ab2ca7c0 <final-head>` confirms.
 - Not changing: hash-chain and event-digest validation, journal storage
   layout, `.orchestrator/config.json`, supervisor dispatch policy, and the
   `ai_status` archive/prune flow.

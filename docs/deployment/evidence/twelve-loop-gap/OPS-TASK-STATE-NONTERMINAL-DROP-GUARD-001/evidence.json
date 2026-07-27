@@ -9,7 +9,7 @@
   "task_branch": "task/OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001",
   "base_branch": "dev",
   "created_at": "2026-07-26T22:20:00Z",
-  "updated_at": "2026-07-26T23:56:00Z",
+  "updated_at": "2026-07-27T00:35:00Z",
   "incident": {
     "gap_id": "GAP-001",
     "delta_document": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/POST_DISPATCH_RUNTIME_GAP_DELTA.md",
@@ -106,7 +106,9 @@
         "code": "None. No implementation, test, or verifier file changed in this round; the blob identities under source_identity are byte-identical to the reviewed head 2e8e1d72, which a reviewer can confirm with git ls-tree at the final head.",
         "refresh": "The branch was refreshed from dev by merging 643181a067ec5c344faac0766c69de0d5cfb32eb, producing integration head 8878dc217ae70cbd7127509cb4e1f8174963e7b4. The PR merge state moved from BEHIND to CLEAN.",
         "manifest": "verification now records the exact full integration head, the exact full dev head and merge base, the hardening commit, and the immutable git blob ids of every source, test, and evidence file. All three local suites and all six Branch CI Gate checks were re-run at that exact head and are recorded under verification.commands and ci.",
-        "parent_commit": "2e8e1d7286bceb548362302b8be9f917d941102e"
+        "parent_commit": "2e8e1d7286bceb548362302b8be9f917d941102e",
+        "recut_commit": "2ab2ca7c03e89174531cbbcb73da73fa52e93ef7",
+        "recut_commit_result": "The recut landed as docs-only commit 2ab2ca7c03e89174531cbbcb73da73fa52e93ef7 on top of verified head 8878dc217ae70cbd7127509cb4e1f8174963e7b4. Both Branch CI Gate runs at 2ab2ca7c0 (push 30226361956, pull_request 30226362879) concluded success, so all six checks pass at that head, and all three local suites were re-run green there. That result is now recorded under verification and ci below; this manifest revision is the docs-only commit above 2ab2ca7c0."
       }
     }
   ],
@@ -139,15 +141,14 @@
     {
       "criterion": "Relevant tests PR checks independent review and merge to dev are required",
       "status": "pending_review",
-      "proof": "All three local suites re-ran green at the exact verified head 8878dc217ae70cbd7127509cb4e1f8174963e7b4 (159; 133 plus 25 subtests; 399), and all six Branch CI Gate checks pass at that same head across the push and pull_request runs recorded under ci. PR #4224 is refreshed from dev 643181a067ec5c344faac0766c69de0d5cfb32eb and reports CLEAN. The head returns to Codex2 for independent review; the merge into dev remains outstanding at the time of this cut."
+      "proof": "All three local suites re-ran green at the exact verified head 2ab2ca7c03e89174531cbbcb73da73fa52e93ef7 (159; 133 plus 25 subtests; 399), and all six Branch CI Gate checks pass at that same head across the push and pull_request runs recorded under ci. PR #4224 is refreshed from dev 643181a067ec5c344faac0766c69de0d5cfb32eb and reports CLEAN. The head returns to Codex2 for independent review; the merge into dev remains outstanding at the time of this cut."
     }
   ],
   "verification": {
     "python": "/home/lupin/pantheon/.venv/bin/python3",
-    "verified_head": "8878dc217ae70cbd7127509cb4e1f8174963e7b4",
+    "verified_head": "2ab2ca7c03e89174531cbbcb73da73fa52e93ef7",
     "verified_head_parents": {
-      "task_branch": "2e8e1d7286bceb548362302b8be9f917d941102e",
-      "dev": "643181a067ec5c344faac0766c69de0d5cfb32eb"
+      "task_branch": "8878dc217ae70cbd7127509cb4e1f8174963e7b4"
     },
     "base_branch_head": "643181a067ec5c344faac0766c69de0d5cfb32eb",
     "merge_base_with_dev": "643181a067ec5c344faac0766c69de0d5cfb32eb",
@@ -155,12 +156,13 @@
       "round_1_reviewed_head": "fb5f8c58b30fb3bdcf6ad7be03c5e2281a7773a3",
       "hardening_commit": "4503b8757fe7d3813b0c52fc0c79d52313fd50a9",
       "round_2_reviewed_head": "2e8e1d7286bceb548362302b8be9f917d941102e",
+      "round_2_integration_merge": "8878dc217ae70cbd7127509cb4e1f8174963e7b4",
       "stale_integration_merge": "a593091043717da8c6c2ddd186b7314d21cb377f",
       "stale_dev_head": "6578ef968f7e0374b046de0afb5b07ce2f81558e"
     },
-    "manifest_commit_note": "This manifest and the task brief are committed on top of 8878dc217ae70cbd7127509cb4e1f8174963e7b4, so the final PR head is one docs-only commit above the verified head. That commit changes only the two evidence files and the task brief; every implementation, test, and verifier blob id under source_identity is unchanged from the verified head and from round-2 reviewed head 2e8e1d72, and can be re-derived at the final head with: git ls-tree -r <final-head> -- .orchestrator/rewrite/task_state_store.py .orchestrator/rewrite/test_task_state_store.py conftest.py scripts/verify_task_state_store.py scripts/test_verify_task_state_store.py",
+    "manifest_commit_note": "A manifest cannot record the git id of the commit that carries it, so the binding is stated structurally. verified_head 2ab2ca7c03e89174531cbbcb73da73fa52e93ef7 is the pushed head where every check under verification.commands and ci was actually observed. This manifest revision is committed directly on top of it and changes only three paths: this file, evidence.sha256, and the task brief .orchestrator/task-briefs/ops_task_state_nonterminal_drop_guard_001.md. No implementation, test, or verifier file changes in it. A reviewer can confirm the reviewed artifact at whatever the final PR head is with: git diff --name-only 2ab2ca7c03e89174531cbbcb73da73fa52e93ef7 <final-head> (must list only those three docs paths) and git ls-tree -r <final-head> -- .orchestrator/rewrite/task_state_store.py .orchestrator/rewrite/test_task_state_store.py conftest.py scripts/verify_task_state_store.py scripts/test_verify_task_state_store.py (must match source_identity.blobs, which are also byte-identical to round-2 reviewed head 2e8e1d72).",
     "source_identity": {
-      "resolved_at_commit": "8878dc217ae70cbd7127509cb4e1f8174963e7b4",
+      "resolved_at_commit": "2ab2ca7c03e89174531cbbcb73da73fa52e93ef7",
       "blob_algorithm": "git blob sha1 (git ls-tree -r)",
       "blobs": {
         ".orchestrator/rewrite/task_state_store.py": "dee49ce7b8facb953478155181112b6d4f098cc0",
@@ -170,49 +172,57 @@
         "scripts/test_verify_task_state_store.py": "11e8d20f5312f444ebb46041cf4fdb22d6717e32"
       },
       "unchanged_since_reviewed_head": "2e8e1d7286bceb548362302b8be9f917d941102e",
-      "evidence_manifest_identity": "docs/deployment/evidence/twelve-loop-gap/OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001/evidence.sha256 carries the sha256 of this file; a git blob id for evidence.json cannot be self-recorded inside evidence.json, so evidence.sha256 is the binding identity for this manifest. The reviewed-head manifest blob was d94d7bbbef003f988d4dc28e8bbd8e0b071f6e1d with sha256 38df0b1994ff682d6bad573fe6067c0a9c2d79e33fd2282de5906dd8c17dcf1c."
+      "evidence_manifest_identity": "docs/deployment/evidence/twelve-loop-gap/OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001/evidence.sha256 carries the sha256 of this file; a git blob id for evidence.json cannot be self-recorded inside evidence.json, so evidence.sha256 is the binding identity for this manifest. The round-2 reviewed-head manifest blob was d94d7bbbef003f988d4dc28e8bbd8e0b071f6e1d with sha256 38df0b1994ff682d6bad573fe6067c0a9c2d79e33fd2282de5906dd8c17dcf1c; the superseded recut at 2ab2ca7c0 had sha256 77b550aaedabcf77ecf27cc53f035c4cd80311dc06a8d5af60ba4f3ff07744c8."
     },
     "commands": [
       {
         "command": "/home/lupin/pantheon/.venv/bin/pytest .orchestrator/rewrite scripts/test_verify_task_state_store.py -q",
         "result": "159 passed",
-        "head": "8878dc217ae70cbd7127509cb4e1f8174963e7b4"
+        "head": "2ab2ca7c03e89174531cbbcb73da73fa52e93ef7"
       },
       {
         "command": "/home/lupin/pantheon/.venv/bin/pytest scripts/test_ai_status.py -q",
         "result": "133 passed, 25 subtests passed",
-        "head": "8878dc217ae70cbd7127509cb4e1f8174963e7b4"
+        "head": "2ab2ca7c03e89174531cbbcb73da73fa52e93ef7"
       },
       {
         "command": "PYTHONPATH=.orchestrator /home/lupin/pantheon/.venv/bin/pytest .orchestrator/test_supervisor.py -q",
         "result": "399 passed",
-        "head": "8878dc217ae70cbd7127509cb4e1f8174963e7b4"
+        "head": "2ab2ca7c03e89174531cbbcb73da73fa52e93ef7"
+      }
+    ],
+    "earlier_verified_heads": [
+      {
+        "head": "8878dc217ae70cbd7127509cb4e1f8174963e7b4",
+        "suites": "159; 133 plus 25 subtests; 399",
+        "ci_runs": [30226177755, 30226178863],
+        "note": "Round-2 integration merge of dev 643181a06 into 2e8e1d72. Same three suites and same six checks, all green. Its source blobs are identical to those recorded under source_identity."
       }
     ]
   },
   "ci": {
     "pull_request": 4224,
-    "head": "8878dc217ae70cbd7127509cb4e1f8174963e7b4",
+    "head": "2ab2ca7c03e89174531cbbcb73da73fa52e93ef7",
     "merge_state_status": "CLEAN",
     "workflow": "Branch CI Gate",
     "runs": [
       {
         "event": "push",
-        "id": 30226177755,
+        "id": 30226361956,
         "conclusion": "success",
-        "url": "https://github.com/ajoe734/pantheon/actions/runs/30226177755",
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30226361956",
         "checks": ["Commit trailers", "Runtime mirror guard", "Smoke acceptance"]
       },
       {
         "event": "pull_request",
-        "id": 30226178863,
+        "id": 30226362879,
         "conclusion": "success",
-        "url": "https://github.com/ajoe734/pantheon/actions/runs/30226178863",
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30226362879",
         "checks": ["Commit trailers", "Runtime mirror guard", "Smoke acceptance"]
       }
     ],
     "all_checks_pass": true,
-    "note": "Six checks total, three per workflow run, all pass at head 8878dc217ae70cbd7127509cb4e1f8174963e7b4. The docs-only manifest commit that carries this file re-triggers the same gate; its result is visible on the final PR head."
+    "note": "Six checks total, three per workflow run, all pass at head 2ab2ca7c03e89174531cbbcb73da73fa52e93ef7. The docs-only commit that carries this manifest revision re-triggers the same gate; its result is visible on the final PR head and touches no source file, per manifest_commit_note."
   },
   "known_limitations": [
     "scripts/ai_status.py prune_archived_active_tasks removes an active row whose id already has an archive snapshot. When such a row is still nonterminal that is a real removal, so the guard now refuses it until the caller supplies an audited drain marker. This repair path is outside this task's artifact scope and is left to a follow-up in ai_status.py; the normal done flow is unaffected because a task row is archived and pruned only after it is already terminal in the predecessor commit.",
@@ -236,6 +246,7 @@
       "2e8e1d7286bceb548362302b8be9f917d941102e",
       "8878dc217ae70cbd7127509cb4e1f8174963e7b4"
     ],
-    "latest_dev_integration_merge": "8878dc217ae70cbd7127509cb4e1f8174963e7b4"
+    "latest_dev_integration_merge": "8878dc217ae70cbd7127509cb4e1f8174963e7b4",
+    "round_2_evidence_recut": "2ab2ca7c03e89174531cbbcb73da73fa52e93ef7"
   }
 }
