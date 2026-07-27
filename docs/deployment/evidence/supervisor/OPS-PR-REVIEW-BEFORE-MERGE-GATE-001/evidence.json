@@ -333,7 +333,7 @@
   "validation": {
     "revalidation": {
       "actor": "Codex",
-      "reason": "Owner reassignment followed exact-head rejections that found approval-binding, archive-case, helper-revocation, and stale-base defects. The latest independent review rejected PR #4218 head dcd4b9cc because auto_integrator trusted a zero disable-auto exit without reading live autoMergeRequest back. Codex preserved the rejection, added mandatory readback with exit-zero/still-armed, unreadable, and nonzero/already-off regressions, normalized the gate/integrator regression imports to one module identity, explicitly composed current dev including PRs #4254 and #4255, and reran the full focused matrix.",
+      "reason": "Owner reassignment followed exact-head rejections that found approval-binding, archive-case, helper-revocation, stale-base, and revocation-readback defects. After Codex repaired the zero-exit/still-armed path, an independent review dispatch named PR #4218 head 30b57020 but observed the PR already at 4cfd0985; Codex2 rejected reuse of the old-head review. Codex preserved that rejection, fast-forwarded the intervening task commits, explicitly composed current dev through PR #4256 while preserving review_binding and command-runtime REVIEW_* isolation, and reran the full focused matrix including all four revocation outcomes.",
       "adopted_predecessor_commit": "7759ed36666ce62a7f912a9c85f74cf409cff095",
       "rejected_review_head": "5a9ad1643eba2580bf8a51c71a6f3a43ad8c57b6",
       "repair_anchor_commit": "e971a2c9441c0611fa7070f7554805e3ccfcb2b7",
@@ -343,8 +343,11 @@
       "revocation_readback_rejected_review_head": "dcd4b9ccf80d520c6d95cb84e5e4a83091c71dc3",
       "revocation_readback_rejected_base": "6692d51c9bc5a48ffcbaac8cf817b635351a7c9a",
       "revocation_readback_anchor_commit": "aff6e98ae538db7d1593309d0431d12bfb271549",
-      "validated_dev_base": "33e1c4d64e4accceab4d803e7b4ce2324f44306a",
-      "validated_tree_commit": "ca74166d2e1ff27097995bb07bf4e817041dc22d"
+      "latest_rejected_dispatched_head": "30b57020d73ba7aefd261a12326b83114d83eec2",
+      "latest_rejected_observed_pr_head": "4cfd09852fc3dcaf6490cd25e6d5a35e5d6b6873",
+      "latest_rejection_anchor_commit": "456982f4d8566befb60b54d221065c4573cc423f",
+      "validated_dev_base": "e1512d207d9b5df3739ac7b7d0cac202b2798ac8",
+      "validated_tree_commit": "7fb2f318783114d7cbd8ecd981390e84f2af355a"
     },
     "commands": [
       {
@@ -363,8 +366,8 @@
         "result": "pass"
       },
       {
-        "command": ".venv-pantheon/bin/python3 -m unittest -v scripts.git.test_task_review_merge_gate.IntegratorGateTests.test_successful_revocation_that_still_reads_armed_never_merges scripts.git.test_task_review_merge_gate.IntegratorGateTests.test_unreadable_revocation_readback_never_reaches_the_merge scripts.git.test_task_review_merge_gate.IntegratorGateTests.test_nonzero_revocation_can_continue_only_when_readback_proves_off",
-        "conclusion": "Ran the three exact revocation-readback regressions - OK",
+        "command": ".venv-pantheon/bin/python3 -m unittest -v scripts.git.test_task_review_merge_gate.IntegratorGateTests.test_successful_revocation_that_still_reads_armed_never_merges scripts.git.test_task_review_merge_gate.IntegratorGateTests.test_unreadable_revocation_readback_never_reaches_the_merge scripts.git.test_task_review_merge_gate.IntegratorGateTests.test_failed_auto_merge_revocation_never_reaches_the_merge scripts.git.test_task_review_merge_gate.IntegratorGateTests.test_nonzero_revocation_can_continue_only_when_readback_proves_off",
+        "conclusion": "Ran the four exact revocation-readback regressions covering exit-zero/still-armed, unreadable, nonzero/still-armed, and nonzero/already-off - OK",
         "result": "pass"
       },
       {
@@ -374,12 +377,12 @@
       },
       {
         "command": "/home/lupin/pantheon/.venv/bin/python -m pytest scripts/git/test_task_review_merge_gate.py scripts/git/test_auto_integrator.py scripts/git/test_git_workflow_helpers.py scripts/git/test_task_pr_triage.py scripts/git/test_index_safety.py scripts/test_ai_status.py scripts/git/test_task_git_helpers_refspec.py -q",
-        "conclusion": "332 passed, 31 subtests passed after composing current dev",
+        "conclusion": "333 passed, 31 subtests passed after composing current dev",
         "result": "pass"
       },
       {
         "command": "/home/lupin/pantheon/.venv/bin/python -m pytest scripts/git/test_task_review_merge_gate.py scripts/git/test_auto_integrator.py scripts/git/test_git_workflow_helpers.py scripts/git/test_task_pr_triage.py scripts/git/test_index_safety.py scripts/test_ai_status.py scripts/git/test_task_git_helpers_refspec.py scripts/test_status_command_runtime_pin.py scripts/test_nightly_publish_cut.py -q",
-        "conclusion": "341 passed, 45 subtests passed after composing current dev through PRs #4254 and #4255",
+        "conclusion": "341 passed, 45 subtests passed after composing current dev through PR #4256",
         "result": "pass"
       },
       {
@@ -419,7 +422,7 @@
       },
       {
         "command": ".venv-pantheon/bin/python3 scripts/test_ai_status.py",
-        "conclusion": "Ran 141 tests - OK after composing current dev",
+        "conclusion": "Ran 142 tests - OK after composing current dev",
         "result": "pass"
       },
       {

@@ -17,13 +17,19 @@ that rejection, fetched `dev` through the explicit remote-tracking refspec,
 and composed authoritative base `6692d51c9bc5a48ffcbaac8cf817b635351a7c9a`.
 The next exact-head review rejected `dcd4b9ccf80d520c6d95cb84e5e4a83091c71dc3`
 because the integrator trusted a zero `--disable-auto` exit without reading
-live `autoMergeRequest` back. Codex added that mandatory readback, composed
-current authoritative base `33e1c4d64e4accceab4d803e7b4ce2324f44306a`, and
-revalidated implementation tree
-`ca74166d2e1ff27097995bb07bf4e817041dc22d` before this evidence-only refresh.
-That final implementation pass also normalizes the gate/integrator regression
-imports to one module identity so package-mode pytest and direct script
-execution exercise the same `CommandFailure` class.
+live `autoMergeRequest` back. Codex added that mandatory readback and
+normalized the gate/integrator regression imports to one module identity so
+package-mode pytest and direct script execution exercise the same
+`CommandFailure` class.
+
+The following review dispatch named exact head
+`30b57020d73ba7aefd261a12326b83114d83eec2`, but PR #4218 had already moved to
+`4cfd09852fc3dcaf6490cd25e6d5a35e5d6b6873`; Codex2 rejected reuse of the
+old-head review. Codex preserved that rejection in anchor
+`456982f4d8566befb60b54d221065c4573cc423f`, fast-forwarded to the remote task
+work, composed current authoritative base
+`e1512d207d9b5df3739ac7b7d0cac202b2798ac8`, and revalidated tree
+`7fb2f318783114d7cbd8ecd981390e84f2af355a` before this evidence-only refresh.
 
 Scope rule honoured throughout: **no `.orchestrator/config.json` edit**, no
 hand-edited task board, no owner or reviewer action performed on behalf of
@@ -377,8 +383,8 @@ The full map of PR → entry point → fixture is the `live_regressions` table i
 See `validation.txt` for the captured transcript.
 
 This pass ran against authoritative `origin/dev`
-`33e1c4d64e4accceab4d803e7b4ce2324f44306a` and validated tree
-`ca74166d2e1ff27097995bb07bf4e817041dc22d`.
+`e1512d207d9b5df3739ac7b7d0cac202b2798ac8` and validated tree
+`7fb2f318783114d7cbd8ecd981390e84f2af355a`.
 
 ```
 .venv-pantheon/bin/python3 scripts/git/test_task_review_merge_gate.py
@@ -393,12 +399,13 @@ This pass ran against authoritative `origin/dev`
                                                        Ran  24 tests - OK
 .venv-pantheon/bin/python3 scripts/git/test_index_safety.py
                                                        Ran  17 tests - OK
-.venv-pantheon/bin/python3 scripts/test_ai_status.py   Ran 141 tests - OK
+.venv-pantheon/bin/python3 scripts/test_ai_status.py   Ran 142 tests - OK
+four exact integrator revocation-readback cases           all OK
 bash -n task_finalize.sh safe_pr.sh nightly_publish.sh        syntax ok
 py_compile task_review_merge_gate.py auto_integrator.py ai_status.py
                                                         compile ok
 git diff --check origin/dev...HEAD                         clean
-pytest combined focused matrix                              332 passed, 31 subtests
+pytest combined focused matrix                              333 passed, 31 subtests
 pytest post-dev-compose matrix                              341 passed, 45 subtests
 check_commit_trailers origin/dev..HEAD --skip-merge         ok
 ```
