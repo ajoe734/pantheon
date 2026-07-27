@@ -805,6 +805,16 @@
       "sequence": 17,
       "sha": "6b6bab3b2392fb9a5f03e5cc6586cbcef78f2872",
       "status": "pass"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "independent_review",
+      "note": "Approved sequence-17 at PR #4261 exact immutable owner head f5d6191afccf82b342e12b3282e6b5ba66d0a782 against origin/dev 5a2fc69a3b432e0d1bc528981d66a2ee32defa71 with zero base-only commits. Independently verified merged delivery PRs #4183, #4205, #4206, and #4210 and their dev ancestry; eight green PR checks with auto-merge disabled; 296 focused tests with 39 passing subtests; product-evidence schema, companion checksum, canonical catalog digest, nine source hashes, py_compile, task-scoped guardrail, and git diff --check. Security review reconfirmed explicit Human/Ops JWT or cookie principal classification, MFA and role enforcement, exact catalog/manifest/target/FE/BFF binding, candidate and fleet self-sign rejection, canonical supervisor lease recovery with erased workspace bindings, pre-access forbidden-root validation, revoked and consumed ledger-tail containment, competing-decision serialization, and exactly-once done consumption. Sequence-12 was treated only as append-only history and was not reused.",
+      "recorded_at": "2026-07-27T19:19:05Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4261",
+      "sequence": 18,
+      "sha": "f5d6191afccf82b342e12b3282e6b5ba66d0a782",
+      "status": "approved"
     }
   ]
 }
