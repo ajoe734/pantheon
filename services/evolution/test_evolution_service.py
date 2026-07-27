@@ -24,6 +24,7 @@ import tempfile
 import uuid
 import json
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +49,11 @@ from services.foundation import (  # noqa: E402
     TraceContext,
 )
 from services.evolution import main as evo_main  # noqa: E402
+from services.evolution.testing_receipts import (  # noqa: E402
+    ALL_PLANES,
+    install_scripted_adapter,
+    receipt_body,
+)
 from services.evolution import scheduler_worker  # noqa: E402
 from services.evolution.main import app  # noqa: E402
 
@@ -254,6 +260,28 @@ def advance_to_reviewed(decision_id: str, apv_id: str = "apv-001") -> dict:
     return r.json()
 
 
+@pytest.fixture(autouse=True)
+def scripted_receipts():
+    """Give /execute a downstream it can really read back.
+
+    An EvolutionDecision now only reaches ``executed`` on a terminal receipt the
+    service re-reads from the plane that did the work.  These tests are about
+    lifecycle, cooldown, and reporting invariants rather than about the receipt
+    gate itself, so they install a scripted downstream that reports terminal
+    success; the gate's own behaviour is covered in
+    ``test_l12_evo_001_dispatch_outbox.py``.
+    """
+    original = dict(evo_main.receipt_registry)
+    adapter = install_scripted_adapter(
+        evo_main.receipt_registry, *ALL_PLANES, always_succeeds=True
+    )
+    try:
+        yield adapter
+    finally:
+        evo_main.receipt_registry.clear()
+        evo_main.receipt_registry.update(original)
+
+
 def advance_to_approved(decision_id: str, actor_role: str = "reviewer_on_duty") -> dict:
     r = client.post(f"/api/evolution/proposals/{decision_id}/approve", json={
         "actor_role": actor_role,
@@ -265,6 +293,7 @@ def advance_to_approved(decision_id: str, actor_role: str = "reviewer_on_duty") 
 
 def advance_to_executed(decision_id: str) -> dict:
     r = client.post(f"/api/evolution/proposals/{decision_id}/execute", json={
+        "execution_receipt": receipt_body(decision_id),
         "actor_role": "evolution_controller",
         "actor_id": "evo-ctrl",
     })
@@ -280,6 +309,49 @@ def test_health():
     r = client.get("/health")
     assert r.status_code == 200
     assert r.json()["status"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# Evolution input coverage
+# ---------------------------------------------------------------------------
+
+def test_input_coverage_api_fails_closed_when_no_valid_thresholds(monkeypatch):
+    observed_at = datetime.now(timezone.utc).replace(microsecond=0)
+    summary = {
+        "runtime_id": "runtime-no-threshold-policy",
+        "binding_id": "binding-no-threshold-policy",
+        "deployment_stage": "paper",
+        "deployment_plan_id": "plan-no-threshold-policy",
+        "capital_pool_id": "pool-no-threshold-policy",
+        "persona_capital_binding_id": "pcb-no-threshold-policy",
+        "artifact_id": "artifact-no-threshold-policy",
+        "artifact_version": "1.0.0",
+        "last_heartbeat_at": observed_at.isoformat().replace("+00:00", "Z"),
+    }
+    monkeypatch.setattr(evo_main, "load_thresholds", lambda: [])
+    monkeypatch.setattr(evo_main, "load_baselines", lambda: {})
+    monkeypatch.setattr(
+        evo_main,
+        "default_fetch_summaries",
+        lambda *_args, **_kwargs: [summary],
+    )
+
+    response = client.get("/api/evolution/input-coverage")
+
+    assert response.status_code == 200
+    coverage = response.json()
+    assert coverage["thresholds_loaded"] == 0
+    assert coverage["thresholds_considered"] == []
+    assert coverage["monitored_artifacts"] == 1
+    assert coverage["complete_artifacts"] == 0
+    assert coverage["incomplete_artifacts"] == 1
+    assert coverage["coverage_complete"] is False
+    assert coverage["artifacts"][0]["complete"] is False
+    assert any("no valid enabled thresholds" in item for item in coverage["diagnostics"])
+    assert any(
+        "no valid enabled thresholds" in gap
+        for gap in coverage["artifacts"][0]["gaps"]
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -396,6 +468,7 @@ def test_full_lifecycle_low_risk():
 
     # Step 4: execute
     r = client.post(f"/api/evolution/proposals/{did}/execute", json={
+        "execution_receipt": receipt_body(did),
         "actor_role": "evolution_controller",
         "actor_id": "evo-ctrl",
     })
@@ -444,6 +517,7 @@ def test_full_lifecycle_medium_risk_freeze_paper():
     }).raise_for_status()
 
     r = client.post(f"/api/evolution/proposals/{did}/execute", json={
+        "execution_receipt": receipt_body(did),
         "actor_role": "evolution_controller",
         "actor_id": "evo-ctrl",
     })
@@ -475,6 +549,7 @@ def test_full_lifecycle_high_risk_freeze_live():
     }).raise_for_status()
 
     r = client.post(f"/api/evolution/proposals/{did}/execute", json={
+        "execution_receipt": receipt_body(did),
         "actor_role": "evolution_controller",
         "actor_id": "evo-ctrl",
     })
@@ -519,6 +594,7 @@ def test_execute_wrong_role_rejected():
     advance_to_reviewed(d["decision_id"])
     advance_to_approved(d["decision_id"])
     r = client.post(f"/api/evolution/proposals/{d['decision_id']}/execute", json={
+        "execution_receipt": receipt_body(d['decision_id']),
         "actor_role": "reviewer_on_duty",  # not a valid execution role
         "actor_id": "actor-003",
     })
@@ -600,6 +676,7 @@ def test_cannot_approve_from_proposed():
 def test_cannot_execute_from_proposed():
     d = propose()
     r = client.post(f"/api/evolution/proposals/{d['decision_id']}/execute", json={
+        "execution_receipt": receipt_body(d['decision_id']),
         "actor_role": "evolution_controller",
         "actor_id": "evo-ctrl",
     })
@@ -888,6 +965,7 @@ def test_execute_invalid_freeze_mode_returns_400():
     advance_to_reviewed(d["decision_id"])
     advance_to_approved(d["decision_id"])
     r = client.post(f"/api/evolution/proposals/{d['decision_id']}/execute", json={
+        "execution_receipt": receipt_body(d['decision_id']),
         "actor_role": "evolution_controller",
         "actor_id": "evo-ctrl",
         "freeze_mode": "not_a_valid_freeze_mode",
@@ -1833,7 +1911,9 @@ def test_observation_window_report_open_window_contains_evidence_refs():
     assert report["active_until"] == executed["observation_window_ends_at"]
     assert report["seconds_since_observation_start"] == 86400
     assert report["seconds_until_observation_end"] > 0
-    assert report["execution"]["execution_ref_id"] == f"dispatch-{did}"
+    # execution_ref_id now cites the downstream record the terminal receipt was
+    # read back from, not a locally minted dispatch command id.
+    assert report["execution"]["execution_ref_id"] == receipt_body(did)["downstream_ref_id"]
     assert report["followthrough_refs"][0]["ref_type"] == "dispatch_command"
     assert report["threshold_snapshots"][0]["metric_name"] == "sharpe_pct_of_baseline"
     assert "EVOLUTION_COOLDOWN_AND_CONVERGENCE_POLICY.md §5.2-§5.4" in report["policy_refs"]
@@ -1972,6 +2052,7 @@ def test_rollback_followthrough_endpoint_requires_approved_freeze():
     client.post("/api/evolution/proposals", json=body).raise_for_status()
     # Still proposed — rollback followthrough must be rejected
     r = client.post(f"/api/evolution/proposals/{did}/rollback-followthrough", json={
+        "execution_receipt": receipt_body(did),
         "actor_role": "evolution_controller",
         "actor_id": "evo-ctrl",
     })
@@ -2000,6 +2081,7 @@ def test_rollback_followthrough_executes_approved_freeze():
     }).raise_for_status()
 
     r = client.post(f"/api/evolution/proposals/{did}/rollback-followthrough", json={
+        "execution_receipt": receipt_body(did),
         "actor_role": "evolution_controller",
         "actor_id": "evo-ctrl",
         "active_binding_id": "binding-rb-live-001",
@@ -2031,6 +2113,7 @@ def test_redeploy_followthrough_rejected_for_executed_freeze():
         "actor_id": "committee-rd",
     }).raise_for_status()
     client.post(f"/api/evolution/proposals/{did}/execute", json={
+        "execution_receipt": receipt_body(did),
         "actor_role": "evolution_controller",
         "actor_id": "evo-ctrl",
     }).raise_for_status()
@@ -2065,6 +2148,7 @@ def test_rollback_followthrough_requires_active_binding_id():
         "actor_id": "committee-nb",
     }).raise_for_status()
     r = client.post(f"/api/evolution/proposals/{did}/rollback-followthrough", json={
+        "execution_receipt": receipt_body(did),
         "actor_role": "evolution_controller",
         "actor_id": "evo-ctrl",
     })

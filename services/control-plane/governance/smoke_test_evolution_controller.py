@@ -21,9 +21,37 @@ from evolution_decision import (
     EvolutionActionType,
     EvolutionActorRole,
     EvolutionDecision,
+    ExecutionResult,
+    ExecutionStatus,
     ThresholdSignalType,
     ThresholdSnapshot,
 )
+
+
+def route_and_execute(controller, decision, *, actor_id, executed_at, **dispatch_kwargs):
+    """Route an approved decision, then execute it on a terminal receipt.
+
+    ``EvolutionDecision.execute`` refuses the ``submitted`` dispatch intent
+    that ``EvolutionController.execute_approved`` composes: only a real
+    downstream terminal readback may move a decision to ``executed``
+    (L12-EVO-001).  This smoke test checks routing, so it dispatches and then
+    supplies the terminal receipt the downstream plane would return.
+    """
+    outcome = controller.dispatch_approved(decision, executed_at=executed_at, **dispatch_kwargs)
+    decision.execute(
+        EvolutionActorRole.EVOLUTION_CONTROLLER,
+        actor_id,
+        ExecutionResult(
+            status=ExecutionStatus.SUCCEEDED,
+            plane=outcome.execution_result.plane,
+            executed_at=executed_at,
+            execution_ref_id=outcome.primary_command.command_id,
+            outcome_summary=outcome.execution_result.outcome_summary,
+        ),
+        cooldown_ends_at=outcome.primary_command.cooldown_ends_at,
+        observation_window_ends_at=outcome.primary_command.observation_window_ends_at,
+    )
+    return outcome
 
 PASS = 0
 FAIL = 0
@@ -112,7 +140,8 @@ def main() -> int:
         action_type=EvolutionActionType.FREEZE,
         target_stage="live",
     )
-    outcome = controller.execute_approved(
+    outcome = route_and_execute(
+        controller,
         freeze_live,
         actor_id="controller-01",
         executed_at="2026-04-11T10:00:00Z",
@@ -128,7 +157,8 @@ def main() -> int:
         action_type=EvolutionActionType.FREEZE,
         target_stage="live",
     )
-    outcome = controller.execute_approved(
+    outcome = route_and_execute(
+        controller,
         freeze_stage,
         actor_id="controller-01",
         executed_at="2026-04-11T10:00:00Z",
@@ -144,7 +174,8 @@ def main() -> int:
         action_type=EvolutionActionType.FREEZE,
         target_stage="live",
     )
-    outcome = controller.execute_approved(
+    outcome = route_and_execute(
+        controller,
         freeze_rollback,
         actor_id="controller-01",
         executed_at="2026-04-11T10:00:00Z",
@@ -164,7 +195,8 @@ def main() -> int:
         action_type=EvolutionActionType.RETRAIN,
         target_stage=None,
     )
-    outcome = controller.execute_approved(
+    outcome = route_and_execute(
+        controller,
         retrain,
         actor_id="controller-01",
         executed_at="2026-04-11T10:00:00Z",

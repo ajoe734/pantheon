@@ -1,15 +1,29 @@
 """
-Evolution dispatch worker — LOOP-AUTO-EVO-004.
+Evolution dispatch worker — durable outbox delivery (L12-EVO-001).
 
-Polls for approved EvolutionDecisions and dispatches each through the correct
-gated execution path (research / governance / runtime) via the evolution
-service API. No direct production mutation is allowed; all dispatches go
-through the boundary-enforced /execute endpoint.
+Polls the durable dispatch outbox rather than the approved-decision list, drives
+each claimed intent to a real downstream, and only asks the evolution service to
+execute a decision once the downstream reports a terminal receipt.
 
-Acceptance (LOOP-AUTO-EVO-004):
-- Approved action dispatches only through allowed gated path.
-- Production-affecting mutation requires correct approval gate.
-- Dispatch result is visible in EvolutionDecision follow-through.
+What each tick does:
+
+1. **Reconcile.** Prepared intents whose decision is durably approved are
+   activated.  This is the crash-after-approval recovery path: approval and
+   activation are separate writes, so a process that died between them left an
+   inert intent that would otherwise never be dispatched.
+2. **Claim.** Due records are leased, so two workers cannot both dispatch the
+   same approved action.
+3. **Submit and read back.** The plane adapter submits idempotently and then
+   reads the downstream's own status.  A run that is still executing is left
+   claimed until its lease expires — it is a healthy in-flight dispatch and must
+   not consume the retry budget reserved for real failures.
+4. **Converge.** A terminal success calls ``/execute`` with the receipt, which
+   the service independently re-reads before moving the decision to ``executed``.
+   A terminal downstream failure, or a downstream that ran while the decision
+   could not record it, records a durable compensation and dead-letters.
+
+The worker never marks a decision executed itself, never fabricates a receipt,
+and never bypasses the boundary gate on ``/execute``.
 """
 
 from __future__ import annotations
@@ -21,21 +35,32 @@ import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Mapping
 
+from services.evolution.dispatch_outbox import (
+    CompensationLedger,
+    EvolutionDispatchOutbox,
+    build_dispatch_outbox_store,
+    reconcile_dispatch_outbox,
+)
+from services.evolution.dispatch_receipts import (
+    OUTCOME_FAILED,
+    OUTCOME_PENDING,
+    OUTCOME_RETRYABLE,
+    OUTCOME_SUCCEEDED,
+    OUTCOME_TERMINAL_ERROR,
+    OUTCOME_UNSUPPORTED,
+    build_adapter_registry,
+)
+from services.foundation.persistence_posture import require_persistence_posture
 
 _WORKER_NAME = "evolution-dispatch-worker"
 _ACTOR_ROLE = "evolution_controller"
-_AUTO_DISPATCH_RESEARCH_ACTIONS = frozenset(
-    {
-        "observe",
-        "revalidate",
-        "retrain",
-        "require_more_data",
-        "flag_for_review",
-    }
-)
-_EXECUTION_PLANES = frozenset({"research", "governance", "deployment", "runtime"})
+
+# Decision states that mean "this intent has nothing left to deliver".
+_CONVERGED_STATES = frozenset({"executed"})
+# Decision states that mean the intent will never be deliverable again.
+_ABANDONED_STATES = frozenset({"rejected", "canceled", "superseded"})
 
 
 def _env_int(name: str, default: int, *, minimum: int = 0) -> int:
@@ -58,21 +83,48 @@ def _decode_json_response(body: str, *, context: str) -> Any:
         raise RuntimeError(f"{context} returned malformed JSON") from exc
 
 
-def _http_get(url: str, timeout_seconds: float) -> Any:
+def _service_headers(*, tenant_id: str | None, auth_token: str | None) -> dict[str, str]:
+    headers = {"Accept": "application/json"}
+    if tenant_id:
+        headers["X-Tenant-Id"] = tenant_id
+    if auth_token:
+        headers["Authorization"] = f"Bearer {auth_token}"
+    return headers
+
+
+def _http_get(
+    url: str,
+    timeout_seconds: float,
+    *,
+    tenant_id: str | None = None,
+    auth_token: str | None = None,
+) -> Any:
     request = urllib.request.Request(
-        url, headers={"Accept": "application/json"}, method="GET"
+        url,
+        headers=_service_headers(tenant_id=tenant_id, auth_token=auth_token),
+        method="GET",
     )
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
         body = response.read().decode("utf-8")
     return _decode_json_response(body, context=f"GET {url}")
 
 
-def _http_post(url: str, payload: dict[str, Any], timeout_seconds: float) -> Any:
+def _http_post(
+    url: str,
+    payload: dict[str, Any],
+    timeout_seconds: float,
+    *,
+    tenant_id: str | None = None,
+    auth_token: str | None = None,
+) -> Any:
     data = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
         url,
         data=data,
-        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        headers={
+            **_service_headers(tenant_id=tenant_id, auth_token=auth_token),
+            "Content-Type": "application/json",
+        },
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
@@ -80,299 +132,440 @@ def _http_post(url: str, payload: dict[str, Any], timeout_seconds: float) -> Any
     return _decode_json_response(body, context=f"POST {url}")
 
 
-def _require_object(payload: Any, *, context: str) -> dict[str, Any]:
-    if not isinstance(payload, dict):
-        raise RuntimeError(f"{context} returned a non-object payload")
-    if not payload:
-        raise RuntimeError(f"{context} returned an empty object payload")
-    return payload
-
-
-def _require_nonempty_string(
-    payload: dict[str, Any], field: str, *, context: str
-) -> str:
-    value = payload.get(field)
-    if not isinstance(value, str) or not value.strip():
-        raise RuntimeError(f"{context} has invalid {field!r}")
-    return value
-
-
-def _validate_approved_decisions(payload: Any) -> list[dict[str, Any]]:
-    context = "approved-decision list"
-    if not isinstance(payload, list):
-        raise RuntimeError(f"{context} returned a non-list payload")
-
-    decisions: list[dict[str, Any]] = []
-    for index, item in enumerate(payload):
-        item_context = f"{context} item {index}"
-        decision = _require_object(item, context=item_context)
-        _require_nonempty_string(decision, "decision_id", context=item_context)
-        _require_nonempty_string(decision, "action_type", context=item_context)
-        _require_nonempty_string(decision, "decision_state", context=item_context)
-        metadata = decision.get("metadata")
-        if metadata is not None and not isinstance(metadata, dict):
-            raise RuntimeError(f"{item_context} has invalid 'metadata'")
-        decisions.append(decision)
-    return decisions
-
-
-def _validate_boundary_payload(
-    payload: Any, *, decision_id: str
-) -> dict[str, Any]:
-    context = f"boundary for decision_id={decision_id}"
-    boundary = _require_object(payload, context=context)
-    _require_nonempty_string(boundary, "boundary_key", context=context)
-    execution_plane = _require_nonempty_string(
-        boundary, "execution_plane", context=context
-    )
-    if execution_plane not in _EXECUTION_PLANES:
-        raise RuntimeError(
-            f"{context} has unsupported execution_plane={execution_plane!r}"
-        )
-    _require_nonempty_string(boundary, "threshold_policy_source", context=context)
-
-    for field in ("reviewed_owner_roles", "approved_owner_roles", "followthrough"):
-        value = boundary.get(field)
-        if not isinstance(value, list) or any(
-            not isinstance(item, str) or not item.strip() for item in value
-        ):
-            raise RuntimeError(f"{context} has invalid {field!r}")
-    for field in ("default_cooldown_days", "default_observation_days"):
-        value = boundary.get(field)
-        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-            raise RuntimeError(f"{context} has invalid {field!r}")
-    return boundary
-
-
-def _validate_execute_payload(
-    payload: Any,
-    *,
-    decision: dict[str, Any],
-    expected_execution_plane: str,
-) -> dict[str, Any]:
-    decision_id = decision["decision_id"]
-    context = f"execute response for decision_id={decision_id}"
-    result = _require_object(payload, context=context)
-    if _require_nonempty_string(result, "decision_id", context=context) != decision_id:
-        raise RuntimeError(f"{context} has a mismatched decision_id")
-    if (
-        _require_nonempty_string(result, "action_type", context=context)
-        != decision["action_type"]
-    ):
-        raise RuntimeError(f"{context} has a mismatched action_type")
-    if _require_nonempty_string(result, "decision_state", context=context) != "executed":
-        raise RuntimeError(f"{context} did not confirm decision_state='executed'")
-
-    execution_result = _require_object(
-        result.get("execution_result"), context=f"{context} execution_result"
-    )
-    if (
-        _require_nonempty_string(execution_result, "status", context=context)
-        != "submitted"
-    ):
-        raise RuntimeError(f"{context} did not confirm execution status='submitted'")
-    if (
-        _require_nonempty_string(execution_result, "plane", context=context)
-        != expected_execution_plane
-    ):
-        raise RuntimeError(f"{context} has a mismatched execution plane")
-    execution_ref_id = _require_nonempty_string(
-        execution_result, "execution_ref_id", context=context
-    )
-    expected_execution_ref_id = f"dispatch-{decision_id}"
-    if execution_ref_id != expected_execution_ref_id:
-        raise RuntimeError(
-            f"{context} has mismatched execution_ref_id={execution_ref_id!r}; "
-            f"expected {expected_execution_ref_id!r}"
-        )
-    _require_nonempty_string(execution_result, "executed_at", context=context)
-    _require_nonempty_string(result, "cooldown_ends_at", context=context)
-    _require_nonempty_string(result, "observation_window_ends_at", context=context)
-    return result
-
-
-def fetch_approved_decisions(
-    *,
-    api_url: str,
-    timeout_seconds: float = 10.0,
-) -> list[dict[str, Any]]:
-    """Return all decisions currently in 'approved' state."""
-    url = api_url.rstrip("/") + "/api/evolution/proposals?decision_state=approved"
-    try:
-        return _validate_approved_decisions(_http_get(url, timeout_seconds))
-    except urllib.error.HTTPError as exc:
-        raise RuntimeError(
-            f"Failed to fetch approved decisions: HTTP {exc.code} {exc.reason}"
-        ) from exc
-
-
-def fetch_boundary(
+def fetch_decision(
     *,
     api_url: str,
     decision_id: str,
-    timeout_seconds: float = 10.0,
-) -> dict[str, Any]:
-    """Return the no-runtime ActionBoundary for a research decision."""
-    url = (
-        api_url.rstrip("/")
-        + f"/api/evolution/proposals/{decision_id}/boundary"
-    )
-    return _validate_boundary_payload(
-        _http_get(url, timeout_seconds), decision_id=decision_id
-    )
+    tenant_id: str,
+    auth_token: str | None,
+    timeout_seconds: float,
+) -> dict[str, Any] | None:
+    """Return the decision, or ``None`` when the service says it is gone."""
+    url = api_url.rstrip("/") + f"/api/evolution/proposals/{decision_id}"
+    try:
+        payload = _http_get(
+            url,
+            timeout_seconds,
+            tenant_id=tenant_id,
+            auth_token=auth_token,
+        )
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return None
+        raise
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"decision {decision_id} returned a non-object payload")
+    return payload
 
 
-def dispatch_decision(
+def execute_with_receipt(
     *,
     api_url: str,
-    decision: dict[str, Any],
+    decision_id: str,
+    tenant_id: str,
     actor_id: str,
-    expected_execution_plane: str,
-    timeout_seconds: float = 30.0,
+    downstream_kind: str,
+    downstream_ref_id: str,
+    auth_token: str | None,
+    timeout_seconds: float,
 ) -> dict[str, Any]:
-    """
-    Submit an approved EvolutionDecision to the /execute endpoint.
+    """Ask the evolution service to execute on a downstream receipt.
 
-    The execute endpoint enforces the ActionBoundary (gates) — this worker
-    never bypasses it. The response is the updated DecisionResponse with
-    cooldown/observation metadata and execution_result set.
+    Only the reference is sent, never a claimed status: the service re-reads the
+    downstream itself, so a compromised or buggy worker cannot assert an outcome
+    the downstream never reported.
     """
-    decision_id = decision["decision_id"]
     url = api_url.rstrip("/") + f"/api/evolution/proposals/{decision_id}/execute"
-    payload: dict[str, Any] = {
+    payload = {
         "actor_role": _ACTOR_ROLE,
         "actor_id": actor_id,
+        "tenant_id": tenant_id,
+        "execution_receipt": {
+            "downstream_kind": downstream_kind,
+            "downstream_ref_id": downstream_ref_id,
+        },
     }
-    return _validate_execute_payload(
-        _http_post(url, payload, timeout_seconds),
-        decision=decision,
-        expected_execution_plane=expected_execution_plane,
+    result = _http_post(
+        url,
+        payload,
+        timeout_seconds,
+        tenant_id=tenant_id,
+        auth_token=auth_token,
     )
+    if not isinstance(result, dict):
+        raise RuntimeError(f"execute response for {decision_id} was not an object")
+    return result
 
 
-def _http_error_retryable(exc: urllib.error.HTTPError) -> bool:
-    if exc.code in {408, 409, 425, 429}:
-        return True
-    return 500 <= exc.code <= 599
+def _transition_applied_check(
+    *,
+    api_url: str,
+    auth_token: str | None,
+    timeout_seconds: float,
+):
+    """Build the reconcile predicate: is the intent's decision durably approved?
+
+    Fails closed.  A decision the service cannot currently answer for is *not*
+    reported as applied, so a transient outage leaves the intent prepared for
+    the next tick instead of activating a dispatch whose approval was never
+    confirmed.
+    """
+
+    def transition_applied(transition: Mapping[str, Any]) -> bool:
+        if transition.get("aggregate_type") != "evolution_decision":
+            return False
+        decision_id = str(transition.get("aggregate_id") or "")
+        tenant_id = str(transition.get("tenant_id") or "")
+        if not decision_id or not tenant_id:
+            return False
+        try:
+            decision = fetch_decision(
+                api_url=api_url,
+                decision_id=decision_id,
+                tenant_id=tenant_id,
+                auth_token=auth_token,
+                timeout_seconds=timeout_seconds,
+            )
+        except Exception:  # noqa: BLE001 - any read failure must not activate
+            return False
+        if decision is None:
+            return False
+        if str(decision.get("tenant_id") or "") != str(transition.get("tenant_id") or ""):
+            return False
+        expected = set(transition.get("expected_states") or [])
+        return str(decision.get("decision_state") or "") in expected
+
+    return transition_applied
 
 
 def run_poll(
     *,
     api_url: str,
-    actor_id: str,
+    outbox: EvolutionDispatchOutbox,
+    registry: Mapping[str, Any],
+    compensations: CompensationLedger,
+    actor_id: str = _WORKER_NAME,
+    worker_id: str = _WORKER_NAME,
     timeout_seconds: float = 10.0,
+    auth_token: str | None = None,
+    claim_limit: int | None = None,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
-    """
-    Fetch approved decisions and dispatch supported research actions.
-
-    Returns a summary with decisions_found, dispatched, skipped, and errors.
-    The evolution service is the gate enforcer — this worker only fans out
-    research decisions to the correct path; it never mutates production state
-    directly. Governance, deployment, and runtime action families remain
-    approved for their authoritative owner because this worker cannot infer an
-    active binding or an approved operational follow-through mode.
-    """
-    decisions = fetch_approved_decisions(api_url=api_url, timeout_seconds=timeout_seconds)
-
-    dispatched = 0
-    skipped_already_executed = 0
-    skipped_unsupported = 0
-    errors: list[str] = []
-    dispatch_items: list[dict[str, Any]] = []
-    skip_items: list[dict[str, Any]] = []
-
-    for decision in decisions:
-        decision_id = decision.get("decision_id", "")
-        action_type = decision.get("action_type", "")
-        decision_state = decision.get("decision_state", "")
-
-        if decision_state != "approved":
-            skipped_already_executed += 1
-            continue
-
-        if action_type not in _AUTO_DISPATCH_RESEARCH_ACTIONS:
-            skipped_unsupported += 1
-            metadata = decision.get("metadata") or {}
-            skip_items.append(
-                {
-                    "decision_id": decision_id,
-                    "action_type": action_type,
-                    "target_stage": decision.get("target_stage"),
-                    "reported_runtime_binding_id": (
-                        metadata.get("runtime_binding_id")
-                        or metadata.get("binding_id")
-                    ),
-                    "reason": (
-                        "automatic dispatch supports research-plane actions only; "
-                        "governance/deployment/runtime actions require an explicit "
-                        "authoritative owner and approved follow-through mode"
-                    ),
-                }
-            )
-            continue
-
-        try:
-            boundary = fetch_boundary(
-                api_url=api_url,
-                decision_id=decision_id,
-                timeout_seconds=timeout_seconds,
-            )
-            execution_plane = boundary.get("execution_plane", "unknown")
-            expected_boundary_key = f"research_{action_type}"
-            if (
-                execution_plane != "research"
-                or boundary.get("boundary_key") != expected_boundary_key
-                or boundary.get("followthrough")
-            ):
-                raise RuntimeError(
-                    "research auto-dispatch boundary mismatch: "
-                    f"expected key={expected_boundary_key!r}, plane='research', "
-                    f"followthrough=[]; received key={boundary.get('boundary_key')!r}, "
-                    f"plane={execution_plane!r}, "
-                    f"followthrough={boundary.get('followthrough')!r}"
-                )
-        except Exception as exc:  # noqa: BLE001
-            errors.append(f"decision_id={decision_id} boundary_fetch_error={exc}")
-            # Fail closed: the boundary read is part of the execution gate.  If
-            # it cannot be verified, do not attempt the mutating /execute call.
-            continue
-
-        try:
-            result = dispatch_decision(
-                api_url=api_url,
-                decision=decision,
-                actor_id=actor_id,
-                expected_execution_plane=execution_plane,
-                timeout_seconds=timeout_seconds,
-            )
-            dispatched += 1
-            dispatch_items.append(
-                {
-                    "decision_id": decision_id,
-                    "action_type": action_type,
-                    "boundary_key": boundary["boundary_key"],
-                    "execution_plane": execution_plane,
-                    "resulting_state": result.get("decision_state"),
-                    "cooldown_ends_at": result.get("cooldown_ends_at"),
-                    "observation_window_ends_at": result.get("observation_window_ends_at"),
-                    "execution_result": result.get("execution_result"),
-                }
-            )
-        except urllib.error.HTTPError as exc:
-            reason = f"decision_id={decision_id} http_error={exc.code} {exc.reason}"
-            errors.append(reason)
-        except Exception as exc:  # noqa: BLE001
-            errors.append(f"decision_id={decision_id} error={exc}")
-
-    return {
-        "decisions_found": len(decisions),
-        "dispatched": dispatched,
-        "skipped_already_executed": skipped_already_executed,
-        "skipped_unsupported": skipped_unsupported,
-        "errors": errors,
-        "dispatch_items": dispatch_items,
-        "skip_items": skip_items,
+    """Run one delivery tick over the durable dispatch outbox."""
+    result: dict[str, Any] = {
+        "reconciled": 0,
+        "claimed": 0,
+        "executed": 0,
+        "pending": 0,
+        "retried": 0,
+        "dead_lettered": 0,
+        "compensated": 0,
+        "unsupported": 0,
+        "errors": [],
+        "items": [],
     }
+
+    try:
+        result["reconciled"] = reconcile_dispatch_outbox(
+            outbox,
+            transition_applied=_transition_applied_check(
+                api_url=api_url,
+                auth_token=auth_token,
+                timeout_seconds=timeout_seconds,
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001
+        result["errors"].append(f"reconcile_error={exc}")
+
+    try:
+        claimed = outbox.claim_due(worker_id=worker_id, now=now, limit=claim_limit)
+    except Exception as exc:  # noqa: BLE001
+        result["errors"].append(f"claim_error={exc}")
+        return result
+
+    result["claimed"] = len(claimed)
+
+    for record in claimed:
+        payload = dict(record.event.payload or {})
+        decision_id = str(payload.get("decision_id") or "")
+        tenant_id = str(payload.get("tenant_id") or "")
+        plane = str(payload.get("execution_plane") or "")
+        item: dict[str, Any] = {
+            "outbox_id": record.outbox_id,
+            "decision_id": decision_id,
+            "tenant_id": tenant_id,
+            "execution_plane": plane,
+            "action_type": payload.get("action_type"),
+        }
+        try:
+            _deliver_one(
+                record=record,
+                decision_id=decision_id,
+                tenant_id=tenant_id,
+                plane=plane,
+                payload=payload,
+                api_url=api_url,
+                outbox=outbox,
+                registry=registry,
+                compensations=compensations,
+                actor_id=actor_id,
+                timeout_seconds=timeout_seconds,
+                auth_token=auth_token,
+                now=now,
+                result=result,
+                item=item,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # An unexpected error must not leave the record silently claimed
+            # forever; count it as a delivery attempt so backoff and the DLQ
+            # still apply.
+            item["disposition"] = "error"
+            item["detail"] = str(exc)
+            result["errors"].append(f"decision_id={decision_id} error={exc}")
+            try:
+                _fail(record, outbox, f"unexpected dispatch error: {exc}", result, now=now)
+            except Exception as inner:  # noqa: BLE001
+                result["errors"].append(f"decision_id={decision_id} complete_error={inner}")
+        result["items"].append(item)
+
+    return result
+
+
+def _fail(
+    record,
+    outbox: EvolutionDispatchOutbox,
+    error: str,
+    result: dict[str, Any],
+    *,
+    permanent: bool = False,
+    now: datetime | None = None,
+) -> None:
+    _, completed = outbox.complete_failed(record, error, permanent=permanent, now=now)
+    if completed.status.value == "dead_lettered":
+        result["dead_lettered"] += 1
+    else:
+        result["retried"] += 1
+
+
+def _deliver_one(
+    *,
+    record,
+    decision_id: str,
+    tenant_id: str,
+    plane: str,
+    payload: Mapping[str, Any],
+    api_url: str,
+    outbox: EvolutionDispatchOutbox,
+    registry: Mapping[str, Any],
+    compensations: CompensationLedger,
+    actor_id: str,
+    timeout_seconds: float,
+    auth_token: str | None,
+    now: datetime | None,
+    result: dict[str, Any],
+    item: dict[str, Any],
+) -> None:
+    decision = fetch_decision(
+        api_url=api_url,
+        decision_id=decision_id,
+        tenant_id=tenant_id,
+        auth_token=auth_token,
+        timeout_seconds=timeout_seconds,
+    )
+    if decision is None:
+        item["disposition"] = "dead_lettered"
+        item["detail"] = "decision no longer exists"
+        _fail(
+            record,
+            outbox,
+            f"decision {decision_id} no longer exists",
+            result,
+            permanent=True,
+            now=now,
+        )
+        return
+
+    state = str(decision.get("decision_state") or "")
+    if state in _CONVERGED_STATES:
+        # The decision already reached its terminal state — an earlier attempt
+        # (or an operator) converged it.  The intent is delivered.
+        item["disposition"] = "already_executed"
+        outbox.complete_published(record)
+        return
+    if state in _ABANDONED_STATES:
+        item["disposition"] = "dead_lettered"
+        item["detail"] = f"decision is {state}; nothing left to dispatch"
+        _fail(
+            record,
+            outbox,
+            f"decision {decision_id} is {state}",
+            result,
+            permanent=True,
+            now=now,
+        )
+        return
+    if state != "approved":
+        # proposed/reviewed: the intent was activated too early. Retry rather
+        # than dead-letter; the approval may still be in flight.
+        item["disposition"] = "retry"
+        item["detail"] = f"decision is {state}, not yet approved"
+        _fail(record, outbox, f"decision {decision_id} is {state}", result, now=now)
+        return
+
+    if str(decision.get("tenant_id") or "") != tenant_id:
+        item["disposition"] = "dead_lettered"
+        item["detail"] = "decision tenant no longer matches the dispatch intent"
+        _fail(
+            record,
+            outbox,
+            f"decision {decision_id} tenant changed since the intent was prepared",
+            result,
+            permanent=True,
+            now=now,
+        )
+        return
+
+    adapter = registry.get(plane)
+    if adapter is None:
+        item["disposition"] = "dead_lettered"
+        item["detail"] = f"no adapter for execution plane {plane!r}"
+        _fail(
+            record,
+            outbox,
+            f"no downstream adapter for execution plane {plane!r}",
+            result,
+            permanent=True,
+            now=now,
+        )
+        return
+
+    submission = adapter.submit(payload)
+    if submission.outcome == OUTCOME_UNSUPPORTED:
+        result["unsupported"] += 1
+        item["disposition"] = "unsupported"
+        item["detail"] = submission.detail
+        _fail(record, outbox, f"unsupported plane: {submission.detail}", result, permanent=True, now=now)
+        return
+    if submission.outcome == OUTCOME_TERMINAL_ERROR:
+        item["disposition"] = "dead_lettered"
+        item["detail"] = submission.detail
+        _fail(record, outbox, str(submission.detail), result, permanent=True, now=now)
+        return
+    if submission.outcome == OUTCOME_RETRYABLE:
+        item["disposition"] = "retry"
+        item["detail"] = submission.detail
+        _fail(record, outbox, str(submission.detail), result, now=now)
+        return
+
+    downstream_ref_id = submission.downstream_ref_id
+    if not downstream_ref_id:
+        item["disposition"] = "retry"
+        item["detail"] = "submission returned no downstream reference"
+        _fail(record, outbox, "submission returned no downstream reference", result, now=now)
+        return
+
+    item["downstream_kind"] = submission.downstream_kind
+    item["downstream_ref_id"] = downstream_ref_id
+
+    receipt = adapter.read_receipt(
+        downstream_ref_id,
+        expected_intent=payload,
+    )
+    item["downstream_status"] = receipt.downstream_status
+    if receipt.outcome == OUTCOME_PENDING:
+        # Healthy in-flight work.  Leave the claim to expire rather than
+        # recording a failed attempt: a long research run must not be
+        # dead-lettered for taking longer than the retry budget.
+        result["pending"] += 1
+        item["disposition"] = "pending"
+        item["detail"] = receipt.detail
+        return
+    if receipt.outcome == OUTCOME_RETRYABLE:
+        item["disposition"] = "retry"
+        item["detail"] = receipt.detail
+        _fail(record, outbox, str(receipt.detail), result, now=now)
+        return
+    if receipt.outcome in {OUTCOME_TERMINAL_ERROR, OUTCOME_UNSUPPORTED}:
+        item["disposition"] = "dead_lettered"
+        item["detail"] = receipt.detail
+        _fail(record, outbox, str(receipt.detail), result, permanent=True, now=now)
+        return
+    if receipt.outcome == OUTCOME_FAILED:
+        # The downstream really ran and really failed.  The decision stays
+        # approved; the obligation to unwind whatever the downstream did is
+        # recorded durably rather than left in a log line.
+        compensations.record(
+            tenant_id=tenant_id,
+            decision_id=decision_id,
+            outbox_id=record.outbox_id,
+            reason=f"downstream terminal failure: {receipt.detail}",
+            downstream_kind=receipt.downstream_kind,
+            downstream_ref_id=downstream_ref_id,
+        )
+        result["compensated"] += 1
+        item["disposition"] = "compensated"
+        item["detail"] = receipt.detail
+        _fail(record, outbox, str(receipt.detail), result, permanent=True, now=now)
+        return
+
+    if receipt.outcome != OUTCOME_SUCCEEDED:  # pragma: no cover - defensive
+        item["disposition"] = "retry"
+        item["detail"] = f"unrecognised receipt outcome {receipt.outcome!r}"
+        _fail(record, outbox, f"unrecognised receipt outcome {receipt.outcome!r}", result, now=now)
+        return
+
+    try:
+        executed = execute_with_receipt(
+            api_url=api_url,
+            decision_id=decision_id,
+            tenant_id=tenant_id,
+            actor_id=actor_id,
+            downstream_kind=receipt.downstream_kind,
+            downstream_ref_id=downstream_ref_id,
+            auth_token=auth_token,
+            timeout_seconds=timeout_seconds,
+        )
+    except urllib.error.HTTPError as exc:
+        if 500 <= exc.code <= 599 or exc.code in {408, 429}:
+            item["disposition"] = "retry"
+            item["detail"] = f"execute failed: HTTP {exc.code} {exc.reason}"
+            _fail(record, outbox, f"execute failed: HTTP {exc.code}", result, now=now)
+            return
+        # The downstream work completed but the decision cannot record it.
+        # That is a genuine half-applied dispatch and needs compensation.
+        compensations.record(
+            tenant_id=tenant_id,
+            decision_id=decision_id,
+            outbox_id=record.outbox_id,
+            reason=(
+                f"downstream succeeded but execute was rejected: HTTP {exc.code} {exc.reason}"
+            ),
+            downstream_kind=receipt.downstream_kind,
+            downstream_ref_id=downstream_ref_id,
+        )
+        result["compensated"] += 1
+        item["disposition"] = "compensated"
+        item["detail"] = f"execute rejected: HTTP {exc.code} {exc.reason}"
+        _fail(
+            record,
+            outbox,
+            f"execute rejected: HTTP {exc.code} {exc.reason}",
+            result,
+            permanent=True,
+            now=now,
+        )
+        return
+    except Exception as exc:  # noqa: BLE001
+        item["disposition"] = "retry"
+        item["detail"] = f"execute transport error: {exc}"
+        _fail(record, outbox, f"execute transport error: {exc}", result, now=now)
+        return
+
+    result["executed"] += 1
+    item["disposition"] = "executed"
+    item["decision_state"] = executed.get("decision_state")
+    item["execution_result"] = executed.get("execution_result")
+    outbox.complete_published(record)
 
 
 def _write_health(path: str, state: dict[str, Any]) -> None:
@@ -386,9 +579,7 @@ def _write_health(path: str, state: dict[str, Any]) -> None:
 def healthcheck() -> int:
     """Return success only after a recent, error-free dispatch poll."""
     health_file = os.getenv("EVOLUTION_DISPATCH_HEALTH_FILE", "")
-    interval_seconds = _env_int(
-        "EVOLUTION_DISPATCH_INTERVAL_SECONDS", 30, minimum=1
-    )
+    interval_seconds = _env_int("EVOLUTION_DISPATCH_INTERVAL_SECONDS", 30, minimum=1)
     if not health_file:
         print("EVOLUTION_DISPATCH_HEALTH_FILE is not configured", file=sys.stderr)
         return 1
@@ -425,22 +616,49 @@ def healthcheck() -> int:
 
 def main() -> int:
     api_url = os.getenv("EVOLUTION_API_URL", "http://127.0.0.1:8093")
+    research_api_url = (
+        os.getenv("EVOLUTION_RESEARCH_API_URL")
+        or os.getenv("RESEARCH_ORCHESTRATOR_URL", "http://research-orchestrator-svc:8101")
+    )
+    data_dir = os.getenv("EVOLUTION_DATA_DIR", "/tmp/pantheon/evolution")
     actor_id = os.getenv("EVOLUTION_DISPATCH_ACTOR_ID", _WORKER_NAME)
     interval_seconds = _env_int("EVOLUTION_DISPATCH_INTERVAL_SECONDS", 30, minimum=1)
     max_ticks = _env_int("EVOLUTION_DISPATCH_MAX_TICKS", 0, minimum=0)
     timeout_seconds = float(os.getenv("EVOLUTION_DISPATCH_TIMEOUT_SECONDS", "10"))
     health_file = os.getenv("EVOLUTION_DISPATCH_HEALTH_FILE", "")
+    auth_mode = os.getenv("EVOLUTION_AUTH_MODE", "disabled").strip().lower()
+    auth_token = os.getenv("EVOLUTION_AUTH_TOKEN", "").strip() or None
+    if auth_mode not in {"disabled", "token"}:
+        raise RuntimeError("EVOLUTION_AUTH_MODE must be disabled or token")
+    if auth_mode == "token" and auth_token is None:
+        raise RuntimeError("EVOLUTION_AUTH_TOKEN is required when EVOLUTION_AUTH_MODE=token")
+
+    persistence_posture = require_persistence_posture(
+        "evolution-dispatch-worker",
+        backend_env_vars={"EVOLUTION_STORE_BACKEND": "json"},
+        require_object_store=False,
+    )
+
+    outbox = EvolutionDispatchOutbox(build_dispatch_outbox_store(data_dir=data_dir))
+    compensations = CompensationLedger(data_dir=data_dir)
+    registry = build_adapter_registry(
+        research_api_url=research_api_url, timeout=timeout_seconds
+    )
 
     health: dict[str, Any] = {
         "worker_name": actor_id,
         "status": "starting",
-        "total_dispatched": 0,
-        "total_skipped": 0,
+        "total_executed": 0,
+        "total_dead_lettered": 0,
+        "total_compensated": 0,
         "total_errors": 0,
         "ticks": 0,
         "last_success": None,
         "last_failure": None,
         "last_failure_reason": None,
+        "store_backend": os.getenv("EVOLUTION_STORE_BACKEND", "json"),
+        "persistence_posture": persistence_posture.mode,
+        "auth_mode": auth_mode,
     }
     if health_file:
         # A container restart can retain the prior writable-layer health file.
@@ -455,15 +673,17 @@ def main() -> int:
         try:
             result = run_poll(
                 api_url=api_url,
+                outbox=outbox,
+                registry=registry,
+                compensations=compensations,
                 actor_id=actor_id,
                 timeout_seconds=timeout_seconds,
+                auth_token=auth_token,
             )
             health["ticks"] = tick
-            health["total_dispatched"] += result["dispatched"]
-            health["total_skipped"] += (
-                result["skipped_already_executed"]
-                + result["skipped_unsupported"]
-            )
+            health["total_executed"] += result["executed"]
+            health["total_dead_lettered"] += result["dead_lettered"]
+            health["total_compensated"] += result["compensated"]
             if result["errors"]:
                 health["total_errors"] += len(result["errors"])
                 health["status"] = "degraded"
@@ -481,13 +701,16 @@ def main() -> int:
             health["last_failure"] = _utc_now()
             health["last_failure_reason"] = str(exc)
             result = {
-                "decisions_found": 0,
-                "dispatched": 0,
-                "skipped_already_executed": 0,
-                "skipped_unsupported": 0,
+                "reconciled": 0,
+                "claimed": 0,
+                "executed": 0,
+                "pending": 0,
+                "retried": 0,
+                "dead_lettered": 0,
+                "compensated": 0,
+                "unsupported": 0,
                 "errors": [str(exc)],
-                "dispatch_items": [],
-                "skip_items": [],
+                "items": [],
             }
             if health_file:
                 _write_health(health_file, health)

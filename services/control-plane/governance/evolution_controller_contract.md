@@ -1,7 +1,7 @@
 # EvolutionController Contract
 
-Last updated: 2026-04-11
-Task: `EVO-004`
+Last updated: 2026-07-27
+Task: `EVO-004`, hardened by `L12-EVO-001`
 Status: canonical operational evolution boundary contract
 Tier: L1-adjacent service contract derived from canonical evolution governance policy
 Scope: EvolutionController orchestration boundary — freeze, rollback, retrain, redeploy ownership, threshold mapping, cooldown defaults, and execution plane routing
@@ -56,7 +56,14 @@ Without this boundary, `EvolutionDecision` approval and execution are decoupled 
 
 - Downstream execution is triggered by `DispatchCommand` objects returned from `dispatch_approved()`
 - `RollbackCommand` is a companion command emitted when the action mandates a concurrent runtime mitigation
-- Execution commands are not executed in-process; the controller records a `SUBMITTED` result and returns the commands to the caller
+- Execution commands are not executed in-process. The API writes a durable,
+  tenant-scoped dispatch intent before approval commits and activates it only
+  after the approved state is durable.
+- `SUBMITTED` is not an execution outcome. `EvolutionDecision.executed` is
+  permitted only after the API independently re-reads a terminal receipt from
+  the authoritative downstream adapter.
+- A plane without a real adapter is explicitly unsupported and dead-lettered;
+  it remains `approved` rather than receiving a synthetic execution result.
 
 ---
 
@@ -127,7 +134,10 @@ Severity-1 incident on an active `live` binding:
    - primary governance `DispatchCommand(action_type = "freeze")`
    - either deployment `DispatchCommand(action_type = "freeze_stage")` when the book may stay in place
    - or companion `RollbackCommand(action_type = "pause_then_replace" | "liquidate_then_replace")` when runtime mitigation is required
-4. `EvolutionDecision.executed` records the governance acceptance time and inherits the 14d/14d window.
+4. The governance adapter must return a terminal receipt before
+   `EvolutionDecision.executed` can record the acceptance time and inherited
+   14d/14d window. Until such an adapter exists, the intent is dead-lettered
+   with an unsupported-plane reason and the decision remains `approved`.
 5. `Rollback Controller` / `Runtime Manager` complete runtime mitigation, then incident / postmortem / audit layers record the downstream outcome without taking over runtime write authority.
 
 ---
@@ -203,7 +213,16 @@ POST /api/evolution/proposals/:id/review
 POST /api/evolution/proposals/:id/approve
 POST /api/evolution/proposals/:id/reject
 POST /api/evolution/proposals/:id/execute
-    → moves state and records execution result
+    → re-reads the supplied downstream reference; moves state only for a
+      terminal authoritative receipt
+POST /api/evolution/proposals/:id/dispatch
+    → idempotently ensures the tenant/decision dispatch intent exists
+GET  /api/evolution/dispatch-outbox
+POST /api/evolution/dispatch-outbox/:outbox_id/replay
+    → operator visibility and cooldown-governed DLQ replay
+GET  /api/evolution/compensations
+POST /api/evolution/compensations/:decision_id/resolve
+    → durable half-applied-dispatch obligations
 ```
 
 Events emitted:
@@ -220,7 +239,44 @@ evolution.deployment_followthrough_requested
 
 ---
 
-## 10. Acceptance Coverage
+## 10. Durable Dispatch and Restart Authority
+
+The durable delivery identity is derived from `(tenant_id, decision_id)`.
+Repeated approval, dispatch, worker restart, or replay triggers therefore
+converge on one outbox record per tenant decision.
+
+Approval uses a prepare/commit/activate sequence:
+
+1. Persist a non-deliverable dispatch intent.
+2. Commit the `approved` decision.
+3. Activate the intent.
+4. On worker startup, reconcile prepared intents against the authoritative
+   decision store. This repairs a crash after step 2 and before step 3.
+
+The dispatcher claims records with durable leases, submits with downstream
+idempotency keys, and re-reads downstream state. Pending work consumes no
+delivery attempt. Retry/backoff, DLQ state, replay cooldown, and compensation
+obligations are durable and survive process restart.
+
+The API and dispatcher must use the same decision/outbox store:
+
+- JSON is a development-only posture and requires both processes to mount the
+  same `EVOLUTION_DATA_DIR`.
+- Production posture requires `EVOLUTION_STORE_BACKEND=postgres` with
+  `EVOLUTION_STORE_DSN` or `DATABASE_URL`; JSON fails closed.
+- The root Compose Evolution stanzas carry the shared store settings and data
+  mount. `L12-MANIFEST-001` remains the owner of all-loop manifest integration.
+- Scheduler calls forward the configured tenant and token so tenant authority
+  is preserved when automatic sweeps create proposals.
+
+Only Research Orchestrator currently supplies a real automatic receipt adapter.
+Governance, deployment, and runtime remain explicit unsupported boundaries
+until their authoritative owners expose the context and receipt contracts
+required here.
+
+---
+
+## 11. Acceptance Coverage
 
 - [x] Each action path has declared execution plane (governance / runtime / research / deployment)
 - [x] Each action path has declared approval owner (reviewer_on_duty / risk_owner / governance_committee)
@@ -230,11 +286,18 @@ evolution.deployment_followthrough_requested
 - [x] ThresholdEvaluator maps metric signals to proposed action types
 - [x] DispatchCommand and RollbackCommand boundary objects defined
 - [x] Boundary rules (what controller owns vs. what downstream planes own) are explicit
+- [x] Every supported approval creates one durable tenant-scoped dispatch intent
+- [x] `executed` requires an authoritative terminal downstream readback
+- [x] Retry, DLQ, replay cooldown, and compensation survive process restart
+- [x] API and worker share one configured persistence authority and production fails closed
 
-## 11. Implementation Artifacts
+## 12. Implementation Artifacts
 
 | Artifact | Purpose |
 |---|---|
 | `services/control-plane/governance/evolution_controller.py` | Executable normal-path router for approved decisions, threshold mapping, follow-through command emission |
 | `services/control-plane/governance/test_evolution_controller.py` | Unit coverage for freeze / rollback / retrain / redeploy routing invariants |
 | `services/control-plane/governance/smoke_test_evolution_controller.py` | Scriptable smoke verification of the main operational handoff paths |
+| `services/evolution/dispatch_outbox.py` | Durable tenant-scoped intent, retry, DLQ, replay cooldown, and compensation state |
+| `services/evolution/dispatch_receipts.py` | Real downstream adapter and terminal receipt verification |
+| `services/evolution/dispatch_worker.py` | Restart-safe claim, reconcile, readback, and convergence worker |

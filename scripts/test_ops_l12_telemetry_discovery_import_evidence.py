@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -42,8 +43,24 @@ EVIDENCE_DIR = (
 )
 MANIFEST_PATH = EVIDENCE_DIR / "evidence.json"
 CHECKSUM_PATH = EVIDENCE_DIR / "evidence.sha256"
+PACKAGING_MANIFEST_PATH = (
+    REPO_ROOT
+    / "docs"
+    / "deployment"
+    / "evidence"
+    / "twelve-loop-gap"
+    / "OPS-L12-PYTHON-PACKAGING-PROVISION-001"
+    / "evidence.json"
+)
 
 TASK_ID = "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001"
+OWNER = "Codex2"
+REVIEWER = "Codex"
+PACKAGING_TASK_ID = "OPS-L12-PYTHON-PACKAGING-PROVISION-001"
+PACKAGING_REVIEWER = "Codex2"
+CURRENT_PR_NUMBER = 4273
+CURRENT_PR_HEAD_SHA = "5ce0b9a58924bb47f9c2b369fc30821411051e81"
+COMMAND_REF = re.compile(r"^validation\.commands\[(\d+)\]$")
 
 # Every manifest location that carries a wall-clock timestamp. A future value in
 # any of them means the manifest is asserting something that had not happened yet
@@ -89,6 +106,17 @@ def _iter_manifest_timestamps(manifest: dict):
         value = entry.get("merged_at")
         if isinstance(value, str) and value:
             yield f"implementation_delivery.pull_requests[{index}].merged_at", value
+
+
+def _iter_strings(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for nested in value.values():
+            yield from _iter_strings(nested)
+    elif isinstance(value, list):
+        for nested in value:
+            yield from _iter_strings(nested)
 
 
 def _validate_subset(instance, schema, path: str = "$") -> list[str]:
@@ -186,12 +214,89 @@ class TestEvidenceManifestSchema(unittest.TestCase):
     def test_manifest_binds_this_task(self):
         task = self.manifest["task"]
         self.assertEqual(task["id"], TASK_ID)
+        self.assertEqual(task["owner"], OWNER)
+        self.assertEqual(task["reviewer"], REVIEWER)
+        self.assertEqual(task["overall_admission"], "review_approved")
         self.assertEqual(EVIDENCE_DIR.name, TASK_ID)
         self.assertEqual(
             task["review_file"],
             str(MANIFEST_PATH.relative_to(REPO_ROOT)),
         )
         self.assertNotEqual(task["owner"], task["reviewer"])
+
+        acceptance = {entry["id"]: entry for entry in self.manifest["acceptance"]}
+        self.assertEqual(acceptance["AC2"]["status"], "pass")
+        self.assertIn(PACKAGING_TASK_ID, acceptance["AC2"]["statement"])
+
+    def test_manifest_records_independent_review_approval(self):
+        acceptance = {entry["id"]: entry for entry in self.manifest["acceptance"]}
+        self.assertEqual(acceptance["AC6"]["status"], "review_approved_pending_merge")
+        self.assertEqual(
+            self.manifest["security_and_safety"]["two_person_approval"]["status"],
+            "pass",
+        )
+        approvals = [
+            entry
+            for entry in self.manifest["record_log"]
+            if entry.get("kind") == "independent_review_approved"
+        ]
+        self.assertEqual(len(approvals), 1)
+        self.assertEqual(approvals[0]["actor"], REVIEWER)
+        self.assertEqual(approvals[0]["status"], "review_approved")
+        self.assertIn(CURRENT_PR_HEAD_SHA, approvals[0]["reference"])
+
+    def test_dependency_manifest_closes_the_packaging_precondition(self):
+        dependency = _load(PACKAGING_MANIFEST_PATH)
+        task = dependency["task"]
+        self.assertEqual(task["id"], PACKAGING_TASK_ID)
+        self.assertEqual(task["overall_admission"], "review_approved")
+        self.assertEqual(task["reviewer"], PACKAGING_REVIEWER)
+        acceptance = {entry["id"]: entry for entry in dependency["acceptance"]}
+        self.assertEqual(acceptance["AC3"]["status"], "pass")
+        self.assertIn("foreign cwd", acceptance["AC3"]["statement"])
+
+    def test_current_repair_pr_and_exact_head_are_bound(self):
+        pull_requests = self.manifest["implementation_delivery"]["pull_requests"]
+        matches = [
+            entry
+            for entry in pull_requests
+            if entry.get("number") == CURRENT_PR_NUMBER
+        ]
+        self.assertEqual(len(matches), 1, f"expected one PR #{CURRENT_PR_NUMBER} binding")
+        current = matches[0]
+        self.assertEqual(current["base"], "dev")
+        self.assertEqual(current["head_sha"], CURRENT_PR_HEAD_SHA)
+        self.assertEqual(current["url"], "https://github.com/ajoe734/pantheon/pull/4273")
+
+        required_checks = self.manifest["implementation_delivery"]["required_checks"]
+        current_checks = [
+            entry
+            for entry in required_checks
+            if entry.get("head_sha") == CURRENT_PR_HEAD_SHA
+        ]
+        self.assertEqual(
+            sorted(entry["event"] for entry in current_checks),
+            ["pull_request", "push"],
+        )
+        for entry in current_checks:
+            self.assertEqual(entry["conclusion"], "success")
+            self.assertEqual(entry["jobs"].get("Commit trailers"), "success")
+            self.assertEqual(entry["jobs"].get("Python packaging provision"), "success")
+            self.assertEqual(entry["jobs"].get("Runtime mirror guard"), "success")
+            self.assertEqual(entry["jobs"].get("Smoke acceptance"), "success")
+
+    def test_validation_command_references_are_in_range(self):
+        command_count = len(self.manifest["validation"]["commands"])
+        out_of_range = []
+        for value in _iter_strings(self.manifest):
+            match = COMMAND_REF.fullmatch(value)
+            if match and int(match.group(1)) >= command_count:
+                out_of_range.append(value)
+        self.assertEqual(
+            sorted(set(out_of_range)),
+            [],
+            f"validation command references must be < {command_count}",
+        )
 
 
 class TestEvidenceManifestTimestamps(unittest.TestCase):

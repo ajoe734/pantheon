@@ -133,11 +133,11 @@ def _advance_to_approved(decision: EvolutionDecision) -> EvolutionDecision:
 
 def _execution_result(plane: ExecutionPlane = ExecutionPlane.GOVERNANCE) -> ExecutionResult:
     return ExecutionResult(
-        status=ExecutionStatus.SUBMITTED,
+        status=ExecutionStatus.SUCCEEDED,
         plane=plane,
         executed_at="2026-05-01T12:00:00Z",
         execution_ref_id="cmd-inv-001",
-        outcome_summary="Invariant test execution.",
+        outcome_summary="Invariant test terminal downstream receipt.",
     )
 
 
@@ -524,7 +524,7 @@ class TestSingleActiveRuleInvariant(unittest.TestCase):
         store = EvolutionDecisionStore()
         d1 = self._make_and_approve("evo-seq-001")
         past_result = ExecutionResult(
-            status=ExecutionStatus.SUBMITTED,
+            status=ExecutionStatus.SUCCEEDED,
             plane=ExecutionPlane.GOVERNANCE,
             executed_at="2020-01-01T12:00:00Z",
             execution_ref_id="cmd-past-001",
