@@ -12861,6 +12861,41 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
                 1,
             )
 
+    def test_reconcile_queue_records_fails_started_event_when_worker_already_failed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = self._config(root)
+            event_key = "dispatcher:Codex:OPS-PR-REVIEW-BEFORE-MERGE-GATE-001:latest"
+            state = {
+                "queue": {
+                    "events": {
+                        "evt-worker": {
+                            "status": "started",
+                            "run_id": "codex-run-failed",
+                            "event_key": event_key,
+                        }
+                    }
+                },
+                "workers": {
+                    "codex-run-failed": {
+                        "run_id": "codex-run-failed",
+                        "status": "failed",
+                        "queue_event_id": "evt-worker",
+                        "last_event_at": "2026-07-27T21:15:40Z",
+                        "last_error": "worker runner exited 143",
+                    }
+                },
+            }
+
+            changed = supervisor.reconcile_queue_records(config, state)
+
+            self.assertTrue(changed)
+            record = state["queue"]["events"]["evt-worker"]
+            self.assertEqual(record["status"], "failed")
+            self.assertEqual(record["processed_at"], "2026-07-27T21:15:40Z")
+            self.assertEqual(record["error"], "worker runner exited 143")
+            self.assertEqual(state["seen_event_keys"][event_key], "2026-07-27T21:15:40Z")
+
     def test_reconcile_runtime_redispatches_completed_review_worker_once(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
