@@ -1,7 +1,7 @@
 # P0-TW-PAPER-ACTIVATE-001 — make `persona-tw-equity` actually paper-trade (it is a ghost row today)
 
 Owner: **Codex2** · Reviewer: Codex · Phase: Pantheon P0 Paper Loop
-Status: implementation complete; independent re-review pending
+Status: in progress; Track C canonical authority revision pending
 Source symptom: operator clicked the fleet "Δ 績效 9.50%" cell for `persona-tw-equity` → the
 performance-attribution / holdings pages are entirely `—` / 0, and the funding-pool overview is empty.
 
