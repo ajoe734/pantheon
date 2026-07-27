@@ -1,12 +1,12 @@
 # L12-SIGNOFF-001 protected closeout evidence
 
-Status: owner evidence sequence 10 revalidated after the sequence-9 remediation
-merged as PR #4210, ready for independent `Codex2` review of the current
-follow-up PR.
+Status: owner evidence sequence 11 revalidated after the sequence-9 remediation
+merged as PR #4210 and the latest `dev` composition, ready for independent
+`Codex2` review of the final immutable follow-up PR head.
 
 Owner is `Codex` and reviewer is `Codex2`, matching the current canonical task
 row and supervisor dispatch. Historical owner records remain append-only in
-`record_log`; sequence 10 is the current owner admission.
+`record_log`; sequence 11 is the current owner admission.
 
 This packet proves that protected product closeout decisions are signed by a
 configured Human/Ops authority, recorded in a lock-protected append-only
@@ -177,6 +177,17 @@ mutation as missing its workspace binding. The current source hashes, merged
 PR #4210 receipt, task ownership, and task packet were re-cut here. This remains
 owner evidence, not an inherited or self-issued reviewer verdict.
 
+### Sequence-11 exact-head revalidation
+
+Codex2's security review of sequence 10 otherwise passed, but correctly
+rejected approval because PR #4261 moved from the dispatched exact head after a
+post-handoff `origin/dev` merge. The owner preserved that finding in an anchor,
+composed `origin/dev` `4974824687ef5c3acf665fa22a4306e5d3d664f1`,
+refreshed the two compatible `ai_status` source hashes, and re-ran the four
+focused suites at 296 tests and 39 subtests. Sequence 11 is the final owner
+admission before a new exact-head handoff; it carries no inherited or
+self-issued reviewer verdict.
+
 ## Authority and binding
 
 The BFF boundary accepts only authenticated JWT or JWT-backed cookie sessions,
@@ -225,7 +236,7 @@ The focused run on the current dev integration completed:
   scripts/test_loop_done_guardrail.py \
   scripts/test_ai_status.py
 
-294 passed, 1 warning, 39 subtests
+296 passed, 1 warning, 39 subtests
 ```
 
 The sequence-9 count rose from 275 in the sequence-7 cut by nine
@@ -271,6 +282,7 @@ verdict — confirming the cut is otherwise `done`-eligible.
 all re-run at the sequence-9 head and passed; the smoke run completed stage-0
 validation and the full smoke baseline. Sequence 10 then re-ran the four
 focused suites after merging current `origin/dev`; 294 tests and 39 subtests
-passed.
+passed. Sequence 11 re-ran them after the final pre-review `dev` composition;
+296 tests and 39 subtests passed.
 
 [`evidence.sha256`](evidence.sha256) covers the machine-readable manifest.
