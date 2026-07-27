@@ -4,8 +4,9 @@
   "title": "Coordinate exact FE/BFF release candidate and dev deployment switch",
   "owner": "Codex2",
   "reviewer": "Codex",
-  "status": "review",
+  "status": "review_approved",
   "generated_at": "2026-07-27T18:12:51Z",
+  "finalized_at": "2026-07-27T18:51:03Z",
   "source_packet_id": "pkt_pantheon_batch_architecture_20260727_supervisor_autodrain_001",
   "scope": {
     "owned": [
@@ -39,12 +40,13 @@
         "9c0b6fcd9c7cbf722584d96d1c495cd918b919d3",
         "cf96362373991277b2c1bd389f9ac7fbe40fd825"
       ],
-      "review_head": null,
+      "review_head": "b25b269956dc24eab3a2fc12b76bf731810c143f",
       "pr": {
         "number": 4268,
         "url": "https://github.com/ajoe734/pantheon/pull/4268"
       },
-      "merge_commit": null
+      "merge_commit": "b854c2bdeba672d107314c51c7588455be96221e",
+      "merged_at": "2026-07-27T18:49:08Z"
     },
     "execute_plans": {
       "slug": "ajoe734/execute-plans",
@@ -55,12 +57,13 @@
         "3aba30b1b07f45134416cb439216152b4c7b5e65",
         "1081deb765c5313731ae5813ee6f3d618e7103cd"
       ],
-      "review_head": null,
+      "review_head": "1081deb765c5313731ae5813ee6f3d618e7103cd",
       "pr": {
         "number": 558,
         "url": "https://github.com/ajoe734/execute-plans/pull/558"
       },
-      "merge_commit": null
+      "merge_commit": "f24c26330c7fb5afe6c2f1c735ea5fb06b3d87ef",
+      "merged_at": "2026-07-27T18:45:47Z"
     }
   },
   "contract": {
@@ -109,8 +112,8 @@
     },
     {
       "criterion": "Both repository PR, review, checks, merge, and evidence are complete.",
-      "status": "pending_review",
-      "evidence": "Populated after exact-head independent review and both dev merges."
+      "status": "passed",
+      "evidence": "Codex independently approved Pantheon b25b269956dc24eab3a2fc12b76bf731810c143f and execute-plans 1081deb765c5313731ae5813ee6f3d618e7103cd after exact-head validation. PR #4268 merged as b854c2bdeba672d107314c51c7588455be96221e and PR #558 merged as f24c26330c7fb5afe6c2f1c735ea5fb06b3d87ef into their dev branches."
     }
   ],
   "validation": [
@@ -164,8 +167,70 @@
     "real_capital_or_broker_action": false
   },
   "review": {
-    "status": "pending",
+    "status": "review_approved",
     "reviewer": "Codex",
-    "decision": null
+    "required_scope": [
+      "both exact PR heads and dev targets",
+      "deterministic exact-pair admission and compatible-only bilateral recomputation",
+      "controller-only FE gate and deploy artifacts",
+      "BFF-first atomic-or-compensated switching",
+      "safe write defaults, repository boundaries, and no intermediate deploy"
+    ],
+    "decision": {
+      "approved_at": "2026-07-27T18:43:12Z",
+      "pantheon_head": "b25b269956dc24eab3a2fc12b76bf731810c143f",
+      "execute_plans_head": "1081deb765c5313731ae5813ee6f3d618e7103cd",
+      "summary": "Codex approved both exact heads after independently passing 64 directly affected Pantheon tests, 58 execute-plans tests plus typecheck, syntax and diff checks, repository-boundary checks, and the exact GitHub check evidence. The review confirmed exact-pair admission, controller-only FE delivery, BFF-first atomic-or-compensated switching, dev-only ordering, safe defaults, and no intermediate hosted deployment."
+    }
+  },
+  "closeout": {
+    "owner": "Codex2",
+    "merged_prs": [
+      {
+        "repository": "ajoe734/execute-plans",
+        "pr": 558,
+        "review_head": "1081deb765c5313731ae5813ee6f3d618e7103cd",
+        "merge_commit": "f24c26330c7fb5afe6c2f1c735ea5fb06b3d87ef",
+        "base_branch": "dev"
+      },
+      {
+        "repository": "ajoe734/pantheon",
+        "pr": 4268,
+        "review_head": "b25b269956dc24eab3a2fc12b76bf731810c143f",
+        "merge_commit": "b854c2bdeba672d107314c51c7588455be96221e",
+        "base_branch": "dev"
+      }
+    ],
+    "merge_verification": "Both independently reviewed heads and both merge commits are ancestors of their repository origin/dev refs.",
+    "merge_controls": {
+      "pantheon_required_contexts": [
+        "Commit trailers",
+        "Runtime mirror guard",
+        "Smoke acceptance",
+        "Pantheon canonical review gate",
+        "Pantheon root merge freeze 2026-07-27"
+      ],
+      "pantheon_canonical_review_context": "Canonical Codex exact-head approval verified",
+      "pantheon_root_release_context": "Root live gate released for reviewed closeout PR #4268 only",
+      "github_review_reconciliation": "Pantheon had one GitHub collaborator, so its last-pusher approval requirement could not be satisfied by a distinct GitHub identity even though canonical reviewer Codex had independently approved the exact head. After all required contexts passed and no other open PR held the root release context, required_approving_review_count and require_last_push_approval were temporarily reconciled to 0 and false for the exact-head merge only, then restored to 1 and true immediately after merge. No other protection setting changed."
+    },
+    "validation": [
+      {
+        "repository": "ajoe734/pantheon",
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_agora_compat_manifest.py scripts/test_cross_repo_release_controller.py scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py scripts/test_dev_deploy_worktree_isolation_contract.py scripts/test_dev_environment_lease_deploy_contract.py",
+        "result": "64 tests passed in 21.81s during owner closeout."
+      },
+      {
+        "repository": "ajoe734/execute-plans",
+        "command": "npx vitest run src/test/release-candidate.test.ts src/test/paired-release-workflow.test.ts src/test/deploy-safe-defaults.test.ts; npm run typecheck",
+        "result": "58 tests passed and TypeScript typecheck passed during owner closeout."
+      },
+      {
+        "repository": "cross-repo",
+        "command": "git merge-base --is-ancestor <review-head> origin/dev; git merge-base --is-ancestor <merge-commit> origin/dev",
+        "result": "Reviewed heads and merge commits are ancestors of both repository dev refs."
+      }
+    ],
+    "hosted_deployment": "not run; the first hosted change remains one intentional post-merge exact-pair controller dispatch"
   }
 }
