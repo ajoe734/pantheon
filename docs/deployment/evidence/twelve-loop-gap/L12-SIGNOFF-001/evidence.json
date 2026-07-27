@@ -650,6 +650,16 @@
       "sequence": 11,
       "sha": "44fe5e742601c7478d4fd741087e0b52e6180709",
       "status": "pass"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "independent_review",
+      "note": "Approved sequence-11 at PR #4261 exact immutable head ea628cac729fbd3a3240145940fa78518ba02782. Independently verified merged delivery PRs #4183, #4205, #4206, and #4210 and their dev ancestry; PR #4261 head/base and eight green required checks; 296 focused tests with 39 passing subtests; product-evidence schema, companion checksum, canonical catalog digest, nine source hashes, and git diff --check. Security review confirmed explicit Human/Ops JWT or cookie principal classification, MFA and role enforcement, exact catalog/manifest/target/FE/BFF binding, candidate and fleet self-sign rejection, canonical supervisor lease recovery with erased workspace bindings, pre-access forbidden-root validation, revoked and consumed ledger-tail containment, competing-decision serialization, and exactly-once done consumption.",
+      "recorded_at": "2026-07-27T17:14:48Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4261",
+      "sequence": 12,
+      "sha": "ea628cac729fbd3a3240145940fa78518ba02782",
+      "status": "approved"
     }
   ]
 }
