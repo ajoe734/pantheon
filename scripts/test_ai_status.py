@@ -2612,6 +2612,43 @@ class ArchiveWorkflowTests(unittest.TestCase):
         archive_task = self.state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY]["snapshots"][0]["task"]
         self.assertEqual(archive_task["id"], "REG-100")
 
+    def test_archive_migrate_normalizes_only_missing_legacy_done_outcome(self) -> None:
+        legacy = self.state["tasks"][0]
+        legacy.pop("terminal_outcome")
+
+        ai_status.command_archive_migrate(self.state, [])
+
+        snapshot = self.state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY]["snapshots"][0]
+        self.assertEqual(snapshot["terminal_outcome"], "completed")
+        self.assertNotIn("terminal_outcome", snapshot["task"])
+        self.assertTrue(ai_status._status_archive_snapshot_is_valid(snapshot))
+
+    def test_archive_migrate_rejects_present_invalid_terminal_outcome(self) -> None:
+        invalid_outcomes = (None, "", "failed", "COMPLETED")
+        for invalid_outcome in invalid_outcomes:
+            with self.subTest(terminal_outcome=invalid_outcome):
+                state = deepcopy(self.state)
+                state["tasks"][0]["terminal_outcome"] = invalid_outcome
+
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "terminal task has invalid archive outcome: REG-100",
+                ):
+                    ai_status.command_archive_migrate(state, [])
+
+                self.assertNotIn(ai_status.STATUS_ARCHIVE_OUTBOX_KEY, state)
+
+    def test_archive_migrate_preserves_canonical_superseded_outcome(self) -> None:
+        superseded = self.state["tasks"][0]
+        superseded["terminal_outcome"] = "superseded"
+        superseded["superseded_by"] = "REG-101"
+
+        ai_status.command_archive_migrate(self.state, [])
+
+        snapshot = self.state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY]["snapshots"][0]
+        self.assertEqual(snapshot["terminal_outcome"], "superseded")
+        self.assertEqual(snapshot["task"]["terminal_outcome"], "superseded")
+
     def _write_modern_archive_with_absolute_review_file(
         self,
         *,
@@ -5608,6 +5645,77 @@ class CanonicalTaskStateAndActivityRecoveryTests(unittest.TestCase):
             process.join(timeout=5)
             self.fail("status outbox recovery process timed out")
         self.assertEqual(process.exitcode, 0)
+
+    def test_legacy_done_archive_replay_and_recovery_are_exact_and_idempotent(
+        self,
+    ) -> None:
+        state = self._fixture_state()
+        terminal = state["tasks"][0]
+        terminal["status"] = "done"
+        terminal.pop("terminal_outcome", None)
+        archive_dir = self.root / "ai-task-archive"
+        archive_path = archive_dir / "tasks" / "LOCK-ONE.json"
+        with (
+            mock.patch.object(ai_status, "STATUS_FILE", self.status_file),
+            mock.patch.object(task_archive, "STATUS_ROOT", self.root),
+            mock.patch.object(task_archive, "STATUS_FILE", self.status_file),
+            mock.patch.object(task_archive, "ARCHIVE_DIR", archive_dir),
+            mock.patch.object(
+                task_archive,
+                "ARCHIVE_TASKS_DIR",
+                archive_dir / "tasks",
+            ),
+            mock.patch.object(
+                task_archive,
+                "ARCHIVE_INDEX_FILE",
+                archive_dir / "index.json",
+            ),
+        ):
+            first = ai_status.archive_terminal_task_from_state(
+                state,
+                terminal,
+                archived_at="2026-07-14T00:03:00Z",
+            )
+            pending = deepcopy(state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY])
+            replay = ai_status.archive_terminal_task_from_state(
+                state,
+                terminal,
+                archived_at="2026-07-14T00:03:00Z",
+            )
+
+            self.assertEqual(replay, first)
+            self.assertEqual(state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY], pending)
+            self.assertEqual(first["terminal_outcome"], "completed")
+            self.assertNotIn("terminal_outcome", first["task"])
+            self.assertEqual(
+                pending["transaction_id"],
+                "ai-status-archive-tx-"
+                + ai_status._canonical_json_sha256(pending["snapshots"]),
+            )
+
+            pending_state = deepcopy(state)
+            archive_bytes = None
+            for recovery_attempt in range(2):
+                with self.subTest(recovery_attempt=recovery_attempt):
+                    replay_state = deepcopy(pending_state)
+                    self._write_state(replay_state)
+                    self.assertTrue(
+                        ai_status.recover_status_archive_outbox(replay_state)
+                    )
+                    self.assertIsNone(
+                        replay_state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY]
+                    )
+                    self.assertIsNone(
+                        ai_status.get_task(replay_state, "LOCK-ONE")
+                    )
+                    current_bytes = archive_path.read_bytes()
+                    if archive_bytes is None:
+                        archive_bytes = current_bytes
+                    self.assertEqual(current_bytes, archive_bytes)
+                    self.assertEqual(
+                        json.loads(current_bytes),
+                        first,
+                    )
 
     def test_concurrent_task_mutations_are_serialized_without_lost_update(self) -> None:
         self._write_state(self._fixture_state())

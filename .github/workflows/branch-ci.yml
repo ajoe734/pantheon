@@ -118,6 +118,45 @@ jobs:
             echo "execute-plans is a separate repository; remove the embedded frontend mirror" >&2
             exit 1
           fi
+  packaging:
+    name: Python packaging provision
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      # requirements.txt is the root-level test dependency file. Installed
+      # strictly, not best-effort: telemetry capture degrades silently without
+      # jsonschema, so a partial install would turn the acceptance below into a
+      # false pass rather than a failure. setuptools is explicit because
+      # setup-python 3.12 ships none and the editable build needs one.
+      - name: Install test dependencies
+        run: |
+          python3 -m pip install --upgrade pip "setuptools>=68"
+          python3 -m pip install -r requirements.txt pytest
+
+      # Same entry point the auto-worker test bootstrap uses (see
+      # AI_COLLABORATION_GUIDE.md § Python Test Environment Provisioning), so CI
+      # and workers can never install different distributions. --mode current is
+      # admissible here and only here: a GitHub runner is a disposable
+      # single-checkout container, so rebinding its interpreter cannot collide
+      # with another checkout. The script verifies the binding and fails closed.
+      - name: Provision the repository distribution
+        run: |
+          python3 scripts/dev/provision_python_distribution.py \
+            --mode current --allow-system-interpreter
+
+      # The packaging contract plus the four-mode AC2 acceptance
+      # (OPS-L12-PYTHON-PACKAGING-PROVISION-001). Both are meaningful only once
+      # the distribution is installed, which the step above just did.
+      - name: Packaging contract and telemetry import acceptance
+        run: |
+          python3 -m pytest -q \
+            scripts/dev/test_provision_python_distribution.py \
+            services/telemetry/test_discovery_imports.py
+
   smoke:
     name: Smoke acceptance
     runs-on: ubuntu-latest
