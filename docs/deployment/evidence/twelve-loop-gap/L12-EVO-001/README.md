@@ -1,6 +1,6 @@
 # L12-EVO-001 durable Evolution dispatch evidence
 
-Status: owner evidence ready for independent `Codex` review.
+Status: owner evidence ready for independent `Claude` review.
 
 This packet proves the repository implementation for complete Evolution input
 coverage, tenant-scoped decision authority, durable approved-action dispatch,
@@ -51,7 +51,7 @@ PANTHEON_RUNTIME_MANAGER_URL=http://runtime-manager:8081 \
   services/control-plane/governance/smoke_test_evolution_controller.py \
   scripts/test_evolution_daily_sweep_deploy_contract.py
 
-431 passed, 5 warnings in 106.07s
+431 passed, 5 warnings in 112.60s
 ```
 
 The five warnings are existing FastAPI/Starlette deprecation notices.
@@ -66,6 +66,6 @@ This task does not write `RuntimeBinding`, deployment, governance-target,
 broker, or capital state. Global Compose admission and hosted identity remain
 owned by `L12-MANIFEST-001`, `L12-VERIFY-OBS-001`, and `L12-HOSTED-001`.
 
-Owner `Codex2` and reviewer `Codex` remain distinct. The manifest has one owner
+Owner `Codex2` and reviewer `Claude` remain distinct. The manifest has one owner
 record and deliberately no formal reviewer verdict. Governed approval must bind
 this exact repository-relative manifest before owner closeout.

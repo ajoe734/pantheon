@@ -3,7 +3,7 @@
   "schema_status": {
     "formal_schema_owner": "LOOP-PROD-002",
     "formalization_trigger": "L12-EVO-001 product-level owner evidence admission.",
-    "note": "Owner evidence only. The formal Codex reviewer verdict is intentionally absent until independent review occurs.",
+    "note": "Owner evidence only. The formal Claude reviewer verdict is intentionally absent until independent review occurs.",
     "status": "formalized"
   },
   "evidence_policy": {
@@ -16,8 +16,8 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-27T18:07:30Z",
-    "evidence_cut_semantics": "Owner evidence over the merged-current-dev implementation head fdcb121bdb50e8f53e9062dbe73bf096300b68fb. It proves repository and separate-process behavior and does not assert hosted activation or an independent reviewer verdict.",
+    "evidence_cut_at": "2026-07-27T18:37:09Z",
+    "evidence_cut_semantics": "Owner evidence over the merged-current-dev implementation head fdcb121bdb50e8f53e9062dbe73bf096300b68fb, rebound to canonical reviewer Claude after the fleet reassignment. It proves repository and separate-process behavior and does not assert hosted activation or an independent reviewer verdict.",
     "id": "L12-EVO-001",
     "overall_admission": "pass_owner_evidence_ready",
     "owner": "Codex2",
@@ -25,7 +25,7 @@
     "product_level_required": true,
     "repository": "ajoe734/pantheon",
     "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-EVO-001/evidence.json",
-    "reviewer": "Codex",
+    "reviewer": "Claude",
     "target_environment": "dev integration and separate-process local proof",
     "target_maturity": "reconciled",
     "task_branch": "task/L12-EVO-001",
@@ -137,7 +137,7 @@
     "commands": [
       {
         "command": "PANTHEON_RUNTIME_MANAGER_URL=http://runtime-manager:8081 .venv-pantheon/bin/python -m pytest -q services/evolution services/incidents services/postmortems services/control-plane/governance/test_evolution_decision.py services/control-plane/governance/test_evolution_controller.py services/control-plane/governance/test_evolution_dispatcher_invariants.py services/control-plane/governance/smoke_test_evolution_decision.py services/control-plane/governance/smoke_test_evolution_controller.py scripts/test_evolution_daily_sweep_deploy_contract.py",
-        "conclusion": "431 passed with five known FastAPI/Starlette deprecation warnings in 106.07 seconds.",
+        "conclusion": "431 passed with five known FastAPI/Starlette deprecation warnings in 112.60 seconds.",
         "result": "pass"
       },
       {
@@ -166,7 +166,7 @@
         "result": "pass"
       }
     ],
-    "validated_at": "2026-07-27T18:07:30Z",
+    "validated_at": "2026-07-27T18:37:09Z",
     "validated_base_sha": "a6966b13d84430387da9c3a33fcf224c841bc5c6",
     "validated_head_sha": "fdcb121bdb50e8f53e9062dbe73bf096300b68fb"
   },
@@ -191,7 +191,7 @@
     "pre_deploy": {
       "environment": "task worktree and separate local OS processes",
       "hosted_activation_claimed": false,
-      "observed_at": "2026-07-27T18:07:30Z",
+      "observed_at": "2026-07-27T18:37:09Z",
       "status": "pass",
       "terminal_readback": "Two Evolution API processes and restarted dispatch workers shared one durable JSON authority locally; a real in-process Research Orchestrator service boundary supplied terminal success and failure readback. Replacement-dev deployment is not claimed."
     }
@@ -264,7 +264,7 @@
       "status": "pass"
     },
     "two_person_approval": {
-      "proof": "Owner Codex2 and reviewer Codex are distinct. This owner cut intentionally records no formal Codex verdict; independent review remains the only blocking closeout gate.",
+      "proof": "Owner Codex2 and reviewer Claude are distinct. This owner cut intentionally records no formal Claude verdict; independent review remains the only blocking closeout gate.",
       "status": "pass"
     }
   },
@@ -324,10 +324,10 @@
   "residual_risks": {
     "independent_review": {
       "blocking_for_this_task": true,
-      "containment": "Keep the task out of review_approved/done until Codex independently validates the committed manifest and implementation.",
-      "description": "The owner evidence is complete, but the required independent Codex verdict has not yet been recorded.",
-      "expiry": "On governed Codex approval or concrete changes-requested decision.",
-      "owner": "Codex",
+      "containment": "Keep the task out of review_approved/done until Claude independently validates the committed manifest and implementation.",
+      "description": "The owner evidence is complete, but the required independent Claude verdict has not yet been recorded.",
+      "expiry": "On governed Claude approval or concrete changes-requested decision.",
+      "owner": "Claude",
       "recheck_trigger": "Task enters review with the evidence commit and PR available.",
       "severity": "blocking"
     },
@@ -383,6 +383,15 @@
       "reference": "fdcb121bdb50e8f53e9062dbe73bf096300b68fb",
       "sequence": 1,
       "sha": "fdcb121bdb50e8f53e9062dbe73bf096300b68fb",
+      "status": "ready_for_independent_review"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "owner_evidence_reviewer_rebind",
+      "recorded_at": "2026-07-27T18:37:09Z",
+      "reference": "9f892149b3f8708cef695f3b7d7808d0c3e8be25",
+      "sequence": 2,
+      "sha": "9f892149b3f8708cef695f3b7d7808d0c3e8be25",
       "status": "ready_for_independent_review"
     }
   ]
