@@ -22,6 +22,27 @@ POST  /api/telemetry/ingest/batch
     Body: { "events": [ ... ] }
     Returns 202 only when at least one event has a durable receipt.
 
+POST  /api/v1/telemetry/infrastructure-health
+    Admit one non-trading infrastructure health observation.
+    Body: InfrastructureHealthEvent (see the InfrastructureHealthEvent
+    definition in telemetry_event.schema.json).
+    Requires a verified service JWT whose claims bind the request tenant and an
+    allowlisted producer scope; the deployment-wide permissive auth mode and the
+    shared static service token are both refused on this route.
+    Returns 202 on admission and on an idempotent replay of an event_id that
+    already holds a durable receipt, 409 INFRA_EVENT_ID_CONFLICT when an
+    event_id is reused for different content, 400 on contract violation, and
+    503 when the schema or ledger is unavailable (INFRA_SCHEMA_UNAVAILABLE,
+    INFRA_LEDGER_UNCONFIGURED), the deployment has no durable broker behind the
+    route (INFRA_BUFFER_NOT_DURABLE), the buffer is full
+    (INFRA_BUFFER_OVERFLOW), or no durable receipt exists yet because another
+    attempt holds the reservation (INFRA_ADMISSION_IN_FLIGHT,
+    INFRA_ADMISSION_FENCED).
+
+    Producers must treat every 503 as "retry with the same event_id": it means
+    the observation is not durable yet, so retrying is what makes delivery
+    at-least-once while the admission ledger keeps it exactly-once.
+
 POST  /api/v1/telemetry/heartbeats
     Ingest one RuntimeHeartbeat payload and adapt it into a canonical
     TelemetryEvent heartbeat.
@@ -115,7 +136,28 @@ PANTHEON_TELEMETRY_SERVICE_TOKEN
 
 PANTHEON_TELEMETRY_ALLOWED_TENANTS
     Fallback tenant allowlist when a verified identity token has no tenant
-    claim. Every protected request must also send ``X-Tenant-Id``.
+    claim. Every protected request must also send ``X-Tenant-Id``. This fallback
+    deliberately does NOT apply to the infrastructure health route, whose tenant
+    authority must come from the presented service JWT itself.
+
+PANTHEON_TELEMETRY_INFRA_PRODUCERS
+    Explicit allowlist of infrastructure health producer identities admitted by
+    this deployment (e.g. ``control-plane-bff``). Wildcards are refused. The
+    effective scope is this allowlist intersected with the producer scope in the
+    caller's service JWT.
+
+TELEMETRY_INFRASTRUCTURE_HEALTH_LEDGER
+    Path to the durable infrastructure health admission ledger. Defaults to
+    TELEMETRY_STORAGE_DIR/infrastructure_health_admissions.jsonl. Point every
+    replica at the same shared path so a stable event_id is admitted once
+    across restarts and replicas.
+
+TELEMETRY_INFRASTRUCTURE_HEALTH_LEASE_SECONDS
+    Lease held by one infrastructure health admission reservation before another
+    replica may recover it (default 30). Set it above the worst-case durable
+    enqueue latency: a crashed owner's reservation only becomes recoverable once
+    the lease expires, and until then retries are answered as retryable rather
+    than as delivered.
 
 TELEMETRY_BATCH_SIZE
     Max events per write batch (default 500).
@@ -179,8 +221,11 @@ from flask import Flask, jsonify, request
 
 from .auth import (
     TelemetryAuthorityError,
+    bind_event_producer,
     bind_event_tenant,
+    request_authority,
     request_tenant_id,
+    require_infrastructure_health_authority,
     require_telemetry_authority,
 )
 from .heartbeat_service import (
@@ -506,6 +551,12 @@ def _build_service(lineage_write_store: LineageReadService | None = None) -> Tel
         heartbeat_stale_after = int(os.getenv("TELEMETRY_RUNTIME_HEARTBEAT_STALE_SECONDS", "90"))
     except ValueError:
         heartbeat_stale_after = 90
+    try:
+        infrastructure_health_lease = float(
+            os.getenv("TELEMETRY_INFRASTRUCTURE_HEALTH_LEASE_SECONDS", "30")
+        )
+    except ValueError:
+        infrastructure_health_lease = 30.0
     replay_dlq_on_start = _env_bool("TELEMETRY_REPLAY_DLQ_ON_START", default=False)
     dlq_replay_tag_filter = os.getenv("TELEMETRY_REPLAY_DLQ_TAG") or None
 
@@ -560,6 +611,11 @@ def _build_service(lineage_write_store: LineageReadService | None = None) -> Tel
         lineage_write_store=lineage_write_store,
         replay_dlq_on_start=replay_dlq_on_start,
         dlq_replay_tag_filter=dlq_replay_tag_filter,
+        infrastructure_health_ledger_path=os.getenv(
+            "TELEMETRY_INFRASTRUCTURE_HEALTH_LEDGER"
+        )
+        or None,
+        infrastructure_health_lease_seconds=infrastructure_health_lease,
     )
 
 
@@ -620,6 +676,14 @@ def _telemetry_metrics() -> dict[str, Any]:
     dlq_stats = stats.get("dead_letter_queue", {}) if isinstance(stats, dict) else {}
     buffer_stats = stats.get("buffer", {}) if isinstance(stats, dict) else {}
     startup_stats = stats.get("startup", {}) if isinstance(stats, dict) else {}
+    infrastructure_stats = (
+        stats.get("infrastructure_health", {}) if isinstance(stats, dict) else {}
+    )
+    infrastructure_ledger = (
+        infrastructure_stats.get("ledger", {})
+        if isinstance(infrastructure_stats, dict)
+        else {}
+    )
     tag_counts = dlq_stats.get("tag_counts", {}) if isinstance(dlq_stats, dict) else {}
     write_failure_dlq_entries = (
         int(tag_counts.get("writer_error", 0) or 0)
@@ -648,6 +712,24 @@ def _telemetry_metrics() -> dict[str, Any]:
         "dlq_incident_fired": 1 if dlq_stats.get("incident_fired") else 0,
         "startup_dlq_loaded": startup_stats.get("dlq_loaded_from_spill", 0),
         "startup_dlq_replayed": startup_stats.get("dlq_replayed_on_start", 0),
+        "infrastructure_health_admitted": infrastructure_stats.get("admitted", 0),
+        "infrastructure_health_duplicates": infrastructure_stats.get("duplicates", 0),
+        "infrastructure_health_conflicts": infrastructure_stats.get("conflicts", 0),
+        "infrastructure_health_in_flight_rejections": infrastructure_stats.get("in_flight_rejections", 0),
+        "infrastructure_health_fenced_rejections": infrastructure_stats.get("fenced_rejections", 0),
+        "infrastructure_health_non_durable_rejections": infrastructure_stats.get(
+            "non_durable_rejections", 0
+        ),
+        "infrastructure_health_rejected": infrastructure_stats.get("rejected", 0),
+        "infrastructure_health_schema_loaded": 1 if infrastructure_stats.get("schema_loaded") else 0,
+        # 0 means this deployment cannot admit infrastructure health at all: the
+        # route fails closed until a durable broker is configured behind it.
+        "infrastructure_health_buffer_durable": 1 if infrastructure_stats.get("buffer_durable") else 0,
+        "infrastructure_health_ledger_committed_ids": infrastructure_ledger.get("committed_event_ids", 0),
+        "infrastructure_health_ledger_open_reservations": infrastructure_ledger.get("open_reservations", 0),
+        "infrastructure_health_ledger_recoverable_reservations": infrastructure_ledger.get(
+            "recoverable_expired_reservations", 0
+        ),
     }
 
 
@@ -901,6 +983,75 @@ def ingest_batch():
         **result,
         "status": "partially_accepted" if rejected else "accepted",
     }), 202
+
+
+# Rejection codes returned by TelemetryIngestService.ingest_infrastructure_health()
+# mapped onto their HTTP meaning. Anything unmapped is a producer contract
+# violation and answers 400.
+_INFRASTRUCTURE_HEALTH_ERROR_STATUS = {
+    "INFRA_EVENT_ID_CONFLICT": 409,
+    "INFRA_SCHEMA_UNAVAILABLE": 503,
+    "INFRA_LEDGER_UNCONFIGURED": 503,
+    # The deployment has no durable broker behind this route, so nothing may be
+    # admitted: a volatile enqueue would be erased by the next crash while the
+    # admission ledger kept answering retries as an already-delivered duplicate.
+    "INFRA_BUFFER_NOT_DURABLE": 503,
+    "INFRA_BUFFER_OVERFLOW": 503,
+    # Retryable: no durable receipt exists yet, so the producer must try again
+    # rather than treat the observation as delivered.
+    "INFRA_ADMISSION_IN_FLIGHT": 503,
+    "INFRA_ADMISSION_FENCED": 503,
+}
+
+
+@app.route("/api/v1/telemetry/infrastructure-health", methods=["POST"])
+@require_infrastructure_health_authority()
+def ingest_infrastructure_health():
+    """Admit one non-trading infrastructure health observation.
+
+    This route is the only admission path for infrastructure_health telemetry.
+    It carries no RuntimeBinding, so its authority is entirely the caller's
+    verified service identity: a strict service JWT that binds the request
+    tenant and an allowlisted producer scope. Trading telemetry keeps its own
+    binding and lineage validation on the routes above, and an event shaped like
+    an infrastructure probe cannot use this route to skip it.
+    """
+    body = request.get_json(force=True, silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"error": {"code": "INVALID_BODY", "message": "Request body must be a JSON object"}}), 400
+
+    try:
+        authority = request_authority()
+        event = bind_event_tenant(body, authority.tenant_id)
+        event = bind_event_producer(event, authority)
+    except TelemetryAuthorityError as exc:
+        payload, status = exc.as_response()
+        return jsonify(payload), status
+
+    svc = _get_service()
+    try:
+        result = _run_async(svc.ingest_infrastructure_health(event))
+    except Exception as exc:
+        log.exception("Unexpected error during infrastructure health ingest")
+        return jsonify({"error": {"code": "INTERNAL_ERROR", "message": str(exc)}}), 500
+
+    status = result.get("status")
+    if status in ("accepted", "duplicate"):
+        return jsonify({
+            "status": "accepted",
+            "duplicate": status == "duplicate",
+            "event_id": result.get("event_id"),
+            "fingerprint": result.get("fingerprint"),
+            "tenant_id": event.get("tenant_id"),
+            "producer": event.get("producer"),
+        }), 202
+
+    code = str(result.get("code") or "INFRA_REJECTED")
+    return jsonify({
+        "status": "rejected",
+        "error": {"code": code, "message": result.get("message")},
+        "event_id": result.get("event_id"),
+    }), _INFRASTRUCTURE_HEALTH_ERROR_STATUS.get(code, 400)
 
 
 @app.route("/api/v1/telemetry/heartbeats", methods=["POST"])
