@@ -32,6 +32,14 @@ from typing import Any
 DEFAULT_LEASE_SECONDS = 60
 DEFAULT_BATCH_SIZE = 25
 
+SERVICE_TOKEN_ENV = "POLICY_LEARNING_SERVICE_TOKEN"
+API_TOKEN_ENV = "POLICY_LEARNING_API_TOKEN"
+TENANT_ENV = "POLICY_LEARNING_AGORA_TENANT_ID"
+
+
+class SchedulerConfigurationError(RuntimeError):
+    """The sidecar is not configured to be a trusted, tenant-bound caller."""
+
 
 def _env_int(name: str, default: int, *, minimum: int = 0) -> int:
     value = int(os.getenv(name, str(default)))
@@ -66,6 +74,37 @@ def window_tick_id(*, eval_type: str, interval_seconds: int, now: float) -> str:
     return f"shadow-tick-{eval_type}-{span}s-{window}"
 
 
+def caller_token() -> str:
+    """The credential this sidecar presents to the policy-learning API."""
+
+    return _env_text(SERVICE_TOKEN_ENV) or _env_text(API_TOKEN_ENV)
+
+
+def require_caller_configuration() -> tuple[str, str]:
+    """Return ``(token, tenant_id)``, refusing to run without both.
+
+    A sidecar with no credential gets 401 on every tick and one with no tenant
+    scope gets 400 — both silently, forever, in a scheduling loop nobody
+    watches.  Compose wires these from the same variables the API authorizes,
+    so a missing value means the deployment is misconfigured and the worker
+    fails closed at start-up instead of emitting unauthenticated ticks.
+    """
+
+    token = caller_token()
+    tenant_id = _env_text(TENANT_ENV)
+    missing = [
+        name
+        for name, value in ((f"{SERVICE_TOKEN_ENV} (or {API_TOKEN_ENV})", token), (TENANT_ENV, tenant_id))
+        if not value
+    ]
+    if missing:
+        raise SchedulerConfigurationError(
+            "The shadow-eval scheduler is not an authorized tenant-bound caller; "
+            f"set {', '.join(missing)}"
+        )
+    return token, tenant_id
+
+
 def request_headers(tenant_id: str) -> dict[str, str]:
     """Headers that make this sidecar a trusted, tenant-bound caller.
 
@@ -76,7 +115,7 @@ def request_headers(tenant_id: str) -> dict[str, str]:
     """
 
     headers = {"Accept": "application/json", "Content-Type": "application/json"}
-    token = _env_text("POLICY_LEARNING_SERVICE_TOKEN") or _env_text("POLICY_LEARNING_API_TOKEN")
+    token = caller_token()
     if token:
         headers["Authorization"] = f"Bearer {token}"
     if tenant_id:
@@ -209,7 +248,14 @@ def main() -> int:
     eval_type = os.getenv("SHADOW_EVAL_TYPE", "shadow").strip() or "shadow"
     max_datasets_raw = os.getenv("SHADOW_EVAL_MAX_DATASETS", "").strip()
     max_datasets = int(max_datasets_raw) if max_datasets_raw else None
-    tenant_id = _env_text("POLICY_LEARNING_AGORA_TENANT_ID")
+    try:
+        _, tenant_id = require_caller_configuration()
+    except SchedulerConfigurationError as exc:
+        print(
+            json.dumps({"status": "error", "reason": "scheduler_unconfigured", "detail": str(exc)}),
+            flush=True,
+        )
+        return 2
     user_id = _env_text("POLICY_LEARNING_AGORA_USER_ID")
     batch_size = _env_int("SHADOW_EVAL_WORKER_BATCH_SIZE", DEFAULT_BATCH_SIZE, minimum=1)
     lease_seconds = _env_int("SHADOW_EVAL_WORKER_LEASE_SECONDS", DEFAULT_LEASE_SECONDS, minimum=1)

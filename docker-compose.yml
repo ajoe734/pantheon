@@ -489,6 +489,23 @@ services:
       PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
       POLICY_LEARNING_STORE_BACKEND: ${POLICY_LEARNING_STORE_BACKEND:-json}
       POLICY_LEARNING_STORE_DSN: ${POLICY_LEARNING_STORE_DSN:-}
+      # Imitation-loop inbound authority (L12-IMIT-001).  The direct
+      # shadow-eval / worker routes are authenticated and tenant-bound, so the
+      # API and the scheduler sidecar below must share one credential and one
+      # tenant scope or every tick is a 401.  The default is a well-known
+      # local-cluster value that `inbound_authority.py` refuses once
+      # PANTHEON_PERSISTENCE_POSTURE is staging or prod; a real deployment
+      # supplies its own POLICY_LEARNING_SERVICE_TOKEN.
+      POLICY_LEARNING_SERVICE_TOKEN: ${POLICY_LEARNING_SERVICE_TOKEN:-pantheon-local-policy-learning-service}
+      POLICY_LEARNING_SERVICE_TENANTS: ${POLICY_LEARNING_SERVICE_TENANTS:-${POLICY_LEARNING_AGORA_TENANT_ID:-pantheon-local}}
+      POLICY_LEARNING_AGORA_TENANT_ID: ${POLICY_LEARNING_AGORA_TENANT_ID:-pantheon-local}
+      POLICY_LEARNING_AGORA_USER_ID: ${POLICY_LEARNING_AGORA_USER_ID:-}
+      # Agora DatasetVersion authority (owned by L12-AGORA-001).  Unset means
+      # "follow DATABASE_URL"; set these to read through a dedicated Agora
+      # read role instead of the shared application identity.
+      AGORA_DATASET_STORE_BACKEND: ${AGORA_DATASET_STORE_BACKEND:-}
+      AGORA_DATASET_STORE_DSN: ${AGORA_DATASET_STORE_DSN:-}
+      AGORA_DATASET_STORE_SCHEMA: ${AGORA_DATASET_STORE_SCHEMA:-agora}
     volumes:
       - policy-learning-data:/data/policy-learning
     ports:
@@ -519,6 +536,14 @@ services:
       SHADOW_EVAL_SCHEDULER_MAX_TICKS: ${SHADOW_EVAL_SCHEDULER_MAX_TICKS:-0}
       SHADOW_EVAL_TYPE: ${SHADOW_EVAL_TYPE:-shadow}
       SHADOW_EVAL_MAX_DATASETS: ${SHADOW_EVAL_MAX_DATASETS:-}
+      # Same credential and same tenant scope as policy-learning-svc above.
+      # The scheduler presents this token as `Authorization: Bearer` and the
+      # tenant as `X-Tenant-Id`; both must resolve to the same values the API
+      # authorizes, so they are interpolated from the same variables.
+      PANTHEON_PERSISTENCE_POSTURE: ${PANTHEON_PERSISTENCE_POSTURE:-dev}
+      POLICY_LEARNING_SERVICE_TOKEN: ${POLICY_LEARNING_SERVICE_TOKEN:-pantheon-local-policy-learning-service}
+      POLICY_LEARNING_AGORA_TENANT_ID: ${POLICY_LEARNING_AGORA_TENANT_ID:-pantheon-local}
+      POLICY_LEARNING_AGORA_USER_ID: ${POLICY_LEARNING_AGORA_USER_ID:-}
     depends_on:
       policy-learning-svc:
         condition: service_healthy
