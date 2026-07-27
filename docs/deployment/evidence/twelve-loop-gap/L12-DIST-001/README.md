@@ -125,11 +125,9 @@ one class per acceptance criterion.
 
 Commands rerun in this task worktree with the checkout-scoped
 `.venv-pantheon/bin/python3` after merging `origin/dev`
-`b81edf76dfc14087dd7d5e3a6599448cb9d0bb09` at local merge
-`7fce60810e0a1c0eeb7753001681010b01918fb5`:
+`7f545a33bf41e5682dc67f50333c84b42f09d17e` at local merge
+`a1aca8d522227e364bbafaf2bc789f319f93d566`:
 
-- Exact controller, direct Registry facade, committed v1/v2 snapshot, in-memory
-  approve-before-POST, and real HTTP approve-before-POST selection — 6 passed.
 - `pytest services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_distillation_controller.py` — 65 passed.
 - `pytest services/source_ingestion` — 757 passed with 2 skipped.
 - `pytest services/registry services/research/strategy_spec` — 230 passed
