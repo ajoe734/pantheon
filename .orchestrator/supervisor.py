@@ -133,6 +133,10 @@ _DEFERRED_WORKER_TERMINATIONS: ContextVar[
     "deferred_worker_terminations",
     default=None,
 )
+_PREFETCHED_WORKER_BASE_REFS: ContextVar[frozenset[str] | None] = ContextVar(
+    "prefetched_worker_base_refs",
+    default=None,
+)
 
 
 SESSION_ID_PATTERNS = [
@@ -1711,6 +1715,19 @@ def _fetch_worker_base_ref(repo_root: Path, base_ref: str) -> tuple[bool, str | 
     return False, details or "git fetch failed"
 
 
+def _worker_base_ref_precondition(base_ref: str) -> tuple[bool, str | None]:
+    """Fail closed in live cycles unless the network fetch ran before admission."""
+
+    prefetched = _PREFETCHED_WORKER_BASE_REFS.get()
+    if prefetched is None:
+        # Standalone maintenance/tests do not run inside the supervisor cycle.
+        return True, None
+    normalized = str(base_ref or "").strip()
+    if normalized in prefetched:
+        return True, None
+    return False, f"base_ref_not_prefetched:{normalized or 'missing'}"
+
+
 def _quarantine_incomplete_worker_path(path: Path) -> Path | None:
     """Move an unregistered partial checkout aside so dispatch can recover.
 
@@ -1757,9 +1774,9 @@ def _create_worker_worktree(repo_root: Path, path: Path, branch: str, base_ref: 
         if _quarantine_incomplete_worker_path(path) is None:
             return False, f"Worker worktree path already exists and is not empty: {path}"
 
-    fetched, fetch_error = _fetch_worker_base_ref(repo_root, base_ref)
-    if not fetched:
-        return False, f"Failed to refresh worker base {base_ref}: {fetch_error}"
+    base_ready, base_error = _worker_base_ref_precondition(base_ref)
+    if not base_ready:
+        return False, f"Failed to refresh worker base {base_ref}: {base_error}"
 
     remote_ref = f"refs/remotes/origin/{branch}"
     if _git_ref_exists(repo_root, f"refs/heads/{branch}"):
@@ -1984,9 +2001,9 @@ def _refresh_reused_worker_worktree(
     tracked changes.
     """
     base = base_ref.split("/", 1)[1] if base_ref.startswith("origin/") else base_ref
-    fetched, fetch_error = _fetch_worker_base_ref(repo_root, base_ref)
-    if not fetched:
-        return False, f"fetch_failed: {fetch_error}"
+    base_ready, base_error = _worker_base_ref_precondition(base_ref)
+    if not base_ready:
+        return False, f"fetch_failed: {base_error}"
 
     status_proc = subprocess.run(
         ["git", "status", "--porcelain", "--untracked-files=no"],
@@ -12514,6 +12531,37 @@ def probe_provider_reports(
     return previous, report
 
 
+def pending_worker_base_refs(
+    config: dict[str, Any],
+    runtime_snapshot: dict[str, Any],
+) -> set[str]:
+    """Return worktree base refs needed by queue events not yet terminal."""
+
+    settings = worker_worktree_settings(config)
+    if not settings.get("enabled"):
+        return set()
+    try:
+        events = load_event_queue(config)
+    except Exception:
+        return set()
+    queue_records = (
+        (runtime_snapshot.get("queue") or {}).get("events") or {}
+        if isinstance(runtime_snapshot, dict)
+        else {}
+    )
+    terminal_statuses = {"started", "manual_pending", "completed", "failed"}
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        if not worker_worktree_reason_enabled(event.get("reason"), settings):
+            continue
+        event_id = str(event.get("event_id") or "").strip()
+        record = queue_records.get(event_id, {}) if isinstance(queue_records, dict) else {}
+        if str((record or {}).get("status") or "").strip() not in terminal_statuses:
+            return {str(settings.get("base_ref") or "origin/dev")}
+    return set()
+
+
 def run_once(
     config: dict[str, Any],
     *,
@@ -12533,6 +12581,24 @@ def run_once(
         github_runtime_snapshot = load_runtime_state_snapshot(config)
     except Exception:
         github_runtime_snapshot = {}
+    prefetched_worker_base_refs: set[str] = set()
+    repo_root = config_path(config, "status_file").parent
+    for base_ref in pending_worker_base_refs(config, github_runtime_snapshot):
+        fetched, fetch_error = _fetch_worker_base_ref(repo_root, base_ref)
+        if fetched:
+            prefetched_worker_base_refs.add(base_ref)
+            continue
+        write_activity_log(
+            config,
+            {
+                "type": "worker_worktree_base_refresh_failed",
+                "message": (
+                    f"Worker base {base_ref} could not be refreshed before "
+                    f"runtime admission: {fetch_error}"
+                ),
+                "base_ref": base_ref,
+            },
+        )
     github_bus_changed = bool(
         _safe_phase(
             "sync_github_bus",
@@ -12542,19 +12608,25 @@ def run_once(
             quiet=quiet,
         )
     )
-    return _run_with_deferred_dispatch_status_syncs(
-        config,
-        lambda: _run_once_locked(
-            config,
-            watch=watch,
-            replay=replay,
-            quiet=quiet,
-            verbose=verbose,
-            once=once,
-            provider_reports=provider_reports,
-            prelock_changed=github_bus_changed,
-        )
+    base_ref_token = _PREFETCHED_WORKER_BASE_REFS.set(
+        frozenset(prefetched_worker_base_refs)
     )
+    try:
+        return _run_with_deferred_dispatch_status_syncs(
+            config,
+            lambda: _run_once_locked(
+                config,
+                watch=watch,
+                replay=replay,
+                quiet=quiet,
+                verbose=verbose,
+                once=once,
+                provider_reports=provider_reports,
+                prelock_changed=github_bus_changed,
+            )
+        )
+    finally:
+        _PREFETCHED_WORKER_BASE_REFS.reset(base_ref_token)
 
 
 def sync_task_state_shadow(config: dict[str, Any], state: dict[str, Any]) -> bool:

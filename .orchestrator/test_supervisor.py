@@ -1694,38 +1694,20 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                 "preserve me\n",
             )
             self.assertIn("original_path=", (quarantined[0] / "ORCHESTRATOR_QUARANTINE.txt").read_text(encoding="utf-8"))
-            self.assertEqual(
-                run.call_args_list,
+            run.assert_called_once_with(
                 [
-                    mock.call(
-                        [
-                            "git",
-                            "fetch",
-                            "origin",
-                            "+refs/heads/dev:refs/remotes/origin/dev",
-                            "--quiet",
-                        ],
-                        cwd=repo_root,
-                        capture_output=True,
-                        text=True,
-                        check=False,
-                    ),
-                    mock.call(
-                        [
-                            "git",
-                            "worktree",
-                            "add",
-                            "-b",
-                            "task/AG-WS-OPS-002",
-                            str(worktree_path),
-                            "origin/dev",
-                        ],
-                        cwd=repo_root,
-                        capture_output=True,
-                        text=True,
-                        check=False,
-                    ),
+                    "git",
+                    "worktree",
+                    "add",
+                    "-b",
+                    "task/AG-WS-OPS-002",
+                    str(worktree_path),
+                    "origin/dev",
                 ],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=False,
             )
 
     def test_create_worker_worktree_does_not_move_git_worktree(self) -> None:
@@ -5024,6 +5006,49 @@ class DispatchStatusSyncTests(unittest.TestCase):
             ["provider_probe", "lock_enter", "locked_cycle", "lock_exit"],
         )
 
+    def test_run_once_fetches_worker_base_before_taking_runtime_lock(self) -> None:
+        """The exact origin/dev network refresh must precede admission."""
+
+        call_order: list[str] = []
+
+        @contextlib.contextmanager
+        def runtime_lock(*_args: object, **_kwargs: object):
+            call_order.append("lock_enter")
+            try:
+                yield
+            finally:
+                call_order.append("lock_exit")
+
+        def fetch_base(_repo_root: Path, base_ref: str) -> tuple[bool, None]:
+            self.assertEqual(base_ref, "origin/dev")
+            call_order.append("fetch_base")
+            return True, None
+
+        def locked_cycle(*_args: object, **_kwargs: object) -> bool:
+            call_order.append("locked_cycle")
+            self.assertEqual(
+                supervisor._worker_base_ref_precondition("origin/dev"),
+                (True, None),
+            )
+            return False
+
+        with (
+            mock.patch.object(supervisor, "probe_provider_reports", return_value=({}, {})),
+            mock.patch.object(supervisor, "load_runtime_state_snapshot", return_value={}),
+            mock.patch.object(supervisor, "pending_worker_base_refs", return_value={"origin/dev"}),
+            mock.patch.object(supervisor, "_fetch_worker_base_ref", side_effect=fetch_base),
+            mock.patch.object(supervisor, "sync_github_bus", return_value=False),
+            mock.patch.object(supervisor, "runtime_state_lock", side_effect=runtime_lock),
+            mock.patch.object(supervisor, "_run_once_locked", side_effect=locked_cycle),
+        ):
+            changed = supervisor.run_once(self.config, watch=False)
+
+        self.assertFalse(changed)
+        self.assertEqual(
+            call_order,
+            ["fetch_base", "lock_enter", "locked_cycle", "lock_exit"],
+        )
+
     def test_run_once_syncs_github_bus_before_taking_the_runtime_lock(self) -> None:
         """No gh/API subprocess may extend the exclusive admission hold."""
 
@@ -6390,6 +6415,8 @@ class SupervisorRuntimeAdmissionLockTests(unittest.TestCase):
         self.assertIn('"sync_github_bus"', run_once_source)
         self.assertNotIn('"sync_github_bus"', locked_cycle_source)
         self.assertNotIn("probe_provider_reports", locked_cycle_source)
+        self.assertIn("_fetch_worker_base_ref", run_once_source)
+        self.assertNotIn("_fetch_worker_base_ref", locked_cycle_source)
         self.assertIn(
             "with runtime_state_lock(config, shared=False",
             locked_operation_source,
@@ -10640,6 +10667,8 @@ class WorktreeDirtClassificationTests(unittest.TestCase):
             subprocess.run(["git", "checkout", "-q", "-b", "task/OPS-GATEFIX-001"], cwd=repo, check=True)
             # Modified-but-unstaged real change (the common superseded-run residue).
             (repo / "svc.py").write_text("unstaged worker WIP\n", encoding="utf-8")
+            fetched, fetch_error = supervisor._fetch_worker_base_ref(repo, "origin/dev")
+            self.assertTrue(fetched, fetch_error)
 
             ok, detail = supervisor._refresh_reused_worker_worktree(
                 repo, repo, "origin/dev",
