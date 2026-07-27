@@ -17,6 +17,7 @@ from pathlib import Path
 from unittest import mock
 
 import supervisor
+import provider_permissions
 import runtime_state
 import common
 
@@ -9147,6 +9148,215 @@ class PollWorkersRecoveryTests(unittest.TestCase):
         reassign.assert_called_once()
         finalize_queue_event_record.assert_called_once_with({}, {}, worker, "completed")
 
+    def test_completion_stage_blocks_prepared_head_without_handoff(self) -> None:
+        """SUP-PROVIDER-POOL-PROBE-GATE-001.
+
+        An owner run that pushed the exact review head and then exited 0 without
+        advancing the task used to be recorded as a generic worker exit. The task
+        stayed `in_progress` with the same owner, so the next tick reissued
+        `owned_in_progress_dispatch` and the run reproduced the identical clean
+        exit -- a token loop instead of reviewer dispatch.
+        """
+        worker = {
+            "run_id": "run-prepared-head",
+            "task_id": "TASK-PREPARED",
+            "provider": "claude2",
+            "agent_id": "claude2",
+            "status": "running",
+            "pr_url": "https://github.com/ajoe734/pantheon/pull/4270",
+            "pr_url_source": "result_payload",
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_IN_PROGRESS},
+        }
+        state: dict[str, object] = {}
+        with (
+            mock.patch.object(supervisor, "worker_is_discussion_planning", return_value=False),
+            mock.patch.object(supervisor, "worker_is_coordination_dispatch", return_value=False),
+            mock.patch.object(supervisor, "worker_is_chair_review", return_value=False),
+            mock.patch.object(
+                supervisor,
+                "record_missing_handoff_blocker",
+                return_value={"task_id": "TASK-PREPARED", "message": "blocked"},
+            ) as record_blocker,
+            mock.patch.object(supervisor, "record_task_failure_streak") as record_streak,
+            mock.patch.object(supervisor, "maybe_reassign_task_after_worker_failure") as reassign,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            mock.patch.object(supervisor, "finalize_queue_event_record") as finalize_queue_event_record,
+        ):
+            outcome = supervisor.poll_worker_completion_stage(
+                {},
+                state,
+                worker,
+                task_map={"TASK-PREPARED": {"status": "in_progress"}},
+                redispatch_statuses={"in_progress"},
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        self.assertEqual(worker["status"], "failed")
+        self.assertEqual(worker["last_error"], supervisor.MISSING_HANDOFF_EXIT_REASON)
+        record_blocker.assert_called_once()
+        # No generic-exit streak and no owner reassignment: this shape is a
+        # missing handoff, not a provider failure.
+        record_streak.assert_not_called()
+        reassign.assert_not_called()
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_failed")
+        finalize_queue_event_record.assert_called_once_with(
+            {}, state, worker, "failed", supervisor.MISSING_HANDOFF_EXIT_REASON
+        )
+
+    def test_completion_stage_keeps_generic_exit_when_no_head_was_prepared(self) -> None:
+        """An owner exit with no pushed PR head is still a plain generic exit."""
+        worker = {
+            "run_id": "run-no-head",
+            "task_id": "TASK-PREPARED",
+            "provider": "claude2",
+            "agent_id": "claude2",
+            "status": "running",
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_IN_PROGRESS},
+        }
+        with (
+            mock.patch.object(supervisor, "worker_is_discussion_planning", return_value=False),
+            mock.patch.object(supervisor, "worker_is_coordination_dispatch", return_value=False),
+            mock.patch.object(supervisor, "worker_is_chair_review", return_value=False),
+            mock.patch.object(supervisor, "record_missing_handoff_blocker") as record_blocker,
+            mock.patch.object(supervisor, "record_task_failure_streak", return_value=1) as record_streak,
+            mock.patch.object(
+                supervisor,
+                "provider_guardrail_settings",
+                return_value={"generic_exit_reassign_after": 2},
+            ),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "finalize_queue_event_record"),
+        ):
+            outcome = supervisor.poll_worker_completion_stage(
+                {},
+                {},
+                worker,
+                task_map={"TASK-PREPARED": {"status": "in_progress"}},
+                redispatch_statuses={"in_progress"},
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        record_blocker.assert_not_called()
+        record_streak.assert_called_once()
+        self.assertEqual(worker["last_error"], supervisor.GENERIC_WORKER_EXIT_REASON)
+
+    def test_completion_stage_ignores_mention_only_pr_url(self) -> None:
+        """A PR URL scraped from logs is audit data, not prepared-head proof."""
+        worker = {
+            "run_id": "run-mentioned-pr",
+            "task_id": "TASK-PREPARED",
+            "provider": "claude2",
+            "agent_id": "claude2",
+            "status": "running",
+            "pr_url": "https://github.com/ajoe734/pantheon/pull/4270",
+            "pr_url_source": "log_scrape",
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_IN_PROGRESS},
+        }
+        with (
+            mock.patch.object(supervisor, "worker_is_discussion_planning", return_value=False),
+            mock.patch.object(supervisor, "worker_is_coordination_dispatch", return_value=False),
+            mock.patch.object(supervisor, "worker_is_chair_review", return_value=False),
+            mock.patch.object(supervisor, "record_missing_handoff_blocker") as record_blocker,
+            mock.patch.object(supervisor, "record_task_failure_streak", return_value=1) as record_streak,
+            mock.patch.object(
+                supervisor,
+                "provider_guardrail_settings",
+                return_value={"generic_exit_reassign_after": 2},
+            ),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "finalize_queue_event_record"),
+        ):
+            outcome = supervisor.poll_worker_completion_stage(
+                {},
+                {},
+                worker,
+                task_map={"TASK-PREPARED": {"status": "in_progress"}},
+                redispatch_statuses={"in_progress"},
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        record_blocker.assert_not_called()
+        record_streak.assert_called_once()
+        self.assertEqual(worker["last_error"], supervisor.GENERIC_WORKER_EXIT_REASON)
+
+    def test_completion_stage_does_not_block_finalize_exit(self) -> None:
+        """A review-approved finalize run can exit while waiting for auto-merge."""
+        worker = {
+            "run_id": "run-finalize-pr",
+            "task_id": "TASK-PREPARED",
+            "provider": "claude2",
+            "agent_id": "claude2",
+            "status": "running",
+            "pr_url": "https://github.com/ajoe734/pantheon/pull/4270",
+            "pr_url_source": "result_payload",
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_FINALIZE},
+        }
+        with (
+            mock.patch.object(supervisor, "worker_is_discussion_planning", return_value=False),
+            mock.patch.object(supervisor, "worker_is_coordination_dispatch", return_value=False),
+            mock.patch.object(supervisor, "worker_is_chair_review", return_value=False),
+            mock.patch.object(supervisor, "record_missing_handoff_blocker") as record_blocker,
+            mock.patch.object(supervisor, "record_task_failure_streak") as record_streak,
+            mock.patch.object(supervisor, "clear_task_failure_streak") as clear_streak,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            mock.patch.object(supervisor, "finalize_queue_event_record") as finalize_queue_event_record,
+        ):
+            outcome = supervisor.poll_worker_completion_stage(
+                {},
+                {},
+                worker,
+                task_map={"TASK-PREPARED": {"status": "review_approved"}},
+                redispatch_statuses={"review_approved"},
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        self.assertEqual(worker["status"], "completed")
+        record_blocker.assert_not_called()
+        record_streak.assert_not_called()
+        clear_streak.assert_called_once()
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_completed")
+        finalize_queue_event_record.assert_called_once_with({}, {}, worker, "completed")
+
+    def test_worker_prepared_review_head_requires_an_owner_dispatch(self) -> None:
+        base = {
+            "pr_url": "https://github.com/ajoe734/pantheon/pull/4270",
+            "pr_url_source": "result_payload",
+        }
+        for reason in (
+            supervisor.REASON_OWNED_READY,
+            supervisor.REASON_OWNED_IN_PROGRESS,
+        ):
+            with self.subTest(reason=reason):
+                self.assertTrue(
+                    supervisor.worker_prepared_review_head({**base, "request_snapshot": {"reason": reason}})
+                )
+        self.assertFalse(
+            supervisor.worker_prepared_review_head(
+                {**base, "request_snapshot": {"reason": supervisor.REASON_OWNED_FINALIZE}}
+            )
+        )
+        # A reviewer run that happens to cite a PR is not a missing owner handoff.
+        self.assertFalse(
+            supervisor.worker_prepared_review_head(
+                {**base, "request_snapshot": {"reason": "review_ready_dispatch"}}
+            )
+        )
+        # A prose-scraped PR URL is also not prepared-head proof.
+        self.assertFalse(
+            supervisor.worker_prepared_review_head(
+                {
+                    "pr_url": "https://github.com/ajoe734/pantheon/pull/4270",
+                    "pr_url_source": "log_scrape",
+                    "request_snapshot": {"reason": supervisor.REASON_OWNED_IN_PROGRESS},
+                }
+            )
+        )
+        self.assertFalse(
+            supervisor.worker_prepared_review_head(
+                {"request_snapshot": {"reason": supervisor.REASON_OWNED_IN_PROGRESS}}
+            )
+        )
+
     def test_orphan_stage_reaps_dead_worker_after_queue_event_disappears(self) -> None:
         worker = {
             "run_id": "run-orphan",
@@ -11184,6 +11394,265 @@ class WorktreeDirtClassificationTests(unittest.TestCase):
             self.assertEqual(head_before, head_after)
 
 
+class CachedProviderCapabilityLoopTests(unittest.TestCase):
+    """SUP-PROVIDER-POOL-PROBE-GATE-001 acceptance 4.
+
+    `run_once` calls `probe_provider_reports` before every loop. While that path
+    forced the Codex probe, an intended telemetry refresh re-ran `codex exec`
+    (and, per alias, `agy --prompt`) on every supervisor tick regardless of
+    `provider_auth.probe_interval_seconds`.
+    """
+
+    @staticmethod
+    def _is_provider_cli_smoke(command: list[str]) -> bool:
+        if len(command) >= 2 and Path(command[0]).name.startswith("codex") and command[1] == "exec":
+            return True
+        return bool(Path(command[0]).name.startswith("agy") and "--prompt" in command)
+
+    def test_loop_report_reuses_cached_probes_when_none_are_due(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            codex_home = root / "codex-home"
+            codex_home.mkdir()
+            (codex_home / "auth.json").write_text(
+                '{"tokens":{"access_token":"redacted","refresh_token":"redacted"}}',
+                encoding="utf-8",
+            )
+            agy_home = root / "agy-home"
+            (agy_home / ".gemini" / "antigravity-cli").mkdir(parents=True)
+            (agy_home / ".gemini" / "antigravity-cli" / "antigravity-oauth-token").write_text(
+                "token", encoding="utf-8"
+            )
+            stub_bin = root / "bin"
+            stub_bin.mkdir()
+            codex_cli = stub_bin / "codex"
+            codex_cli.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            codex_cli.chmod(0o755)
+            agy_cli = stub_bin / "agy"
+            agy_cli.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            agy_cli.chmod(0o755)
+            recent = (
+                datetime.now(timezone.utc) - timedelta(seconds=60)
+            ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+            def cached(provider_id: str, kind: str) -> dict:
+                return {
+                    "provider": provider_id,
+                    "kind": kind,
+                    "ready": True,
+                    "status": "ready",
+                    "method": "cached",
+                    "error": None,
+                    "checked_at": recent,
+                    "last_auth_probe_at": recent,
+                    "source": "live",
+                }
+
+            capabilities = root / "provider-capabilities.json"
+            capabilities.write_text(
+                json.dumps(
+                    {
+                        "providers": {
+                            "codex": {"auth_ready": True, "auth_probe": cached("codex", "codex")},
+                            "codex2": {"auth_ready": True, "auth_probe": cached("codex2", "codex")},
+                            "antigravity": {
+                                "auth_ready": True,
+                                "auth_probe": cached("antigravity", "antigravity"),
+                            },
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            config = {
+                "paths": {
+                    "status_file": str(root / "ai-status.json"),
+                    "activity_log": str(root / "ai-activity-log.jsonl"),
+                    "current_work": str(root / "current-work.md"),
+                    "dashboard": str(root / "dashboard-bundle.json"),
+                    "claude_mcp_config": str(root / "claude-approval-broker.mcp.json"),
+                    "provider_capabilities": str(capabilities),
+                },
+                "provider_auth": {"probe_interval_seconds": 900},
+                "agents": {},
+                "providers": {
+                    "codex": {
+                        "delivery_mode": "codex",
+                        "codex": {"cli": str(codex_cli), "codex_home": str(codex_home)},
+                    },
+                    "codex2": {
+                        "delivery_mode": "codex",
+                        "codex": {"cli": str(codex_cli), "codex_home": str(codex_home)},
+                    },
+                    "antigravity": {
+                        "delivery_mode": "antigravity",
+                        "antigravity": {"cli": str(agy_cli), "home": str(agy_home)},
+                    },
+                },
+            }
+
+            commands: list[list[str]] = []
+
+            def spy(command, **_kwargs):
+                commands.append(list(command))
+                return subprocess.CompletedProcess(command, 1, "", "")
+
+            with mock.patch.object(provider_permissions, "run_command", side_effect=spy):
+                _previous, report = supervisor.probe_provider_reports(config, quiet=True)
+
+        smokes = [command for command in commands if self._is_provider_cli_smoke(command)]
+        self.assertEqual(smokes, [], f"unexpected provider CLI smoke probes: {smokes}")
+        for provider_id in ("codex", "codex2", "antigravity"):
+            self.assertEqual(
+                report["providers"][provider_id]["auth_probe"]["source"],
+                "cached",
+                provider_id,
+            )
+            self.assertTrue(report["providers"][provider_id]["auth_ready"], provider_id)
+
+
+class WorkerBaseRefPreconditionTests(unittest.TestCase):
+    """SUP-PROVIDER-POOL-PROBE-GATE-001.
+
+    The per-loop `_PREFETCHED_WORKER_BASE_REFS` context proved that *this* cycle
+    fetched the base. After a provider probe, a worker failure, a redispatch, or
+    a split-root restart, a dispatch can cross into a cycle whose context never
+    listed the base even though `origin/dev` resolves fine. Treating the missing
+    flag as proof of a missing fetch stalled the scheduler with
+    `base_ref_not_prefetched:origin/dev`. The invariant is the git ref.
+    """
+
+    def _origin_backed_repo(self, tmpdir: str) -> Path:
+        root = Path(tmpdir)
+        origin = root / "origin.git"
+        repo = root / "repo"
+        subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", "-b", "dev"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)
+        subprocess.run(["git", "remote", "add", "origin", str(origin)], cwd=repo, check=True)
+        (repo / "tracked.txt").write_text("initial\n", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-qm", "initial"], cwd=repo, check=True)
+        subprocess.run(["git", "push", "-q", "origin", "dev"], cwd=repo, check=True)
+        subprocess.run(
+            ["git", "fetch", "-q", "origin", "+refs/heads/dev:refs/remotes/origin/dev"],
+            cwd=repo,
+            check=True,
+        )
+        return repo
+
+    def test_prefetched_context_is_still_the_fast_path(self) -> None:
+        token = supervisor._PREFETCHED_WORKER_BASE_REFS.set(frozenset({"origin/dev"}))
+        try:
+            with mock.patch.object(supervisor, "_fetch_worker_base_ref") as fetch:
+                self.assertEqual(
+                    supervisor._worker_base_ref_precondition("origin/dev", Path("/nonexistent")),
+                    (True, None),
+                )
+            fetch.assert_not_called()
+        finally:
+            supervisor._PREFETCHED_WORKER_BASE_REFS.reset(token)
+
+    def test_empty_context_accepts_a_resolvable_freshly_fetched_base(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = self._origin_backed_repo(tmpdir)
+            token = supervisor._PREFETCHED_WORKER_BASE_REFS.set(frozenset())
+            try:
+                ready, error = supervisor._worker_base_ref_precondition("origin/dev", repo)
+                self.assertTrue(ready, error)
+                self.assertIsNone(error)
+                # The recovered ref is cached for the rest of the cycle.
+                self.assertIn("origin/dev", supervisor._PREFETCHED_WORKER_BASE_REFS.get())
+            finally:
+                supervisor._PREFETCHED_WORKER_BASE_REFS.reset(token)
+
+    def test_worktree_creation_succeeds_across_a_redispatch_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = self._origin_backed_repo(tmpdir)
+            worktree = Path(tmpdir) / "leases" / "task-redispatch"
+            token = supervisor._PREFETCHED_WORKER_BASE_REFS.set(frozenset())
+            try:
+                created, error = supervisor._create_worker_worktree(
+                    repo, worktree, "task/OPS-REDISPATCH-001", "origin/dev"
+                )
+            finally:
+                supervisor._PREFETCHED_WORKER_BASE_REFS.reset(token)
+
+            self.assertTrue(created, error)
+            self.assertTrue((worktree / "tracked.txt").exists())
+
+    def test_recovery_fetch_is_time_bounded_inside_the_cycle(self) -> None:
+        """The pre-admission fetch runs outside every lock; this one does not.
+
+        An unbounded recovery fetch would charge its network wait to the
+        runtime-admission hold that approve/assign/note commands queue behind.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = self._origin_backed_repo(tmpdir)
+            token = supervisor._PREFETCHED_WORKER_BASE_REFS.set(frozenset())
+            try:
+                with mock.patch.object(
+                    supervisor, "_fetch_worker_base_ref", return_value=(True, None)
+                ) as fetch:
+                    ready, error = supervisor._worker_base_ref_precondition("origin/dev", repo)
+            finally:
+                supervisor._PREFETCHED_WORKER_BASE_REFS.reset(token)
+
+        self.assertTrue(ready, error)
+        self.assertEqual(
+            fetch.call_args.kwargs["timeout_seconds"],
+            supervisor.WORKER_BASE_REF_RECOVERY_FETCH_TIMEOUT_SECONDS,
+        )
+
+    def test_a_hung_recovery_fetch_still_accepts_an_already_resolving_ref(self) -> None:
+        """A fetch timeout is not proof the ref is missing; only rev-parse is."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = self._origin_backed_repo(tmpdir)
+            token = supervisor._PREFETCHED_WORKER_BASE_REFS.set(frozenset())
+            try:
+                with mock.patch.object(
+                    supervisor,
+                    "_fetch_worker_base_ref",
+                    return_value=(False, "git fetch timed out after 30s"),
+                ):
+                    ready, error = supervisor._worker_base_ref_precondition("origin/dev", repo)
+            finally:
+                supervisor._PREFETCHED_WORKER_BASE_REFS.reset(token)
+
+        self.assertTrue(ready, error)
+
+    def test_unresolvable_base_still_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = self._origin_backed_repo(tmpdir)
+            token = supervisor._PREFETCHED_WORKER_BASE_REFS.set(frozenset())
+            try:
+                ready, error = supervisor._worker_base_ref_precondition("origin/no-such-branch", repo)
+            finally:
+                supervisor._PREFETCHED_WORKER_BASE_REFS.reset(token)
+
+            self.assertFalse(ready)
+            self.assertTrue(str(error).startswith("base_ref_unresolved:origin/no-such-branch"), error)
+
+    def test_missing_base_ref_name_fails_closed(self) -> None:
+        token = supervisor._PREFETCHED_WORKER_BASE_REFS.set(frozenset())
+        try:
+            self.assertEqual(
+                supervisor._worker_base_ref_precondition("", Path("/nonexistent")),
+                (False, "base_ref_not_prefetched:missing"),
+            )
+        finally:
+            supervisor._PREFETCHED_WORKER_BASE_REFS.reset(token)
+
+    def test_standalone_maintenance_outside_a_cycle_is_unaffected(self) -> None:
+        self.assertEqual(
+            supervisor._worker_base_ref_precondition("origin/dev"),
+            (True, None),
+        )
+
+
 class WorkerReassignmentTests(unittest.TestCase):
     def setUp(self) -> None:
         self.config = {
@@ -11559,6 +12028,98 @@ class WorkerReassignmentTests(unittest.TestCase):
         self.assertEqual(kwargs["new_reviewer"], "Claude")
         self.assertEqual(kwargs["new_status"], "todo")
         self.assertIn("Task returned to todo until Codex starts a fresh run.", kwargs["message"])
+
+
+class MissingHandoffBlockerTests(unittest.TestCase):
+    """SUP-PROVIDER-POOL-PROBE-GATE-001 acceptance 7."""
+
+    def setUp(self) -> None:
+        self.config = {
+            "paths": {"status_file": "ai-status.json"},
+            "agents": {"claude2": {"id": "claude2", "display_name": "Claude2"}},
+        }
+        self.worker = {
+            "run_id": "claude2-run-9",
+            "task_id": "SUP-LOOP-001",
+            "agent_id": "claude2",
+            "provider": "claude2",
+            "pr_url": "https://github.com/ajoe734/pantheon/pull/4270",
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_IN_PROGRESS},
+        }
+
+    def _status(self) -> dict:
+        return {
+            "tasks": [
+                {
+                    "id": "SUP-LOOP-001",
+                    "status": "in_progress",
+                    "owner": "Claude2",
+                    "reviewer": "Codex2",
+                }
+            ]
+        }
+
+    def test_blocker_takes_the_task_out_of_owned_in_progress_dispatch(self) -> None:
+        status = self._status()
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "write_status") as write_status,
+            mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            mock.patch.object(supervisor, "utc_now", return_value="2026-07-27T19:00:00Z"),
+        ):
+            event = supervisor.record_missing_handoff_blocker(self.config, self.worker)
+
+        self.assertIsNotNone(event)
+        task = status["tasks"][0]
+        # `in_progress` is what owned_in_progress_dispatch selects on; leaving it
+        # there is exactly the loop. `blocked` is not an owned dispatch status.
+        self.assertEqual(task["status"], "blocked")
+        self.assertEqual(task["waiting_for"], "Codex2")
+        blocker = status["blockers"][0]
+        self.assertEqual(blocker["blocker_kind"], "missing_handoff")
+        self.assertEqual(blocker["status"], "open")
+        self.assertEqual(blocker["waiting_for"], "Codex2")
+        self.assertIn("pull/4270", blocker["message"])
+        write_status.assert_called_once_with(
+            self.config, status, source="supervisor-missing-handoff"
+        )
+        self.assertEqual(
+            status["status_activity_outbox"]["events"][0]["type"],
+            "task_missing_handoff_blocked",
+        )
+        self.assertEqual(
+            write_activity_log.call_args.args[1]["type"], "task_missing_handoff_blocked"
+        )
+
+    def test_blocker_is_not_duplicated_on_a_later_tick(self) -> None:
+        status = self._status()
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "write_status"),
+            mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "utc_now", return_value="2026-07-27T19:00:00Z"),
+        ):
+            self.assertIsNotNone(supervisor.record_missing_handoff_blocker(self.config, self.worker))
+            status.pop("status_activity_outbox", None)
+            self.assertIsNone(supervisor.record_missing_handoff_blocker(self.config, self.worker))
+
+        self.assertEqual(len(status["blockers"]), 1)
+
+    def test_blocker_is_skipped_when_the_owner_no_longer_owns_the_task(self) -> None:
+        status = self._status()
+        status["tasks"][0]["owner"] = "Codex"
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "write_status") as write_status,
+            mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            self.assertIsNone(supervisor.record_missing_handoff_blocker(self.config, self.worker))
+
+        write_status.assert_not_called()
+        self.assertEqual(status["tasks"][0]["status"], "in_progress")
 
 
 class WorkerPreemptionSyncTests(unittest.TestCase):
