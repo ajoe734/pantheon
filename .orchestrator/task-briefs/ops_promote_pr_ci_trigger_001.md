@@ -7,7 +7,7 @@ Generated in the worker workspace because the supervisor root did not have a tas
 - Status: in_progress
 - Owner: Codex2
 - Reviewer: Codex
-- Next: Exact-head workflow dispatch implementation is locally validated; publish the task PR, prove one fresh promote candidate on merged dev, retire only demonstrably superseded stale promote PRs, and hand the evidence to Codex.
+- Next: PR #4258 merged the exact-head dispatch. Follow-up removes statusCheckRollup from the 1,000-row bulk query after two fail-closed GraphQL 502 runs; merge that repair, cut a fresh release, prove its promote PR, then retire only demonstrably superseded stale PRs and hand evidence to Codex.
 
 ## Summary
 修復 promote/* PR 沒有 required checks 導致 auto-merge 永遠卡住的 CI/dispatch 治理缺口。
