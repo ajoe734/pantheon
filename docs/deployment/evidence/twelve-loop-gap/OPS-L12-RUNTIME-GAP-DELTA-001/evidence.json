@@ -2,22 +2,22 @@
   "schema_version": "loop_product_evidence.v1",
   "schema_status": {
     "formal_schema_owner": "LOOP-PROD-002",
-    "formalization_trigger": "OPS-L12-RUNTIME-GAP-DELTA-001 v8.0.0 recut after Codex2's rejection of PR #4221 final head 04332822e44922d64a4a403cfe6223f311e9954b (historical). That rejection was not about the delivery proof, which held: the receipt commit 63d4d60372741af77943f24c2833db0c15e2e051 (historical) carried the bound bytes, the final head changed none of them, its required checks were green, and every rule the validator then shipped returned zero rejections. It was about prose that had not been recut with the delivery: the manifest still dated its canonical snapshot to superseded journal sequences, still called the delta document v6 (historical), still counted seven (historical) rules, and still described a pull request as red that the same manifest recorded green. Rule current_cut_consistency now derives the cut's version, canonical snapshot, delivery receipt and rule count from the manifest's own structure and rejects any enrolled claim that disagrees with them. The receipt for this cut is 6874ea5aeaae05577bf94ffea9de8e7a52a6d005.",
-    "note": "Machine-readable evidence manifest for the Layer 4 post-dispatch runtime gap delta. Records journal facts, hosted identity, and twelve post-dispatch gaps mapped to MANIFEST, TRUTH, VERIFY, and HOSTED tasks. Claims no hosted activation and no task completion. Delivered bytes are bound by content digest, not by a commit sha, and every claim about this cut is checked against the cut the manifest itself declares.",
+    "formalization_trigger": "OPS-L12-RUNTIME-GAP-DELTA-001 v9.0.0 recut after Codex2's rejection of PR #4221 final head a5de47447b607a2f561b852fc40bf33035ffcba0 (historical). That rejection was not about this manifest, which held: schema, checksum and every rule the validator then shipped returned zero rejections, the receipt commit 6874ea5aeaae05577bf94ffea9de8e7a52a6d005 (historical) carried the bound bytes, and its required checks were green. It was about the delta document that the content digest binds. That document said the cut declares its identity in an evidence.json field named current_cut, which this manifest has never carried and the schema's additionalProperties false forbids, while section 7.7 of the same document correctly described the identity as derived from existing structure; and it reported its journal scan as bounded at sequence 2014 (historical) when this cut's boundary, and this manifest's own scan command, are sequence 2191. Rule bound_document_consistency now reads the one markdown artifact the digest binds and rejects both shapes: a declaration pointed at a manifest field that does not resolve, and a scan-boundary sentence that disagrees with the declared snapshot. The receipt for this cut is cd9a7c0f12996a2b64e61056be34c97b2b994a19.",
+    "note": "Machine-readable evidence manifest for the Layer 4 post-dispatch runtime gap delta. Records journal facts, hosted identity, and twelve post-dispatch gaps mapped to MANIFEST, TRUTH, VERIFY, and HOSTED tasks. Claims no hosted activation and no task completion. Delivered bytes are bound by content digest, not by a commit sha, and every claim about this cut -- in this manifest and in the document the digest binds -- is checked against the cut the manifest itself declares.",
     "status": "formalized"
   },
   "evidence_policy": {
     "checksum_file": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-RUNTIME-GAP-DELTA-001/evidence.sha256",
     "missing_or_contradicted_proof_fails_closed": true,
-    "mutation_rule": "Task-scoped evidence changes require a Pantheon task commit and independent reviewer verification by Codex2. Any change to a bound artifact requires an evidence recut: a new delivery receipt commit carrying only the bound artifacts, green required checks on that receipt head, then an evidence-only commit that records the receipt. scripts/validate_twelve_loop_gap_evidence.py must return zero rejections over all nine rules before handoff, including receipt_commit_artifacts, which reads the receipt commit out of the local git object store, and current_cut_consistency, which requires every enrolled claim about this cut to name this cut's version, canonical snapshot sequence, delivery receipt and rule count, or to mark the stale token (historical).",
+    "mutation_rule": "Task-scoped evidence changes require a Pantheon task commit and independent reviewer verification by Codex2. Any change to a bound artifact requires an evidence recut: a new delivery receipt commit carrying only the bound artifacts, green required checks on that receipt head, then an evidence-only commit that records the receipt. scripts/validate_twelve_loop_gap_evidence.py must return zero rejections over all ten rules before handoff, including receipt_commit_artifacts, which reads the receipt commit out of the local git object store; current_cut_consistency, which requires every enrolled claim about this cut to name this cut's version, canonical snapshot sequence, delivery receipt and rule count, or to mark the stale token (historical); and bound_document_consistency, which applies the same declared cut to the delta document the content digest binds.",
     "recording_mode": "logical_append_only",
     "redacted": true,
     "self_hashing": false
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-27T01:45:34Z",
-    "evidence_cut_semantics": "Owner evidence cut v8.0.0. Supersedes v1.0.0 (historical) (merged by PR #4200), the unreviewed v2.0.0 (historical) / v3.0.0 (historical) recuts, v4.0.0 (historical) (commits 5c39428dda1d3c1e42fa926aa5f320467e1b8324 (historical) and 0bb6d7ffbef956a57f3a3b300056f77088837f2a (historical)), v5.0.0 (historical) (head 5a9ed0c9957529467fce0b7afa0338546987ee4b (historical)), v6.0.0 (historical) (head b3f8edad0b5ac078ada3dd791b8166dbaf58cf9e (historical)), and v7.0.0 (historical) (final head 04332822e44922d64a4a403cfe6223f311e9954b (historical), receipt 63d4d60372741af77943f24c2833db0c15e2e051 (historical)). The first four were rejected by Human/Ops; v6.0.0 (historical) was rejected by reviewer Codex2 because every rule read the manifest's own description of the delivery receipt rather than the receipt itself; v7.0.0 (historical) was rejected by the same reviewer because the receipt proof held while the manifest's prose still described the previous cut. Every mutable GitHub fact in this cut is recorded as a point-in-time observation bound to an exact head and observed_at, never as the cut's current truth. The delivered bytes are bound by content digest over the three artifacts finalized in delivery receipt commit 6874ea5aeaae05577bf94ffea9de8e7a52a6d005, whose required checks are recorded below and whose tree is verified offline by rule receipt_commit_artifacts; the evidence pair is deliberately outside that digest so this commit cannot invalidate it.",
+    "evidence_cut_at": "2026-07-27T03:02:00Z",
+    "evidence_cut_semantics": "Owner evidence cut v9.0.0. Supersedes v1.0.0 (historical) (merged by PR #4200), the unreviewed v2.0.0 (historical) / v3.0.0 (historical) recuts, v4.0.0 (historical) (commits 5c39428dda1d3c1e42fa926aa5f320467e1b8324 (historical) and 0bb6d7ffbef956a57f3a3b300056f77088837f2a (historical)), v5.0.0 (historical) (head 5a9ed0c9957529467fce0b7afa0338546987ee4b (historical)), v6.0.0 (historical) (head b3f8edad0b5ac078ada3dd791b8166dbaf58cf9e (historical)), v7.0.0 (historical) (final head 04332822e44922d64a4a403cfe6223f311e9954b (historical), receipt 63d4d60372741af77943f24c2833db0c15e2e051 (historical)), and v8.0.0 (historical) (final head a5de47447b607a2f561b852fc40bf33035ffcba0 (historical), receipt 6874ea5aeaae05577bf94ffea9de8e7a52a6d005 (historical)). The first four were rejected by Human/Ops; v6.0.0 (historical) was rejected by reviewer Codex2 because every rule read the manifest's own description of the delivery receipt rather than the receipt itself; v7.0.0 (historical) because the receipt proof held while this manifest's prose still described the previous cut; v8.0.0 (historical) because this manifest's prose was recut while the delta document it binds was not, and no rule opened that document. This cut is a narrative recut of v8.0.0 (historical) at the same canonical boundary, journal sequence 2191: the fact set is unchanged and the snapshot is deliberately not advanced, so the diff a reviewer reads contains the two rejected passages, the new rule and its regression suite, and nothing else. Every mutable GitHub fact is recorded as a point-in-time observation bound to an exact head and observed_at, never as the cut's current truth. The delivered bytes are bound by content digest over the three artifacts finalized in delivery receipt commit cd9a7c0f12996a2b64e61056be34c97b2b994a19, whose required checks are recorded below and whose tree is verified offline by rule receipt_commit_artifacts; the evidence pair is deliberately outside that digest so this commit cannot invalidate it.",
     "id": "OPS-L12-RUNTIME-GAP-DELTA-001",
     "overall_admission": "in_progress",
     "owner": "Claude",
@@ -196,9 +196,22 @@
       {
         "sha": "6874ea5aeaae05577bf94ffea9de8e7a52a6d005",
         "subject": "OPS-L12-RUNTIME-GAP-DELTA-001: check current-cut claims against the cut",
-        "delivery_state": "v8_delivery_receipt_head",
-        "receipt_role": "current_delivery_receipt",
+        "delivery_state": "superseded_v8_delivery_receipt_rejected_by_codex2",
         "bound_content_digest": "content-digest:sha256:ec0126d3951d9c61412329d55945471ff38c075a4b0104bfd6fafe4aeb8a1564",
+        "note": "v8.0.0 (historical) delivery receipt. Its three required checks were green (run 30230401313) and rule receipt_commit_artifacts verified its tree, but Codex2 rejected the cut it carried: the delta document in this very tree named an evidence.json current_cut field that does not exist and reported its journal scan as bounded at sequence 2014 (historical). The validator bytes here predate rule bound_document_consistency."
+      },
+      {
+        "sha": "12e8216c26516f136abea324fae3f6ad4b9835c1",
+        "subject": "Merge remote-tracking branch 'origin/dev' into task/OPS-L12-RUNTIME-GAP-DELTA-001",
+        "delivery_state": "v9_dev_refresh_merge_retained_in_history",
+        "note": "Merge of dev tip d65b87eecac09ffafa5653cf05ebeb5d526546d5 so PR #4221 is not BEHIND at the v9.0.0 receipt. Auto-merge stays disabled. Carried out before the receipt commit so the receipt head is the first commit of this cut that CI runs against."
+      },
+      {
+        "sha": "cd9a7c0f12996a2b64e61056be34c97b2b994a19",
+        "subject": "OPS-L12-RUNTIME-GAP-DELTA-001: read the digest-bound delta document",
+        "delivery_state": "v9_delivery_receipt_head",
+        "receipt_role": "current_delivery_receipt",
+        "bound_content_digest": "content-digest:sha256:2824f87833588791347f1ea04e3b1fdd59c6c891a5206c7441d0e7ddc4f55c9f",
         "note": "Delivery receipt per section 7.5 of the delta document. Carries only the three digest-bound artifacts, so the bytes its required checks passed are byte-identical at the final PR head; the follow-up evidence commit touches only evidence.json and evidence.sha256, which are outside the content digest. Rule receipt_commit_artifacts reads each bound path out of this commit's tree and compares blob sha256 against integrity.source_artifact_sha256_by_epoch."
       }
     ],
@@ -382,6 +395,33 @@
         "head_sha": "6874ea5aeaae05577bf94ffea9de8e7a52a6d005",
         "run_id": 30230401313,
         "url": "https://github.com/ajoe734/pantheon/actions/runs/30230401313"
+      },
+      {
+        "workflow": "Runtime mirror guard",
+        "event": "pull_request",
+        "conclusion": "success",
+        "completed_at": "2026-07-27T02:57:23Z",
+        "head_sha": "cd9a7c0f12996a2b64e61056be34c97b2b994a19",
+        "run_id": 30233384772,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30233384772"
+      },
+      {
+        "workflow": "Commit trailers",
+        "event": "pull_request",
+        "conclusion": "success",
+        "completed_at": "2026-07-27T02:57:28Z",
+        "head_sha": "cd9a7c0f12996a2b64e61056be34c97b2b994a19",
+        "run_id": 30233384772,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30233384772"
+      },
+      {
+        "workflow": "Smoke acceptance",
+        "event": "pull_request",
+        "conclusion": "success",
+        "completed_at": "2026-07-27T02:58:07Z",
+        "head_sha": "cd9a7c0f12996a2b64e61056be34c97b2b994a19",
+        "run_id": 30233384772,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30233384772"
       }
     ]
   },
@@ -529,7 +569,8 @@
         "command": "python3 -m pytest scripts/test_validate_twelve_loop_gap_evidence.py scripts/test_dispatch_twelve_loop_gap_2026_07_26.py -q",
         "result": "pass",
         "note": "77 tests: 45 validator regressions (28 from v7 (historical) plus 17 covering current_cut_consistency) and 32 dispatcher tests. The 17 new cases pin each shape Codex2 listed: a stale version token, a stale short-form cut name, a stale journal sequence, a dropped journal sequence, a superseded receipt named in a current claim, an unbound pull-request state claim, a stale rule count, an unlabelled command entry, an unlabelled historical command entry, a stale claim hidden inside a current command entry, a deleted enrolled field, a missing version declaration, an ambiguous snapshot declaration, and an ambiguous receipt. Three are no-false-positive cases: a marked historical token, a bound pull-request claim, and schema names such as loop_catalog.v2 that must not read as cut names.",
-        "claim_scope": "current"
+        "claim_scope": "historical",
+        "historical_note": "v8.0.0 (historical) run of the regression suite, before bound_document_consistency existed; the test and rule counts quoted are those of the nine-rule (historical) validator."
       },
       {
         "command": "python3 scripts/dispatch_twelve_loop_gap_2026_07_26.py --validate-only",
@@ -583,25 +624,28 @@
       {
         "command": "python3 scripts/validate_twelve_loop_gap_evidence.py docs/deployment/evidence/twelve-loop-gap/OPS-L12-RUNTIME-GAP-DELTA-001/evidence.json --json",
         "result": "pass",
-        "claim_scope": "current",
-        "note": "Nine fail-closed rules, zero rejections. The ninth, current_cut_consistency, derives this cut's version, canonical snapshot sequence, delivery receipt and rule count from the manifest's own structure and checks every enrolled claim against them."
+        "claim_scope": "historical",
+        "note": "Nine fail-closed rules, zero rejections. The ninth, current_cut_consistency, derives this cut's version, canonical snapshot sequence, delivery receipt and rule count from the manifest's own structure and checks every enrolled claim against them.",
+        "historical_note": "v8.0.0 (historical) run: the validator then shipped nine (historical) rules and did not read the bound document."
       },
       {
         "command": "python3 scripts/validate_twelve_loop_gap_evidence.py <v7 (historical) manifest extracted from commit cda848807a354f78a7a7c6853ef2817c6f504c34 (historical)> --repo-root <that commit's tree> --git-root . --now 2026-07-27T00:40:00Z --json",
         "result": "pass_reproduces_codex2_rejection",
-        "claim_scope": "current",
-        "note": "Replay of the exact rejection Codex2 raised, against the manifest as it stood at its own evidence commit. Sixty-two rejections, every one of them from current_cut_consistency and none from the eight rules (historical) that cut already shipped. The rejections reproduce the reviewer's list field by field: authorities.actual_state[0] and residual_risks.canonical_snapshot_age naming seq 2046 (historical); deployment.identity_admission, security_and_safety.two_person_approval, acceptance AC5 and AC9 naming seq 2014 (historical); behavioral_proof.duplicate_safety naming 6.0.0 (historical); behavioral_proof.failure_and_degraded_behavior and AC7 counting seven (historical) rules; AC4 describing a pull request with no head to bind it to; residual_risks.delivery_receipt_intermediate_state naming the superseded receipt; and all twenty validation.commands entries carrying no claim_scope at all. This is the non-vacuity proof: the rule fires on exactly the artifact the reviewer rejected, and on nothing the eight earlier rules could already see."
+        "claim_scope": "historical",
+        "note": "Replay of the exact rejection Codex2 raised, against the manifest as it stood at its own evidence commit. Sixty-two rejections, every one of them from current_cut_consistency and none from the eight rules (historical) that cut already shipped. The rejections reproduce the reviewer's list field by field: authorities.actual_state[0] and residual_risks.canonical_snapshot_age naming seq 2046 (historical); deployment.identity_admission, security_and_safety.two_person_approval, acceptance AC5 and AC9 naming seq 2014 (historical); behavioral_proof.duplicate_safety naming 6.0.0 (historical); behavioral_proof.failure_and_degraded_behavior and AC7 counting seven (historical) rules; AC4 describing a pull request with no head to bind it to; residual_risks.delivery_receipt_intermediate_state naming the superseded receipt; and all twenty validation.commands entries carrying no claim_scope at all. This is the non-vacuity proof: the rule fires on exactly the artifact the reviewer rejected, and on nothing the eight earlier rules could already see.",
+        "historical_note": "v8.0.0 (historical)-era replay of the v7.0.0 (historical) rejection; the rejection counts quoted are those of the nine-rule (historical) validator."
       },
       {
         "command": "python3 scripts/validate_twelve_loop_gap_evidence.py <staged copy with receipt_role moved to 5c39428 (historical) and evidence.sha256 resealed> --repo-root <staged copy> --git-root . --json",
         "result": "pass_reproduces_codex2_rejection",
-        "claim_scope": "current",
-        "note": "Replay of the v6 (historical) receipt substitution against the current rule set. Seven rejections, from receipt_commit_artifacts (three) and current_cut_consistency (four) only; none of the seven earlier rules fires, which is what makes this the v6 (historical) shape rather than a generic failure. receipt_commit_artifacts reports the delta document digest conflict at 5c39428 (historical) and the two validator scripts absent from that commit's tree. current_cut_consistency catches the same swap from the opposite side: demoting the real receipt to superseded leaves four enrolled claims still naming it."
+        "claim_scope": "historical",
+        "note": "Replay of the v6 (historical) receipt substitution against the current rule set. Seven rejections, from receipt_commit_artifacts (three) and current_cut_consistency (four) only; none of the seven earlier rules fires, which is what makes this the v6 (historical) shape rather than a generic failure. receipt_commit_artifacts reports the delta document digest conflict at 5c39428 (historical) and the two validator scripts absent from that commit's tree. current_cut_consistency catches the same swap from the opposite side: demoting the real receipt to superseded leaves four enrolled claims still naming it.",
+        "historical_note": "v8.0.0 (historical)-era replay of the v6.0.0 (historical) receipt substitution; the rejection counts quoted are those of the nine-rule (historical) validator."
       },
       {
         "command": "gh pr view 4193 / 4203 / 4211 --repo ajoe734/pantheon",
         "result": "pass",
-        "claim_scope": "current",
+        "claim_scope": "historical",
         "observed_at": "2026-07-27T01:37:46Z",
         "conclusion": "Point-in-time observation, not a claim about the cut instant. Section 5.0 of the delta document carries an earlier observation of the same three pull requests at 2026-07-27T01:18:3xZ, where #4203 was still open at head 2cc1a2e6af3cca1d274c8a2ef87648c13e2affa8; it merged at head 65b14b861f323e2dc04f6636b6458f9ccdad2a1e between the two reads. Green CI and merge alike leave the still-missing product evidence for gaps 6, 8 and 12 unchanged.",
         "observations": [
@@ -623,12 +667,13 @@
             "head_sha": "8c4d727296d575cf49b9d3a6e1b7a222396063e3",
             "observed_at": "2026-07-27T01:37:46Z"
           }
-        ]
+        ],
+        "historical_note": "v8.0.0 (historical) pull-request observations, taken at 2026-07-27T01:37:46Z. Superseded by the v9.0.0 observations recorded later in this list."
       },
       {
         "command": "gh pr view 4221 --repo ajoe734/pantheon --json headRefOid,autoMergeRequest,mergeStateStatus and gh api repos/ajoe734/pantheon/commits/<receipt>/check-runs",
         "result": "pass",
-        "claim_scope": "current",
+        "claim_scope": "historical",
         "observed_at": "2026-07-27T01:45:34Z",
         "conclusion": "autoMergeRequest is null: auto-merge stays disabled as Human/Ops set it, and this cut does not call task_finalize.sh. All three required workflows are success on the delivery receipt head in pull_request run 30230401313: Runtime mirror guard 2026-07-27T01:42:04Z, Commit trailers 2026-07-27T01:42:08Z, Smoke acceptance 2026-07-27T01:43:00Z. Because that commit changed only bound artifacts, these checks cover the exact bytes validated_head_sha names.",
         "observations": [
@@ -646,12 +691,87 @@
             "observed_at": "2026-07-27T01:45:34Z",
             "value": "Runtime mirror guard success 2026-07-27T01:42:04Z; Commit trailers success 2026-07-27T01:42:08Z; Smoke acceptance success 2026-07-27T01:43:00Z; run 30230401313"
           }
+        ],
+        "historical_note": "v8.0.0 (historical) observation of PR #4221 and of the check runs on the v8 (historical) delivery receipt head."
+      },
+      {
+        "command": "python3 scripts/validate_twelve_loop_gap_evidence.py docs/deployment/evidence/twelve-loop-gap/OPS-L12-RUNTIME-GAP-DELTA-001/evidence.json --json",
+        "result": "pass",
+        "claim_scope": "current",
+        "note": "Ten fail-closed rules, zero rejections. The tenth, bound_document_consistency, opens the one markdown artifact the content digest binds and holds its declaration references and scan-boundary sentences to the same cut current_cut_consistency derives for this manifest."
+      },
+      {
+        "command": "python3 scripts/validate_twelve_loop_gap_evidence.py <v8 (historical) manifest extracted from commit a5de47447b607a2f561b852fc40bf33035ffcba0 (historical)> --repo-root <that commit's tree> --git-root . --now 2026-07-27T02:00:00Z --json",
+        "result": "pass_reproduces_codex2_rejection",
+        "claim_scope": "current",
+        "note": "Replay of the exact rejection Codex2 raised, against the previous cut as it stood at its own final head. Nine rejections: five from bound_document_consistency and four from current_cut_consistency. The five are the reviewer's finding, field for field -- section 1 of the delta document naming an evidence.json current_cut that does not resolve, section 3.4 citing seq 1952 (historical) and twice citing 2014 (historical) as this version's scan, and section 7.2 citing seq 1952 (historical) as an unmarked boundary. The four from current_cut_consistency are not part of the finding: they are the mechanical result of the rule count moving from nine (historical) to ten, and each of them reports the same drift, that an enrolled claim counts a rule total the validator no longer ships. None of the eight rules (historical) that predate current_cut_consistency rejects that cut. This is the non-vacuity proof: the new rule fires on exactly the artifact the reviewer rejected, and on nothing the earlier rules could already see."
+      },
+      {
+        "command": "python3 -m pytest scripts/test_validate_twelve_loop_gap_evidence.py scripts/test_dispatch_twelve_loop_gap_2026_07_26.py -q",
+        "result": "pass",
+        "claim_scope": "current",
+        "note": "89 tests: 57 validator regressions (45 from v8 (historical) plus 12 covering bound_document_consistency) and 32 dispatcher tests. The 12 new cases pin the shape Codex2 named and the ways around it: the section 1 declaration pointed at a manifest field that does not resolve, the section 3.4 scan boundary two cuts old, the (historical) marker keeping both legal when the claim really is superseded, a resolvable field reference and the journal's own event sequences left alone as non-false-positive cases, deleting every boundary rather than recutting it, the two fail-closed preconditions (no bound document in the tree, two bound documents), a manifest whose snapshot cannot be derived, and the two parsing details the rule depends on -- a boundary phrase split across a hard wrap and a sequence token terminated by CJK."
+      },
+      {
+        "command": "git diff origin/dev --stat -- docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/ docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/tasks.json",
+        "result": "pass",
+        "claim_scope": "current",
+        "note": "Empty. The three baseline audits and the 25-task catalog are byte-for-byte identical to dev at d65b87eecac09ffafa5653cf05ebeb5d526546d5, which this branch merged before the delivery receipt commit."
+      },
+      {
+        "command": "gh pr view 4193 / 4203 / 4211 --repo ajoe734/pantheon",
+        "result": "pass",
+        "claim_scope": "current",
+        "observed_at": "2026-07-27T02:59:39Z",
+        "conclusion": "Point-in-time observation, not a claim about the cut instant. Nothing moved between the v8.0.0 (historical) read at 2026-07-27T01:37:46Z and this one: #4193 is still open at head 192c1fbabc9574e6bb59ba23be6b0c145354764b, #4203 is still merged at head 65b14b861f323e2dc04f6636b6458f9ccdad2a1e, and #4211 is still merged at head 8c4d727296d575cf49b9d3a6e1b7a222396063e3. Green CI and merge alike leave the still-missing product evidence for gaps 6, 8 and 12 unchanged.",
+        "observations": [
+          {
+            "subject": "pull_request:4193 task/L12-DIST-001 OPEN BEHIND, merge-ref Commit trailers failure",
+            "pull_request": 4193,
+            "head_sha": "192c1fbabc9574e6bb59ba23be6b0c145354764b",
+            "observed_at": "2026-07-27T02:59:37Z"
+          },
+          {
+            "subject": "pull_request:4203 task/L12-CAP-001 MERGED at 2026-07-27T01:25:19Z",
+            "pull_request": 4203,
+            "head_sha": "65b14b861f323e2dc04f6636b6458f9ccdad2a1e",
+            "observed_at": "2026-07-27T02:59:38Z"
+          },
+          {
+            "subject": "pull_request:4211 task/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001 MERGED at 2026-07-27T00:37:26Z",
+            "pull_request": 4211,
+            "head_sha": "8c4d727296d575cf49b9d3a6e1b7a222396063e3",
+            "observed_at": "2026-07-27T02:59:39Z"
+          }
+        ]
+      },
+      {
+        "command": "gh pr view 4221 --repo ajoe734/pantheon --json headRefOid,autoMergeRequest,mergeStateStatus and gh api repos/ajoe734/pantheon/commits/<receipt>/check-runs",
+        "result": "pass",
+        "claim_scope": "current",
+        "observed_at": "2026-07-27T02:59:39Z",
+        "conclusion": "autoMergeRequest is null: auto-merge stays disabled as Human/Ops set it, and this cut does not call task_finalize.sh. mergeStateStatus is CLEAN because this branch merged dev d65b87eecac09ffafa5653cf05ebeb5d526546d5 before the receipt commit. All three required workflows are success on the delivery receipt head in pull_request run 30233384772: Runtime mirror guard 2026-07-27T02:57:23Z, Commit trailers 2026-07-27T02:57:28Z, Smoke acceptance 2026-07-27T02:58:07Z. Because that commit changed only bound artifacts, these checks cover the exact bytes validated_head_sha names.",
+        "observations": [
+          {
+            "subject": "pull_request:4221 head at the v9.0.0 evidence cut",
+            "pull_request": 4221,
+            "head_sha": "cd9a7c0f12996a2b64e61056be34c97b2b994a19",
+            "observed_at": "2026-07-27T02:59:39Z",
+            "value": "mergeStateStatus=CLEAN; autoMergeRequest=null; task_finalize.sh was not called"
+          },
+          {
+            "subject": "all three required workflows success on the v9.0.0 delivery receipt head",
+            "pull_request": 4221,
+            "head_sha": "cd9a7c0f12996a2b64e61056be34c97b2b994a19",
+            "observed_at": "2026-07-27T02:59:39Z",
+            "value": "Runtime mirror guard success 2026-07-27T02:57:23Z; Commit trailers success 2026-07-27T02:57:28Z; Smoke acceptance success 2026-07-27T02:58:07Z; run 30233384772"
+          }
         ]
       }
     ],
-    "validated_at": "2026-07-27T01:45:34Z",
-    "validated_base_sha": "7fedefb281dd416e0412e935c48e866438f56e6d",
-    "validated_head_sha": "content-digest:sha256:ec0126d3951d9c61412329d55945471ff38c075a4b0104bfd6fafe4aeb8a1564"
+    "validated_at": "2026-07-27T03:02:00Z",
+    "validated_base_sha": "d65b87eecac09ffafa5653cf05ebeb5d526546d5",
+    "validated_head_sha": "content-digest:sha256:2824f87833588791347f1ea04e3b1fdd59c6c891a5206c7441d0e7ddc4f55c9f"
   },
   "deployment": {
     "applicable": false,
@@ -682,10 +802,11 @@
   "behavioral_proof": {
     "duplicate_safety": {
       "proof": [
-        "The delta document is versioned 8.0.0 and sections 7.1 through 7.7 enumerate every superseded claim from v1.0.0 (historical) to v7.0.0 (historical), so a reader cannot treat two versions as concurrently true.",
+        "The delta document is versioned 9.0.0 and sections 7.1 through 7.8 enumerate every superseded claim from v1.0.0 (historical) to v8.0.0 (historical), so a reader cannot treat two versions as concurrently true.",
         "The companion checksum covers this manifest, so a silent second copy of the evidence fails verification.",
         "The head binding is a content digest over the delta document and the validator pair, so a second copy of any bound artifact that differs by one byte is rejected by rule head_binding.",
-        "Rule current_cut_consistency adds the version dimension the first three miss: a manifest that carries the current bytes while describing a superseded cut is now a rejection rather than a silent inconsistency."
+        "Rule current_cut_consistency adds the version dimension the first three miss: a manifest that carries the current bytes while describing a superseded cut is now a rejection rather than a silent inconsistency.",
+        "Rule bound_document_consistency extends that dimension across the artifact boundary: the bound document must point at manifest fields that exist and must state this cut's scan boundary, so the manifest and the document it binds cannot describe two different cuts."
       ],
       "status": "pass"
     },
@@ -693,16 +814,17 @@
       "proof": [
         "Fails closed on product-evidence schema validation or companion checksum mismatch.",
         "Gaps whose target task has no PR record PR none rather than borrowing an unrelated PR number; unverified references are removed instead of being downgraded.",
-        "scripts/validate_twelve_loop_gap_evidence.py enforces nine fail-closed rejection rules. future_timestamp rejects any evidence_cut_at, validated_at, observed_at, record_log recorded_at, required-check completed_at, or command observation timestamp later than the check instant. head_binding rejects a bare commit sha, a stale content digest, or a mutated bound artifact. record_log_ordering rejects non-increasing sequences and backwards timestamps. checks_bound_to_commits rejects a check on an unrecorded head. current_delivery_checks rejects a manifest with no named delivery receipt, a superseded receipt, a receipt whose bound_content_digest does not equal validated_head_sha, a receipt missing any of the three required workflows, or a check set that lands only on superseded heads. receipt_commit_artifacts reads the receipt commit out of the local git object store and rejects a missing path, a disagreeing blob digest, or an unanswerable git query. mutable_observation_binding rejects any gh pr / gh run / gh api command entry that does not bind each fact to a 40-hex head and an observed_at. companion_checksum rejects a manifest whose bytes disagree with evidence.sha256. current_cut_consistency rejects an enrolled claim that names a version, journal sequence, rule count, superseded commit or unbound pull request that disagrees with the cut this manifest declares.",
+        "scripts/validate_twelve_loop_gap_evidence.py enforces ten fail-closed rejection rules. future_timestamp rejects any evidence_cut_at, validated_at, observed_at, record_log recorded_at, required-check completed_at, or command observation timestamp later than the check instant. head_binding rejects a bare commit sha, a stale content digest, or a mutated bound artifact. record_log_ordering rejects non-increasing sequences and backwards timestamps. checks_bound_to_commits rejects a check on an unrecorded head. current_delivery_checks rejects a manifest with no named delivery receipt, a superseded receipt, a receipt whose bound_content_digest does not equal validated_head_sha, a receipt missing any of the three required workflows, or a check set that lands only on superseded heads. receipt_commit_artifacts reads the receipt commit out of the local git object store and rejects a missing path, a disagreeing blob digest, or an unanswerable git query. mutable_observation_binding rejects any gh pr / gh run / gh api command entry that does not bind each fact to a 40-hex head and an observed_at. companion_checksum rejects a manifest whose bytes disagree with evidence.sha256. current_cut_consistency rejects an enrolled claim that names a version, journal sequence, rule count, superseded commit or unbound pull request that disagrees with the cut this manifest declares. bound_document_consistency reads the single markdown artifact the content digest binds and rejects a sentence that says the cut declares itself in a manifest field that does not resolve, a scan-boundary sentence citing a sequence other than the declared snapshot without the (historical) marker, a document that never states the declared boundary at all, and the fail-closed preconditions: no single bound document, an absent file, or a snapshot the manifest does not declare unambiguously.",
         "Run against the rejected v4 (historical) manifest with --now 2026-07-26T21:49:00Z, the validator returns exactly the Human/Ops findings of that audit: two future_timestamp rejections and one head_binding rejection.",
         "scripts/test_validate_twelve_loop_gap_evidence.py pins each rule with a mutation test and asserts the delivered manifest passes all of them, so a future recut that reintroduces any defect fails in the regression suite rather than in review.",
-        "Replayed against the v7.0.0 (historical) manifest at its own commit cda848807a354f78a7a7c6853ef2817c6f504c34 (historical), the delivered validator returns rejections only from current_cut_consistency, and reproduces the reviewer's list item by item: the seq 2046 (historical) authority line, the seq 2014 (historical) identity and two-person-approval proofs, the 6.0.0 (historical) document version, the seven-rule (historical) counts in behavioral_proof and AC7, the unbound PR claim in AC4, the seq 2014 (historical) claims in AC5 and AC9, and the superseded receipt named in delivery_receipt_intermediate_state. The eight rules (historical) that cut already shipped return zero rejections on that same manifest, which is precisely why they could not catch what Codex2 caught."
+        "Replayed against the v7.0.0 (historical) manifest at its own commit cda848807a354f78a7a7c6853ef2817c6f504c34 (historical), the delivered validator returns rejections only from current_cut_consistency, and reproduces the reviewer's list item by item: the seq 2046 (historical) authority line, the seq 2014 (historical) identity and two-person-approval proofs, the 6.0.0 (historical) document version, the seven-rule (historical) counts in behavioral_proof and AC7, the unbound PR claim in AC4, the seq 2014 (historical) claims in AC5 and AC9, and the superseded receipt named in delivery_receipt_intermediate_state. The eight rules (historical) that cut already shipped return zero rejections on that same manifest, which is precisely why they could not catch what Codex2 caught.",
+        "Replayed against the v8.0.0 (historical) cut at its own final head a5de47447b607a2f561b852fc40bf33035ffcba0 (historical), the delivered validator returns nine rejections and reproduces Codex2's list exactly: five from bound_document_consistency -- section 1 naming a current_cut field that does not resolve, and four scan-boundary citations of seq 1952 (historical) and seq 2014 (historical) in sections 3.4 and 7.2 -- plus four from current_cut_consistency, which are the mechanical consequence of the rule count moving from nine (historical) to ten and not part of the reviewer's finding. None of the eight rules (historical) that predate current_cut_consistency fires on that cut, which is precisely why schema, checksum and all nine (historical) rules passed a document that contradicted itself."
       ],
       "status": "pass"
     },
     "request_receipt_downstream_correlation": {
       "proof": [
-        "Journal sequences 1592, 1593, 1594, 1595, 1606, 1610, 1645, 1646, 1647, 1648, 1649, 1650, 1651, 1685, 1687, 1943 and 2014 are each correlated to a source, a committed_at, and a total / nonterminal / L12 count.",
+        "Journal sequences 1592, 1593, 1594, 1595, 1606, 1610, 1645, 1646, 1647, 1648, 1649, 1650, 1651, 1685, 1687 and 1943 are each correlated to a source, a committed_at, and a total / nonterminal / L12 count, and the empty-snapshot census is bounded at sequence 2191.",
         "Every record_log entry is correlated either to a git commit whose committer date equals its recorded_at, or to a journal sequence committed_at, or to a GitHub check run completed_at. Every mutable GitHub fact is additionally correlated to the exact head it was read from.",
         "Hosted identity is correlated to gate run 30192097967, deploy run 30192435033, release 20260726T072219Z-6a8d2d9b4f72-gate-30192097967-30192435033-1-887536, and the release.accepted / release.completed hash-chained evidence events."
       ],
@@ -748,7 +870,7 @@
       "status": "not_applicable"
     },
     "two_person_approval": {
-      "proof": "Owner Claude and reviewer Codex2 are distinct, matching the canonical task row at journal sequence 2191 (2026-07-27T01:18:27Z). Auto-merge on PR #4221 is null at head 6874ea5aeaae05577bf94ffea9de8e7a52a6d005, so merge cannot happen on the owner path alone.",
+      "proof": "Owner Claude and reviewer Codex2 are distinct, matching the canonical task row at journal sequence 2191 (2026-07-27T01:18:27Z). Auto-merge on PR #4221 is null at head cd9a7c0f12996a2b64e61056be34c97b2b994a19, so merge cannot happen on the owner path alone.",
       "status": "pass"
     }
   },
@@ -815,7 +937,7 @@
         "scripts/test_validate_twelve_loop_gap_evidence.py"
       ],
       "id": "AC7",
-      "statement": "product-evidence schema validation, evidence sha256 verification, and the nine fail-closed rejection rules all pass. The independent review gate belongs to Codex2 and has not yet been exercised on this cut.",
+      "statement": "product-evidence schema validation, evidence sha256 verification, and the ten fail-closed rejection rules all pass. The independent review gate belongs to Codex2 and has not yet been exercised on this cut.",
       "status": "partial_pending_independent_review"
     },
     {
@@ -824,7 +946,7 @@
         "https://github.com/ajoe734/pantheon/pull/4221"
       ],
       "id": "AC8",
-      "statement": "branch, commit, push, PR, checks, merge, and archive complete for this recut. Branch, commit and push are done; the delivery receipt head has all three required checks green; the evidence commit that follows is pushed to the same PR and its checks are reported in the handoff rather than in this manifest, because recording them here would restart the circularity section 7.5 terminates. Merge and archive wait on Codex2.",
+      "statement": "branch, commit, push, PR, checks, merge, and archive complete for this recut. Branch, commit and push are done; the delivery receipt head cd9a7c0f12996a2b64e61056be34c97b2b994a19 has all three required checks green; the evidence commit that follows is pushed to the same PR and its checks are reported in the handoff rather than in this manifest, because recording them here would restart the circularity section 7.5 terminates. Merge and archive wait on Codex2.",
       "status": "pending"
     },
     {
@@ -834,7 +956,7 @@
         "scripts/test_validate_twelve_loop_gap_evidence.py"
       ],
       "id": "AC9",
-      "statement": "Every defect raised against a superseded cut is repaired and guarded by an executable regression: the v4.0.0 (historical) findings (stale seq 1952 (historical) facts, the L12-CAP-001 error, future timestamps, a head binding that did not cover the delivered bytes), the v5.0.0 (historical) findings (unbound mutable PR facts, required checks covering only superseded heads), the v6.0.0 (historical) finding (a receipt proven only by the manifest's own description of it), and the v7.0.0 (historical) finding (prose describing a superseded cut). Canonical rows are re-derived from journal sequence 2191, the head binding is a non-circular content digest, the receipt is verified against git objects, every enrolled current claim is checked against the declared cut, and auto-merge stays disabled.",
+      "statement": "Every defect raised against a superseded cut is repaired and guarded by an executable regression: the v4.0.0 (historical) findings (stale seq 1952 (historical) facts, the L12-CAP-001 error, future timestamps, a head binding that did not cover the delivered bytes), the v5.0.0 (historical) findings (unbound mutable PR facts, required checks covering only superseded heads), the v6.0.0 (historical) finding (a receipt proven only by the manifest's own description of it), the v7.0.0 (historical) finding (manifest prose describing a superseded cut), and the v8.0.0 (historical) finding (the digest-bound delta document naming a manifest field that does not exist and reporting a superseded scan boundary). Canonical rows are re-derived from journal sequence 2191, the head binding is a non-circular content digest, the receipt is verified against git objects, every enrolled current claim in this manifest and every enrolled claim in the bound document is checked against the declared cut, and auto-merge stays disabled.",
       "status": "pass"
     }
   ],
@@ -851,7 +973,7 @@
     "independent_review": {
       "blocking_for_this_task": true,
       "containment": "Task is handed to Codex2 for review with auto-merge disabled. No done transition is attempted and no completion is claimed.",
-      "description": "The v8.0.0 recut has not yet been independently reviewed by Codex2.",
+      "description": "The v9.0.0 recut has not yet been independently reviewed by Codex2.",
       "expiry": "Upon Codex2 review decision",
       "owner": "Codex2",
       "recheck_trigger": "Task PR review",
@@ -859,8 +981,8 @@
     },
     "canonical_snapshot_age": {
       "blocking_for_this_task": false,
-      "containment": "Every canonical claim in the delta document names the journal sequence and committed_at it was read from, so a reviewer can diff against a newer sequence rather than guess. Section 8 states explicitly that the counts are a point-in-time snapshot, and rule current_cut_consistency now requires every enrolled claim in this manifest to name the same sequence the cut declares.",
-      "description": "The task-state journal is append-only and advances continuously; sequence 2191 at 2026-07-27T01:18:27Z was the tip when this cut was verified, and the tip will be higher at review time. This is the class of staleness that sank v4.0.0 (historical), which quoted seq 1952 (historical) without a freshness statement; v5.0.0 (historical), whose seq 2014 (historical) snapshot was overtaken by 32 events during its own review; and v7.0.0 (historical), whose seq 2142 (historical) snapshot the delta document carried while this manifest still described seq 2046 (historical) and seq 2014 (historical).",
+      "containment": "Every canonical claim in the delta document names the journal sequence and committed_at it was read from, so a reviewer can diff against a newer sequence rather than guess. Section 8 states explicitly that the counts are a point-in-time snapshot; rule current_cut_consistency requires every enrolled claim in this manifest to name the same sequence the cut declares, and rule bound_document_consistency requires every scan-boundary sentence in the bound document to name it too.",
+      "description": "The task-state journal is append-only and advances continuously; sequence 2191 at 2026-07-27T01:18:27Z was the tip when the fact set of this cut was verified, and the tip is already higher at review time. This cut deliberately does not advance the snapshot: it is a narrative recut of v8.0.0 (historical) at the same boundary, so that the reviewer's diff separates 'the prose was recut' from 'the facts moved'. This is the class of staleness that sank v4.0.0 (historical), which quoted seq 1952 (historical) without a freshness statement; v5.0.0 (historical), whose seq 2014 (historical) snapshot was overtaken by 32 events during its own review; and v7.0.0 (historical), whose seq 2142 (historical) snapshot the delta document carried while this manifest still described seq 2046 (historical) and seq 2014 (historical).",
       "expiry": "When Codex2 completes the independent review against a then-current sequence",
       "owner": "Claude",
       "recheck_trigger": "Any canonical owner, reviewer, or status change to an L12 or OPS task cited in section 5 or 6",
@@ -887,7 +1009,7 @@
     "delivery_receipt_intermediate_state": {
       "blocking_for_this_task": false,
       "containment": "Section 7.5 of the delta document states the ordering and its two costs explicitly. The branch CI smoke gate runs scripts/run-acceptance.sh smoke and does not execute this pytest file, so the receipt commit's three required checks are green; review is against the final PR head, where the suite passes.",
-      "description": "At delivery receipt commit 6874ea5aeaae05577bf94ffea9de8e7a52a6d005 the tree carries the v8.0.0 artifacts with the previous evidence.json, so python3 -m pytest scripts/test_validate_twelve_loop_gap_evidence.py fails at that one intermediate commit. This is inherent to any non-circular receipt: checks cannot be recorded before they run.",
+      "description": "At delivery receipt commit cd9a7c0f12996a2b64e61056be34c97b2b994a19 the tree carries the v9.0.0 artifacts with the previous evidence.json, so python3 -m pytest scripts/test_validate_twelve_loop_gap_evidence.py fails at that one intermediate commit. This is inherent to any non-circular receipt: checks cannot be recorded before they run.",
       "expiry": "When the evidence commit lands on the PR branch",
       "owner": "Claude",
       "recheck_trigger": "Any checkout of the intermediate commit",
@@ -912,11 +1034,11 @@
       "twelve_loop_hosted_proof": "0_of_12"
     },
     "self_hash_omitted": true,
-    "self_hash_reason": "Companion checksum file records the manifest digest; the manifest cannot contain its own hash. This is why validated_head_sha binds artifacts finalized before the manifest rather than the manifest or its commit, and why the delivery receipt is a separate earlier commit whose checks cover those artifacts. The receipt is not merely declared: rule receipt_commit_artifacts reads it out of the local git object store and requires every bound path to exist there with a matching blob sha256. Rule current_cut_consistency then requires the manifest's enrolled prose to describe that same cut, so a current-looking manifest cannot describe a superseded one.",
+    "self_hash_reason": "Companion checksum file records the manifest digest; the manifest cannot contain its own hash. This is why validated_head_sha binds artifacts finalized before the manifest rather than the manifest or its commit, and why the delivery receipt is a separate earlier commit whose checks cover those artifacts. The receipt is not merely declared: rule receipt_commit_artifacts reads it out of the local git object store and requires every bound path to exist there with a matching blob sha256. Rule current_cut_consistency then requires this manifest's enrolled prose to describe that same cut, and rule bound_document_consistency requires the bound delta document to describe it too, so neither a current-looking manifest nor a current-looking document can describe a superseded one.",
     "source_artifact_sha256_by_epoch": {
-      "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/POST_DISPATCH_RUNTIME_GAP_DELTA.md@v8.0.0": "5855b82520a6e9d84640275e3fe6792402b1c79bada24bf0c911126fb034666f",
-      "scripts/validate_twelve_loop_gap_evidence.py@v8.0.0": "7f767d4ebd78816f5a275f63e9c7f8d7cf172e9e46c2b1df4d6ee2b39d71a7c1",
-      "scripts/test_validate_twelve_loop_gap_evidence.py@v8.0.0": "b3512f0cd1d748881f73ab141e063e601a767e7cd14e72c7ef88ee2939f82327"
+      "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/POST_DISPATCH_RUNTIME_GAP_DELTA.md@v9.0.0": "2af24bd3ad7138f30f72270e752ede64c02e03613b6e8583436aca4613b4d23c",
+      "scripts/validate_twelve_loop_gap_evidence.py@v9.0.0": "0379ba60ad8a15628e71b5ff4e29296033382d2fd2fed729d321211bc7f3c241",
+      "scripts/test_validate_twelve_loop_gap_evidence.py@v9.0.0": "11a80bbfdb4bd45706ab48ae8683143a2c0a533f687085a6879e489e290d113b"
     }
   },
   "record_log": [
@@ -1236,6 +1358,41 @@
       "kind": "owner_evidence_recut_v8",
       "status": "in_progress",
       "reference": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-RUNTIME-GAP-DELTA-001/evidence.json; adds rule current_cut_consistency so every enrolled claim about this cut is checked against the cut the manifest declares, and rebinds the head digest to the v8.0.0 artifacts"
+    },
+    {
+      "sequence": 37,
+      "recorded_at": "2026-07-27T02:51:22Z",
+      "actor": "Codex2",
+      "kind": "independent_review_rejected_v8_bound_document",
+      "sha": "a5de47447b607a2f561b852fc40bf33035ffcba0",
+      "status": "in_progress",
+      "reference": "Sixth rejection on PR #4221. The manifest passed schema, checksum and all nine (historical) rules; the rejection names two claims in the digest-bound delta document that no rule reads -- section 1 declaring the cut identity in an evidence.json current_cut field the manifest does not have, and section 3.4 reporting this version's journal scan as bounded at sequence 2014 (historical) against this cut's boundary of 2191. It also asked the handoff's count of historical validation.commands entries to be reconciled: the v8 (historical) manifest carried twelve, at indexes 2, 3, 4, 5, 10, 11, 12, 13, 14, 17, 18 and 19, not eleven."
+    },
+    {
+      "sequence": 38,
+      "recorded_at": "2026-07-27T02:56:39Z",
+      "actor": "Claude",
+      "kind": "owner_v9_delivery_receipt_commit",
+      "sha": "cd9a7c0f12996a2b64e61056be34c97b2b994a19",
+      "status": "in_progress",
+      "reference": "git committer date of cd9a7c0f12996a2b64e61056be34c97b2b994a19. Carries only the three bound artifacts: the delta document recut to v9.0.0, rule bound_document_consistency, and its twelve regression cases. Pushed onto the dev merge of d65b87eecac09ffafa5653cf05ebeb5d526546d5, so PR #4221 is CLEAN at this head."
+    },
+    {
+      "sequence": 39,
+      "recorded_at": "2026-07-27T02:58:07Z",
+      "actor": "GitHub Actions",
+      "kind": "required_checks_green_on_v9_delivery_receipt",
+      "sha": "cd9a7c0f12996a2b64e61056be34c97b2b994a19",
+      "status": "success",
+      "reference": "run 30233384772: Runtime mirror guard 2026-07-27T02:57:23Z, Commit trailers 2026-07-27T02:57:28Z, Smoke acceptance 2026-07-27T02:58:07Z, all success"
+    },
+    {
+      "sequence": 40,
+      "recorded_at": "2026-07-27T03:02:00Z",
+      "actor": "Claude",
+      "kind": "owner_evidence_recut_v9",
+      "status": "in_progress",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-RUNTIME-GAP-DELTA-001/evidence.json; adds rule bound_document_consistency so the delta document the content digest binds is held to the same declared cut as this manifest, rebinds the head digest to the v9.0.0 artifacts, and marks the five v8.0.0 (historical) command entries historical, bringing the historical total to eighteen."
     }
   ]
 }
