@@ -242,6 +242,43 @@ def test_supervisor_runtime_state_discovers_authoritative_journal(
         ) == REPO_ROOT
 
 
+def test_supervisor_runtime_state_rejects_symlinked_journal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    status_root = tmp_path / "status-root"
+    runtime_dir = status_root / ".orchestrator"
+    runtime_dir.mkdir(parents=True)
+    real_event_log = tmp_path / "runtime" / "task-state-events.jsonl"
+    real_event_log.parent.mkdir()
+    real_event_log.touch()
+    linked_event_log = tmp_path / "linked-task-state-events.jsonl"
+    linked_event_log.symlink_to(real_event_log)
+    (runtime_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "supervisor": {
+                    "task_state_shadow": {
+                        "mode": "authoritative",
+                        "ok": True,
+                        "event_log": str(linked_event_log),
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    for name in (
+        "PANTHEON_STATUS_ROOT",
+        "PANTHEON_TASK_STATE_STORE_MODE",
+        "PANTHEON_TASK_STATE_EVENT_LOG",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    with pytest.raises(RuntimeError, match="symlink component"):
+        dev_bridge_dispatcher._runtime_task_state_env(str(status_root))
+
+
 def test_authoritative_bridge_dispatch_survives_next_projection_cycle(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

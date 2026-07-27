@@ -1,8 +1,8 @@
 # OPS-ASSISTANT-DEV-BRIDGE-DRAIN-001 evidence
 
-Task: Repair supervisor DevTaskPacket drain and bridge command binding  
-Owner: Codex  
-Reviewer: Codex2  
+Task: Repair supervisor DevTaskPacket drain and bridge command binding
+Owner: Codex
+Reviewer: Codex2
 Evidence captured: 2026-07-27 UTC
 
 ## Root cause
@@ -129,7 +129,7 @@ assertions and the missing
 Post-repair focused suite:
 
 ```text
-69 passed
+70 passed
 ```
 
 Command:
@@ -143,6 +143,19 @@ PANTHEON_PY="$(python3 scripts/dev/provision_python_distribution.py --print-pyth
   services/control-plane/bff/assistant/tests/test_dev_bridge_inbox_cli.py \
   services/control-plane/bff/assistant/tests/test_dev_bridge.py \
   scripts/test_assistant_dev_packet_inbox_supervisor_contract.py
+```
+
+Broader validation:
+
+```text
+services/control-plane/bff/assistant/tests
+scripts/test_assistant_dev_packet_inbox_supervisor_contract.py
+157 passed
+
+scripts/test_ai_status.py
+scripts/test_status_command_runtime_pin.py
+scripts/test_assistant_dev_packet_inbox_supervisor_contract.py
+147 passed, 45 subtests passed
 ```
 
 The authoritative regression uses the real governed `scripts/ai_status.py`

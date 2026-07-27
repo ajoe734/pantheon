@@ -154,9 +154,19 @@
       ]
     },
     "focused": {
-      "result": "69 passed",
+      "result": "70 passed",
       "command": "pytest -q test_dev_bridge_reliability.py test_dev_bridge_inbox.py test_dev_bridge_dispatch_cli.py test_dev_bridge_inbox_cli.py test_dev_bridge.py scripts/test_assistant_dev_packet_inbox_supervisor_contract.py"
     },
+    "broad": [
+      {
+        "result": "157 passed",
+        "command": "pytest -q services/control-plane/bff/assistant/tests scripts/test_assistant_dev_packet_inbox_supervisor_contract.py"
+      },
+      {
+        "result": "147 passed, 45 subtests passed",
+        "command": "pytest -q scripts/test_ai_status.py scripts/test_status_command_runtime_pin.py scripts/test_assistant_dev_packet_inbox_supervisor_contract.py"
+      }
+    ],
     "syntax": {
       "result": "pass",
       "commands": [
@@ -170,7 +180,7 @@
     "base": "dev",
     "branch": "task/OPS-ASSISTANT-DEV-BRIDGE-DRAIN-001",
     "anchor_commit": "308314dd6",
-    "implementation_commit": null,
+    "implementation_commit": "a736741c6",
     "pull_request": null,
     "merge_commit": null,
     "live_runtime_refresh": "Not in task scope; governed by SUP-COMMAND-RUNTIME-REFRESH-001."

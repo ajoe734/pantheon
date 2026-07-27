@@ -135,7 +135,7 @@ def _absolute_runtime_path(raw_path: str, *, label: str) -> str:
 
 def _code_repo_root() -> Path:
     candidate = Path(__file__).resolve()
-    for parent in (candidate.parent, *candidate.parents):
+    for parent in candidate.parents:
         if (
             (parent / ".git").exists()
             and (parent / "scripts" / "ai_status.py").is_file()
@@ -251,7 +251,11 @@ def _status_command_context(
         task_state_env=task_state_env,
     )
     if command_root is None:
-        return _ai_status_py(repo_root), {STATUS_ROOT_ENV: str(Path(repo_root).resolve())}, False
+        return (
+            _ai_status_py(repo_root),
+            {STATUS_ROOT_ENV: str(Path(repo_root).resolve())},
+            False,
+        )
 
     ai_status = command_root / "scripts" / "ai_status.py"
     if not ai_status.is_file():
