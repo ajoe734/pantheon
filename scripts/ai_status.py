@@ -3754,6 +3754,16 @@ def normalize_runtime_queue(orchestrator_state: dict[str, Any]) -> list[dict[str
 
 def mismatch_resolution_hint(item: dict[str, Any]) -> str:
     mismatch_type = str(item.get("type") or "")
+    if mismatch_type == "delivery_merged_needs_closeout":
+        return (
+            "先用 merged-dev evidence 補正式 closeout/review 檔，"
+            "再走 governed done 或 reconcile_merged_done；不要重新開工或重派已 merged 的 PR。"
+        )
+    if mismatch_type == "delivery_binding_stale":
+        return (
+            "先把 task 的 source_ref/review binding 對齊實際 reviewed/merged exact head；"
+            "舊 head_sha 留在 active board 會讓 dashboard 和 supervisor 誤判。"
+        )
     if mismatch_type == "github_review_gate_missing":
         return (
             "以 assigned reviewer 對 exact PR head 重新執行 governed approve；"
@@ -3777,6 +3787,113 @@ def mismatch_resolution_hint(item: dict[str, Any]) -> str:
     if mismatch_type == "approval_missing_task":
         return "先清掉 stale approval，或先恢復 task board 中的 task，再進行批准。"
     return "先對齊 task board、queue、runtime 三者的真相，再決定是重派、回退，還是清理殘留記錄。"
+
+
+MERGED_DELIVERY_RE = re.compile(
+    r"\b(?:PR\s*#?\d+[^.\n;]*?)?\bmerged\s+(?:to|into)\s+(?:origin/)?(?P<target>dev|main)\s+as\s+(?P<sha>[0-9a-fA-F]{40})\b",
+    re.IGNORECASE,
+)
+EXACT_HEAD_RE = re.compile(
+    r"\b(?:exact[- ]head|exact\s+head|head)\s+(?P<sha>[0-9a-fA-F]{40})\b",
+    re.IGNORECASE,
+)
+
+
+def task_status_is_nonterminal(task: Mapping[str, Any]) -> bool:
+    return str(task.get("status") or "").strip().lower() not in {"done", "superseded"}
+
+
+def _task_text_fields(task: Mapping[str, Any]) -> str:
+    values: list[str] = []
+    for key in ("next", "summary_zh", "title", "phase"):
+        value = task.get(key)
+        if isinstance(value, str):
+            values.append(value)
+    for key in ("review_notes_zh", "acceptance"):
+        value = task.get(key)
+        if isinstance(value, list):
+            values.extend(str(item) for item in value if str(item).strip())
+    return "\n".join(values)
+
+
+def merged_delivery_evidence(task: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Return local evidence that a PR-backed delivery merged but is not closed.
+
+    This intentionally avoids GitHub API calls so dashboard generation remains
+    deterministic and CI-safe.  It recognizes structured status metadata first,
+    then the existing Human/Ops closeout notes used by live fleet tasks.
+    """
+
+    delivery = task.get("delivery")
+    if isinstance(delivery, Mapping):
+        if delivery.get("head_merged_to_target") is True or str(delivery.get("state") or "").upper() == "MERGED":
+            commit = str(delivery.get("merge_target_sha") or delivery.get("merge_commit") or delivery.get("commit") or "").strip()
+            return {
+                "source": "delivery",
+                "merge_commit": commit or None,
+                "merge_target": str(delivery.get("merge_target_branch") or delivery.get("merge_target_ref") or "").strip() or None,
+            }
+
+    for key in ("source_ref", "github", APPROVAL_BINDING_KEY, GITHUB_REVIEW_BRIDGE_KEY):
+        payload = task.get(key)
+        if not isinstance(payload, Mapping):
+            continue
+        state = str(payload.get("state") or payload.get("status") or "").strip().upper()
+        merged = payload.get("merged") is True or state == "MERGED" or bool(payload.get("merged_at"))
+        commit = str(
+            payload.get("merge_commit")
+            or payload.get("merge_commit_sha")
+            or payload.get("merged_commit")
+            or payload.get("merged_to_dev_sha")
+            or ""
+        ).strip()
+        if merged or commit:
+            return {
+                "source": key,
+                "merge_commit": commit or None,
+                "merge_target": str(payload.get("base") or payload.get("target") or payload.get("merge_target") or "").strip() or None,
+            }
+
+    text = _task_text_fields(task)
+    match = MERGED_DELIVERY_RE.search(text)
+    if match:
+        return {
+            "source": "task_text",
+            "merge_commit": match.group("sha").lower(),
+            "merge_target": match.group("target").lower(),
+        }
+    return None
+
+
+def delivery_binding_stale_evidence(task: Mapping[str, Any]) -> dict[str, Any] | None:
+    source_ref = task.get("source_ref")
+    if not isinstance(source_ref, Mapping):
+        return None
+    recorded = str(source_ref.get("head_sha") or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{40}", recorded):
+        return None
+
+    candidates: list[tuple[str, str]] = []
+    for key in (APPROVAL_BINDING_KEY, GITHUB_REVIEW_BRIDGE_KEY, "github"):
+        payload = task.get(key)
+        if not isinstance(payload, Mapping):
+            continue
+        head = str(payload.get("head_sha") or "").strip().lower()
+        if re.fullmatch(r"[0-9a-f]{40}", head):
+            candidates.append((key, head))
+
+    text = _task_text_fields(task)
+    for match in EXACT_HEAD_RE.finditer(text):
+        candidates.append(("task_text_exact_head", match.group("sha").lower()))
+
+    for source, candidate in candidates:
+        if candidate != recorded:
+            return {
+                "source": source,
+                "recorded_head_sha": recorded,
+                "evidence_head_sha": candidate,
+            }
+    return None
 
 
 def detect_truth_mismatches(
@@ -3943,6 +4060,41 @@ def detect_truth_mismatches(
 
     for task in state.get("tasks", []):
         task_status = str(task.get("status") or "").lower()
+        if task_status_is_nonterminal(task):
+            merged_evidence = merged_delivery_evidence(task)
+            if merged_evidence is not None:
+                push(
+                    {
+                        "id": f"delivery-merged-needs-closeout:{task['id']}",
+                        "type": "delivery_merged_needs_closeout",
+                        "severity": "high",
+                        "title": "Delivery PR 已 merged，但 task 尚未 closeout",
+                        "summary": (
+                            f"{task['id']} 已有 merged-dev delivery evidence，"
+                            f"但 task status 仍是 {task_status or 'unknown'}。"
+                        ),
+                        "task_id": task["id"],
+                        "delivery_evidence": merged_evidence,
+                        "detected_at": task.get("last_update"),
+                    }
+                )
+            stale_evidence = delivery_binding_stale_evidence(task)
+            if stale_evidence is not None:
+                push(
+                    {
+                        "id": f"delivery-binding-stale:{task['id']}",
+                        "type": "delivery_binding_stale",
+                        "severity": "high",
+                        "title": "Task delivery binding 指向舊 exact head",
+                        "summary": (
+                            f"{task['id']} 的 source_ref.head_sha 與後續 "
+                            "review/merge evidence 不一致。"
+                        ),
+                        "task_id": task["id"],
+                        "delivery_evidence": stale_evidence,
+                        "detected_at": task.get("last_update"),
+                    }
+                )
         if (
             task_status == "review_approved"
             and (
