@@ -17,6 +17,15 @@ def test_daily_sweep_scheduler_is_enabled_by_default_in_root_compose() -> None:
     assert scheduler["command"] == ["python", "-m", "services.evolution.scheduler_worker"]
     assert scheduler["restart"] == "unless-stopped"
     assert scheduler["environment"]["EVOLUTION_API_URL"] == "http://evolution:8093"
+    assert scheduler["environment"]["EVOLUTION_AUTH_MODE"] == (
+        "${EVOLUTION_AUTH_MODE:-disabled}"
+    )
+    assert scheduler["environment"]["EVOLUTION_AUTH_TOKEN"] == (
+        "${EVOLUTION_AUTH_TOKEN:-}"
+    )
+    assert scheduler["environment"]["EVOLUTION_SCHEDULER_TENANT_ID"] == (
+        "${EVOLUTION_DEFAULT_TENANT_ID:-pantheon-default}"
+    )
     assert (
         scheduler["environment"]["EVOLUTION_SCHEDULER_INTERVAL_SECONDS"]
         == "${EVOLUTION_SCHEDULER_INTERVAL_SECONDS:-86400}"
@@ -93,22 +102,44 @@ def test_dispatch_worker_is_enabled_by_default_in_root_compose() -> None:
         "services.evolution.dispatch_worker",
     ]
     assert worker["restart"] == "unless-stopped"
-    assert worker["environment"] == {
-        "EVOLUTION_API_URL": "http://evolution:8093",
-        "EVOLUTION_DISPATCH_ACTOR_ID": (
-            "${EVOLUTION_DISPATCH_ACTOR_ID:-evolution-dispatch-worker}"
-        ),
-        "EVOLUTION_DISPATCH_INTERVAL_SECONDS": (
-            "${EVOLUTION_DISPATCH_INTERVAL_SECONDS:-30}"
-        ),
-        "EVOLUTION_DISPATCH_MAX_TICKS": "${EVOLUTION_DISPATCH_MAX_TICKS:-0}",
-        "EVOLUTION_DISPATCH_TIMEOUT_SECONDS": (
-            "${EVOLUTION_DISPATCH_TIMEOUT_SECONDS:-10}"
-        ),
-        "EVOLUTION_DISPATCH_HEALTH_FILE": (
-            "${EVOLUTION_DISPATCH_HEALTH_FILE:-/tmp/evolution-dispatch-health.json}"
-        ),
-    }
+    environment = worker["environment"]
+    assert environment["EVOLUTION_API_URL"] == "http://evolution:8093"
+    assert environment["EVOLUTION_DATA_DIR"] == "/data/evolution"
+    assert environment["EVOLUTION_STORE_BACKEND"] == "${EVOLUTION_STORE_BACKEND:-json}"
+    assert environment["EVOLUTION_STORE_DSN"] == "${EVOLUTION_STORE_DSN:-}"
+    assert environment["PANTHEON_PERSISTENCE_POSTURE"] == (
+        "${PANTHEON_PERSISTENCE_POSTURE:-dev}"
+    )
+    assert environment["EVOLUTION_AUTH_MODE"] == "${EVOLUTION_AUTH_MODE:-disabled}"
+    assert environment["EVOLUTION_AUTH_TOKEN"] == "${EVOLUTION_AUTH_TOKEN:-}"
+    assert environment["EVOLUTION_DISPATCH_ACTOR_ID"] == (
+        "${EVOLUTION_DISPATCH_ACTOR_ID:-evolution-dispatch-worker}"
+    )
+    assert environment["EVOLUTION_DISPATCH_INTERVAL_SECONDS"] == (
+        "${EVOLUTION_DISPATCH_INTERVAL_SECONDS:-30}"
+    )
+    assert environment["EVOLUTION_DISPATCH_MAX_TICKS"] == (
+        "${EVOLUTION_DISPATCH_MAX_TICKS:-0}"
+    )
+    assert environment["EVOLUTION_DISPATCH_TIMEOUT_SECONDS"] == (
+        "${EVOLUTION_DISPATCH_TIMEOUT_SECONDS:-10}"
+    )
+    assert environment["EVOLUTION_DISPATCH_HEALTH_FILE"] == (
+        "${EVOLUTION_DISPATCH_HEALTH_FILE:-/tmp/evolution-dispatch-health.json}"
+    )
+    assert "evolution-data:/data/evolution" in worker["volumes"]
+    api = compose["services"]["evolution"]
+    assert "evolution-data:/data/evolution" in api["volumes"]
+    assert api["environment"]["EVOLUTION_DATA_DIR"] == environment["EVOLUTION_DATA_DIR"]
+    assert api["environment"]["EVOLUTION_STORE_BACKEND"] == environment[
+        "EVOLUTION_STORE_BACKEND"
+    ]
+    assert api["environment"]["EVOLUTION_STORE_DSN"] == environment[
+        "EVOLUTION_STORE_DSN"
+    ]
+    assert api["environment"]["PANTHEON_PERSISTENCE_POSTURE"] == environment[
+        "PANTHEON_PERSISTENCE_POSTURE"
+    ]
     assert worker["depends_on"]["evolution"]["condition"] == "service_healthy"
     assert worker["healthcheck"]["test"] == [
         "CMD",

@@ -21,15 +21,22 @@ def run_tick(
     api_url: str,
     max_incidents: int | None = None,
     timeout_seconds: float = 30.0,
+    tenant_id: str | None = None,
+    auth_token: str | None = None,
 ) -> dict[str, Any]:
     body: dict[str, Any] = {"sweep_id": "scheduled-daily"}
     if max_incidents is not None:
         body["max_incidents"] = max_incidents
     payload = json.dumps(body).encode("utf-8")
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    if tenant_id:
+        headers["X-Tenant-Id"] = tenant_id
+    if auth_token:
+        headers["Authorization"] = f"Bearer {auth_token}"
     request = urllib.request.Request(
         api_url.rstrip("/") + "/api/evolution/daily-sweep",
         data=payload,
-        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
@@ -43,10 +50,29 @@ def main() -> int:
     max_ticks = _env_int("EVOLUTION_SCHEDULER_MAX_TICKS", 0, minimum=0)
     max_incidents_raw = os.getenv("EVOLUTION_SWEEP_MAX_INCIDENTS", "").strip()
     max_incidents = int(max_incidents_raw) if max_incidents_raw else None
+    auth_mode = os.getenv("EVOLUTION_AUTH_MODE", "disabled").strip().lower()
+    auth_token = os.getenv("EVOLUTION_AUTH_TOKEN", "").strip() or None
+    tenant_id = (
+        os.getenv("EVOLUTION_SCHEDULER_TENANT_ID")
+        or os.getenv("EVOLUTION_DEFAULT_TENANT_ID")
+        or os.getenv("PANTHEON_TENANT_ID")
+        or "pantheon-default"
+    ).strip()
+    if auth_mode not in {"disabled", "token"}:
+        raise RuntimeError("EVOLUTION_AUTH_MODE must be disabled or token")
+    if auth_mode == "token" and auth_token is None:
+        raise RuntimeError("EVOLUTION_AUTH_TOKEN is required when EVOLUTION_AUTH_MODE=token")
+    if not tenant_id:
+        raise RuntimeError("EVOLUTION_SCHEDULER_TENANT_ID is required")
     tick = 0
     while True:
         tick += 1
-        result = run_tick(api_url=api_url, max_incidents=max_incidents)
+        result = run_tick(
+            api_url=api_url,
+            max_incidents=max_incidents,
+            tenant_id=tenant_id,
+            auth_token=auth_token,
+        )
         print(json.dumps({"tick": tick, "result": result}, sort_keys=True), flush=True)
         if max_ticks and tick >= max_ticks:
             return 0
