@@ -1,0 +1,389 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "L12-EVO-001 product-level owner evidence admission.",
+    "note": "Owner evidence only. The formal Codex reviewer verdict is intentionally absent until independent review occurs.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/L12-EVO-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Task-scoped evidence changes require a reviewed Pantheon PR; append a record_log entry whenever the accepted evidence cut or formal review state changes.",
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-27T18:07:30Z",
+    "evidence_cut_semantics": "Owner evidence over the merged-current-dev implementation head fdcb121bdb50e8f53e9062dbe73bf096300b68fb. It proves repository and separate-process behavior and does not assert hosted activation or an independent reviewer verdict.",
+    "id": "L12-EVO-001",
+    "overall_admission": "pass_owner_evidence_ready",
+    "owner": "Codex2",
+    "phase": "Twelve Loop Remediation / Evolution",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-EVO-001/evidence.json",
+    "reviewer": "Codex",
+    "target_environment": "dev integration and separate-process local proof",
+    "target_maturity": "reconciled",
+    "task_branch": "task/L12-EVO-001",
+    "title": "Complete Evolution inputs and durable approved-action dispatch"
+  },
+  "authorities": {
+    "actual_state": [
+      "tenant-scoped EvolutionDecision owner store",
+      "durable Evolution dispatch outbox and compensation ledger",
+      "authoritative Research Orchestrator terminal receipt"
+    ],
+    "desired_state": [
+      "resolved IncidentCase and published Postmortem",
+      "approved numeric threshold baseline and daily sweep policy",
+      "approved EvolutionDecision"
+    ],
+    "task_packet": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-EVO-001.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "Evolution owns decisions, dispatch intent, replay state, and compensation obligations; Research, Governance, Deployment, Rollback, and Runtime retain their own downstream write authority.",
+    "composes_with": [
+      "L12-TEL-001 for admitted lifecycle telemetry and runtime summaries",
+      "L12-REC-001 for resolved incident and reconciliation inputs",
+      "L12-MANIFEST-001 for global manifest admission",
+      "L12-VERIFY-OBS-001 for the later incident-to-evolution product drill",
+      "L12-HOSTED-001 for replacement-dev restart proof"
+    ],
+    "evidence_changed_files": [
+      ".orchestrator/task-briefs/l12_evo_001.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-EVO-001/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/L12-EVO-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-EVO-001/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "docker-compose.yml",
+      "services/control-plane/governance/evolution_controller_contract.md",
+      "services/control-plane/governance/evolution_decision.py",
+      "services/control-plane/governance/smoke_test_evolution_controller.py",
+      "services/control-plane/governance/test_evolution_controller.py",
+      "services/control-plane/governance/test_evolution_decision.py",
+      "services/control-plane/governance/test_evolution_dispatcher_invariants.py",
+      "services/evolution/cooldown_enforcement.py",
+      "services/evolution/dispatch_outbox.py",
+      "services/evolution/dispatch_receipts.py",
+      "services/evolution/dispatch_worker.py",
+      "services/evolution/hosted_compose_probe.py",
+      "services/evolution/hosted_dispatch_probe.py",
+      "services/evolution/main.py",
+      "services/evolution/models.py",
+      "services/evolution/scheduler_worker.py",
+      "services/evolution/sweep.py",
+      "services/evolution/test_compose_activation.py",
+      "services/evolution/test_dispatch_worker.py",
+      "services/evolution/test_evo_005_rollback_followthrough.py",
+      "services/evolution/test_evolution_service.py",
+      "services/evolution/test_hosted_dispatch_probe.py",
+      "services/evolution/test_l12_evo_001_downstream_integration.py",
+      "services/evolution/test_l12_evo_001_process_recovery.py",
+      "services/evolution/test_threshold_sweep_worker.py",
+      "services/evolution/test_worker_health.py",
+      "services/evolution/testing_receipts.py",
+      "services/evolution/threshold_sweep_worker.py",
+      "services/evolution/worker_health.py"
+    ],
+    "not_changing": "No direct runtime, deployment, governance-target, broker, or capital mutation; no unsupported execution plane is counted as executed; no global all-loop manifest or hosted deployment admission is claimed.",
+    "owned_layer": "Evolution input completeness, tenant decision authority, durable approved-action dispatch, terminal receipt gating, retry/DLQ/replay/compensation, and Evolution worker health contracts"
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "delivery_state": "committed_on_task_branch",
+        "sha": "6bd0c67ce98cbd055e4a55a62d53b28e16273432",
+        "subject": "L12-EVO-001: anchor tenant identity and terminal-receipt gate"
+      },
+      {
+        "delivery_state": "committed_on_task_branch",
+        "sha": "4aa6672ae18eaaaf346064b5b8511c95d0fd574f",
+        "subject": "L12-EVO-001: anchor tenant cooldown and input coverage"
+      },
+      {
+        "delivery_state": "committed_on_task_branch",
+        "sha": "f7f81a9ffb6db72e404fe299e28380a3a71c436c",
+        "subject": "L12-EVO-001: anchor durable dispatch outbox and real receipts"
+      },
+      {
+        "delivery_state": "committed_on_task_branch",
+        "sha": "2c95bc3a7bdb518760aea85e7f183637c0715c4e",
+        "subject": "L12-EVO-001: anchor tenant dispatch authority"
+      },
+      {
+        "delivery_state": "committed_on_task_branch",
+        "sha": "160ae649143afc81053ed6f475508b2cd5868f4e",
+        "subject": "L12-EVO-001: anchor shared dispatcher restart authority"
+      },
+      {
+        "delivery_state": "committed_on_task_branch",
+        "sha": "31f14650555680f89e49be91ce2a2e6db8df16ca",
+        "subject": "L12-EVO-001: anchor cross-replica replay cooldown race"
+      },
+      {
+        "delivery_state": "committed_on_task_branch",
+        "sha": "72af617ab6e2c95b815a60a697b1966adb13419a",
+        "subject": "L12-EVO-001: anchor worker health contract"
+      }
+    ],
+    "required_checks": []
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "PANTHEON_RUNTIME_MANAGER_URL=http://runtime-manager:8081 .venv-pantheon/bin/python -m pytest -q services/evolution services/incidents services/postmortems services/control-plane/governance/test_evolution_decision.py services/control-plane/governance/test_evolution_controller.py services/control-plane/governance/test_evolution_dispatcher_invariants.py services/control-plane/governance/smoke_test_evolution_decision.py services/control-plane/governance/smoke_test_evolution_controller.py scripts/test_evolution_daily_sweep_deploy_contract.py",
+        "conclusion": "431 passed with five known FastAPI/Starlette deprecation warnings in 106.07 seconds.",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python -m compileall -q services/evolution services/incidents services/postmortems services/control-plane/governance/evolution_decision.py services/control-plane/governance/evolution_controller.py",
+        "conclusion": "exit 0",
+        "result": "pass"
+      },
+      {
+        "command": "docker compose -f docker-compose.yml config -q",
+        "conclusion": "exit 0",
+        "result": "pass"
+      },
+      {
+        "command": "git diff --check",
+        "conclusion": "exit 0",
+        "result": "pass"
+      },
+      {
+        "command": ".venv-pantheon/bin/python -m ruff check --select F,E9 <task scope>",
+        "conclusion": "Not run: neither the checkout-scoped dependency environment nor PATH provides ruff. Compile, pytest, Compose, and diff gates remain authoritative for this cut.",
+        "result": "not_run_tool_unavailable"
+      },
+      {
+        "command": "jsonschema.validate(evidence.json, schemas/product-evidence.schema.json) && sha256sum -c evidence.sha256",
+        "conclusion": "ProductEvidenceManifest schema and companion checksums pass.",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-07-27T18:07:30Z",
+    "validated_base_sha": "a6966b13d84430387da9c3a33fcf224c841bc5c6",
+    "validated_head_sha": "fdcb121bdb50e8f53e9062dbe73bf096300b68fb"
+  },
+  "deployment": {
+    "applicable": false,
+    "canonical_root_deploy": {
+      "reason": "Global Compose/default-runtime admission remains owned by L12-MANIFEST-001 and hosted replacement-dev proof remains owned by L12-HOSTED-001.",
+      "status": "not_applicable"
+    },
+    "environment": "dev integration and local separate-process proof",
+    "identity_admission": {
+      "proof": "Strict token mode binds bearer authority and X-Tenant-Id; decision, outbox, replay, and compensation reads are tenant-scoped.",
+      "status": "pass"
+    },
+    "public_bff_base_url": "not_applicable_internal_evolution_service",
+    "publish_cut": {
+      "reason": "No hosted publish or service restart is claimed by this task-scoped evidence cut.",
+      "status": "not_applicable"
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "environment": "task worktree and separate local OS processes",
+      "hosted_activation_claimed": false,
+      "observed_at": "2026-07-27T18:07:30Z",
+      "status": "pass",
+      "terminal_readback": "Two Evolution API processes and restarted dispatch workers shared one durable JSON authority locally; a real in-process Research Orchestrator service boundary supplied terminal success and failure readback. Replacement-dev deployment is not claimed."
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "proof": [
+        "Dispatch identity includes tenant and decision identity, so duplicate approval and worker triggers reuse one outbox record.",
+        "Two API replicas racing on one tenant/target admit exactly one active decision; the same target remains independently admissible for another tenant.",
+        "Concurrent replay attempts against one DLQ record both observe the same durable cooldown and cannot revive it."
+      ],
+      "status": "pass"
+    },
+    "failure_and_degraded_behavior": {
+      "proof": [
+        "Missing or unapproved baseline values produce explicit incomplete input coverage and no fabricated threshold candidate.",
+        "Unsupported execution planes are durably dead-lettered with a reason and leave the EvolutionDecision approved with no execution result.",
+        "Production persistence posture refuses the JSON backend before application boot.",
+        "Scheduler and threshold worker health stays unready before the first tick, becomes degraded on tick errors, and fails when stale."
+      ],
+      "status": "pass"
+    },
+    "request_receipt_downstream_correlation": {
+      "proof": [
+        "Approval prepares and activates a durable tenant-scoped outbox intent before any downstream submit.",
+        "The real Research Orchestrator run carries tenant_id and decision_id, and Evolution independently re-reads the run by its immutable downstream reference.",
+        "Evolution executes only after terminal completed readback; queued work remains approved and unexecuted."
+      ],
+      "status": "pass"
+    },
+    "restart_and_recovery": {
+      "proof": [
+        "A crash after approval but before outbox activation is recovered by a fresh dispatch worker process.",
+        "Two API processes and restarted workers share one decision/outbox authority and preserve attempt, DLQ, and replay state.",
+        "Compose binds API and dispatcher to the same named volume/backend settings and gives all four Evolution processes health or readiness plus a 30-second stop grace period."
+      ],
+      "status": "pass"
+    },
+    "rollback_or_compensation": {
+      "proof": [
+        "A terminal Research failure leaves the decision approved, dead-letters the outbox, and records one durable compensation obligation with the real Research run reference.",
+        "The compensation ledger survives reconstruction from disk and duplicate failure handling does not create a second obligation.",
+        "Evolution never writes RuntimeBinding or downstream governance/deployment state directly."
+      ],
+      "status": "pass"
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "proof": "The cut covers repository, isolated service-boundary, and local separate-process behavior only; hosted activation is delegated and unclaimed.",
+      "status": "pass"
+    },
+    "hosted_frontend": {
+      "status": "not_applicable"
+    },
+    "mfa": {
+      "proof": "This internal service task changes no interactive operator authentication or MFA policy.",
+      "status": "not_applicable"
+    },
+    "no_live_capital": {
+      "proof": "No broker, allocation, live-capital, deployment, or RuntimeBinding mutation authority is added.",
+      "status": "pass"
+    },
+    "rbac": {
+      "proof": "Review and approval continue to require the canonical action risk-tier actor roles; token auth rejects missing credentials and tenant/body scope mismatch.",
+      "status": "pass"
+    },
+    "tenant_isolation": {
+      "proof": "Tenant identity participates in decision uniqueness, dispatch identity, authenticated reads, replay authorization, and compensation records; cross-tenant spoofing is rejected.",
+      "status": "pass"
+    },
+    "two_person_approval": {
+      "proof": "Owner Codex2 and reviewer Codex are distinct. This owner cut intentionally records no formal Codex verdict; independent review remains the only blocking closeout gate.",
+      "status": "pass"
+    }
+  },
+  "acceptance": [
+    {
+      "evidence_refs": [
+        "services/evolution/threshold_sweep_worker.py",
+        "services/evolution/test_threshold_sweep_worker.py",
+        "services/evolution/config/threshold_sweep_baselines.json"
+      ],
+      "id": "acceptance-1",
+      "statement": "Every evaluated monitored artifact must expose numeric drawdown and an approved positive expected baseline; incomplete inputs are surfaced and cannot fabricate a candidate.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/control-plane/governance/evolution_decision.py",
+        "services/evolution/main.py",
+        "services/evolution/test_l12_evo_001_process_recovery.py"
+      ],
+      "id": "acceptance-2",
+      "statement": "Evolution actor, tenant, and single-active decision uniqueness are authoritative and tenant-scoped across service replicas.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/evolution/dispatch_outbox.py",
+        "services/evolution/main.py",
+        "services/evolution/test_dispatch_worker.py"
+      ],
+      "id": "acceptance-3",
+      "statement": "Every approved action prepares a durable dispatch intent; supported actions activate for delivery and unsupported planes fail visibly without synthetic execution.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/evolution/dispatch_receipts.py",
+        "services/evolution/test_l12_evo_001_downstream_integration.py",
+        "services/control-plane/governance/evolution_decision.py"
+      ],
+      "id": "acceptance-4",
+      "statement": "An EvolutionDecision becomes executed only after Evolution independently reads a real terminal downstream receipt.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/evolution/dispatch_outbox.py",
+        "services/evolution/dispatch_worker.py",
+        "services/evolution/test_l12_evo_001_process_recovery.py",
+        "services/evolution/test_l12_evo_001_downstream_integration.py"
+      ],
+      "id": "acceptance-5",
+      "statement": "Retry, DLQ, replay cooldown, compensation, restart, and duplicate triggers converge without resetting authority or fabricating success.",
+      "status": "pass"
+    }
+  ],
+  "residual_risks": {
+    "independent_review": {
+      "blocking_for_this_task": true,
+      "containment": "Keep the task out of review_approved/done until Codex independently validates the committed manifest and implementation.",
+      "description": "The owner evidence is complete, but the required independent Codex verdict has not yet been recorded.",
+      "expiry": "On governed Codex approval or concrete changes-requested decision.",
+      "owner": "Codex",
+      "recheck_trigger": "Task enters review with the evidence commit and PR available.",
+      "severity": "blocking"
+    },
+    "hosted_activation": {
+      "blocking_for_this_task": false,
+      "containment": "Do not claim replacement-dev activation from this packet.",
+      "description": "Current hosted worker health, Postgres wiring, and restart readback remain delegated to L12-MANIFEST-001, L12-VERIFY-OBS-001, and L12-HOSTED-001.",
+      "expiry": "When the delegated manifest and hosted verification tasks admit exact deployment evidence.",
+      "owner": "L12-MANIFEST-001/L12-VERIFY-OBS-001/L12-HOSTED-001",
+      "recheck_trigger": "Global manifest activation or hosted verification starts.",
+      "severity": "tracked"
+    },
+    "unsupported_planes": {
+      "blocking_for_this_task": false,
+      "containment": "Durably dead-letter with an explicit unsupported reason and leave the decision approved.",
+      "description": "Governance, deployment, and runtime actions are not auto-executed until their authoritative owners expose terminal receipt adapters.",
+      "expiry": "When each downstream owner publishes and tests its terminal receipt contract.",
+      "owner": "Governance/Deployment/Runtime owners",
+      "recheck_trigger": "A new Evolution receipt adapter is proposed.",
+      "severity": "tracked"
+    },
+    "lint_tooling": {
+      "blocking_for_this_task": false,
+      "containment": "Retain compileall, 431 scoped tests, Compose config, and diff checks as the executable gates for this cut.",
+      "description": "The worker dependency environment does not provide ruff, so the optional F/E9 lint command could not run.",
+      "expiry": "When ruff is provisioned in the repository dependency environment.",
+      "owner": "developer tooling",
+      "recheck_trigger": "Dependency environment changes or CI reports a lint failure.",
+      "severity": "low"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-EVO-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/L12-EVO-001/README.md"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/twelve-loop-gap/L12-EVO-001/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/twelve-loop-gap/L12-EVO-001/evidence.json",
+    "normalized_hosted_readback": {
+      "status": "not_applicable_no_hosted_activation_claim"
+    },
+    "self_hash_omitted": true,
+    "self_hash_reason": "The manifest cannot contain its own digest without circularity; evidence.sha256 seals the committed bytes.",
+    "source_artifact_sha256_by_epoch": {}
+  },
+  "record_log": [
+    {
+      "actor": "Codex2",
+      "kind": "owner_evidence_cut",
+      "recorded_at": "2026-07-27T18:07:30Z",
+      "reference": "fdcb121bdb50e8f53e9062dbe73bf096300b68fb",
+      "sequence": 1,
+      "sha": "fdcb121bdb50e8f53e9062dbe73bf096300b68fb",
+      "status": "ready_for_independent_review"
+    }
+  ]
+}
