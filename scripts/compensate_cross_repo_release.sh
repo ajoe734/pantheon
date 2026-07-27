@@ -104,7 +104,6 @@ heartbeat_stopped() {
 }
 
 stop_heartbeat() {
-  local attempt
   heartbeat_stopped && return 0
   python3 "${lease_cli}" verify-heartbeat-identity \
     --identity-file "${identity_file}" \
@@ -116,7 +115,7 @@ stop_heartbeat() {
     return 1
   }
   kill -CONT "${heartbeat_pid}" 2>/dev/null || true
-  for attempt in $(seq 1 40); do
+  for _ in $(seq 1 40); do
     heartbeat_stopped && return 0
     sleep 0.25
   done

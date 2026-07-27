@@ -1,0 +1,120 @@
+{
+  "schema_version": "pantheon.release-platform-task-evidence.v1",
+  "task_id": "OPS-CROSS-REPO-RELEASE-CONTROLLER-001",
+  "title": "Coordinate exact FE/BFF release candidate and dev deployment switch",
+  "owner": "Codex2",
+  "reviewer": "Codex",
+  "status": "review",
+  "generated_at": "2026-07-27T18:01:47Z",
+  "source_packet_id": "pkt_pantheon_batch_architecture_20260727_supervisor_autodrain_001",
+  "scope": {
+    "owned": [
+      "deterministic exact FE/BFF compatibility ledger",
+      "Pantheon cross-repository gate and deploy dispatcher",
+      "Pantheon nonprod exact-dev-tip admission and compensation routing",
+      "execute-plans controller-only gate artifact and FE deploy admission",
+      "paired rollback evidence and nonprod delivery documentation"
+    ],
+    "not_changing": [
+      "docker-compose.yml",
+      "scripts/deploy_nonprod_vm.sh",
+      "execute-plans:scripts/deploy-dev-vm.sh",
+      "runtime Compose manifest owned by L12-MANIFEST-001",
+      "hosted dev state during implementation"
+    ],
+    "composes_with": [
+      "OPS-PUBLISH-ENGINE-UNIFICATION-001",
+      "L12-MANIFEST-001"
+    ]
+  },
+  "repositories": {
+    "pantheon": {
+      "slug": "ajoe734/pantheon",
+      "base_branch": "dev",
+      "task_branch": "task/OPS-CROSS-REPO-RELEASE-CONTROLLER-001",
+      "anchor_commits": [
+        "f6cac33f9dbdee6ea797dc50b981dcfbe61f0302",
+        "30a4bcbced5085d964b86ad21e2a83e65fc99274",
+        "d1bbb1493eace47b9778e0e137ba8d33ae0ca511"
+      ],
+      "review_head": null,
+      "pr": null,
+      "merge_commit": null
+    },
+    "execute_plans": {
+      "slug": "ajoe734/execute-plans",
+      "base_branch": "dev",
+      "task_branch": "task/OPS-CROSS-REPO-RELEASE-CONTROLLER-001",
+      "anchor_commits": [
+        "3aba30b1b07f45134416cb439216152b4c7b5e65",
+        "1081deb765c5313731ae5813ee6f3d618e7103cd"
+      ],
+      "review_head": null,
+      "pr": null,
+      "merge_commit": null
+    }
+  },
+  "contract": {
+    "release_candidate_schema": "pantheon.dev-release-candidate.v1",
+    "frontend_admission_schema": "pantheon.dev-release-candidate-admission.v1",
+    "controller_evidence_schema": "pantheon.cross-repo-release-controller-evidence.v1",
+    "compensation_evidence_schema": "pantheon.cross-repo-release-compensation.v1",
+    "backend_branch": "dev",
+    "frontend_branch": "dev",
+    "compatibility_status": "compatible",
+    "deployment_profile": "read-only",
+    "ordinary_push_deploy": false,
+    "publish_snapshot_deploy": false,
+    "frontend_workflow_run_deploy": false
+  },
+  "acceptance": [
+    {
+      "criterion": "A single immutable release candidate record binds exact Pantheon and execute-plans commits before deployment.",
+      "status": "passed",
+      "evidence": "agora_compat_manifest.py derives release_candidate_id from both commit/tree identities and the exact generated manifest; nonprod-deploy uploads the ledger and rollback baseline before Deploy dev VM stack under lease."
+    },
+    {
+      "criterion": "Admission fails closed unless manifests match and compatibility_status is compatible.",
+      "status": "passed",
+      "evidence": "Both execute-plans workflows independently regenerate the Pantheon manifest and require compatible candidate ID, manifest digest, and exact FE/BFF commits."
+    },
+    {
+      "criterion": "FE is built and smoke tested against the exact BFF candidate before public switch.",
+      "status": "passed",
+      "evidence": "The controller waits for the exact integration-gate run; only its hard-gated controller-dispatch artifact can enter pantheon-dev-fe-deploy, whose existing deploy controller probes before the symlink switch."
+    },
+    {
+      "criterion": "The dev switch is atomic or compensated with rollback proof.",
+      "status": "passed",
+      "evidence": "execute-plans retains atomic FE rollback; Pantheon compensation restores the baseline BFF under a fresh lease and requires both hosted FE/BFF identities before writing compensation evidence."
+    },
+    {
+      "criterion": "The workflow refuses out-of-order or main-branch frontend delivery.",
+      "status": "passed",
+      "evidence": "Pantheon and both execute-plans workflows require the exact current protected dev tips and exact dev workflow-run identity."
+    },
+    {
+      "criterion": "No intermediate hosted deployment is triggered for individual fixes.",
+      "status": "passed",
+      "evidence": "Pantheon publish pushes no longer trigger nonprod dev; execute-plans dev pushes no longer upload deployable artifacts and workflow_run no longer triggers FE deploy."
+    },
+    {
+      "criterion": "Both repository PR, review, checks, merge, and evidence are complete.",
+      "status": "pending_review",
+      "evidence": "Populated after exact-head independent review and both dev merges."
+    }
+  ],
+  "validation": [],
+  "safety": {
+    "hosted_deployment_run": false,
+    "vm_mutation": false,
+    "shared_workflow_disabled": false,
+    "unrelated_run_cancelled": false,
+    "real_capital_or_broker_action": false
+  },
+  "review": {
+    "status": "pending",
+    "reviewer": "Codex",
+    "decision": null
+  }
+}

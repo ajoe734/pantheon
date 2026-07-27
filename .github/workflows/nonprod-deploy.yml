@@ -1313,7 +1313,7 @@ jobs:
       id-token: write
     env:
       TARGET_ENV: dev
-      RELEASE_EVIDENCE_DIR: ${{ runner.temp }}/pantheon-cross-repo-release-${{ github.run_id }}-${{ github.run_attempt }}
+      RELEASE_EVIDENCE_DIR: ${{ github.workspace }}/.pantheon-cross-repo-release-${{ github.run_id }}-${{ github.run_attempt }}
       DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io' }}
       DEV_FE_URL: ${{ vars.DEV_FE_URL || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
     steps:
@@ -1493,6 +1493,7 @@ jobs:
           name: pantheon-cross-repo-release-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ steps.frontend_release.outputs.evidence_dir }}
           if-no-files-found: error
+          include-hidden-files: true
           retention-days: 30
 
       - name: Enforce accepted or proven compensated outcome

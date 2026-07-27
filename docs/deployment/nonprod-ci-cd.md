@@ -1,16 +1,17 @@
 # Nonprod CI/CD
 
-Status date: 2026-06-11
+Status date: 2026-07-27
 
 This is the repo-local CI/CD operating record for Pantheon dev and
 staging-live.
 
 The current implementation keeps the VM/Compose non-prod topology in the
-Benjamin GCP project and uses GitHub Actions for pinned VM deployment:
+Pantheon Lupin GCP projects and uses GitHub Actions for pinned VM deployment:
 
 - CI remains `Pantheon Stage 0 CI`.
 - Image publishing remains manual through `Publish images to Artifact Registry`.
-- Dev deployment is automatic on `publish/v*` pushes.
+- Dev deployment is an explicit exact-pair release from both repositories'
+  protected `dev` tips. Publish snapshots never deploy.
 - Staging-live deployment is automatic on `master` pushes and can also be run
   manually through the protected `staging-live` GitHub Environment.
 
@@ -20,7 +21,9 @@ Benjamin GCP project and uses GitHub Actions for pinned VM deployment:
 | --- | --- | --- | --- |
 | Pantheon Stage 0 CI | `.github/workflows/stage-0-ci.yml` | PR, push, manual | changed target detection, baseline checks, focused verify, Docker build dry-run |
 | Publish images to Artifact Registry | `.github/workflows/gcp-deploy.yml` | manual | GitHub OIDC to GCP, Cloud Build, Artifact Registry tags, build manifest |
-| Pantheon Nonprod Deploy | `.github/workflows/nonprod-deploy.yml` | `publish/v*`, `master`, manual | VM checkout-to-commit, compose restart, health/CORS smoke |
+| Pantheon Nonprod Deploy | `.github/workflows/nonprod-deploy.yml` | manual dev release; `master` or manual staging | exact FE/BFF admission, VM checkout-to-commit, compensated FE/BFF switch, health/CORS smoke |
+| Pantheon FE-BFF Integration Gate | `execute-plans:.github/workflows/pantheon-integration-gate.yml` | controller dispatch only for deployable artifacts; PR/push CI remains non-deploying | rebuild and smoke the exact FE SHA against the exact hosted BFF SHA |
+| Pantheon Dev FE Deploy | `execute-plans:.github/workflows/pantheon-dev-fe-deploy.yml` | controller dispatch only | authenticate the exact gate artifact, probe the candidate, then atomically switch the hosted FE |
 
 ## Deployment Script
 
@@ -93,10 +96,21 @@ promotion history, but must not create a doomed deploy dispatch.
 
 Normal dev delivery enters through GitHub Actions, not through an operator
 locally SSHing to the VM and running Compose by hand. Use `Pantheon Nonprod
-Deploy` with `environment=dev`, `component=root`, and `ref=<commit-sha>` when
-the target commit must be deployed before the next publish snapshot. The deploy
-script still executes on the dev VM through CI-managed `gcloud compute ssh`;
-that VM execution is an implementation detail of the CI deploy lane.
+Deploy` from the workflow's `dev` ref with:
+
+```text
+environment=dev
+component=root
+ref=<exact-current-pantheon-dev-sha>
+frontend_sha=<exact-current-execute-plans-dev-sha>
+dev_auth_profile=strict
+```
+
+The workflow rejects branch names, `main`, older ancestors, task-branch
+commits, and any pair that is no longer the two repositories' exact `dev`
+tips. The deploy script still executes on the dev VM through CI-managed
+`gcloud compute ssh`; that VM execution is an implementation detail of the CI
+deploy lane.
 
 Target:
 
@@ -114,16 +128,27 @@ PANTHEON_LIVE_BROKER_ENABLED=false
 PANTHEON_BFF_CORS_ORIGINS=https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io
 ```
 
-Agora frontend/BFF deploys must also pass the compatibility manifest gate before
-the VM stack is treated as deployable:
+Agora frontend/BFF deploys generate and pass a candidate-specific compatibility
+manifest before the VM stack is treated as deployable:
 
 ```bash
-python3 scripts/agora_compat_manifest.py deployment-gate \
-  --manifest docs/contracts/agora/dev-compatibility-manifest.json \
+python3 scripts/agora_compat_manifest.py write \
+  --output <candidate-dir>/release-compatibility-manifest.json \
   --frontend-root /home/lupin/code/execute-plans \
   --backend-dev-ref refs/remotes/origin/dev \
   --frontend-dev-ref refs/remotes/origin/dev \
-  --backend-runtime-commit <exact-target-sha>
+  --backend-runtime-commit <exact-pantheon-dev-sha> \
+  --frontend-runtime-commit <exact-execute-plans-dev-sha> \
+  --compatibility-status accepted
+
+python3 scripts/agora_compat_manifest.py deployment-gate \
+  --manifest <candidate-dir>/release-compatibility-manifest.json \
+  --frontend-root /home/lupin/code/execute-plans \
+  --backend-dev-ref refs/remotes/origin/dev \
+  --frontend-dev-ref refs/remotes/origin/dev \
+  --backend-runtime-commit <exact-pantheon-dev-sha> \
+  --frontend-runtime-commit <exact-execute-plans-dev-sha> \
+  --evidence-out <candidate-dir>/release-candidate-ledger.json
 ```
 
 Use `verify --allow-pending` only as a repo sanity check for a deliberately
@@ -133,11 +158,41 @@ commits reachable from both protected `dev` branches, matching v1.13
 bundle/OpenAPI/capability/generated-type hashes, exact handoff bytes, and the
 full advertised Agora capability set. The dev workflow performs this check
 from a clean protected-`dev` gate-controller checkout and compares the accepted
-backend runtime identity to the resolved deployment `TARGET_SHA`. It runs
-before the environment lease and deploy command, so a pending, rejected,
-tampered, or later arbitrary payload cannot reach the switch path.
+backend and frontend runtime identities to the resolved pair. The deterministic
+`release_candidate_id` is the SHA-256 identity of the compatible pair and its
+manifest. The workflow also records the currently hosted FE/BFF SHAs and
+uploads the ledger, generated manifest, and rollback baseline as one immutable
+GitHub artifact before the environment lease or any switch. A pending,
+rejected, tampered, stale, `main`-only, or arbitrary payload cannot reach the
+switch path.
 
-Latest verified dev root deploy, 2026-06-11:
+The accepted release transaction is ordered:
+
+1. Resolve both exact protected `dev` tips.
+2. Generate and seal the immutable compatibility ledger and hosted rollback
+   baseline.
+3. Deploy the exact BFF candidate under the shared environment lease and pass
+   BFF health/version/CORS and existing governed smokes.
+4. Release that lease, then use
+   `scripts/cross_repo_release_controller.py` to dispatch the exact
+   execute-plans integration gate.
+5. The gate builds `VITE_BFF_MODE=live`, `VITE_BFF_FALLBACK=strict`, with real
+   and stub writes disabled, and smokes the candidate against the exact hosted
+   BFF before it uploads a deployable artifact.
+6. The controller dispatches `pantheon-dev-fe-deploy.yml`; that workflow
+   authenticates the ledger-bound artifact, probes it before changing the live
+   symlink, and performs its own atomic FE rollback on failure.
+7. If either frontend workflow rejects the candidate, Pantheon reacquires the
+   shared lease, restores the recorded BFF SHA, verifies `/bff/version`, and
+   verifies the hosted FE `deployment.json` is back at the recorded frontend
+   SHA. The run remains failed, but uploads
+   `pantheon.cross-repo-release-compensation.v1` proof.
+
+There is no deployment trigger on an ordinary fix push, PR merge, dev push, or
+publish cut. Multiple repairs compose on `dev`; one explicit controller run
+admits and switches one pair.
+
+Historical pre-controller verified dev root deploy, 2026-06-11:
 
 - GitHub Actions run `27357842338`
 - ref `0d9fe5864a9b39b1775dcc94da91a54357cdeb9d`
@@ -232,6 +287,12 @@ Dev authenticates through `DEV_GCP_WIF_PROVIDER` and
 replacement project. Staging-live continues to use `GCP_WIF_PROVIDER` and
 falls back from `GCP_DEPLOY_SERVICE_ACCOUNT` to `GCP_SERVICE_ACCOUNT`.
 
+`COORDINATION_REPO_TOKEN` is required by the dev environment lease and by the
+Pantheon controller's exact workflow dispatches into
+`ajoe734/execute-plans`. Its repository access must be limited to the
+coordination branch and the two named execute-plans workflows needed by this
+transaction.
+
 Recommended GitHub Environments:
 
 - `dev`: no reviewer required; exact-pair admission and the shared environment
@@ -268,9 +329,10 @@ VM compose stacks, not read broker secrets from Secret Manager.
 
 ## Promotion Contract
 
-Dev promotion is a publish snapshot: push `publish/v*` after the target commit
-has passed the required repository checks. Staging-live promotion consumes
-`master` or an explicit manually selected ref.
+An immutable `publish/v*` snapshot is a promotion input and historical source
+identity; it is not a dev deployment. Dev delivery is the explicit exact-pair
+controller run described above. Staging-live promotion consumes `master` or an
+explicit manually selected ref.
 
 Staging-live promotion is manual:
 
@@ -290,23 +352,21 @@ The deploy script writes a pre-deploy snapshot on each VM under:
 ~/pantheon-deploy-snapshots/
 ```
 
-To roll back a VM stack, manually dispatch the workflow with the last known good
-commit SHA and the affected component.
+For a rejected paired dev release, rollback is automatic and fail-closed:
 
-Examples:
+- execute-plans must leave or restore the recorded frontend symlink;
+- Pantheon restores the recorded BFF SHA under a fresh environment lease;
+- both hosted identities must equal the pre-switch baseline;
+- the rejected run fails even when compensation succeeds, so it cannot be
+  mistaken for an accepted release.
 
-```text
-environment=dev
-component=root
-ref=<last-good-sha>
-```
+Do not manually dispatch an older dev SHA: the controller deliberately rejects
+anything except the current protected `dev` tips. If an already accepted dev
+pair must be reverted later, land the revert through normal PRs in both
+repositories as needed, then release the new exact `dev` pair. Emergency VM
+snapshot recovery remains an operator procedure and must be followed by a
+controller release that restores repository/deployment identity agreement.
 
-```text
-environment=staging-live
-component=control
-ref=<last-good-sha>
-```
-
-Rollback does not change Lovable publish state. If the frontend was promoted,
-roll it back through the Lovable project as documented in
-`lovable-dev-staging-operating-rules.md`.
+Staging-live can still be rolled back independently by manually dispatching
+`environment=staging-live`, the affected component, and the verified last-good
+SHA. Pantheon dev frontend delivery does not use Lovable publish state.
