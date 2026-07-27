@@ -4,7 +4,12 @@
 # supervisor.py) never go live until someone manually deploys -- this closes
 # that gap. Safe to run on a cron: a no-op when already current.
 #
-#   - fetch origin/dev; if dev-root is behind, stash dirty TRACKED changes
+#   - resolve the root the LIVE supervisor process actually runs from
+#     (/proc/<pid>/cwd) and sync that root too. Syncing only the default
+#     dev-root path is what let the live supervisor sit 63 commits behind
+#     origin/dev while this script reported success (SUP-PROVIDER-POOL-PROBE-
+#     GATE-001). Set SYNC_ACTIVE_ROOT=0 to report the split without repairing it.
+#   - fetch origin/dev; if a root is behind, stash dirty TRACKED changes
 #     (untracked runtime files like watchdog-state.json are left in place) and
 #     fast-forward via `git reset --hard origin/dev`.
 #   - re-provision the split-root live config so repo-owned schema migrations
@@ -25,6 +30,7 @@ stamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 log() { echo "[sync-dev-root $(stamp)] $*"; }
 
 cd "$DEV_ROOT" || { log "FATAL: cannot cd $DEV_ROOT"; exit 1; }
+DEV_ROOT="$(pwd -P)"
 
 fetch_ref="${REF#origin/}"
 if [[ "$REF" == origin/* ]]; then
@@ -34,27 +40,69 @@ if [[ "$REF" == origin/* ]]; then
   # exact remote-tracking ref consumed below regardless of that config.
   fetch_ref="${REF#origin/}:refs/remotes/origin/${REF#origin/}"
 fi
-if ! git fetch --quiet origin "$fetch_ref"; then
-  log "fetch $REF failed; aborting"; exit 1
+
+# The pid file is the same one the watchdog uses; /proc/<pid>/cwd is the only
+# authority for which checkout is actually executing the control loop.
+pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+ACTIVE_ROOT=""
+if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+  active_cwd="$(readlink -f "/proc/$pid/cwd" 2>/dev/null || true)"
+  if [[ -n "$active_cwd" ]]; then
+    ACTIVE_ROOT="$(git -C "$active_cwd" rev-parse --show-toplevel 2>/dev/null || true)"
+  fi
+fi
+if [[ -z "$ACTIVE_ROOT" ]]; then
+  log "active supervisor root unresolved (pid=${pid:-none}); syncing $DEV_ROOT only"
+elif [[ "$ACTIVE_ROOT" == "$DEV_ROOT" ]]; then
+  log "active supervisor root matches dev-root ($DEV_ROOT)"
+else
+  log "ACTIVE_ROOT_SPLIT: live supervisor pid=$pid runs from $ACTIVE_ROOT, not $DEV_ROOT"
 fi
 
-behind="$(git rev-list --count "HEAD..$REF" 2>/dev/null || echo '?')"
-log "dev-root behind $REF by ${behind}"
-
 updated=0
+sync_root() {
+  # $1 = repo root, $2 = label. Sets `updated=1` when the root moved.
+  local root="$1" label="$2" behind head_before
+  if ! git -C "$root" rev-parse --git-dir >/dev/null 2>&1; then
+    log "ERROR: $label $root is not a git checkout; skipping"
+    return 1
+  fi
+  if ! git -C "$root" fetch --quiet origin "$fetch_ref"; then
+    log "fetch $REF failed in $label $root"
+    return 1
+  fi
+  behind="$(git -C "$root" rev-list --count "HEAD..$REF" 2>/dev/null || echo '?')"
+  head_before="$(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo '?')"
+  log "$label ($root) at $head_before, behind $REF by ${behind}"
+  if [[ "$behind" =~ ^[0-9]+$ && "$behind" -gt 0 ]]; then
+    if ! git -C "$root" diff --quiet || ! git -C "$root" diff --cached --quiet; then
+      git -C "$root" stash push -m "sync-dev-root-dirty-${head_before}-$(date -u +%Y%m%dT%H%M%SZ)" \
+        >/dev/null 2>&1 && log "$label stashed dirty tracked changes (recoverable via git stash list)"
+    fi
+    if git -C "$root" reset --hard "$REF" >/dev/null 2>&1; then
+      updated=1
+      log "updated $label -> $(git -C "$root" rev-parse --short HEAD)"
+    else
+      log "ERROR: git reset --hard $REF failed in $label $root"
+      return 1
+    fi
+  fi
+  return 0
+}
+
 config_updated=0
 live_hash_before="$(sha256sum "$LIVE_CONFIG" 2>/dev/null | awk '{print $1}')"
-if [[ "$behind" =~ ^[0-9]+$ && "$behind" -gt 0 ]]; then
-  if ! git diff --quiet || ! git diff --cached --quiet; then
-    git stash push -m "sync-dev-root-dirty-$(git rev-parse --short HEAD)-$(date -u +%Y%m%dT%H%M%SZ)" \
-      >/dev/null 2>&1 && log "stashed dirty tracked changes (recoverable via git stash list)"
-  fi
-  if git reset --hard "$REF" >/dev/null 2>&1; then
-    updated=1
-    log "updated dev-root -> $(git rev-parse --short HEAD)"
+
+if ! sync_root "$DEV_ROOT" "dev-root"; then
+  log "FATAL: cannot sync dev-root $DEV_ROOT"; exit 1
+fi
+if [[ -n "$ACTIVE_ROOT" && "$ACTIVE_ROOT" != "$DEV_ROOT" ]]; then
+  if [[ "${SYNC_ACTIVE_ROOT:-1}" == "1" ]]; then
+    sync_root "$ACTIVE_ROOT" "active-supervisor-root" || log "active supervisor root sync failed; split persists"
   else
-    log "ERROR: git reset --hard $REF failed"
+    log "SYNC_ACTIVE_ROOT=0; leaving active supervisor root $ACTIVE_ROOT unrepaired"
   fi
+  log "evidence: dev-root HEAD=$(git -C "$DEV_ROOT" rev-parse HEAD) active HEAD=$(git -C "$ACTIVE_ROOT" rev-parse HEAD 2>/dev/null || echo unknown) target=$(git -C "$DEV_ROOT" rev-parse "$REF")"
 fi
 
 if [[ -f scripts/provision_live_supervisor_config.py && -f .orchestrator/config.json ]]; then
@@ -82,9 +130,8 @@ if [[ "$live_hash_before" != "$live_hash_after" ]]; then
 fi
 
 if [[ "$updated" -eq 1 || "$config_updated" -eq 1 ]]; then
-  pid="$(cat "$PID_FILE" 2>/dev/null || true)"
   if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-    target_sha="$(git rev-parse HEAD)"
+    target_sha="$(git -C "$DEV_ROOT" rev-parse "$REF")"
     if ! python3 "$DEV_ROOT/.orchestrator/supervisor_watchdog.py" \
       --config "$LIVE_CONFIG" \
       --record-intent-pid "$pid" \
