@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Antigravity is quota-blocked and Claude is temporarily quota-paused; dispatching to available real Codex worker so review bridge work does not stall.
-- Status: todo
+- Status: in_progress
 - Owner: Codex
 - Reviewer: Codex2
-- Next: Ownership updated
+- Next: Supervisor re-dispatched L12-GITHUB-REVIEW-BRIDGE-001; task remains in progress.
 
 ## Summary
 Bind fleet reviewer decisions to GitHub review gates
