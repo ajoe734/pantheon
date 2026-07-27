@@ -1,45 +1,46 @@
-Revalidated by Codex after the independent rejection of PR #4218 head
-5a9ad1643eba2580bf8a51c71a6f3a43ad8c57b6. The repair preserves canonical
-archive filename case/escaping, and both PR-opening helpers verify
-autoMergeRequest after revocation and fail closed while it remains armed.
+Revalidated by Codex after the independent stale-base rejection of PR #4218
+head 23109d468ea1c5ccda9318253d5b4221eac92d61. The implementation repair
+continues to preserve canonical archive filename case/escaping, and both
+PR-opening helpers verify autoMergeRequest after revocation and fail closed
+while it remains armed.
 
 The task branch contains authoritative origin/dev
-eecb96fa3826e8e3527a77da7f187a32b33c6c93, fetched through the explicit
+6692d51c9bc5a48ffcbaac8cf817b635351a7c9a, fetched through the explicit
 remote-tracking refspec. The validated implementation tree is
-efa6633d59a5648159938bcfb393fe17ee2425f7; the
+0ab8cbeb1952b3c98ebccf720cc97cb77c5eacf9; the
 following task commit changes evidence only.
 
 == python3 scripts/git/test_task_review_merge_gate.py
 ----------------------------------------------------------------------
-Ran 84 tests in 3.693s
+Ran 84 tests in 3.058s
 OK
 
 == python3 scripts/git/test_auto_integrator.py
 ----------------------------------------------------------------------
-Ran 9 tests in 0.003s
+Ran 9 tests in 0.004s
 OK
 
 == python3 scripts/git/test_git_workflow_helpers.py
 ----------------------------------------------------------------------
-Ran 52 tests in 5.408s
+Ran 52 tests in 2.372s
 OK
 
 == .venv-pantheon/bin/python3 -m pytest -q scripts/git/test_task_git_helpers_refspec.py
-2 passed in 0.44s
+2 passed in 0.45s
 
 == python3 scripts/git/test_task_pr_triage.py
 ----------------------------------------------------------------------
-Ran 24 tests in 0.005s
+Ran 24 tests in 0.006s
 OK
 
 == python3 scripts/git/test_index_safety.py
 ----------------------------------------------------------------------
-Ran 17 tests in 2.824s
+Ran 17 tests in 3.034s
 OK
 
 == python3 scripts/test_ai_status.py
 ----------------------------------------------------------------------
-Ran 141 tests in 12.768s
+Ran 141 tests in 12.507s
 OK
 
 == bash -n helpers

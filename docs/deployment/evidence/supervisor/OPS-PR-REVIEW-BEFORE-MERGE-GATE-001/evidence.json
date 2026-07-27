@@ -330,12 +330,15 @@
   "validation": {
     "revalidation": {
       "actor": "Codex",
-      "reason": "Owner reassignment after the first exact-head review rejected the predecessor implementation, followed by a second independent review of head 5a9ad1643 that found lowercase archive lookup and fail-open helper revocation. Codex corrected both findings, composed current dev, and reran the full focused matrix.",
+      "reason": "Owner reassignment after the first exact-head review rejected the predecessor implementation, followed by a second independent review of head 5a9ad1643 that found lowercase archive lookup and fail-open helper revocation. Codex corrected both findings. A later independent review rejected PR #4218 head 23109d468 solely because its eecb96fa3 base became stale; Codex preserved that feedback, explicitly fetched and composed current dev, and reran the full focused matrix.",
       "adopted_predecessor_commit": "7759ed36666ce62a7f912a9c85f74cf409cff095",
       "rejected_review_head": "5a9ad1643eba2580bf8a51c71a6f3a43ad8c57b6",
       "repair_anchor_commit": "e971a2c9441c0611fa7070f7554805e3ccfcb2b7",
-      "validated_dev_base": "eecb96fa3826e8e3527a77da7f187a32b33c6c93",
-      "validated_tree_commit": "efa6633d59a5648159938bcfb393fe17ee2425f7"
+      "stale_base_rejected_review_head": "23109d468ea1c5ccda9318253d5b4221eac92d61",
+      "stale_pr_base": "eecb96fa3826e8e3527a77da7f187a32b33c6c93",
+      "stale_base_anchor_commit": "e0038d729c812095ff411c73580ac6556840ceb8",
+      "validated_dev_base": "6692d51c9bc5a48ffcbaac8cf817b635351a7c9a",
+      "validated_tree_commit": "0ab8cbeb1952b3c98ebccf720cc97cb77c5eacf9"
     },
     "commands": [
       {

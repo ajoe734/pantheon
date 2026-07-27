@@ -10,6 +10,14 @@ independent rejection of
 implementation; Codex owns the case-preserving archive repair, helper
 revocation readback, final evidence, handoff, and closeout.
 
+A later independent pass rejected PR #4218 head
+`23109d468ea1c5ccda9318253d5b4221eac92d61` because its reviewed base
+`eecb96fa3826e8e3527a77da7f187a32b33c6c93` had become stale. Codex preserved
+that rejection, fetched `dev` through the explicit remote-tracking refspec,
+composed authoritative base `6692d51c9bc5a48ffcbaac8cf817b635351a7c9a`,
+and revalidated implementation tree
+`0ab8cbeb1952b3c98ebccf720cc97cb77c5eacf9` before this evidence-only refresh.
+
 Scope rule honoured throughout: **no `.orchestrator/config.json` edit**, no
 hand-edited task board, no owner or reviewer action performed on behalf of
 anyone. Every decision is derived from canonical task state that already
@@ -355,6 +363,10 @@ The full map of PR → entry point → fixture is the `live_regressions` table i
 ## 5. Validation
 
 See `validation.txt` for the captured transcript.
+
+This pass ran against authoritative `origin/dev`
+`6692d51c9bc5a48ffcbaac8cf817b635351a7c9a` and validated tree
+`0ab8cbeb1952b3c98ebccf720cc97cb77c5eacf9`.
 
 ```
 python3 scripts/git/test_task_review_merge_gate.py     Ran  84 tests - OK
