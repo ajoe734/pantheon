@@ -144,3 +144,63 @@ PR #4215  new  origin/dev..3984f143a exit 0
 3. **An empty range passes.** If the base tip already contains the PR head — a
    re-run after auto-merge landed — nothing is scanned. Those commits were
    gated on the way in.
+
+## 6. Post-merge confirmation (live fleet, not a replay)
+
+Everything in §4 is a replay. This section is the repaired gate running on the
+real fleet after the delivery landed.
+
+Delivery: PR [#4217](https://github.com/ajoe734/pantheon/pull/4217) merged into
+`dev` at `2026-07-26T21:43:27Z` (merge commit `71aea154b`). PR #4217's own
+`Commit trailers` job already ran under the repaired resolver, because a
+`pull_request` workflow runs the workflow file from the PR's merge ref.
+
+Sample: every `branch-ci.yml` run created between that merge and
+`2026-07-26T23:19:29Z` — **40 runs**, 22 `push` and 18 `pull_request`, across
+`dev` and six task branches (`L12-CAP-001`,
+`OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001`, `OPS-L12-RUNTIME-GAP-DELTA-001`,
+`OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001`,
+`OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001`, `SUP-COMMAND-RUNTIME-REFRESH-001`).
+
+**36 success, 4 failure.** The contract observed in the logs matches the table
+in §2 exactly:
+
+| shape | live resolved range | example |
+| --- | --- | --- |
+| `pull_request` | `origin/dev..<pull_request.head.sha>` | run 30224958034 → `origin/dev..1ea220c43` |
+| push on `task/**` | `origin/dev..<github.sha>` | run 30224956120 → `origin/dev..1ea220c43` |
+| push on `dev` | unchanged `before..head` | run 30224998589 → `e376955ff..3ac69ff7f` |
+
+`dev` pushes still resolve from `github.event.before`, so AC3's "integration
+branches keep their previous decision path" is confirmed in production and not
+only in unit tests.
+
+### 6.1 The original blocker no longer blocks anything
+
+`0410a89f0` — `OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001: record isolation
+evidence (#4213)`, 79 chars — is **still on `dev`**. It was never rewritten or
+reverted; the range was fixed instead. Across all 40 runs it is rejected zero
+times, on either event shape, including on the six task branches that were cut
+before it landed and would have inherited it under the old contract.
+
+### 6.2 The four failures are the same true positive
+
+All four are `task/L12-CAP-001` (runs 30222792583 and 30222793958 at 22:16,
+then 30222823409 and 30222825355 at 22:17 after a re-push). Every one rejects
+the same commit:
+
+```
+[range] event=pull_request resolved=origin/dev..590512f55
+[trailers] 5dbc95673c4390f7ae140a89b8fe88b95cf81059:
+  - subject exceeds 72 chars (81)
+```
+
+`5dbc95673` is `L12-CAP-001: resolve review blockers for lossless signal
+execution & leader lease` — 81 chars, **branch-owned and not an ancestor of
+`origin/dev`**. That is the gate doing its job inside the narrowed range, which
+is the live counterpart of
+`test_repaired_range_still_fails_a_malformed_task_head`: scoping the range to
+the PR head removed the false failures without removing the true ones. The
+branch passed at 22:29 once its own subject was fixed.
+
+No run in the window failed on a commit its branch did not own.

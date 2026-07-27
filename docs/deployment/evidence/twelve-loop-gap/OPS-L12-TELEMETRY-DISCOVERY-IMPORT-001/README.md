@@ -3,7 +3,14 @@
 **Title:** Eliminate telemetry unittest discovery loader errors
 **Owner:** Claude · **Reviewer:** Codex2 · **Phase:** Twelve-loop verification hardening
 **Repository:** `ajoe734/pantheon` · **Branch:** `task/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001`
-**Delivery:** PR [#4222](https://github.com/ajoe734/pantheon/pull/4222) merged as `55b17612e` · re-cut head `408d6d9a5` on merged dev `6578ef968`
+**Delivery:** PR [#4222](https://github.com/ajoe734/pantheon/pull/4222) merged as `55b17612e` · PR [#4225](https://github.com/ajoe734/pantheon/pull/4225) merged as `8d1b50779` · this cut at head `b91c845e4`
+
+> **Status: `blocked_pending_scope_decision`.** The import repair is delivered and
+> verified (285 tests / 0 errors / 1 skip, 75 previously-unrun tests recovered, no
+> production change). Canonical acceptance criterion 2 is **not met as written**
+> and is not claimed as narrowed: see *AC2 status* below and
+> [`AC2_FEASIBILITY_PROOF.md`](AC2_FEASIBILITY_PROOF.md). A Human/Ops scope
+> decision is required.
 
 The machine-readable manifest is `evidence.json`; `evidence.sha256` pins both
 files. This README is the human summary and does not outrank the manifest.
@@ -19,7 +26,7 @@ unchanged. Five fixes were required, and this cut answers all five:
 
 | # | Required fix | Answer |
 |---|---|---|
-| 1 | Acceptance 2 was false as written — the recorded `env -i` run injected `PYTHONPATH`, and with no `PYTHONPATH` the dotted/direct forms fail from a foreign cwd | Three new **genuinely** no-`PYTHONPATH` regressions that pass, two boundary assertions for what cannot, and AC2 narrowed to the supported claim (see *Repository-root resolution contract*) |
+| 1 | Acceptance 2 was false as written — the recorded `env -i` run injected `PYTHONPATH`, and with no `PYTHONPATH` the dotted/direct forms fail from a foreign cwd | Three new **genuinely** no-`PYTHONPATH` regressions that pass, plus two assertions that make the remaining gap machine-checked. The narrowing first offered here was **rejected by Human/Ops** and has been withdrawn — AC2 is now recorded as `blocked_pending_scope_decision` (see *AC2 status*) |
 | 2 | Re-cut evidence with actually observed times; bind the follow-up head and PR/checks/merge facts, not just the anchor | Every timestamp is an observed time (`21:52:40`, `21:54:05`, `21:55:32`, `21:58:37`, `22:15:44`, `22:37:15`); PR #4222 is bound in full with its three check runs; `validated_head_sha` is the re-cut head `408d6d9a5` |
 | 3 | Make `evidence.json` validate against `schemas/product-evidence.schema.json` | Manifest restructured; validates under `jsonschema` 4.26.0 and under the gate's own validator |
 | 4 | Add the fail-closed check rejecting future `task.evidence_cut_at`, `validation.validated_at`, and `record_log` timestamps | `scripts/test_ops_l12_telemetry_discovery_import_evidence.py` (10 tests), proven to reject the rejected manifest |
@@ -27,7 +34,43 @@ unchanged. Five fixes were required, and this cut answers all five:
 
 PR #4222 merged at `21:55:32Z`, six minutes **before** the `21:58:37Z` owner
 handoff, and carried no reviews. It is retained historical delivery, not
-approval.
+approval. PR #4225 carried fixes 2–5 and the first answer to fix 1; it merged at
+`23:01:39Z` as `8d1b50779`.
+
+## AC2 status
+
+Human/Ops audited the in-progress head `408d6d9a5` at `2026-07-26T22:41:34Z` and
+**rejected** the acceptance-scope narrowing: AC2 requires *every* named mode to
+pass, and recording foreign-cwd dotted and direct-file failure as an accepted
+boundary proves a weaker contract. That is correct, and the narrowing is
+withdrawn. The manifest now records AC2 and `task.overall_admission` as
+`blocked_pending_scope_decision`, and the two boundary tests are labelled in
+source as recording an **unresolved** gap.
+
+[`AC2_FEASIBILITY_PROOF.md`](AC2_FEASIBILITY_PROOF.md) is the formal answer the
+audit asked for. In short:
+
+- `sys.path` in the foreign-cwd, no-`PYTHONPATH` environment is
+  `["", stdlib…, site-packages]` — nothing points at the repository;
+- the repaired file is **never executed** in that mode: asking for a module that
+  does not exist at all produces the byte-identical `No module named 'services'`,
+  so resolution stops at the `services` package. Code that never runs cannot
+  repair anything, so no edit to the repaired files can close it;
+- the mechanisms that could put the repository root on `sys.path` are exactly
+  four — `PYTHONPATH`, cwd, runtime `sys.path` mutation, or a `site-packages`
+  entry. AC2 forbids the first three, leaving only an installed distribution;
+- **demonstrated constructively:** a single `.pth` line in a throwaway venv's
+  `site-packages` — exactly what `pip install -e .` writes — makes dotted
+  unittest (75 tests OK) and direct file execution (35 and 40 OK) pass from
+  `/tmp` with no `PYTHONPATH` and **no change of any kind to the repaired
+  files**. Removing the `.pth` fails again.
+
+So AC2 is achievable, by packaging only. That means a root `pyproject.toml` (the
+repository has never had packaging metadata anywhere) **and** a rule that every
+test environment installs it — a config change plus a process change, both
+outside this task's scope and both excluded by the audit's own "No config/process
+change" line. The proof document states the two options and recommends handling
+Option A as its own build/CI-lane task; the decision is Human/Ops'.
 
 ## Defect
 
@@ -93,17 +136,17 @@ so the claim is stated exactly. **Every row below runs under `env -i` with no
 | foreign cwd (`/tmp`) | `python -m unittest services.telemetry.test_capture` | **fails: `No module named 'services'`** — the repository root is unreachable |
 | foreign cwd (`/tmp`) | `python <abs>/services/telemetry/test_capture.py` | **fails: `No module named 'services'`** — `sys.path[0]` is `services/telemetry` |
 
-The last two rows are recorded as a **boundary, not a pass**. Making them pass
-needs either a process-global `sys.path` mutation — which acceptance 2 itself
-forbids and `test_repaired_modules_do_not_mutate_process_global_sys_path`
-rejects — or installing the repository as a distribution, which is out of scope.
-What the regression module does assert there is the invariant that holds in
-every environment: **a failure may name `services`, never `capture` or
-`feedback_adapter`.** That is exactly the defect this task removed.
-
-Acceptance criterion 2 is therefore recorded as `pass_as_narrowed` in the
-manifest, with the boundary carried as an explicit residual risk rather than
-folded into a claim of unconditional success.
+The last two rows are the **unresolved AC2 gap**, not an accepted boundary.
+Closing them inside the modules would need a process-global `sys.path` (or
+`sys.modules`) mutation — which acceptance 2 itself forbids,
+`test_repaired_modules_do_not_mutate_process_global_sys_path` rejects, and which
+would reintroduce the duplicate-module-identity hazard this task closed — and in
+the dotted case it is impossible outright because the file never executes. What
+the regression module asserts there is the invariant that does hold in every
+environment: **a failure may name `services`, never `capture` or
+`feedback_adapter`.** That is exactly the defect this task removed. The gap is
+tracked as a blocking residual risk at severity `high`, not folded into a claim
+of success.
 
 ## Regression coverage
 
@@ -126,8 +169,8 @@ test module that reintroduces a bare sibling import fails here:
 | **new** `test_pytest_passes_from_foreign_cwd_with_no_pythonpath_or_repo_config` | `pytest` passes from a foreign cwd with **no `PYTHONPATH`**, `-c /dev/null` and `--noconftest`. |
 | **new** `test_dotted_unittest_from_repo_root_cwd_needs_no_pythonpath` | Dotted `unittest` passes from the repository root with **no `PYTHONPATH`**. |
 | **new** `test_repo_root_discovery_needs_no_pythonpath` | Repository-root `unittest discover` passes with **no `PYTHONPATH`**. |
-| **new** `test_dotted_unittest_from_foreign_cwd_without_pythonpath_fails_only_on_services` | Boundary: any failure there names `services`, never a bare sibling. |
-| **new** `test_direct_file_execution_from_foreign_cwd_fails_only_on_services` | Same boundary for `python <abs file>`. |
+| **new** `test_dotted_unittest_from_foreign_cwd_without_pythonpath_fails_only_on_services` | Unresolved AC2 gap, machine-checked: any failure there names `services`, never a bare sibling. |
+| **new** `test_direct_file_execution_from_foreign_cwd_fails_only_on_services` | Same unresolved gap for `python <abs file>`. |
 
 Child interpreters carry `PANTHEON_TELEMETRY_DISCOVERY_IMPORT_CHILD=1`; the
 subprocess-spawning classes skip when that sentinel is set, so a widened
@@ -237,17 +280,29 @@ file.
    `55b17612e` at `21:55:32Z` with all required checks green, but before the
    owner handoff and with no reviews. Retained historical delivery.
 3. **Codex2 rejection** at `22:15:44Z` with five required fixes.
-4. **This re-cut** (`408d6d9a5` plus these evidence bytes) on merged dev
-   `6578ef968`. The follow-up pull request's number, head, checks, and merge sha
-   are bound by the next cut; a manifest cannot contain the merge commit of the
-   pull request that introduces it, which is the same structural limit as
-   `integrity.self_hash_omitted`.
+4. **PR #4225** (anchor `408d6d9a5`, evidence `3c2d88370`) — merged as
+   `8d1b50779` at `23:01:39Z` with all required checks green. It carried the
+   fail-closed evidence gate, the five no-`PYTHONPATH` regressions, and the
+   schema-valid manifest. Note: `task_finalize.sh`'s auto-merge enable did not
+   stick; the PR merged when `gh pr merge --auto --merge` was re-issued with every
+   check already green.
+5. **Human/Ops in-progress audit** at `22:41:34Z` — rejected head `408d6d9a5` as
+   an acceptance-scope narrowing and required either an implementation covering
+   every AC2 mode or a formal impossibility proof plus scope revision, with no
+   config/process change and via a new repair PR.
+6. **This cut** (`b91c845e4` plus these evidence bytes) on merged dev
+   `8d1b50779`: AC2 narrowing withdrawn, `AC2_FEASIBILITY_PROOF.md` added,
+   status `blocked_pending_scope_decision`. Each cut binds the previous pull
+   request in full; the pull request that carries a cut is bound by the next one,
+   because a manifest cannot contain the merge commit of the PR that introduces
+   it — the same structural limit as `integrity.self_hash_omitted`.
 
 ## Residual notes
 
 - From a foreign cwd with no `PYTHONPATH` and no other route to the repository
-  root, the dotted and direct-file forms fail on `services` — recorded boundary,
-  not a defect of these modules.
+  root, the dotted and direct-file forms fail on `services`. **Blocking**
+  residual risk at severity `high`, pending the Human/Ops AC2 scope decision —
+  not a defect of these modules, and not accepted as satisfying AC2.
 - The root `conftest.py` masks bare sibling imports under `pytest`, so `pytest`
   alone cannot catch a regression of this class. The AST fence can.
 - `services/telemetry/test_main_routes.py` and
