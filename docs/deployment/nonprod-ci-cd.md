@@ -83,9 +83,13 @@ Emergency flags:
 
 ## Dev Lane
 
-Automatic dev deploy runs when a `publish/v*` snapshot branch is pushed. Manual
-image-publish runs do not auto-deploy dev; use the manual deploy entry when
-that is desired.
+The hourly publish cut creates immutable `publish/v*` snapshots but does not
+dispatch a dev deployment. A push event produced with `GITHUB_TOKEN` does not
+recursively start this workflow, and the publish workflow no longer works
+around that suppression. Dev delivery is a separate governed operation:
+`nonprod-deploy.yml` must admit the exact Pantheon/execute-plans pair before any
+switch. An inadmissible snapshot may remain available for investigation or
+promotion history, but must not create a doomed deploy dispatch.
 
 Normal dev delivery enters through GitHub Actions, not through an operator
 locally SSHing to the VM and running Compose by hand. Use `Pantheon Nonprod
@@ -230,7 +234,8 @@ falls back from `GCP_DEPLOY_SERVICE_ACCOUNT` to `GCP_SERVICE_ACCOUNT`.
 
 Recommended GitHub Environments:
 
-- `dev`: no reviewer required, because it auto-deploys after publish success.
+- `dev`: no reviewer required; exact-pair admission and the shared environment
+  lease remain mandatory before any switch.
 - `staging-live`: required reviewers enabled.
 
 ## GCP IAM

@@ -289,11 +289,10 @@ strategy.
    - Creates `publish/v<YYYY>.<MM>.<DD>.<N>` from `origin/dev` HEAD.
    - Pushes the branch.
    - Tags `release/v<YYYY>.<MM>.<DD>.<N>` (annotated).
-   - Explicitly dispatches `nonprod-deploy.yml` (environment=dev) for the new
-     snapshot so the dev VM redeploys. NOTE: the `on: push: publish/*` trigger
-     does **not** fire here — branches pushed with `GITHUB_TOKEN` do not start
-     downstream workflow runs, so the cut job calls the deploy via
-     `workflow_dispatch` (which is exempt from that suppression).
+   - Does **not** dispatch a deployment. A publish snapshot is an immutable
+     promotion input, not proof that the exact Pantheon/execute-plans pair is
+     admitted for dev. Dev delivery is a separate governed operation and keeps
+     its own exact-pair gate before any switch.
 3. If `dev` has not advanced, no-op.
 
 ### 3.1 Version format `vYYYY.MM.DD.N`
@@ -498,10 +497,10 @@ merged only at the exact head that reviewer approved.
 | File                                       | Trigger                                                                 | Purpose                                                  |
 |--------------------------------------------|--------------------------------------------------------------------------|----------------------------------------------------------|
 | `.github/workflows/branch-ci.yml`          | push/PR on `task/**`, `hotfix/**`, `dev`, `publish/**`, `master`         | Trailer check + mirror guard + smoke acceptance gate     |
-| `.github/workflows/nightly-publish-cut.yml`| cron `0 3 * * *` + `workflow_dispatch`                                    | Cut `publish/v<YYYY>.<MM>.<DD>.<N>` from `dev` if it advanced and release discipline passes |
+| `.github/workflows/nightly-publish-cut.yml`| cron `0 * * * *` + `workflow_dispatch`                                    | Cut an immutable publish snapshot only; never dispatch deployment |
 | `.github/workflows/publish-promote.yml`    | cron hourly + `release/v*` push + `workflow_dispatch`                    | Open `promote/<v>` PR after soak; auto-merge             |
 | `.github/workflows/master-release.yml`     | push on `master`                                                         | Tag `prod/<v>` on promote merges; tag hotfix merges      |
-| `.github/workflows/nonprod-deploy.yml`     | push on `publish/v*`, push on `master`, and `workflow_dispatch`           | Auto-deploy dev from publish and staging-live from master |
+| `.github/workflows/nonprod-deploy.yml`     | push on `publish/v*`, push on `master`, and `workflow_dispatch`           | Fail-closed nonprod deploy with exact-pair admission before dev switch |
 | `.github/workflows/orchestrator-sync.yml`  | push/tag/PR labeled                                                      | POST git event to orchestrator webhook (no-op without SYNC_URL) |
 
 ---
@@ -510,16 +509,17 @@ merged only at the exact head that reviewer approved.
 
 | Environment      | Tracks ref                              | Auto-deploy trigger                          | Operator role |
 |------------------|------------------------------------------|----------------------------------------------|---------------|
-| **dev**          | latest `publish/v<latest>`               | push on `publish/v*`                          | observe       |
+| **dev**          | exact admitted Pantheon/execute-plans pair | separate governed deploy after pair admission | observe       |
 | **staging-live** | `master` HEAD (post-promote)             | push on `master` (every promote / hotfix merge) | smoke / sign-off |
 | **production**   | a chosen `prod/v<...>` tag (locked)      | never auto                                    | sign + manual workflow_dispatch |
 
-dev is the **CI-gate environment** — every nightly publish snapshot
-auto-deploys here and `publish-promote.yml` only opens a promote PR
-once branch-ci is green. staging-live is the post-promote
-pre-production rehearsal — `master` push automatically redeploys both
-`pantheon-lupin-staging-{control,exec}` VMs. Production is
-operator-locked.
+dev is the **CI-gate environment**, but a nightly snapshot does not by itself
+authorize a switch. The deploy lane must first admit the exact backend/frontend
+pair; inadmissible snapshots remain promotion inputs without creating a deploy
+dispatch. `publish-promote.yml` still opens promote PRs only after its publish
+criteria pass. staging-live is the post-promote pre-production rehearsal —
+`master` push automatically redeploys both
+`pantheon-lupin-staging-{control,exec}` VMs. Production is operator-locked.
 
 ---
 

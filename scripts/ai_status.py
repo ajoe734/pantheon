@@ -6096,8 +6096,12 @@ def resolve_approval_binding(task: dict[str, Any]) -> dict[str, Any]:
     task_id = str(task.get("id") or "").strip()
     raw_pr = os.environ.get("REVIEW_PR", "").strip().lstrip("#")
     raw_head = os.environ.get("REVIEW_HEAD_SHA", "").strip()
-    base_branch = os.environ.get("REVIEW_BASE", "").strip() or DEFAULT_APPROVAL_BASE_BRANCH
-    head_branch = os.environ.get("REVIEW_HEAD_BRANCH", "").strip() or f"task/{task_id}"
+    base_branch = (
+        os.environ.get("REVIEW_BASE", "").strip() or DEFAULT_APPROVAL_BASE_BRANCH
+    )
+    head_branch = (
+        os.environ.get("REVIEW_HEAD_BRANCH", "").strip() or f"task/{task_id}"
+    )
 
     owner = str(task.get("owner") or "").strip().casefold()
     reviewer = str(task.get("reviewer") or "").strip().casefold()
@@ -6116,9 +6120,13 @@ def resolve_approval_binding(task: dict[str, Any]) -> dict[str, Any]:
         return {}
 
     if not raw_pr:
-        raise SystemExit("REVIEW_HEAD_SHA was supplied without REVIEW_PR; both are required.")
+        raise SystemExit(
+            "REVIEW_HEAD_SHA was supplied without REVIEW_PR; both are required."
+        )
     if not raw_head:
-        raise SystemExit("REVIEW_PR was supplied without REVIEW_HEAD_SHA; both are required.")
+        raise SystemExit(
+            "REVIEW_PR was supplied without REVIEW_HEAD_SHA; both are required."
+        )
     if not raw_pr.isdigit() or int(raw_pr) <= 0:
         raise SystemExit(f"REVIEW_PR must be a positive PR number, got {raw_pr!r}")
     if not APPROVAL_HEAD_SHA_RE.match(raw_head):

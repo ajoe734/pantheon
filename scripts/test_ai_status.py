@@ -25,7 +25,20 @@ from canonical_writer_guard import assert_isolated_legacy_write_target
 from rewrite.task_state_store import load_events, verify_projection
 
 
+REVIEW_BINDING_ENV_KEYS = (
+    "REVIEW_PR",
+    "REVIEW_HEAD_SHA",
+    "REVIEW_BASE",
+    "REVIEW_HEAD_BRANCH",
+)
+
+
 def _setup_test_isolation(test_case):
+    test_case._inherited_review_binding_env = {
+        key: os.environ.pop(key)
+        for key in REVIEW_BINDING_ENV_KEYS
+        if key in os.environ
+    }
     test_case._test_temp_dir = tempfile.TemporaryDirectory(prefix="ai-status-test-")
     test_case._test_root = Path(test_case._test_temp_dir.name)
     test_case._test_status_file = test_case._test_root / "ai-status.json"
@@ -57,6 +70,10 @@ def _setup_test_isolation(test_case):
 
 
 def _teardown_test_isolation(test_case):
+    for key in REVIEW_BINDING_ENV_KEYS:
+        os.environ.pop(key, None)
+    os.environ.update(test_case._inherited_review_binding_env)
+
     paths = test_case._orig_paths
     ai_status.STATUS_ROOT = paths["STATUS_ROOT"]
     ai_status.STATUS_FILE = paths["STATUS_FILE"]
@@ -1403,7 +1420,10 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             },
             clear=False,
         ):
-            ai_status.command_approve(self.state, ["REG-002", "Approved the exact head."])
+            ai_status.command_approve(
+                self.state,
+                ["REG-002", "Approved the exact head."],
+            )
 
         expected = {
             "pr": 4218,
@@ -1428,23 +1448,82 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertNotIn("review_binding", task)
         self.assertNotIn("review_binding", self._approval_events()[0])
 
+    def test_fixture_clears_inherited_review_inputs_for_no_binding_approval(
+        self,
+    ) -> None:
+        inherited = {
+            "REVIEW_PR": "4254",
+            "REVIEW_HEAD_SHA": "a" * 40,
+            "REVIEW_BASE": "inherited-base",
+            "REVIEW_HEAD_BRANCH": "task/inherited-head",
+        }
+        nested_fixture = unittest.TestCase()
+
+        with mock.patch.dict(os.environ, inherited, clear=False):
+            _setup_test_isolation(nested_fixture)
+            try:
+                self.assertTrue(
+                    all(key not in os.environ for key in REVIEW_BINDING_ENV_KEYS)
+                )
+                state = deepcopy(self.state)
+                with mock.patch.dict(
+                    os.environ,
+                    {"AI_NAME": "Claude"},
+                    clear=False,
+                ):
+                    ai_status.command_approve(
+                        state,
+                        ["REG-002", "Approved without a PR binding."],
+                    )
+
+                task = ai_status.get_task(state, "REG-002")
+                self.assertEqual(task["status"], "review_approved")
+                self.assertNotIn("review_binding", task)
+                events = [
+                    json.loads(line)
+                    for line in nested_fixture._test_log_file.read_text(
+                        encoding="utf-8"
+                    ).splitlines()
+                    if line.strip()
+                ]
+                self.assertNotIn("review_binding", events[-1])
+            finally:
+                _teardown_test_isolation(nested_fixture)
+
+            self.assertEqual(
+                {key: os.environ.get(key) for key in REVIEW_BINDING_ENV_KEYS},
+                inherited,
+            )
+
     def test_approve_refuses_an_abbreviated_head_sha(self) -> None:
         with mock.patch.dict(
             os.environ,
-            {"AI_NAME": "Claude", "REVIEW_PR": "4218", "REVIEW_HEAD_SHA": "190bf7fe8"},
+            {
+                "AI_NAME": "Claude",
+                "REVIEW_PR": "4218",
+                "REVIEW_HEAD_SHA": "190bf7fe8",
+            },
             clear=False,
         ):
             with self.assertRaisesRegex(SystemExit, "40-hex"):
-                ai_status.command_approve(self.state, ["REG-002", "Approved."])
+                ai_status.command_approve(
+                    self.state,
+                    ["REG-002", "Approved."],
+                )
 
         self.assertEqual(ai_status.get_task(self.state, "REG-002")["status"], "review")
 
     def test_approve_refuses_a_head_sha_without_a_pr_number(self) -> None:
         with mock.patch.dict(
-            os.environ, {"AI_NAME": "Claude", "REVIEW_HEAD_SHA": "b" * 40}, clear=False
+            os.environ,
+            {"AI_NAME": "Claude", "REVIEW_HEAD_SHA": "b" * 40},
+            clear=False,
         ):
             with self.assertRaisesRegex(SystemExit, "REVIEW_PR"):
-                ai_status.command_approve(self.state, ["REG-002", "Approved."])
+                ai_status.command_approve(
+                    self.state,
+                    ["REG-002", "Approved."],
+                )
 
         self.assertEqual(ai_status.get_task(self.state, "REG-002")["status"], "review")
 
