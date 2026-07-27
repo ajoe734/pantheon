@@ -236,6 +236,25 @@
         "manifest_parse": "pass",
         "git_diff_check": "pass"
       },
+      "subsequent_refresh": {
+        "trigger": "PR #4263 merged while the first refreshed head was being pushed.",
+        "merged_dev_head": "52aa8a623e68336e1965d7241950cb3c22f0c827",
+        "merge_commit": "fd548825f408e3b64c82131ff6bfca1748b13dc5",
+        "strategy": "normal merge; no rebase and no force push",
+        "task_artifact_hashes_unchanged_across_merge": {
+          "task_brief": "c95fd803897608f9dc7a0eaaec0ba38fe3792594b4a5be131aaa983612f5a604",
+          "evidence.json": "fa33bcdee634a548b04a7d49a92457034bdd3914e4cfb455eed61d3f3df7b220",
+          "evidence.md": "eb1c8f9c0fe09a4f80475c43dedc22537e4439ec81354c29e5d8b5ffbdccd02c"
+        },
+        "local_validation": {
+          "scripts/test_ai_status.py": "144/144 pass",
+          "ReviewApprovedWorkflowTests": "30/30 pass",
+          "scripts/test_status_command_runtime_pin.py": "7/7 pass",
+          "py_compile": "pass",
+          "manifest_parse": "pass",
+          "git_diff_check": "pass"
+        }
+      },
       "live_readonly_recheck": {
         "captured_at": "2026-07-27T16:51:09Z",
         "supervisor_pid": 500973,

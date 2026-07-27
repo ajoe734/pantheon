@@ -181,6 +181,15 @@ branch then absorbed current `origin/dev`
 base-refresh commit `9c4588c433768ba7ba6b3f7964fdea8f5503c200`. No rebase or force push was
 used.
 
+While that first refreshed head was being pushed, PR #4263 advanced `dev`
+again to `52aa8a623e68336e1965d7241950cb3c22f0c827`. The task branch absorbed it
+with a second normal merge,
+`fd548825f408e3b64c82131ff6bfca1748b13dc5`. The same task artifacts and live
+config were again hash-identical across the merge. Because #4263 changed the
+task-state store and ai-status tests, the owner reran the full focused suite;
+the updated result was 144/144, 30/30, and 7/7, with py_compile, manifest
+parsing, and `git diff --check` also passing.
+
 Before and after that merge, sha256 values for `evidence.json`, `evidence.md`,
 `bootstrap-approval-binding.md`, and `handoff/runtime-snapshot.py` were
 identical. The live config also remained byte-identical at
