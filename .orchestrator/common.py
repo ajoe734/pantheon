@@ -810,8 +810,14 @@ def is_github_cli_auth_failure(reason: str | None) -> bool:
         "github cli is not authenticated",
         "gh cli is not authenticated",
         "gh is not authenticated",
+        "require authenticated gh session",
+        "require authenticated `gh` session",
+        "requires authenticated gh session",
+        "requires authenticated `gh` session",
         "you are not logged into any github hosts",
         "to log in, run: gh auth login",
+        "run gh auth status",
+        "run `gh auth status`",
     )
     return any(marker in normalized for marker in markers)
 

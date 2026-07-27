@@ -1,0 +1,79 @@
+{
+  "schema_version": "supervisor_guardrail_closeout_evidence.v1",
+  "task": {
+    "id": "SUP-GH-TOOL-AUTH-CLASSIFY-001",
+    "title": "Classify GitHub CLI auth errors as tool auth, not provider auth",
+    "phase": "Supervisor / Provider Guardrail",
+    "owner": "Codex",
+    "reviewer": "Codex2",
+    "status": "review_approved",
+    "repository": "ajoe734/pantheon",
+    "base_branch": "dev",
+    "task_branch": "task/SUP-GH-TOOL-AUTH-CLASSIFY-001"
+  },
+  "scope": {
+    "owned_layer": "Supervisor worker-failure classification for GitHub CLI authentication and its focused regression coverage.",
+    "not_changing": "LLM provider credential or quota classification, provider health semantics, and provider-dispatch pause policy.",
+    "implementation_files": [
+      ".orchestrator/common.py",
+      ".orchestrator/test_supervisor.py"
+    ]
+  },
+  "review": {
+    "decision": "approved",
+    "reviewed_head": "dfb3484dfb45b627cb9e5266ac5261f8369a3f5e",
+    "reviewer": "Codex2",
+    "summary": "Independent review confirmed that the exact plain and backticked gh-session failures classify as tool_auth, do not pause provider dispatch, and leave existing provider auth and quota behavior covered."
+  },
+  "acceptance": {
+    "require_authenticated_gh_session_is_tool_auth": {
+      "status": "proven",
+      "tests": [
+        ".orchestrator/test_supervisor.py::DetectWorkerFailureTests::test_classifies_require_authenticated_gh_session_as_tool_auth"
+      ]
+    },
+    "tool_auth_does_not_pause_provider_dispatch": {
+      "status": "proven",
+      "tests": [
+        ".orchestrator/test_supervisor.py::DetectWorkerFailureTests::test_classifies_require_authenticated_gh_session_as_tool_auth",
+        ".orchestrator/test_supervisor.py::DetectWorkerFailureTests::test_tool_auth_failures_do_not_pause_provider_dispatch"
+      ]
+    },
+    "existing_auth_and_quota_classification_remains_covered": {
+      "status": "proven",
+      "evidence": "The focused classification selection and full supervisor test module passed."
+    }
+  },
+  "verification": [
+    {
+      "command": "python3 scripts/dev/provision_python_distribution.py",
+      "result": "Checkout-scoped .venv-pantheon provisioned and imports verified from a foreign working directory."
+    },
+    {
+      "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k 'classifies or pause_provider or provider_dispatch_paused or github_cli_auth or tool_auth'",
+      "result": "20 passed, 420 deselected, 2 subtests passed."
+    },
+    {
+      "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py",
+      "result": "440 passed, 4 subtests passed."
+    },
+    {
+      "command": "git diff --check origin/dev...dfb3484dfb45b627cb9e5266ac5261f8369a3f5e",
+      "result": "passed"
+    }
+  ],
+  "delivery": {
+    "implementation_pr": "https://github.com/ajoe734/pantheon/pull/4276",
+    "reviewed_head": "dfb3484dfb45b627cb9e5266ac5261f8369a3f5e",
+    "merge_commit": "852da0aa71d4e0d0293d5fcc8b5dff6d886386f7",
+    "merged_at": "2026-07-27T20:49:50Z",
+    "base_branch": "dev",
+    "checks": {
+      "branch_ci": "all 8 visible Branch CI checks succeeded",
+      "orchestrator_sync": "Forward to orchestrator succeeded",
+      "canonical_review_gate": "Canonical Codex2 exact-head approval verified",
+      "root_merge_gate": "Released for PR #4276 exact reviewed head only"
+    },
+    "protection_reconciliation": "The repository has one GitHub collaborator, so the exact-head closeout temporarily reconciled required approvals from 1 to 0 and last-pusher approval from true to false after all required contexts passed. The original 1/true settings were restored immediately after auto-merge."
+  }
+}
