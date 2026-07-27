@@ -148,6 +148,25 @@
       ]
     },
     {
+      "task_id": "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001",
+      "lane": "telemetry-test-isolation",
+      "loop_ids": [
+        "telemetry_reconciliation"
+      ],
+      "current_status": "blocked",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "parallel_group": "frontier-now",
+      "depends_on": [],
+      "blocking_gap": "Canonical telemetry discovery/import task existed at observation time but was blocked on provider-lane recovery; omitting it hides current telemetry/reconciliation test-isolation work needed before verifier drills.",
+      "required_validation": [
+        "services/telemetry discovery/import tests prove isolated imports",
+        "feedback adapter and capture tests pass without cross-test leakage",
+        "evidence binds exact task head and canonical task-state",
+        "reviewer confirms it feeds L12-VERIFY-OBS-001 rather than replacing the product drill"
+      ]
+    },
+    {
       "task_id": "OPS-CROSS-REPO-RELEASE-CONTROLLER-001",
       "lane": "release-controller",
       "current_status": "review",
@@ -205,9 +224,9 @@
     {
       "task_id": "L12-MANIFEST-001",
       "lane": "runtime-manifest",
-      "current_status": "not_materialized_or_not_currently_projected",
-      "owner": "Antigravity",
-      "reviewer": "Claude",
+      "current_status": "todo",
+      "owner": "Codex2",
+      "reviewer": "Codex",
       "parallel_group": "serial-integration",
       "depends_on": [
         "L12-DIST-001",
@@ -227,9 +246,9 @@
     {
       "task_id": "L12-FE-TRUTH-001",
       "lane": "frontend-truth",
-      "current_status": "not_materialized_or_not_currently_projected",
-      "owner": "Antigravity",
-      "reviewer": "Claude",
+      "current_status": "todo",
+      "owner": "Codex",
+      "reviewer": "Codex2",
       "target_repo": "ajoe734/execute-plans",
       "parallel_group": "serial-integration",
       "depends_on": [
@@ -252,9 +271,9 @@
         "strategy_distillation",
         "alpha_replication"
       ],
-      "current_status": "not_materialized_or_not_currently_projected",
-      "owner": "Claude",
-      "reviewer": "Codex2",
+      "current_status": "todo",
+      "owner": "Codex2",
+      "reviewer": "Codex",
       "parallel_group": "verifier-drills",
       "depends_on": [
         "L12-MANIFEST-001",
@@ -277,9 +296,9 @@
         "human_imitation_shadow_evaluation",
         "consultation"
       ],
-      "current_status": "not_materialized_or_not_currently_projected",
-      "owner": "Claude",
-      "reviewer": "Codex2",
+      "current_status": "todo",
+      "owner": "Codex2",
+      "reviewer": "Codex",
       "parallel_group": "verifier-drills",
       "depends_on": [
         "L12-MANIFEST-001",
@@ -300,9 +319,9 @@
         "promotion_deployment",
         "capital_pool_execution"
       ],
-      "current_status": "not_materialized_or_not_currently_projected",
-      "owner": "Claude",
-      "reviewer": "Codex2",
+      "current_status": "todo",
+      "owner": "Codex2",
+      "reviewer": "Codex",
       "parallel_group": "verifier-drills",
       "depends_on": [
         "L12-MANIFEST-001",
@@ -325,9 +344,9 @@
         "evolution",
         "bff_health_monitoring"
       ],
-      "current_status": "not_materialized_or_not_currently_projected",
-      "owner": "Claude",
-      "reviewer": "Codex2",
+      "current_status": "todo",
+      "owner": "Codex2",
+      "reviewer": "Codex",
       "parallel_group": "verifier-drills",
       "depends_on": [
         "L12-MANIFEST-001",

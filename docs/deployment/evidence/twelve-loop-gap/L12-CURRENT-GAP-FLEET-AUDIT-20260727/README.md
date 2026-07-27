@@ -24,3 +24,12 @@ Machine-readable execution matrix:
 This packet makes no completion claim. Its verdict is that the previous repair
 rounds produced real progress and real worker dispatch, but all twelve loops
 are still not accepted as operational.
+
+Review correction:
+
+- Claude review found the first PR head understated canonical task-state at the
+  observation time. Six downstream rows were already assigned `todo`, not absent,
+  and `OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001` was omitted. This revision binds
+  the matrix to the authoritative event-log snapshot immediately before
+  `2026-07-27T18:37:20Z` and includes telemetry discovery/import as a frontier
+  support task for the observability verifier.

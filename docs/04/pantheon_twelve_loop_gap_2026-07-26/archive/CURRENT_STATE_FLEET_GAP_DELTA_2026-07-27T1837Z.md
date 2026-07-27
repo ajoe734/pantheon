@@ -53,13 +53,22 @@ This pass checks the current task-state, PRs, and auto-worker facts.
 | `OPS-TASK-PR-TRIAGE-002` | `todo` | Claude | Codex2 | PR/task backlog alignment is still open. |
 | `OPS-PROMOTE-PR-CI-TRIGGER-001` | `in_progress` | Codex2 | Claude | Worker is running; promote PR/CI trigger path not closed. |
 | `OPS-CROSS-REPO-RELEASE-CONTROLLER-001` | `review` | Codex2 | Codex | PR #4268 and execute-plans PR #558 require exact-pair review; hosted deployment was not run. |
+| `OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001` | `blocked` | Claude | Codex2 | Telemetry discovery/import isolation task existed and was blocked on provider-lane recovery; it feeds the observability verifier but does not replace product drill proof. |
+| `L12-MANIFEST-001` | `todo` | Codex2 | Codex | Assigned but unstarted; current replacement-dev worker manifest and safe defaults are still absent. |
+| `L12-FE-TRUTH-001` | `todo` | Codex | Codex2 | Assigned but unstarted; hosted frontend truth rendering against live BFF is still absent. |
+| `L12-VERIFY-KNOW-001` | `todo` | Codex2 | Codex | Assigned but unstarted; knowledge-loop product verifier drill has not run. |
+| `L12-VERIFY-LEARN-001` | `todo` | Codex2 | Codex | Assigned but unstarted; learning-loop product verifier drill has not run. |
+| `L12-VERIFY-RUNTIME-001` | `todo` | Codex2 | Codex | Assigned but unstarted; runtime-loop product verifier drill has not run. |
+| `L12-VERIFY-OBS-001` | `todo` | Codex2 | Codex | Assigned but unstarted; observability-loop product verifier drill has not run. |
 
 The previously archived program DAG also requires `L12-MANIFEST-001`,
 `L12-FE-TRUTH-001`, `L12-VERIFY-KNOW-001`, `L12-VERIFY-LEARN-001`,
-`L12-VERIFY-RUNTIME-001`, and `L12-VERIFY-OBS-001`. They were not present in
-the 18:37Z focused canonical snapshot above, so the current gap is worse than
-"some PRs need review": the serial integration and verifier drill tasks must
-be made current before closeout.
+`L12-VERIFY-RUNTIME-001`, and `L12-VERIFY-OBS-001`. They were present in
+canonical task-state at `2026-07-27T18:37:20Z`, but still sat untouched as
+`todo` after their `2026-07-27T16:22Z` Human/Ops assignment events. The current
+gap is therefore worse than "some PRs need review": serial integration and
+verifier drill tasks exist, but remain assigned-and-unstarted or dependency
+blocked, and must become current before closeout.
 
 ### Live auto-worker snapshot
 
@@ -168,7 +177,8 @@ High-parallel frontier:
 6. `L12-DIST-001` — finish exact review/merge.
 7. `L12-EVO-001` — finish implementation/review/merge.
 8. `L12-BFF-001` — finish BFF health telemetry and incident authority.
-9. `OPS-CROSS-REPO-RELEASE-CONTROLLER-001` — finish Pantheon/#4268 and execute-plans/#558 exact-pair review.
+9. `OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001` — finish telemetry discovery/import isolation so observability verifier setup is not hidden.
+10. `OPS-CROSS-REPO-RELEASE-CONTROLLER-001` — finish Pantheon/#4268 and execute-plans/#558 exact-pair review.
 
 Serial or dependency-gated frontier:
 
