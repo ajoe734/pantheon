@@ -89,7 +89,12 @@ from runtime_state import (
     load_runtime_state_snapshot,
     runtime_state_lock,
 )
-from rewrite.task_state_store import append_state_commit, load_events, project_latest_state
+from rewrite.task_state_store import (
+    append_state_commit,
+    load_events,
+    load_snapshot,
+    project_latest_state,
+)
 from common import (
     ActivityAuditInvariantError,
     DuplicateActivityJSONKeyError,
@@ -1441,12 +1446,15 @@ def load_state() -> dict[str, Any]:
     if store_mode == "authoritative":
         _validate_task_state_projection_binding(store_mode)
         event_path = _task_state_event_path(store_mode)
-        events = load_events(event_path)
-        if not events:
+        # One validated pass over the journal: load_events followed by
+        # project_latest_state replayed and revalidated every event twice, which
+        # is the bulk of what a plain note command used to spend.
+        snapshot = load_snapshot(event_path)
+        if not snapshot["event_count"]:
             raise SystemExit(
                 "Authoritative task-state journal is empty; refusing ai-status.json fallback."
             )
-        state = project_latest_state(events)
+        state = snapshot["state"]
         if not isinstance(state, dict) or not state:
             raise SystemExit("Authoritative task-state projection is not a non-empty object.")
         sync_canonical_document_metadata(state)

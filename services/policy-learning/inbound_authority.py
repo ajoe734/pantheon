@@ -32,6 +32,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Sequence
 
+from services.foundation.persistence_posture import validate_persistence_posture
 from services.runtime_auth_inbound import AuthContext, AuthError, validate_request_auth
 
 
@@ -42,6 +43,15 @@ SERVICE_TOKEN_ENV = "POLICY_LEARNING_SERVICE_TOKEN"
 SERVICE_TENANTS_ENV = "POLICY_LEARNING_SERVICE_TENANTS"
 ALLOWED_ROLES_ENV = "POLICY_LEARNING_ALLOWED_ROLES"
 DEFAULT_ALLOWED_ROLES = "policy-learning-service"
+
+# ``docker-compose.yml`` hands the API and the scheduler sidecar this value so
+# the local product loop runs end to end without an operator having to mint a
+# secret first.  Because it is published in the repository it is a development
+# convenience and nothing more: under a staging or production persistence
+# posture it is treated as *unconfigured*, so a deployment that forgot to set
+# its own ``POLICY_LEARNING_SERVICE_TOKEN`` fails closed instead of accepting a
+# credential anyone can read off GitHub.
+LOCAL_DEV_SERVICE_TOKEN = "pantheon-local-policy-learning-service"
 
 _TENANT_CLAIM_KEYS = (
     "allowed_tenants",
@@ -156,10 +166,34 @@ def allowed_roles() -> tuple[str, ...]:
     return tuple(_split_values(os.getenv(ALLOWED_ROLES_ENV, DEFAULT_ALLOWED_ROLES)))
 
 
+def _enforced_posture() -> bool:
+    """True when this process is running as a staging or production deployment.
+
+    Resolved through the shared posture helper rather than a second reading of
+    ``PANTHEON_PERSISTENCE_POSTURE`` here, so "this is a real deployment" has
+    one definition across the service.
+    """
+
+    return validate_persistence_posture("policy-learning", require_object_store=False).enforced
+
+
+def service_token() -> str:
+    """The usable in-cluster service token, or ``""`` when there is none.
+
+    The published compose default is deliberately downgraded to "no token" on a
+    staging or production posture: see :data:`LOCAL_DEV_SERVICE_TOKEN`.
+    """
+
+    configured = _clean(os.getenv(SERVICE_TOKEN_ENV))
+    if configured and hmac.compare_digest(configured, LOCAL_DEV_SERVICE_TOKEN) and _enforced_posture():
+        return ""
+    return configured
+
+
 def _service_context(authorization: str) -> Optional[AuthContext]:
     """Recognize the in-cluster service token used by the scheduler sidecar."""
 
-    configured = _clean(os.getenv(SERVICE_TOKEN_ENV))
+    configured = service_token()
     if not configured or not authorization.startswith("Bearer "):
         return None
     presented = authorization.split(None, 1)[1].strip()
@@ -281,11 +315,18 @@ def authority_configuration() -> dict[str, Any]:
         or env.get("PANTHEON_RUNTIME_JWKS_URI")
         or env.get("PANTHEON_RUNTIME_OIDC_DISCOVERY_URL")
     )
-    service_token_configured = bool(_clean(os.getenv(SERVICE_TOKEN_ENV)))
+    resolved_token = service_token()
+    service_token_configured = bool(resolved_token)
     return {
         "mode": mode,
         "jwt_verifier_configured": verifier_configured,
         "service_token_configured": service_token_configured,
+        "service_token_scope": (
+            "local_dev_default"
+            if resolved_token and hmac.compare_digest(resolved_token, LOCAL_DEV_SERVICE_TOKEN)
+            else ("deployment_secret" if resolved_token else "none")
+        ),
+        "service_tenants_configured": bool(_split_values(os.getenv(SERVICE_TENANTS_ENV))),
         "allowed_roles": list(allowed_roles()),
         "tenant_header": TENANT_HEADER,
         "inherits_runtime_manager_secret": False,
@@ -295,6 +336,7 @@ def authority_configuration() -> dict[str, Any]:
 
 __all__ = [
     "ALLOWED_ROLES_ENV",
+    "LOCAL_DEV_SERVICE_TOKEN",
     "PolicyLearningAuthority",
     "PolicyLearningAuthorityError",
     "SERVICE_TENANTS_ENV",
@@ -305,4 +347,5 @@ __all__ = [
     "authority_configuration",
     "bind_tenant",
     "resolve_authority",
+    "service_token",
 ]
