@@ -1,0 +1,461 @@
+{
+  "schema_version": "loop_product_evidence.v1",
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001 owner evidence cut for the twelve-loop verification-hardening lane.",
+    "note": "Owner evidence cut for a test-isolation task. Implementation and owner verification are complete; the independent reviewer verdict from Codex2 is intentionally absent until approval occurs and is appended to record_log. The earlier cuts named Antigravity; Human/Ops reassigned the reviewer to Codex2 at 2026-07-26T20:24:36Z and this cut rebinds the manifest to the canonical reviewer.",
+    "status": "formalized"
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Task-scoped changes require a reviewed Pantheon PR; append a record_log entry whenever the accepted evidence cut or formal review state changes.",
+    "recording_mode": "logical_append_only",
+    "redacted": false,
+    "self_hashing": false
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-26T20:45:00Z",
+    "evidence_cut_semantics": "Owner re-cut binding the manifest to the reassigned reviewer Codex2 and recording an independent owner re-verification on merged dev tip f687d7aeb7b9f9ebabb85247a11afbfd7c3fc16b. The delivery itself is unchanged: PR #4213 squash-merged into dev as 0410a89f0e4ac3c53e7bc5192aebe6925423b4da and PR #4214 merged as f687d7aeb. Independent reviewer approval is not asserted by this cut.",
+    "id": "OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001",
+    "overall_admission": "pass",
+    "owner": "Claude",
+    "phase": "Twelve-loop verification hardening",
+    "product_level_required": false,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001/evidence.json",
+    "reviewer": "Codex2",
+    "target_environment": "local developer and CI test execution only",
+    "target_maturity": "reconciled",
+    "task_branch": "task/OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001",
+    "title": "Isolate telemetry lineage full-stack test from ambient runtime-manager configuration"
+  },
+  "authorities": {
+    "actual_state": [
+      "services/telemetry/test_lineage_write_path.py as merged by LIN-003 commit c4fa50f36",
+      "services/runtime-manager/runtime_manager_client.py fail-closed RuntimeManagerClient constructor",
+      "services/incidents/main.py module-level CanonicalReferenceValidator bootstrap"
+    ],
+    "desired_state": [
+      "A telemetry lineage full-stack test that declares its own runtime-manager transport, credentials, and storage",
+      "Unchanged production fail-closed behaviour for RuntimeManagerClient without PANTHEON_RUNTIME_MANAGER_URL"
+    ],
+    "task_packet": ".orchestrator/task-briefs/ops_l12_telemetry_lineage_test_isolation_001.md"
+  },
+  "scope": {
+    "authoritative_write_owner": "This task owns only the test fixture in services/telemetry/test_lineage_write_path.py and its evidence artifacts. It owns no runtime, service, config, or deployment surface.",
+    "composes_with": [
+      "OPS-L12-RUNTIME-GAP-DELTA-001 twelve-loop gap inventory",
+      "L12-TEL-001 telemetry durable-ingest evidence lane",
+      "LIN-003 live lineage write path decision record"
+    ],
+    "evidence_changed_files": [
+      ".orchestrator/task-briefs/ops_l12_telemetry_lineage_test_isolation_001.md",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001/evidence.sha256"
+    ],
+    "implementation_changed_files": [
+      "services/telemetry/test_lineage_write_path.py"
+    ],
+    "not_changing": "No change to services/runtime-manager/runtime_manager_client.py, services/incident/reference_validation.py, services/incidents/main.py, services/telemetry runtime modules, live or template deployment config, canonical architecture docs, or any capital, broker, or deployment authority.",
+    "owned_layer": "Test-owned runtime-manager fixture and environment isolation for the telemetry lineage full-stack acceptance test, plus the regression guards that keep the production fail-closed default intact."
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "delivery_state": "squash_merged_via_pr_4213",
+        "note": "Test-owned isolation fixture plus fail-closed guard and no-leakage regression tests.",
+        "sha": "a608a81c7785e191e7e0f8e940e2a4464ecca404",
+        "subject": "OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001: anchor test isolation"
+      },
+      {
+        "delivery_state": "squash_merged_via_pr_4213",
+        "note": "Task brief and evidence manifest.",
+        "sha": "b3c7681cc",
+        "subject": "OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001: record isolation evidence"
+      },
+      {
+        "delivery_state": "merged_to_dev",
+        "note": "Squash commit carrying both anchors onto dev.",
+        "sha": "0410a89f0e4ac3c53e7bc5192aebe6925423b4da",
+        "subject": "OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001: record isolation evidence (#4213)"
+      }
+    ],
+    "required_checks": [
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "9e484e2522cd8778b85a4c880e4cd33d07ef401f",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30218645940,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30218645940",
+        "workflow": "Branch CI Gate"
+      },
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "9e484e2522cd8778b85a4c880e4cd33d07ef401f",
+        "jobs": {
+          "Forward to orchestrator": "success"
+        },
+        "run_id": 30218685132,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30218685132",
+        "workflow": "Orchestrator Sync"
+      }
+    ],
+    "pull_request": {
+      "base": "dev",
+      "head_sha": "9e484e2522cd8778b85a4c880e4cd33d07ef401f",
+      "merge_sha": "0410a89f0e4ac3c53e7bc5192aebe6925423b4da",
+      "merged_at": "2026-07-26T20:18:15Z",
+      "number": 4213,
+      "url": "https://github.com/ajoe734/pantheon/pull/4213"
+    },
+    "pull_requests": [
+      {
+        "base": "dev",
+        "head_sha": "9e484e2522cd8778b85a4c880e4cd33d07ef401f",
+        "merge_sha": "0410a89f0e4ac3c53e7bc5192aebe6925423b4da",
+        "merged_at": "2026-07-26T20:18:15Z",
+        "number": 4213,
+        "url": "https://github.com/ajoe734/pantheon/pull/4213"
+      }
+    ]
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "env -u PANTHEON_RUNTIME_MANAGER_URL /home/lupin/pantheon/.venv/bin/python3 -m unittest services.telemetry.test_lineage_write_path",
+        "conclusion": "Ran 7 tests in 0.565s; OK. Before the fix the same command in the same clean environment produced RuntimeManagerClientError on test_ingest_then_consume_threshold_route_201_then_replay_200.",
+        "result": "pass"
+      },
+      {
+        "command": "PANTHEON_RUNTIME_MANAGER_URL=http://198.51.100.7:8099 PANTHEON_RUNTIME_MANAGER_TOKEN_FILE=/nonexistent/token INCIDENTS_DATA_DIR=/nonexistent/ambient/incidents /home/lupin/pantheon/.venv/bin/python3 -m unittest services.telemetry.test_lineage_write_path",
+        "conclusion": "Ran 7 tests in 0.463s; OK. Hostile ambient runtime-manager URL, token file, and data dir are overridden by the fixture rather than inherited.",
+        "result": "pass"
+      },
+      {
+        "command": "env -u PANTHEON_RUNTIME_MANAGER_URL /home/lupin/pantheon/.venv/bin/python3 -m unittest discover -s services/telemetry -p 'test_*.py' -t . (baseline, HEAD~1 version of the test file)",
+        "conclusion": "Ran 193 tests in 11.914s; FAILED (errors=3, skipped=1). Errors: services.telemetry.test_capture loader error, services.telemetry.test_feedback_adapter loader error, and TestLiveLineageWritePathFullStackHTTPRoute.test_ingest_then_consume_threshold_route_201_then_replay_200.",
+        "result": "baseline_recorded"
+      },
+      {
+        "command": "env -u PANTHEON_RUNTIME_MANAGER_URL /home/lupin/pantheon/.venv/bin/python3 -m unittest discover -s services/telemetry -p 'test_*.py' -t .",
+        "conclusion": "Ran 197 tests in 12.491s; FAILED (errors=2, skipped=1). The two remaining errors are the pre-existing services.telemetry.test_capture and services.telemetry.test_feedback_adapter loader errors, unchanged from baseline and unrelated to this task; the lineage full-stack error is gone. Net delta: +4 tests, -1 error, no new failures.",
+        "result": "pass_with_nonblocking_baseline_residual"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python3 -m compileall -q services/telemetry/test_lineage_write_path.py",
+        "conclusion": "exit 0",
+        "result": "pass"
+      },
+      {
+        "command": "stat -c '%y %n' /tmp/pantheon/incidents/incidents.json /tmp/pantheon/incidents/incidents_outbox.json before and after a full run",
+        "conclusion": "Modification times unchanged at 2026-07-26T17:58:12Z across the post-fix run; /tmp/pantheon/runtime-manager/ was never created. Before the fix, importing services.incidents.main wrote the shared /tmp/pantheon/incidents store.",
+        "result": "pass"
+      },
+      {
+        "command": "git diff --check",
+        "conclusion": "exit 0",
+        "result": "pass"
+      },
+      {
+        "command": "env -u PANTHEON_RUNTIME_MANAGER_URL /home/lupin/pantheon/.venv/bin/python3 -m unittest services.telemetry.test_lineage_write_path (post-merge, dev tip 0410a89f0)",
+        "conclusion": "Ran 7 tests in 0.472s; OK. Confirms the isolation holds on the merged dev tree, not only on the task branch.",
+        "result": "pass"
+      },
+      {
+        "command": "env -u PANTHEON_RUNTIME_MANAGER_URL -u PANTHEON_RUNTIME_MANAGER_TOKEN_FILE -u PANTHEON_RUNTIME_MANAGER_TIMEOUT_SECONDS -u PANTHEON_RUNTIME_MANAGER_TOKEN -u PANTHEON_RUNTIME_BINDING_STORE_PATH /home/lupin/pantheon/.venv/bin/python -m unittest services.telemetry.test_lineage_write_path",
+        "conclusion": "Ran 7 tests in 1.222s; OK. Independent owner re-verification in a fresh worker session with every ambient runtime-manager variable unset, reproducing the recorded clean-environment result on dev tip f687d7aeb.",
+        "result": "pass"
+      },
+      {
+        "command": "PANTHEON_RUNTIME_MANAGER_URL=http://198.51.100.7:8099 PANTHEON_RUNTIME_MANAGER_TOKEN=ambient-operator-token PANTHEON_RUNTIME_MANAGER_TOKEN_FILE=/nonexistent/ambient-token PANTHEON_RUNTIME_BINDING_STORE_PATH=/nonexistent/ambient/bindings.json PANTHEON_SINGLE_RUNTIME_ENFORCED=false INCIDENTS_DATA_DIR=/nonexistent/ambient/incidents /home/lupin/pantheon/.venv/bin/python -m unittest services.telemetry.test_lineage_write_path",
+        "conclusion": "Ran 7 tests in 0.933s; OK. Independent owner re-verification with the full hostile ambient set from _HOSTILE_AMBIENT_ENV exported at process level; none of it reaches the fixture.",
+        "result": "pass"
+      },
+      {
+        "command": "env -u PANTHEON_RUNTIME_MANAGER_URL -u PANTHEON_RUNTIME_MANAGER_TOKEN_FILE -u PANTHEON_RUNTIME_MANAGER_TIMEOUT_SECONDS -u PANTHEON_RUNTIME_MANAGER_TOKEN -u PANTHEON_RUNTIME_BINDING_STORE_PATH /home/lupin/pantheon/.venv/bin/python -m unittest discover -s services/telemetry -t .",
+        "conclusion": "Ran 197 tests in 12.844s; FAILED (errors=2, skipped=1). Independent owner re-verification reproducing the recorded post-change counts exactly; both residual errors are the pre-existing services.telemetry.test_capture and services.telemetry.test_feedback_adapter loader ModuleNotFoundError.",
+        "result": "pass_with_nonblocking_baseline_residual"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python -c \"import json,jsonschema; jsonschema.validate(json.load(open('docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001/evidence.json')), json.load(open('schemas/product-evidence.schema.json')))\"",
+        "conclusion": "Manifest validates clean against schemas/product-evidence.schema.json.",
+        "result": "pass"
+      },
+      {
+        "command": "/usr/bin/python3 -m unittest services.telemetry.test_lineage_write_path",
+        "conclusion": "ModuleNotFoundError: No module named 'fastapi'. Recorded as an environment fact rather than a regression: the full-stack case needs the project venv, and the bare system interpreter has none of the service dependencies. The pre-task file failed the same way for the same reason, so this is unchanged by the task. It does mean test_full_stack_case_passes_under_hostile_ambient_config surfaces a missing dependency as a failure rather than a skip.",
+        "result": "environment_note"
+      }
+    ],
+    "validated_at": "2026-07-26T20:45:00Z",
+    "validated_base_sha": "03389c0c7fca98b543ee8329e11042f99ed5a0f6",
+    "validated_head_sha": "f687d7aeb7b9f9ebabb85247a11afbfd7c3fc16b"
+  },
+  "deployment": {
+    "applicable": false,
+    "canonical_root_deploy": {
+      "reason": "Test-only change; no service, config, or root deployment wiring is touched.",
+      "status": "not_applicable"
+    },
+    "environment": "local developer and CI test execution only",
+    "identity_admission": {
+      "proof": "The task asserts that RuntimeManagerClient still refuses an in-process fallback without an explicit URL or allow_local=True, so runtime identity admission is preserved rather than relaxed.",
+      "status": "pass"
+    },
+    "public_bff_base_url": "not_applicable_test_only_change",
+    "publish_cut": {
+      "reason": "No hosted surface is affected.",
+      "status": "not_applicable"
+    }
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "hosted_activation_claimed": false,
+      "reason": "No hosted or deployed surface is exercised or changed by this task; the only executed surfaces are in-process test fixtures.",
+      "status": "not_applicable"
+    }
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "proof": [
+        "The preserved full-stack assertion still requires POST /api/incidents/consume-threshold to return 201 on first delivery and 200 on idempotent replay with the same incident_id.",
+        "test_isolated_runtime_manager_fixture_writes_only_to_tempdir deploys and reads back through a per-test binding store, so repeated runs cannot collide on shared state."
+      ],
+      "status": "pass"
+    },
+    "failure_and_degraded_behavior": {
+      "proof": [
+        "test_default_runtime_manager_client_stays_fail_closed_without_url asserts RuntimeManagerClient() and RuntimeManagerClient(require_remote=True) both raise RuntimeManagerClientError when no URL is configured.",
+        "The inert URL bound only for the services.incidents.main import is http://127.0.0.1:9/lin003-inert-never-contacted; any accidental use would fail loudly rather than reach a real service."
+      ],
+      "status": "pass"
+    },
+    "request_receipt_downstream_correlation": {
+      "proof": [
+        "The full-stack case still proves telemetry ingest acceptance, live lineage resolution, and the real incidents FastAPI route in one chain, now against a test-declared runtime-manager binding instead of an ambient one."
+      ],
+      "status": "pass"
+    },
+    "restart_and_recovery": {
+      "proof": [
+        "test_fixture_overrides_ambient_config_then_restores_it drives setUp/tearDown under hostile ambient values and asserts os.environ is byte-identical afterwards and the tempdir is removed, so repeated or interleaved runs start from the same state.",
+        "test_full_stack_case_passes_under_hostile_ambient_config re-runs the entire full-stack case nested under hostile ambient config and re-asserts environment restoration."
+      ],
+      "status": "pass"
+    },
+    "rollback_or_compensation": {
+      "proof": [
+        "Reverting the single changed test file restores the previous behaviour exactly; no runtime, data, or config migration is involved.",
+        "The change grants no broker, allocation, deployment, runtime-control, or capital authority."
+      ],
+      "status": "pass"
+    }
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "proof": "Only in-process test execution in the task worktree was exercised. No hosted, staging, or production surface was contacted; the fixture explicitly clears ambient runtime-manager URL and token-file variables so no real service can be reached.",
+      "status": "pass"
+    },
+    "hosted_frontend": {
+      "status": "not_applicable"
+    },
+    "mfa": {
+      "proof": "No interactive operator authentication or MFA policy is touched.",
+      "status": "not_applicable"
+    },
+    "no_live_capital": {
+      "proof": "A test fixture change with no broker or capital authority; the exercised deploy request targets the paper stage against a temporary binding store.",
+      "status": "pass"
+    },
+    "rbac": {
+      "proof": "No authorization rule is added, removed, or weakened. The pinned bearer token is a per-test literal confined to a temporary environment patch.",
+      "status": "pass"
+    },
+    "tenant_isolation": {
+      "proof": "No tenant scoping logic is changed. Test state is confined to a per-test tempdir, so no cross-run or cross-tenant state can accumulate in shared paths.",
+      "status": "pass"
+    },
+    "two_person_approval": {
+      "proof": "Owner Claude and reviewer Codex2 are distinct, matching the canonical ai-status.json row after the 2026-07-26T20:24:36Z Human/Ops reviewer reassignment. The reviewer verdict is not asserted here and must be appended to record_log before done.",
+      "status": "pass"
+    }
+  },
+  "acceptance": [
+    {
+      "evidence_refs": [
+        "services/telemetry/test_lineage_write_path.py#TestLiveLineageWritePathFullStackHTTPRoute._isolated_runtime_manager_client",
+        "validation.commands[0]"
+      ],
+      "id": "AC1",
+      "statement": "The exact previously failing test passes in a clean workspace with no ambient PANTHEON_RUNTIME_MANAGER_URL.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/telemetry/test_lineage_write_path.py#test_default_runtime_manager_client_stays_fail_closed_without_url",
+        "services/runtime-manager/runtime_manager_client.py"
+      ],
+      "id": "AC2",
+      "statement": "Production RuntimeManagerClient still rejects a missing URL unless allow_local=True is explicit, and that guarantee is now asserted by a regression test rather than assumed.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "validation.commands[2]",
+        "validation.commands[3]"
+      ],
+      "id": "AC3",
+      "statement": "The full services/telemetry suite has no new failures, with exact counts recorded: baseline 193 tests / 3 errors / 1 skip, post-change 197 tests / 2 errors / 1 skip.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/telemetry/test_lineage_write_path.py#TestFullStackFixtureIsolation",
+        "validation.commands[5]"
+      ],
+      "id": "AC4",
+      "statement": "The test proves fixture cleanup and no process-global environment leakage in both directions.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "implementation_delivery.pull_request",
+        "implementation_delivery.required_checks",
+        "record_log"
+      ],
+      "id": "AC5",
+      "statement": "Branch, commit, push, PR, checks, independent review, merge, archive, and evidence are complete.",
+      "status": "pass_pending_review",
+      "blocking_until": "Codex2 approval appended to record_log, then owner done"
+    }
+  ],
+  "residual_risks": {
+    "shared_telemetry_loader_errors": {
+      "blocking_for_this_task": false,
+      "containment": "Both modules import sibling modules by bare name and only fail under unittest discovery from the repository root; they were failing identically before this task and are outside its owned layer.",
+      "description": "services.telemetry.test_capture and services.telemetry.test_feedback_adapter raise loader ModuleNotFoundError under repository-root discovery, unchanged from the recorded baseline.",
+      "expiry": "next telemetry test-hygiene task",
+      "owner": "unassigned",
+      "recheck_trigger": "Any change to services/telemetry test import conventions",
+      "severity": "low"
+    },
+    "incidents_main_import_time_default": {
+      "blocking_for_this_task": false,
+      "containment": "The test binds an explicit inert URL for the import only and replaces the module-level validator before any request; no ambient value is inherited. A durable fix would make the module-level validator lazy, which is outside this task's owned layer.",
+      "description": "services/incidents/main.py still constructs a CanonicalReferenceValidator at import time, so importing it anywhere still requires runtime-manager configuration to be resolvable.",
+      "expiry": "next incidents service wiring task",
+      "owner": "unassigned",
+      "recheck_trigger": "Any task that touches services/incidents/main.py bootstrap",
+      "severity": "medium"
+    }
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001/evidence.json"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001/evidence.sha256",
+    "hosted_semantic_sha256": {
+      "reason": "No hosted readback artifact exists for this test-only task.",
+      "status": "not_applicable"
+    },
+    "manifest_path": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001/evidence.json",
+    "normalized_hosted_readback": {
+      "reason": "No hosted readback artifact exists for this test-only task.",
+      "status": "not_applicable"
+    },
+    "self_hash_omitted": true,
+    "self_hash_reason": "A manifest cannot contain its own digest, so no digest of evidence.json appears inside evidence.json. The digest is instead recorded in the companion evidence.sha256, which is the convention used by the sibling twelve-loop-gap evidence directories and gives the file bound as REVIEW_FILE an integrity anchor; the merge commit records it a second time.",
+    "source_artifact_sha256_by_epoch": {
+      "a608a81c7785e191e7e0f8e940e2a4464ecca404": {
+        "services/telemetry/test_lineage_write_path.py": "12e1159b8ad9b7ebc05b50ce466ba98cdf7ac84d2b2d1a53b6e6e14edb294b4c"
+      },
+      "0410a89f0e4ac3c53e7bc5192aebe6925423b4da": {
+        "services/telemetry/test_lineage_write_path.py": "12e1159b8ad9b7ebc05b50ce466ba98cdf7ac84d2b2d1a53b6e6e14edb294b4c"
+      }
+    }
+  },
+  "record_log": [
+    {
+      "actor": "Claude",
+      "kind": "implementation_anchor",
+      "recorded_at": "2026-07-26T20:00:00Z",
+      "reference": "task/OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001",
+      "sequence": 1,
+      "sha": "a608a81c7785e191e7e0f8e940e2a4464ecca404",
+      "status": "recorded"
+    },
+    {
+      "actor": "Claude",
+      "kind": "owner_evidence_cut",
+      "recorded_at": "2026-07-26T20:02:00Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001/evidence.json",
+      "sequence": 2,
+      "status": "recorded"
+    },
+    {
+      "actor": "Claude",
+      "kind": "delivery_merged",
+      "recorded_at": "2026-07-26T20:18:15Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4213",
+      "sequence": 3,
+      "sha": "0410a89f0e4ac3c53e7bc5192aebe6925423b4da",
+      "status": "recorded"
+    },
+    {
+      "actor": "Claude",
+      "kind": "owner_evidence_recut",
+      "recorded_at": "2026-07-26T20:25:00Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001/evidence.json",
+      "sequence": 4,
+      "status": "recorded"
+    },
+    {
+      "actor": "Human/Ops",
+      "kind": "reviewer_reassigned",
+      "note": "Reviewer moved from Antigravity to Codex2. Owner unchanged. Recorded here because cuts 2 and 4 predate the reassignment and named the previous reviewer.",
+      "recorded_at": "2026-07-26T20:24:36Z",
+      "reference": "ai-activity-log.jsonl assign event ai-status-event-5ab0af3fdc0771d56e7a6f739b9866e24eb469355711cecef1711c3c159c5ed3",
+      "sequence": 5,
+      "status": "recorded"
+    },
+    {
+      "actor": "Claude",
+      "kind": "delivery_merged",
+      "note": "Evidence re-cut PR carrying the merge facts for PR #4213.",
+      "recorded_at": "2026-07-26T20:22:00Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4214",
+      "sequence": 6,
+      "sha": "f687d7aeb7b9f9ebabb85247a11afbfd7c3fc16b",
+      "status": "recorded"
+    },
+    {
+      "actor": "Claude",
+      "kind": "owner_evidence_recut",
+      "note": "Rebinds the manifest to the canonical reviewer Codex2 and records an independent owner re-verification run on dev tip f687d7aeb. No implementation file changed; validated_head_sha advanced from 0410a89f0 to f687d7aeb.",
+      "recorded_at": "2026-07-26T20:45:00Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001/evidence.json",
+      "sequence": 7,
+      "status": "recorded"
+    },
+    {
+      "actor": "Claude",
+      "kind": "owner_handoff_to_review",
+      "note": "Owner hands the merged delivery to reviewer Codex2 with this manifest as REVIEW_FILE.",
+      "recorded_at": "2026-07-26T20:45:00Z",
+      "reference": "OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001 handoff Claude -> Codex2",
+      "sequence": 8,
+      "status": "recorded"
+    }
+  ]
+}

@@ -27,11 +27,13 @@ def client():
         "PANTHEON_GOVERNANCE_DATA_DIR": os.environ.get("PANTHEON_GOVERNANCE_DATA_DIR"),
         "CAPITAL_STORE_BACKEND": os.environ.get("CAPITAL_STORE_BACKEND"),
         "CAPITAL_AUDIT_BACKEND": os.environ.get("CAPITAL_AUDIT_BACKEND"),
+        "CAPITAL_AUTH_DISABLED": os.environ.get("CAPITAL_AUTH_DISABLED"),
     }
     os.environ["CAPITAL_DATA_DIR"] = tempdir
     os.environ["PANTHEON_GOVERNANCE_DATA_DIR"] = tempdir
     os.environ["CAPITAL_STORE_BACKEND"] = "json"
     os.environ["CAPITAL_AUDIT_BACKEND"] = "jsonl"
+    os.environ["CAPITAL_AUTH_DISABLED"] = "true"
 
     sys.modules.pop("services.capital.main", None)
     module = importlib.import_module("services.capital.main")
@@ -161,6 +163,107 @@ def test_health(client):
     response = test_client.get("/health")
     assert response.status_code == 200
     assert response.json()["service"] == "pantheon-capital"
+
+
+def test_capital_mutations_bind_verified_actor_role_and_tenant():
+    from services.runtime_auth_inbound import encode_jwt_hs256
+
+    tempdir = tempfile.mkdtemp(prefix="capital_auth_")
+    keys = (
+        "CAPITAL_DATA_DIR",
+        "PANTHEON_GOVERNANCE_DATA_DIR",
+        "CAPITAL_STORE_BACKEND",
+        "CAPITAL_AUDIT_BACKEND",
+        "CAPITAL_AUTH_DISABLED",
+        "CAPITAL_AUTH_MODE",
+        "CAPITAL_JWT_SECRET",
+        "CAPITAL_ALLOWED_CALLER_SERVICES",
+    )
+    backup = {key: os.environ.get(key) for key in keys}
+    try:
+        os.environ.update(
+            {
+                "CAPITAL_DATA_DIR": tempdir,
+                "PANTHEON_GOVERNANCE_DATA_DIR": tempdir,
+                "CAPITAL_STORE_BACKEND": "json",
+                "CAPITAL_AUDIT_BACKEND": "jsonl",
+                "CAPITAL_AUTH_DISABLED": "false",
+                "CAPITAL_AUTH_MODE": "strict",
+                "CAPITAL_JWT_SECRET": "capital-test-secret",
+                "CAPITAL_ALLOWED_CALLER_SERVICES": "control-plane-bff",
+            }
+        )
+        sys.modules.pop("services.capital.main", None)
+        module = importlib.import_module("services.capital.main")
+        module = importlib.reload(module)
+        test_client = TestClient(module.app)
+        token = encode_jwt_hs256(
+            {
+                "sub": "control-plane-bff",
+                "service": "control-plane-bff",
+                "roles": ["capital.admin"],
+                "allowed_tenants": ["tenant-capital-a"],
+                "delegated_actor_id": "capital-admin-1",
+                "exp": int(time.time()) + 300,
+            },
+            secret="capital-test-secret",
+        )
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "X-Tenant-Id": "tenant-capital-a",
+            "X-Pantheon-Service": "control-plane-bff",
+        }
+
+        created = test_client.post(
+            "/api/capital-pools",
+            json=_pool_payload(),
+            headers=headers,
+        )
+        assert created.status_code == 201, created.text
+        assert created.headers["X-Pantheon-Tenant"] == "tenant-capital-a"
+
+        missing_auth = test_client.post(
+            "/api/capital-pools",
+            json=_pool_payload(pool_id="pool-no-auth"),
+        )
+        assert missing_auth.status_code == 400
+        assert missing_auth.json()["error"]["code"] == "TENANT_REQUIRED"
+
+        wrong_tenant = test_client.post(
+            "/api/capital-pools",
+            json=_pool_payload(pool_id="pool-wrong-tenant"),
+            headers={**headers, "X-Tenant-Id": "tenant-capital-b"},
+        )
+        assert wrong_tenant.status_code == 403
+        assert wrong_tenant.json()["error"]["code"] == "TENANT_SCOPE_FORBIDDEN"
+
+        spoofed_actor = test_client.post(
+            "/api/capital-pools",
+            json=_pool_payload(
+                pool_id="pool-spoofed-actor",
+                actor_id="attacker",
+            ),
+            headers=headers,
+        )
+        assert spoofed_actor.status_code == 403
+        assert "authenticated actor" in spoofed_actor.json()["detail"]
+
+        spoofed_role = test_client.post(
+            "/api/capital-pools",
+            json=_pool_payload(
+                pool_id="pool-spoofed-role",
+                actor_role="persona.admin",
+            ),
+            headers=headers,
+        )
+        assert spoofed_role.status_code == 403
+        assert "verified token" in spoofed_role.json()["detail"]
+    finally:
+        for key, value in backup.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 def test_write_authority_matrix(client):

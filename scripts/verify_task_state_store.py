@@ -15,7 +15,13 @@ ORCHESTRATOR = ROOT / ".orchestrator"
 if str(ORCHESTRATOR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR))
 
-from rewrite.task_state_store import TaskStateStoreError, verify_projection
+from common import canonical_task_state_lock_file
+from rewrite.task_state_store import (
+    FULL_REPLAY_ENV,
+    TaskStateStoreError,
+    load_snapshot,
+    verify_snapshot,
+)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -31,6 +37,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Incumbent ai-status.json projection to compare.",
     )
     parser.add_argument("--json", action="store_true")
+    parser.add_argument(
+        "--full-replay",
+        action="store_true",
+        help=(
+            "Re-parse and revalidate every event instead of accepting the "
+            "checkpointed prefix. Every byte is hashed either way; this only "
+            "repeats the per-event digest work for a deep audit."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -41,6 +56,7 @@ def emit(payload: dict[str, Any], *, as_json: bool) -> None:
     print(
         "task-state shadow verification: "
         f"ok={payload.get('ok')} events={payload.get('event_count', 0)} "
+        f"nonterminal_tasks={payload.get('nonterminal_task_count', '-')} "
         f"error={payload.get('error') or '-'}"
     )
 
@@ -51,12 +67,21 @@ def main(argv: list[str] | None = None) -> int:
         payload = {"ok": False, "error": "task-state event log path is not configured"}
         emit(payload, as_json=args.json)
         return 3
+    if args.full_replay:
+        os.environ[FULL_REPLAY_ENV] = "1"
     try:
         status_path = Path(args.status_file).expanduser()
-        status = json.loads(status_path.read_text(encoding="utf-8"))
-        if not isinstance(status, dict):
-            raise ValueError("status projection must be a JSON object")
-        report = verify_projection(Path(args.event_log).expanduser(), status)
+        # The board and the journal must be sampled from one lock domain. Read
+        # separately, a commit landing between them reports the event count of
+        # the newer generation against the digest of the older one -- the
+        # transient "expected SHA from event N-1, projected SHA from event N"
+        # failure that a stable rerun then contradicts.
+        with canonical_task_state_lock_file(status_path, shared=True):
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+            if not isinstance(status, dict):
+                raise ValueError("status projection must be a JSON object")
+            snapshot = load_snapshot(Path(args.event_log).expanduser())
+        report = verify_snapshot(snapshot, status)
     except TaskStateStoreError as exc:
         payload = {"ok": False, "error": str(exc), "error_kind": "integrity"}
         emit(payload, as_json=args.json)

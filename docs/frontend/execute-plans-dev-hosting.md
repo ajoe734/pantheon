@@ -314,6 +314,12 @@ Some historical orchestration scripts and tests still mention
 use those paths to route current frontend work until they have been explicitly
 migrated to `execute-plans` and Pantheon-owned dev hosting.
 
+The repo-owned supervisor config keeps the legacy coordination publisher
+disabled for current dev delivery. Do not re-enable `.orchestrator` coordination
+publishing as a live workaround for Management AI, OpenClaw, Pantheon, Agora, or
+`execute-plans` work; use the assistant dev bridge and governed repair-worktree
+routes instead.
+
 Known legacy surfaces include:
 
 - `.orchestrator/coordination_repo_mirror.py`

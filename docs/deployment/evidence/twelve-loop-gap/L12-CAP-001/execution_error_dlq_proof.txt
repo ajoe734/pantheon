@@ -1,0 +1,23 @@
+L12-CAP-001 — Execution Exception Durable DLQ Proof
+==================================================
+Captured: 2026-07-26T22:06:25Z
+Image: redis@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
+
+Command:
+  /home/lupin/pantheon/.venv/bin/python -m unittest -v \
+    services.execution.lean_runtime.test_signal_isolation.TestExecutionErrorDLQ
+
+Observed cases:
+  test_execution_error_atomically_moves_real_redis_claim_to_dlq ... ok
+  test_execution_error_routes_to_dlq ... ok
+
+Result:
+  Ran 2 tests in 1.439s
+  OK
+
+The real Redis case injects a broker exception after claim and verifies that the
+claim is atomically removed from in-flight and appended to the binding-scoped
+DLQ with its failure reason. If the DLQ transfer fails, the consumer does not
+mark the signal processed and the visibility lease remains recoverable.
+
+STATUS: OWNER PROOF PASSED; INDEPENDENT REVIEW PENDING

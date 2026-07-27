@@ -8,8 +8,8 @@ import tempfile
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 
-from feedback_adapter import FeedbackStoreAdapter
-from capture import ExecutionMode
+from services.telemetry.feedback_adapter import FeedbackStoreAdapter
+from services.telemetry.capture import ExecutionMode
 
 
 class TestFeedbackStoreAdapter(unittest.TestCase):

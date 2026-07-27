@@ -456,6 +456,88 @@ Optional environment variables:
 - `REVIEW_FILE`
 - `REVIEW_NOTES_ZH` (`||` separated when setting multiple notes)
 
+### Python Test Environment Provisioning
+
+`services.*`, `scripts.*`, and `integrations.*` are top-level import names, so
+Python resolves them only from `sys.path`. Running the suite from the
+repository root, or exporting `PYTHONPATH`, happens to work — but it makes every
+test result depend on where the interpreter was started, and it is why dotted
+`unittest` and direct-file execution used to fail from any other directory.
+
+The repository is therefore installable. Provision it once per checkout before
+running tests:
+
+```bash
+# auto worker, inside your task worktree
+python3 scripts/dev/provision_python_distribution.py
+PANTHEON_PY="$(python3 scripts/dev/provision_python_distribution.py --print-python)"
+"$PANTHEON_PY" -m pytest -q services/telemetry
+```
+
+Rules:
+
+- **Use the script, never a bare `pip install -e .`.** An editable install
+  writes an absolute mapping to one checkout. Every auto worker gets its own
+  git worktree while sharing the host interpreter, so a bare install into that
+  shared interpreter silently rebinds `services` for every other worker. The
+  script installs into a checkout-scoped `.venv-pantheon` instead and fails
+  closed if the mapping ever points somewhere else.
+- **Provisioning does not dirty your worktree.** `.venv-pantheon/` matches the
+  existing `.venv-*/` ignore rule, and no install artifact is written into the
+  tree.
+- **Provisioning installs import paths only.** `pyproject.toml` declares no
+  dependencies; `requirements.txt` and the per-service requirements files stay
+  the dependency source of truth. The dependencies themselves are inherited
+  from a separately selected interpreter — see below.
+- `--mode current --allow-system-interpreter` installs into the running
+  interpreter. It is for disposable single-checkout containers only — dev CI
+  uses it in the `Python packaging provision` job of `branch-ci.yml`, which is
+  the same entry point, so CI and workers install the same distribution. In this
+  mode the running interpreter must already have the dependencies, which is why
+  the CI job installs `requirements.txt` in the step before.
+- `--check-only` verifies an existing provision without installing.
+- `--recreate` rebuilds `.venv-pantheon` from scratch.
+
+#### Where the dependencies come from
+
+You do not have to have pytest installed before you run the command above, and
+you should not assume you do: on an auto-worker host `command -v python3` is
+`/usr/bin/python3`, which has neither pytest nor any service dependency.
+
+Provisioning therefore resolves a **dependency interpreter** separately from the
+interpreter you started it with, and probes each candidate for `pytest` before
+accepting it. In order:
+
+1. `--dependency-python`
+2. `$PANTHEON_DEPENDENCY_PYTHON`
+3. the interpreter you ran the script with
+4. `$VIRTUAL_ENV`
+5. `<checkout>/.venv`
+6. `<main worktree>/.venv` — derived with `git rev-parse --git-common-dir`, so a
+   task worktree finds the main checkout's environment. **This is the one that
+   normally answers for an auto worker.**
+
+`.venv-pantheon` is then created *by* that interpreter and inherits its
+packages, and provisioning ends by re-proving that the interpreter it hands back
+can import pytest from a foreign working directory with no `PYTHONPATH`.
+
+Two consequences worth knowing:
+
+- **Provisioning fails closed rather than returning an unusable interpreter.**
+  If no candidate has the dependencies, the script exits non-zero and prints the
+  whole candidate table with the reason each entry was rejected. A run that
+  succeeds is a run whose `"$PANTHEON_PY" -m pytest` will not die on
+  `No module named pytest`.
+- **An interpreter you name explicitly is authoritative.** `--dependency-python`
+  and `$PANTHEON_DEPENDENCY_PYTHON` are never silently replaced by a fallback,
+  because a silent fallback is how the wrong environment gets used unnoticed.
+  Use them when a host has several environments and you want a specific one:
+
+  ```bash
+  PANTHEON_DEPENDENCY_PYTHON=/path/to/python \
+    python3 scripts/dev/provision_python_distribution.py
+  ```
+
 ## 4. Working Agreement
 
 - prefer one source of truth per concern

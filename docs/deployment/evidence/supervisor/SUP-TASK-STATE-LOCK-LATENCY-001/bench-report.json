@@ -1,0 +1,72 @@
+{
+  "cold_first_read": {
+    "event_count": 2050,
+    "resumed_from_checkpoint": false,
+    "seconds": 3.281
+  },
+  "fixture": {
+    "build_seconds": 3.5,
+    "bytes": 159487724,
+    "events": 2050,
+    "task_rows": 34
+  },
+  "live_reference": {
+    "event_count": 2050,
+    "exclusive_lock_hold_seconds": [
+      517.0,
+      771.0
+    ],
+    "journal_bytes": 157000000,
+    "note_command_seconds": [
+      55.0,
+      90.0
+    ],
+    "reviewer_reopen_wait_seconds": 508.0,
+    "runtime_admission_inode": 807896,
+    "supervisor_pid": 901543
+  },
+  "meets_target": true,
+  "speedup_p95": {
+    "uncontended": 56.4,
+    "under_active_supervisor_cycle": 53.8
+  },
+  "target_p95_seconds": 2.0,
+  "uncontended": {
+    "current": {
+      "label": "current",
+      "max_seconds": 0.263,
+      "min_seconds": 0.25,
+      "p50_seconds": 0.253,
+      "p95_seconds": 0.263,
+      "samples": 8
+    },
+    "legacy": {
+      "label": "legacy",
+      "max_seconds": 14.844,
+      "min_seconds": 11.481,
+      "p50_seconds": 11.938,
+      "p95_seconds": 14.844,
+      "samples": 8
+    }
+  },
+  "under_active_supervisor_cycle": {
+    "current": {
+      "commands": 8,
+      "concurrent_workers": 4,
+      "label": "current",
+      "max_seconds": 1.179,
+      "p50_seconds": 1.114,
+      "p95_seconds": 1.179,
+      "supervisor_cycle_seconds": 45.0
+    },
+    "legacy": {
+      "commands": 8,
+      "concurrent_workers": 4,
+      "label": "legacy",
+      "max_seconds": 63.463,
+      "p50_seconds": 59.737,
+      "p95_seconds": 63.463,
+      "supervisor_cycle_seconds": 45.0
+    }
+  }
+}

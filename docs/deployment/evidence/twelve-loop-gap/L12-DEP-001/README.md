@@ -9,11 +9,38 @@ does not activate a Compose manifest, authorize live capital, bypass an
 ApprovalDecision, or move RuntimeBinding write ownership out of Runtime
 Manager.
 
-The machine-readable receipt is in [`evidence.json`](evidence.json), with its
-digest in [`evidence.sha256`](evidence.sha256). The schema-complete owner
-closeout manifest is in [`closeout/evidence.json`](closeout/evidence.json),
-with its companion digest in
-[`closeout/evidence.sha256`](closeout/evidence.sha256).
+The single closeout manifest for this task is
+[`closeout/evidence.json`](closeout/evidence.json), with its companion digest in
+[`closeout/evidence.sha256`](closeout/evidence.sha256). It is the path recorded
+as the archived `review_file` for `L12-DEP-001`.
+
+## Replay-source layout
+
+`scripts/loop_done_guardrail.py --evidence-root` discovers replay sources by
+globbing for files named `evidence.json`, so this packet must expose exactly one
+of them. It previously carried two: `closeout/evidence.json` and a top-level
+`evidence.json`.
+
+The top-level file was the pre-PR dispatcher receipt that `Codex` reviewed. It
+was never a closeout manifest — its `overall_admission` was
+`review_approved_for_task_pr` — so it failed every replay of `L12-DEP-001` and
+was superseded in full by `closeout/evidence.json`.
+`OPS-L12-DEP-EVIDENCE-REPLAY-001` removed it, together with its companion
+`evidence.sha256`, so that the global evidence-root replay resolves `L12-DEP-001`
+to one accepted source and zero failing ones.
+
+Nothing was rewritten to achieve that: `closeout/evidence.json` and
+`closeout/evidence.sha256` are byte-for-byte unchanged, and the deleted files
+were removed rather than edited. The removed content stays auditable in merged
+`dev` history at commit `22e9e319ef340b2822d7382ad49890ca09207110`, and the
+closeout manifest still records its digest as
+`integrity.source_artifact_sha256_by_epoch.reviewed_dispatcher_receipt`
+(`6405c222a4ba405a11c9b1a09de9c2b006f831c94ad8495b4d0402b8a146f263`).
+
+Because `closeout/evidence.json` is immutable, it still cites the removed paths
+in `integrity.checksum_coverage`, `scope.evidence_changed_files`, and the
+`record_log` sequence-1 `owner_evidence_ready` reference. Resolve those against
+merged history, not the working tree.
 
 ## Delivered boundary
 

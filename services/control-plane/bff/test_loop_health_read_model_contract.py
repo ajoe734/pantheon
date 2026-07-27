@@ -20,9 +20,39 @@ sys.path.insert(0, str(BFF_DIR))
 import main as bff_main  # noqa: E402
 import loop_inventory as loop_inventory_model  # noqa: E402
 from read_store import ReadSurfaceStore  # noqa: E402
+from services.runtime_auth_inbound import encode_jwt_hs256  # noqa: E402
 
 
-HEADERS = {"Authorization": "Bearer loop-health-operator:operator,reviewer,admin:mfa"}
+TENANT_ID = "tenant-loop-health"
+ENVIRONMENT = "dev"
+HEADERS = {
+    "Authorization": (
+        "Bearer loop-health-operator:operator,reviewer,admin:"
+        f"{TENANT_ID}"
+    )
+}
+
+
+def _scope_loop_health_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    scoped = deepcopy(payload)
+    records = scoped.get("loop_health")
+    if isinstance(records, dict):
+        for record in records.values():
+            if isinstance(record, dict):
+                record.setdefault("tenant_id", TENANT_ID)
+                record.setdefault("environment", ENVIRONMENT)
+    return scoped
+
+
+def _scope_loop_health_records(
+    records: Dict[str, Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    scoped = deepcopy(records)
+    for record in scoped.values():
+        if isinstance(record, dict):
+            record.setdefault("tenant_id", TENANT_ID)
+            record.setdefault("environment", ENVIRONMENT)
+    return scoped
 
 
 @contextmanager
@@ -36,11 +66,17 @@ def _loop_health_client(
         root = Path(td)
         snapshot_path = root / "read_surfaces.json"
         if snapshot_payload is not None:
-            snapshot_path.write_text(json.dumps(snapshot_payload), encoding="utf-8")
+            snapshot_path.write_text(
+                json.dumps(_scope_loop_health_payload(snapshot_payload)),
+                encoding="utf-8",
+            )
         env_overrides: Dict[str, str] = {}
         if loop_health_store is not None:
             health_path = root / "loop_health.json"
-            health_path.write_text(json.dumps(loop_health_store), encoding="utf-8")
+            health_path.write_text(
+                json.dumps(_scope_loop_health_records(loop_health_store)),
+                encoding="utf-8",
+            )
             env_overrides["PANTHEON_BFF_LOOP_HEALTH_STORE"] = str(health_path)
 
         original_store = bff_main.read_store
@@ -611,10 +647,21 @@ def test_loop_health_db_store_exercise(monkeypatch) -> None:
                 "deployment_sha": "sha-123",
                 "desired_state_query": "SELECT *",
                 "actual_state_query": "SELECT *",
+                "desired_state": {
+                    "present": True,
+                    "source": "domain-desired-store",
+                    "checked_at": now,
+                },
+                "downstream_actual_state": {
+                    "status": "ready",
+                    "source": "domain-terminal-store",
+                    "checked_at": now,
+                },
                 "last_heartbeat_at": now,
                 "last_tick_at": now,
                 "last_success_at": now,
                 "truth_level": "reconciled_live_proof",
+                "lease_token": "db-store-fence-1",
                 "lease_expires_at": now + timedelta(seconds=60),
                 "evidence_refs": ["ref-1"],
                 "payload": {}
@@ -659,10 +706,21 @@ def test_loop_health_db_store_merge_with_file_store(monkeypatch) -> None:
                 "deployment_sha": "sha-123",
                 "desired_state_query": "SELECT *",
                 "actual_state_query": "SELECT *",
+                "desired_state": {
+                    "present": True,
+                    "source": "domain-desired-store",
+                    "checked_at": now,
+                },
+                "downstream_actual_state": {
+                    "status": "ready",
+                    "source": "domain-terminal-store",
+                    "checked_at": now,
+                },
                 "last_heartbeat_at": now,
                 "last_tick_at": now,
                 "last_success_at": now,
                 "truth_level": "reconciled_live_proof",
+                "lease_token": "db-store-fence-2",
                 "lease_expires_at": now + timedelta(seconds=60),
                 "evidence_refs": ["ref-1"],
                 "payload": {}
@@ -698,5 +756,95 @@ def test_loop_health_db_store_merge_with_file_store(monkeypatch) -> None:
     bff_health = next(item for item in items if item["loop_id"] == "bff_health_monitoring")
 
     assert source_ingestion["truth_source"]["source"] == "controller_store"
+    assert source_ingestion["desired_state_presence"]["authoritative"] is True
+    assert source_ingestion["desired_state_presence"]["present"] is True
+    assert source_ingestion["downstream_actual_state"]["authoritative"] is True
+    assert source_ingestion["downstream_actual_state"]["status"] == "ready"
     assert bff_health["truth_source"]["source"] == "service_store"
     assert bff_health["evidence_packet"]["packet_id"] == "packet-bff-health-001"
+
+
+def test_loop_health_database_lookup_uses_authenticated_tenant_and_environment(
+    monkeypatch,
+) -> None:
+    secret = "loop-health-tenant-scope-secret"
+    issuer = "pantheon-loop-health-test"
+    audience = "bff-operators"
+    now = int(datetime.now(timezone.utc).timestamp())
+    token = encode_jwt_hs256(
+        {
+            "sub": "loop-health-tenant-viewer",
+            "roles": ["viewer"],
+            "tenant_id": TENANT_ID,
+            "iss": issuer,
+            "aud": audience,
+            "iat": now,
+            "exp": now + 300,
+        },
+        secret=secret,
+    )
+    strict_headers = {"Authorization": f"Bearer {token}"}
+
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "false")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", secret)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_ISSUER", issuer)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_AUDIENCE", audience)
+    monkeypatch.setenv("PANTHEON_BFF_MFA_REQUIRED", "false")
+    monkeypatch.delenv("PANTHEON_BFF_JWKS_URI", raising=False)
+    monkeypatch.delenv("PANTHEON_BFF_OIDC_DISCOVERY_URL", raising=False)
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        "postgresql://dummy_user:dummy_pass@localhost:5432/dummy_db",
+    )
+    monkeypatch.setenv("PANTHEON_ENV", ENVIRONMENT)
+
+    import importlib
+    import sys
+    from unittest.mock import MagicMock
+
+    monkeypatch.setitem(sys.modules, "asyncpg", MagicMock())
+    loop_control = importlib.import_module("services.loop-control")
+    calls = []
+
+    async def mock_list_records(self, tenant_id, environment):
+        calls.append((tenant_id, environment))
+        return [
+            {
+                "loop_id": "source_ingestion",
+                "tenant_id": "tenant-other",
+                "environment": environment,
+            }
+        ]
+
+    monkeypatch.setattr(
+        loop_control.LoopControllerStore,
+        "list_records",
+        mock_list_records,
+    )
+    with _loop_health_client() as client:
+        response = client.get("/bff/v5/loop-health", headers=strict_headers)
+        denied = client.get(
+            "/bff/v5/loop-health",
+            headers={**strict_headers, "X-Tenant-Id": "tenant-other"},
+        )
+        denied_environment = client.get(
+            "/bff/v5/loop-health?environment=prod",
+            headers=strict_headers,
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["meta"]["scope"] == {
+        "tenant_id": TENANT_ID,
+        "environment": ENVIRONMENT,
+        "source": "authenticated_identity_and_deployment_scope",
+    }
+    assert response.json()["meta"]["coverage"]["raw_health_record_count"] == 0
+    assert calls == [(TENANT_ID, ENVIRONMENT)]
+    assert denied.status_code == 403
+    assert denied.json()["error"]["details"]["precondition_failed"] == "tenant_scope"
+    assert denied_environment.status_code == 403
+    assert (
+        denied_environment.json()["error"]["details"]["precondition_failed"]
+        == "environment_scope"
+    )
