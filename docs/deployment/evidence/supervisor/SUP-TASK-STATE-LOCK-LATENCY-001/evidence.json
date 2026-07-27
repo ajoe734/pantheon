@@ -323,12 +323,12 @@
     "commands": [
       {
         "command": "PYTHONPATH=.orchestrator python3 -m pytest -q .orchestrator/test_supervisor.py .orchestrator/test_runtime_state.py .orchestrator/rewrite/test_task_state_store.py .orchestrator/rewrite/test_worker_lifecycle.py .orchestrator/test_common.py scripts/test_ai_status.py scripts/test_verify_task_state_store.py scripts/test_status_file_guard.py",
-        "conclusion": "779 passed, 134 subtests passed in 134.32s",
+        "conclusion": "780 passed, 134 subtests passed in 140.81s",
         "result": "pass"
       },
       {
-        "command": "PYTHONPATH=.orchestrator python3 -m pytest -q .orchestrator/test_adapter_fallback_policy.py .orchestrator/test_worker_runner_heartbeat.py",
-        "conclusion": "37 passed in 7.94s",
+        "command": "PYTHONPATH=.orchestrator python3 -m pytest -q .orchestrator/test_adapter_fallback_policy.py .orchestrator/test_worker_runner_heartbeat.py scripts/git/test_task_git_helpers_refspec.py",
+        "conclusion": "39 passed in 8.38s",
         "result": "pass"
       },
       {
