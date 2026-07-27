@@ -66,8 +66,7 @@
         "kill_switch_action",
         "heartbeat",
         "bracket_order_logged",
-        "telemetry_mirror_mismatch",
-        "infrastructure_health"
+        "telemetry_mirror_mismatch"
       ],
       "description": "Canonical telemetry event type. Order/fill/deploy/rollback/governance events MUST NOT be sampled."
     },
@@ -95,16 +94,6 @@
       "type": "string",
       "format": "uuid",
       "description": "Distributed tracing correlation ID. Injected by telemetry-ingest-svc if not provided by the producer."
-    },
-    "infrastructure_probe": {
-      "type": "object",
-      "description": "Non-trading infrastructure health probe metadata.",
-      "properties": {
-        "target_name": { "type": "string" },
-        "failure_reason": { "type": ["string", "null"] },
-        "probe_source": { "type": "string" }
-      },
-      "additionalProperties": false
     },
     "correlation_envelope": {
       "type": "object",
