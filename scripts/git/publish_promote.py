@@ -36,6 +36,14 @@ CONFIG_FILE = ROOT / ".orchestrator" / "config.json"
 # configured by nightly_publish.version_format is eligible for automation.
 RELEASE_TAG_RE = re.compile(r"^refs/tags/release/(v\d{4}\.\d{2}(?:\.\d+){1,2})$")
 DAILY_RELEASE_RE = re.compile(r"^v\d{4}\.\d{2}\.\d{2}\.\d+$")
+BRANCH_CI_WORKFLOW = "branch-ci.yml"
+REQUIRED_PROMOTE_CHECKS = frozenset(
+    {
+        "Commit trailers",
+        "Runtime mirror guard",
+        "Smoke acceptance",
+    }
+)
 
 
 class PromotionConflict(RuntimeError):
@@ -127,7 +135,7 @@ def find_open_promote_pr(promote_branch: str) -> tuple[dict | None, str | None]:
             "--state",
             "open",
             "--json",
-            "number,url,mergeStateStatus,headRefOid",
+            "number,url,mergeStateStatus,headRefOid,statusCheckRollup",
         ],
         capture_output=True,
         text=True,
@@ -215,6 +223,48 @@ def fetch_blocking_issue_map(
             if name in block_labels:
                 global_blockers.append(f"{summary} (label: {name})")
     return by_version, list(dict.fromkeys(global_blockers)), None
+
+
+def missing_required_promote_checks(pr: dict) -> list[str]:
+    """Return required Branch CI contexts not yet attached to this PR head."""
+
+    present = {
+        str(check.get("name", "")).strip()
+        for check in pr.get("statusCheckRollup") or []
+        if isinstance(check, dict)
+    }
+    return sorted(REQUIRED_PROMOTE_CHECKS - present)
+
+
+def dispatch_promote_ci(
+    promote_branch: str, expected_head_sha: str, pr_number: int | str
+) -> None:
+    """Dispatch Branch CI on the immutable promote head.
+
+    A PR opened by a workflow's GITHUB_TOKEN does not recursively trigger the
+    pull_request workflow. workflow_dispatch is the supported recursive event,
+    and selecting the promote ref attaches the required check runs to that
+    exact PR head rather than to dev.
+    """
+
+    if not re.fullmatch(r"[0-9a-f]{40}", expected_head_sha):
+        raise RuntimeError("promote PR head must be a full lowercase commit SHA")
+    subprocess.run(
+        [
+            "gh",
+            "workflow",
+            "run",
+            BRANCH_CI_WORKFLOW,
+            "--ref",
+            promote_branch,
+            "-f",
+            f"expected_head_sha={expected_head_sha}",
+            "-f",
+            f"promote_pr_number={pr_number}",
+        ],
+        check=True,
+        cwd=ROOT,
+    )
 
 
 def assess_promotion_mode(main_ref: str, release_ref: str) -> tuple[str, str]:
@@ -412,6 +462,11 @@ def discover(
             candidate["disposition"] = "superseded"
             candidate["superseded_by"] = successor["version"]
         elif candidate.get("existing_pr"):
+            # Keep the bulk PR lookup cheap. Asking GraphQL for
+            # statusCheckRollup across up to 1,000 PRs caused repeatable 502s
+            # in runs 30284788017 and 30284856368. The action step performs one
+            # exact-branch lookup and dispatches only when that PR head is
+            # actually missing a required context.
             candidate["disposition"] = "existing_pr"
             terminal_snapshots.append(candidate)
         else:
@@ -453,11 +508,16 @@ def cmd_discover(args: argparse.Namespace) -> int:
         version_format=settings["version_format"],
     )
     eligible = [c for c in candidates if c["disposition"] == "eligible"]
+    actionable = [
+        c
+        for c in candidates
+        if c["disposition"] in {"eligible", "existing_pr"}
+    ]
     if args.github_output:
         with open(args.github_output, "a") as fh:
-            fh.write(f"candidate_count={len(eligible)}\n")
+            fh.write(f"candidate_count={len(actionable)}\n")
             fh.write("candidates<<__EOC__\n")
-            fh.write(json.dumps(eligible))
+            fh.write(json.dumps(actionable))
             fh.write("\n__EOC__\n")
             fh.write("dispositions<<__EOD__\n")
             fh.write(json.dumps(candidates))
@@ -469,6 +529,7 @@ def cmd_discover(args: argparse.Namespace) -> int:
                 "counts": dict(Counter(c["disposition"] for c in candidates)),
                 "all": candidates,
                 "eligible": eligible,
+                "actionable": actionable,
             },
             indent=2,
         )
@@ -514,10 +575,31 @@ def open_candidate(cand: dict, settings: dict) -> dict:
     if lookup_error:
         raise RuntimeError(f"existing PR lookup failed: {lookup_error}")
     if existing_pr:
+        missing = missing_required_promote_checks(existing_pr)
+        if not missing:
+            return {
+                "version": version,
+                "disposition": "existing_pr",
+                "detail": existing_pr.get("url", "existing promote PR"),
+            }
+        promote_head = str(existing_pr.get("headRefOid", "")).strip()
+        if not promote_head:
+            raise RuntimeError("existing promote PR did not expose an exact head SHA")
+        dispatch_promote_ci(promote_branch, promote_head, existing_pr["number"])
+        subprocess.run(
+            ["gh", "pr", "merge", promote_branch, "--auto", "--merge"],
+            check=False,
+            cwd=ROOT,
+        )
         return {
             "version": version,
-            "disposition": "existing_pr",
-            "detail": existing_pr.get("url", "existing promote PR"),
+            "disposition": "ci_dispatched",
+            "missing_required_checks": missing,
+            "head_sha": promote_head,
+            "detail": (
+                f"dispatched required Branch CI for existing PR "
+                f"#{existing_pr['number']} at {promote_head}"
+            ),
         }
 
     run_git("checkout", "-B", promote_branch, main_ref)
@@ -536,6 +618,7 @@ def open_candidate(cand: dict, settings: dict) -> dict:
     # A normal push is intentionally the only publication path.  The PR and
     # auto-merge request leave master behind its required protected checks.
     run_git("push", "-u", "origin", promote_branch)
+    promote_head = run_git("rev-parse", "HEAD")
 
     body = (
         f"Auto-generated promotion of `{publish_branch}` "
@@ -564,12 +647,22 @@ def open_candidate(cand: dict, settings: dict) -> dict:
         check=True,
         cwd=ROOT,
     )
+    opened_pr, lookup_error = find_open_promote_pr(promote_branch)
+    if lookup_error:
+        raise RuntimeError(f"created PR lookup failed: {lookup_error}")
+    if not opened_pr:
+        raise RuntimeError("created promote PR was not visible to exact-head CI dispatch")
+    if str(opened_pr.get("headRefOid", "")).strip() != promote_head:
+        raise RuntimeError(
+            "created promote PR head changed before required CI dispatch"
+        )
     if promote_label:
         subprocess.run(
             ["gh", "pr", "edit", promote_branch, "--add-label", promote_label],
             check=False,
             cwd=ROOT,
         )
+    dispatch_promote_ci(promote_branch, promote_head, opened_pr["number"])
     subprocess.run(
         ["gh", "pr", "merge", promote_branch, "--auto", "--merge"],
         check=False,
@@ -579,7 +672,11 @@ def open_candidate(cand: dict, settings: dict) -> dict:
         "version": version,
         "disposition": "pr_opened",
         "promotion_mode": cand.get("promotion_mode", "clean_merge"),
-        "detail": f"opened {promote_branch} for protected auto-merge",
+        "head_sha": promote_head,
+        "detail": (
+            f"opened {promote_branch}, dispatched required Branch CI, "
+            "and requested protected auto-merge"
+        ),
     }
 
 

@@ -9,6 +9,7 @@ or with unittest discovery:
 
 from __future__ import annotations
 
+import argparse
 import contextlib
 import importlib.util
 import io
@@ -573,6 +574,7 @@ class PublishPromoteTests(unittest.TestCase):
         "regression_label_prefix": "regression/",
         "block_labels": [],
         "promote_pr_label": "auto-promote",
+        "version_format": "vYYYY.MM.DD.N",
     }
 
     def _discover(self, tags, *, input_version=None, blockers=None, ancestor=None, existing=None, mode=None):
@@ -670,6 +672,60 @@ class PublishPromoteTests(unittest.TestCase):
         self.assertEqual(dispositions["v2024.07.10.0"]["disposition"], "superseded")
         self.assertEqual(dispositions["v2024.07.10.0"]["superseded_by"], "v2025.07.10.0")
         self.assertEqual(dispositions["v2025.07.10.0"]["disposition"], "eligible")
+
+    def test_discover_schedules_only_maximal_existing_pr_for_exact_check_lookup(self) -> None:
+        now = datetime.now(timezone.utc)
+        older = now.replace(year=now.year - 2)
+        newer = now.replace(year=now.year - 1)
+        existing = {
+            "promote/v2024.07.10.0": {
+                "number": 40,
+            },
+            "promote/v2025.07.10.0": {
+                "number": 41,
+            },
+        }
+        cands = self._discover(
+            [("v2024.07.10.0", older), ("v2025.07.10.0", newer)],
+            ancestor=lambda left, right: left.endswith("v2024.07.10.0")
+            and right.endswith("v2025.07.10.0"),
+            existing=existing,
+        )
+        dispositions = {c["version"]: c for c in cands}
+        self.assertEqual(dispositions["v2024.07.10.0"]["disposition"], "superseded")
+        self.assertEqual(dispositions["v2025.07.10.0"]["disposition"], "existing_pr")
+
+    def test_discover_bulk_lookup_does_not_need_status_rollup(self) -> None:
+        old = datetime.now(timezone.utc).replace(year=2025)
+        cands = self._discover(
+            [("v2025.07.10.0", old)],
+            existing={
+                "promote/v2025.07.10.0": {
+                    "number": 41,
+                }
+            },
+        )
+        self.assertEqual(cands[0]["disposition"], "existing_pr")
+
+    def test_cmd_discover_sends_existing_pr_to_exact_action_step(self) -> None:
+        candidate = {
+            "version": "v2025.07.10.0",
+            "disposition": "existing_pr",
+        }
+        with (
+            tempfile.NamedTemporaryFile() as output,
+            mock.patch.object(publish_promote, "load_promote_settings", return_value=self.SETTINGS),
+            mock.patch.object(publish_promote, "discover", return_value=[candidate]),
+            mock.patch.object(publish_promote, "append_step_summary"),
+        ):
+            rc = publish_promote.cmd_discover(
+                argparse.Namespace(version=None, github_output=output.name)
+            )
+            output.seek(0)
+            rendered = output.read().decode()
+        self.assertEqual(rc, 0)
+        self.assertIn("candidate_count=1", rendered)
+        self.assertIn('"disposition": "existing_pr"', rendered)
 
     def test_discover_reports_content_conflict(self) -> None:
         old = datetime.now(timezone.utc).replace(year=2024)
@@ -786,9 +842,24 @@ class PublishPromoteTests(unittest.TestCase):
         with (
             mock.patch.object(publish_promote, "run_git") as run_git,
             mock.patch.object(publish_promote, "publish_ref_matches_tag", return_value=True),
-            mock.patch.object(publish_promote, "find_open_promote_pr", return_value=(None, None)),
+            mock.patch.object(
+                publish_promote,
+                "find_open_promote_pr",
+                side_effect=[
+                    (None, None),
+                    (
+                        {
+                            "number": 42,
+                            "headRefOid": "a" * 40,
+                            "statusCheckRollup": [],
+                        },
+                        None,
+                    ),
+                ],
+            ),
             mock.patch.object(publish_promote.subprocess, "run") as run,
         ):
+            run_git.side_effect = lambda *args: "a" * 40 if args == ("rev-parse", "HEAD") else ""
             result = publish_promote.open_candidate(candidate, self.SETTINGS)
 
         self.assertEqual(result["disposition"], "pr_opened")
@@ -800,6 +871,21 @@ class PublishPromoteTests(unittest.TestCase):
         self.assertIn(["gh", "pr", "merge", "promote/v2026.20.0", "--auto", "--merge"], commands)
         self.assertIn(
             ["gh", "pr", "edit", "promote/v2026.20.0", "--add-label", "auto-promote"],
+            commands,
+        )
+        self.assertIn(
+            [
+                "gh",
+                "workflow",
+                "run",
+                "branch-ci.yml",
+                "--ref",
+                "promote/v2026.20.0",
+                "-f",
+                f"expected_head_sha={'a' * 40}",
+                "-f",
+                "promote_pr_number=42",
+            ],
             commands,
         )
 
@@ -818,12 +904,102 @@ class PublishPromoteTests(unittest.TestCase):
             mock.patch.object(
                 publish_promote,
                 "find_open_promote_pr",
-                return_value=({"number": 42, "url": "https://example.invalid/42"}, None),
+                return_value=(
+                    {
+                        "number": 42,
+                        "url": "https://example.invalid/42",
+                        "headRefOid": "b" * 40,
+                        "statusCheckRollup": [
+                            {"name": "Commit trailers"},
+                            {"name": "Runtime mirror guard"},
+                            {"name": "Smoke acceptance"},
+                        ],
+                    },
+                    None,
+                ),
             ),
+            mock.patch.object(publish_promote.subprocess, "run") as run,
         ):
             result = publish_promote.open_candidate(candidate, self.SETTINGS)
         self.assertEqual(result["disposition"], "existing_pr")
         self.assertFalse(any(call.args[0] == "push" for call in run_git.call_args_list))
+        self.assertFalse(run.called)
+
+    def test_open_candidate_repairs_existing_pr_with_zero_checks(self) -> None:
+        candidate = {
+            "version": "v2026.20.0",
+            "publish_branch": "publish/v2026.20.0",
+            "age_days": 1.25,
+            "blockers": [],
+            "promote_branch": "promote/v2026.20.0",
+            "promotion_mode": "clean_merge",
+        }
+        with (
+            mock.patch.object(publish_promote, "run_git"),
+            mock.patch.object(publish_promote, "publish_ref_matches_tag", return_value=True),
+            mock.patch.object(
+                publish_promote,
+                "find_open_promote_pr",
+                return_value=(
+                    {
+                        "number": 42,
+                        "url": "https://example.invalid/42",
+                        "headRefOid": "c" * 40,
+                        "statusCheckRollup": [],
+                    },
+                    None,
+                ),
+            ),
+            mock.patch.object(publish_promote.subprocess, "run") as run,
+        ):
+            result = publish_promote.open_candidate(candidate, self.SETTINGS)
+        self.assertEqual(result["disposition"], "ci_dispatched")
+        self.assertEqual(result["head_sha"], "c" * 40)
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertIn(
+            [
+                "gh",
+                "workflow",
+                "run",
+                "branch-ci.yml",
+                "--ref",
+                "promote/v2026.20.0",
+                "-f",
+                f"expected_head_sha={'c' * 40}",
+                "-f",
+                "promote_pr_number=42",
+            ],
+            commands,
+        )
+        self.assertIn(
+            ["gh", "pr", "merge", "promote/v2026.20.0", "--auto", "--merge"],
+            commands,
+        )
+
+    def test_branch_ci_exposes_exact_head_promote_dispatch(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "branch-ci.yml").read_text()
+        publish_workflow = (
+            ROOT / ".github" / "workflows" / "publish-promote.yml"
+        ).read_text()
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn("expected_head_sha:", workflow)
+        self.assertEqual(workflow.count("Validate explicit promote dispatch"), 2)
+        self.assertIn('[[ "$REF_NAME" != promote/* ]]', workflow)
+        self.assertIn('[[ "$HEAD_SHA" != "$EXPECTED_HEAD_SHA" ]]', workflow)
+        self.assertIn("actions: write", publish_workflow)
+
+    def test_bulk_promote_pr_lookup_omits_expensive_status_rollup(self) -> None:
+        completed = subprocess.CompletedProcess(
+            ["gh", "pr", "list"], returncode=0, stdout="[]", stderr=""
+        )
+        with mock.patch.object(
+            publish_promote.subprocess, "run", return_value=completed
+        ) as run:
+            rows, error = publish_promote.list_open_promote_prs("master")
+        self.assertEqual((rows, error), ({}, None))
+        command = run.call_args.args[0]
+        json_fields = command[command.index("--json") + 1]
+        self.assertNotIn("statusCheckRollup", json_fields)
 
     def test_open_prs_continues_after_candidate_conflict(self) -> None:
         candidates = [{"version": "v1"}, {"version": "v2"}]
