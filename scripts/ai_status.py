@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import gzip
+import fcntl
 import hashlib
 import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -93,6 +95,7 @@ from rewrite.task_state_store import (
     load_events,
     load_snapshot,
     project_latest_state,
+    snapshot_transaction,
 )
 from common import (
     ActivityAuditInvariantError,
@@ -126,6 +129,7 @@ STATUS_ACTIVITY_OUTBOX_SCHEMA_VERSION = 1
 STATUS_ARCHIVE_OUTBOX_KEY = "status_archive_outbox"
 STATUS_ARCHIVE_OUTBOX_SCHEMA_VERSION = 1
 _ACTIVITY_TRANSACTION_LOCAL = local()
+_TASK_STATE_TRANSACTION_LOCAL = local()
 CURRENT_WORK_FILE = STATUS_ROOT / "current-work.md"
 DOCS_SITE_DIR = STATUS_ROOT / "docs-site"
 CONFIG_FILE = ROOT / ".orchestrator" / "config.json"
@@ -1448,7 +1452,12 @@ def load_state() -> dict[str, Any]:
         # One validated pass over the journal: load_events followed by
         # project_latest_state replayed and revalidated every event twice, which
         # is the bulk of what a plain note command used to spend.
-        snapshot = load_snapshot(event_path)
+        transaction = getattr(_TASK_STATE_TRANSACTION_LOCAL, "transaction", None)
+        snapshot = (
+            transaction.load_snapshot()
+            if transaction is not None
+            else load_snapshot(event_path)
+        )
         if not snapshot["event_count"]:
             raise SystemExit(
                 "Authoritative task-state journal is empty; refusing ai-status.json fallback."
@@ -1482,6 +1491,26 @@ def canonical_task_state_lock(*, shared: bool = False, nonblocking: bool = False
         nonblocking=nonblocking,
     ):
         yield
+
+
+@contextmanager
+def authoritative_task_state_transaction():
+    """Reuse one validated journal snapshot across a governed mutation."""
+
+    store_mode = str(os.environ.get(TASK_STATE_STORE_MODE_ENV) or "").strip().lower()
+    if store_mode != "authoritative":
+        yield
+        return
+    _validate_task_state_projection_binding(store_mode)
+    event_path = _task_state_event_path(store_mode)
+    if getattr(_TASK_STATE_TRANSACTION_LOCAL, "transaction", None) is not None:
+        raise RuntimeError("nested authoritative task-state transaction")
+    with snapshot_transaction(event_path) as transaction:
+        _TASK_STATE_TRANSACTION_LOCAL.transaction = transaction
+        try:
+            yield
+        finally:
+            del _TASK_STATE_TRANSACTION_LOCAL.transaction
 
 
 def load_logs() -> list[dict[str, Any]]:
@@ -1775,7 +1804,11 @@ def save_state(state: dict[str, Any]) -> None:
             or str(os.environ.get("AI_NAME") or "").strip()
             or "ai-status"
         )
-        append_state_commit(event_path, state, source=source)
+        transaction = getattr(_TASK_STATE_TRANSACTION_LOCAL, "transaction", None)
+        if transaction is not None:
+            transaction.append_state_commit(state, source=source)
+        else:
+            append_state_commit(event_path, state, source=source)
     serialized = json.dumps(state, indent=2, ensure_ascii=False) + "\n"
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=STATUS_FILE.parent, delete=False) as handle:
         handle.write(serialized)
@@ -4904,7 +4937,11 @@ def sync_docs_site(state: dict[str, Any]) -> None:
     _mirror_log_tail(LOG_FILE, DOCS_SITE_DIR / LOG_FILE.name, DASHBOARD_LOG_TAIL_LINES)
 
 
-def sync_all(state: dict[str, Any]) -> None:
+def sync_all(
+    state: dict[str, Any],
+    *,
+    refresh_views: bool = True,
+) -> None:
     assert_task_archive_root_binding()
     sync_canonical_document_metadata(state)
     normalize_state_agents(state)
@@ -4918,7 +4955,8 @@ def sync_all(state: dict[str, Any]) -> None:
     buffered = getattr(_ACTIVITY_TRANSACTION_LOCAL, "events", None)
     events = list(buffered) if isinstance(buffered, list) else []
     commit_state_with_activity_outbox(state, events)
-    refresh_derived_status_views(state)
+    if refresh_views:
+        refresh_derived_status_views(state)
 
 
 def refresh_derived_status_views(state: dict[str, Any]) -> None:
@@ -4928,6 +4966,58 @@ def refresh_derived_status_views(state: dict[str, Any]) -> None:
     write_current_work(state, logs)
     write_dashboard_bundle(state)
     sync_docs_site(state)
+
+
+@contextmanager
+def derived_status_views_lock():
+    """Serialize derived projections without extending the canonical task lock."""
+
+    lock_path = STATUS_FILE.parent / ".orchestrator" / "status-derived-views.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(
+        lock_path,
+        os.O_RDWR
+        | os.O_CREAT
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise RuntimeError(
+                f"derived status views lock must be a regular file: {lock_path}"
+            )
+        os.fchmod(descriptor, stat.S_IRUSR | stat.S_IWUSR)
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+
+
+def refresh_derived_status_views_if_current(state: dict[str, Any]) -> bool:
+    """Render only if this command still owns the latest canonical projection."""
+
+    expected_sha256 = _canonical_json_sha256(state)
+    with derived_status_views_lock():
+        try:
+            current = json.loads(
+                read_regular_file_bytes(
+                    STATUS_FILE,
+                    source="canonical status projection",
+                ).decode("utf-8", errors="strict")
+            )
+        except (FileNotFoundError, UnicodeDecodeError, json.JSONDecodeError):
+            return False
+        if (
+            not isinstance(current, dict)
+            or _canonical_json_sha256(current) != expected_sha256
+        ):
+            return False
+        refresh_derived_status_views(state)
+    return True
 
 
 def mark_blockers_resolved(state: dict[str, Any], task_id: str) -> None:
@@ -6736,32 +6826,33 @@ def main(argv: list[str]) -> int:
             raise SystemExit("Usage: recover")
         try:
             with canonical_task_state_lock(shared=False, nonblocking=True):
-                state = load_state()
-                pending_planes = [
-                    key
-                    for key in (
-                        STATUS_ARCHIVE_OUTBOX_KEY,
-                        STATUS_ACTIVITY_OUTBOX_KEY,
-                    )
-                    if state.get(key) not in (None, {}, [])
-                ]
-                try:
-                    archive_recovered = recover_status_archive_outbox(state)
-                    activity_recovered = recover_status_activity_outbox(state)
-                    if archive_recovered or activity_recovered:
-                        refresh_derived_status_views(state)
-                except ActivityAuditInvariantError:
-                    raise
-                except RuntimeError as exc:
-                    raise ActivityAuditInvariantError(
-                        "canonical status recovery failed integrity checks",
-                        invariant="status_recovery_integrity",
-                        evidence={
-                            "command": command,
-                            "pending_planes": pending_planes,
-                            "error": str(exc),
-                        },
-                    ) from exc
+                with authoritative_task_state_transaction():
+                    state = load_state()
+                    pending_planes = [
+                        key
+                        for key in (
+                            STATUS_ARCHIVE_OUTBOX_KEY,
+                            STATUS_ACTIVITY_OUTBOX_KEY,
+                        )
+                        if state.get(key) not in (None, {}, [])
+                    ]
+                    try:
+                        archive_recovered = recover_status_archive_outbox(state)
+                        activity_recovered = recover_status_activity_outbox(state)
+                        if archive_recovered or activity_recovered:
+                            refresh_derived_status_views(state)
+                    except ActivityAuditInvariantError:
+                        raise
+                    except RuntimeError as exc:
+                        raise ActivityAuditInvariantError(
+                            "canonical status recovery failed integrity checks",
+                            invariant="status_recovery_integrity",
+                            evidence={
+                                "command": command,
+                                "pending_planes": pending_planes,
+                                "error": str(exc),
+                            },
+                        ) from exc
         except BlockingIOError:
             _emit_fail_closed(
                 ActivityAuditInvariantError(
@@ -6837,27 +6928,32 @@ def main(argv: list[str]) -> int:
     if command not in commands:
         raise SystemExit(f"Unknown command: {command}")
 
-    def run_mutation() -> None:
+    def run_mutation() -> dict[str, Any] | None:
         state = load_state()
         recover_status_archive_outbox(state)
         recover_status_activity_outbox(state)
         with buffer_activity_events():
             command_result = commands[command](state, args)
             if command_result is False:
-                return
-            sync_all(state)
+                return None
+            sync_all(state, refresh_views=False)
+        return deepcopy(state)
 
+    committed_state: dict[str, Any] | None
     if str(os.environ.get("ORCH_RUN_ID") or "").strip():
         config = load_config()
         with runtime_state_lock(config, shared=True):
             validate_active_status_command_lease(command, args)
             with canonical_task_state_lock(shared=False):
-                run_mutation()
-        return 0
-
-    with canonical_task_state_lock(shared=False):
-        validate_active_status_command_lease(command, args)
-        run_mutation()
+                with authoritative_task_state_transaction():
+                    committed_state = run_mutation()
+    else:
+        with canonical_task_state_lock(shared=False):
+            validate_active_status_command_lease(command, args)
+            with authoritative_task_state_transaction():
+                committed_state = run_mutation()
+    if committed_state is not None:
+        refresh_derived_status_views_if_current(committed_state)
     return 0
 
 
