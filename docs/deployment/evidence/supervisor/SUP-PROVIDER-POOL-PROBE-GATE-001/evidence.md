@@ -83,6 +83,15 @@ cd .orchestrator && "$PANTHEON_PY" -m pytest -q \
 
 Raw output: `raw/orchestrator-suites.txt`, `raw/acceptance-selections.txt`.
 
+### 2026-07-27 reviewer rework
+
+Claude review found that the acceptance-4 loop regression depended on the
+worker shell `PATH` containing `codex` and `agy`. The test now creates temporary
+executable stubs and points the provider config at their absolute paths, so the
+cache assertion is independent of the worker environment. Human/Ops also removed
+the stale reviewer label from this evidence file; reviewer remains `Claude` for
+the re-requested review.
+
 ### Known pre-existing failure, out of scope
 
 `scripts/test_supervisor.py::SupervisorRuntimeStateTests::test_run_once_reconciles_execution_mode_state_from_running_workers`
