@@ -3,29 +3,29 @@
   "schema_status": {
     "formal_schema_owner": "LOOP-PROD-002",
     "formalization_trigger": "L12-BFF-001 product-level task evidence admission.",
-    "note": "Schema-normalized owner evidence for the BFF-owned implementation and composed incidents authority. Independent reviewer approval is intentionally absent.",
+    "note": "Schema-normalized Codex2 owner evidence for the BFF-owned implementation and composed incidents authority. Independent Codex approval is intentionally absent.",
     "status": "formalized"
   },
   "evidence_policy": {
     "checksum_file": "docs/deployment/evidence/twelve-loop-gap/L12-BFF-001/evidence.sha256",
     "missing_or_contradicted_proof_fails_closed": true,
-    "mutation_rule": "Task-scoped changes require a reviewed Pantheon PR; append a record_log entry whenever the accepted evidence cut or review state changes.",
+    "mutation_rule": "Task-scoped changes require a reviewed Pantheon PR. This owner cut must pass all ten fail-closed evidence rules, and a record_log entry is appended whenever the accepted cut or review state changes.",
     "recording_mode": "logical_append_only",
     "redacted": true,
     "self_hashing": false
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-27T20:17:00Z",
-    "evidence_cut_semantics": "BFF-owned implementation, focused integration validation, and the services/incidents non-trading infrastructure-health consume authority are complete on this PR branch after composing current origin/dev and applying the Claude review repair. The BFF payload still contains no caller-supplied RuntimeBinding fields; the incident authority maps infrastructure subject evidence internally and exact replay is idempotent. Incident authority HTTP 409 is no longer treated as successful delivery, and durable health history is bounded with trigger-maintained status counters. Hosted stop/recovery verification and independent reviewer approval are not claimed.",
+    "evidence_cut_at": "2026-07-27T20:51:06Z",
+    "evidence_cut_semantics": "Owner evidence cut v1.0.0. Canonical task state was verified through journal sequence 2968. BFF-owned implementation, focused integration validation, and the services/incidents non-trading infrastructure-health consume authority are complete in delivery receipt fd5165b36f7cf5da014029839cca8d740a87a743. The BFF payload contains no caller-supplied RuntimeBinding fields; exact incident replay is idempotent; HTTP 409 remains visible in DLQ; and retention preserves active incident and unfinished delivery dependencies through restart and recovery. The receipt passed the required workflows, and this manifest passes all ten fail-closed evidence rules. Hosted activation and independent reviewer approval are not claimed.",
     "id": "L12-BFF-001",
     "overall_admission": "implementation_ready",
-    "owner": "Claude2",
+    "owner": "Codex2",
     "phase": "Twelve Loop Remediation / BFF",
     "product_level_required": true,
     "repository": "ajoe734/pantheon",
     "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-BFF-001/evidence.json",
-    "reviewer": "Claude",
+    "reviewer": "Codex",
     "target_environment": "dev integration and bounded local nonprod BFF",
     "target_maturity": "implementation_ready_pending_review",
     "task_branch": "task/L12-BFF-001",
@@ -33,7 +33,7 @@
   },
   "authorities": {
     "actual_state": [
-      "BFF downstream target registry and probe state",
+      "Canonical task-state journal sequence 2968 committed at 2026-07-27T20:48:26Z: owner Codex2, reviewer Codex, status in_progress, review_file bound to this manifest",
       "BFF delivery outbox, DLQ, replay audit, and incident mapping",
       "strict infrastructure-health telemetry admission in services/telemetry"
     ],
@@ -101,47 +101,125 @@
         "note": "Added the incidents-owned non-trading infrastructure-health consume route, exact replay idempotency, conflict rejection, fake RuntimeBinding payload isolation, and status-route resolution coverage.",
         "sha": "18a094764bdee7caccc4f516e3920f8b19285ed5",
         "subject": "L12-BFF-001: add infrastructure incident consume authority"
+      },
+      {
+        "delivery_state": "current_branch",
+        "note": "Preserved delivered dependency anchors during retention and added restart recovery coverage for an incident whose opening delivery exceeds the retention window.",
+        "sha": "774b7542ed1cb59486a881da3a3b296c9afba1bb",
+        "subject": "L12-BFF-001: anchor retention-safe recovery"
+      },
+      {
+        "bound_content_digest": "content-digest:sha256:ad7ac102d1de7039c2a0e55b11dc91c16a9838fc9cd2813fe3fb68a5c8984152",
+        "delivery_state": "v1_delivery_receipt_head",
+        "note": "Carries the digest-bound README and final implementation sources. The evidence-only follow-up changes evidence.json and evidence.sha256, which are outside the content digest.",
+        "receipt_role": "current_delivery_receipt",
+        "sha": "fd5165b36f7cf5da014029839cca8d740a87a743",
+        "subject": "L12-BFF-001: finalize retention recovery receipt"
       }
     ],
     "pull_request": {
       "base": "dev",
-      "head_sha": "f2be990d53f041cb52d6eadf4832b8873baab6b0",
+      "head_sha": "fd5165b36f7cf5da014029839cca8d740a87a743",
       "number": 4274,
       "url": "https://github.com/ajoe734/pantheon/pull/4274"
     },
-    "required_checks": []
+    "required_checks": [
+      {
+        "completed_at": "2026-07-27T20:49:50Z",
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "fd5165b36f7cf5da014029839cca8d740a87a743",
+        "run_id": 30304230246,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30304230246",
+        "workflow": "Commit trailers"
+      },
+      {
+        "completed_at": "2026-07-27T20:49:52Z",
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "fd5165b36f7cf5da014029839cca8d740a87a743",
+        "run_id": 30304230246,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30304230246",
+        "workflow": "Runtime mirror guard"
+      },
+      {
+        "completed_at": "2026-07-27T20:50:14Z",
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "fd5165b36f7cf5da014029839cca8d740a87a743",
+        "run_id": 30304230246,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30304230246",
+        "workflow": "Python packaging provision"
+      },
+      {
+        "completed_at": "2026-07-27T20:50:39Z",
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "fd5165b36f7cf5da014029839cca8d740a87a743",
+        "run_id": 30304230246,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30304230246",
+        "workflow": "Smoke acceptance"
+      }
+    ]
   },
   "validation": {
     "commands": [
       {
+        "claim_scope": "current",
         "command": "python3 scripts/dev/provision_python_distribution.py",
         "conclusion": "The checkout-scoped .venv-pantheon was provisioned and verified.",
         "result": "pass"
       },
       {
-        "command": "/home/lupin/pantheon/.venv/bin/python -m pytest -q services/control-plane/bff/test_bff_downstream_health_monitor.py services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py services/telemetry/test_infrastructure_health_ingest.py services/incidents/test_main_routes.py",
-        "conclusion": "167 passed with 29 unchanged FastAPI on_event, Starlette TestClient, and jsonschema RefResolver deprecation warnings.",
+        "claim_scope": "current",
+        "command": ".venv-pantheon/bin/python -m pytest -q services/control-plane/bff/test_bff_downstream_health_monitor.py services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py services/telemetry/test_infrastructure_health_ingest.py services/incidents/test_main_routes.py",
+        "conclusion": "168 tests collected and passed, including recovery after delivered-history retention and restart.",
         "result": "pass"
       },
       {
+        "claim_scope": "current",
         "command": "python3 -m py_compile services/control-plane/bff/downstream_health_monitor.py services/control-plane/bff/main.py services/control-plane/bff/test_bff_downstream_health_monitor.py services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py services/incidents/consumer.py services/incidents/main.py services/incidents/test_main_routes.py",
         "conclusion": "All task-owned Python sources compiled without error.",
         "result": "pass"
       },
       {
+        "claim_scope": "current",
         "command": "git diff --check origin/dev...HEAD",
         "conclusion": "No whitespace errors.",
         "result": "pass"
       },
       {
+        "claim_scope": "current",
         "command": "rg -n consume-infrastructure-health services/incidents services/incident",
         "conclusion": "services/incidents/main.py exposes POST /api/incidents/consume-infrastructure-health and services/incidents/test_main_routes.py covers create, exact replay, conflicting replay, fake RuntimeBinding payload isolation, and status-route resolve.",
         "result": "pass"
+      },
+      {
+        "claim_scope": "current",
+        "command": "gh pr view 4274 --json headRefOid,mergeStateStatus,reviewDecision,state and gh api repos/ajoe734/pantheon/commits/fd5165b36f7cf5da014029839cca8d740a87a743/check-runs",
+        "conclusion": "Point-in-time receipt observation: pull request head fd5165b36f7cf5da014029839cca8d740a87a743 was open and review-required; all four Branch CI jobs in pull_request run 30304230246 succeeded.",
+        "observations": [
+          {
+            "head_sha": "fd5165b36f7cf5da014029839cca8d740a87a743",
+            "observed_at": "2026-07-27T20:51:06Z",
+            "pull_request": 4274,
+            "subject": "pull_request:4274 delivery receipt head and required checks",
+            "value": "OPEN; REVIEW_REQUIRED; receipt run 30304230246: Commit trailers, Runtime mirror guard, Python packaging provision, and Smoke acceptance success"
+          }
+        ],
+        "observed_at": "2026-07-27T20:51:06Z",
+        "result": "pass"
+      },
+      {
+        "claim_scope": "current",
+        "command": "python3 scripts/validate_twelve_loop_gap_evidence.py docs/deployment/evidence/twelve-loop-gap/L12-BFF-001/evidence.json --json",
+        "conclusion": "All ten fail-closed evidence rules return zero rejections.",
+        "result": "pass"
       }
     ],
-    "validated_at": "2026-07-27T20:17:00Z",
-    "validated_base_sha": "b81edf76dfc14087dd7d5e3a6599448cb9d0bb09",
-    "validated_head_sha": "f2be990d53f041cb52d6eadf4832b8873baab6b0"
+    "validated_at": "2026-07-27T20:51:06Z",
+    "validated_base_sha": "852da0aa71d4e0d0293d5fcc8b5dff6d886386f7",
+    "validated_head_sha": "content-digest:sha256:ad7ac102d1de7039c2a0e55b11dc91c16a9838fc9cd2813fe3fb68a5c8984152"
   },
   "deployment": {
     "applicable": false,
@@ -151,7 +229,7 @@
     },
     "environment": "dev integration",
     "identity_admission": {
-      "proof": "The BFF infrastructure telemetry client fails closed without a service JWT, exact tenant header, and allowlisted producer authority.",
+      "proof": "At canonical journal sequence 2968, the BFF infrastructure telemetry client fails closed without a service JWT, exact tenant header, and allowlisted producer authority.",
       "status": "pass"
     },
     "public_bff_base_url": "not_applicable_until_composed_hosted_verification",
@@ -196,14 +274,15 @@
       "proof": [
         "SQLite WAL persists probe windows, target state, error windows, delivery claims, DLQ state, incident mappings, and replay audit.",
         "A restarted monitor reads the failed target and its incident mapping from the shared store.",
-        "A real local HTTP target was observed healthy, stopped and unavailable, restarted, and recovered; final real IncidentCase authority proof remains dependency-blocked."
+        "A real local HTTP target was observed healthy, stopped and unavailable, restarted, and recovered through the incidents-owned IncidentCase authority.",
+        "A delivered incident-open receipt older than retention remains protected while its incident is active; after restart, the recovery telemetry and incident-resolve delivery both complete with zero backlog."
       ],
-      "status": "pass_with_blocked_incident_composition"
+      "status": "pass"
     },
     "rollback_or_compensation": {
       "proof": [
         "The initializer preserves a pre-L12 delivery_outbox as a legacy table and migrates its pending, delivered, and DLQ receipts instead of deleting runtime state.",
-        "Delivered outbox history, completed probe windows, stale error windows, and replay audit records are pruned by bounded retention while retry/DLQ intent is retained.",
+        "Delivered outbox history, completed probe windows, stale error windows, and replay audit records are pruned by bounded retention while active incident anchors and unfinished delivery dependencies remain retained.",
         "Delivery status counters are trigger-maintained so GET /bff/v5/downstream-health reads summary rows instead of grouping over the full outbox history.",
         "Exact DLQ replay is operator-only, MFA-bound, approval-referenced, reason-bound, and durably audited.",
         "The controller grants no broker, order, allocation, runtime-control, or live-capital authority."
@@ -237,7 +316,7 @@
       "status": "pass"
     },
     "two_person_approval": {
-      "proof": "Owner Claude2 and reviewer Claude are distinct. Independent approval is pending and is not asserted in this evidence cut.",
+      "proof": "At canonical journal sequence 2968, owner Codex2 and reviewer Codex are distinct. Independent approval is pending and is not asserted in this evidence cut.",
       "status": "pending"
     }
   },
@@ -307,10 +386,37 @@
     "incident_authority_route": {
       "blocking_for_this_task": false,
       "containment": "The BFF persists and retries the exact non-trading incident intent; it never falls back to a fake RuntimeBinding or clears the mapping before authority confirmation.",
-      "description": "PR #4274 now exposes and tests POST /api/incidents/consume-infrastructure-health. Generic POST /api/incidents remains RuntimeBinding-backed; the new route maps infrastructure subject evidence inside the incidents authority and ignores caller-supplied fake RuntimeBinding fields.",
-      "expiry": "When PR #4274 is reviewed and merged into dev.",
+      "description": "Delivery receipt fd5165b36f7cf5da014029839cca8d740a87a743 exposes and tests POST /api/incidents/consume-infrastructure-health. Generic POST /api/incidents remains RuntimeBinding-backed; the new route maps infrastructure subject evidence inside the incidents authority and ignores caller-supplied fake RuntimeBinding fields.",
+      "expiry": "When the task pull request is independently reviewed and merged into dev.",
       "owner": "L12-BFF-001 / services/incidents",
-      "recheck_trigger": "After PR #4274 CI/review or after hosted L12-VERIFY-OBS-001 verification.",
+      "recheck_trigger": "After task CI/review or after hosted L12-VERIFY-OBS-001 verification.",
+      "severity": "low"
+    },
+    "independent_review": {
+      "blocking_for_this_task": true,
+      "containment": "The owner keeps overall_admission at implementation_ready and does not assert review_approved or done.",
+      "description": "At canonical journal sequence 2968, Codex2 owns this cut and Codex remains the distinct reviewer. Independent exact-head approval is pending for the implementation carried by delivery receipt fd5165b36f7cf5da014029839cca8d740a87a743.",
+      "expiry": "When Codex records an exact-head review decision.",
+      "owner": "Codex",
+      "recheck_trigger": "Any task branch head change or reviewer decision.",
+      "severity": "medium"
+    },
+    "canonical_snapshot_age": {
+      "blocking_for_this_task": false,
+      "containment": "The README and all sequence-required manifest claims bind the same journal sequence so a reviewer can identify later task-state movement.",
+      "description": "Canonical task-state journal sequence 2968, committed at 2026-07-27T20:48:26Z, is the point-in-time owner/reviewer/status snapshot for this cut. Later journal events do not retroactively alter this recorded observation.",
+      "expiry": "At independent review or any owner/reviewer/status change.",
+      "owner": "Codex2",
+      "recheck_trigger": "A newer governed task-state read.",
+      "severity": "low"
+    },
+    "delivery_receipt_intermediate_state": {
+      "blocking_for_this_task": false,
+      "containment": "The v1.0.0 evidence-only commit changes only evidence.json and evidence.sha256; every content-bound artifact remains byte-identical to the receipt tree.",
+      "description": "Delivery receipt fd5165b36f7cf5da014029839cca8d740a87a743 carries the v1.0.0 bound README and final implementation sources with all required checks green. The manifest and companion checksum necessarily follow that receipt so the content digest remains acyclic and all ten rules can verify the receipt offline.",
+      "expiry": "When the evidence-only commit lands on the task branch.",
+      "owner": "Codex2",
+      "recheck_trigger": "Any change to a digest-bound artifact.",
       "severity": "low"
     }
   },
@@ -332,17 +438,16 @@
       "strict_telemetry_admitted": true
     },
     "self_hash_omitted": true,
-    "self_hash_reason": "The companion checksum file contains the manifest digest and avoids recursive self-hashing.",
+    "self_hash_reason": "The v1.0.0 companion checksum seals this manifest, while delivery receipt fd5165b36f7cf5da014029839cca8d740a87a743 binds the finalized source and README bytes without recursive self-hashing.",
     "source_artifact_sha256_by_epoch": {
-      "validated_2026_07_27": {
-        "services/control-plane/bff/downstream_health_monitor.py": "e66b67e9ff1976af3591b07eb1167d531f3edeac95b0024b5c41fcb22147b045",
-        "services/control-plane/bff/main.py": "2aa2a8b6518f3e1b1b054f6c4742ac46802b145461a23e6e8454aac38e4fc958",
-        "services/control-plane/bff/test_bff_downstream_health_monitor.py": "9852f7df56d184435b35d8357dca8a54ff06589b027014e292a35c12559d3ab7",
-        "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py": "25390e93cf05c11e5cf0111c84daf28ab3328b5fa614709e53b13ebb644a1381",
-        "services/incidents/consumer.py": "01aa9e8eb04895bb289419b3b1c548b010e79de23e3f0b02643c06f317ca70d7",
-        "services/incidents/main.py": "ae230e131355f74eb41427d39a8eb3e2fbee199d06ed86b111dbe7cd59005a1d",
-        "services/incidents/test_main_routes.py": "3e00cfd25180afd3f45da1713f4fb2446e12d04b8acac6e506f37ce076d9ec1f"
-      }
+      "docs/deployment/evidence/twelve-loop-gap/L12-BFF-001/README.md@v1.0.0": "4bbe5756b3f521761987a4b1a9224d64becc472f281765867265d3c25923343f",
+      "services/control-plane/bff/downstream_health_monitor.py@v1.0.0": "c5d2291c65348e1122e7c8dbb6ea2f8501f275e22656cfade49a6a408fdc5e36",
+      "services/control-plane/bff/main.py@v1.0.0": "2aa2a8b6518f3e1b1b054f6c4742ac46802b145461a23e6e8454aac38e4fc958",
+      "services/control-plane/bff/test_bff_downstream_health_monitor.py@v1.0.0": "9852f7df56d184435b35d8357dca8a54ff06589b027014e292a35c12559d3ab7",
+      "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py@v1.0.0": "25f1c791e24ebdd93643ce207db36d508246a7b06707ffcecb7b48624386b654",
+      "services/incidents/consumer.py@v1.0.0": "01aa9e8eb04895bb289419b3b1c548b010e79de23e3f0b02643c06f317ca70d7",
+      "services/incidents/main.py@v1.0.0": "ae230e131355f74eb41427d39a8eb3e2fbee199d06ed86b111dbe7cd59005a1d",
+      "services/incidents/test_main_routes.py@v1.0.0": "3e00cfd25180afd3f45da1713f4fb2446e12d04b8acac6e506f37ce076d9ec1f"
     }
   },
   "record_log": [
@@ -389,6 +494,15 @@
       "reference": "https://github.com/ajoe734/pantheon/pull/4274",
       "sequence": 5,
       "sha": "f2be990d53f041cb52d6eadf4832b8873baab6b0",
+      "status": "implementation_ready_pending_review"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "retention_recovery_delivery_receipt_ready",
+      "recorded_at": "2026-07-27T20:51:06Z",
+      "reference": "docs/deployment/evidence/twelve-loop-gap/L12-BFF-001/README.md",
+      "sequence": 6,
+      "sha": "fd5165b36f7cf5da014029839cca8d740a87a743",
       "status": "implementation_ready_pending_review"
     }
   ]
