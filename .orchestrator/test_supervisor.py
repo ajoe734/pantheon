@@ -5160,8 +5160,132 @@ class DispatchStatusSyncTests(unittest.TestCase):
             ["github_sync", "lock_enter", "locked_cycle", "lock_exit"],
         )
 
+    def test_run_once_prefetches_ownerless_pr_metadata_before_runtime_lock(self) -> None:
+        task_id = "SUP-SQUASH-PREFETCH"
+        head = "a" * 40
+        status = {
+            "tasks": [
+                {
+                    "id": task_id,
+                    "status": "in_progress",
+                    "owner": "Claude",
+                    "reviewer": "Codex2",
+                }
+            ]
+        }
+        runtime_snapshot = {
+            "workers": {
+                "claude-run": {
+                    "run_id": "claude-run",
+                    "task_id": task_id,
+                    "logical_agent_id": "claude",
+                    "agent_id": "claude",
+                    "provider": "claude",
+                    "status": "completed",
+                    "runner_status": "completed",
+                    "exit_code": 0,
+                    "lease_acquired_at": "2026-07-27T14:00:00Z",
+                    "commit_progress_count": 1,
+                    "last_commit_progress_at": "2026-07-27T14:01:00Z",
+                    "work_progress_snapshot": {"commit_sha": head},
+                    "request_snapshot": {
+                        "reason": supervisor.REASON_OWNED_IN_PROGRESS
+                    },
+                }
+            },
+            "queue": {"events": {}},
+        }
+        self.config["agents"].update(
+            {
+                "claude": {
+                    "id": "claude",
+                    "display_name": "Claude",
+                    "provider": "claude",
+                },
+                "codex2": {
+                    "id": "codex2",
+                    "display_name": "Codex2",
+                    "provider": "codex2",
+                },
+            }
+        )
+        self.config["branch_workflow"] = {
+            "task_branch_prefix": "task/",
+            "dev_branch": "dev",
+        }
+        lock_held = False
+        call_order: list[str] = []
+
+        @contextlib.contextmanager
+        def runtime_lock(*_args: object, **_kwargs: object):
+            nonlocal lock_held
+            lock_held = True
+            call_order.append("lock_enter")
+            try:
+                yield
+            finally:
+                call_order.append("lock_exit")
+                lock_held = False
+
+        def gh_lookup(*_args: object, **_kwargs: object) -> mock.Mock:
+            self.assertFalse(lock_held, "gh PR lookup ran under runtime lock")
+            call_order.append("gh_lookup")
+            return mock.Mock(
+                returncode=0,
+                stdout=json.dumps(
+                    [
+                        {
+                            "number": 4254,
+                            "state": "MERGED",
+                            "headRefName": f"task/{task_id}",
+                            "headRefOid": head,
+                            "baseRefName": "dev",
+                            "mergedAt": "2026-07-27T14:10:00Z",
+                            "mergeCommit": {"oid": "b" * 40},
+                            "url": "https://github.com/ajoe734/pantheon/pull/4254",
+                        }
+                    ]
+                ),
+            )
+
+        def locked_cycle(*_args: object, **kwargs: object) -> bool:
+            call_order.append("locked_cycle")
+            snapshot = kwargs["ownerless_pr_snapshots"][task_id]
+            self.assertEqual(snapshot["worker_run_id"], "claude-run")
+            self.assertEqual(snapshot["delivery_head"], head)
+            self.assertEqual(snapshot["records"][0]["number"], 4254)
+            return False
+
+        with (
+            mock.patch.object(supervisor, "probe_provider_reports", return_value=({}, {})),
+            mock.patch.object(
+                supervisor,
+                "load_runtime_state_snapshot",
+                return_value=runtime_snapshot,
+            ),
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "resolve_gh_binary", return_value="gh"),
+            mock.patch.object(
+                supervisor,
+                "_repository_slug_from_remote",
+                return_value="ajoe734/pantheon",
+            ),
+            mock.patch.object(supervisor, "run_gh_process", side_effect=gh_lookup),
+            mock.patch.object(supervisor, "pending_worker_base_refs", return_value=set()),
+            mock.patch.object(supervisor, "sync_github_bus", return_value=False),
+            mock.patch.object(supervisor, "runtime_state_lock", side_effect=runtime_lock),
+            mock.patch.object(supervisor, "_run_once_locked", side_effect=locked_cycle),
+        ):
+            changed = supervisor.run_once(self.config, watch=False)
+
+        self.assertFalse(changed)
+        self.assertEqual(
+            call_order,
+            ["gh_lookup", "lock_enter", "locked_cycle", "lock_exit"],
+        )
+
     def test_run_once_confirms_worker_termination_after_runtime_lock_release(self) -> None:
-        """SIGTERM is immediate; confirm_kill's poll sleeps are deferred."""
+        """Both the signal and confirm/poll path run after admission."""
 
         call_order: list[str] = []
 
@@ -5173,26 +5297,28 @@ class DispatchStatusSyncTests(unittest.TestCase):
             finally:
                 call_order.append("lock_exit")
 
-        def send_signal(pid: int, sent_signal: int) -> None:
-            self.assertEqual((pid, sent_signal), (4242, signal.SIGTERM))
-            call_order.append("sigterm")
-
         def confirm_kill(pid: int, **_kwargs: object) -> bool:
             self.assertEqual(pid, 4242)
-            self.assertTrue(_kwargs["term_already_sent"])
             self.assertTrue(_kwargs["is_alive"](pid))
             call_order.append("confirm_kill")
+            _kwargs["send_signal"](pid, signal.SIGTERM)
             return True
 
         def locked_cycle() -> bool:
-            self.assertTrue(supervisor.terminate_worker_pid(4242))
+            self.assertFalse(supervisor.terminate_worker_pid(4242))
             return True
 
         with (
             mock.patch.object(supervisor, "runtime_state_lock", side_effect=runtime_lock),
             mock.patch.object(supervisor, "pid_is_alive", return_value=True),
             mock.patch.object(supervisor, "worker_pid_start_ticks", return_value=777),
-            mock.patch.object(supervisor.os, "kill", side_effect=send_signal),
+            mock.patch.object(
+                supervisor.os,
+                "kill",
+                side_effect=lambda pid, sent_signal: call_order.append(
+                    f"signal:{pid}:{sent_signal}"
+                ),
+            ),
             mock.patch.object(
                 supervisor.rewrite_worker_lifecycle,
                 "confirm_kill",
@@ -5207,7 +5333,12 @@ class DispatchStatusSyncTests(unittest.TestCase):
         self.assertTrue(changed)
         self.assertEqual(
             call_order,
-            ["lock_enter", "sigterm", "lock_exit", "confirm_kill"],
+            [
+                "lock_enter",
+                "lock_exit",
+                "confirm_kill",
+                f"signal:4242:{signal.SIGTERM}",
+            ],
         )
 
     def test_deferred_termination_does_not_signal_a_reused_pid(self) -> None:
@@ -5215,14 +5346,6 @@ class DispatchStatusSyncTests(unittest.TestCase):
 
         call_order: list[str] = []
         start_ticks = iter([111, 222])
-
-        def confirm_kill(pid: int, **kwargs: object) -> bool:
-            self.assertEqual(pid, 4242)
-            call_order.append("confirm_kill")
-            # PID 4242 now belongs to a different process. The identity-bound
-            # liveness callback must report the original worker gone.
-            self.assertFalse(kwargs["is_alive"](pid))
-            return True
 
         with (
             mock.patch.object(supervisor, "pid_is_alive", return_value=True),
@@ -5241,20 +5364,198 @@ class DispatchStatusSyncTests(unittest.TestCase):
             mock.patch.object(
                 supervisor.rewrite_worker_lifecycle,
                 "confirm_kill",
-                side_effect=confirm_kill,
-            ),
+            ) as confirm_kill,
         ):
-            self.assertTrue(
+            self.assertFalse(
                 supervisor._run_with_deferred_dispatch_status_syncs(
                     self.config,
                     lambda: supervisor.terminate_worker_pid(4242),
                 )
             )
 
+        self.assertEqual(call_order, [])
+        confirm_kill.assert_not_called()
+
+    def test_deferred_termination_without_start_ticks_fails_closed(self) -> None:
+        """An unreadable /proc identity never authorizes a signal."""
+
+        with (
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "worker_pid_start_ticks", return_value=None),
+            mock.patch.object(supervisor.os, "kill") as send_signal,
+            mock.patch.object(
+                supervisor.rewrite_worker_lifecycle,
+                "confirm_kill",
+            ) as confirm_kill,
+        ):
+            changed = supervisor._run_with_deferred_dispatch_status_syncs(
+                self.config,
+                lambda: supervisor.terminate_worker_pid(4242),
+            )
+
+        self.assertFalse(changed)
+        send_signal.assert_not_called()
+        confirm_kill.assert_not_called()
+
+    def test_worker_remains_nonterminal_until_deferred_confirmation(self) -> None:
+        worker = {
+            "run_id": "chair-run",
+            "task_id": "OPS-CHAIR-REVIEW",
+            "pid": 4242,
+            "status": "running",
+        }
+
+        def locked_cycle() -> bool:
+            result = supervisor.poll_worker_assignment_stage(
+                self.config,
+                {"workers": {"chair-run": worker}},
+                worker,
+                run_id="chair-run",
+                provider_report={},
+                task_map={},
+                active_worker_statuses={"running"},
+                alive=True,
+            )
+            self.assertEqual(result, {"changed": False, "stop": True})
+            self.assertEqual(worker["status"], "running")
+            return result["changed"]
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "chair_review_worker_artifacts_applied",
+                return_value=True,
+            ),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "worker_pid_start_ticks", return_value=777),
+            mock.patch.object(
+                supervisor.rewrite_worker_lifecycle,
+                "confirm_kill",
+                return_value=True,
+            ) as confirm_kill,
+        ):
+            changed = supervisor._run_with_deferred_dispatch_status_syncs(
+                self.config,
+                locked_cycle,
+            )
+
+        self.assertFalse(changed)
+        self.assertEqual(worker["status"], "running")
+        confirm_kill.assert_called_once()
+
+    def test_auto_commit_archive_subprocess_runs_after_runtime_admission(self) -> None:
+        self.config["paths"].update(
+            {
+                "state_file": str(self.root / "state.json"),
+                "event_queue": str(self.root / "event-queue.jsonl"),
+            }
+        )
+        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
+        script = self.root / ".orchestrator" / "auto_commit_archive.py"
+        script.parent.mkdir(parents=True, exist_ok=True)
+        script.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+        self.config["auto_commit_archive"] = {
+            "enabled": True,
+            "tick_interval_seconds": 0,
+            "script_timeout_seconds": 180,
+        }
+        lock_depth = 0
+        call_order: list[str] = []
+
+        @contextlib.contextmanager
+        def runtime_lock(*_args: object, **_kwargs: object):
+            nonlocal lock_depth
+            lock_depth += 1
+            call_order.append("lock_enter")
+            try:
+                yield
+            finally:
+                call_order.append("lock_exit")
+                lock_depth -= 1
+
+        def run_archive(*_args: object, **_kwargs: object) -> mock.Mock:
+            self.assertEqual(lock_depth, 0, "archive subprocess ran under runtime lock")
+            call_order.append("archive_subprocess")
+            return mock.Mock(
+                returncode=0,
+                stdout="auto_commit_archive: opened PR for task briefs\n",
+                stderr="",
+            )
+
+        def locked_cycle() -> bool:
+            state = supervisor.load_runtime_state(self.config)
+            scheduled = supervisor.maybe_auto_commit_archive(self.config, state)
+            self.assertTrue(scheduled)
+            supervisor.save_runtime_state(self.config, state)
+            return scheduled
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "runtime_state_lock",
+                side_effect=runtime_lock,
+            ),
+            mock.patch.object(
+                supervisor.subprocess,
+                "run",
+                side_effect=run_archive,
+            ),
+            mock.patch.object(supervisor, "refresh_dashboard_runtime_artifacts"),
+        ):
+            changed = supervisor._run_with_deferred_dispatch_status_syncs(
+                self.config,
+                locked_cycle,
+            )
+
+        self.assertTrue(changed)
         self.assertEqual(
             call_order,
-            [f"signal:{signal.SIGTERM}", "confirm_kill"],
+            [
+                "lock_enter",
+                "lock_exit",
+                "archive_subprocess",
+                "lock_enter",
+                "lock_exit",
+            ],
         )
+        bucket = supervisor.load_runtime_state(self.config)["auto_commit_archive"]
+        self.assertIsNone(bucket["pending_token"])
+        self.assertIsNone(bucket["pending_since"])
+        self.assertEqual(bucket["last_exit"], 0)
+        self.assertIsNone(bucket["last_error"])
+
+    def test_auto_commit_archive_result_rejects_a_stale_token(self) -> None:
+        self.config["paths"].update(
+            {
+                "state_file": str(self.root / "state.json"),
+                "event_queue": str(self.root / "event-queue.jsonl"),
+            }
+        )
+        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
+        state = supervisor.load_runtime_state(self.config)
+        state["auto_commit_archive"] = {
+            "pending_token": "current-token",
+            "pending_since": "2026-07-27T15:00:00Z",
+        }
+        supervisor.save_runtime_state(self.config, state)
+
+        applied = supervisor.apply_auto_commit_archive_result(
+            self.config,
+            {
+                "token": "stale-token",
+                "scheduled_at": "2026-07-27T15:00:00Z",
+            },
+            {
+                "finished_at": "2026-07-27T15:00:01Z",
+                "last_exit": 0,
+                "opened_pr": True,
+            },
+        )
+
+        self.assertFalse(applied)
+        bucket = supervisor.load_runtime_state(self.config)["auto_commit_archive"]
+        self.assertEqual(bucket["pending_token"], "current-token")
+        self.assertNotIn("last_exit", bucket)
 
     def test_sync_status_pipeline_uses_installed_command_runtime(self) -> None:
         command_env = {
@@ -5525,6 +5826,70 @@ class TaskStateShadowCatchupTests(unittest.TestCase):
             supervisor.sync_task_state_shadow(self.config, self.runtime_state)
 
         self.assertEqual(reads, ["snapshot"])
+
+    def test_run_once_reconciles_task_state_before_runtime_admission(self) -> None:
+        canonical = self.write_status("todo")
+        supervisor.rewrite_task_state_store.append_state_commit(
+            self.event_log,
+            canonical,
+            source="migration",
+        )
+        self.config["task_state_store"]["mode"] = "authoritative"
+        runtime_snapshot = {"supervisor": {}}
+        lock_held = False
+        call_order: list[str] = []
+
+        @contextlib.contextmanager
+        def runtime_lock(*_args: object, **_kwargs: object):
+            nonlocal lock_held
+            lock_held = True
+            call_order.append("lock_enter")
+            try:
+                yield
+            finally:
+                call_order.append("lock_exit")
+                lock_held = False
+
+        real_sync = supervisor.sync_task_state_shadow
+
+        def reconcile_before_lock(
+            config: dict[str, object],
+            state: dict[str, object],
+        ) -> bool:
+            self.assertFalse(lock_held)
+            call_order.append("task_state_shadow")
+            return real_sync(config, state)
+
+        def locked_cycle(*_args: object, **kwargs: object) -> bool:
+            call_order.append("locked_cycle")
+            snapshot = kwargs["task_state_shadow_snapshot"]
+            self.assertTrue(snapshot["report"]["ok"])
+            self.assertTrue(snapshot["report"]["caught_up"])
+            return False
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "load_runtime_state_snapshot",
+                return_value=runtime_snapshot,
+            ),
+            mock.patch.object(
+                supervisor,
+                "sync_task_state_shadow",
+                side_effect=reconcile_before_lock,
+            ),
+            mock.patch.object(supervisor, "probe_provider_reports", return_value=({}, {})),
+            mock.patch.object(supervisor, "sync_github_bus", return_value=False),
+            mock.patch.object(supervisor, "runtime_state_lock", side_effect=runtime_lock),
+            mock.patch.object(supervisor, "_run_once_locked", side_effect=locked_cycle),
+        ):
+            changed = supervisor.run_once(self.config, watch=False)
+
+        self.assertFalse(changed)
+        self.assertEqual(
+            call_order,
+            ["task_state_shadow", "lock_enter", "locked_cycle", "lock_exit"],
+        )
 
     def test_reconciliation_report_describes_one_journal_generation(self) -> None:
         """The projection report must not straddle two journal generations.
@@ -6480,7 +6845,17 @@ class SupervisorRuntimeAdmissionLockTests(unittest.TestCase):
         self.assertIn("lambda: _run_once_locked(", run_once_source)
         self.assertIn('"sync_github_bus"', run_once_source)
         self.assertNotIn('"sync_github_bus"', locked_cycle_source)
+        self.assertIn(
+            "prefetch_ownerless_merged_pr_snapshots",
+            run_once_source,
+        )
+        self.assertNotIn(
+            "_merged_pull_requests_for_branch",
+            locked_cycle_source,
+        )
         self.assertNotIn("probe_provider_reports", locked_cycle_source)
+        self.assertIn("prefetch_task_state_shadow", run_once_source)
+        self.assertNotIn("sync_task_state_shadow", locked_cycle_source)
         self.assertIn("_fetch_worker_base_ref", run_once_source)
         self.assertNotIn("_fetch_worker_base_ref", locked_cycle_source)
         self.assertIn(
@@ -6488,8 +6863,16 @@ class SupervisorRuntimeAdmissionLockTests(unittest.TestCase):
             locked_operation_source,
         )
         self.assertIn(
-            "for pid, expected_start_ticks, term_sent in deferred_terminations",
+            "for pid, expected_start_ticks in deferred_terminations",
             locked_operation_source,
+        )
+        self.assertIn(
+            "execute_auto_commit_archive(config, action)",
+            locked_operation_source,
+        )
+        self.assertNotIn(
+            "execute_auto_commit_archive",
+            locked_cycle_source,
         )
         self.assertEqual(
             queue_writer_source.count("replace_event_queue(config, events)"),
@@ -13657,6 +14040,129 @@ class OwnerlessInProgressReconciliationTests(unittest.TestCase):
         self.assertEqual(evidence["delivery_shape"], "squash_pr_metadata")
         self.assertEqual(evidence["pull_request_number"], 4213)
         self.assertEqual(evidence["pull_request_merged_at"], "2026-07-26T20:18:15Z")
+
+    def test_prefetched_squash_metadata_never_falls_back_to_locked_gh(self) -> None:
+        task_id = "SUP-PREFETCHED-SQUASH"
+        head = "b" * 40
+        merge = "c" * 40
+        task = self._task(task_id)
+        worker = self._worker(
+            task_id,
+            work_progress_snapshot={"commit_sha": head},
+        )
+        state = {
+            "workers": {worker["run_id"]: worker},
+            "queue": {"events": {}},
+        }
+        status = {"tasks": [task], "handoffs": []}
+        identity = supervisor._ownerless_pr_snapshot_identity(
+            self.config,
+            task_id,
+            task,
+            worker,
+        )
+        self.assertIsNotNone(identity)
+        snapshot = {
+            **identity,
+            "fetched_at": "2026-07-26T19:59:59Z",
+            "records": [
+                {
+                    "number": 4213,
+                    "state": "MERGED",
+                    "headRefName": f"task/{task_id}",
+                    "headRefOid": head,
+                    "baseRefName": "dev",
+                    "mergedAt": "2026-07-26T20:18:15Z",
+                    "mergeCommit": {"oid": merge},
+                    "url": "https://github.com/ajoe734/pantheon/pull/4213",
+                }
+            ],
+        }
+
+        def fake_ancestor(_root: object, commit: str, _ref: str) -> bool:
+            return commit == merge
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(
+                supervisor,
+                "_git_ref_exists",
+                side_effect=lambda _root, ref: ref == "origin/dev",
+            ),
+            mock.patch.object(
+                supervisor,
+                "_git_commit_is_ancestor",
+                side_effect=fake_ancestor,
+            ),
+            mock.patch.object(supervisor, "_git_capture", return_value=f"{merge}\n"),
+            mock.patch.object(
+                supervisor,
+                "task_branch_has_unmerged_commits",
+                return_value=False,
+            ),
+            mock.patch.object(
+                supervisor,
+                "_merged_pull_requests_for_branch",
+                side_effect=AssertionError("locked reconciliation retried gh"),
+            ),
+            mock.patch.object(
+                supervisor,
+                "_prepare_ownerless_review_handoff_locked",
+                return_value=None,
+            ) as prepare_handoff,
+        ):
+            changed = supervisor.reconcile_ownerless_in_progress_tasks(
+                self.config,
+                state,
+                prefetched_merged_prs={task_id: snapshot},
+            )
+
+        self.assertFalse(changed)
+        evidence = prepare_handoff.call_args.kwargs["evidence"]
+        self.assertEqual(evidence["delivery_shape"], "squash_pr_metadata")
+        self.assertEqual(evidence["pull_request_number"], 4213)
+
+    def test_stale_prefetched_pr_identity_fails_closed(self) -> None:
+        task_id = "SUP-STALE-PREFETCH"
+        task = self._task(task_id)
+        worker = self._worker(task_id)
+        state = {
+            "workers": {worker["run_id"]: worker},
+            "queue": {"events": {}},
+        }
+        snapshot = {
+            **supervisor._ownerless_pr_snapshot_identity(
+                self.config,
+                task_id,
+                task,
+                worker,
+            ),
+            "owner": "DifferentOwner",
+            "records": [],
+        }
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "load_status",
+                return_value={"tasks": [task], "handoffs": []},
+            ),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(
+                supervisor,
+                "merged_owner_delivery_evidence",
+            ) as merged_evidence,
+        ):
+            changed = supervisor.reconcile_ownerless_in_progress_tasks(
+                self.config,
+                state,
+                prefetched_merged_prs={task_id: snapshot},
+            )
+
+        self.assertFalse(changed)
+        self.assertEqual(task["status"], "in_progress")
+        merged_evidence.assert_not_called()
 
     def test_reconciled_evidence_records_the_bound_delivery(self) -> None:
         worker = self._worker("SUP-BOUND")
