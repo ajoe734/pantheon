@@ -1,233 +1,330 @@
 {
-  "schema_version": "supervisor_runtime_refresh_evidence.v1",
+  "schema_version": "supervisor_runtime_refresh_evidence.v2",
   "schema_status": {
     "status": "task_scoped",
     "product_level_required": false,
-    "note": "Task-scoped owner evidence manifest for a governed command runtime refresh. The task installs an already accepted dev commit into the configured supervisor command root and hands the live supervisor process over to it. It changes no product code, no orchestrator decision logic, and no live config, and claims no hosted activation or capital authority."
+    "note": "Final task-scoped runtime proof. Live refresh, rollback, and roll-forward are complete; exact-head independent review and merge remain the closeout gate."
   },
   "task": {
     "id": "SUP-COMMAND-RUNTIME-REFRESH-001",
-    "title": "Refresh governed supervisor command runtime without config changes",
+    "title": "Refresh installed supervisor command runtime safely",
     "phase": "Supervisor Runtime Delivery",
-    "owner": "Claude",
+    "owner": "Codex",
     "reviewer": "Codex2",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/SUP-COMMAND-RUNTIME-REFRESH-001",
-    "depends_on": ["SUP-WORKER-TRUTH-RECONCILE-001"],
+    "depends_on": [
+      "SUP-WORKER-TRUTH-RECONCILE-001"
+    ],
     "review_file": "docs/deployment/evidence/supervisor/SUP-COMMAND-RUNTIME-REFRESH-001/evidence.json",
     "narrative": "docs/deployment/evidence/supervisor/SUP-COMMAND-RUNTIME-REFRESH-001/evidence.md"
   },
   "delivery_status": {
-    "state": "partial",
-    "stage_1_install": "complete and verified",
-    "stage_2_process_handoff": "blocked on a permission this background worker does not hold",
-    "live_system_effect_so_far": "The live supervisor still runs the runtime it was already running (pid 901543 from dev-root-bdbd0a99bf68 at bdbd0a99bf68). The only change is that the command root named by the live config's watchdog command now holds the accepted dev runtime instead of an older commit.",
-    "blocked_reason": "Stopping pid 901543 and launching the replacement was refused by the harness permission layer on every attempt, including the durable intentional-restart declaration. The orchestrator_approval_broker MCP server exposed no tools to this session, so no approval route existed.",
-    "unblock_command": "bash docs/deployment/evidence/supervisor/SUP-COMMAND-RUNTIME-REFRESH-001/handoff/swap-supervisor.sh /home/lupin/pantheon-ci-deploy/dev-root-d054bd49cb48 refresh-d054"
+    "state": "runtime_proof_complete_review_pending",
+    "live_refresh": "complete",
+    "rollback_drill": "complete",
+    "rollforward": "complete",
+    "final_review": "pending",
+    "final_merge": "pending",
+    "done_transition": "not permitted before reviewed PR merge"
   },
-  "scope_rules": {
+  "scope_invariants": {
     "live_config_not_edited": true,
-    "live_config_sha256_before": "cd98e7c5c259b7eb3fe5bda23afddb40fd04381f86a1525fa8a7f46b1eddaa54",
-    "live_config_sha256_after_stage_1": "cd98e7c5c259b7eb3fe5bda23afddb40fd04381f86a1525fa8a7f46b1eddaa54",
-    "provisioning_paths_deliberately_not_run": [
+    "live_config_path": "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json",
+    "live_config_sha256_before": "adab474b01b99630041cb06d565ae9dbfd7d52badc1d9e612b7cb8d4129de77e",
+    "live_config_sha256_after_refresh": "adab474b01b99630041cb06d565ae9dbfd7d52badc1d9e612b7cb8d4129de77e",
+    "live_config_sha256_after_rollback": "adab474b01b99630041cb06d565ae9dbfd7d52badc1d9e612b7cb8d4129de77e",
+    "live_config_sha256_after_rollforward": "adab474b01b99630041cb06d565ae9dbfd7d52badc1d9e612b7cb8d4129de77e",
+    "provisioning_paths_not_run": [
       "scripts/sync-dev-root.sh",
       "scripts/provision_live_supervisor_config.py",
       "scripts/check_config_drift.py --fix"
     ],
-    "provisioning_exclusion_reason": "Each of these rewrites the live supervisor config as a side effect, which this task forbids.",
-    "task_board_hand_edits": "none; the only canonical mutation was the governed ai-status.sh start / blocker commands"
+    "manual_task_board_edits": false,
+    "restart_serialization": "PID-bound intentional-restart declaration followed by exclusive runtime admission lock around TERM"
   },
   "candidate": {
-    "commit": "6578ef968f7e0374b046de0afb5b07ce2f81558e",
-    "tree": "55680b29ccb50ab5c1771ddd9f10590f1ba774c9",
-    "source": "exact origin/dev tip",
-    "carries_delivery": {
-      "pull_request": 4223,
-      "task_id": "SUP-WORKER-TRUTH-RECONCILE-001",
-      "head_ref_oid": "16d4e504ab90e04a46abc7f30923f0dfdf59659f",
-      "merged_at": "2026-07-26T22:09:29Z",
-      "merge_commit": "6578ef968f7e0374b046de0afb5b07ce2f81558e"
-    },
-    "required_checks": {
-      "source": "gh api repos/ajoe734/pantheon/branches/dev/protection",
-      "contexts": ["Commit trailers", "Runtime mirror guard", "Smoke acceptance"],
-      "results_on_candidate": {
+    "bootstrap_pull_request": 4254,
+    "bootstrap_reviewed_head": "5d1f069dc902c0692310879c02fedad4bc131b68",
+    "merge_commit": "29054ab270d552a56ed071cedf3f45150e948b6a",
+    "tree": "a8d7dcc6fa23ad02e1e62f1f8eb13cfc73cce466",
+    "merged_at": "2026-07-27T15:56:33Z",
+    "source_at_selection": "exact origin/dev tip",
+    "is_accepted_dev_ancestor": true,
+    "contains_supervisor_truth_repair": [
+      "squash_merged_delivery_metadata",
+      "merged_owner_delivery_evidence"
+    ],
+    "contains_approval_binding": [
+      "REVIEW_PR",
+      "REVIEW_HEAD_SHA",
+      "REVIEW_BASE",
+      "REVIEW_HEAD_BRANCH"
+    ],
+    "checks": {
+      "branch_ci_run": 30282382789,
+      "orchestrator_sync_run": 30282382774,
+      "results": {
         "Commit trailers": "success",
         "Runtime mirror guard": "success",
-        "Smoke acceptance": "success"
-      },
-      "other_runs_on_candidate": {
-        "Forward to orchestrator": "success",
-        "Branch CI Gate": "success",
-        "Orchestrator Sync": "success",
-        "Publish Promote": "success",
-        "Hourly Publish Cut": "failure"
-      },
-      "non_required_failure_note": "Scheduled run 30222860390 (Hourly Publish Cut) failed its own 'Check if dev advanced' step. It is not a required context and does not gate the runtime."
-    },
-    "contains_supervisor_truth_repair": {
-      "verified_by": "git show 6578ef968:.orchestrator/supervisor.py | grep -c 'squash_merged_delivery_metadata|merged_owner_delivery_evidence'",
-      "matches": 7
-    },
-    "smoke": {
-      "command": "env -C .orchestrator python3 -m unittest test_supervisor.OwnerlessInProgressReconciliationTests test_supervisor.MergedDeliveryEvidenceTests test_supervisor.SquashMergedDeliveryEvidenceTests test_supervisor.MergedPullRequestLookupTests test_supervisor.WorkerDeliveryIdentityTests",
-      "result": "Ran 55 tests, OK",
-      "run_from": "task worktree at the candidate tree, so the installed root was left clean",
-      "py_compile": "python3 -m py_compile .orchestrator/{supervisor,common,worker_runner,supervisor_watchdog}.py scripts/ai_status.py in the installed root — OK"
+        "Python packaging provision": "success",
+        "Smoke acceptance": "success",
+        "Forward to orchestrator": "success"
+      }
     }
   },
-  "installed_command_root": {
-    "path": "/home/lupin/pantheon-ci-deploy/dev-root-d054bd49cb48",
-    "selection_reason": "It is the only command root the live config references (watchdog.supervisor_command). Installing here refreshes the governed runtime without any config edit and simultaneously removes a latent downgrade trap: before this task the config-named root held d054bd49cb48 (PR #4189), older than the running bdbd0a99bf68 code, so a watchdog relaunch would have downgraded the runtime.",
-    "prior_head": "d054bd49cb485f091e3fb31b1d91e57d4fe372ab",
-    "prior_tree": "72618947f7f326a6d7664deab9eedbf86d7af861",
-    "prior_dirty_entries": 0,
-    "prior_users": "none — full /proc cwd scan found no process using this root",
-    "install_command": "git -C /home/lupin/pantheon-ci-deploy/dev-root-d054bd49cb48 checkout --detach 6578ef968f7e0374b046de0afb5b07ce2f81558e",
-    "install_command_reason": "checkout --detach rather than reset --hard: it fails closed instead of clobbering a dirty tree",
-    "installed_head": "6578ef968f7e0374b046de0afb5b07ce2f81558e",
-    "installed_tree": "55680b29ccb50ab5c1771ddd9f10590f1ba774c9",
-    "installed_dirty_entries": 0,
-    "remote": "https://github.com/ajoe734/pantheon.git",
-    "is_ancestor_of_origin_dev": true,
-    "provider_adapter_wrappers_present": ["agy", "claude", "codex", "copilot", "gemini", "gemini2", "gh"],
-    "issued_runtime_env": {
-      "PANTHEON_COMMAND_ROOT": "/home/lupin/pantheon-ci-deploy/dev-root-d054bd49cb48",
-      "PANTHEON_COMMAND_RUNTIME_SHA": "6578ef968f7e0374b046de0afb5b07ce2f81558e",
-      "PANTHEON_COMMAND_REMOTE": "ajoe734/pantheon",
-      "PANTHEON_COMMAND_BASE_REF": "origin/dev",
-      "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
-      "PANTHEON_TASK_STATE_EVENT_LOG": "/home/lupin/pantheon-ci-deploy/runtime/task-state-events.jsonl"
+  "runtime_roots": {
+    "prior": {
+      "path": "/home/lupin/pantheon-ci-deploy/dev-root-6692d51c9bc5",
+      "head": "6692d51c9bc5a48ffcbaac8cf817b635351a7c9a",
+      "tree": "fa55d946a09b8311de7b37e4348405267378fecd",
+      "role": "preserved issued-worker and rollback root",
+      "mutated_by_task": false
     },
-    "issued_runtime_source": "common.status_command_runtime_env(load_config(live_config)) executed from the installed root; the journal binding comes from the unchanged live config"
-  },
-  "candidate_freshness_while_handoff_pending": {
-    "origin_dev_at_install": "6578ef968f7e0374b046de0afb5b07ce2f81558e",
-    "origin_dev_observed_later": "1cf27337e9197c8bc0840e466f55019065e3576e",
-    "installed_commit_still_valid": true,
-    "why": "6578ef968f7e remains an exact accepted dev commit, an ancestor of origin/dev, with all three required contexts green, and it is the commit carrying the dependency this task activates.",
-    "policy": "Running the handoff as recorded activates 6578ef968f7e and satisfies acceptance. If a fresher runtime is wanted later, repeat the install step against the then-current accepted dev tip first and re-verify HEAD/tree/clean/remote/ancestry plus the unchanged config sha256; never activate a root whose HEAD is not exactly one accepted dev commit."
-  },
-  "prior_installed_root_left_untouched": {
-    "path": "/home/lupin/pantheon-ci-deploy/dev-root-bdbd0a99bf68",
-    "head": "bdbd0a99bf68e6a635d9bd936782c659298b7bb7",
-    "reason": "All six live worker records pin status_command_runtime.command_root to this root, and ai_status.validate_status_command_runtime_binding re-reads its git HEAD on every governed status command. Refreshing the running root in place would have made every in-flight worker fail the issued-vs-running SHA gate and lose the ability to write canonical status."
-  },
-  "lease_preservation": {
-    "stage_1_effect": "none — no path any live lane reads was touched",
-    "active_workers_before": 6,
-    "worker_lease_seconds": 600,
-    "leases_observed_extended_by_incumbent_cycle_to": "2026-07-26T23:05:49Z",
-    "all_workers_issued_runtime": "…/dev-root-bdbd0a99bf68 @ bdbd0a99bf68e6a635d9bd936782c659298b7bb7",
-    "handoff_safety_mechanism": "reconcile_runtime_on_boot refreshes last_heartbeat_at from each runner's heartbeat marker before judging a lease, then renews the lease when heartbeat and observed work progress are fresh; worker_lease_is_expired additionally requires renewal to be impossible, so a prompt handoff cannot reap a live worker.",
-    "handoff_timing_constraint": "work_progress_stale_seconds=360 and worker_lease_seconds=600. A supervisor left down until both the lease and observed progress lapse would let boot reconciliation terminate live workers, so the swap must be executed promptly rather than queued."
-  },
-  "observed_live_conditions": [
-    {
-      "id": "OC1",
-      "condition": "The incumbent supervisor runtime is degraded: poll_interval_seconds is 30 but ticks report lag=603–894s, with 3h15m CPU over 7h42m wall-clock. It holds the runtime admission flock for most of each cycle, so governed status mutations queue for minutes.",
-      "evidence": "raw/installed-root-verification.txt §9 (/proc/locks holder 901543 with two waiting ai_status.py readers) and the incumbent supervisor log tick lines",
-      "caused_by_this_task": false,
-      "bearing": "It is the reason this task's own ai-status.sh start took ~12 minutes to land, and the reason the cutover is serialized on the same lock rather than racing it."
-    },
-    {
-      "id": "OC2",
-      "condition": "Between cycles the canonical board and the authoritative journal projection diverge: at 22:51:02Z an independent projection of 2046 events hashed a95e170e763b… against board hash c7ec3a4e7e1c…, while the supervisor's last task_state_shadow (22:47:35Z, 2039 events) was ok:true, caught_up:false.",
-      "caused_by_this_task": false,
-      "bearing": "In authoritative mode sync_task_state_shadow repairs the board from the journal on the next successful cycle, so the acceptance check is the post-handoff shadow report, not this instantaneous read."
+    "candidate": {
+      "path": "/home/lupin/pantheon-ci-deploy/dev-root-29054ab270d5",
+      "remote": "https://github.com/ajoe734/pantheon.git",
+      "head": "29054ab270d552a56ed071cedf3f45150e948b6a",
+      "tree": "a8d7dcc6fa23ad02e1e62f1f8eb13cfc73cce466",
+      "initially_clean": true,
+      "runtime_generated_untracked_task_briefs_after_cycles": 3,
+      "runtime_code_identity_exact": true
     }
-  ],
-  "rollback": {
-    "available": true,
-    "tested": false,
-    "config_change_required": false,
-    "restore_installed_root": "git -C /home/lupin/pantheon-ci-deploy/dev-root-d054bd49cb48 checkout --detach d054bd49cb485f091e3fb31b1d91e57d4fe372ab",
-    "restore_running_runtime": "bash handoff/swap-supervisor.sh /home/lupin/pantheon-ci-deploy/dev-root-bdbd0a99bf68 rollback-bdbd",
-    "prior_runtime_still_on_disk": "/home/lupin/pantheon-ci-deploy/dev-root-bdbd0a99bf68 @ bdbd0a99bf68e6a635d9bd936782c659298b7bb7",
-    "drill_status": "not executed — the drill needs the same process permission as the cutover"
+  },
+  "handoff": {
+    "refresh": {
+      "stopped_pid": 4138635,
+      "stopped_root": "/home/lupin/pantheon-ci-deploy/dev-root-6692d51c9bc5",
+      "started_pid": 395813,
+      "started_root": "/home/lupin/pantheon-ci-deploy/dev-root-29054ab270d5",
+      "swapped_at": "2026-07-27T16:00:23Z",
+      "healthy_heartbeat_at": "2026-07-27T16:02:57Z",
+      "reconciled_heartbeat_at": "2026-07-27T16:05:46Z"
+    },
+    "rollback": {
+      "stopped_pid": 395813,
+      "started_pid": 466881,
+      "started_root": "/home/lupin/pantheon-ci-deploy/dev-root-6692d51c9bc5",
+      "swapped_at": "2026-07-27T16:06:30Z",
+      "healthy_heartbeat_at": "2026-07-27T16:08:25Z"
+    },
+    "rollforward": {
+      "stopped_pid": 466881,
+      "started_pid": 500973,
+      "started_root": "/home/lupin/pantheon-ci-deploy/dev-root-29054ab270d5",
+      "swapped_at": "2026-07-27T16:09:16Z",
+      "healthy_heartbeat_at": "2026-07-27T16:11:21Z",
+      "final_lifecycle": "running"
+    }
+  },
+  "lease_and_queue_proof": {
+    "pre_refresh": {
+      "captured_at": "2026-07-27T15:59:50Z",
+      "active_workers": 4,
+      "issued_runtime_sha": "6692d51c9bc5a48ffcbaac8cf817b635351a7c9a",
+      "worker_lease_expires_at": "2026-07-27T16:08:38Z"
+    },
+    "post_refresh_reconciled": {
+      "captured_at": "2026-07-27T16:05:54Z",
+      "active_workers": 3,
+      "all_worker_pids_alive": true,
+      "worker_lease_expires_at": "2026-07-27T16:15:46Z",
+      "queue_lease_expires_at": "2026-07-27T16:35:46Z",
+      "natural_completion_reconciled_without_duplicate": true
+    },
+    "rollback": {
+      "captured_at": "2026-07-27T16:08:38Z",
+      "active_workers": 3,
+      "all_worker_pids_alive": true,
+      "worker_lease_expires_at": "2026-07-27T16:18:25Z",
+      "queue_lease_expires_at": "2026-07-27T16:38:25Z"
+    },
+    "final_rollforward": {
+      "captured_at": "2026-07-27T16:11:38Z",
+      "active_workers": 4,
+      "all_worker_pids_alive": true,
+      "worker_lease_expires_at": "2026-07-27T16:21:21Z",
+      "queue_lease_expires_at": "2026-07-27T16:41:21Z",
+      "started_queue_records_match_live_lease_owners": true,
+      "duplicate_active_dispatches": 0
+    }
+  },
+  "projection_proof": {
+    "post_refresh_reconciled": {
+      "shadow_ok": true,
+      "shadow_caught_up": true,
+      "shadow_hashes_equal": true,
+      "independent_event_count": 2461,
+      "independent_projected_sha256": "a43281c07a66419e5a6bf4e4fbea8ad67893e72c0b7698815cf1a04508f3f30c",
+      "canonical_board_sha256": "a43281c07a66419e5a6bf4e4fbea8ad67893e72c0b7698815cf1a04508f3f30c"
+    },
+    "rollback": {
+      "shadow_ok": true,
+      "shadow_caught_up": true,
+      "shadow_hashes_equal": true,
+      "independent_event_count": 2461,
+      "independent_projected_sha256": "a43281c07a66419e5a6bf4e4fbea8ad67893e72c0b7698815cf1a04508f3f30c",
+      "canonical_board_sha256": "a43281c07a66419e5a6bf4e4fbea8ad67893e72c0b7698815cf1a04508f3f30c"
+    },
+    "final_rollforward": {
+      "shadow_ok": true,
+      "shadow_caught_up": true,
+      "shadow_hashes_equal": true,
+      "independent_event_count": 2464,
+      "independent_projected_sha256": "4848c1e04ff07357fe71411de3b455d1d412ead19703995118be43cf940c3276",
+      "canonical_board_sha256": "4848c1e04ff07357fe71411de3b455d1d412ead19703995118be43cf940c3276"
+    }
   },
   "acceptance": [
     {
       "id": "AC1",
       "statement": "Candidate commit is exact accepted dev with required checks and contains the merged supervisor truth repair.",
-      "status": "pass",
-      "evidence_refs": ["evidence.md#1-candidate", "raw/installed-root-verification.txt §1–§2"]
+      "status": "pass"
     },
     {
       "id": "AC2",
       "statement": "Installed command root commit and tree exactly match the candidate and retain the existing live config byte for byte.",
-      "status": "pass",
-      "evidence_refs": ["evidence.md#3-stage-1--installed-verified", "raw/installed-root-verification.txt §3–§7", "raw/post-install-snapshot.json"]
+      "status": "pass"
     },
     {
       "id": "AC3",
-      "statement": "Refresh is serialized after active workers drain or their leases are safely preserved with no duplicate dispatch.",
-      "status": "partial",
-      "detail": "Stage 1 disturbed no lease (all six pre-existing leases intact and still bdbd-pinned across the install). The serialized cutover is implemented in handoff/swap-supervisor.sh and not yet executed.",
-      "evidence_refs": ["evidence.md#4-runtime-state-captured-around-stage-1", "handoff/swap-supervisor.sh"]
+      "statement": "Refresh is serialized and preserves live worker leases with no duplicate dispatch.",
+      "status": "pass"
     },
     {
       "id": "AC4",
       "statement": "Supervisor PID replacement and command runtime handoff are proven without manual task board edits.",
-      "status": "blocked",
-      "detail": "Process stop/launch refused by the harness permission layer; no approval route available from the worker session.",
-      "evidence_refs": ["evidence.md#61-what-is-blocked-and-why"]
+      "status": "pass"
     },
     {
       "id": "AC5",
       "statement": "Authoritative event projection shadow caught_up and queue worker lease parity pass after refresh.",
-      "status": "blocked",
-      "detail": "Check is defined and scripted; it can only be recorded after the handoff.",
-      "evidence_refs": ["evidence.md#63-verification-to-record-after-the-handoff", "handoff/runtime-snapshot.py"]
+      "status": "pass"
     },
     {
       "id": "AC6",
-      "statement": "Rollback to the prior installed root is tested and available.",
-      "status": "partial",
-      "detail": "Available and documented with recorded prior SHAs; the executed drill is part of the blocked stage.",
-      "evidence_refs": ["evidence.md#5-rollback--available-now-not-yet-exercised"]
+      "statement": "Rollback to the prior installed root is tested and available, and roll-forward restores the candidate.",
+      "status": "pass"
     },
     {
       "id": "AC7",
-      "statement": "Deployment evidence branch commit push PR checks Codex2 review merge and archive complete.",
-      "status": "in_progress",
-      "evidence_refs": ["docs/deployment/evidence/supervisor/SUP-COMMAND-RUNTIME-REFRESH-001/"]
+      "statement": "Deployment evidence branch commit, push, PR checks, Codex2 review, merge, archive, and done are complete.",
+      "status": "pending_final_review"
     }
   ],
+  "review": {
+    "status": "pending",
+    "reviewer": "Codex2",
+    "base_refresh": {
+      "reason": "PR #4257 head became BEHIND after dev advanced; refresh without changing the proven live candidate.",
+      "rejected_head": "dcadf09109d919e35bef078b061faea70b3df7a4",
+      "merged_dev_head": "b79d3a540a797fe69851f4dbb3a119ddb647cf9a",
+      "merge_commit": "9c4588c433768ba7ba6b3f7964fdea8f5503c200",
+      "strategy": "normal merge; no rebase and no force push",
+      "task_artifact_hashes_unchanged_across_merge": {
+        "evidence.json": "457ad11aeb953f713e44c8771b69ed0a551ead5755e7b2d7e7aee977c892f714",
+        "evidence.md": "1f977da2404f3d2b905615b4785b9dbd1084d0eece5c28c23c6908cf2a1cfa3e",
+        "bootstrap-approval-binding.md": "b8968d1991638d214e592a7681501c075b241374a93811473668e67f6b3cae0f",
+        "handoff/runtime-snapshot.py": "9e70818147074e43a93fd4d0bbd11efb486b79aec6a8a2811f009c94c5f3361a"
+      },
+      "local_validation": {
+        "scripts/test_ai_status.py": "142/142 pass",
+        "ReviewApprovedWorkflowTests": "30/30 pass",
+        "scripts/test_status_command_runtime_pin.py": "7/7 pass",
+        "py_compile": "pass",
+        "manifest_parse": "pass",
+        "git_diff_check": "pass"
+      },
+      "subsequent_refresh": {
+        "trigger": "PR #4263 merged while the first refreshed head was being pushed.",
+        "merged_dev_head": "52aa8a623e68336e1965d7241950cb3c22f0c827",
+        "merge_commit": "fd548825f408e3b64c82131ff6bfca1748b13dc5",
+        "strategy": "normal merge; no rebase and no force push",
+        "task_artifact_hashes_unchanged_across_merge": {
+          "task_brief": "c95fd803897608f9dc7a0eaaec0ba38fe3792594b4a5be131aaa983612f5a604",
+          "evidence.json": "fa33bcdee634a548b04a7d49a92457034bdd3914e4cfb455eed61d3f3df7b220",
+          "evidence.md": "eb1c8f9c0fe09a4f80475c43dedc22537e4439ec81354c29e5d8b5ffbdccd02c"
+        },
+        "local_validation": {
+          "scripts/test_ai_status.py": "144/144 pass",
+          "ReviewApprovedWorkflowTests": "30/30 pass",
+          "scripts/test_status_command_runtime_pin.py": "7/7 pass",
+          "py_compile": "pass",
+          "manifest_parse": "pass",
+          "git_diff_check": "pass"
+        }
+      },
+      "live_readonly_recheck": {
+        "captured_at": "2026-07-27T16:51:09Z",
+        "supervisor_pid": 500973,
+        "supervisor_root": "/home/lupin/pantheon-ci-deploy/dev-root-29054ab270d5",
+        "candidate_head": "29054ab270d552a56ed071cedf3f45150e948b6a",
+        "live_config_sha256": "adab474b01b99630041cb06d565ae9dbfd7d52badc1d9e612b7cb8d4129de77e",
+        "active_worker_pids_alive": "5/5",
+        "started_queue_lease_owner_parity": "5/5",
+        "projection_ok": true,
+        "projection_caught_up": true,
+        "projection_hashes_equal": true,
+        "projected_and_board_sha256": "cc0b7f1870ac6944b14a96f3e38c43f9deaa1a8900aa3cc9c67eef3cf7da1011"
+      }
+    },
+    "required_binding": {
+      "review_file": "docs/deployment/evidence/supervisor/SUP-COMMAND-RUNTIME-REFRESH-001/evidence.json",
+      "pull_request": 4257,
+      "head_sha": "must be the full exact PR head reviewed by Codex2",
+      "base": "dev",
+      "head_branch": "task/SUP-COMMAND-RUNTIME-REFRESH-001"
+    },
+    "owner_closeout_rule": "Do not run done until the exact reviewed head merges into dev."
+  },
   "artifacts": {
     "narrative": "evidence.md",
     "manifest": "evidence.json",
-    "raw": [
-      "raw/installed-root-verification.txt",
-      "raw/pre-refresh-snapshot.json",
-      "raw/post-install-snapshot.json"
-    ],
     "handoff": [
       "handoff/swap-supervisor.sh",
       "handoff/runtime-snapshot.py",
       "handoff/lease-freshness-check.py"
+    ],
+    "final_raw": [
+      "raw/pre-final-refresh-snapshot.json",
+      "raw/final-refresh-discovery.txt",
+      "raw/final-refresh-swap.txt",
+      "raw/post-final-refresh-snapshot.json",
+      "raw/rollback-discovery.txt",
+      "raw/rollback-swap.txt",
+      "raw/rollback-snapshot.json",
+      "raw/rollforward-discovery.txt",
+      "raw/rollforward-swap.txt",
+      "raw/final-rollforward-snapshot.json"
+    ],
+    "historical_partial_raw": [
+      "raw/installed-root-verification.txt",
+      "raw/pre-refresh-snapshot.json",
+      "raw/post-install-snapshot.json"
     ]
   },
-  "residual_risks": {
-    "installed_root_name_no_longer_matches_head": {
+  "residual_risks": [
+    {
+      "id": "RR1",
       "severity": "low",
-      "blocking_for_this_task": false,
-      "description": "dev-root-d054bd49cb48 now holds 6578ef968f7e. Every other dev-root-<sha> in the deploy area still equals its HEAD.",
-      "containment": "Authoritative bindings are computed (git rev-parse HEAD, issued status_command_runtime), never parsed from the path. Correcting the directory name would require the live config edit this task forbids."
+      "blocking": false,
+      "description": "The unchanged watchdog supervisor_command still names the prior accepted root, so a future watchdog relaunch fails safely back to 6692d51 rather than persisting the candidate.",
+      "containment": "Keep the prior root intact. A separate config-changing task may repin the watchdog only after all old-runtime worker bindings drain."
     },
-    "handoff_left_unexecuted": {
-      "severity": "medium",
-      "blocking_for_this_task": true,
-      "description": "Until the swap runs, the live system keeps the degraded incumbent runtime and governed status mutations keep queueing behind ~10-minute cycles.",
-      "containment": "Nothing is lost or corrupted; the swap is one auditable command (handoff/swap-supervisor.sh) with fail-closed steps.",
-      "recheck_trigger": "Run the swap, then handoff/runtime-snapshot.py post-refresh."
-    },
-    "watchdog_relaunch_during_the_gap": {
+    {
+      "id": "RR2",
       "severity": "low",
-      "blocking_for_this_task": false,
-      "description": "No cron or systemd unit currently schedules the watchdog, so an automatic relaunch is not expected.",
-      "containment": "Strictly beneficial if it happens: the config-named path now holds the accepted runtime, so a relaunch lands on the candidate rather than the older d054bd49cb48 code."
+      "blocking": false,
+      "description": "Healthy supervisor cycles generated three untracked task briefs in the candidate root.",
+      "containment": "HEAD and tree remain exact; treat these as runtime state and never commit them as product source."
+    },
+    {
+      "id": "RR3",
+      "severity": "low",
+      "blocking": false,
+      "description": "Serial provider probes made each healthy cycle take roughly two minutes.",
+      "containment": "Observed worker and queue leases extended within the configured 600/1800-second windows through every swap."
     }
-  }
+  ]
 }
