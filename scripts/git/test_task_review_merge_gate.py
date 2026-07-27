@@ -1711,20 +1711,10 @@ class IntegratorGateTests(unittest.TestCase):
         self.assertIn(["gh", "pr", "view", "100", "--json", "autoMergeRequest"], runner.commands)
 
     def test_gated_pr_needing_a_rebase_is_not_force_pushed(self) -> None:
-        runner = self._runner(open_pr(mergeStateStatus="BEHIND"))
-        # The rebase probe moves HEAD, which would replace the reviewed head.
-        original_run = runner.run
-        state = {"calls": 0}
-
-        def run(args: Sequence[str], **kwargs: Any):  # type: ignore[override]
-            command = [str(arg) for arg in args]
-            if command[:3] == ["git", "rev-parse", "HEAD"]:
-                state["calls"] += 1
-                runner.commands.append(command)
-                return completed(command, stdout=("before\n" if state["calls"] == 1 else "after\n"))
-            return original_run(args, **kwargs)
-
-        runner.run = run  # type: ignore[method-assign]
+        runner = self._runner(
+            open_pr(mergeStateStatus="BEHIND"),
+            merge_base_returncode=1,
+        )
 
         result = auto_integrator.integrate_candidate(
             self.candidate,
@@ -1736,6 +1726,11 @@ class IntegratorGateTests(unittest.TestCase):
 
         self.assertEqual(result.action, "waiting")
         self.assertIn("re-approves the new head", result.detail)
+        self.assertIn(
+            ["git", "merge-base", "--is-ancestor", "origin/dev", "b" * 40],
+            runner.commands,
+        )
+        self.assertFalse(any(command[:2] == ["git", "rebase"] for command in runner.commands))
         self.assertFalse(any(command[:2] == ["git", "push"] for command in runner.commands))
         self.assertFalse(any(command[:3] == ["gh", "pr", "merge"] for command in runner.commands))
 
@@ -1767,20 +1762,9 @@ class IntegratorGateTests(unittest.TestCase):
             open_pr(
                 mergeStateStatus="BEHIND",
                 autoMergeRequest={"enabledAt": "2026-07-26T11:31:00Z"},
-            )
+            ),
+            merge_base_returncode=1,
         )
-        original_run = runner.run
-        state = {"calls": 0}
-
-        def run(args: Sequence[str], **kwargs: Any):  # type: ignore[override]
-            command = [str(arg) for arg in args]
-            if command[:3] == ["git", "rev-parse", "HEAD"]:
-                state["calls"] += 1
-                runner.commands.append(command)
-                return completed(command, stdout=("before\n" if state["calls"] == 1 else "after\n"))
-            return original_run(args, **kwargs)
-
-        runner.run = run  # type: ignore[method-assign]
 
         result = auto_integrator.integrate_candidate(
             self.candidate,
@@ -1793,6 +1777,8 @@ class IntegratorGateTests(unittest.TestCase):
         self.assertEqual(result.action, "waiting")
         merge_commands = [c for c in runner.commands if c[:3] == ["gh", "pr", "merge"]]
         self.assertEqual(merge_commands, [["gh", "pr", "merge", "100", "--disable-auto"]])
+        self.assertFalse(any(command[:2] == ["git", "rebase"] for command in runner.commands))
+        self.assertFalse(any(command[:2] == ["git", "push"] for command in runner.commands))
 
     def test_concurrent_open_prs_for_one_task_branch_fail_closed(self) -> None:
         class AmbiguousRunner(FakeRunner):
@@ -1834,6 +1820,135 @@ class IntegratorGateTests(unittest.TestCase):
         self.assertEqual(result.action, "merged")
         merge_commands = [c for c in runner.commands if c[:3] == ["gh", "pr", "merge"]]
         self.assertEqual(merge_commands, [["gh", "pr", "merge", "100", "--merge"]])
+
+
+class RealGitExactHeadIntegrationTests(unittest.TestCase):
+    """Exercise the approved merge path against a merge-rich real git graph."""
+
+    @staticmethod
+    def _git(args: Sequence[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", *args],
+            cwd=str(cwd),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    def test_current_merge_rich_exact_head_reaches_match_head_merge_without_rewrite(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="exact-head-integrator-") as tmp_text:
+            tmp = Path(tmp_text)
+            origin = tmp / "origin.git"
+            repo = tmp / "repo"
+            self._git(["init", "--bare", "--initial-branch=dev", str(origin)], cwd=tmp)
+            self._git(["init", "--initial-branch=dev", str(repo)], cwd=tmp)
+            self._git(["config", "user.email", "gate@example.test"], cwd=repo)
+            self._git(["config", "user.name", "Gate Fixture"], cwd=repo)
+            self._git(["remote", "add", "origin", str(origin)], cwd=repo)
+
+            (repo / "base.txt").write_text("base\n", encoding="utf-8")
+            self._git(["add", "base.txt"], cwd=repo)
+            self._git(["commit", "-m", "base", "--no-verify"], cwd=repo)
+            self._git(["push", "-u", "origin", "dev"], cwd=repo)
+
+            self._git(["checkout", "-b", "task/ABC-001"], cwd=repo)
+            (repo / "task.txt").write_text("task\n", encoding="utf-8")
+            self._git(["add", "task.txt"], cwd=repo)
+            self._git(["commit", "-m", "task change", "--no-verify"], cwd=repo)
+
+            self._git(["checkout", "dev"], cwd=repo)
+            (repo / "dev.txt").write_text("dev\n", encoding="utf-8")
+            self._git(["add", "dev.txt"], cwd=repo)
+            self._git(["commit", "-m", "dev advance", "--no-verify"], cwd=repo)
+            self._git(["push", "origin", "dev"], cwd=repo)
+
+            self._git(["checkout", "task/ABC-001"], cwd=repo)
+            self._git(["merge", "--no-ff", "dev", "-m", "compose dev", "--no-verify"], cwd=repo)
+            (repo / "after-merge.txt").write_text("reviewed\n", encoding="utf-8")
+            self._git(["add", "after-merge.txt"], cwd=repo)
+            self._git(["commit", "-m", "reviewed head", "--no-verify"], cwd=repo)
+            self._git(["push", "-u", "origin", "task/ABC-001"], cwd=repo)
+
+            exact_head = self._git(["rev-parse", "HEAD"], cwd=repo).stdout.strip()
+            counts = self._git(
+                ["rev-list", "--left-right", "--count", "origin/dev...HEAD"],
+                cwd=repo,
+            ).stdout.split()
+            self.assertEqual(counts[0], "0")
+            self.assertGreater(int(counts[1]), 0)
+            self.assertGreater(
+                int(self._git(["rev-list", "--min-parents=2", "--count", "HEAD"], cwd=repo).stdout),
+                0,
+            )
+
+            pr = open_pr(
+                headRefOid=exact_head,
+                commits=[{"oid": exact_head, "committedDate": "2026-07-26T11:30:00Z"}],
+            )
+
+            class RealGitRunner(FakeRunner):
+                def run(self, args: Sequence[str], **kwargs: Any):  # type: ignore[override]
+                    command = [str(arg) for arg in args]
+                    if command and command[0] == "git":
+                        return auto_integrator.CommandRunner.run(self, args, **kwargs)
+                    return super().run(args, **kwargs)
+
+                def run_shell(self, command: str, **kwargs: Any):  # type: ignore[override]
+                    return auto_integrator.CommandRunner.run_shell(self, command, **kwargs)
+
+            runner = RealGitRunner(pr=pr)
+            result = auto_integrator.integrate_candidate(
+                auto_integrator.TaskCandidate(
+                    task_id="ABC-001",
+                    title="Ready",
+                    owner="Codex",
+                    reviewer="Claude",
+                    branch="task/ABC-001",
+                ),
+                auto_integrator.Settings(),
+                runner,
+                root=repo,
+                execute=True,
+                extra_smoke_commands=(
+                    f'test "$(git rev-parse HEAD)" = "{exact_head}"',
+                    "git merge-base --is-ancestor origin/dev HEAD",
+                ),
+                gate=auto_integrator.ReviewGate(
+                    state={"tasks": [task_row()]},
+                    events=[
+                        approval_event(
+                            review_binding=approval_binding(head_sha=exact_head),
+                        )
+                    ],
+                ),
+            )
+
+            self.assertEqual(result.action, "merged", result.detail)
+            self.assertIn(
+                ["git", "merge-base", "--is-ancestor", "origin/dev", exact_head],
+                runner.commands,
+            )
+            self.assertTrue(
+                any(
+                    command[:4] == ["git", "worktree", "add", "--detach"]
+                    and command[-1] == exact_head
+                    for command in runner.commands
+                )
+            )
+            self.assertFalse(any(command[:2] == ["git", "rebase"] for command in runner.commands))
+            self.assertFalse(any(command[:2] == ["git", "push"] for command in runner.commands))
+            self.assertIn(
+                [
+                    "gh",
+                    "pr",
+                    "merge",
+                    "100",
+                    "--merge",
+                    "--match-head-commit",
+                    exact_head,
+                ],
+                runner.commands,
+            )
 
 
 FAKE_GH = r"""#!/usr/bin/env bash

@@ -267,7 +267,7 @@ class IntegrationPlanTests(unittest.TestCase):
         self.assertTrue(any("scripts/ai_status.py" in " ".join(command) and "assign" in command for command in runner.commands))
         self.assertFalse(any(command[:3] == ["gh", "pr", "merge"] for command in runner.commands))
 
-    def test_rebase_conflict_opens_unblock_without_merge(self) -> None:
+    def test_merge_then_review_rebase_conflict_opens_unblock_without_merge(self) -> None:
         candidate = auto_integrator.TaskCandidate(
             task_id="ABC-001",
             title="Ready",
@@ -282,7 +282,21 @@ class IntegrationPlanTests(unittest.TestCase):
             auto_integrator.Settings(),
             runner,
             execute=True,
-            gate=approved_gate(),
+            gate=auto_integrator.ReviewGate(
+                state={
+                    "tasks": [
+                        {
+                            "id": "ABC-001",
+                            "title": "Ready",
+                            "status": "review_approved",
+                            "owner": "Codex",
+                            "reviewer": "Codex",
+                            "merge_policy": "merge_then_review",
+                        }
+                    ]
+                },
+                events=[],
+            ),
         )
 
         self.assertEqual(result.action, "blocked")

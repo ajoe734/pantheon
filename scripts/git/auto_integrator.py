@@ -493,6 +493,7 @@ def run_rebase_smoke(
     execute: bool,
     extra_smoke_commands: Sequence[str] = (),
     allow_push: bool = True,
+    exact_head: str = "",
 ) -> tuple[bool, str]:
     fetch_refs(candidate, settings, runner, root=root)
     commands = tuple(extra_smoke_commands) or settings.smoke_commands
@@ -506,13 +507,15 @@ def run_rebase_smoke(
         # head already contains the target base.  If it does, smoke that
         # immutable head directly; if it does not, require the owner to refresh
         # and get a new exact-head review.
+        if not exact_head:
+            return False, "exact_head_missing"
         ancestry = runner.run(
             [
                 "git",
                 "merge-base",
                 "--is-ancestor",
                 f"origin/{settings.dev_branch}",
-                f"origin/{candidate.branch}",
+                exact_head,
             ],
             cwd=root,
             check=False,
@@ -521,7 +524,7 @@ def run_rebase_smoke(
             return False, "rebase_required"
         with tempfile.TemporaryDirectory(prefix=f"pantheon-integrate-{candidate.task_id}-") as tmp:
             worktree = Path(tmp)
-            runner.run(["git", "worktree", "add", "--detach", str(worktree), f"origin/{candidate.branch}"], cwd=root)
+            runner.run(["git", "worktree", "add", "--detach", str(worktree), exact_head], cwd=root)
             try:
                 for command in commands:
                     runner.run_shell(command, cwd=worktree)
@@ -920,6 +923,7 @@ def integrate_candidate(
             # A gated PR may never be force-pushed: replacing the head would
             # discard the exact commit the reviewer approved.
             allow_push=not gated,
+            exact_head=decision.head_oid if gated else "",
         )
     except CommandFailure as exc:
         detail = f"Local smoke or git command failed for PR #{number}: {exc.output.strip() or exc.args_rendered}"
@@ -930,6 +934,35 @@ def integrate_candidate(
         detail = f"PR #{number} does not rebase cleanly onto {settings.dev_branch}."
         unblock = open_unblock_task(candidate, "rebase-conflict", detail, settings, runner, root=root, execute=execute) if open_unblock else None
         return IntegrationResult(candidate.task_id, "blocked", detail, number, url, unblock, not execute, runner.commands[:])
+
+    if gated and rebase_status == "exact_head_missing":
+        detail = (
+            f"PR #{number} passed the review gate without an exact approved head; "
+            "refusing to smoke or merge an unbound branch ref."
+        )
+        unblock = (
+            open_unblock_task(
+                candidate,
+                "exact-head-missing",
+                detail,
+                settings,
+                runner,
+                root=root,
+                execute=execute,
+            )
+            if open_unblock
+            else None
+        )
+        return IntegrationResult(
+            candidate.task_id,
+            "blocked",
+            detail,
+            number,
+            url,
+            unblock,
+            not execute,
+            runner.commands[:],
+        )
 
     if gated and rebase_status == "rebase_required":
         # Landing this PR needs a new head, and no reviewer has seen that head.
