@@ -8,7 +8,7 @@ review ownership, approval linkage, cooldown windows, and execution metadata.
 Public API
 ----------
 EvolutionDecision        — first-class evolution-governance object
-EvolutionDecisionStore   — in-memory store with optional JSON persistence
+EvolutionDecisionStore   — in-memory, JSON, or Postgres owner store
 ReviewStep               — reviewer-chain entry for review / approval / execute
 ThresholdSnapshot        — normalized threshold breach snapshot
 ExecutionResult          — downstream execution result envelope
@@ -40,6 +40,7 @@ except ImportError:  # pragma: no cover
     fcntl = None  # type: ignore[assignment]
 
 from approval_decision import EvidenceRef, EvidenceRefType, RiskLevel
+from services.foundation.postgres_json_store import PostgresJsonOwnerStore
 
 
 def utc_now() -> str:
@@ -1080,7 +1081,7 @@ def validate_evolution_decision(decision: EvolutionDecision) -> List[str]:
 
 
 class EvolutionDecisionStore:
-    """EvolutionDecision store with optional concurrent-safe JSON persistence.
+    """EvolutionDecision store with authoritative JSON/Postgres persistence.
 
     JSON-backed instances coordinate through a path-scoped thread lock and an
     advisory file lock.  Every write reloads the latest durable snapshot while
@@ -1088,6 +1089,10 @@ class EvolutionDecisionStore:
     file only after it has been flushed.  This makes two workers pointing at
     the same file a serialized read-modify-write sequence instead of a
     last-snapshot-wins race.
+
+    Postgres-backed instances take a table lock around the complete
+    read/validate/upsert transaction.  The single-active invariant is therefore
+    authoritative across service replicas, not an in-process preflight check.
     """
 
     _path_locks_guard = threading.Lock()
@@ -1098,9 +1103,35 @@ class EvolutionDecisionStore:
         storage_path: Optional[str] = None,
         *,
         incident_store: Any | None = None,
+        backend: str | None = None,
+        dsn: str | None = None,
+        table_name: str = "evolution.decisions",
     ) -> None:
-        self._storage_path = Path(storage_path) if storage_path else None
+        normalized_backend = str(
+            backend or ("json" if storage_path else "memory")
+        ).strip().lower()
+        if normalized_backend not in {"memory", "json", "postgres"}:
+            raise ValueError("EvolutionDecisionStore backend must be memory, json, or postgres")
+        if normalized_backend == "json" and not storage_path:
+            raise ValueError("EvolutionDecisionStore JSON backend requires storage_path")
+        if normalized_backend == "postgres" and not str(dsn or "").strip():
+            raise ValueError("EvolutionDecisionStore Postgres backend requires a DSN")
+
+        self.backend = normalized_backend
+        self._storage_path = (
+            Path(storage_path) if normalized_backend == "json" and storage_path else None
+        )
         self._incident_store = incident_store
+        self._postgres_store = (
+            PostgresJsonOwnerStore(
+                dsn=str(dsn),
+                table=table_name,
+                owner_service="evolution-svc",
+                bootstrap=True,
+            )
+            if normalized_backend == "postgres"
+            else None
+        )
         self._decisions: Dict[str, EvolutionDecision] = {}
         self._memory_lock = threading.RLock()
         self._thread_lock = self._lock_for_path(self._storage_path)
@@ -1162,6 +1193,11 @@ class EvolutionDecisionStore:
         errors = validate_evolution_decision(decision)
         if errors:
             raise EvolutionDecisionError(f"Invalid EvolutionDecision: {errors}")
+        if self._postgres_store is not None:
+            self._put_postgres(decision)
+            self._sync_postmortem_link(decision)
+            return
+
         expected_snapshot = getattr(decision, "_store_snapshot", None)
         with self._locked(exclusive=True):
             if self._storage_path is not None:
@@ -1201,6 +1237,11 @@ class EvolutionDecisionStore:
         self._sync_postmortem_link(decision)
 
     def get(self, decision_id: str) -> Optional[EvolutionDecision]:
+        if self._postgres_store is not None:
+            payload = self._postgres_store.get(decision_id)
+            if payload is None:
+                return None
+            return self._copy_for_caller(EvolutionDecision.from_dict(payload))
         with self._locked(exclusive=False):
             if self._storage_path is not None:
                 self._load_unlocked()
@@ -1208,6 +1249,11 @@ class EvolutionDecisionStore:
             return self._copy_for_caller(decision) if decision is not None else None
 
     def list_all(self) -> List[EvolutionDecision]:
+        if self._postgres_store is not None:
+            return [
+                self._copy_for_caller(EvolutionDecision.from_dict(payload))
+                for payload in self._postgres_store.list_all()
+            ]
         with self._locked(exclusive=False):
             if self._storage_path is not None:
                 self._load_unlocked()
@@ -1231,16 +1277,13 @@ class EvolutionDecisionStore:
             target_type.value if isinstance(target_type, EvolutionTargetType) else target_type
         )
         scope = normalize_tenant_id(tenant_id) if tenant_id is not None else None
-        with self._locked(exclusive=False):
-            if self._storage_path is not None:
-                self._load_unlocked()
-            return [
-                self._copy_for_caller(decision)
-                for decision in self._decisions.values()
-                if decision.target_id == target_id
-                and decision.to_dict()["target_type"] == target_type_value
-                and (scope is None or decision.tenant_id == scope)
-            ]
+        return [
+            decision
+            for decision in self.list_all()
+            if decision.target_id == target_id
+            and decision.to_dict()["target_type"] == target_type_value
+            and (scope is None or decision.tenant_id == scope)
+        ]
 
     def find_active_by_target(
         self,
@@ -1257,14 +1300,98 @@ class EvolutionDecisionStore:
         ]
 
     def find_by_postmortem(self, postmortem_id: str) -> List[EvolutionDecision]:
-        with self._locked(exclusive=False):
-            if self._storage_path is not None:
-                self._load_unlocked()
-            return [
-                self._copy_for_caller(decision)
-                for decision in self._decisions.values()
-                if decision.linked_postmortem_id == postmortem_id
-            ]
+        return [
+            decision
+            for decision in self.list_all()
+            if decision.linked_postmortem_id == postmortem_id
+        ]
+
+    def _put_postgres(self, decision: EvolutionDecision) -> None:
+        """Commit one decision under a cross-replica single-active fence."""
+
+        assert self._postgres_store is not None
+        expected_snapshot = getattr(decision, "_store_snapshot", None)
+        durable_copy = EvolutionDecision.from_dict(decision.to_dict())
+
+        with self._memory_lock:
+            with self._postgres_store._connect() as conn:
+                # A single service-owned table lock makes the read of every
+                # competing active decision and this upsert one transaction.
+                # Row-only locking cannot fence a concurrent insert for a new
+                # decision_id, so the table-level lock is intentional.
+                conn.execute(
+                    f"LOCK TABLE {self._postgres_store.table} "
+                    "IN SHARE ROW EXCLUSIVE MODE"
+                )
+                cursor = conn.execute(
+                    f"SELECT record_id, payload FROM {self._postgres_store.table}"
+                )
+                loaded: Dict[str, EvolutionDecision] = {}
+                for row in cursor.fetchall():
+                    record_id = row[0] if isinstance(row, tuple) else row.get("record_id")
+                    payload = row[1] if isinstance(row, tuple) else row.get("payload")
+                    decoded = self._postgres_store._decode_payload(payload)
+                    if decoded is None:
+                        raise EvolutionDecisionError(
+                            f"Invalid Postgres EvolutionDecision record: {record_id}"
+                        )
+                    loaded[str(record_id)] = EvolutionDecision.from_dict(decoded)
+
+                current = loaded.get(decision.decision_id)
+                self._assert_expected_snapshot(
+                    decision=decision,
+                    current=current,
+                    expected_snapshot=expected_snapshot,
+                )
+                self._decisions = loaded
+                self._enforce_single_active_rule(decision)
+
+                encoded = json.dumps(
+                    durable_copy.to_dict(),
+                    ensure_ascii=True,
+                    sort_keys=True,
+                )
+                conn.execute(
+                    f"""
+                    INSERT INTO {self._postgres_store.table}
+                        (record_id, payload, updated_at)
+                    VALUES (%s, %s::jsonb, now())
+                    ON CONFLICT (record_id) DO UPDATE SET
+                        payload = EXCLUDED.payload,
+                        updated_at = EXCLUDED.updated_at
+                    """,
+                    (decision.decision_id, encoded),
+                )
+                self._decisions[decision.decision_id] = durable_copy
+
+        snapshot = self._fingerprint(durable_copy)
+        setattr(durable_copy, "_store_snapshot", snapshot)
+        setattr(decision, "_store_snapshot", snapshot)
+
+    def _assert_expected_snapshot(
+        self,
+        *,
+        decision: EvolutionDecision,
+        current: EvolutionDecision | None,
+        expected_snapshot: str | None,
+    ) -> None:
+        if current is None and expected_snapshot is not None:
+            raise EvolutionDecisionError(
+                "concurrent modification detected: EvolutionDecision was removed"
+            )
+        if current is None:
+            return
+        current_snapshot = self._fingerprint(current)
+        if expected_snapshot is None:
+            if self._fingerprint(decision) != current_snapshot:
+                raise EvolutionDecisionError(
+                    "decision_id already exists; blind overwrite is not allowed"
+                )
+        elif expected_snapshot != current_snapshot:
+            raise EvolutionDecisionError(
+                "concurrent modification detected for EvolutionDecision "
+                f"{decision.decision_id}"
+            )
 
     def _enforce_single_active_rule(self, candidate: EvolutionDecision) -> None:
         """One active decision per (tenant, target_type, target_id).

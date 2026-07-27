@@ -31,9 +31,12 @@ Policy references
 """
 from __future__ import annotations
 
+import contextvars
+import hmac
 import json
 import logging
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -47,7 +50,8 @@ try:  # pragma: no cover - Linux production and CI provide fcntl.
 except ImportError:  # pragma: no cover
     fcntl = None  # type: ignore[assignment]
 
-from fastapi import FastAPI, HTTPException, Query, Response
+from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from services.foundation import (
     EventEnvelope,
@@ -57,6 +61,7 @@ from services.foundation import (
     sha256_checksum,
 )
 from services.foundation.health import register_fastapi_health_routes
+from services.foundation.persistence_posture import require_persistence_posture
 
 # ---------------------------------------------------------------------------
 # Path bootstrap — platform objects live in control-plane/governance
@@ -167,6 +172,141 @@ app = FastAPI(title="Pantheon Evolution Service", version="1.0.0")
 
 EVOLUTION_DATA_DIR = os.getenv("EVOLUTION_DATA_DIR", "/tmp/pantheon/evolution")
 os.makedirs(EVOLUTION_DATA_DIR, exist_ok=True)
+EVOLUTION_STORE_BACKEND = (
+    os.getenv("EVOLUTION_STORE_BACKEND", "json").strip().lower() or "json"
+)
+EVOLUTION_STORE_DSN = (
+    os.getenv("EVOLUTION_STORE_DSN") or os.getenv("DATABASE_URL")
+)
+PERSISTENCE_POSTURE = require_persistence_posture(
+    "evolution",
+    backend_env_vars={"EVOLUTION_STORE_BACKEND": "json"},
+    require_object_store=False,
+)
+
+_TENANT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,127}$")
+_TENANT_CONTEXT: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "evolution_tenant_id",
+    default=DEFAULT_TENANT_ID,
+)
+
+
+def _auth_mode() -> str:
+    mode = os.getenv("EVOLUTION_AUTH_MODE", "disabled").strip().lower()
+    if mode not in {"disabled", "token"}:
+        raise HTTPException(
+            status_code=503,
+            detail="EVOLUTION_AUTH_MODE must be disabled or token",
+        )
+    return mode
+
+
+def _configured_default_tenant() -> str:
+    tenant_id = normalize_tenant_id(
+        os.getenv("EVOLUTION_DEFAULT_TENANT_ID")
+        or os.getenv("PANTHEON_TENANT_ID")
+        or DEFAULT_TENANT_ID
+    )
+    if not _TENANT_ID_PATTERN.fullmatch(tenant_id):
+        raise HTTPException(
+            status_code=503,
+            detail="configured Evolution tenant id is invalid",
+        )
+    return tenant_id
+
+
+def _allowed_tenants() -> set[str]:
+    return {
+        item.strip()
+        for item in os.getenv("EVOLUTION_AUTH_ALLOWED_TENANTS", "").split(",")
+        if item.strip()
+    }
+
+
+def _current_tenant() -> str:
+    return _TENANT_CONTEXT.get()
+
+
+def _authorized_request_tenant(tenant_id: Optional[str]) -> str:
+    """Resolve body/query tenant identity against authenticated request scope."""
+
+    if _auth_mode() == "disabled":
+        return normalize_tenant_id(tenant_id) if tenant_id is not None else _current_tenant()
+    supplied = normalize_tenant_id(tenant_id)
+    current = _current_tenant()
+    if tenant_id is not None and supplied != current:
+        raise HTTPException(status_code=403, detail="tenant identity mismatch")
+    return current
+
+
+@app.middleware("http")
+async def authenticate_tenant(request: Request, call_next):
+    """Bind every Evolution API call to one authenticated tenant.
+
+    Tests and explicitly local deployments may select ``disabled``.  Compose
+    selects ``token`` and then both the bearer token and ``X-Tenant-Id`` are
+    mandatory; missing secret/allowlist configuration fails closed before any
+    durable state can be read or changed.
+    """
+
+    if not request.url.path.startswith("/api/evolution"):
+        return await call_next(request)
+    try:
+        mode = _auth_mode()
+    except HTTPException as exc:
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+    supplied_tenant = str(request.headers.get("x-tenant-id") or "").strip()
+    if supplied_tenant and not _TENANT_ID_PATTERN.fullmatch(supplied_tenant):
+        return JSONResponse(status_code=400, content={"detail": "X-Tenant-Id is invalid"})
+
+    if mode == "token":
+        configured_token = os.getenv("EVOLUTION_AUTH_TOKEN", "").strip()
+        allowed = _allowed_tenants()
+        if not configured_token or not allowed:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "detail": (
+                        "Evolution tenant authentication requires "
+                        "EVOLUTION_AUTH_TOKEN and EVOLUTION_AUTH_ALLOWED_TENANTS"
+                    )
+                },
+            )
+        authorization = request.headers.get("authorization") or ""
+        scheme, separator, presented = authorization.partition(" ")
+        if (
+            separator != " "
+            or scheme.lower() != "bearer"
+            or not presented
+            or not hmac.compare_digest(presented, configured_token)
+        ):
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "invalid Evolution bearer token"},
+            )
+        if not supplied_tenant:
+            return JSONResponse(
+                status_code=400,
+                content={"detail": "X-Tenant-Id is required"},
+            )
+        if "*" not in allowed and supplied_tenant not in allowed:
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "authenticated caller is not authorized for this tenant"},
+            )
+
+    try:
+        tenant = supplied_tenant or _configured_default_tenant()
+    except HTTPException as exc:
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    token = _TENANT_CONTEXT.set(tenant)
+    try:
+        response = await call_next(request)
+    finally:
+        _TENANT_CONTEXT.reset(token)
+    response.headers["Vary"] = "Authorization, X-Tenant-Id"
+    return response
 
 
 class _EvolutionProposalInbox:
@@ -314,6 +454,8 @@ os.makedirs(INCIDENT_DATA_DIR, exist_ok=True)
 
 store = EvolutionDecisionStore(
     storage_path=os.path.join(EVOLUTION_DATA_DIR, "decisions.json"),
+    backend=EVOLUTION_STORE_BACKEND,
+    dsn=EVOLUTION_STORE_DSN,
 )
 try:
     from services.incident.pg_store import build_incident_store
@@ -365,6 +507,9 @@ _sweep_state: Dict[str, Any] = {
 register_fastapi_health_routes(
     app,
     "evolution",
+    dependencies=lambda: {
+        "persistence": PERSISTENCE_POSTURE.to_dict(),
+    },
     metrics=lambda: {
         "decision_count": len(store.list_all()),
         "sweep_last_success_at": _sweep_state["last_success_at"],
@@ -373,7 +518,10 @@ register_fastapi_health_routes(
     },
     details=lambda: {
         "evolution_data_dir": EVOLUTION_DATA_DIR,
+        "evolution_store_backend": EVOLUTION_STORE_BACKEND,
         "incident_data_dir": INCIDENT_DATA_DIR,
+        "auth_mode": os.getenv("EVOLUTION_AUTH_MODE", "disabled"),
+        "persistence_posture": PERSISTENCE_POSTURE.to_dict(),
     },
 )
 
@@ -429,9 +577,22 @@ def _tenant_error(exc: Exception) -> HTTPException:
 
 def _guard_actor_tenant(decision: EvolutionDecision, tenant_id: Optional[str]) -> str:
     try:
-        return decision.assert_actor_tenant(tenant_id)
+        authoritative_tenant = _authorized_request_tenant(tenant_id)
+        return decision.assert_actor_tenant(authoritative_tenant)
     except EvolutionDecisionError as exc:
         raise _tenant_error(exc) from exc
+
+
+def _guard_read_tenant(decision: EvolutionDecision) -> str:
+    """Refuse cross-tenant reads whenever request authentication is active."""
+
+    if _auth_mode() == "disabled":
+        return decision.tenant_id
+    tenant = _current_tenant()
+    if decision.tenant_id != tenant:
+        # Do not disclose whether a foreign tenant owns the identifier.
+        raise _not_found(decision.decision_id)
+    return tenant
 
 
 def _dispatch_intent_for(decision: EvolutionDecision) -> DispatchIntent | None:
@@ -734,7 +895,7 @@ def _build_proposed_decision(
             persona_id=body.persona_id,
             target_stage=body.target_stage,
             metadata=body.metadata,
-            tenant_id=body.tenant_id,
+            tenant_id=_authorized_request_tenant(body.tenant_id),
         )
     except EvolutionDecisionError as exc:
         raise _domain_error(exc) from exc
@@ -1343,6 +1504,7 @@ def daily_sweep(body: DailySweepRequest):
             max_incidents=body.max_incidents,
             sweep_id=body.sweep_id,
             evaluator=evaluator,
+            tenant_id=_authorized_request_tenant(None),
         )
     except ValueError as exc:
         _sweep_state["last_failure_at"] = now_str
@@ -1399,6 +1561,7 @@ def list_proposals(
     decision_state: Optional[str] = Query(default=None),
     risk_level: Optional[str] = Query(default=None),
     active_only: bool = Query(default=False),
+    tenant_id: Optional[str] = Query(default=None),
 ):
     """
     List EvolutionDecision records with optional filtering.
@@ -1411,7 +1574,16 @@ def list_proposals(
     risk_level      : filter by risk level (low, medium, high)
     active_only     : when true, only return decisions whose is_active() == True
     """
-    decisions: List[EvolutionDecision] = store.list_all()
+    scope = (
+        _authorized_request_tenant(tenant_id)
+        if tenant_id is not None or _auth_mode() == "token"
+        else None
+    )
+    decisions: List[EvolutionDecision] = [
+        decision
+        for decision in store.list_all()
+        if scope is None or decision.tenant_id == scope
+    ]
     if target_id:
         decisions = [d for d in decisions if d.target_id == target_id]
     if target_type:
@@ -1433,6 +1605,7 @@ def get_proposal(decision_id: str):
     decision = store.get(decision_id)
     if decision is None:
         raise _not_found(decision_id)
+    _guard_read_tenant(decision)
     return _decision_to_response(decision)
 
 
@@ -1457,6 +1630,7 @@ def get_observation_report(
     decision = store.get(decision_id)
     if decision is None:
         raise _not_found(decision_id)
+    _guard_read_tenant(decision)
     if EvolutionDecisionState(decision.decision_state) != EvolutionDecisionState.EXECUTED:
         raise HTTPException(
             status_code=422,
@@ -1558,14 +1732,14 @@ def review_proposal(decision_id: str, body: ReviewRequest):
     decision = store.get(decision_id)
     if decision is None:
         raise _not_found(decision_id)
-    _guard_actor_tenant(decision, body.tenant_id)
+    tenant = _guard_actor_tenant(decision, body.tenant_id)
     try:
         decision.mark_reviewed(
             actor_role=body.actor_role,
             actor_id=body.actor_id,
             approval_decision_id=body.approval_decision_id,
             note=body.note,
-            actor_tenant_id=body.tenant_id,
+            actor_tenant_id=tenant,
         )
         store.put(decision)
     except EvolutionDecisionError as exc:
@@ -1589,14 +1763,14 @@ def approve_proposal(decision_id: str, body: ApproveRequest):
     decision = store.get(decision_id)
     if decision is None:
         raise _not_found(decision_id)
-    _guard_actor_tenant(decision, body.tenant_id)
+    tenant = _guard_actor_tenant(decision, body.tenant_id)
     try:
         decision.approve(
             actor_role=body.actor_role,
             actor_id=body.actor_id,
             approval_decision_id=body.approval_decision_id,
             note=body.note,
-            actor_tenant_id=body.tenant_id,
+            actor_tenant_id=tenant,
         )
     except EvolutionDecisionError as exc:
         raise _domain_error(exc) from exc
@@ -1668,14 +1842,14 @@ def reject_proposal(decision_id: str, body: RejectRequest):
     decision = store.get(decision_id)
     if decision is None:
         raise _not_found(decision_id)
-    _guard_actor_tenant(decision, body.tenant_id)
+    tenant = _guard_actor_tenant(decision, body.tenant_id)
     try:
         decision.reject(
             actor_role=body.actor_role,
             actor_id=body.actor_id,
             approval_decision_id=body.approval_decision_id,
             note=body.note,
-            actor_tenant_id=body.tenant_id,
+            actor_tenant_id=tenant,
         )
         store.put(decision)
     except EvolutionDecisionError as exc:
@@ -1698,13 +1872,13 @@ def cancel_proposal(decision_id: str, body: CancelRequest):
     decision = store.get(decision_id)
     if decision is None:
         raise _not_found(decision_id)
-    _guard_actor_tenant(decision, body.tenant_id)
+    tenant = _guard_actor_tenant(decision, body.tenant_id)
     try:
         decision.cancel(
             actor_role=body.actor_role,
             actor_id=body.actor_id,
             note=body.note,
-            actor_tenant_id=body.tenant_id,
+            actor_tenant_id=tenant,
         )
         store.put(decision)
     except EvolutionDecisionError as exc:
@@ -1754,7 +1928,7 @@ def execute_proposal(decision_id: str, body: ExecuteRequest):
     decision = store.get(decision_id)
     if decision is None:
         raise _not_found(decision_id)
-    _guard_actor_tenant(decision, body.tenant_id)
+    tenant = _guard_actor_tenant(decision, body.tenant_id)
     try:
         freeze_mode = FreezeFollowthroughMode(body.freeze_mode)
     except ValueError as exc:
@@ -1795,6 +1969,8 @@ def execute_proposal(decision_id: str, body: ExecuteRequest):
             execution_plane=execution_plane,
             downstream_kind=body.execution_receipt.downstream_kind,
             downstream_ref_id=body.execution_receipt.downstream_ref_id,
+            tenant_id=tenant,
+            decision_id=decision.decision_id,
         )
     except DispatchReceiptError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -1822,7 +1998,7 @@ def execute_proposal(decision_id: str, body: ExecuteRequest):
             cooldown_ends_at=outcome.primary_command.cooldown_ends_at,
             observation_window_ends_at=outcome.primary_command.observation_window_ends_at,
             note=body.note or execution_result.outcome_summary,
-            actor_tenant_id=body.tenant_id,
+            actor_tenant_id=tenant,
         )
         store.put(decision)
     except EvolutionDecisionError as exc:
@@ -1860,6 +2036,7 @@ def get_boundary(
     decision = store.get(decision_id)
     if decision is None:
         raise _not_found(decision_id)
+    _guard_read_tenant(decision)
     try:
         boundary = controller.boundary_for(decision, has_active_runtime=has_active_runtime)
     except EvolutionControllerError as exc:
@@ -1921,7 +2098,7 @@ def rollback_followthrough(decision_id: str, body: RollbackFollowthroughRequest)
                 "the governance-only or freeze-stage path instead."
             ),
         )
-    _guard_actor_tenant(decision, body.tenant_id)
+    tenant = _guard_actor_tenant(decision, body.tenant_id)
     if body.execution_receipt is None:
         raise HTTPException(
             status_code=422,
@@ -1952,6 +2129,8 @@ def rollback_followthrough(decision_id: str, body: RollbackFollowthroughRequest)
             execution_plane=execution_plane,
             downstream_kind=body.execution_receipt.downstream_kind,
             downstream_ref_id=body.execution_receipt.downstream_ref_id,
+            tenant_id=tenant,
+            decision_id=decision.decision_id,
         )
     except DispatchReceiptError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -1977,7 +2156,7 @@ def rollback_followthrough(decision_id: str, body: RollbackFollowthroughRequest)
             cooldown_ends_at=outcome.primary_command.cooldown_ends_at,
             observation_window_ends_at=outcome.primary_command.observation_window_ends_at,
             note=body.note,
-            actor_tenant_id=body.tenant_id,
+            actor_tenant_id=tenant,
         )
         store.put(decision)
     except EvolutionDecisionError as exc:
@@ -2027,6 +2206,7 @@ def redeploy_followthrough(decision_id: str, body: RedeployFollowthroughRequest)
     decision = store.get(decision_id)
     if decision is None:
         raise _not_found(decision_id)
+    _guard_read_tenant(decision)
     parent_action = _enum_value(decision.action_type)
     if parent_action not in _REDEPLOY_ELIGIBLE_ACTION_TYPES:
         raise HTTPException(
@@ -2227,7 +2407,11 @@ def list_dispatch_outbox(
     status: Optional[str] = Query(default=None),
 ):
     """List durable dispatch records, tenant-scoped when a tenant is supplied."""
-    scope = normalize_tenant_id(tenant_id) if tenant_id is not None else None
+    scope = (
+        _authorized_request_tenant(tenant_id)
+        if tenant_id is not None or _auth_mode() == "token"
+        else None
+    )
     records = dispatch_outbox.list_all(tenant_id=scope)
     if status:
         wanted = status.strip().lower()
@@ -2253,11 +2437,12 @@ def replay_dispatch(outbox_id: str, body: DispatchReplayRequest):
         raise HTTPException(status_code=404, detail=f"dispatch record not found: {outbox_id}")
 
     record_tenant = str(dict(record.event.payload or {}).get("tenant_id") or DEFAULT_TENANT_ID)
-    if normalize_tenant_id(body.tenant_id) != record_tenant:
+    actor_tenant = _authorized_request_tenant(body.tenant_id)
+    if actor_tenant != record_tenant:
         raise HTTPException(
             status_code=403,
             detail=(
-                f"actor tenant '{normalize_tenant_id(body.tenant_id)}' is not authorized to "
+                f"actor tenant '{actor_tenant}' is not authorized to "
                 f"replay a dispatch owned by tenant '{record_tenant}'"
             ),
         )
@@ -2277,7 +2462,11 @@ def replay_dispatch(outbox_id: str, body: DispatchReplayRequest):
 @app.get("/api/evolution/compensations", response_model=CompensationListResponse)
 def list_compensations(tenant_id: Optional[str] = Query(default=None)):
     """List durable compensation obligations left by failed dispatches."""
-    scope = normalize_tenant_id(tenant_id) if tenant_id is not None else None
+    scope = (
+        _authorized_request_tenant(tenant_id)
+        if tenant_id is not None or _auth_mode() == "token"
+        else None
+    )
     return CompensationListResponse(
         tenant_id=scope,
         compensations=[

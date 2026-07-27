@@ -52,6 +52,7 @@ from services.evolution.dispatch_receipts import (
     OUTCOME_UNSUPPORTED,
     build_adapter_registry,
 )
+from services.foundation.persistence_posture import require_persistence_posture
 
 _WORKER_NAME = "evolution-dispatch-worker"
 _ACTOR_ROLE = "evolution_controller"
@@ -82,21 +83,48 @@ def _decode_json_response(body: str, *, context: str) -> Any:
         raise RuntimeError(f"{context} returned malformed JSON") from exc
 
 
-def _http_get(url: str, timeout_seconds: float) -> Any:
+def _service_headers(*, tenant_id: str | None, auth_token: str | None) -> dict[str, str]:
+    headers = {"Accept": "application/json"}
+    if tenant_id:
+        headers["X-Tenant-Id"] = tenant_id
+    if auth_token:
+        headers["Authorization"] = f"Bearer {auth_token}"
+    return headers
+
+
+def _http_get(
+    url: str,
+    timeout_seconds: float,
+    *,
+    tenant_id: str | None = None,
+    auth_token: str | None = None,
+) -> Any:
     request = urllib.request.Request(
-        url, headers={"Accept": "application/json"}, method="GET"
+        url,
+        headers=_service_headers(tenant_id=tenant_id, auth_token=auth_token),
+        method="GET",
     )
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
         body = response.read().decode("utf-8")
     return _decode_json_response(body, context=f"GET {url}")
 
 
-def _http_post(url: str, payload: dict[str, Any], timeout_seconds: float) -> Any:
+def _http_post(
+    url: str,
+    payload: dict[str, Any],
+    timeout_seconds: float,
+    *,
+    tenant_id: str | None = None,
+    auth_token: str | None = None,
+) -> Any:
     data = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
         url,
         data=data,
-        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        headers={
+            **_service_headers(tenant_id=tenant_id, auth_token=auth_token),
+            "Content-Type": "application/json",
+        },
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
@@ -105,12 +133,22 @@ def _http_post(url: str, payload: dict[str, Any], timeout_seconds: float) -> Any
 
 
 def fetch_decision(
-    *, api_url: str, decision_id: str, timeout_seconds: float
+    *,
+    api_url: str,
+    decision_id: str,
+    tenant_id: str,
+    auth_token: str | None,
+    timeout_seconds: float,
 ) -> dict[str, Any] | None:
     """Return the decision, or ``None`` when the service says it is gone."""
     url = api_url.rstrip("/") + f"/api/evolution/proposals/{decision_id}"
     try:
-        payload = _http_get(url, timeout_seconds)
+        payload = _http_get(
+            url,
+            timeout_seconds,
+            tenant_id=tenant_id,
+            auth_token=auth_token,
+        )
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
             return None
@@ -128,6 +166,7 @@ def execute_with_receipt(
     actor_id: str,
     downstream_kind: str,
     downstream_ref_id: str,
+    auth_token: str | None,
     timeout_seconds: float,
 ) -> dict[str, Any]:
     """Ask the evolution service to execute on a downstream receipt.
@@ -146,14 +185,23 @@ def execute_with_receipt(
             "downstream_ref_id": downstream_ref_id,
         },
     }
-    result = _http_post(url, payload, timeout_seconds)
+    result = _http_post(
+        url,
+        payload,
+        timeout_seconds,
+        tenant_id=tenant_id,
+        auth_token=auth_token,
+    )
     if not isinstance(result, dict):
         raise RuntimeError(f"execute response for {decision_id} was not an object")
     return result
 
 
 def _transition_applied_check(
-    *, api_url: str, timeout_seconds: float
+    *,
+    api_url: str,
+    auth_token: str | None,
+    timeout_seconds: float,
 ):
     """Build the reconcile predicate: is the intent's decision durably approved?
 
@@ -167,11 +215,16 @@ def _transition_applied_check(
         if transition.get("aggregate_type") != "evolution_decision":
             return False
         decision_id = str(transition.get("aggregate_id") or "")
-        if not decision_id:
+        tenant_id = str(transition.get("tenant_id") or "")
+        if not decision_id or not tenant_id:
             return False
         try:
             decision = fetch_decision(
-                api_url=api_url, decision_id=decision_id, timeout_seconds=timeout_seconds
+                api_url=api_url,
+                decision_id=decision_id,
+                tenant_id=tenant_id,
+                auth_token=auth_token,
+                timeout_seconds=timeout_seconds,
             )
         except Exception:  # noqa: BLE001 - any read failure must not activate
             return False
@@ -194,6 +247,7 @@ def run_poll(
     actor_id: str = _WORKER_NAME,
     worker_id: str = _WORKER_NAME,
     timeout_seconds: float = 10.0,
+    auth_token: str | None = None,
     claim_limit: int | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
@@ -215,7 +269,9 @@ def run_poll(
         result["reconciled"] = reconcile_dispatch_outbox(
             outbox,
             transition_applied=_transition_applied_check(
-                api_url=api_url, timeout_seconds=timeout_seconds
+                api_url=api_url,
+                auth_token=auth_token,
+                timeout_seconds=timeout_seconds,
             ),
         )
     except Exception as exc:  # noqa: BLE001
@@ -254,6 +310,7 @@ def run_poll(
                 compensations=compensations,
                 actor_id=actor_id,
                 timeout_seconds=timeout_seconds,
+                auth_token=auth_token,
                 now=now,
                 result=result,
                 item=item,
@@ -303,12 +360,17 @@ def _deliver_one(
     compensations: CompensationLedger,
     actor_id: str,
     timeout_seconds: float,
+    auth_token: str | None,
     now: datetime | None,
     result: dict[str, Any],
     item: dict[str, Any],
 ) -> None:
     decision = fetch_decision(
-        api_url=api_url, decision_id=decision_id, timeout_seconds=timeout_seconds
+        api_url=api_url,
+        decision_id=decision_id,
+        tenant_id=tenant_id,
+        auth_token=auth_token,
+        timeout_seconds=timeout_seconds,
     )
     if decision is None:
         item["disposition"] = "dead_lettered"
@@ -405,7 +467,10 @@ def _deliver_one(
     item["downstream_kind"] = submission.downstream_kind
     item["downstream_ref_id"] = downstream_ref_id
 
-    receipt = adapter.read_receipt(downstream_ref_id)
+    receipt = adapter.read_receipt(
+        downstream_ref_id,
+        expected_intent=payload,
+    )
     item["downstream_status"] = receipt.downstream_status
     if receipt.outcome == OUTCOME_PENDING:
         # Healthy in-flight work.  Leave the claim to expire rather than
@@ -457,6 +522,7 @@ def _deliver_one(
             actor_id=actor_id,
             downstream_kind=receipt.downstream_kind,
             downstream_ref_id=downstream_ref_id,
+            auth_token=auth_token,
             timeout_seconds=timeout_seconds,
         )
     except urllib.error.HTTPError as exc:
@@ -560,6 +626,18 @@ def main() -> int:
     max_ticks = _env_int("EVOLUTION_DISPATCH_MAX_TICKS", 0, minimum=0)
     timeout_seconds = float(os.getenv("EVOLUTION_DISPATCH_TIMEOUT_SECONDS", "10"))
     health_file = os.getenv("EVOLUTION_DISPATCH_HEALTH_FILE", "")
+    auth_mode = os.getenv("EVOLUTION_AUTH_MODE", "disabled").strip().lower()
+    auth_token = os.getenv("EVOLUTION_AUTH_TOKEN", "").strip() or None
+    if auth_mode not in {"disabled", "token"}:
+        raise RuntimeError("EVOLUTION_AUTH_MODE must be disabled or token")
+    if auth_mode == "token" and auth_token is None:
+        raise RuntimeError("EVOLUTION_AUTH_TOKEN is required when EVOLUTION_AUTH_MODE=token")
+
+    persistence_posture = require_persistence_posture(
+        "evolution-dispatch-worker",
+        backend_env_vars={"EVOLUTION_STORE_BACKEND": "json"},
+        require_object_store=False,
+    )
 
     outbox = EvolutionDispatchOutbox(build_dispatch_outbox_store(data_dir=data_dir))
     compensations = CompensationLedger(data_dir=data_dir)
@@ -578,6 +656,9 @@ def main() -> int:
         "last_success": None,
         "last_failure": None,
         "last_failure_reason": None,
+        "store_backend": os.getenv("EVOLUTION_STORE_BACKEND", "json"),
+        "persistence_posture": persistence_posture.mode,
+        "auth_mode": auth_mode,
     }
     if health_file:
         # A container restart can retain the prior writable-layer health file.
@@ -597,6 +678,7 @@ def main() -> int:
                 compensations=compensations,
                 actor_id=actor_id,
                 timeout_seconds=timeout_seconds,
+                auth_token=auth_token,
             )
             health["ticks"] = tick
             health["total_executed"] += result["executed"]

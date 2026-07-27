@@ -23,6 +23,7 @@ from approval_decision import EvidenceRef, EvidenceRefType  # type: ignore
 from evolution_controller import EvolutionControllerError, ThresholdEvaluator  # type: ignore
 from evolution_decision import (  # type: ignore
     ComparisonOperator,
+    DEFAULT_TENANT_ID,
     EvolutionActionType,
     EvolutionDecision,
     EvolutionDecisionError,
@@ -80,6 +81,7 @@ def run_daily_sweep(
     max_incidents: int | None = None,
     sweep_id: str = "daily",
     evaluator: ThresholdEvaluator | None = None,
+    tenant_id: str = DEFAULT_TENANT_ID,
 ) -> DailySweepResult:
     """Create EvolutionDecision proposals for eligible incident triggers."""
     incidents = _select_incidents(
@@ -96,7 +98,11 @@ def run_daily_sweep(
     for incident in incidents:
         target_type = EvolutionTargetType.CANDIDATE_ARTIFACT.value
         target_id = incident.artifact_id
-        existing = _decision_for_incident(decision_store, incident.incident_id)
+        existing = _decision_for_incident(
+            decision_store,
+            incident.incident_id,
+            tenant_id=tenant_id,
+        )
         if existing is not None:
             items.append(
                 SweepItem(
@@ -111,7 +117,11 @@ def run_daily_sweep(
             )
             continue
 
-        active = decision_store.find_active_by_target(target_type, target_id)
+        active = decision_store.find_active_by_target(
+            target_type,
+            target_id,
+            tenant_id=tenant_id,
+        )
         if active:
             items.append(
                 SweepItem(
@@ -133,6 +143,7 @@ def run_daily_sweep(
                 incident,
                 evaluator=classifier,
                 sweep_id=sweep_id,
+                tenant_id=tenant_id,
             )
             decision_store.put(decision)
         except (EvolutionControllerError, EvolutionDecisionError, ValueError, TypeError) as exc:
@@ -174,6 +185,7 @@ def build_decision_from_incident(
     *,
     evaluator: ThresholdEvaluator | None = None,
     sweep_id: str = "daily",
+    tenant_id: str = DEFAULT_TENANT_ID,
 ) -> EvolutionDecision:
     """Derive one proposed EvolutionDecision from an incident threshold signal."""
     snapshot = threshold_snapshot_from_incident(incident)
@@ -222,6 +234,7 @@ def build_decision_from_incident(
         capital_pool_id=incident.capital_pool_id,
         target_stage=incident.deployment_stage,
         metadata=metadata,
+        tenant_id=tenant_id,
     )
 
 
@@ -289,9 +302,14 @@ def _select_incidents(
 def _decision_for_incident(
     decision_store: EvolutionDecisionStore,
     incident_id: str,
+    *,
+    tenant_id: str = DEFAULT_TENANT_ID,
 ) -> EvolutionDecision | None:
     for decision in decision_store.list_all():
-        if decision.linked_incident_id == incident_id:
+        if (
+            decision.tenant_id == tenant_id
+            and decision.linked_incident_id == incident_id
+        ):
             return decision
     return None
 

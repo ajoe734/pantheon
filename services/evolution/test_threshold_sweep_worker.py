@@ -1686,7 +1686,7 @@ def test_run_tick_retains_undelivered_incidents_across_day_rollover(tmp_path):
 # EVOCHAIN-001 Regressions (duplicate retries, WAL fail-closed, and rollover)
 # ---------------------------------------------------------------------------
 
-def test_telemetry_duplicate_retry_rejects_content_mismatch_and_preserves_canonical():
+def test_telemetry_duplicate_retry_requires_exact_content_and_preserves_canonical():
     """Verify that duplicate telemetry event_id retries run schema/evidence
     validation and reject same-ID content mismatch, while lineage repair uses
     the immutable originally accepted payload."""
@@ -1742,11 +1742,17 @@ def test_telemetry_duplicate_retry_rejects_content_mismatch_and_preserves_canoni
     assert ok_retry is False  # Rejected content mismatch
     assert len(lineage.admitted) == 1  # No new admission
 
-    # Ingest duplicate retry with identical content (except created_at)
-    valid_retry = dict(original_event)
-    valid_retry["created_at"] = "2026-07-13T00:01:00Z"  # time can change
+    # A duplicate event id is immutable, including its observation timestamp.
+    # The threshold worker persists and reuses the exact canonical payload on
+    # retry, so allowing created_at to drift here would weaken the telemetry
+    # owner's duplicate-content fence.
+    timestamp_mismatch = dict(original_event)
+    timestamp_mismatch["created_at"] = "2026-07-13T00:01:00Z"
+    mismatch_retry = asyncio.run(ingest.ingest(timestamp_mismatch))
+    assert mismatch_retry is False
+    assert len(lineage.admitted) == 1
 
-    ok_valid_retry = asyncio.run(ingest.ingest(valid_retry))
+    ok_valid_retry = asyncio.run(ingest.ingest(dict(original_event)))
     assert ok_valid_retry is True  # Allowed as idempotent skip
     assert len(lineage.admitted) == 2
     # Ensure lineage repair used the immutable original event, not the retry body!

@@ -116,16 +116,41 @@ def worker_http(monkeypatch):
     needing a live socket.
     """
 
-    def _get(url: str, timeout_seconds: float):
-        response = client.get(_path(url))
+    def _headers(tenant_id: str | None, auth_token: str | None) -> dict[str, str]:
+        headers: dict[str, str] = {}
+        if tenant_id:
+            headers["X-Tenant-Id"] = tenant_id
+        if auth_token:
+            headers["Authorization"] = f"Bearer {auth_token}"
+        return headers
+
+    def _get(
+        url: str,
+        timeout_seconds: float,
+        *,
+        tenant_id: str | None = None,
+        auth_token: str | None = None,
+    ):
+        response = client.get(_path(url), headers=_headers(tenant_id, auth_token))
         if response.status_code >= 400:
             raise urllib.error.HTTPError(
                 url, response.status_code, str(response.status_code), None, None
             )
         return response.json()
 
-    def _post(url: str, payload: dict, timeout_seconds: float):
-        response = client.post(_path(url), json=payload)
+    def _post(
+        url: str,
+        payload: dict,
+        timeout_seconds: float,
+        *,
+        tenant_id: str | None = None,
+        auth_token: str | None = None,
+    ):
+        response = client.post(
+            _path(url),
+            json=payload,
+            headers=_headers(tenant_id, auth_token),
+        )
         if response.status_code >= 400:
             raise urllib.error.HTTPError(
                 url, response.status_code, str(response.status_code), None, None
@@ -265,6 +290,72 @@ def test_two_tenants_on_one_target_get_separate_dispatch_records(isolated_state)
     assert a_id != b_id
     assert isolated_state["outbox"].get_by_id(a_id) is not None
     assert isolated_state["outbox"].get_by_id(b_id) is not None
+
+
+def test_token_auth_scopes_reads_and_rejects_body_tenant_spoofing(
+    isolated_state,
+    monkeypatch,
+):
+    monkeypatch.setenv("EVOLUTION_AUTH_MODE", "token")
+    monkeypatch.setenv("EVOLUTION_AUTH_TOKEN", "evolution-test-token")
+    monkeypatch.setenv("EVOLUTION_AUTH_ALLOWED_TENANTS", "tenant-a,tenant-b")
+    tenant_a_headers = {
+        "Authorization": "Bearer evolution-test-token",
+        "X-Tenant-Id": "tenant-a",
+    }
+    tenant_b_headers = {
+        "Authorization": "Bearer evolution-test-token",
+        "X-Tenant-Id": "tenant-b",
+    }
+
+    decision_id = _new_decision_id("evo-auth")
+    created = client.post(
+        "/api/evolution/proposals",
+        headers=tenant_a_headers,
+        json={
+            "decision_id": decision_id,
+            "tenant_id": "tenant-a",
+            "target_type": "candidate_artifact",
+            "target_id": f"artifact-{decision_id}",
+            "target_version": "1.0.0",
+            "action_type": "retrain",
+            "rationale": "Tenant-authenticated research retrain proposal.",
+            "created_by_id": "evolution-controller-01",
+            "linked_incident_id": f"inc-{decision_id}",
+        },
+    )
+    assert created.status_code == 201, created.text
+
+    missing_auth = client.get(f"/api/evolution/proposals/{decision_id}")
+    assert missing_auth.status_code == 401
+    foreign_read = client.get(
+        f"/api/evolution/proposals/{decision_id}",
+        headers=tenant_b_headers,
+    )
+    assert foreign_read.status_code == 404
+    own_read = client.get(
+        f"/api/evolution/proposals/{decision_id}",
+        headers=tenant_a_headers,
+    )
+    assert own_read.status_code == 200
+
+    spoofed_review = client.post(
+        f"/api/evolution/proposals/{decision_id}/review",
+        headers=tenant_a_headers,
+        json={
+            "actor_role": "reviewer_on_duty",
+            "actor_id": "reviewer-01",
+            "approval_decision_id": f"approval-{decision_id}",
+            "tenant_id": "tenant-b",
+        },
+    )
+    assert spoofed_review.status_code == 403
+    unchanged = client.get(
+        f"/api/evolution/proposals/{decision_id}",
+        headers=tenant_a_headers,
+    )
+    assert unchanged.status_code == 200
+    assert unchanged.json()["decision_state"] == "proposed"
 
 
 # ---------------------------------------------------------------------------

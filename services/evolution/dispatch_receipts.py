@@ -176,6 +176,9 @@ class ResearchPlaneAdapter:
         )
 
     def _ensure_task(self, intent: Mapping[str, Any], decision_id: str) -> str:
+        tenant_id = str(intent.get("tenant_id") or "").strip()
+        if not tenant_id:
+            raise ValueError("dispatch intent carries no tenant_id")
         status, body = self._http_json(
             "POST",
             f"{self.api_url}/api/research-orchestrator/tasks",
@@ -187,8 +190,12 @@ class ResearchPlaneAdapter:
                     f"{intent.get('target_id')}@{intent.get('target_version')}"
                 ),
                 "source_refs": [{"type": "evolution_decision", "id": decision_id}],
+                "constraints": {
+                    "tenant_id": tenant_id,
+                    "evolution_decision_id": decision_id,
+                },
                 "actor_id": "evolution-dispatch-worker",
-                "idempotency_key": f"evolution-task-{decision_id}",
+                "idempotency_key": f"evolution-task:{tenant_id}:{decision_id}",
             },
             timeout=self.timeout,
         )
@@ -200,6 +207,9 @@ class ResearchPlaneAdapter:
         return str(task_id)
 
     def _ensure_run(self, intent: Mapping[str, Any], decision_id: str, task_id: str) -> str:
+        tenant_id = str(intent.get("tenant_id") or "").strip()
+        if not tenant_id:
+            raise ValueError("dispatch intent carries no tenant_id")
         status, body = self._http_json(
             "POST",
             f"{self.api_url}/api/research-orchestrator/tasks/{task_id}/runs",
@@ -208,6 +218,7 @@ class ResearchPlaneAdapter:
                     {"type": "strategy_artifact", "id": str(intent.get("target_id") or "")}
                 ],
                 "parameters": {
+                    "tenant_id": tenant_id,
                     "decision_id": decision_id,
                     "action_type": intent.get("action_type"),
                     "target_artifact_id": intent.get("target_id"),
@@ -215,7 +226,7 @@ class ResearchPlaneAdapter:
                     "work_item_id": task_id,
                 },
                 "actor_id": "evolution-dispatch-worker",
-                "idempotency_key": f"evolution-run-{decision_id}",
+                "idempotency_key": f"evolution-run:{tenant_id}:{decision_id}",
             },
             timeout=self.timeout,
         )
@@ -228,12 +239,17 @@ class ResearchPlaneAdapter:
 
     # -- readback -----------------------------------------------------------
 
-    def read_receipt(self, downstream_ref_id: str) -> DispatchReceipt:
-        """Read the run's real status back and classify it."""
+    def read_receipt(
+        self,
+        downstream_ref_id: str,
+        *,
+        expected_intent: Mapping[str, Any] | None = None,
+    ) -> DispatchReceipt:
+        """Read the full run record back, validate its tenant/decision, classify it."""
         try:
             status, body = self._http_json(
                 "GET",
-                f"{self.api_url}/api/research-orchestrator/runs/{downstream_ref_id}/status",
+                f"{self.api_url}/api/research-orchestrator/runs/{downstream_ref_id}",
                 timeout=self.timeout,
             )
         except urllib.error.HTTPError as exc:
@@ -271,6 +287,33 @@ class ResearchPlaneAdapter:
                 detail=f"research run readback returned status={status} without a usable body",
             )
 
+        parameters = body.get("parameters")
+        parameters = dict(parameters) if isinstance(parameters, Mapping) else {}
+        if expected_intent is not None:
+            expected_tenant = str(expected_intent.get("tenant_id") or "").strip()
+            expected_decision = str(expected_intent.get("decision_id") or "").strip()
+            if (
+                not expected_tenant
+                or not expected_decision
+                or str(parameters.get("tenant_id") or "") != expected_tenant
+                or str(parameters.get("decision_id") or "") != expected_decision
+            ):
+                return DispatchReceipt(
+                    outcome=OUTCOME_TERMINAL_ERROR,
+                    downstream_kind=self.kind,
+                    downstream_ref_id=downstream_ref_id,
+                    downstream_status=str(body.get("status") or "").strip().lower() or None,
+                    detail=(
+                        "research run readback does not belong to the expected "
+                        f"tenant/decision ({expected_tenant!r}, {expected_decision!r})"
+                    ),
+                    evidence={
+                        "run_id": body.get("run_id"),
+                        "task_id": body.get("task_id"),
+                        "parameters": parameters,
+                    },
+                )
+
         run_status = str(body.get("status") or "").strip().lower()
         if run_status in _RESEARCH_SUCCESS_STATUSES:
             outcome = OUTCOME_SUCCEEDED
@@ -289,6 +332,7 @@ class ResearchPlaneAdapter:
                 "task_id": body.get("task_id"),
                 "status": body.get("status"),
                 "artifact_refs": list(body.get("artifact_refs") or []),
+                "parameters": parameters,
                 "updated_at": body.get("updated_at"),
             },
         )
@@ -317,7 +361,12 @@ class UnsupportedPlaneAdapter:
             detail=self.reason,
         )
 
-    def read_receipt(self, downstream_ref_id: str) -> DispatchReceipt:
+    def read_receipt(
+        self,
+        downstream_ref_id: str,
+        *,
+        expected_intent: Mapping[str, Any] | None = None,
+    ) -> DispatchReceipt:
         return DispatchReceipt(
             outcome=OUTCOME_UNSUPPORTED,
             downstream_kind=self.kind,
@@ -374,6 +423,8 @@ def verify_terminal_receipt(
     execution_plane: str,
     downstream_kind: str,
     downstream_ref_id: str,
+    tenant_id: str,
+    decision_id: str,
 ) -> DispatchReceipt:
     """Re-read a downstream record and require it to be terminal.
 
@@ -397,7 +448,13 @@ def verify_terminal_receipt(
     if not str(downstream_ref_id).strip():
         raise DispatchReceiptError("receipt downstream_ref_id is required")
 
-    receipt = adapter.read_receipt(str(downstream_ref_id).strip())
+    receipt = adapter.read_receipt(
+        str(downstream_ref_id).strip(),
+        expected_intent={
+            "tenant_id": str(tenant_id).strip(),
+            "decision_id": str(decision_id).strip(),
+        },
+    )
     if not receipt.is_terminal:
         raise DispatchReceiptError(
             f"downstream {downstream_kind} {downstream_ref_id} is not terminal: "

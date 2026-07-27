@@ -78,7 +78,12 @@ class ScriptedReceiptAdapter:
             detail=f"scripted submission for {reference}",
         )
 
-    def read_receipt(self, downstream_ref_id: str) -> DispatchReceipt:
+    def read_receipt(
+        self,
+        downstream_ref_id: str,
+        *,
+        expected_intent: Mapping[str, Any] | None = None,
+    ) -> DispatchReceipt:
         self.readbacks.append(downstream_ref_id)
         scripted = self.statuses.get(downstream_ref_id)
         if scripted is not None:
