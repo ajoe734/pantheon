@@ -54,7 +54,7 @@ PANTHEON_RUNTIME_MANAGER_URL=http://runtime-manager:8081 \
   services/control-plane/governance/smoke_test_evolution_controller.py \
   scripts/test_evolution_daily_sweep_deploy_contract.py
 
-440 passed, 5 warnings in 103.07s
+440 passed, 5 warnings in 91.15s
 ```
 
 The five warnings are existing FastAPI/Starlette deprecation notices.
