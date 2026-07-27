@@ -5,10 +5,11 @@ ASST-INTEG-006 — owned by Claude2.
 Flow:
 1. Verify packet signature (HMAC-SHA256 via dev_bridge_signer).
 2. Reject duplicate packets via replay protection.
-3. For each BridgeTask in the packet, call:
-       python3 scripts/ai_status.py assign <task-id> <owner> <reviewer> [title]
-   using subprocess with a structured TASK_METADATA_JSON envelope containing
-   the exact task spec and packet/conversation/turn/document provenance.
+3. For each BridgeTask in the packet, call the installed governed
+   scripts/ai_status.py runtime with the central status root and authoritative
+   task-state journal binding. The verified repo-local bridge uses the trusted
+   Human/Ops mutation identity while preserving the packet actor in the
+   structured TASK_METADATA_JSON provenance envelope.
 4. Mark packet as seen so replays are rejected in subsequent calls.
 5. Return BridgeDispatchResult with per-task records and audit refs.
 
@@ -26,7 +27,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from urllib.parse import quote
 
 from .dev_bridge_admission import load_admission_record, persist_admission_record
@@ -44,6 +45,32 @@ from .dev_bridge_signer import (
     packet_replay_lock,
     replay_record,
     verify_packet,
+)
+
+BRIDGE_STATUS_ACTOR = "Human/Ops"
+STATUS_ROOT_ENV = "PANTHEON_STATUS_ROOT"
+COMMAND_ROOT_ENV = "PANTHEON_COMMAND_ROOT"
+COMMAND_SHA_ENV = "PANTHEON_COMMAND_RUNTIME_SHA"
+COMMAND_REMOTE_ENV = "PANTHEON_COMMAND_REMOTE"
+COMMAND_BASE_REF_ENV = "PANTHEON_COMMAND_BASE_REF"
+TASK_STATE_MODE_ENV = "PANTHEON_TASK_STATE_STORE_MODE"
+TASK_STATE_EVENT_LOG_ENV = "PANTHEON_TASK_STATE_EVENT_LOG"
+LEGACY_COMMAND_ENV_NAMES = (
+    "PANTHEON_STATUS_COMMAND_ROOT",
+    "PANTHEON_STATUS_COMMAND_SHA",
+    "PANTHEON_STATUS_COMMAND_REMOTE",
+    "PANTHEON_STATUS_COMMAND_BASE_REF",
+)
+AUTO_WORKER_ENV_NAMES = (
+    "ORCH_RUN_ID",
+    "ORCH_TASK_ID",
+    "ORCH_AGENT_ID",
+    "ORCH_PROVIDER",
+    "ORCH_SESSION_ID",
+    "PANTHEON_WORKTREE_ROOT",
+    "ORCH_WORKSPACE_PATH",
+    "ORCH_RUNNER_STATUS_PATH",
+    "ORCH_HEARTBEAT_PATH",
 )
 
 
@@ -71,6 +98,195 @@ def _find_repo_root(start: Optional[str] = None) -> str:
 
 def _ai_status_py(repo_root: str) -> str:
     return str(Path(repo_root) / "scripts" / "ai_status.py")
+
+
+def _same_path(left: str | Path, right: str | Path) -> bool:
+    try:
+        return Path(left).expanduser().resolve() == Path(right).expanduser().resolve()
+    except (OSError, RuntimeError):
+        return False
+
+
+def _environment_targets_status_root(repo_root: str) -> bool:
+    raw_status_root = str(os.environ.get(STATUS_ROOT_ENV) or "").strip()
+    return bool(raw_status_root) and _same_path(raw_status_root, repo_root)
+
+
+def _absolute_runtime_path(raw_path: str, *, label: str) -> str:
+    path = Path(raw_path).expanduser()
+    if not path.is_absolute():
+        raise RuntimeError(f"{label} must be an absolute path")
+    if ".." in path.parts:
+        raise RuntimeError(f"{label} cannot contain parent directory references")
+    cursor = Path(path.anchor)
+    for part in path.parts[1:]:
+        cursor = cursor / part
+        try:
+            if cursor.is_symlink():
+                raise RuntimeError(
+                    f"{label} cannot include a symlink component: {cursor}"
+                )
+            if not cursor.exists():
+                break
+        except OSError as exc:
+            raise RuntimeError(f"could not validate {label}: {cursor}") from exc
+    return str(path.resolve())
+
+
+def _code_repo_root() -> Path:
+    candidate = Path(__file__).resolve()
+    for parent in (candidate.parent, *candidate.parents):
+        if (
+            (parent / ".git").exists()
+            and (parent / "scripts" / "ai_status.py").is_file()
+        ):
+            return parent
+    raise RuntimeError("could not resolve installed dev bridge command root")
+
+
+def _git_stdout(repo_root: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(repo_root), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "git command failed").strip()
+        raise RuntimeError(detail)
+    return result.stdout.strip()
+
+
+def _runtime_task_state_env(repo_root: str) -> Dict[str, str]:
+    """Resolve the live journal binding without trusting a repo template path."""
+
+    if _environment_targets_status_root(repo_root):
+        mode = str(os.environ.get(TASK_STATE_MODE_ENV) or "").strip().lower()
+        event_log = str(os.environ.get(TASK_STATE_EVENT_LOG_ENV) or "").strip()
+        if mode or event_log:
+            if mode not in {"shadow", "authoritative"}:
+                raise RuntimeError(
+                    f"{TASK_STATE_MODE_ENV} must be shadow or authoritative"
+                )
+            if not event_log:
+                raise RuntimeError(
+                    f"{TASK_STATE_EVENT_LOG_ENV} is required in {mode} mode"
+                )
+            return {
+                TASK_STATE_MODE_ENV: mode,
+                TASK_STATE_EVENT_LOG_ENV: _absolute_runtime_path(
+                    event_log,
+                    label=TASK_STATE_EVENT_LOG_ENV,
+                ),
+            }
+
+    runtime_state_path = Path(repo_root) / ".orchestrator" / "state.json"
+    if not runtime_state_path.is_file():
+        return {}
+    try:
+        runtime_state = json.loads(runtime_state_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            f"could not read supervisor runtime state: {runtime_state_path}"
+        ) from exc
+    if not isinstance(runtime_state, dict):
+        raise RuntimeError("supervisor runtime state must be a JSON object")
+    supervisor = runtime_state.get("supervisor")
+    shadow = (
+        supervisor.get("task_state_shadow")
+        if isinstance(supervisor, dict)
+        else None
+    )
+    if not isinstance(shadow, dict):
+        return {}
+    mode = str(shadow.get("mode") or "").strip().lower()
+    event_log = str(shadow.get("event_log") or "").strip()
+    if mode not in {"shadow", "authoritative"}:
+        return {}
+    if not event_log:
+        raise RuntimeError(
+            "supervisor task-state runtime binding requires an absolute event log"
+        )
+    return {
+        TASK_STATE_MODE_ENV: mode,
+        TASK_STATE_EVENT_LOG_ENV: _absolute_runtime_path(
+            event_log,
+            label="supervisor task-state event log",
+        ),
+    }
+
+
+def _governed_command_root(
+    repo_root: str,
+    *,
+    task_state_env: Dict[str, str],
+) -> Optional[Path]:
+    if _environment_targets_status_root(repo_root):
+        configured = str(os.environ.get(COMMAND_ROOT_ENV) or "").strip()
+        if configured:
+            path = Path(configured).expanduser()
+            if not path.is_absolute():
+                raise RuntimeError(f"{COMMAND_ROOT_ENV} must be an absolute path")
+            return path.resolve()
+
+    if task_state_env:
+        code_root = _code_repo_root()
+        if not _same_path(code_root, repo_root):
+            return code_root
+        raise RuntimeError(
+            "authoritative dev bridge dispatch requires an installed command "
+            "runtime distinct from the central status root"
+        )
+    return None
+
+
+def _status_command_context(
+    repo_root: str,
+) -> Tuple[str, Dict[str, str], bool]:
+    """Return executable/env for either a governed runtime or legacy fixture."""
+
+    task_state_env = _runtime_task_state_env(repo_root)
+    command_root = _governed_command_root(
+        repo_root,
+        task_state_env=task_state_env,
+    )
+    if command_root is None:
+        return _ai_status_py(repo_root), {STATUS_ROOT_ENV: str(Path(repo_root).resolve())}, False
+
+    ai_status = command_root / "scripts" / "ai_status.py"
+    if not ai_status.is_file():
+        raise RuntimeError(
+            f"installed command runtime is missing scripts/ai_status.py: {command_root}"
+        )
+
+    if _environment_targets_status_root(repo_root) and str(
+        os.environ.get(COMMAND_ROOT_ENV) or ""
+    ).strip():
+        command_sha = str(os.environ.get(COMMAND_SHA_ENV) or "").strip()
+        if not command_sha:
+            raise RuntimeError(
+                f"{COMMAND_SHA_ENV} is required with {COMMAND_ROOT_ENV}"
+            )
+        command_remote = str(
+            os.environ.get(COMMAND_REMOTE_ENV) or "ajoe734/pantheon"
+        ).strip()
+        command_base_ref = str(
+            os.environ.get(COMMAND_BASE_REF_ENV) or "origin/dev"
+        ).strip()
+    else:
+        command_sha = _git_stdout(command_root, "rev-parse", "HEAD")
+        command_remote = _git_stdout(command_root, "remote", "get-url", "origin")
+        command_base_ref = "origin/dev"
+
+    env = {
+        STATUS_ROOT_ENV: str(Path(repo_root).resolve()),
+        COMMAND_ROOT_ENV: str(command_root),
+        COMMAND_SHA_ENV: command_sha,
+        COMMAND_REMOTE_ENV: command_remote,
+        COMMAND_BASE_REF_ENV: command_base_ref,
+        **task_state_env,
+    }
+    return str(ai_status), env, True
 
 
 def _configured_allowed_repos() -> set[str]:
@@ -292,10 +508,9 @@ def _dispatch_task(
     *,
     packet: DevTaskPacket,
     repo_root: str,
-    actor_id: str,
     dry_run: bool,
 ) -> TaskDispatchRecord:
-    """Call scripts/ai_status.py assign for a single task.
+    """Call the governed status runtime for a single verified bridge task.
 
     Returns a TaskDispatchRecord indicating success or failure.
     Does NOT raise — errors are captured in the record.
@@ -310,14 +525,39 @@ def _dispatch_task(
     if dry_run:
         return record
 
-    ai_status = _ai_status_py(repo_root)
+    try:
+        ai_status, status_env, governed = _status_command_context(repo_root)
+    except RuntimeError as exc:
+        record.status = "error"
+        record.error = str(exc)
+        return record
     if not Path(ai_status).exists():
         record.status = "error"
         record.error = f"scripts/ai_status.py not found at {ai_status!r}"
         return record
 
     env = {**os.environ}
-    env["AI_NAME"] = actor_id
+    if not governed:
+        for name in (
+            COMMAND_ROOT_ENV,
+            COMMAND_SHA_ENV,
+            COMMAND_REMOTE_ENV,
+            COMMAND_BASE_REF_ENV,
+            TASK_STATE_MODE_ENV,
+            TASK_STATE_EVENT_LOG_ENV,
+            *LEGACY_COMMAND_ENV_NAMES,
+        ):
+            env.pop(name, None)
+    env.update(status_env)
+    # Signature verification and constraint checks happen before this private
+    # helper is reached. Run the canonical mutation as the repo-local bridge
+    # service rather than borrowing any ambient auto-worker lease. The signed
+    # packet actor remains immutable in TASK_METADATA_JSON and admission
+    # evidence, while direct worker status commands still pass through the
+    # normal lease gate in scripts/ai_status.py.
+    for name in AUTO_WORKER_ENV_NAMES:
+        env.pop(name, None)
+    env["AI_NAME"] = BRIDGE_STATUS_ACTOR
     env["TASK_METADATA_JSON"] = json.dumps(
         _task_metadata(packet, task),
         sort_keys=True,
@@ -468,14 +708,11 @@ def dispatch_task_packet(
 
         task_records: List[TaskDispatchRecord] = []
         errors: List[str] = []
-        actor_id = packet.actor.id
-
         for task in packet.tasks:
             rec = _dispatch_task(
                 task,
                 packet=packet,
                 repo_root=repo_root,
-                actor_id=actor_id,
                 dry_run=dry_run,
             )
             task_records.append(rec)

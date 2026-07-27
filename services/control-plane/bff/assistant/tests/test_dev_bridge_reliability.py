@@ -190,6 +190,58 @@ def test_untrusted_direct_status_mutation_still_requires_worker_lease(
         )
 
 
+def test_supervisor_runtime_state_discovers_authoritative_journal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    status_root = tmp_path / "status-root"
+    runtime_dir = status_root / ".orchestrator"
+    runtime_dir.mkdir(parents=True)
+    event_log = tmp_path / "runtime" / "task-state-events.jsonl"
+    event_log.parent.mkdir()
+    event_log.touch()
+    (runtime_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "supervisor": {
+                    "task_state_shadow": {
+                        "mode": "authoritative",
+                        "ok": True,
+                        "event_log": str(event_log),
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    for name in (
+        "PANTHEON_STATUS_ROOT",
+        "PANTHEON_COMMAND_ROOT",
+        "PANTHEON_COMMAND_RUNTIME_SHA",
+        "PANTHEON_TASK_STATE_STORE_MODE",
+        "PANTHEON_TASK_STATE_EVENT_LOG",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    task_state_env = dev_bridge_dispatcher._runtime_task_state_env(
+        str(status_root)
+    )
+
+    assert task_state_env == {
+        "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
+        "PANTHEON_TASK_STATE_EVENT_LOG": str(event_log),
+    }
+    with patch.object(
+        dev_bridge_dispatcher,
+        "_code_repo_root",
+        return_value=REPO_ROOT,
+    ):
+        assert dev_bridge_dispatcher._governed_command_root(
+            str(status_root),
+            task_state_env=task_state_env,
+        ) == REPO_ROOT
+
+
 def test_authoritative_bridge_dispatch_survives_next_projection_cycle(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -200,7 +252,7 @@ def test_authoritative_bridge_dispatch_survives_next_projection_cycle(
     monkeypatch.setenv("PANTHEON_COMMAND_ROOT", str(REPO_ROOT))
     monkeypatch.setenv("PANTHEON_COMMAND_RUNTIME_SHA", command_sha)
     monkeypatch.setenv("PANTHEON_COMMAND_REMOTE", "ajoe734/pantheon")
-    monkeypatch.setenv("PANTHEON_COMMAND_BASE_REF", "origin/dev")
+    monkeypatch.setenv("PANTHEON_COMMAND_BASE_REF", "HEAD")
     monkeypatch.setenv("PANTHEON_TASK_STATE_STORE_MODE", "authoritative")
     monkeypatch.setenv("PANTHEON_TASK_STATE_EVENT_LOG", str(event_log))
     for marker in (
@@ -213,15 +265,27 @@ def test_authoritative_bridge_dispatch_survives_next_projection_cycle(
     ):
         monkeypatch.delenv(marker, raising=False)
     packet = _signed("pkt_authoritative_projection")
+    initial_event_count = AI_STATUS.load_snapshot(event_log)["event_count"]
 
-    result = dispatch_task_packet(
-        BridgeDispatchRequest(packet=packet, repoRoot=str(status_root)),
+    queued = queue_task_packet(
+        packet,
+        repo_root=str(status_root),
         key_store=KEY_STORE,
     )
+    assert queued["status"] == "queued"
+    drained = drain_task_packet_inbox(repo_root=str(status_root), limit=1)
 
-    assert result.errors == []
+    assert drained["processedCount"] == 1
+    assert drained["errorCount"] == 0
+    receipt = drained["packets"][0]
+    assert receipt["status"] == "processed"
+    assert receipt["result"]["admissionStatus"] == "admitted"
+    admission_path = status_root / receipt["result"]["admissionRecord"][
+        "admission_record_path"
+    ]
+    assert admission_path.is_file()
     snapshot = AI_STATUS.load_snapshot(event_log)
-    assert snapshot["event_count"] == 2
+    assert snapshot["event_count"] > initial_event_count
     assert any(
         task.get("id") == packet.tasks[0].id
         for task in snapshot["state"].get("tasks", [])
