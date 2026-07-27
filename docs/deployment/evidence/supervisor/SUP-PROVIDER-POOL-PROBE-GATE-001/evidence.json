@@ -117,6 +117,8 @@
         ".orchestrator/test_supervisor.py::MissingHandoffBlockerTests::test_blocker_is_skipped_when_the_owner_no_longer_owns_the_task",
         ".orchestrator/test_supervisor.py::PollWorkersRecoveryTests::test_completion_stage_blocks_prepared_head_without_handoff",
         ".orchestrator/test_supervisor.py::PollWorkersRecoveryTests::test_completion_stage_keeps_generic_exit_when_no_head_was_prepared",
+        ".orchestrator/test_supervisor.py::PollWorkersRecoveryTests::test_completion_stage_ignores_mention_only_pr_url",
+        ".orchestrator/test_supervisor.py::PollWorkersRecoveryTests::test_completion_stage_does_not_block_finalize_exit",
         ".orchestrator/test_supervisor.py::PollWorkersRecoveryTests::test_worker_prepared_review_head_requires_an_owner_dispatch"
       ]
     },
@@ -128,7 +130,7 @@
   "verification": {
     "provisioning": "python3 scripts/dev/provision_python_distribution.py",
     "command": "cd .orchestrator && \"$PANTHEON_PY\" -m pytest -q test_provider_permissions.py test_supervisor.py test_supervisor_watchdog.py",
-    "result": "574 passed, 10 subtests passed",
+    "result": "576 passed, 9 subtests passed",
     "raw": [
       "raw/orchestrator-suites.txt",
       "raw/acceptance-selections.txt",

@@ -9164,6 +9164,7 @@ class PollWorkersRecoveryTests(unittest.TestCase):
             "agent_id": "claude2",
             "status": "running",
             "pr_url": "https://github.com/ajoe734/pantheon/pull/4270",
+            "pr_url_source": "result_payload",
             "request_snapshot": {"reason": supervisor.REASON_OWNED_IN_PROGRESS},
         }
         state: dict[str, object] = {}
@@ -9239,21 +9240,115 @@ class PollWorkersRecoveryTests(unittest.TestCase):
         record_streak.assert_called_once()
         self.assertEqual(worker["last_error"], supervisor.GENERIC_WORKER_EXIT_REASON)
 
+    def test_completion_stage_ignores_mention_only_pr_url(self) -> None:
+        """A PR URL scraped from logs is audit data, not prepared-head proof."""
+        worker = {
+            "run_id": "run-mentioned-pr",
+            "task_id": "TASK-PREPARED",
+            "provider": "claude2",
+            "agent_id": "claude2",
+            "status": "running",
+            "pr_url": "https://github.com/ajoe734/pantheon/pull/4270",
+            "pr_url_source": "log_scrape",
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_IN_PROGRESS},
+        }
+        with (
+            mock.patch.object(supervisor, "worker_is_discussion_planning", return_value=False),
+            mock.patch.object(supervisor, "worker_is_coordination_dispatch", return_value=False),
+            mock.patch.object(supervisor, "worker_is_chair_review", return_value=False),
+            mock.patch.object(supervisor, "record_missing_handoff_blocker") as record_blocker,
+            mock.patch.object(supervisor, "record_task_failure_streak", return_value=1) as record_streak,
+            mock.patch.object(
+                supervisor,
+                "provider_guardrail_settings",
+                return_value={"generic_exit_reassign_after": 2},
+            ),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "finalize_queue_event_record"),
+        ):
+            outcome = supervisor.poll_worker_completion_stage(
+                {},
+                {},
+                worker,
+                task_map={"TASK-PREPARED": {"status": "in_progress"}},
+                redispatch_statuses={"in_progress"},
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        record_blocker.assert_not_called()
+        record_streak.assert_called_once()
+        self.assertEqual(worker["last_error"], supervisor.GENERIC_WORKER_EXIT_REASON)
+
+    def test_completion_stage_does_not_block_finalize_exit(self) -> None:
+        """A review-approved finalize run can exit while waiting for auto-merge."""
+        worker = {
+            "run_id": "run-finalize-pr",
+            "task_id": "TASK-PREPARED",
+            "provider": "claude2",
+            "agent_id": "claude2",
+            "status": "running",
+            "pr_url": "https://github.com/ajoe734/pantheon/pull/4270",
+            "pr_url_source": "result_payload",
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_FINALIZE},
+        }
+        with (
+            mock.patch.object(supervisor, "worker_is_discussion_planning", return_value=False),
+            mock.patch.object(supervisor, "worker_is_coordination_dispatch", return_value=False),
+            mock.patch.object(supervisor, "worker_is_chair_review", return_value=False),
+            mock.patch.object(supervisor, "record_missing_handoff_blocker") as record_blocker,
+            mock.patch.object(supervisor, "record_task_failure_streak") as record_streak,
+            mock.patch.object(supervisor, "clear_task_failure_streak") as clear_streak,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            mock.patch.object(supervisor, "finalize_queue_event_record") as finalize_queue_event_record,
+        ):
+            outcome = supervisor.poll_worker_completion_stage(
+                {},
+                {},
+                worker,
+                task_map={"TASK-PREPARED": {"status": "review_approved"}},
+                redispatch_statuses={"review_approved"},
+            )
+
+        self.assertEqual(outcome, {"changed": True, "stop": True})
+        self.assertEqual(worker["status"], "completed")
+        record_blocker.assert_not_called()
+        record_streak.assert_not_called()
+        clear_streak.assert_called_once()
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_completed")
+        finalize_queue_event_record.assert_called_once_with({}, {}, worker, "completed")
+
     def test_worker_prepared_review_head_requires_an_owner_dispatch(self) -> None:
-        base = {"pr_url": "https://github.com/ajoe734/pantheon/pull/4270"}
+        base = {
+            "pr_url": "https://github.com/ajoe734/pantheon/pull/4270",
+            "pr_url_source": "result_payload",
+        }
         for reason in (
             supervisor.REASON_OWNED_READY,
             supervisor.REASON_OWNED_IN_PROGRESS,
-            supervisor.REASON_OWNED_FINALIZE,
         ):
             with self.subTest(reason=reason):
                 self.assertTrue(
                     supervisor.worker_prepared_review_head({**base, "request_snapshot": {"reason": reason}})
                 )
+        self.assertFalse(
+            supervisor.worker_prepared_review_head(
+                {**base, "request_snapshot": {"reason": supervisor.REASON_OWNED_FINALIZE}}
+            )
+        )
         # A reviewer run that happens to cite a PR is not a missing owner handoff.
         self.assertFalse(
             supervisor.worker_prepared_review_head(
                 {**base, "request_snapshot": {"reason": "review_ready_dispatch"}}
+            )
+        )
+        # A prose-scraped PR URL is also not prepared-head proof.
+        self.assertFalse(
+            supervisor.worker_prepared_review_head(
+                {
+                    "pr_url": "https://github.com/ajoe734/pantheon/pull/4270",
+                    "pr_url_source": "log_scrape",
+                    "request_snapshot": {"reason": supervisor.REASON_OWNED_IN_PROGRESS},
+                }
             )
         )
         self.assertFalse(

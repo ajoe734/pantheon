@@ -43,7 +43,7 @@ Five coupled control-plane hazards, all observed on the live dev VM fleet:
 | Provider telemetry | `.orchestrator/provider_permissions.py` | `provider_capabilities()` no longer forces the Codex probe; it honours `provider_auth.probe_interval_seconds`. |
 | Provider pool | `.orchestrator/provider_permissions.py` | `_antigravity_credential_group` / `_antigravity_provider_reports`: aliases sharing one OAuth token+home, or one declared `account`/`account_group`/`quota_group`, share a single probe result and publish `account_group`. |
 | Worktree dispatch | `.orchestrator/supervisor.py` | `_worker_base_ref_precondition(base_ref, repo_root)` falls back to a recovery fetch plus a git ref-resolution check; fails closed only when the ref does not resolve. |
-| Worker lifecycle | `.orchestrator/supervisor.py` | `worker_prepared_review_head` / `record_missing_handoff_blocker`: a clean owner exit with a pushed PR head records an actionable `missing_handoff` blocker and moves the task off `in_progress`. |
+| Worker lifecycle | `.orchestrator/supervisor.py` | `worker_prepared_review_head` / `record_missing_handoff_blocker`: a clean owner exit with a provenance-backed pushed PR head records an actionable `missing_handoff` blocker and moves the task off `in_progress`; mention-only scraped PR URLs and finalize exits stay out of this blocker path. |
 | Root coherence | `.orchestrator/supervisor_watchdog.py` | `process_working_directory`, `scan_worker_runner_roots`, `supervisor_root_report`; every watchdog decision now carries `supervisor_root`. |
 | Root coherence | `scripts/sync-dev-root.sh` | Resolves the live supervisor's real root from `/proc/<pid>/cwd`, syncs it as well as `dev-root`, and logs `ACTIVE_ROOT_SPLIT` plus HEAD/target evidence. `SYNC_ACTIVE_ROOT=0` reports without repairing. |
 
@@ -68,7 +68,7 @@ Five coupled control-plane hazards, all observed on the live dev VM fleet:
 | 4 | A supervisor loop report spawns no fresh provider CLI smoke when none is due | `CachedProviderCapabilityLoopTests.test_loop_report_reuses_cached_probes_when_none_are_due` (drives the real `supervisor.probe_provider_reports`) |
 | 5 | Watchdog/sync report or repair the actual active root | `SupervisorRootCoherenceTests` (5 tests) plus `raw/sync-dev-root-split-smoke.txt` |
 | 6 | Base-ref readiness survives a recovery/redispatch boundary; still fails closed | `WorkerBaseRefPreconditionTests` (8 tests, incl. a real `git worktree add` across an empty context, a bounded recovery fetch, and an unresolvable-ref fail-closed case) |
-| 7 | A clean owner exit cannot loop `owned_in_progress_dispatch` | `MissingHandoffBlockerTests` (3 tests) plus `PollWorkersRecoveryTests.test_completion_stage_blocks_prepared_head_without_handoff`, `…_keeps_generic_exit_when_no_head_was_prepared`, `test_worker_prepared_review_head_requires_an_owner_dispatch` |
+| 7 | A clean owner exit cannot loop `owned_in_progress_dispatch` | `MissingHandoffBlockerTests` (3 tests) plus `PollWorkersRecoveryTests.test_completion_stage_blocks_prepared_head_without_handoff`, `…_keeps_generic_exit_when_no_head_was_prepared`, `…_ignores_mention_only_pr_url`, `…_does_not_block_finalize_exit`, `test_worker_prepared_review_head_requires_an_owner_dispatch` |
 | 8 | PR against `dev`, checks, independent review, merge, live root repair | Recorded in `evidence.json` `delivery` / `live_repair` once the PR merges |
 
 ## Verification
@@ -78,7 +78,7 @@ python3 scripts/dev/provision_python_distribution.py
 PANTHEON_PY="$(python3 scripts/dev/provision_python_distribution.py --print-python)"
 cd .orchestrator && "$PANTHEON_PY" -m pytest -q \
   test_provider_permissions.py test_supervisor.py test_supervisor_watchdog.py
-# 574 passed, 10 subtests passed
+# 576 passed, 9 subtests passed
 ```
 
 Raw output: `raw/orchestrator-suites.txt`, `raw/acceptance-selections.txt`.
@@ -91,6 +91,14 @@ executable stubs and points the provider config at their absolute paths, so the
 cache assertion is independent of the worker environment. Human/Ops also removed
 the stale reviewer label from this evidence file; reviewer remains `Claude` for
 the re-requested review.
+
+Claude's follow-up AC7 review found that a regex-scraped PR URL could falsely
+trigger the missing-handoff blocker when an owner run merely mentioned a PR URL,
+and that `owned_finalize_dispatch` could be moved from `review_approved` to
+`blocked` while waiting for auto-merge. The blocker now requires structured
+`result` payload provenance (or a future explicit prepared-head flag), and
+finalize dispatches are excluded from the prepared-head path. Regression tests
+cover both false positives.
 
 ### Known pre-existing failure, out of scope
 

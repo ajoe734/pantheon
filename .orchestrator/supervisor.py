@@ -5098,6 +5098,7 @@ def update_from_log(config: dict[str, Any], worker: dict[str, Any]) -> None:
                 worker["deferred_tool_use"] = payload.get("deferred_tool_use")
             if payload.get("pr_url") and not worker.get("pr_url"):
                 worker["pr_url"] = normalize_pr_url(config, payload.get("pr_url"))
+                worker["pr_url_source"] = "result_payload"
             if payload.get("session_url") and not worker.get("session_url"):
                 worker["session_url"] = payload.get("session_url")
     if not worker.get("session_id"):
@@ -5111,6 +5112,7 @@ def update_from_log(config: dict[str, Any], worker: dict[str, Any]) -> None:
         for url in URL_PATTERN.findall(content):
             if "/pull/" in url:
                 worker["pr_url"] = normalize_pr_url(config, url)
+                worker["pr_url_source"] = "log_scrape"
                 break
     worker["pr_url"] = normalize_pr_url(config, worker.get("pr_url"))
     if not worker.get("session_url"):
@@ -7398,14 +7400,24 @@ def worker_prepared_review_head(worker: dict[str, Any]) -> bool:
     That shape is not a plain provider failure: the run did the work and only
     skipped the handoff transition. Redispatching the same owner reproduces the
     same clean exit forever, which is the observed token loop.
+
+    A PR URL scraped from arbitrary provider prose is not proof that this worker
+    prepared this task's head: task briefs, gh output, and evidence files can all
+    mention PR URLs. Only a structured result payload (or a future explicit
+    prepared-head flag) can trigger the missing-handoff blocker. Finalize
+    dispatches are also excluded: a review-approved owner may cleanly exit while
+    waiting for auto-merge, and that must not move the task to blocked.
     """
     if not str(worker.get("pr_url") or "").strip():
+        return False
+    if worker.get("prepared_review_head") is not True and str(
+        worker.get("pr_url_source") or ""
+    ) != "result_payload":
         return False
     dispatch_reason = str((worker.get("request_snapshot") or {}).get("reason") or "").strip()
     return dispatch_reason in {
         REASON_OWNED_READY,
         REASON_OWNED_IN_PROGRESS,
-        REASON_OWNED_FINALIZE,
     }
 
 
@@ -9819,6 +9831,25 @@ def poll_worker_completion_stage(
             ["done", "review_approved"],
         )
     }
+    if task_status in terminal_statuses:
+        worker["status"] = "completed"
+        worker["last_event_at"] = utc_now()
+        clear_task_failure_streak(state, worker=worker)
+        write_activity_log(
+            config,
+            {
+                "type": "worker_completed",
+                "provider": worker.get("provider"),
+                "task_id": worker.get("task_id"),
+                "message": "Background worker process exited.",
+                "worker_run_id": worker["run_id"],
+                "pr_url": worker.get("pr_url"),
+                "session_url": worker.get("session_url"),
+            },
+        )
+        finalize_queue_event_record(config, state, worker, "completed")
+        return {"changed": True, "stop": True}
+
     if task_status in redispatch_statuses:
         if worker_prepared_review_head(worker):
             # A clean owner exit that already pushed the review head is a missing
@@ -9891,25 +9922,6 @@ def poll_worker_completion_stage(
             },
         )
         finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
-        return {"changed": True, "stop": True}
-
-    if task_status in terminal_statuses:
-        worker["status"] = "completed"
-        worker["last_event_at"] = utc_now()
-        clear_task_failure_streak(state, worker=worker)
-        write_activity_log(
-            config,
-            {
-                "type": "worker_completed",
-                "provider": worker.get("provider"),
-                "task_id": worker.get("task_id"),
-                "message": "Background worker process exited.",
-                "worker_run_id": worker["run_id"],
-                "pr_url": worker.get("pr_url"),
-                "session_url": worker.get("session_url"),
-            },
-        )
-        finalize_queue_event_record(config, state, worker, "completed")
         return {"changed": True, "stop": True}
 
     worker["status"] = "failed"
