@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -42,8 +43,21 @@ EVIDENCE_DIR = (
 )
 MANIFEST_PATH = EVIDENCE_DIR / "evidence.json"
 CHECKSUM_PATH = EVIDENCE_DIR / "evidence.sha256"
+PACKAGING_MANIFEST_PATH = (
+    REPO_ROOT
+    / "docs"
+    / "deployment"
+    / "evidence"
+    / "twelve-loop-gap"
+    / "OPS-L12-PYTHON-PACKAGING-PROVISION-001"
+    / "evidence.json"
+)
 
 TASK_ID = "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001"
+OWNER = "Codex"
+REVIEWER = "Codex2"
+PACKAGING_TASK_ID = "OPS-L12-PYTHON-PACKAGING-PROVISION-001"
+COMMAND_REF = re.compile(r"^validation\.commands\[(\d+)\]$")
 
 # Every manifest location that carries a wall-clock timestamp. A future value in
 # any of them means the manifest is asserting something that had not happened yet
@@ -89,6 +103,17 @@ def _iter_manifest_timestamps(manifest: dict):
         value = entry.get("merged_at")
         if isinstance(value, str) and value:
             yield f"implementation_delivery.pull_requests[{index}].merged_at", value
+
+
+def _iter_strings(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for nested in value.values():
+            yield from _iter_strings(nested)
+    elif isinstance(value, list):
+        for nested in value:
+            yield from _iter_strings(nested)
 
 
 def _validate_subset(instance, schema, path: str = "$") -> list[str]:
@@ -186,12 +211,45 @@ class TestEvidenceManifestSchema(unittest.TestCase):
     def test_manifest_binds_this_task(self):
         task = self.manifest["task"]
         self.assertEqual(task["id"], TASK_ID)
+        self.assertEqual(task["owner"], OWNER)
+        self.assertEqual(task["reviewer"], REVIEWER)
+        self.assertIn(
+            task["overall_admission"],
+            {"ready_for_independent_review", "review_approved"},
+        )
         self.assertEqual(EVIDENCE_DIR.name, TASK_ID)
         self.assertEqual(
             task["review_file"],
             str(MANIFEST_PATH.relative_to(REPO_ROOT)),
         )
         self.assertNotEqual(task["owner"], task["reviewer"])
+
+        acceptance = {entry["id"]: entry for entry in self.manifest["acceptance"]}
+        self.assertEqual(acceptance["AC2"]["status"], "pass")
+        self.assertIn(PACKAGING_TASK_ID, acceptance["AC2"]["statement"])
+
+    def test_dependency_manifest_closes_the_packaging_precondition(self):
+        dependency = _load(PACKAGING_MANIFEST_PATH)
+        task = dependency["task"]
+        self.assertEqual(task["id"], PACKAGING_TASK_ID)
+        self.assertEqual(task["overall_admission"], "review_approved")
+        self.assertEqual(task["reviewer"], REVIEWER)
+        acceptance = {entry["id"]: entry for entry in dependency["acceptance"]}
+        self.assertEqual(acceptance["AC3"]["status"], "pass")
+        self.assertIn("foreign cwd", acceptance["AC3"]["statement"])
+
+    def test_validation_command_references_are_in_range(self):
+        command_count = len(self.manifest["validation"]["commands"])
+        out_of_range = []
+        for value in _iter_strings(self.manifest):
+            match = COMMAND_REF.fullmatch(value)
+            if match and int(match.group(1)) >= command_count:
+                out_of_range.append(value)
+        self.assertEqual(
+            sorted(set(out_of_range)),
+            [],
+            f"validation command references must be < {command_count}",
+        )
 
 
 class TestEvidenceManifestTimestamps(unittest.TestCase):

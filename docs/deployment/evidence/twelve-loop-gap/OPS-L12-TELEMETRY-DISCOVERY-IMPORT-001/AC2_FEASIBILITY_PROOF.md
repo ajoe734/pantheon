@@ -1,11 +1,40 @@
 # AC2 feasibility proof — OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001
 
-**Task:** OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001 · **Owner:** Claude · **Reviewer:** Codex2
+**Task:** OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001 · **Owner:** Codex · **Reviewer:** Codex2
 **Requested by:** Human/Ops in-progress audit, `2026-07-26T22:41:34Z`
 **Subject head:** `408d6d9a57c583b8b0762dd60e00842948aebe84`
-**Status of this document:** formal feasibility analysis submitted for the
-Human/Ops scope decision the audit itself named as the alternative to
-implementation. It does not assert that AC2 is met.
+**Status of this document:** resolved through Option A. The analysis below is
+retained as the decision record; `OPS-L12-PYTHON-PACKAGING-PROVISION-001`
+implemented the only admissible mechanism and closed as `done`.
+
+## Resolution — Option A implemented
+
+Human/Ops authorized the packaging path as the dependency task
+`OPS-L12-PYTHON-PACKAGING-PROVISION-001`. Its reviewed implementation merged
+through PR #4232 as
+`3802799f81778c93728d9dbbe4028289f153c718` on
+`2026-07-27T14:27:20Z`, and its governed task archive closed at
+`2026-07-27T14:41:36Z`.
+
+The root `pyproject.toml` now exposes only `services`, `integrations`, and
+`scripts`. `scripts/dev/provision_python_distribution.py` installs the
+checkout-specific mapping into a governed interpreter without adding the
+repository root to `sys.path`, and fails closed unless that interpreter can
+also import the test dependencies. The regression class
+`TestAC2ModesUnderInstalledDistribution` drives the shipped provisioner and
+asserts all four modes as unconditional passes.
+
+Fresh owner verification from a foreign `/tmp` cwd under `env -i`, with no
+`PYTHONPATH`, produced:
+
+- dotted `unittest`: 75 tests, `OK`;
+- direct-file execution: 35 tests and 40 tests, both `OK`;
+- `pytest -c /dev/null --noconftest`: 75 passed;
+- repository-root discovery: zero loader errors.
+
+The unprovisioned control still fails at `services`, proving the passing modes
+come from the installed distribution rather than ambient cwd state. AC2 is
+therefore met without any `sys.path` mutation in the repaired modules.
 
 ## The audit instruction
 
@@ -168,21 +197,19 @@ tracked packaging gap owned by the build/CI lane, not as a silent pass.
 Recommended if the intent of AC2 was "the defect is gone and nothing depends on
 being inside `services/telemetry`", which the delivered repair does satisfy.
 
-Until one is chosen, `evidence.json` records AC2 as
-`blocked_pending_scope_decision` and `task.overall_admission` as
-`blocked_pending_scope_decision`. The delivered repair — 285 tests / 0 errors /
-1 skip, 75 previously-unrun tests recovered, zero loader errors, no production
-change — stands on its own; what is unresolved is only whether AC2's foreign-cwd
-clauses are in scope for this task.
+Option A was chosen and delivered by
+`OPS-L12-PYTHON-PACKAGING-PROVISION-001`. The current evidence cut records AC2
+as `pass`; the historical blocked state described above is retained only to
+show why the dependency was necessary.
 
 ## What is not being claimed
 
-- Not claiming AC2 is met. It is not.
-- Not claiming AC2 is logically impossible. It is achievable via packaging, as
-  demonstrated above.
-- Not claiming the boundary is acceptable. The two boundary tests exist so the
-  gap is machine-checked and visible, not so it can be called a pass. Their
-  assertion is the narrower invariant that no failure names a bare sibling.
+- Not claiming a bare, unprovisioned interpreter can resolve this checkout from
+  an arbitrary cwd. The unprovisioned failure remains the negative control.
+- Not claiming AC2 was logically impossible. The analysis proved packaging was
+  sufficient, and the dependency implemented it.
+- Not claiming the old boundary was acceptable. It remained blocking until the
+  governed distribution was independently reviewed and merged.
 - Not implementing a `sys.path` or `sys.modules` shim inside the test modules. It
   could close M3 alone, but it cannot touch M2, it reintroduces the
   duplicate-module-identity hazard this task closed, and it is the same class of
