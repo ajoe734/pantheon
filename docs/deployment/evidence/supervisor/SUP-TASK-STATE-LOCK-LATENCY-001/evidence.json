@@ -9,7 +9,7 @@
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/SUP-TASK-STATE-LOCK-LATENCY-001",
-    "candidate_commit": "611b2a480d2537eab1ff45c2f9faa29e450a8171",
+    "candidate_commit": "2abc735b024917d0cd1e03784ca1e27040540341",
     "review_status": "pending_fresh_independent_review",
     "prior_merged_prs_with_failed_followup_review": [
       4239,
@@ -84,7 +84,7 @@
       "status": "pass",
       "statement": "Approve, assign, note, and reviewer commands remain below two seconds p95 during full supervisor cycles on a roughly 2000-event / 134 MiB fixture.",
       "measured": {
-        "candidate_sha": "611b2a480d2537eab1ff45c2f9faa29e450a8171",
+        "candidate_sha": "2abc735b024917d0cd1e03784ca1e27040540341",
         "fixture_events": 2050,
         "fixture_bytes": 141402624,
         "fixture_mib": 134.852,
@@ -96,11 +96,11 @@
           "note": 2,
           "reopen": 2
         },
-        "full_run_once_cycles": 10,
-        "legacy_p95_seconds": 78.651,
-        "current_p50_seconds": 1.191,
-        "current_p95_seconds": 1.662,
-        "current_max_seconds": 1.662,
+        "full_run_once_cycles": 17,
+        "legacy_p95_seconds": 59.327,
+        "current_p50_seconds": 0.959,
+        "current_p95_seconds": 1.296,
+        "current_max_seconds": 1.296,
         "all_commands_succeeded": true,
         "exact_projection": true,
         "final_event_count": 2066
@@ -135,7 +135,7 @@
       "id": "AC6",
       "status": "pass",
       "statement": "The regression reproduces the live multi-minute shape and proves governed reviewer/status commands no longer stall.",
-      "delivered": "The same 2050-event fixture reports legacy p95 78.651s and real governed/full-cycle current p95 1.662s. The harness exits nonzero unless p95 is below 2s, all commands succeed, supervisor overlap occurs, and final projection is exact."
+      "delivered": "The same 2050-event fixture reports legacy p95 59.327s and real governed/full-cycle current p95/max 1.296s. The harness exits nonzero unless p95 is below 2s, all commands succeed, supervisor overlap occurs, and final projection is exact."
     },
     {
       "id": "AC7",
@@ -174,12 +174,12 @@
     "pytest": {
       "command": "env -u PANTHEON_STATUS_ROOT -u PANTHEON_TASK_STATE_STORE_MODE -u PANTHEON_TASK_STATE_EVENT_LOG PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py .orchestrator/test_runtime_state.py .orchestrator/rewrite/test_task_state_store.py .orchestrator/rewrite/test_worker_lifecycle.py scripts/test_ai_status.py",
       "result": "pass",
-      "conclusion": "680 passed, 82 subtests passed in 119.08s"
+      "conclusion": "685 passed, 82 subtests passed in 144.67s"
     },
     "benchmark": {
       "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 docs/deployment/evidence/supervisor/SUP-TASK-STATE-LOCK-LATENCY-001/task_state_lock_latency_bench.py --events 2050 --task-rows 30 --samples 8 --contention-workers 4 --contention-commands 2 --contention-seconds 45 --json docs/deployment/evidence/supervisor/SUP-TASK-STATE-LOCK-LATENCY-001/bench-report.json",
       "result": "pass",
-      "conclusion": "meets_target=true; legacy p95 78.651s; real governed/full-cycle current p95/max 1.662s; 8/8 commands; 10 run_once cycles; exact projection at event 2066"
+      "conclusion": "meets_target=true; candidate 2abc735b0249; legacy p95 59.327s; real governed/full-cycle current p95/max 1.296s; 8/8 commands; 17 run_once cycles; exact projection at event 2066"
     },
     "static": {
       "result": "pass",

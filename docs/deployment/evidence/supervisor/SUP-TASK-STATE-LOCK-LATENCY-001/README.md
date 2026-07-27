@@ -8,7 +8,7 @@ latency while preserving journal, lease, and process-identity safety.
 | Owner | Codex |
 | Reviewer | Codex2 |
 | Branch | `task/SUP-TASK-STATE-LOCK-LATENCY-001` |
-| Candidate | `611b2a480d2537eab1ff45c2f9faa29e450a8171` |
+| Candidate | `2abc735b024917d0cd1e03784ca1e27040540341` |
 | Review state | Pending fresh independent review |
 
 ## Incident and root cause
@@ -96,12 +96,12 @@ count, and exact journal/projection SHA parity.
 
 | Shape | Legacy p95 | Current p95 |
 |---|---:|---:|
-| Snapshot/commit microbenchmark, uncontended | 19.588s | 0.124s |
-| Real governed commands during full supervisor cycles | 78.651s | **1.662s** |
+| Snapshot/commit microbenchmark, uncontended | 12.884s | 0.115s |
+| Real governed commands during full supervisor cycles | 59.327s | **1.296s** |
 
-The current run completed 8/8 commands, overlapped 10 full `run_once` calls,
+The current run completed 8/8 commands, overlapped 17 full `run_once` calls,
 finished at event 2066, and reported `exact_projection: true`. All current
-command latencies were at or below 1.662 seconds. The formal report has
+command latencies were at or below 1.296 seconds. The formal report has
 `meets_target: true`.
 
 Reproduce from a clean committed candidate:
@@ -128,7 +128,7 @@ env -u PANTHEON_STATUS_ROOT \
       .orchestrator/rewrite/test_task_state_store.py \
       .orchestrator/rewrite/test_worker_lifecycle.py \
       scripts/test_ai_status.py
-→ 680 passed, 82 subtests passed in 119.08s
+→ 685 passed, 82 subtests passed in 144.67s
 ```
 
 Key regressions cover:
