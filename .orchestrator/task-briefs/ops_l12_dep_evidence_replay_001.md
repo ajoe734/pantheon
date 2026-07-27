@@ -151,6 +151,76 @@ After the correction the L12-DEP-001 packet contains exactly three files:
 transition needs no product-level `evidence.json`; adding one would have
 reintroduced a replay source under the audited root.
 
+## Owner closeout verification
+
+On 2026-07-27, owner `Codex` merged current `origin/dev`
+`ddd8dc570` into the closeout candidate and re-ran the task gate:
+
+```text
+python3 scripts/loop_done_guardrail.py \
+  --evidence-root docs/deployment/evidence \
+  --audit-json /tmp/OPS-L12-DEP-EVIDENCE-REPLAY-001-evidence-root-audit.json
+```
+
+The global audit reported `15 passed, 26 failed, 41 scanned` and therefore
+returned exit 1 because of pre-existing failures owned by other packets.
+Filtering the complete audit record to `L12-DEP-001` returned exactly one
+source, `closeout/evidence.json`, with `result=pass`, `gap_count=0`, and no
+gaps.
+
+The canonical archived snapshot was replayed without mutation through the same
+guardrail helpers:
+
+```text
+PYTHONPATH=scripts python3 -c '
+import json, os
+from pathlib import Path
+import loop_done_guardrail as g
+p = Path(os.environ["PANTHEON_STATUS_ROOT"]) / \
+    "ai-task-archive/tasks/L12-DEP-001.json"
+data = json.loads(p.read_text())
+task, reason = g._task_from_archive_snapshot(p, data)
+assert reason is None
+resolved, resolve_error = g._resolve_review_file(task["review_file"])
+gaps = g.check_task(task)
+print({
+    "resolved": str(resolved) if resolved else None,
+    "resolve_error": resolve_error,
+    "gap_count": len(gaps),
+    "classification": g._classify_archive_replay_result(gaps),
+})
+'
+```
+
+It resolved the repo-relative `review_file` to this worktree's
+`closeout/evidence.json` and returned `result=pass`, `gap_count=0`, and
+`classification=valid_closure`. The archive snapshot SHA-256 remained
+`864f63c6d5f385b3719221ad7af21c38ebfd7af254f3fae0c22c486070be9a9f`
+before and after replay.
+
+Final focused checks:
+
+```text
+(cd docs/deployment/evidence/twelve-loop-gap/L12-DEP-001/closeout && \
+  sha256sum -c evidence.sha256)
+evidence.json: OK
+
+/home/lupin/pantheon/.venv/bin/pytest -q \
+  scripts/test_loop_done_guardrail.py scripts/test_ai_status.py
+223 passed, 33 subtests passed in 65.10s
+
+git merge-base --is-ancestor \
+  5b8addf628c09f88ff8199080ab68429dbe7b531 origin/dev
+# exit 0
+
+git diff --check origin/dev...HEAD
+# exit 0
+```
+
+The task packet still contains exactly `README.md`,
+`closeout/evidence.json`, and `closeout/evidence.sha256`. The immutable
+closeout file hashes remain identical at PR merge and current `origin/dev`.
+
 ## Coordination Root
 - Auto workers inherit `PANTHEON_STATUS_ROOT`, `PANTHEON_COMMAND_ROOT`, and `PANTHEON_COMMAND_RUNTIME_SHA` from the supervisor.
 - Run `$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh` for governed status changes; git, tests, and product edits continue in this task worktree while canonical status, activity, archive and lock writes are routed to the validated central root.
