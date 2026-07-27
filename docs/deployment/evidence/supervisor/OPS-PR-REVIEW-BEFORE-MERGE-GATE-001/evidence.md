@@ -73,8 +73,10 @@ ran `git rebase origin/dev`; the reviewed merge-rich graph reproduced
 anchored the finding at `4cbf8cbe5f99478b1ac2b4cf932b64c548ac46ae`,
 changed the gated path to ancestry-check and smoke the reviewer-bound oid
 directly, and added a real-git merge-rich regression. The branch now composes
-current `origin/dev` `b81edf76dfc14087dd7d5e3a6599448cb9d0bb09` at
-`8d142e58a983ee9ea0def27091a295a1937ea461`.
+current `origin/dev` `852da0aa71d4e0d0293d5fcc8b5dff6d886386f7` at
+`253d7b6978f42f60b0d03340de87cfeb9824eb0c`. The four new commits from
+unrelated PR #4276 did not overlap task files; the 101-case gate/integrator
+core and static checks passed again after that final composition.
 
 Scope rule honoured throughout: **no `.orchestrator/config.json` edit**, no
 hand-edited task board, no owner or reviewer action performed on behalf of
@@ -463,6 +465,10 @@ This pass ran against authoritative `origin/dev`
 `b81edf76dfc14087dd7d5e3a6599448cb9d0bb09` and validated compose commit
 `8d142e58a983ee9ea0def27091a295a1937ea461` (tree object
 `30a297772138e9655e2840fee624764f5adc3ced`).
+After unrelated PR #4276 advanced dev, the review-dispatch tree composed
+`852da0aa71d4e0d0293d5fcc8b5dff6d886386f7` at
+`253d7b6978f42f60b0d03340de87cfeb9824eb0c` and passed the 101-case
+gate/integrator core plus static checks.
 
 ```
 .venv-pantheon/bin/python3 scripts/git/test_task_review_merge_gate.py
