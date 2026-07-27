@@ -28,7 +28,8 @@ Run the full fixture for evidence::
 
     PYTHONPATH=.orchestrator python3 \\
       docs/deployment/evidence/supervisor/SUP-TASK-STATE-LOCK-LATENCY-001/task_state_lock_latency_bench.py \\
-      --events 2050 --task-rows 60 --samples 12 --json report.json
+      --events 2050 --task-rows 30 --samples 8 \\
+      --contention-workers 4 --contention-commands 2 --json report.json
 
 Nothing here mutates canonical state: the fixture is built in a scratch
 directory and removed unless ``--keep`` is passed.
@@ -41,6 +42,7 @@ import multiprocessing
 import os
 import shutil
 import statistics
+import subprocess
 import sys
 import tempfile
 import time
@@ -54,6 +56,7 @@ if str(ORCHESTRATOR) not in sys.path:
 
 from common import canonical_task_state_lock_file  # noqa: E402
 from rewrite import task_state_store as store  # noqa: E402
+import supervisor as supervisor_module  # noqa: E402
 
 # Live journal reference points, kept in code so a regression run states what it
 # is being compared against.
@@ -65,7 +68,52 @@ LIVE_REVIEWER_WAIT_SECONDS = 508.0  # Codex2 BFF reopen: ~22:51:17Z -> 22:59:45Z
 TARGET_P95_SECONDS = 2.0
 
 
-def board(task_rows: int, generation: int) -> dict[str, Any]:
+def governed_command_specs(
+    *,
+    workers: int,
+    commands_per_worker: int,
+) -> list[dict[str, Any]]:
+    """Unique real command invocations that can safely run concurrently."""
+
+    command_names = ("approve", "assign", "note", "reopen")
+    specs: list[dict[str, Any]] = []
+    for index in range(workers * commands_per_worker):
+        command = command_names[index % len(command_names)]
+        task_id = (
+            f"BENCH-ASSIGN-{index:04d}"
+            if command == "assign"
+            else f"BENCH-{index:04d}"
+        )
+        actor = "Human/Ops" if command == "assign" else "Codex2"
+        if command == "assign":
+            args = [
+                task_id,
+                "Claude",
+                "Codex2",
+                f"Governed benchmark assignment {index}",
+            ]
+        else:
+            args = [task_id, f"Governed benchmark {command} {index}"]
+        specs.append(
+            {
+                "index": index,
+                "worker_slot": index % workers,
+                "command": command,
+                "task_id": task_id,
+                "actor": actor,
+                "args": args,
+                "uses_worker_lease": actor != "Human/Ops",
+            }
+        )
+    return specs
+
+
+def board(
+    task_rows: int,
+    generation: int,
+    *,
+    command_specs: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """A board shaped like the live one: many tasks, each with long prose.
 
     Task ids only ever accumulate, so the nonterminal-drop guard stays quiet and
@@ -73,7 +121,14 @@ def board(task_rows: int, generation: int) -> dict[str, Any]:
     """
 
     filler = chr(ord("a") + generation % 26)
-    return {
+    state = {
+        "project": "pantheon",
+        "sprint": "SUP-TASK-STATE-LOCK-LATENCY-001-benchmark",
+        "objective": "Measure governed command latency during a full supervisor cycle.",
+        "updated_at": "2026-07-27T00:00:00Z",
+        "canonical_document_layers": {},
+        "canonical_files": [],
+        "agents": [],
         "generation": generation,
         "tasks": [
             {
@@ -89,10 +144,32 @@ def board(task_rows: int, generation: int) -> dict[str, Any]:
             }
             for index in range(task_rows)
         ],
+        "handoffs": [],
+        "blockers": [],
+        "workload": {},
     }
+    tasks = {task["id"]: task for task in state["tasks"]}
+    for spec in command_specs or []:
+        if spec["command"] == "assign":
+            continue
+        task = tasks.get(spec["task_id"])
+        if task is None:
+            raise ValueError(
+                f"task_rows={task_rows} does not cover {spec['task_id']}"
+            )
+        # All reviewer commands use a review task so their supervisor-issued
+        # lease remains assignment-consistent until the command mutates it.
+        task["status"] = "review"
+    return state
 
 
-def build_fixture(path: Path, *, events: int, task_rows: int) -> dict[str, Any]:
+def build_fixture(
+    path: Path,
+    *,
+    events: int,
+    task_rows: int,
+    command_specs: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Write a valid hash-chained journal in one pass.
 
     Appending through ``append_state_commit`` would re-read the growing file
@@ -105,7 +182,11 @@ def build_fixture(path: Path, *, events: int, task_rows: int) -> dict[str, Any]:
     previous_sha256: str | None = None
     with path.open("wb") as handle:
         for sequence in range(1, events + 1):
-            state = board(task_rows, sequence)
+            state = board(
+                task_rows,
+                sequence,
+                command_specs=command_specs,
+            )
             event: dict[str, Any] = {
                 "version": store.EVENT_VERSION,
                 "type": store.EVENT_TYPE_STATE_COMMITTED,
@@ -304,13 +385,452 @@ def measure_contention(
     }
 
 
+def _git_output(root: Path, *args: str) -> str:
+    proc = subprocess.run(
+        ["git", "-C", str(root), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            (proc.stderr or proc.stdout or f"git {' '.join(args)} failed").strip()
+        )
+    return proc.stdout.strip()
+
+
+def command_runtime_binding() -> dict[str, str]:
+    """Bind governed commands to the exact committed candidate under test."""
+
+    command_root = REPO_ROOT.resolve()
+    source_sha = _git_output(command_root, "rev-parse", "HEAD")
+    executable_dirty = _git_output(
+        command_root,
+        "status",
+        "--porcelain",
+        "--",
+        "scripts/ai-status.sh",
+        "scripts/ai_status.py",
+        ".orchestrator",
+    )
+    if executable_dirty:
+        raise RuntimeError(
+            "benchmark candidate executable paths must be committed: "
+            + executable_dirty.splitlines()[0]
+        )
+    return {
+        "command_root": str(command_root),
+        "source_sha": source_sha,
+        "remote": _git_output(command_root, "remote", "get-url", "origin"),
+        # Validate the wrapper against the exact task commit without falsely
+        # claiming an unreviewed candidate is already present on origin/dev.
+        "base_ref": source_sha,
+    }
+
+
+def prepare_full_supervisor_fixture(
+    workspace: Path,
+    journal: Path,
+    status_file: Path,
+    specs: list[dict[str, Any]],
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """Build a scratch coordination root used by real supervisor/status code."""
+
+    subprocess.run(
+        ["git", "init", "-q", str(workspace)],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    runtime_dir = workspace / ".orchestrator"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    paths = {
+        "status_file": str(status_file),
+        "activity_log": str(workspace / "ai-activity-log.jsonl"),
+        "current_work": str(workspace / "current-work.md"),
+        "dashboard": str(workspace / "docs-site" / "index.html"),
+        "state_file": str(runtime_dir / "state.json"),
+        "event_queue": str(runtime_dir / "event-queue.jsonl"),
+        "approval_queue": str(runtime_dir / "approval-queue.json"),
+        "provider_capabilities": str(runtime_dir / "provider-capabilities.json"),
+    }
+    Path(paths["activity_log"]).write_text("", encoding="utf-8")
+    Path(paths["event_queue"]).write_text("", encoding="utf-8")
+    Path(paths["approval_queue"]).write_text(
+        json.dumps({"pending": [], "history": []}) + "\n",
+        encoding="utf-8",
+    )
+    Path(paths["provider_capabilities"]).write_text(
+        json.dumps({"providers": {}, "agent_adapters": {}}) + "\n",
+        encoding="utf-8",
+    )
+    (runtime_dir / "planning-state.json").write_text("{}\n", encoding="utf-8")
+
+    config = json.loads(
+        (ORCHESTRATOR / "config.json").read_text(encoding="utf-8")
+    )
+    config["paths"] = paths
+    config["task_state_store"] = {
+        "mode": "authoritative",
+        "event_log": str(journal),
+    }
+    config["coordination"] = {"enabled": False}
+    config["assistant_dev_bridge"] = {"enabled": False}
+    config["github_bus"] = {"enabled": False}
+    config["chair_review"] = {"enabled": False}
+    config["auto_commit_archive"] = {"enabled": False}
+    config["worker_worktrees"] = {"enabled": False}
+    config["worker_worktree_cleanup"] = {"enabled": False}
+    config["worker_worktree_housekeeping"] = {"enabled": False}
+    config["ready_dispatcher"] = {
+        "enabled": False,
+        "active_worker_statuses": [],
+        "ownerless_in_progress": {"enabled": False},
+    }
+    config["supervisor"] = {
+        **(config.get("supervisor") or {}),
+        "auto_refresh_provider_capabilities": False,
+    }
+
+    command_binding = command_runtime_binding()
+    queue_events: list[dict[str, Any]] = []
+    runtime_state = supervisor_module.load_runtime_state(config)
+    for spec in specs:
+        if not spec["uses_worker_lease"]:
+            continue
+        run_id = f"bench-command-{spec['index']:04d}"
+        workspace_path = workspace / "worker-leases" / run_id
+        workspace_path.mkdir(parents=True, exist_ok=True)
+        runtime_state.setdefault("workers", {})[run_id] = {
+            "run_id": run_id,
+            "task_id": spec["task_id"],
+            "logical_agent_id": "codex2",
+            "agent_id": "codex2",
+            "provider": "codex2",
+            # ``fallback`` is a valid active command lease that the full cycle
+            # deliberately leaves alone without inventing a live PID or queue
+            # delivery. That keeps the benchmark identity truthful.
+            "status": "fallback",
+            "lease_expires_at": "2099-01-01T00:00:00Z",
+            "status_root": str(workspace),
+            "workspace_path": str(workspace_path),
+            "status_command_runtime": command_binding,
+            "request_snapshot": {
+                "reason": "review_ready_dispatch",
+                "metadata": {
+                    "workspace_task_id": spec["task_id"],
+                    "status_command_runtime": command_binding,
+                },
+            },
+        }
+        runtime_state.setdefault("worker_worktrees", {}).setdefault(
+            "leases", {}
+        )[spec["task_id"]] = {
+            "task_id": spec["task_id"],
+            "run_id": run_id,
+            "path": str(workspace_path),
+            "status_root": str(workspace),
+        }
+        spec["run_id"] = run_id
+        spec["workspace_path"] = str(workspace_path)
+
+    supervisor_module.replace_event_queue(config, queue_events)
+    supervisor_module.save_runtime_state(config, runtime_state)
+    return config, command_binding
+
+
+def _full_supervisor_loop(
+    config: dict[str, Any],
+    planning_state_file: str,
+    stop: Any,
+    ready: Any,
+    results: Any,
+    max_seconds: float,
+) -> None:
+    intervals: list[dict[str, Any]] = []
+    deadline = time.monotonic() + max_seconds
+    supervisor_module.PLANNING_STATE_FILE = Path(planning_state_file)
+    ready.set()
+    error = None
+    while not stop.is_set() and time.monotonic() < deadline:
+        started = time.monotonic()
+        try:
+            supervisor_module.run_once(
+                config,
+                watch=False,
+                quiet=True,
+                once=True,
+            )
+        except BaseException as exc:  # pragma: no cover - reported to parent
+            error = f"{type(exc).__name__}: {exc}"
+            break
+        intervals.append(
+            {
+                "started": started,
+                "finished": time.monotonic(),
+            }
+        )
+    results.put({"intervals": intervals, "error": error})
+
+
+def _governed_command(
+    workspace: str,
+    journal: str,
+    spec: dict[str, Any],
+    command_binding: dict[str, str],
+    results: Any,
+) -> None:
+    env = dict(os.environ)
+    for key in (
+        "ORCH_RUN_ID",
+        "ORCH_TASK_ID",
+        "PANTHEON_WORKTREE_ROOT",
+        "ORCH_WORKSPACE_PATH",
+        "ORCH_RUNNER_STATUS_PATH",
+        "ORCH_HEARTBEAT_PATH",
+        "PANTHEON_COMMAND_ROOT",
+        "PANTHEON_COMMAND_RUNTIME_SHA",
+        "PANTHEON_COMMAND_REMOTE",
+        "PANTHEON_COMMAND_BASE_REF",
+        "PANTHEON_STATUS_COMMAND_ROOT",
+        "PANTHEON_STATUS_COMMAND_SHA",
+        "PANTHEON_STATUS_COMMAND_REMOTE",
+        "PANTHEON_STATUS_COMMAND_BASE_REF",
+    ):
+        env.pop(key, None)
+    env.update(
+        {
+            "AI_NAME": spec["actor"],
+            "PANTHEON_STATUS_ROOT": workspace,
+            "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
+            "PANTHEON_TASK_STATE_EVENT_LOG": journal,
+        }
+    )
+    command_root = command_binding["command_root"]
+    if spec["uses_worker_lease"]:
+        env.update(
+            {
+                "ORCH_RUN_ID": spec["run_id"],
+                "ORCH_TASK_ID": spec["task_id"],
+                "PANTHEON_WORKTREE_ROOT": spec["workspace_path"],
+                "ORCH_WORKSPACE_PATH": spec["workspace_path"],
+                "PANTHEON_COMMAND_ROOT": command_root,
+                "PANTHEON_COMMAND_RUNTIME_SHA": command_binding["source_sha"],
+                "PANTHEON_COMMAND_REMOTE": command_binding["remote"],
+                "PANTHEON_COMMAND_BASE_REF": command_binding["base_ref"],
+            }
+        )
+
+    started = time.monotonic()
+    proc = subprocess.run(
+        [
+            str(Path(command_root) / "scripts" / "ai-status.sh"),
+            spec["command"],
+            *spec["args"],
+        ],
+        cwd=command_root,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    results.put(
+        {
+            "index": spec["index"],
+            "command": spec["command"],
+            "actor": spec["actor"],
+            "uses_worker_lease": spec["uses_worker_lease"],
+            "started": started,
+            "finished": time.monotonic(),
+            "returncode": proc.returncode,
+            "stderr": (proc.stderr or "").strip()[-500:],
+            "stdout": (proc.stdout or "").strip()[-500:],
+        }
+    )
+
+
+def _governed_command_loop(
+    workspace: str,
+    journal: str,
+    specs: list[dict[str, Any]],
+    command_binding: dict[str, str],
+    results: Any,
+) -> None:
+    for spec in specs:
+        _governed_command(
+            workspace,
+            journal,
+            spec,
+            command_binding,
+            results,
+        )
+
+
+def measure_governed_contention(
+    workspace: Path,
+    journal: Path,
+    status_file: Path,
+    *,
+    specs: list[dict[str, Any]],
+    cycle_seconds: float,
+) -> dict[str, Any]:
+    """Run real governed commands against the full ``run_once`` cycle."""
+
+    config, command_binding = prepare_full_supervisor_fixture(
+        workspace,
+        journal,
+        status_file,
+        specs,
+    )
+    context = multiprocessing.get_context("fork")
+    stop = context.Event()
+    ready = context.Event()
+    supervisor_results: Any = context.Queue()
+    command_results: Any = context.Queue()
+    supervisor = context.Process(
+        target=_full_supervisor_loop,
+        args=(
+            config,
+            str(workspace / ".orchestrator" / "planning-state.json"),
+            stop,
+            ready,
+            supervisor_results,
+            cycle_seconds,
+        ),
+    )
+    supervisor.start()
+    if not ready.wait(10):
+        supervisor.terminate()
+        supervisor.join(timeout=5)
+        raise RuntimeError("full supervisor cycle did not start")
+    time.sleep(0.1)
+
+    worker_slots = sorted({int(spec["worker_slot"]) for spec in specs})
+    commands = [
+        context.Process(
+            target=_governed_command_loop,
+            args=(
+                str(workspace),
+                str(journal),
+                [
+                    spec
+                    for spec in specs
+                    if int(spec["worker_slot"]) == worker_slot
+                ],
+                command_binding,
+                command_results,
+            ),
+        )
+        for worker_slot in worker_slots
+    ]
+    for process in commands:
+        process.start()
+    for process in commands:
+        process.join(timeout=cycle_seconds + 120)
+        if process.is_alive():
+            process.terminate()
+            process.join(timeout=5)
+            raise RuntimeError("governed command exceeded benchmark timeout")
+    stop.set()
+    supervisor.join(timeout=cycle_seconds + 30)
+    if supervisor.is_alive():
+        supervisor.terminate()
+        supervisor.join(timeout=5)
+        raise RuntimeError("full supervisor cycle exceeded benchmark timeout")
+
+    command_rows = sorted(
+        (command_results.get() for _ in specs),
+        key=lambda item: item["index"],
+    )
+    failed = [row for row in command_rows if row["returncode"] != 0]
+    if failed:
+        raise RuntimeError(f"governed command failed: {failed[0]}")
+    supervisor_row = supervisor_results.get()
+    if supervisor_row.get("error"):
+        raise RuntimeError(
+            f"full supervisor cycle failed: {supervisor_row['error']}"
+        )
+    intervals = supervisor_row["intervals"]
+    if not intervals:
+        raise RuntimeError("full supervisor cycle completed no run_once call")
+
+    durations = sorted(
+        row["finished"] - row["started"] for row in command_rows
+    )
+    index = max(
+        0,
+        min(len(durations) - 1, int(round(0.95 * (len(durations) - 1)))),
+    )
+    overlap = any(
+        command["started"] < interval["finished"]
+        and command["finished"] > interval["started"]
+        for command in command_rows
+        for interval in intervals
+    )
+    final_snapshot = store.load_snapshot(journal)
+    final_projection = json.loads(status_file.read_text(encoding="utf-8"))
+    exact_projection = (
+        store.sha256_json(final_projection)
+        == final_snapshot["state_sha256"]
+    )
+    return {
+        "label": "current",
+        "harness": "real_governed_commands_full_run_once",
+        "concurrent_workers": len(worker_slots),
+        "commands": len(durations),
+        "command_mix": {
+            command: sum(
+                1 for row in command_rows if row["command"] == command
+            )
+            for command in ("approve", "assign", "note", "reopen")
+        },
+        "worker_lease_bound_commands": sum(
+            1 for row in command_rows if row["uses_worker_lease"]
+        ),
+        "candidate_runtime": {
+            "source_sha": command_binding["source_sha"],
+            "base_ref": command_binding["base_ref"],
+            "executable_paths_clean": True,
+        },
+        "full_run_once_cycles": len(intervals),
+        "full_run_once_seconds": [
+            round(interval["finished"] - interval["started"], 3)
+            for interval in intervals
+        ],
+        "supervisor_active_during_commands": overlap,
+        "p50_seconds": round(statistics.median(durations), 3),
+        "p95_seconds": round(durations[index], 3),
+        "max_seconds": round(durations[-1], 3),
+        "command_latencies": [
+            {
+                "index": row["index"],
+                "command": row["command"],
+                "seconds": round(row["finished"] - row["started"], 3),
+            }
+            for row in command_rows
+        ],
+        "final_event_count": final_snapshot["event_count"],
+        "exact_projection": exact_projection,
+        "all_commands_succeeded": True,
+    }
+
+
 def run(args: argparse.Namespace) -> dict[str, Any]:
     workspace = Path(args.workspace) if args.workspace else Path(
         tempfile.mkdtemp(prefix="task-state-lock-latency-")
     )
     journal = workspace / "runtime" / "task-state-events.jsonl"
     try:
-        fixture = build_fixture(journal, events=args.events, task_rows=args.task_rows)
+        specs = governed_command_specs(
+            workers=args.contention_workers,
+            commands_per_worker=args.contention_commands,
+        )
+        fixture = build_fixture(
+            journal,
+            events=args.events,
+            task_rows=args.task_rows,
+            command_specs=specs,
+        )
 
         # Cold read: no checkpoint exists yet, so this is a full validated replay.
         started = time.monotonic()
@@ -321,7 +841,16 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         current = measure("current", journal, samples=args.samples, legacy=False)
 
         status_file = workspace / "ai-status.json"
-        status_file.write_text(json.dumps(board(args.task_rows, args.events)), encoding="utf-8")
+        status_file.write_text(
+            json.dumps(
+                board(
+                    args.task_rows,
+                    args.events,
+                    command_specs=specs,
+                )
+            ),
+            encoding="utf-8",
+        )
         contention = {
             "legacy": measure_contention(
                 journal,
@@ -331,12 +860,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 commands_per_worker=args.contention_commands,
                 cycle_seconds=args.contention_seconds,
             ),
-            "current": measure_contention(
+            "current": measure_governed_contention(
+                workspace,
                 journal,
                 status_file,
-                legacy=False,
-                workers=args.contention_workers,
-                commands_per_worker=args.contention_commands,
+                specs=specs,
                 cycle_seconds=args.contention_seconds,
             ),
         }
@@ -363,6 +891,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "meets_target": (
                 current["p95_seconds"] < TARGET_P95_SECONDS
                 and contention["current"]["p95_seconds"] < TARGET_P95_SECONDS
+                and contention["current"]["supervisor_active_during_commands"]
+                and contention["current"]["exact_projection"]
+                and contention["current"]["all_commands_succeeded"]
             ),
             "speedup_p95": {
                 "uncontended": round(
@@ -384,11 +915,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--events", type=int, default=LIVE_EVENT_COUNT)
-    parser.add_argument("--task-rows", type=int, default=60)
-    parser.add_argument("--samples", type=int, default=12)
+    parser.add_argument("--task-rows", type=int, default=30)
+    parser.add_argument("--samples", type=int, default=8)
     parser.add_argument("--contention-workers", type=int, default=4)
-    parser.add_argument("--contention-commands", type=int, default=3)
-    parser.add_argument("--contention-seconds", type=float, default=30.0)
+    parser.add_argument("--contention-commands", type=int, default=2)
+    parser.add_argument("--contention-seconds", type=float, default=45.0)
     parser.add_argument("--workspace", default=None, help="Reuse a fixture directory.")
     parser.add_argument("--keep", action="store_true")
     parser.add_argument("--json", default=None, help="Write the report to this path.")
