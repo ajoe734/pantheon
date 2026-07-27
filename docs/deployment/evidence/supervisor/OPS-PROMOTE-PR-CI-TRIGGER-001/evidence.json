@@ -5,7 +5,7 @@
     "title": "Repair promote PR CI trigger and auto-merge path",
     "phase": "Repository Merge Governance",
     "owner": "Codex2",
-    "reviewer": "Codex",
+    "reviewer": "Claude",
     "repository": "ajoe734/pantheon",
     "base_branch": "dev",
     "task_branch": "task/OPS-PROMOTE-PR-CI-TRIGGER-001",
@@ -15,8 +15,8 @@
     "review_file": "docs/deployment/evidence/supervisor/OPS-PROMOTE-PR-CI-TRIGGER-001/evidence.json",
     "narrative": "docs/deployment/evidence/supervisor/OPS-PROMOTE-PR-CI-TRIGGER-001/README.md"
   },
-  "status": "in_progress",
-  "generated_at": "2026-07-27T16:39:26Z",
+  "status": "blocked",
+  "generated_at": "2026-07-27T18:40:26Z",
   "scope": {
     "owned": [
       "Branch CI exact-head workflow_dispatch contract for promote PRs",
@@ -139,7 +139,7 @@
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/git/test_git_workflow_helpers.py scripts/test_nightly_publish_cut.py tests/orchestrator/test_release_branch_discipline.py",
-      "result": "70 passed in 9.93s"
+      "result": "70 passed in 10.83s"
     },
     {
       "command": "python3 -m py_compile scripts/git/publish_promote.py scripts/git/test_git_workflow_helpers.py",
@@ -170,12 +170,44 @@
     "bulk_lookup_followup_pr": 4259,
     "bulk_lookup_followup_head": "b271c83fc3674f883dc6b7cf55c56afd612a0762",
     "bulk_lookup_followup_merge_commit": "2644329db702068142d3e942a40b3bc5d76c0c1a",
-    "rest_followup_pr": null,
+    "rest_followup_pr": 4262,
+    "rest_followup_code_commit": "c0254c6faa70b9bd18b6132567cb8cf87b46c136",
+    "rest_followup_pre_evidence_head": "25d8f0764352369dbb6394694627e05d29087448",
     "rest_followup_head": null,
-    "rest_followup_merge_commit": null
+    "rest_followup_merge_commit": null,
+    "rest_followup_checks": {
+      "push_run": 30294569664,
+      "pull_request_run": 30294571835,
+      "required_contexts": {
+        "Commit trailers": "success",
+        "Runtime mirror guard": "success",
+        "Smoke acceptance": "success"
+      },
+      "additional_contexts": {
+        "Python packaging provision": "success"
+      }
+    },
+    "merge_gate": {
+      "observed_at": "2026-07-27T18:40:26Z",
+      "pr_state": "open",
+      "mergeable_state": "blocked",
+      "auto_merge_enabled": true,
+      "required_approving_review_count": 1,
+      "require_last_push_approval": true,
+      "external_required_contexts": [
+        "Pantheon canonical review gate",
+        "Pantheon root merge freeze 2026-07-27"
+      ],
+      "head_check_runs": 8,
+      "head_commit_statuses": 0,
+      "waiting_for": [
+        "Claude independent review",
+        "Human Ops root merge freeze release"
+      ]
+    }
   },
   "live_proof": {
-    "status": "pending_bulk_lookup_followup_merge",
+    "status": "blocked_on_rest_followup_merge",
     "preliminary_publish_cut_run": 30284714199,
     "preliminary_release_tag": "release/v2026.07.27.2",
     "preliminary_release_commit": "6ae436c546942df1ba0a762d7167b456dfedabc8",
@@ -216,7 +248,7 @@
   },
   "review": {
     "status": "pending",
-    "reviewer": "Codex",
+    "reviewer": "Claude",
     "reviewed_head": null,
     "decision": null
   },

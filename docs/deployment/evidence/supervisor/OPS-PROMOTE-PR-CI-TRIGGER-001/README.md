@@ -70,6 +70,23 @@ after that follow-up merges so the live proof covers the corrected bytes.
 - live read-only REST smoke — 26 promote PRs listed; exact PR `#4138`
   returned head and zero checks without an API error.
 
+## REST Follow-up Merge Gate
+
+REST follow-up PR `#4262` is open with auto-merge enabled. At code/evidence
+head `25d8f0764352369dbb6394694627e05d29087448`, both the push run
+`30294569664` and pull-request run `30294571835` completed successfully:
+`Commit trailers`, `Runtime mirror guard`, `Python packaging provision`, and
+`Smoke acceptance` all passed.
+
+The PR cannot merge yet because `dev` protection now requires one independent
+approval with last-push approval plus the external status contexts `Pantheon
+canonical review gate` and `Pantheon root merge freeze 2026-07-27`. The head
+has eight successful GitHub Actions check runs but no commit statuses for
+those external contexts. This is an external review/freeze gate, not a failed
+repository test. The owner will not self-approve, forge a status, weaken
+branch protection, or bypass the freeze. Claude/Human Ops must independently
+clear the governed merge gate before the REST repair can reach `dev`.
+
 ## Live Proof and Stale-PR Retirement
 
 The immutable exact-candidate proof must be recorded only after the repair is
