@@ -51,6 +51,8 @@ COMMIT_RE = re.compile(r"^[a-f0-9]{40}$")
 ACCEPTED_STATUS = "accepted"
 NON_ACCEPTED_STATUSES = {"pending", "rejected"}
 GATE_EVIDENCE_SCHEMA = "pantheon.agora.compatibility-gate-evidence.v1"
+RELEASE_CANDIDATE_SCHEMA = "pantheon.dev-release-candidate.v1"
+RELEASE_COMPATIBILITY_STATUS = "compatible"
 
 
 class ManifestError(ValueError):
@@ -59,6 +61,16 @@ class ManifestError(ValueError):
 
 def sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
+
+
+def canonical_json_sha256(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return sha256_bytes(encoded + b"\n")
 
 
 def sha256_file(path: Path) -> str:
@@ -900,6 +912,33 @@ def build_gate_evidence(
     controller_commit = git_output(REPO_ROOT, ["rev-parse", "HEAD"])
     if not COMMIT_RE.fullmatch(controller_commit):
         raise ManifestError("cannot resolve the Pantheon gate controller commit")
+    release_candidate_identity = {
+        "schema_version": RELEASE_CANDIDATE_SCHEMA,
+        "environment": manifest["environment"],
+        "compatibility_status": RELEASE_COMPATIBILITY_STATUS,
+        "compatibility_manifest": {
+            "contract_family": manifest["contract_family"],
+            "manifest_version": manifest["manifest_version"],
+            "sha256": sha256_file(manifest_path),
+            "source_status": manifest["compatibility_status"],
+        },
+        "backend": {
+            "repository": "ajoe734/pantheon",
+            "branch": "dev",
+            "commit": backend_runtime_commit,
+            "tree": git_tree(REPO_ROOT, backend_runtime_commit),
+        },
+        "frontend": {
+            "repository": "ajoe734/execute-plans",
+            "branch": "dev",
+            "commit": frontend_runtime_commit,
+            "tree": git_tree(frontend_root, frontend_runtime_commit),
+        },
+    }
+    release_candidate = {
+        **release_candidate_identity,
+        "release_candidate_id": canonical_json_sha256(release_candidate_identity),
+    }
     return {
         "schema_version": GATE_EVIDENCE_SCHEMA,
         "contract_family": manifest["contract_family"],
@@ -924,6 +963,7 @@ def build_gate_evidence(
         },
         "source_handoffs": manifest["source_handoffs"],
         "hash_policy": manifest["hash_policy"],
+        "release_candidate": release_candidate,
     }
 
 
