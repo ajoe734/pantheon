@@ -31,9 +31,9 @@ is absent.
 `publish-promote.yml` receives only the `actions: write` permission needed to
 dispatch that workflow. `publish_promote.py`:
 
-- asks GitHub for required check rollups on open promote PRs;
-- identifies only the maximal open candidate with missing contexts as
-  `ci_repair`;
+- keeps bulk open-PR discovery lightweight and selects only the maximal open
+  candidate for an exact lookup;
+- asks GitHub for required check rollups only on that exact candidate;
 - validates the exact PR head before dispatch;
 - dispatches `branch-ci.yml` on that immutable head;
 - requests auto-merge only after dispatch succeeds; and
@@ -42,13 +42,28 @@ dispatch that workflow. `publish_promote.py`:
 The repair does not change release tags, publish snapshot trees, `master`
 branch protection, deployment admission, or broker/capital authority.
 
+Implementation PR `#4258` merged as
+`6ae436c546942df1ba0a762d7167b456dfedabc8` after both push and PR Branch CI
+runs passed all three required contexts. Publish-cut run `30284714199` then
+created `release/v2026.07.27.2` at that exact merge without dispatching a
+deployment.
+
+Two evaluations of that fresh snapshot failed closed
+before opening a PR because the first implementation asked GraphQL for
+`statusCheckRollup` across the 1,000-row bulk lookup. Runs `30284788017` and
+`30284856368` both received HTTP 502. The follow-up moves that expensive field
+to the single exact-candidate lookup and retains the same missing-context
+decision at the action boundary. A new release will be cut after the follow-up
+merges so the live proof covers the corrected bytes rather than reusing the
+known-bad `v2026.07.27.2` snapshot.
+
 ## Validation Before Publication
 
 - `python3 -m unittest scripts.git.test_git_workflow_helpers.PublishPromoteTests -v`
-  — 18 passed.
+  — 20 passed.
 - provisioned checkout-local interpreter, then
   `pytest -q scripts/git/test_git_workflow_helpers.py scripts/test_nightly_publish_cut.py tests/orchestrator/test_release_branch_discipline.py`
-  — 66 passed.
+  — 68 passed.
 - `python3 -m py_compile` on the helper and test module — passed.
 - workflow YAML parse and `git diff --check` — passed.
 

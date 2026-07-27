@@ -16,7 +16,7 @@
     "narrative": "docs/deployment/evidence/supervisor/OPS-PROMOTE-PR-CI-TRIGGER-001/README.md"
   },
   "status": "in_progress",
-  "generated_at": "2026-07-27T16:22:29Z",
+  "generated_at": "2026-07-27T16:31:15Z",
   "scope": {
     "owned": [
       "Branch CI exact-head workflow_dispatch contract for promote PRs",
@@ -120,17 +120,22 @@
       ],
       "caller_permission": "actions: write",
       "idempotency": "existing PRs with all required context names are not redispatched",
-      "backlog_selection": "only a maximal non-superseded existing promote candidate with missing required contexts is actionable as ci_repair"
+      "backlog_selection": "bulk discovery selects only a maximal non-superseded existing promote candidate; one exact-branch lookup obtains its check rollup and dispatches only when required contexts are missing",
+      "bulk_lookup": "omits statusCheckRollup to avoid GraphQL fanout across the 1,000-row query",
+      "bulk_lookup_incident_runs": [
+        30284788017,
+        30284856368
+      ]
     }
   },
   "validation": [
     {
       "command": "python3 -m unittest scripts.git.test_git_workflow_helpers.PublishPromoteTests -v",
-      "result": "18 passed"
+      "result": "20 passed"
     },
     {
       "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/git/test_git_workflow_helpers.py scripts/test_nightly_publish_cut.py tests/orchestrator/test_release_branch_discipline.py",
-      "result": "66 passed in 10.23s"
+      "result": "68 passed in 11.86s"
     },
     {
       "command": "python3 -m py_compile scripts/git/publish_promote.py scripts/git/test_git_workflow_helpers.py",
@@ -142,13 +147,39 @@
     }
   ],
   "delivery": {
-    "implementation_pr": null,
-    "implementation_head": null,
-    "implementation_merge_commit": null,
-    "implementation_checks": null
+    "implementation_pr": 4258,
+    "implementation_head": "2e9c52a948ecdbc712d010d087bd1389776988ee",
+    "implementation_merge_commit": "6ae436c546942df1ba0a762d7167b456dfedabc8",
+    "implementation_checks": {
+      "push_run": 30284547771,
+      "pull_request_run": 30284551850,
+      "required_contexts": {
+        "Commit trailers": "success",
+        "Runtime mirror guard": "success",
+        "Smoke acceptance": "success"
+      }
+    },
+    "bulk_lookup_followup_pr": null,
+    "bulk_lookup_followup_head": null,
+    "bulk_lookup_followup_merge_commit": null
   },
   "live_proof": {
-    "status": "pending_implementation_merge",
+    "status": "pending_bulk_lookup_followup_merge",
+    "preliminary_publish_cut_run": 30284714199,
+    "preliminary_release_tag": "release/v2026.07.27.2",
+    "preliminary_release_commit": "6ae436c546942df1ba0a762d7167b456dfedabc8",
+    "preliminary_promote_runs": [
+      {
+        "run": 30284788017,
+        "result": "fail_closed_without_pr",
+        "detail": "bulk GraphQL query returned HTTP 502"
+      },
+      {
+        "run": 30284856368,
+        "result": "fail_closed_without_pr",
+        "detail": "bulk GraphQL query returned HTTP 502"
+      }
+    ],
     "release_tag": null,
     "release_commit": null,
     "promote_branch": null,
