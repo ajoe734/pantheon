@@ -3754,6 +3754,12 @@ def normalize_runtime_queue(orchestrator_state: dict[str, Any]) -> list[dict[str
 
 def mismatch_resolution_hint(item: dict[str, Any]) -> str:
     mismatch_type = str(item.get("type") or "")
+    if mismatch_type == "github_review_gate_missing":
+        return (
+            "以 assigned reviewer 對 exact PR head 重新執行 governed approve；"
+            "GitHub review 或 branch-policy-required canonical status 成功寫入前，"
+            "不得把 internal review_approved 當成 PR completion。"
+        )
     if mismatch_type == "worker_without_task":
         return "先檢查 dispatch/request snapshot 是否漏掉 task_id；如果是舊 worker，應重派成帶 task_id 的新 run。"
     if mismatch_type == "worker_task_missing":
@@ -3937,6 +3943,29 @@ def detect_truth_mismatches(
 
     for task in state.get("tasks", []):
         task_status = str(task.get("status") or "").lower()
+        if (
+            task_status == "review_approved"
+            and (
+                isinstance(task.get(APPROVAL_BINDING_KEY), Mapping)
+                or task_has_pr_review_target(task)
+            )
+            and not github_review_bridge_evidence_matches(task)
+        ):
+            push(
+                {
+                    "id": f"github-review-gate-missing:{task['id']}",
+                    "type": "github_review_gate_missing",
+                    "severity": "high",
+                    "title": "Internal approval 尚未綁定 GitHub review gate",
+                    "summary": (
+                        f"{task['id']} 有 exact-head review binding 且狀態為 "
+                        "review_approved，但沒有對應的 GitHub review 或 "
+                        "branch-policy-recognized canonical status evidence。"
+                    ),
+                    "task_id": task["id"],
+                    "detected_at": task.get("last_update"),
+                }
+            )
         if task_status != "in_progress":
             continue
         expected_actor = expected_task_actor(task)
@@ -4681,6 +4710,7 @@ def build_dashboard_bundle(
                 "task_status": task.get("status"),
                 "owner": task.get("owner"),
                 "reviewer": task.get("reviewer"),
+                "github_review_bridge": task.get(GITHUB_REVIEW_BRIDGE_KEY),
                 "expected_actor": expected_task_actor(task) if task else None,
                 "source_plane": task.get("source_plane"),
                 "source_ref": normalized_source_ref(task),
@@ -5622,11 +5652,32 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(
             f"Only the owner ({owner}), reviewer ({reviewer}), or Human/Ops can reopen {task_id}"
         )
+    binding: dict[str, Any] = {}
+    github_review_bridge: dict[str, Any] = {}
+    if actor == reviewer:
+        explicit_binding = bool(
+            os.environ.get("REVIEW_PR", "").strip()
+            or os.environ.get("REVIEW_HEAD_SHA", "").strip()
+        )
+        if explicit_binding:
+            binding = resolve_approval_binding(task, warn_if_unbound=False)
+        elif isinstance(task.get(APPROVAL_BINDING_KEY), Mapping):
+            binding = dict(task[APPROVAL_BINDING_KEY])
+        if binding:
+            github_review_bridge = bridge_github_review_decision(
+                task,
+                actor=actor,
+                decision="reopen",
+                message=message,
+                binding=binding,
+            )
     timestamp = iso_now()
     task["status"] = "in_progress"
     task["last_update"] = timestamp
     task["next"] = message
     task.pop("waiting_for", None)
+    if github_review_bridge:
+        task[GITHUB_REVIEW_BRIDGE_KEY] = dict(github_review_bridge)
     mark_blockers_resolved(state, task_id)
     mark_handoffs_done(state, task_id)
     if actor == reviewer and owner and owner != reviewer:
@@ -5640,7 +5691,20 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
                 "created_at": timestamp,
             }
         )
-    append_log({"ts": timestamp, "agent": actor, "type": "reopen", "task_id": task_id, "message": message})
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": actor,
+            "type": "reopen",
+            "task_id": task_id,
+            "message": message,
+            **(
+                {GITHUB_REVIEW_BRIDGE_KEY: dict(github_review_bridge)}
+                if github_review_bridge
+                else {}
+            ),
+        }
+    )
 
 
 def command_handoff(state: dict[str, Any], args: list[str]) -> None:
@@ -6165,11 +6229,22 @@ def command_supersede(state: dict[str, Any], args: list[str]) -> None:
 
 
 APPROVAL_BINDING_KEY = "review_binding"
+GITHUB_REVIEW_BRIDGE_KEY = "github_review_bridge"
 APPROVAL_HEAD_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 DEFAULT_APPROVAL_BASE_BRANCH = "dev"
+GITHUB_CANONICAL_REVIEW_CONTEXT = "Pantheon canonical review gate"
+GITHUB_REVIEW_MODES = {
+    "pull_request_review",
+    "pull_request_review_and_required_status",
+    "required_commit_status",
+}
 
 
-def resolve_approval_binding(task: dict[str, Any]) -> dict[str, Any]:
+def resolve_approval_binding(
+    task: dict[str, Any],
+    *,
+    warn_if_unbound: bool = True,
+) -> dict[str, Any]:
     """Bind an approval to the exact pull-request head the reviewer inspected."""
 
     task_id = str(task.get("id") or "").strip()
@@ -6187,7 +6262,13 @@ def resolve_approval_binding(task: dict[str, Any]) -> dict[str, Any]:
     independent = bool(reviewer) and reviewer != owner
 
     if not raw_pr and not raw_head:
-        if independent:
+        if independent and task_has_pr_review_target(task):
+            raise SystemExit(
+                f"{task_id} is PR-backed but approve has no exact reviewed-head "
+                "binding. Set REVIEW_PR and REVIEW_HEAD_SHA; internal activity "
+                "approval alone is not a GitHub review gate."
+            )
+        if independent and warn_if_unbound:
             print(
                 f"warning: {task_id} is approved without a reviewed-head binding. "
                 "If this task has a PR, the review-before-merge gate will refuse to "
@@ -6222,6 +6303,112 @@ def resolve_approval_binding(task: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def task_has_pr_review_target(task: Mapping[str, Any]) -> bool:
+    """Return whether durable task metadata identifies a delivery PR."""
+
+    if isinstance(task.get(APPROVAL_BINDING_KEY), Mapping):
+        return True
+    for key in ("source_ref", "github"):
+        payload = task.get(key)
+        if not isinstance(payload, Mapping):
+            continue
+        raw_pr = payload.get("pr") or payload.get("pull_request")
+        if isinstance(raw_pr, int) and raw_pr > 0:
+            return True
+        text = str(raw_pr or "").strip().lstrip("#")
+        if text.isdigit() and int(text) > 0:
+            return True
+    return False
+
+
+def bridge_github_review_decision(
+    task: dict[str, Any],
+    *,
+    actor: str,
+    decision: str,
+    message: str,
+    binding: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Represent an exact-head governed verdict on the delivery PR.
+
+    The bridge runs before canonical state changes.  A failed GitHub write
+    therefore leaves the task in its prior lifecycle state instead of
+    manufacturing an internal-only approval.
+    """
+
+    scripts_git = ROOT / "scripts" / "git"
+    if str(scripts_git) not in sys.path:
+        sys.path.insert(0, str(scripts_git))
+    try:
+        import github_review_bridge
+    except ImportError as exc:  # pragma: no cover - deployment packaging guard
+        raise SystemExit(
+            "GitHub review bridge is unavailable; refusing an internal-only "
+            f"{decision} decision for {task.get('id') or '?'}."
+        ) from exc
+
+    config = load_config()
+    repository_id = task_primary_repository_id(config, task)
+    repository_slug_value = repository_slug(config, repository_id)
+    if repository_id is None or not repository_slug_value:
+        raise SystemExit(
+            "GitHub review bridge requires one delivery repository with a "
+            f"configured GitHub slug for {task.get('id') or '?'}."
+        )
+    try:
+        result = github_review_bridge.bridge_review_decision(
+            repository=repository_slug_value,
+            task_id=str(task.get("id") or ""),
+            actor=actor,
+            decision=decision,
+            message=message,
+            binding=binding,
+        )
+    except github_review_bridge.GitHubReviewBridgeError as exc:
+        raise SystemExit(
+            f"GitHub review bridge rejected {decision} for "
+            f"{task.get('id') or '?'}: {exc}"
+        ) from exc
+    payload = result.as_dict()
+    if not isinstance(payload, dict):
+        raise SystemExit("GitHub review bridge returned invalid evidence")
+    return payload
+
+
+def github_review_bridge_evidence_matches(task: Mapping[str, Any]) -> bool:
+    """Return whether task evidence recognizes its exact approved PR head."""
+
+    binding = task.get(APPROVAL_BINDING_KEY)
+    evidence = task.get(GITHUB_REVIEW_BRIDGE_KEY)
+    if not isinstance(binding, Mapping) or not isinstance(evidence, Mapping):
+        return False
+    if str(evidence.get("decision") or "").lower() != "approve":
+        return False
+    if str(evidence.get("mode") or "") not in GITHUB_REVIEW_MODES:
+        return False
+    try:
+        if int(evidence.get("pr") or 0) != int(binding.get("pr") or 0):
+            return False
+    except (TypeError, ValueError):
+        return False
+    for key in ("head_sha", "head_branch", "base"):
+        if str(evidence.get(key) or "").strip() != str(binding.get(key) or "").strip():
+            return False
+
+    mode = str(evidence.get("mode") or "")
+    review_recorded = bool(evidence.get("github_review_id"))
+    required_status_recorded = bool(
+        evidence.get("status_id")
+        and evidence.get("status_context") == GITHUB_CANONICAL_REVIEW_CONTEXT
+        and str(evidence.get("status_state") or "").lower() == "success"
+    )
+    if mode == "pull_request_review":
+        return review_recorded
+    if mode == "required_commit_status":
+        return required_status_recorded
+    return review_recorded and required_status_recorded
+
+
 def command_approve(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: approve <task-id> <message>")
@@ -6248,6 +6435,17 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
         transition_candidate,
         transition="review_approved",
     )
+    github_review_bridge = (
+        bridge_github_review_decision(
+            task,
+            actor=actor,
+            decision="approve",
+            message=message,
+            binding=binding,
+        )
+        if binding
+        else {}
+    )
 
     timestamp = iso_now()
     task["status"] = "review_approved"
@@ -6262,6 +6460,10 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
         task[APPROVAL_BINDING_KEY] = dict(binding)
     else:
         task.pop(APPROVAL_BINDING_KEY, None)
+    if github_review_bridge:
+        task[GITHUB_REVIEW_BRIDGE_KEY] = dict(github_review_bridge)
+    else:
+        task.pop(GITHUB_REVIEW_BRIDGE_KEY, None)
     if verdict_ref is not None:
         task["protected_closeout_verdict"] = verdict_ref
     mark_blockers_resolved(state, task_id)
@@ -6281,6 +6483,11 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
             "task_id": task_id,
             "message": message,
             **({APPROVAL_BINDING_KEY: dict(binding)} if binding else {}),
+            **(
+                {GITHUB_REVIEW_BRIDGE_KEY: dict(github_review_bridge)}
+                if github_review_bridge
+                else {}
+            ),
         }
     )
 
