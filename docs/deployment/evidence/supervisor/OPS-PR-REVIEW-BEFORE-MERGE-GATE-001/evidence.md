@@ -78,6 +78,17 @@ current `origin/dev` `852da0aa71d4e0d0293d5fcc8b5dff6d886386f7` at
 unrelated PR #4276 did not overlap task files; the 101-case gate/integrator
 core and static checks passed again after that final composition.
 
+Codex2 then correctly rejected exact head
+`5f904bc7cc2666525e7e5432ec599c341e57aaa7` because `origin/dev` advanced to
+`7f545a33bf41e5682dc67f50333c84b42f09d17e` after review dispatch. Codex
+preserved that rejection and composed the new base without conflicts at
+`e7a47e8efa27c6f3627b1abf5adcef7be075a886` (tree object
+`b1a6f7ba0e385e896cf00415f9688df2adce7b63`). The graph now has zero base-only
+commits and 67 head-only commits relative to `origin/dev`. The implementation
+diff was unchanged by the compose; the 101-case gate/integrator core, static
+gates, and the 346-case focused git/status suite passed before the evidence
+refresh.
+
 Scope rule honoured throughout: **no `.orchestrator/config.json` edit**, no
 hand-edited task board, no owner or reviewer action performed on behalf of
 anyone. Every decision is derived from canonical task state that already

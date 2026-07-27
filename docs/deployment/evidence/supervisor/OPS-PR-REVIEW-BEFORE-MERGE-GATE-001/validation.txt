@@ -1,3 +1,21 @@
+Review-dispatch refresh by Codex on 2026-07-27 after Codex2 rejected PR #4218
+head 5f904bc7cc2666525e7e5432ec599c341e57aaa7 because origin/dev advanced
+after dispatch. Codex composed origin/dev
+7f545a33bf41e5682dc67f50333c84b42f09d17e at
+e7a47e8efa27c6f3627b1abf5adcef7be075a886 (tree object
+b1a6f7ba0e385e896cf00415f9688df2adce7b63); the graph had 0 base-only
+and 67 head-only commits. The compose was conflict-free and did not change the
+task implementation diff.
+
+== .venv-pantheon/bin/python3 -m pytest -q gate + integrator core
+101 passed in 12.73s
+
+== bash -n; py_compile; json.tool; git diff --check; check_commit_trailers
+OK
+
+== .venv-pantheon/bin/python3 -m pytest -q focused git/status matrix
+346 passed, 31 subtests passed in 52.32s
+
 Review-dispatch refresh by Codex on 2026-07-27 after unrelated PR #4276
 advanced origin/dev to 852da0aa71d4e0d0293d5fcc8b5dff6d886386f7 without
 touching task files. Codex composed that base at
