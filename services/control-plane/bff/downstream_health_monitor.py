@@ -43,6 +43,8 @@ INFRASTRUCTURE_HEALTH_SCHEMA_VERSION = "pantheon.infrastructure-health/1"
 INFRASTRUCTURE_HEALTH_PRODUCER = "control-plane-bff"
 INFRASTRUCTURE_HEALTH_PATH = "/api/v1/telemetry/infrastructure-health"
 INFRASTRUCTURE_INCIDENT_PATH = "/api/incidents/consume-infrastructure-health"
+_DELIVERY_HISTORY_RETENTION_SECONDS = 7 * 24 * 60 * 60
+_WINDOW_HISTORY_RETENTION_SECONDS = 24 * 60 * 60
 
 # Compatibility exports.  They are deliberately empty/non-trading and must
 # never be copied into an infrastructure event or incident request.
@@ -424,6 +426,37 @@ class _DurableHealthStore:
                     ON delivery_outbox(status, next_attempt_at, claim_until);
                 CREATE INDEX IF NOT EXISTS delivery_outbox_event_idx
                     ON delivery_outbox(event_id);
+                CREATE TABLE IF NOT EXISTS delivery_status_counts (
+                    status TEXT PRIMARY KEY,
+                    count INTEGER NOT NULL
+                );
+                CREATE TRIGGER IF NOT EXISTS delivery_outbox_count_insert
+                AFTER INSERT ON delivery_outbox
+                BEGIN
+                    INSERT INTO delivery_status_counts(status, count)
+                    VALUES (NEW.status, 1)
+                    ON CONFLICT(status) DO UPDATE
+                    SET count = count + 1;
+                END;
+                CREATE TRIGGER IF NOT EXISTS delivery_outbox_count_delete
+                AFTER DELETE ON delivery_outbox
+                BEGIN
+                    UPDATE delivery_status_counts
+                    SET count = MAX(0, count - 1)
+                    WHERE status = OLD.status;
+                END;
+                CREATE TRIGGER IF NOT EXISTS delivery_outbox_count_status_update
+                AFTER UPDATE OF status ON delivery_outbox
+                WHEN OLD.status <> NEW.status
+                BEGIN
+                    UPDATE delivery_status_counts
+                    SET count = MAX(0, count - 1)
+                    WHERE status = OLD.status;
+                    INSERT INTO delivery_status_counts(status, count)
+                    VALUES (NEW.status, 1)
+                    ON CONFLICT(status) DO UPDATE
+                    SET count = count + 1;
+                END;
                 CREATE TABLE IF NOT EXISTS delivery_replay_audit (
                     replay_id TEXT PRIMARY KEY,
                     actor_id TEXT NOT NULL,
@@ -438,6 +471,18 @@ class _DurableHealthStore:
             )
             if legacy_table is not None:
                 self._migrate_legacy_outbox(connection, legacy_table)
+            self._rebuild_delivery_counts(connection)
+
+    def _rebuild_delivery_counts(self, connection: sqlite3.Connection) -> None:
+        connection.execute("DELETE FROM delivery_status_counts")
+        connection.execute(
+            """
+            INSERT INTO delivery_status_counts(status, count)
+            SELECT status, COUNT(*) AS count
+            FROM delivery_outbox
+            GROUP BY status
+            """
+        )
 
     def _migrate_legacy_outbox(
         self,
@@ -1086,6 +1131,65 @@ class _DurableHealthStore:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def prune_retained_history(
+        self,
+        *,
+        delivery_history_seconds: float = _DELIVERY_HISTORY_RETENTION_SECONDS,
+        window_history_seconds: float = _WINDOW_HISTORY_RETENTION_SECONDS,
+    ) -> Dict[str, int]:
+        """Bound durable history that is not required for retry/DLQ recovery."""
+
+        now = datetime.now(timezone.utc)
+        delivery_cutoff = (
+            datetime.fromtimestamp(
+                now.timestamp() - max(60.0, float(delivery_history_seconds)),
+                tz=timezone.utc,
+            )
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+        window_cutoff = (
+            datetime.fromtimestamp(
+                now.timestamp() - max(60.0, float(window_history_seconds)),
+                tz=timezone.utc,
+            )
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            delivered = connection.execute(
+                """
+                DELETE FROM delivery_outbox
+                WHERE status='delivered' AND updated_at < ?
+                """,
+                (delivery_cutoff,),
+            ).rowcount
+            probe_windows = connection.execute(
+                """
+                DELETE FROM probe_windows
+                WHERE completed_at IS NOT NULL AND completed_at < ?
+                """,
+                (window_cutoff,),
+            ).rowcount
+            error_windows = connection.execute(
+                "DELETE FROM error_windows WHERE last_observed_at < ?",
+                (window_cutoff,),
+            ).rowcount
+            replay_audit = connection.execute(
+                "DELETE FROM delivery_replay_audit WHERE replayed_at < ?",
+                (delivery_cutoff,),
+            ).rowcount
+            connection.commit()
+        return {
+            "delivery_outbox": max(0, int(delivered)),
+            "probe_windows": max(0, int(probe_windows)),
+            "error_windows": max(0, int(error_windows)),
+            "delivery_replay_audit": max(0, int(replay_audit)),
+        }
+
     def delivery_counts(self) -> Dict[str, int]:
         counts = {
             "pending": 0,
@@ -1096,7 +1200,7 @@ class _DurableHealthStore:
         }
         with self._connect() as connection:
             rows = connection.execute(
-                "SELECT status, COUNT(*) AS count FROM delivery_outbox GROUP BY status"
+                "SELECT status, count FROM delivery_status_counts"
             ).fetchall()
         for row in rows:
             counts[str(row["status"])] = int(row["count"])
@@ -1276,6 +1380,7 @@ class DownstreamHealthMonitor:
         }
         self._task: Optional[asyncio.Task[None]] = None
         self._running = False
+        self._last_retention_prune_at = 0.0
 
     @property
     def state_path(self) -> str:
@@ -1418,6 +1523,10 @@ class DownstreamHealthMonitor:
         }
 
     def get_state(self) -> Dict[str, Any]:
+        now = time.time()
+        if now - self._last_retention_prune_at >= 300.0:
+            self._store.prune_retained_history()
+            self._last_retention_prune_at = now
         persisted = self._store.list_probes()
         self._state = persisted
         registry = self._resolve_target_registry()
@@ -2057,13 +2166,7 @@ class DownstreamHealthMonitor:
                 finally:
                     _POST_HEADERS.reset(token)
 
-                incident_idempotent = (
-                    channel == "incident_open" and status == 409
-                )
-                resolve_idempotent = (
-                    channel == "incident_resolve" and status == 409
-                )
-                if ok or incident_idempotent or resolve_idempotent:
+                if ok:
                     if not self._store.complete_delivery(delivery):
                         continue
                     delivered_count += 1
@@ -2099,8 +2202,10 @@ class DownstreamHealthMonitor:
                     or status in {408, 425, 429}
                     or status >= 500
                 )
-                # Telemetry 409 is a producer identity conflict and must be
-                # visible in DLQ rather than retried with a mutated event.
+                # 409 means a provider-side identity/concurrency conflict for
+                # both telemetry and incident authorities.  It is not a
+                # successful idempotent delivery receipt; leave it retry/DLQ
+                # visible rather than falsely mutating incident mappings.
                 self._store.fail_delivery(
                     delivery,
                     error=(

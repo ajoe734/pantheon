@@ -37,6 +37,7 @@ def _run(coro):
 from downstream_health_monitor import (
     DownstreamHealthMonitor,
     DownstreamProbeResult,
+    _DurableHealthStore,
     _probe_http,
     _post_json,
     _utc_now_rfc3339,
@@ -391,7 +392,7 @@ class TestIncidentOpen:
         assert inc_id == first_id
         mock_post.assert_not_called()
 
-    def test_incident_409_treated_as_idempotent_ok(self):
+    def test_incident_409_is_dead_letter_not_idempotent_success(self):
         monitor = self._make_monitor()
         result = DownstreamProbeResult(
             target_name="telemetry", ok=False, status_code=-1, latency_ms=5.0,
@@ -406,6 +407,55 @@ class TestIncidentOpen:
 
         assert inc_id.startswith("infra-bff-")
         assert "telemetry" in monitor._open_incident_ids
+        deliveries = monitor.list_delivery_records()
+        incident_delivery = next(
+            item for item in deliveries if item["channel"] == "incident_open"
+        )
+        assert incident_delivery["status"] == "dead_letter"
+        assert monitor.get_state()["incidents"]["telemetry"]["status"] == "opening"
+
+    def test_delivery_counts_use_summary_and_retention_prunes_history(self, tmp_path):
+        store = _DurableHealthStore(str(tmp_path / "health.sqlite3"))
+        store.queue_delivery(
+            delivery_id="delivered-old",
+            event_id="event-old",
+            channel="telemetry",
+            target_name="telemetry",
+            url="http://telemetry/events",
+            body={"event_id": "event-old"},
+            dependency_ids=[],
+            max_attempts=1,
+        )
+        with store._connect() as connection:
+            connection.execute(
+                """
+                UPDATE delivery_outbox
+                SET status='delivered', updated_at='2026-01-01T00:00:00Z'
+                WHERE delivery_id='delivered-old'
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO error_windows(
+                    target_name, window_started_at, sample_count,
+                    failure_count, latency_total_ms, last_status_code,
+                    last_detail, last_observed_at
+                ) VALUES (
+                    'telemetry', '2026-01-01T00:00:00Z', 1, 1,
+                    5.0, 500, 'old', '2026-01-01T00:00:00Z'
+                )
+                """
+            )
+
+        counts = store.delivery_counts()
+        assert counts["delivered"] == 1
+        pruned = store.prune_retained_history(
+            delivery_history_seconds=60,
+            window_history_seconds=60,
+        )
+        assert pruned["delivery_outbox"] == 1
+        assert pruned["error_windows"] == 1
+        assert store.delivery_counts()["delivered"] == 0
 
     def test_open_incident_skipped_when_no_incidents_url(self):
         monitor = DownstreamHealthMonitor(
