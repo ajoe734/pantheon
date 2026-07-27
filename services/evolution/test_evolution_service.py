@@ -24,6 +24,7 @@ import tempfile
 import uuid
 import json
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -308,6 +309,49 @@ def test_health():
     r = client.get("/health")
     assert r.status_code == 200
     assert r.json()["status"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# Evolution input coverage
+# ---------------------------------------------------------------------------
+
+def test_input_coverage_api_fails_closed_when_no_valid_thresholds(monkeypatch):
+    observed_at = datetime.now(timezone.utc).replace(microsecond=0)
+    summary = {
+        "runtime_id": "runtime-no-threshold-policy",
+        "binding_id": "binding-no-threshold-policy",
+        "deployment_stage": "paper",
+        "deployment_plan_id": "plan-no-threshold-policy",
+        "capital_pool_id": "pool-no-threshold-policy",
+        "persona_capital_binding_id": "pcb-no-threshold-policy",
+        "artifact_id": "artifact-no-threshold-policy",
+        "artifact_version": "1.0.0",
+        "last_heartbeat_at": observed_at.isoformat().replace("+00:00", "Z"),
+    }
+    monkeypatch.setattr(evo_main, "load_thresholds", lambda: [])
+    monkeypatch.setattr(evo_main, "load_baselines", lambda: {})
+    monkeypatch.setattr(
+        evo_main,
+        "default_fetch_summaries",
+        lambda *_args, **_kwargs: [summary],
+    )
+
+    response = client.get("/api/evolution/input-coverage")
+
+    assert response.status_code == 200
+    coverage = response.json()
+    assert coverage["thresholds_loaded"] == 0
+    assert coverage["thresholds_considered"] == []
+    assert coverage["monitored_artifacts"] == 1
+    assert coverage["complete_artifacts"] == 0
+    assert coverage["incomplete_artifacts"] == 1
+    assert coverage["coverage_complete"] is False
+    assert coverage["artifacts"][0]["complete"] is False
+    assert any("no valid enabled thresholds" in item for item in coverage["diagnostics"])
+    assert any(
+        "no valid enabled thresholds" in gap
+        for gap in coverage["artifacts"][0]["gaps"]
+    )
 
 
 # ---------------------------------------------------------------------------

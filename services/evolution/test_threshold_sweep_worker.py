@@ -148,6 +148,31 @@ def _summary(**overrides) -> dict:
     return base
 
 
+def _threshold_config_without_valid_entries(tmp_path: Path, kind: str) -> str:
+    path = tmp_path / f"{kind}.json"
+    if kind == "missing":
+        return str(path)
+    if kind == "malformed":
+        path.write_text("{not json", encoding="utf-8")
+    elif kind == "empty":
+        path.write_text(json.dumps({"thresholds": []}), encoding="utf-8")
+    elif kind == "all-disabled":
+        path.write_text(
+            json.dumps(
+                {
+                    "thresholds": [
+                        {**threshold, "enabled": False}
+                        for threshold in THRESHOLDS
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+    else:  # pragma: no cover - test helper guard
+        raise AssertionError(f"unknown threshold config kind: {kind}")
+    return str(path)
+
+
 def _seed_real_summary(store: RuntimeSummaryProjectionStore, **event_overrides) -> dict:
     """Project real telemetry-shaped events and return the store's summary.
 
@@ -246,6 +271,35 @@ def test_load_thresholds_drops_disabled_entries(tmp_path):
     disabled_entry["enabled"] = False
     cfg.write_text(json.dumps({"thresholds": [disabled_entry]}), encoding="utf-8")
     assert load_thresholds(str(cfg)) == []
+
+
+@pytest.mark.parametrize("config_kind", ["empty", "missing", "malformed", "all-disabled"])
+def test_input_coverage_fails_closed_when_threshold_config_has_no_valid_entries(
+    tmp_path, config_kind
+):
+    config_path = _threshold_config_without_valid_entries(tmp_path, config_kind)
+    thresholds = load_thresholds(config_path)
+    summary = _summary()
+    summary.pop("drawdown")
+    summary.pop("drawdown_at")
+    summary.pop("drawdown_binding_id")
+
+    coverage = assess_input_coverage(
+        [summary],
+        thresholds,
+        baselines={},
+        now=_NOW,
+    )
+
+    assert coverage["thresholds_considered"] == []
+    assert coverage["monitored_artifacts"] == 1
+    assert coverage["complete_artifacts"] == 0
+    assert coverage["incomplete_artifacts"] == 1
+    assert coverage["coverage_complete"] is False
+    assert coverage["artifacts"][0]["metrics"] == []
+    assert coverage["artifacts"][0]["complete"] is False
+    assert any("no valid enabled thresholds" in gap for gap in coverage["artifacts"][0]["gaps"])
+    assert any("no valid enabled thresholds" in item for item in coverage["diagnostics"])
 
 
 def test_load_thresholds_drops_truthy_non_bool_enabled(tmp_path):
@@ -1004,8 +1058,36 @@ def test_run_tick_fails_closed_when_no_thresholds_configured():
         fetch_summaries=fetch,
     )
     assert result["candidates"] == 0
-    assert not calls
+    assert calls == ["fetch"]
+    assert result["input_coverage"]["coverage_complete"] is False
+    assert result["input_coverage"]["incomplete_artifacts"] == 1
     assert any("no valid thresholds" in d for d in result["diagnostics"])
+    assert any("no valid enabled thresholds" in d for d in result["diagnostics"])
+
+
+@pytest.mark.parametrize("config_kind", ["empty", "missing", "malformed", "all-disabled"])
+def test_run_tick_reports_incomplete_coverage_for_invalid_threshold_config(
+    tmp_path, config_kind
+):
+    config_path = _threshold_config_without_valid_entries(tmp_path, config_kind)
+
+    result = run_tick(
+        telemetry_api_url="http://telemetry.test",
+        incidents_api_url="http://incidents.test",
+        config_path=config_path,
+        baselines={},
+        fetch_summaries=lambda *_args, **_kwargs: [_summary()],
+        state_path=str(tmp_path / "state.json"),
+        now=_NOW,
+    )
+
+    assert result["summaries_evaluated"] == 1
+    assert result["candidates"] == 0
+    assert result["input_coverage"]["coverage_complete"] is False
+    assert result["input_coverage"]["complete_artifacts"] == 0
+    assert result["input_coverage"]["incomplete_artifacts"] == 1
+    assert any("no valid thresholds loaded" in item for item in result["diagnostics"])
+    assert any("no valid enabled thresholds" in item for item in result["diagnostics"])
 
 
 def test_run_tick_fails_closed_when_telemetry_fetch_errors():

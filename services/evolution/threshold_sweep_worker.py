@@ -600,12 +600,20 @@ def assess_input_coverage(
     when the threshold is a ratio, an approved positive baseline.
 
     ``coverage_complete`` is the acceptance-level answer: it is true only when
-    at least one artifact is monitored and every monitored artifact has every
-    input its thresholds require.  Zero monitored artifacts is reported as
-    incomplete, not vacuously complete.
+    at least one valid enabled threshold and one artifact are monitored, and
+    every monitored artifact has every input its thresholds require.  An empty
+    threshold policy cannot define the required metric/baseline set, so it is
+    an explicit configuration gap rather than a vacuously complete result.
+    Zero monitored artifacts is likewise reported as incomplete.
     """
     moment = now or datetime.now(timezone.utc)
     active_baselines = baselines or {}
+    configuration_gaps: list[str] = []
+    if not thresholds:
+        configuration_gaps.append(
+            "fail-closed: no valid enabled thresholds are configured; "
+            "monitored input requirements cannot be established"
+        )
 
     artifacts: list[dict[str, Any]] = []
     ineligible: list[dict[str, Any]] = []
@@ -647,7 +655,7 @@ def assess_input_coverage(
             continue
 
         metrics: list[dict[str, Any]] = []
-        gaps: list[str] = []
+        gaps: list[str] = list(configuration_gaps)
         for threshold in thresholds:
             metric_name = str(threshold["metric_name"])
             field = str(threshold["summary_field"])
@@ -729,7 +737,8 @@ def assess_input_coverage(
         "monitored_artifacts": len(artifacts),
         "complete_artifacts": len(complete),
         "incomplete_artifacts": len(incomplete),
-        "coverage_complete": bool(artifacts) and not incomplete,
+        "coverage_complete": bool(thresholds) and bool(artifacts) and not incomplete,
+        "diagnostics": configuration_gaps,
         "artifacts": artifacts,
         "ineligible_summaries": ineligible,
     }
@@ -1037,19 +1046,30 @@ def run_tick(
                         f"window={key[1]!r}; disabling this identity until live config is fixed"
                     )
             active_thresholds = unique_thresholds
+            if not active_thresholds:
+                result["diagnostics"].append(
+                    "no non-conflicting valid thresholds remain after live-config "
+                    "validation; skipping new breach evaluation (fail-closed)"
+                )
+                should_evaluate = False
 
         active_baselines = baselines if baselines is not None else load_baselines(baselines_path)
 
         summaries = []
-        if should_evaluate:
-            try:
-                summaries = fetch_summaries(telemetry_api_url, timeout=timeout)
-            except (urllib.error.URLError, TimeoutError, ValueError, OSError, http.client.HTTPException) as exc:
-                result["diagnostics"].append(f"telemetry fetch failed, skipping new breach evaluation (fail-closed): {exc}")
-                should_evaluate = False
+        summaries_available = False
+        try:
+            # Coverage remains observable even when threshold configuration is
+            # absent or invalid. Breach evaluation stays disabled, but the
+            # report must still enumerate otherwise-eligible monitored
+            # artifacts instead of returning a false-green empty answer.
+            summaries = fetch_summaries(telemetry_api_url, timeout=timeout)
+            summaries_available = True
+        except (urllib.error.URLError, TimeoutError, ValueError, OSError, http.client.HTTPException) as exc:
+            result["diagnostics"].append(f"telemetry fetch failed, skipping new breach evaluation (fail-closed): {exc}")
+            should_evaluate = False
 
         candidates = []
-        if should_evaluate:
+        if summaries_available:
             if not summaries:
                 result["diagnostics"].append("telemetry fetch returned zero active runtime summaries; nothing to evaluate")
 
@@ -1067,11 +1087,18 @@ def run_tick(
             )
             result["input_coverage"] = coverage
             if not coverage["coverage_complete"]:
+                coverage_reason = (
+                    "; ".join(coverage["diagnostics"])
+                    if coverage["diagnostics"]
+                    else "a numeric metric or an approved baseline is missing"
+                )
                 result["diagnostics"].append(
                     "input coverage incomplete: "
                     f"{coverage['incomplete_artifacts']}/{coverage['monitored_artifacts']} "
-                    "monitored artifact(s) lack a numeric metric or an approved baseline"
+                    f"monitored artifact(s) incomplete; {coverage_reason}"
                 )
+
+        if should_evaluate and summaries_available:
             candidates, diagnostics = evaluate_breaches(
                 summaries,
                 active_thresholds,
