@@ -4,7 +4,7 @@ Owner: Codex2
 Reviewer: Codex
 Status: owner implementation and acceptance proof ready; independent review pending
 
-This cut scanned through authoritative task-state journal sequence 2615. The
+This cut scanned through authoritative task-state journal sequence 2667. The
 canonical row at that boundary reports `in_progress`, owner `Codex2`, reviewer
 `Codex`; later journal events are outside this owner cut.
 
@@ -103,19 +103,26 @@ one class per acceptance criterion.
 
 Commands rerun in this task worktree with the checkout-scoped
 `.venv-pantheon/bin/python3` after merging `origin/dev`
-`4974824687ef5c3acf665fa22a4306e5d3d664f1` at local merge
-`2be0366a7ee40855bcfd3636831fdd2f9d063a50`:
+`4580fc5d18a13ec70dcc18952646c584bec74bcc` at local merge
+`f3caca2742b7454e1224dfb5f9b284507476a162`. A later refresh merged
+`4688bd252911b91ea0459a38a694c5faa53e3bbd` at
+`014c9b9fa6bc56c061fe1acaed8adfa45140170f`; that delta only added unrelated
+L12-IMIT closeout evidence, and the focused 62-test suite passed again after
+the refresh:
 
 - Exact expiry, crash-before/after, outage/recovery, and intervening-revision
   regression selection — 8 passed.
 - `pytest services/source_ingestion/tests/test_l12_dist_001_transactional_distillation.py services/source_ingestion/tests/test_distillation_worker.py services/source_ingestion/tests/test_distillation_controller.py` — 62 passed.
-- `pytest services/source_ingestion` — 754 passed, 2 skipped.
+- `pytest services/source_ingestion` — the first run had one failure in the
+  unchanged L12-SRC multi-process reconciliation race; that isolated case then
+  passed 3/3, and the complete rerun passed 754 tests with 2 skipped.
 - `pytest services/registry services/research/strategy_spec` — 229 passed
   (regression cover for the shared `JsonlRegistryStore` change and the
   conversion path).
 - Multiprocess seed test repeated 3× for stability — passed each time.
 - ProductEvidence schema, companion checksum, ten-rule evidence validator,
-  commit-trailer check, and `git diff --check` — passed.
+  commit-trailer check, and `git diff --check` — passed on the manifest
+  follow-up that names this receipt.
 - Closeout truth replay — failed closed only on the expected open independent
   review risk and missing reviewer verdict; no owner-evidence gap remained.
 - Negative control: the same two-process scenario with the JSONL lease stubbed
