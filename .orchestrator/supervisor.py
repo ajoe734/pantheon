@@ -127,7 +127,9 @@ STICKY_AUTH_BLOCKED_UNTIL = "9999-12-31T23:59:59Z"
 _DEFERRED_DISPATCH_STATUS_SYNCS: ContextVar[
     list[tuple[dict[str, Any], str | None]] | None
 ] = ContextVar("deferred_dispatch_status_syncs", default=None)
-_DEFERRED_WORKER_TERMINATIONS: ContextVar[list[int] | None] = ContextVar(
+_DEFERRED_WORKER_TERMINATIONS: ContextVar[
+    list[tuple[int, int | None, bool]] | None
+] = ContextVar(
     "deferred_worker_terminations",
     default=None,
 )
@@ -3121,6 +3123,31 @@ def pid_is_alive(pid: int | None) -> bool:
     return True
 
 
+def worker_pid_start_ticks(pid: int | None, proc_root: Path | None = None) -> int | None:
+    """Return Linux's immutable process start-time token for PID reuse checks."""
+
+    if not pid:
+        return None
+    root = proc_root if proc_root is not None else Path("/proc")
+    try:
+        raw_stat = (root / str(pid) / "stat").read_text(
+            encoding="utf-8",
+            errors="ignore",
+        )
+    except OSError:
+        return None
+    closing_paren = raw_stat.rfind(")")
+    if closing_paren < 0:
+        return None
+    fields = raw_stat[closing_paren + 2 :].split()
+    if len(fields) < 20:
+        return None
+    try:
+        return int(fields[19])
+    except (TypeError, ValueError):
+        return None
+
+
 def _proc_activity_record(pid: int, proc_root: Path) -> dict[str, Any] | None:
     stat_path = proc_root / str(pid) / "stat"
     try:
@@ -3283,14 +3310,20 @@ def terminate_worker_pid(pid: int | None) -> bool:
         # transaction, but confirm_kill's bounded poll/sleep loop must not.
         # Send the first TERM while the decision is current, then confirm (and
         # escalate to KILL if necessary) immediately after the lock is released.
+        if any(item[0] == pid for item in deferred):
+            return True
         if not pid_is_alive(pid):
             return True
+        start_ticks = worker_pid_start_ticks(pid)
+        term_sent = False
         try:
             os.kill(pid, signal.SIGTERM)
         except OSError:
-            return not pid_is_alive(pid)
-        if pid not in deferred:
-            deferred.append(pid)
+            if not pid_is_alive(pid):
+                return True
+        else:
+            term_sent = True
+        deferred.append((pid, start_ticks, term_sent))
         return True
     # SUPERVISOR-REWRITE Phase 4 (anti-pattern E): confirm-kill instead of
     # SIGTERM-and-assume-dead. A worker that ignores SIGTERM used to be reported
@@ -6970,7 +7003,7 @@ def _run_with_deferred_dispatch_status_syncs(
     """
 
     deferred: list[tuple[dict[str, Any], str | None]] = []
-    deferred_terminations: list[int] = []
+    deferred_terminations: list[tuple[int, int | None, bool]] = []
     token = _DEFERRED_DISPATCH_STATUS_SYNCS.set(deferred)
     termination_token = _DEFERRED_WORKER_TERMINATIONS.set(deferred_terminations)
     try:
@@ -6982,8 +7015,22 @@ def _run_with_deferred_dispatch_status_syncs(
         # terminate_worker_pid now runs its confirm/sleep path because the
         # deferral context has been reset. Keep this in the finally block so a
         # partially completed cycle cannot strand a process it already TERM'd.
-        for pid in deferred_terminations:
-            terminate_worker_pid(pid)
+        for pid, expected_start_ticks, term_sent in deferred_terminations:
+            def deferred_worker_is_alive(candidate_pid: int) -> bool:
+                if not pid_is_alive(candidate_pid):
+                    return False
+                if expected_start_ticks is None:
+                    return True
+                return worker_pid_start_ticks(candidate_pid) == expected_start_ticks
+
+            rewrite_worker_lifecycle.confirm_kill(
+                pid,
+                is_alive=deferred_worker_is_alive,
+                send_signal=os.kill,
+                sleep=time.sleep,
+                monotonic=time.monotonic,
+                term_already_sent=term_sent,
+            )
 
     sync_changed = False
     for event, run_id in deferred:
@@ -12580,7 +12627,7 @@ def _run_once_locked(
     quiet: bool = False,
     verbose: bool = False,
     once: bool = False,
-    provider_reports: tuple[dict[str, Any], dict[str, Any]] | None = None,
+    provider_reports: tuple[dict[str, Any], dict[str, Any]],
     prelock_changed: bool = False,
 ) -> bool:
     write_supervisor_pid(config)
@@ -12615,11 +12662,7 @@ def _run_once_locked(
         # Probing here would put a gh auth round trip inside the exclusive
         # runtime-admission hold; run_once supplies the reports it gathered
         # before the lock was taken.
-        previous_provider_report, provider_report = (
-            provider_reports
-            if provider_reports is not None
-            else probe_provider_reports(config, quiet=quiet)
-        )
+        previous_provider_report, provider_report = provider_reports
         changed = _safe_phase("reconcile_provider_auth_recovery", reconcile_provider_auth_recovery, config, state, previous_provider_report, provider_report, quiet=quiet) or changed
         changed = _safe_phase("drain_assistant_dev_packet_inbox", drain_assistant_dev_packet_inbox, config, state, quiet=quiet) or changed
         if watch:

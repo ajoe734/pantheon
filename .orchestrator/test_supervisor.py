@@ -4993,6 +4993,8 @@ class DispatchStatusSyncTests(unittest.TestCase):
 
         def confirm_kill(pid: int, **_kwargs: object) -> bool:
             self.assertEqual(pid, 4242)
+            self.assertTrue(_kwargs["term_already_sent"])
+            self.assertTrue(_kwargs["is_alive"](pid))
             call_order.append("confirm_kill")
             return True
 
@@ -5003,6 +5005,7 @@ class DispatchStatusSyncTests(unittest.TestCase):
         with (
             mock.patch.object(supervisor, "runtime_state_lock", side_effect=runtime_lock),
             mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "worker_pid_start_ticks", return_value=777),
             mock.patch.object(supervisor.os, "kill", side_effect=send_signal),
             mock.patch.object(
                 supervisor.rewrite_worker_lifecycle,
@@ -5019,6 +5022,52 @@ class DispatchStatusSyncTests(unittest.TestCase):
         self.assertEqual(
             call_order,
             ["lock_enter", "sigterm", "lock_exit", "confirm_kill"],
+        )
+
+    def test_deferred_termination_does_not_signal_a_reused_pid(self) -> None:
+        """The lock-release confirmer is bound to the worker's start time."""
+
+        call_order: list[str] = []
+        start_ticks = iter([111, 222])
+
+        def confirm_kill(pid: int, **kwargs: object) -> bool:
+            self.assertEqual(pid, 4242)
+            call_order.append("confirm_kill")
+            # PID 4242 now belongs to a different process. The identity-bound
+            # liveness callback must report the original worker gone.
+            self.assertFalse(kwargs["is_alive"](pid))
+            return True
+
+        with (
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(
+                supervisor,
+                "worker_pid_start_ticks",
+                side_effect=lambda _pid: next(start_ticks),
+            ),
+            mock.patch.object(
+                supervisor.os,
+                "kill",
+                side_effect=lambda _pid, sent_signal: call_order.append(
+                    f"signal:{sent_signal}"
+                ),
+            ),
+            mock.patch.object(
+                supervisor.rewrite_worker_lifecycle,
+                "confirm_kill",
+                side_effect=confirm_kill,
+            ),
+        ):
+            self.assertTrue(
+                supervisor._run_with_deferred_dispatch_status_syncs(
+                    self.config,
+                    lambda: supervisor.terminate_worker_pid(4242),
+                )
+            )
+
+        self.assertEqual(
+            call_order,
+            [f"signal:{signal.SIGTERM}", "confirm_kill"],
         )
 
     def test_sync_status_pipeline_uses_installed_command_runtime(self) -> None:
@@ -6245,12 +6294,13 @@ class SupervisorRuntimeAdmissionLockTests(unittest.TestCase):
         self.assertIn("lambda: _run_once_locked(", run_once_source)
         self.assertIn('"sync_github_bus"', run_once_source)
         self.assertNotIn('"sync_github_bus"', locked_cycle_source)
+        self.assertNotIn("probe_provider_reports", locked_cycle_source)
         self.assertIn(
             "with runtime_state_lock(config, shared=False",
             locked_operation_source,
         )
         self.assertIn(
-            "for pid in deferred_terminations",
+            "for pid, expected_start_ticks, term_sent in deferred_terminations",
             locked_operation_source,
         )
         self.assertEqual(
