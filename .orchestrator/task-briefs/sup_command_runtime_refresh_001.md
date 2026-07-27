@@ -4,10 +4,10 @@ Generated in the worker workspace because the supervisor root did not have a tas
 
 ## Task
 - Title: Refresh installed supervisor command runtime safely
-- Status: review
+- Status: in_progress
 - Owner: Codex
 - Reviewer: Codex2
-- Next: Final runtime proof is complete in PR #4257 with auto-merge disabled: candidate 29054ab270d552a56ed071cedf3f45150e948b6a is live after an executed rollback/roll-forward drill, config sha256 stayed byte-identical, leases and queue owners remained coherent without duplicate dispatch, and authoritative projection checks passed. Codex2 must independently review the exact final PR head, bind REVIEW_PR=4257 plus the full REVIEW_HEAD_SHA and evidence.json REVIEW_FILE, and approve only that head before merge and owner done.
+- Next: Exact head dcadf09109d919e35bef078b061faea70b3df7a4 is not approvable: PR #4257 has all 8 visible checks successful and auto-merge disabled, but GitHub currently reports mergeStateStatus=BEHIND/mergeable_state=behind against dev after PR #4258 advanced origin/dev to 6ae436c546942df1ba0a762d7167b456dfedabc8. Refresh the task branch from current dev without changing the proven live candidate, push the new full head, keep auto-merge disabled, wait for all checks, update the task brief exact SHA/CLEAN evidence, and re-handoff for a fresh exact-head review. Independent positives already verified: sole live PID 500973 at candidate 29054ab270d552a56ed071cedf3f45150e948b6a; config sha256 adab474b01b99630041cb06d565ae9dbfd7d52badc1d9e612b7cb8d4129de77e unchanged; live worker/queue parity and projection pass; tests 142/142, 30/30, and 7/7 pass.
 
 ## Summary
 在 supervisor truth 修復合併後，將 governed command runtime 更新到精確 accepted dev；重用既有 config，不改 config，不中斷 active lease，保留 rollback。
