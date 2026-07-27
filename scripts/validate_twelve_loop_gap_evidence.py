@@ -37,9 +37,29 @@ close:
   head it was read from, so the claim can only ever be a point-in-time
   observation.
 
+The v6 cut was rejected for a defect that the seven rules above cannot see,
+because every one of them reads the manifest's own assertions about the receipt
+rather than the receipt itself.  Moving ``receipt_role`` onto the rejected v4
+commit ``5c39428``, copying the live ``bound_content_digest`` onto it, marking it
+live, and resealing ``evidence.sha256`` passed all seven rules -- while git
+objects said that commit carries the delta document at
+``9ac925e0...`` rather than the bound ``4f2f7735...`` and does not contain either
+validator script at all.  ``receipt_commit_artifacts`` closes this by reading the
+receipt commit out of the local object store: every bound artifact must exist at
+that commit, each blob's sha256 must equal the digest the manifest records, and
+the digest recomputed from those blobs must equal ``validated_head_sha``.  The
+check is offline -- ``git cat-file`` only -- and fails closed when git is
+unavailable, the commit is unknown, a path is absent, or a digest disagrees.
+
 Usage::
 
-    python3 scripts/validate_twelve_loop_gap_evidence.py <evidence.json> [--now ISO8601] [--json]
+    python3 scripts/validate_twelve_loop_gap_evidence.py <evidence.json> \
+        [--repo-root DIR] [--git-root DIR] [--now ISO8601] [--json]
+
+``--repo-root`` is the tree whose bytes are hashed; ``--git-root`` is the
+repository whose object store holds the receipt commit.  They are the same
+repository in normal use and are separable only so a staged copy of the bound
+artifacts can still be checked against real git history.
 
 Exit status is 0 when no rule rejects the manifest and 1 otherwise.
 """
@@ -50,6 +70,7 @@ import argparse
 import hashlib
 import json
 import re
+import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -81,6 +102,7 @@ RULES = (
     "record_log_ordering",
     "checks_bound_to_commits",
     "current_delivery_checks",
+    "receipt_commit_artifacts",
     "mutable_observation_binding",
     "companion_checksum",
 )
@@ -115,17 +137,65 @@ def split_epoch_key(key: str) -> str:
     return head if sep else key
 
 
-def content_digest(repo_root: Path, relative_paths: Iterable[str]) -> str:
+def digest_of_pairs(sha256_by_path: dict[str, str]) -> str:
     """Digest of ``"<sha256>  <path>\\n"`` lines, sorted by path.
 
     Sorting makes the digest independent of manifest key order, so a reviewer
-    can recompute it from the repository alone.
+    can recompute it from the repository alone.  Both the working-tree digest
+    and the digest recomputed from a receipt commit's blobs go through here, so
+    the two can only ever disagree about content, never about framing.
     """
 
-    lines = []
-    for relative in sorted(set(relative_paths)):
-        lines.append(f"{sha256_file(repo_root / relative)}  {relative}\n")
+    lines = [f"{sha256_by_path[relative]}  {relative}\n" for relative in sorted(sha256_by_path)]
     return hashlib.sha256("".join(lines).encode("utf-8")).hexdigest()
+
+
+def content_digest(repo_root: Path, relative_paths: Iterable[str]) -> str:
+    """``digest_of_pairs`` over the bytes currently in ``repo_root``."""
+
+    return digest_of_pairs({relative: sha256_file(repo_root / relative) for relative in set(relative_paths)})
+
+
+class GitUnavailable(RuntimeError):
+    """Raised when the local object store cannot answer an offline query."""
+
+
+def _git(git_root: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
+    """Run a read-only, network-free ``git`` command against ``git_root``."""
+
+    try:
+        return subprocess.run(
+            ["git", "--no-optional-locks", "-C", str(git_root), *args],
+            capture_output=True,
+            check=False,
+        )
+    except OSError as error:  # git missing, git_root unreadable
+        raise GitUnavailable(f"cannot run git in {git_root}: {error}") from error
+
+
+def git_commit_exists(git_root: Path, sha: str) -> bool:
+    """True when ``sha`` resolves to a commit object already in the store."""
+
+    if not _git(git_root, "rev-parse", "--git-dir").returncode == 0:
+        raise GitUnavailable(f"{git_root} is not a git repository, so no receipt commit can be verified")
+    return _git(git_root, "cat-file", "-e", f"{sha}^{{commit}}").returncode == 0
+
+
+def git_blob_at(git_root: Path, sha: str, relative: str) -> bytes | None:
+    """Bytes of ``relative`` at commit ``sha``, or ``None`` when absent there.
+
+    Absence is a distinct answer from a git failure: a commit that never
+    carried the artifact is the exact 5c39428 substitution shape, whereas a git
+    failure means the claim is unverifiable and must fail closed.
+    """
+
+    completed = _git(git_root, "cat-file", "blob", f"{sha}:{relative}")
+    if completed.returncode == 0:
+        return completed.stdout
+    stderr = completed.stderr.decode("utf-8", "replace")
+    if "does not exist" in stderr or "exists on disk, but not in" in stderr or "Not a valid object name" in stderr:
+        return None
+    raise GitUnavailable(f"git cat-file blob {sha}:{relative} failed: {stderr.strip()}")
 
 
 def parse_iso(value: str) -> datetime:
@@ -385,6 +455,127 @@ def check_current_delivery_checks(manifest: dict[str, Any]) -> list[Rejection]:
     return rejections
 
 
+def bound_relative_paths(manifest: dict[str, Any]) -> dict[str, str]:
+    """``{relative path: recorded sha256}`` from the epoch-keyed binding map."""
+
+    bound = manifest.get("integrity", {}).get("source_artifact_sha256_by_epoch", {}) or {}
+    return {split_epoch_key(key): recorded for key, recorded in bound.items()}
+
+
+def check_receipt_commit_artifacts(manifest: dict[str, Any], git_root: Path) -> list[Rejection]:
+    """The receipt commit must really carry the bytes the manifest binds.
+
+    Every other receipt rule reads the manifest's own description of the
+    receipt, so all of them are satisfied by editing that description.  The v6
+    rejection proved it: ``receipt_role`` and ``bound_content_digest`` moved onto
+    the rejected v4 commit ``5c39428``, ``delivery_state`` was rewritten to look
+    live, ``evidence.sha256`` was resealed, and all seven rules passed -- even
+    though that commit carries a different delta document and neither validator
+    script.  This rule asks the object store instead of the manifest, so the
+    only way to satisfy it is to name a commit that genuinely holds the bytes.
+    """
+
+    delivery = manifest.get("implementation_delivery", {}) or {}
+    receipts = [
+        anchor
+        for anchor in delivery.get("anchor_commits", []) or []
+        if isinstance(anchor, dict) and anchor.get("receipt_role") == RECEIPT_ROLE
+    ]
+    if not receipts:
+        # current_delivery_checks already rejects a manifest that names no
+        # receipt; re-reporting it here would only duplicate that rejection.
+        return []
+
+    recorded_by_path = bound_relative_paths(manifest)
+    declared_head = manifest.get("validation", {}).get("validated_head_sha", "")
+
+    rejections: list[Rejection] = []
+    for receipt in receipts:
+        raw_sha = receipt.get("sha")
+        sha = raw_sha.strip() if isinstance(raw_sha, str) else ""
+        label = f"delivery receipt {sha or raw_sha!r}"
+
+        if not BARE_COMMIT_SHA.match(sha):
+            rejections.append(
+                Rejection(
+                    "receipt_commit_artifacts",
+                    f"receipt sha is {raw_sha!r}; a receipt must name an exact 40-character lowercase "
+                    "commit so its tree can be read offline",
+                )
+            )
+            continue
+
+        if not recorded_by_path:
+            rejections.append(
+                Rejection(
+                    "receipt_commit_artifacts",
+                    f"integrity.source_artifact_sha256_by_epoch is empty, so nothing can be verified "
+                    f"against {label}",
+                )
+            )
+            continue
+
+        try:
+            if not git_commit_exists(git_root, sha):
+                rejections.append(
+                    Rejection(
+                        "receipt_commit_artifacts",
+                        f"{label} is not a commit object in {git_root}; a receipt that cannot be read "
+                        "offline cannot prove it carries the bound artifacts",
+                    )
+                )
+                continue
+
+            actual_by_path: dict[str, str] = {}
+            for relative, recorded in sorted(recorded_by_path.items()):
+                payload = git_blob_at(git_root, sha, relative)
+                if payload is None:
+                    rejections.append(
+                        Rejection(
+                            "receipt_commit_artifacts",
+                            f"{label} does not contain bound artifact {relative}; a commit whose tree "
+                            "never carried the artifact cannot be its delivery receipt",
+                        )
+                    )
+                    continue
+                actual = hashlib.sha256(payload).hexdigest()
+                actual_by_path[relative] = actual
+                if actual != recorded:
+                    rejections.append(
+                        Rejection(
+                            "receipt_commit_artifacts",
+                            f"{label} carries {relative} at sha256 {actual}, but the manifest binds "
+                            f"{recorded}; the receipt covers different bytes than the delivery",
+                        )
+                    )
+        except GitUnavailable as error:
+            rejections.append(
+                Rejection(
+                    "receipt_commit_artifacts",
+                    f"{label} could not be verified offline: {error}",
+                )
+            )
+            continue
+
+        if len(actual_by_path) != len(recorded_by_path):
+            # A path was missing or unreadable; the aggregate digest below would
+            # only restate that, so stop at the specific rejection.
+            continue
+        if not declared_head.startswith(CONTENT_DIGEST_PREFIX):
+            # head_binding owns the shape of validated_head_sha.
+            continue
+        recomputed = digest_of_pairs(actual_by_path)
+        if recomputed != declared_head[len(CONTENT_DIGEST_PREFIX) :]:
+            rejections.append(
+                Rejection(
+                    "receipt_commit_artifacts",
+                    f"{label} recomputes content digest {recomputed} from its own blobs, but "
+                    f"validation.validated_head_sha declares {declared_head[len(CONTENT_DIGEST_PREFIX):]}",
+                )
+            )
+    return rejections
+
+
 def check_mutable_observation_binding(manifest: dict[str, Any]) -> list[Rejection]:
     """Facts read from a mutable surface must name the head and instant they came from.
 
@@ -493,7 +684,21 @@ def check_companion_checksum(manifest: dict[str, Any], manifest_path: Path, repo
     return []
 
 
-def validate(manifest_path: Path, repo_root: Path, now: datetime) -> list[Rejection]:
+def validate(
+    manifest_path: Path,
+    repo_root: Path,
+    now: datetime,
+    git_root: Path | None = None,
+) -> list[Rejection]:
+    """Run every rule.  ``git_root`` defaults to ``repo_root``.
+
+    ``repo_root`` supplies the bytes to hash; ``git_root`` supplies the object
+    store the receipt commit is read from.  They are the same repository in
+    normal use.  A caller that hashes a staged copy of the bound artifacts must
+    name the real repository explicitly, because a directory with no object
+    store cannot answer the receipt question and so fails closed.
+    """
+
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     rejections: list[Rejection] = []
     rejections += check_future_timestamps(manifest, now)
@@ -501,6 +706,7 @@ def validate(manifest_path: Path, repo_root: Path, now: datetime) -> list[Reject
     rejections += check_record_log_ordering(manifest)
     rejections += check_checks_bound_to_commits(manifest)
     rejections += check_current_delivery_checks(manifest)
+    rejections += check_receipt_commit_artifacts(manifest, git_root if git_root is not None else repo_root)
     rejections += check_mutable_observation_binding(manifest)
     rejections += check_companion_checksum(manifest, manifest_path, repo_root)
     return rejections
@@ -510,13 +716,21 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("manifest", type=Path, help="path to the evidence.json manifest")
     parser.add_argument("--repo-root", type=Path, default=REPO_ROOT, help="repository root the manifest paths resolve against")
+    parser.add_argument(
+        "--git-root",
+        type=Path,
+        default=None,
+        help="repository whose object store holds the delivery receipt commit (default: --repo-root)",
+    )
     parser.add_argument("--now", default=None, help="ISO-8601 check instant (default: current UTC time)")
     parser.add_argument("--json", action="store_true", dest="as_json", help="emit machine-readable output")
     args = parser.parse_args(argv)
 
     now = parse_iso(args.now) if args.now else datetime.now(timezone.utc)
     manifest_path = args.manifest.resolve()
-    rejections = validate(manifest_path, args.repo_root.resolve(), now)
+    repo_root = args.repo_root.resolve()
+    git_root = args.git_root.resolve() if args.git_root is not None else repo_root
+    rejections = validate(manifest_path, repo_root, now, git_root=git_root)
 
     if args.as_json:
         print(

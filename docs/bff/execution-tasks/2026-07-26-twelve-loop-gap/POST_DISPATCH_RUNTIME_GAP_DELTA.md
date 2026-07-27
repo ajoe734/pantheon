@@ -1,6 +1,6 @@
 # Twelve-Loop Post-Dispatch Runtime Gap Delta
 
-Document Version: `6.0.0`
+Document Version: `7.0.0`
 Date: `2026-07-26`
 Task ID: `OPS-L12-RUNTIME-GAP-DELTA-001`
 Owner: `Claude`
@@ -21,8 +21,8 @@ Program: `pantheon-twelve-loop-gap-2026-07-26`
 - `docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/ROUND3_ACCEPTANCE_EVIDENCE_AUDIT.md`
 - `docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/tasks.json`（25-task catalog）
 
-本版（v6.0.0）取代 v1.0.0（已由 PR #4200 合併進 `dev`）、v2.0.0、v3.0.0、v4.0.0 與
-v5.0.0 的內容主張。v1–v3 由 owner `Antigravity` 撰寫：v1.0.0 於 journal seq 1685 由
+本版（v7.0.0）取代 v1.0.0（已由 PR #4200 合併進 `dev`）、v2.0.0、v3.0.0、v4.0.0、
+v5.0.0 與 v6.0.0 的內容主張。v1–v3 由 owner `Antigravity` 撰寫：v1.0.0 於 journal seq 1685 由
 `Human/Ops` 獨立否決，v2.0.0 與 v3.0.0 由當時的 reviewer `Claude` 判為事實錯誤且未進入
 PR。journal seq 1943（`2026-07-26T21:12:08Z`，`Human/Ops`）將本 task 改派為 owner
 `Claude` / reviewer `Codex2`。v4.0.0 由新 owner 交付於 PR `#4221`，被 `Human/Ops` 否決
@@ -40,7 +40,18 @@ v5.0.0 修掉上述四項並改以**內容摘要（content digest）**綁定交�
 v6.0.0 的修正是結構性的，不只是改字：所有可變表面的事實一律降格為**綁定 head 與觀測
 時點的時點觀測**（§2、§5.0），並新增兩條 fail-closed 規則
 （`current_delivery_checks`、`mutable_observation_binding`）與一份**非循環交付收據契約**
-（§7.5）。v1–v5 中被推翻的具體主張逐條列於 §7。
+（§7.5）。
+
+v6.0.0 交付於 PR `#4221` head `b3f8edad0b5ac078ada3dd791b8166dbaf58cf9e`，被 reviewer
+`Codex2` 第四次否決，理由是**七條規則全部只讀 manifest 對收據的自述，沒有一條去讀收據
+本身**：把 `receipt_role` 與 `bound_content_digest` 搬到已被否決的 v4 commit
+`5c39428dda1d3c1e42fa926aa5f320467e1b8324`、將其 `delivery_state` 改寫成 live、再重封
+`evidence.sha256`，七條規則依然零拒絕——即使 git object 顯示該 commit 的本文件 sha256 為
+`9ac925e0…` 而非被綁定的 `4f2f7735…`，且該 commit 完全不含兩支 validator script。
+v7.0.0 新增第八條規則 `receipt_commit_artifacts`：直接以 `git cat-file` 離線讀出收據
+commit 的 tree，逐一比對每個被綁定 artifact 的存在與 blob sha256，並在 git 不可用、
+commit 未知、路徑缺失或摘要不符時 fail closed（§7.6）。v1–v6 中被推翻的具體主張逐條列於
+§7。
 
 本文件**不宣稱**十二循環已完成、已 hosted 啟用、或本 task 已完成。
 
@@ -52,13 +63,13 @@ v6.0.0 的修正是結構性的，不只是改字：所有可變表面的事實�
 
 | 來源 | 路徑 / 位置 | 用途 |
 | :--- | :--- | :--- |
-| Task-state journal | `/home/lupin/pantheon-ci-deploy/runtime/task-state-events.jsonl`（append-only，本版查證截止於 seq 2046，`2026-07-26T22:50:08Z`） | 非終態任務消失／復原事實 |
+| Task-state journal | `/home/lupin/pantheon-ci-deploy/runtime/task-state-events.jsonl`（append-only，本版查證截止於 seq 2142，`2026-07-27T00:13:26Z`） | 非終態任務消失／復原事實 |
 | Loop catalog registry | `docs/deployment/loop-catalog.registry.json`（`global-loop-catalog-2026-07-13`, `loop_catalog.v2`） | 十二循環 controller / maturity / evidence 現況 |
 | BFF loop read model | `services/control-plane/bff/loop_inventory.py` | 何種 evidence 才會被接受為 live proof |
 | Runtime manifest | `docker-compose.yml`（66 services） | worker 是否被 default 啟動、restart/health/volume 設定 |
 | Hosted deploy path | `scripts/deploy_nonprod_vm.sh` | `COMPOSE_PROFILES` 預設集合 |
 | Hosted acceptance evidence | `ajoe734/execute-plans` run `30192435033` artifact `controller/accepted-deployment.json`、`controller/evidence.jsonl` | 現役 FE/BFF 身分與 accept 時間 |
-| Canonical task rows | `$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh show <task>`；journal seq 2046 state | owner / reviewer / status |
+| Canonical task rows | `$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh show <task>`；journal seq 2142 state | owner / reviewer / status |
 | Archived task rows | `/home/lupin/pantheon/ai-task-archive/tasks/<TASK-ID>.json` | 已歸檔 `done` 任務的 owner / reviewer |
 | PR 狀態 | `gh pr view <n> --repo ajoe734/pantheon`、`gh api repos/ajoe734/pantheon/commits/<head>/check-runs` | 只引用查得到的 PR，且一律以「head + 觀測時點」記錄 |
 | Live command runtime | `$PANTHEON_COMMAND_ROOT`（`PANTHEON_COMMAND_RUNTIME_SHA=bdbd0a99bf68e6a635d9bd936782c659298b7bb7`） | merged 與 installed 的落差 |
@@ -161,23 +172,37 @@ seq 1685 是 Human/Ops 對本 task v1.0.0 交付的獨立否決；seq 1687 是�
 由 worker session 發出的 handoff。1687 沒有推翻 1685：本 task 於本文件寫作時仍為
 `in_progress`，並已改派 owner `Claude` / reviewer `Codex2`。
 
-### 3.6 查證邊界（seq 2046 的時點快照）
+### 3.6 查證邊界（seq 2142 的時點快照）
 
-seq 2046，`2026-07-26T22:50:08Z`，source `claude1-2-20260726T224344Z-c29a23d8`：
-**29 total / 26 nonterminal / 15 L12**。
+seq 2142，`2026-07-27T00:13:26Z`，source `claude1-2-20260727T000651Z-b1a3fcd8`：
+**31 total / 28 nonterminal / 15 L12**（`15 L12` 指 25-task catalog 中仍在板上、id 以
+`L12-` 起首的 task；`OPS-L12-*` 為派工後新增的 ops task，計入 total 而不計入這 15）。
 
 這是**時點快照**，不是「現況」。v4.0.0 引用 seq 1952（`2026-07-26T21:19:49Z`，
 31 / 28 / 15）而在送審時已過期；v5.0.0 引用 seq 2014（`2026-07-26T22:13:08Z`，
-30 / 26 / 15）並在該版審查期間又被 32 筆事件超前。本版把所有 canonical owner /
-reviewer / status 一律重新取自 seq 2046，並依 §2.1 明載該序號與時間戳；審查者在更高的
-sequence 上讀到不同的值，屬於 journal 正常前進，應以 §2 命令自行重讀。
+30 / 26 / 15）並在該版審查期間又被 32 筆事件超前；v6.0.0 引用 seq 2046
+（`2026-07-26T22:50:08Z`，29 / 26 / 15）並在其審查期間又被 96 筆事件超前。本版把所有
+canonical owner / reviewer / status 一律重新取自 seq 2142，並依 §2.1 明載該序號與時間戳；
+審查者在更高的 sequence 上讀到不同的值，屬於 journal 正常前進，應以 §2 命令自行重讀。
 
-seq 2014 → 2046 之間實際發生變動、且本版已據以更正的兩筆：
+這個「引用即過期」的模式本身就是證據，不是本文件的失誤：canonical journal 是 append-only
+且持續前進的，任何快照都會在審查完成前被超前。因此本文件的主張一律綁定序號，而**不**
+主張「此後未再變動」（§8 最後一項）。
 
-| Task | seq 2014（v5.0.0） | seq 2046（本版） |
+seq 2046 → 2142 之間實際發生變動、且本版已據以更正的七筆：
+
+| Task | seq 2046（v6.0.0） | seq 2142（本版） |
 | :--- | :--- | :--- |
-| `OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001` | `in_progress` | `review`（`last_update` `2026-07-26T22:36:12Z`） |
-| `SUP-COMMAND-RUNTIME-REFRESH-001` | `todo` | `in_progress`（`last_update` `2026-07-26T22:48:46Z`） |
+| `L12-IMIT-001` | owner `Antigravity` / reviewer `Claude` | owner `Claude` / reviewer `Codex2`（`todo`，`last_update` `2026-07-27T00:10:47Z`；§5 Gap 3、§6 已更正） |
+| `OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001` | `in_progress` | `blocked`（`last_update` `2026-07-26T23:21:29Z`） |
+| `SUP-COMMAND-RUNTIME-REFRESH-001` | `in_progress` | `blocked`（`last_update` `2026-07-26T23:32:20Z`） |
+| `OPS-CI-PR-TRAILER-RANGE-001` | `todo` | `review`（`last_update` `2026-07-26T23:40:24Z`） |
+| `OPS-PR-REVIEW-BEFORE-MERGE-GATE-001` | `todo` | `in_progress`（`last_update` `2026-07-26T23:53:44Z`） |
+| `OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001` | 不存在 | 新增，`todo`，`Claude` / `Codex2`（`2026-07-26T23:48:13Z`） |
+| `OPS-L12-PYTHON-PACKAGING-PROVISION-001` | 不存在 | 新增，`in_progress`，`Claude` / `Codex2`（`2026-07-27T00:05:52Z`） |
+
+上表兩筆 `blocked` 與兩筆新增 `OPS-*` task 都發生在派工之後，屬於 §5 所記缺口的同一
+時期；它們不改變 §5 任一 gap 的「仍缺證據」欄。
 
 25-task catalog 中已歸檔為 `done` 的 10 個（狀態逐一由 `ai-task-archive/tasks/*.json`
 複核）：`L12-FLEET-001`（`Codex`/`Codex2`）、`L12-CTRL-001`（`Claude`/`Codex2`）、
@@ -239,8 +264,8 @@ evidence 目錄。上述現役 FE/BFF pair 是 **PPL-ALLOC-009 的 hosted accept
 
 每個 gap 都列出：現象與可驗證證據、影響、canonical task、owner、reviewer、acceptance
 條文、PR、tests、仍缺證據。`PR: none` 表示該 task 目前確實沒有對應 PR，不以任何未查證
-的 PR 編號填補。所有 owner/reviewer/status 取自 journal seq 2046 的 canonical row
-（`2026-07-26T22:50:08Z`）；已歸檔任務取自 `ai-task-archive/tasks/*.json`。
+的 PR 編號填補。所有 owner/reviewer/status 取自 journal seq 2142 的 canonical row
+（`2026-07-27T00:13:26Z`）；已歸檔任務取自 `ai-task-archive/tasks/*.json`。
 
 ### 5.0 本節引用的 PR 時點觀測（依 §2.1）
 
@@ -250,15 +275,24 @@ evidence 目錄。上述現役 FE/BFF pair 是 **PPL-ALLOC-009 的 hosted accept
 
 | PR | branch | head @ 觀測時點 | state / mergeStateStatus | 該 head 的必要檢查 |
 | :--- | :--- | :--- | :--- | :--- |
-| `#4193` | `task/L12-DIST-001` | `192c1fbabc9574e6bb59ba23be6b0c145354764b` @ `2026-07-26T22:50:20Z` | OPEN / `BEHIND` | merge-ref 的 `Commit trailers` **failure**（`2026-07-26T15:14:22Z`）；branch-ref 的三項為 success |
-| `#4203` | `task/L12-CAP-001` | `7cec6f7cb0929a34024eb67c27bb299d2a2c6d62` @ `2026-07-26T22:50:22Z` | OPEN / `CLEAN` | `Commit trailers` / `Runtime mirror guard` / `Smoke acceptance` 全 success（`22:29:43Z`–`22:30:37Z`） |
-| `#4211` | `task/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001` | `c1686aaecd393e57648a06d8aa593fd71a1f9a7b` @ `2026-07-26T22:50:24Z` | OPEN / `CLEAN` | 三項全 success（`22:24:56Z`–`22:25:49Z`） |
-| `#4221` | `task/OPS-L12-RUNTIME-GAP-DELTA-001` | `5a9ed0c9957529467fce0b7afa0338546987ee4b` @ `2026-07-26T22:50:26Z` | OPEN / `CLEAN`、`autoMergeRequest` 為 `null` | 三項全 success（`22:28:12Z`–`22:29:05Z`）；此為 v5.0.0 被否決的 head |
+| `#4193` | `task/L12-DIST-001` | `192c1fbabc9574e6bb59ba23be6b0c145354764b` @ `2026-07-27T00:19:46Z` | OPEN / `BEHIND` | merge-ref 的 `Commit trailers` **failure**（`2026-07-26T15:14:22Z`，run `89808697675`）；branch-ref 的三項為 success（run `89808695266` / `89808695219` / `89808724269`） |
+| `#4203` | `task/L12-CAP-001` | `945f47dce1d7deaaf4643499a899d3b499cca2bc` @ `2026-07-27T00:19:47Z` | OPEN / `CLEAN` | `Commit trailers` / `Runtime mirror guard` / `Smoke acceptance` 全 success（`23:49:51Z`–`23:50:40Z`） |
+| `#4211` | `task/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001` | `8c4d727296d575cf49b9d3a6e1b7a222396063e3` @ `2026-07-27T00:19:48Z` | OPEN / `CLEAN` | 三項全 success（`2026-07-27T00:01:40Z`–`00:02:37Z`） |
+| `#4221` | `task/OPS-L12-RUNTIME-GAP-DELTA-001` | `b3f8edad0b5ac078ada3dd791b8166dbaf58cf9e` @ `2026-07-27T00:19:48Z` | OPEN / `BEHIND`、`autoMergeRequest` 為 `null` | 三項全 success（`2026-07-26T23:06:13Z`–`23:06:58Z`）；此為 v6.0.0 被 `Codex2` 否決的 head（§7.6） |
 
-v5.0.0 對 `#4203`（`5dbc956…`、trailers fail、BEHIND）與 `#4211`（`4e24e895…`、BEHIND、
-trailers fail）的敘述在上述觀測時點已不成立，§5 Gap 6、Gap 8 與 §6 已據此更正。這些
-更正**不改變任一 gap 的「仍缺證據」**：PR 轉綠代表 CI 檢查通過，不代表該 task 的產品
-證據已取得（§8「Merged ≠ Installed」的同型推論）。
+`#4203` 與 `#4211` 的 head 又各自前進了一次（v6.0.0 分別記為 `7cec6f7cb…` 與
+`c1686aaec…`，觀測於 `2026-07-26T22:50:22Z` / `22:50:24Z`）。這**不是**本版的更正對象，
+而是 §2.1 規則正常運作的結果：v6.0.0 的那兩列在其自己載明的觀測時點為真，本表則另立
+`2026-07-27T00:19:4xZ` 的觀測。v5.0.0 之所以被否決，是因為它把已過期的值寫成 cut 當下的
+真值，而不是因為值會變。
+
+`#4221` 自身在本表的觀測時點為 `BEHIND`：`dev` 已前進到
+`643181a067ec5c344faac0766c69de0d5cfb32eb`。本版在收據 commit 之前先合入該 `dev` tip，
+因此 `BEHIND` 是**本表觀測時點的事實**，不是最終 head 的狀態；最終 head 的
+`mergeStateStatus` 由 reviewer 於 §7.5 所述的 PR 留言時點自行重讀。
+
+這些觀測**不改變任一 gap 的「仍缺證據」**：PR 轉綠代表 CI 檢查通過，不代表該 task 的
+產品證據已取得（§8「Merged ≠ Installed」的同型推論）。
 
 ### Gap 1 — Scheduler：必要排程 worker 不在預設啟動集合（`scheduler`）
 
@@ -316,7 +350,8 @@ trailers fail）的敘述在上述觀測時點已不成立，§5 Gap 6、Gap 8 �
   imitation candidate 且不得使用 seed fallback）無法在現行 runtime 上取得證據。
 - **Canonical task**：`L12-VERIFY-LEARN-001`（wave 4）；前置為 `L12-IMIT-001`
 - **Owner / Reviewer**：`L12-VERIFY-LEARN-001` = `Antigravity` / `Claude`（`todo`）；
-  `L12-IMIT-001` = `Antigravity` / `Claude`（`todo`）
+  `L12-IMIT-001` = `Claude` / `Codex2`（`todo`）。**本版更正 v6.0.0**：v6.0.0 依 seq 2046
+  記為 `Antigravity` / `Claude`，該 task 於 `2026-07-27T00:10:47Z` 被改派（§3.6）。
 - **Acceptance**：`Real dataset creates a gated imitation candidate without seed fallback`
 - **PR**：none
 - **Tests**：`services/policy-learning/` 之 shadow-eval 契約測試（由 `L12-IMIT-001` 指定）
@@ -365,9 +400,9 @@ trailers fail）的敘述在上述觀測時點已不成立，§5 Gap 6、Gap 8 �
   啟動，但 `paper-signal-producer`、`reconciliation-drift-consumer`、
   `reconciliation-drift-scheduler`、`reconciliation-drift-incident-listener` **均無
   healthcheck**；實際執行 paper 訂單的 `pantheon-paper-runtime` 位於 profile
-  `static-paper-runtime`，不在任何 deploy 預設集合中。canonical row（seq 2046，
-  `2026-07-26T22:50:08Z`）顯示 `L12-CAP-001` 為 owner `Codex` / reviewer `Claude` /
-  status **`in_progress`**（`last_update` `2026-07-26T22:50:02Z`）；registry 中
+  `static-paper-runtime`，不在任何 deploy 預設集合中。canonical row（seq 2142，
+  `2026-07-27T00:13:26Z`）顯示 `L12-CAP-001` 為 owner `Codex` / reviewer `Claude` /
+  status **`in_progress`**（`last_update` `2026-07-27T00:12:17Z`）；registry 中
   `capital_pool_execution` 的
   `maturity.current` 為 `manual`、`proven_live_evidence` 為 `historical`（非 `present`）。
 - **Evidence-only closeout 的圍堵結果**：稍早的 canonical row（`last_update`
@@ -401,11 +436,14 @@ trailers fail）的敘述在上述觀測時點已不成立，§5 Gap 6、Gap 8 �
   為 `L12-CAP-001` 的已合併 evidence anchor；`#4203`
   `L12-CAP-001: make governed-paper execution lossless and isolated`
   是目前的收斂路徑。依 §5.0 的時點觀測：head
-  `7cec6f7cb0929a34024eb67c27bb299d2a2c6d62` @ `2026-07-26T22:50:22Z` 為 **open /
-  `CLEAN`**，三項必要檢查全 success。**本版更正 v5.0.0**：v5.0.0 寫「head `5dbc956`、
-  Commit trailers fail、`BEHIND`」，該敘述在其自稱的 cut（`22:26:48Z`）之前就已不成立
-  （`#4203` 於 `22:25:34Z`、`22:25:44Z` 連續前進）。**CI 轉綠不等於本 gap 收斂**：下列
-  「仍缺證據」由產品證據決定，不由 check 顏色決定。
+  `945f47dce1d7deaaf4643499a899d3b499cca2bc` @ `2026-07-27T00:19:47Z` 為 **open /
+  `CLEAN`**，三項必要檢查全 success（`2026-07-26T23:49:51Z`–`23:50:40Z`）。
+  **本版更正 v5.0.0**：v5.0.0 寫「head `5dbc956`、Commit trailers fail、`BEHIND`」，
+  該敘述在其自稱的 cut（`22:26:48Z`）之前就已不成立（`#4203` 於 `22:25:34Z`、
+  `22:25:44Z` 連續前進）。v6.0.0 記的 `7cec6f7cb…` @ `22:50:22Z` 在其時點為真，之後
+  該 PR 又前進到本列的 head——依 §2.1，兩者都只是時點觀測，並非互相矛盾。
+  **CI 轉綠不等於本 gap 收斂**：下列「仍缺證據」由產品證據決定，不由 check
+  顏色決定。
 - **Tests**：`services/control-plane/governance/test_product_closeout_verdict.py`
 - **仍缺證據**：原子化的 claim / timestamp / ack / nack / DLQ（Lua 或等價 durable
   consumer-group 交易）；接入 production constructor 的 fenced leader 取得與續約；
@@ -478,14 +516,17 @@ trailers fail）的敘述在上述觀測時點已不成立，§5 Gap 6、Gap 8 �
 - **PR**：`#4211`
   `OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001: prove infra health authority`
   是唯一在飛的相關交付。依 §5.0 的時點觀測：head
-  `c1686aaecd393e57648a06d8aa593fd71a1f9a7b` @ `2026-07-26T22:50:24Z` 為 **open /
-  `CLEAN`**，三項必要檢查全 success。**本版更正 v5.0.0**：v5.0.0 寫「head
+  `8c4d727296d575cf49b9d3a6e1b7a222396063e3` @ `2026-07-27T00:19:48Z` 為 **open /
+  `CLEAN`**，三項必要檢查全 success（`2026-07-27T00:01:40Z`–`00:02:37Z`；v6.0.0 記的
+  `c1686aaec…` @ `22:50:24Z` 在其時點為真，之後又前進到本列的 head）。
+  **本版更正 v5.0.0**：v5.0.0 寫「head
   `4e24e895…`、`BEHIND`、merge-ref 的 Commit trailers fail」，但 `c1686aae` 的
   committer 時間為 `2026-07-26T22:24:26Z`，早於 v5.0.0 自稱的 cut `22:26:48Z`，該敘述
-  在 cut 當下即已過期。對應的 task 於 seq 2046（`22:50:08Z`）為 owner `Claude` /
-  reviewer `Codex2` / status **`review`**（`last_update` `2026-07-26T22:36:12Z`）——
-  v4.0.0 記 `review`、v5.0.0 依 seq 2014 更正為 `in_progress`，該 task 之後又進入
-  `review`；此為 §2.1 所述的正常前進，本版以 seq 2046 為準。
+  在 cut 當下即已過期。對應的 task 於 seq 2142（`2026-07-27T00:13:26Z`）為 owner
+  `Claude` / reviewer `Codex2` / status **`review`**（`last_update`
+  `2026-07-26T23:57:36Z`）——v4.0.0 記 `review`、v5.0.0 依 seq 2014 更正為
+  `in_progress`，該 task 之後又進入 `review`；此為 §2.1 所述的正常前進，本版以
+  seq 2142 為準。
 - **Tests**：`services/control-plane/bff/test_loop_health_read_model_contract.py`；
   `services/control-plane/bff/test_bff_downstream_health_monitor.py`（稽核記錄 56 passed / 2 failed）
 - **仍缺證據**：9 個常駐 worker 的 healthcheck 補齊；durable 共享的 probe/outbox/incident
@@ -546,8 +587,10 @@ trailers fail）的敘述在上述觀測時點已不成立，§5 Gap 6、Gap 8 �
   `SUP-COMMAND-RUNTIME-REFRESH-001` 承擔
 - **Owner / Reviewer**：`L12-HOSTED-001` = `Claude` / `Antigravity`（`todo`）；
   `OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001` = `Claude` / `Codex2`（`in_progress`）；
-  `SUP-COMMAND-RUNTIME-REFRESH-001` = `Claude` / `Codex2`（seq 2046 為 `in_progress`，
-  `last_update` `2026-07-26T22:48:46Z`；v5.0.0 依 seq 2014 記為 `todo`）
+  `SUP-COMMAND-RUNTIME-REFRESH-001` = `Claude` / `Codex2`（seq 2142 為 **`blocked`**，
+  `last_update` `2026-07-26T23:32:20Z`；v6.0.0 依 seq 2046 記為 `in_progress`、
+  v5.0.0 依 seq 2014 記為 `todo`。這個 task 正是 §5 Gap 10「已合併但未安裝」的
+  收斂路徑，其 `blocked` 屬於該 gap 的現況，不改變 gap 結論）
 - **Acceptance**：`Full stack restart preserves or recovers in-flight work without duplicate effects`
 - **PR**：`#4199`（merged）為防護本身；`#4197`（merged）為 task-brief lock-order
   正規化，兩者是**不同的修復**，不得合併敘述。
@@ -584,17 +627,17 @@ trailers fail）的敘述在上述觀測時點已不成立，§5 Gap 6、Gap 8 �
   已 materialize seed、Registry 投遞失敗、version 2 先被admit 而 version 1 才重試時，
   version-1 的重試會改變 bundle identity——重現結果為 **2 個 source version 產生 3 個
   seed**。依 §5.0 的時點觀測，`#4193` head
-  `192c1fbabc9574e6bb59ba23be6b0c145354764b` @ `2026-07-26T22:50:20Z` 仍為 open /
+  `192c1fbabc9574e6bb59ba23be6b0c145354764b` @ `2026-07-27T00:19:46Z` 仍為 open /
   **`BEHIND`**，且 merge-ref 的 **`Commit trailers` 為 failure**
-  （`2026-07-26T15:14:22Z`，run `30207761345`）。這是三個被引用 PR 中唯一在該時點未變動
-  的一個。
+  （`2026-07-26T15:14:22Z`，check run `89808697675`）。這是四個被引用 PR 中唯一自
+  v5.0.0 以來 head 未變動的一個。
 - **影響**：`L12-MANIFEST-001` 的 12 個 dependency 中 `L12-DIST-001` 尚未收斂；
   `L12-VERIFY-KNOW-001` acceptance 第 1 條（真實 Persona requirement 產生 SourceRecord
   與一份可變 StrategySpec draft）所需的 exactly-once 語意目前不成立。
 - **Canonical task**：`L12-DIST-001`（wave 2, lane `source`）
 - **Owner / Reviewer**：`Claude` / `Antigravity`（status `in_progress`）
 - **Acceptance**：`Committed normalized SourceRecord transactionally enqueues one versioned distillation job`；`Crash before or after Registry write replays to one terminal draft`
-- **PR**：`#4193`（head `192c1fba…` @ `2026-07-26T22:50:20Z`：open、merge-ref 的
+- **PR**：`#4193`（head `192c1fba…` @ `2026-07-27T00:19:46Z`：open、merge-ref 的
   Commit trailers failure、`BEHIND`）
 - **Tests**：`services/source_ingestion/` 與 Registry 套件（稽核記錄 60 focused tests 通過但
   未涵蓋上述兩個路徑）
@@ -614,30 +657,31 @@ trailers fail）的敘述在上述觀測時點已不成立，§5 Gap 6、Gap 8 �
 | 3 | imitation | `L12-VERIFY-LEARN-001` | Antigravity | Claude | todo | none | real-dataset gated candidate |
 | 4 | alpha persona | `L12-VERIFY-KNOW-001` | Claude | Antigravity | todo | none | persona→ExperimentRun 完整鏈 |
 | 5 | consultation | `L12-VERIFY-LEARN-001` | Antigravity | Claude | todo | none | executor 形態裁決 + memo/handoff |
-| 6 | capital reconciliation | `L12-VERIFY-RUNTIME-001` | Claude | Antigravity | todo | #4194, #4196 (CAP, merged); #4203 (open / CLEAN @ `7cec6f7cb…` @ 22:50:22Z) | paper sleeve 實測 + CAP 原子化／fenced lease 的真實 Redis 證明 |
+| 6 | capital reconciliation | `L12-VERIFY-RUNTIME-001` | Claude | Antigravity | todo | #4194, #4196 (CAP, merged); #4203 (open / CLEAN @ `945f47dce…` @ `2026-07-27T00:19:47Z`) | paper sleeve 實測 + CAP 原子化／fenced lease 的真實 Redis 證明 |
 | 7 | evolution | `L12-VERIFY-OBS-001` | Antigravity | Claude | todo | none | worker health/graceful-stop + 下游終態 |
-| 8 | storage healthcheck | `L12-VERIFY-OBS-001` | Antigravity | Claude | todo | #4211 (open / CLEAN @ `c1686aaec…` @ 22:50:24Z) | 9 個 worker healthcheck + incident 收斂 |
+| 8 | storage healthcheck | `L12-VERIFY-OBS-001` | Antigravity | Claude | todo | #4211 (open / CLEAN @ `8c4d72729…` @ `2026-07-27T00:19:48Z`) | 9 個 worker healthcheck + incident 收斂 |
 | 9 | revision | `L12-MANIFEST-001` | Antigravity | Claude | todo | #4184, #4187, #4188, #4189 (merged) | 修訂後啟動紀錄 + 2 個未完成 dependency |
 | 10 | recurrence | `L12-HOSTED-001` | Claude | Antigravity | todo | #4197, #4199 (merged) | command runtime 安裝後重驗 |
 | 11 | hosted | `L12-HOSTED-001` | Claude | Antigravity | todo | none | 十二循環 hosted manifest + 12 筆 controller record |
-| 12 | distillation identity / trailer | `L12-DIST-001` → `L12-MANIFEST-001` | Claude | Antigravity | in_progress | #4193 (open / BEHIND、trailers failure @ `192c1fbab…` @ 22:50:20Z) | expiry-boundary 迴歸 + 穩定 materialization identity |
+| 12 | distillation identity / trailer | `L12-DIST-001` → `L12-MANIFEST-001` | Claude | Antigravity | in_progress | #4193 (open / BEHIND、trailers failure @ `192c1fbab…` @ `2026-07-27T00:19:46Z`) | expiry-boundary 迴歸 + 穩定 materialization identity |
 
-支援型 task（非本文件擁有，僅記錄依存關係；狀態取自 journal seq 2046，
-`2026-07-26T22:50:08Z`）：
-`L12-IMIT-001`（`Antigravity`/`Claude`，todo）、
+支援型 task（非本文件擁有，僅記錄依存關係；狀態取自 journal seq 2142，
+`2026-07-27T00:13:26Z`）：
+`L12-IMIT-001`（**`Claude`/`Codex2`**，todo）、
 `L12-CAP-001`（`Codex`/`Claude`，in_progress）、
 `L12-EVO-001`（`Claude`/`Antigravity`，in_progress）、
 `L12-BFF-001`（`Antigravity`/`Claude`，in_progress）、
 `L12-DIST-001`（`Claude`/`Antigravity`，in_progress）、
 `L12-SIGNOFF-001`（`Claude`/`Codex2`，in_progress）、
 `OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001`（`Claude`/`Codex2`，in_progress）、
-`SUP-COMMAND-RUNTIME-REFRESH-001`（`Claude`/`Codex2`，**in_progress**）、
-`OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001`（`Claude`/`Codex2`，**review**）。
-最後兩筆是 seq 2014 → 2046 之間變動的項目（§3.6）。
+`SUP-COMMAND-RUNTIME-REFRESH-001`（`Claude`/`Codex2`，**blocked**）、
+`OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001`（`Claude`/`Codex2`，review）。
+其中 `L12-IMIT-001` 的改派與 `SUP-COMMAND-RUNTIME-REFRESH-001` 的
+`in_progress → blocked` 是 seq 2046 → 2142 之間變動的項目（§3.6）。
 
 ---
 
-## 7. Corrections To v1.0.0 – v5.0.0
+## 7. Corrections To v1.0.0 – v6.0.0
 
 ### 7.1 對 v1.0.0 – v3.0.0 的更正
 
@@ -671,11 +715,12 @@ v4.0.0 由本 task 的新 owner 交付於 PR `#4221`，並被 `Human/Ops` 於
 
 1. **過期的 canonical 快照**：v4.0.0 的所有 owner / reviewer / status 取自 journal
    seq 1952（`2026-07-26T21:19:49Z`）。該快照在送審時已被後續事件取代。v5.0.0 改以
-   seq 2014（`2026-07-26T22:13:08Z`）為準；本版再推進到 seq 2046
-   （`2026-07-26T22:50:08Z`），並在 §2 / §2.1 / §3.6 / §5 前言明載查證邊界與時點語意。
+   seq 2014（`2026-07-26T22:13:08Z`）為準；v6.0.0 推進到 seq 2046
+   （`2026-07-26T22:50:08Z`），本版再推進到 seq 2142（`2026-07-27T00:13:26Z`），並在
+   §2 / §2.1 / §3.6 / §5 前言明載查證邊界與時點語意。
 2. **`L12-CAP-001` 事實錯誤**：v4.0.0 記為 owner `Antigravity` / reviewer `Claude` /
    status `blocked`。canonical row 實為 owner `Codex` / reviewer `Claude` /
-   status `in_progress`（seq 2046 的 `last_update` 為 `2026-07-26T22:50:02Z`；
+   status `in_progress`（seq 2142 的 `last_update` 為 `2026-07-27T00:12:17Z`；
    §5 Gap 6、§5 Gap 9、§6）。
 3. **未來時間戳**：v4.0.0 的 evidence `record_log` sequence 7 記載
    `recorded_at 2026-07-26T22:00:00Z`，晚於當時的稽核時點，屬於尚未發生的事實主張。
@@ -706,8 +751,9 @@ commit sha 無法在 commit 之前得知，因此把交付 bytes 綁在 commit s
 4. `.orchestrator/task-briefs/ops_l12_runtime_gap_delta_001.md` **刻意排除**於綁定之外：
    它由 supervisor 於每次派工重新產生，納入綁定會產生與交付無關的失效。
 
-驗證器 `scripts/validate_twelve_loop_gap_evidence.py` 對這份 evidence 執行**七條
-fail-closed 拒絕規則**（v5.0.0 為五條，v6.0.0 新增最後兩條），並由
+驗證器 `scripts/validate_twelve_loop_gap_evidence.py` 對這份 evidence 執行**八條
+fail-closed 拒絕規則**（v5.0.0 為五條，v6.0.0 新增 `current_delivery_checks` 與
+`mutable_observation_binding`，v7.0.0 新增 `receipt_commit_artifacts`），並由
 `scripts/test_validate_twelve_loop_gap_evidence.py` 以迴歸測試逐條覆蓋：
 
 | 規則 | 拒絕條件 | 對應缺陷 |
@@ -717,13 +763,23 @@ fail-closed 拒絕規則**（v5.0.0 為五條，v6.0.0 新增最後兩條），�
 | `record_log_ordering` | `record_log` 的 `sequence` 非嚴格遞增，或 `recorded_at` 相對前一筆倒退 | §7.2 第 3 項的一般化 |
 | `checks_bound_to_commits` | `implementation_delivery.required_checks[].head_sha` 未出現在 `anchor_commits[].sha` | §7.2 第 4 項的一般化 |
 | **`current_delivery_checks`** | 沒有任何 `anchor_commits[]` 標記 `receipt_role: current_delivery_receipt`；或該收據 commit 被自身 `delivery_state` 標為 superseded / squashed / rejected / merged；或其 `bound_content_digest` 不等於 `validation.validated_head_sha`；或該 head 缺少 `Commit trailers`、`Runtime mirror guard`、`Smoke acceptance` 任一項的 success；或所有成功的 required check 都落在被標為 superseded 的 head 上 | §7.4 第 2 項 |
+| **`receipt_commit_artifacts`** | 收據 commit 的 sha 不是 40-hex 小寫；或該 commit 不在本地 object store；或 `source_artifact_sha256_by_epoch` 為空；或該 commit 的 tree 缺少任一被綁定 artifact；或任一 blob 的 sha256 與 manifest 記載不符；或以該 commit 的 blob 重算出的 content digest 不等於 `validated_head_sha`；或 git 本身不可用（例如 `--git-root` 不是 git repository） | §7.6 |
 | **`mutable_observation_binding`** | 任一讀取 `gh pr` / `gh run` / `gh api` / `gh search` 的 `validation.commands[]` 缺少 `observed_at` 或 `observations[]`，或任一觀測缺少 `subject`、缺少可解析的 `observed_at`、或其 `head_sha` 不是 40-hex 小寫 commit sha | §7.4 第 1 項 |
 | `companion_checksum` | `evidence.json` 的實際 sha256 與 `evidence.sha256` 記載不符，或 companion 檔案缺少該筆記錄 | 封存 §7.3 第 3 點的那一環 |
 
-驗證器只讀不寫：它不修改工作樹，也不觸碰任何 status plane。以 `--now` 指定檢查時點，
-即可對已提交的舊 evidence 重放稽核；對 `0bb6d7f` 的 v4 bytes 以
-`--now 2026-07-26T21:49:00Z` 重放，會精確重現 `Human/Ops` 當時的三筆拒絕
-（兩筆 `future_timestamp`、一筆 `head_binding`）並以 exit 1 結束。
+前七條規則都只讀 manifest 自身的斷言，因此都可以用「改寫 manifest」來滿足；
+`receipt_commit_artifacts` 是唯一一條把 manifest 的主張拿去對**外部不可竄改來源**
+（git object store）核對的規則，也因此是唯一一條無法用改寫 manifest 來滿足的規則。
+
+驗證器只讀不寫：它不修改工作樹，也不觸碰任何 status plane，且**完全離線**——唯一的外部
+呼叫是 `git --no-optional-locks -C <git-root> cat-file`，不存取網路，也不需要 GitHub
+憑證。`--repo-root` 指定被雜湊的 bytes 所在的樹，`--git-root` 指定收據 commit 所在的
+object store；正常使用時兩者是同一個 repository，未指定 `--git-root` 時預設等於
+`--repo-root`（因此把 `--repo-root` 指向沒有 object store 的暫存目錄會 fail closed，
+而不是悄悄改去讀別的 repository 的歷史）。以 `--now` 指定檢查時點，即可對已提交的舊
+evidence 重放稽核；對 `0bb6d7f` 的 v4 bytes 以 `--now 2026-07-26T21:49:00Z` 重放，會精確
+重現 `Human/Ops` 當時的三筆拒絕（兩筆 `future_timestamp`、一筆 `head_binding`）並以
+exit 1 結束。
 
 ### 7.4 對 v5.0.0 的更正
 
@@ -765,6 +821,11 @@ v5.0.0 交付於 PR `#4221` head `5a9ed0c9957529467fce0b7afa0338546987ee4b`，�
    標記收據 commit，並記下 `bound_content_digest`（必須等於 `validated_head_sha`）與該
    head 上三項必要檢查的 run id、conclusion、`completed_at`。
 4. `evidence.json` 自身的 bytes 由 companion `evidence.sha256` 封存。
+5. **（v7.0.0 新增）**收據 commit 不只被「宣告」，還要能被**離線核對**：
+   `receipt_commit_artifacts` 以 `git cat-file` 讀出該 commit 的 tree，要求每個被綁定
+   artifact 都存在於該 tree 且 blob sha256 等於 manifest 記載值，並以這些 blob 重算
+   content digest 與 `validated_head_sha` 比對。少了這一步，第 3 點只是 manifest 的
+   自述，可以被改寫（§7.6）。
 
 因此本 manifest 主張的是：**被綁定的那三個 artifact，其 byte 內容在收據 head 上通過了
 全部三項必要檢查**。這個主張不需要知道自己所在 commit 的 sha，遞迴到此終止。
@@ -778,6 +839,59 @@ v5.0.0 交付於 PR `#4221` head `5a9ed0c9957529467fce0b7afa0338546987ee4b`，�
   仍為綠。審查請以 PR 最終 head 為準。
 - evidence commit 自身的三項檢查結果**不在** manifest 內（寫進去就再次遞迴）。它們由
   owner 在 handoff 訊息與 PR 留言中以 run id 揭露，由 reviewer 於 `#4221` 上直接核對。
+
+### 7.6 對 v6.0.0 的更正：收據自述 vs. 收據本身
+
+v6.0.0 交付於 PR `#4221` head `b3f8edad0b5ac078ada3dd791b8166dbaf58cf9e`，由 reviewer
+`Codex2` 否決。這次的缺陷不在任何單一欄位，而在**七條規則的取材面**：它們讀的全是
+manifest 對收據的自述，沒有一條去讀收據 commit 本身。因此以下這組編輯可以在**不觸碰任何
+規則**的情況下把收據換成一個不曾承載交付 bytes 的舊 commit：
+
+1. 把 `receipt_role: current_delivery_receipt` 從真正的收據 head 搬到已被 `Human/Ops`
+   否決的 v4 commit `5c39428dda1d3c1e42fa926aa5f320467e1b8324`；
+2. 把當前的 `bound_content_digest` 原值複製到該 anchor 上（於是
+   `current_delivery_checks` 的等值檢查通過）；
+3. 把它的 `delivery_state` 從 `superseded_v4_delivery_commit_rejected_by_human_ops`
+   改寫成看起來 live 的字串（於是 superseded 標記檢查通過）；
+4. 重封 `evidence.sha256`（於是 `companion_checksum` 通過）。
+
+`5c39428` 上三項必要檢查本來就是全綠（run 30221671216），所以
+`current_delivery_checks` 的綠燈完整性檢查也通過。**七條規則、零拒絕。**
+
+而 git object 對同一個 commit 的說法完全相反，且不可竄改：
+
+| 被綁定 artifact | `5c39428` 的 blob sha256 | manifest 綁定值 |
+| :--- | :--- | :--- |
+| `POST_DISPATCH_RUNTIME_GAP_DELTA.md` | `9ac925e0c66a3c48a916b7b3c97fbac580034ee96f7e3f53e1e0a42c4093a5d3` | v6.0.0 為 `4f2f7735513f52fabc6a5679202be6f1c1dd521b6ad639b99dfc618a3b7944bc` |
+| `scripts/validate_twelve_loop_gap_evidence.py` | 該 commit 的 tree 中**不存在** | 有綁定值 |
+| `scripts/test_validate_twelve_loop_gap_evidence.py` | 該 commit 的 tree 中**不存在** | 有綁定值 |
+
+v7.0.0 的修正是新增第八條規則 `receipt_commit_artifacts`（§7.3 表格最後一列），
+把收據從「manifest 說的」變成「object store 能證明的」：
+
+- 以 `git --no-optional-locks -C <git-root> cat-file` 離線讀取，不觸網、不需憑證；
+- 收據 sha 必須是 40-hex 小寫且解析為 commit object，否則 fail closed；
+- `source_artifact_sha256_by_epoch` 中每一個路徑都必須存在於收據 commit 的 tree，
+  缺任一路徑即 fail closed（這是上表第 2、3 列的形狀）；
+- 每個 blob 的 sha256 必須等於 manifest 記載值，不符即 fail closed（第 1 列的形狀）；
+- 以收據 commit 的 blob 重算 content digest，必須等於 `validated_head_sha`；
+- git 不可用、`--git-root` 不是 git repository、或 `cat-file` 以非「路徑不存在」的原因
+  失敗時，一律 fail closed——「無法核對」不等於「通過」。
+
+迴歸測試以**這次否決的精確形狀**覆蓋，而非近似形狀：
+
+- `test_v4_receipt_substitution_with_resealed_checksum_is_rejected` 以本 manifest 為輸入，
+  執行上述四步編輯（含重封 checksum），斷言**只有** `receipt_commit_artifacts` 拒絕
+  （即證明其餘七條規則確實全部通過），且拒絕訊息同時含有 `9ac925e0…` 的摘要衝突與兩支
+  validator script 的 `does not contain bound artifact` 缺失。
+- `test_receipt_verification_reads_blobs_not_the_working_tree` 更進一步：把工作樹的本文件
+  換成 `5c39428` 的精確 v4 bytes 並完整 rebind，使 `head_binding` 與
+  `companion_checksum` 都通過，仍然被 `receipt_commit_artifacts` 拒絕——因為該 commit
+  根本沒有兩支 validator script，任何 rebind 都追不上。
+- `test_receipt_naming_an_unknown_commit_is_rejected`、
+  `test_receipt_with_an_abbreviated_sha_is_rejected`、
+  `test_cli_without_git_root_falls_back_to_repo_root_and_fails_closed` 覆蓋 commit 未知、
+  縮寫 sha、以及 object store 不可用時的 fail-closed 行為。
 
 ---
 
@@ -795,7 +909,7 @@ v5.0.0 交付於 PR `#4221` head `5a9ed0c9957529467fce0b7afa0338546987ee4b`，�
 >   該 task 需經 reviewer `Codex2` 獨立審查後由 owner 收尾。
 > - **Auto-Merge**：PR `#4221` 的 auto-merge 由 `Human/Ops` 關閉，本版**不重新啟用**。
 >   合併時機由 reviewer `Codex2` 的獨立審查決定，不由 owner 端的自動化決定。
-> - **Snapshot Freshness**：§3.6 的 canonical 計數是 seq 2046 的時點快照。journal 持續
+> - **Snapshot Freshness**：§3.6 的 canonical 計數是 seq 2142 的時點快照。journal 持續
 >   append，審查時的最新 sequence 只會更大；本文件的主張綁定在載明的 sequence 與時間戳
 >   上，不宣稱「此後未再變動」。
 > - **Mutable Surface**：PR head、`mergeStateStatus` 與 check 顏色同屬會前進的表面。
@@ -804,6 +918,13 @@ v5.0.0 交付於 PR `#4221` head `5a9ed0c9957529467fce0b7afa0338546987ee4b`，�
 >   未綁定 head 與時點的可變事實都應被視為缺陷（`mutable_observation_binding`）。
 > - **Green CI ≠ Gap Closed**：`#4203` 與 `#4211` 在 §5.0 的觀測時點為 `CLEAN` 且三項
 >   檢查全綠。這只表示分支 CI 通過，Gap 6 與 Gap 8 的「仍缺證據」一項未減。
+> - **Self-Declared Receipt ≠ Verified Receipt**：`evidence.json` 對交付收據的描述是
+>   manifest 的自述，可被改寫；只有 `receipt_commit_artifacts` 以 git object 核對過的
+>   部分才是被證明的（§7.6）。同理，本文件對八條規則的敘述不取代規則本身——請以
+>   `python3 scripts/validate_twelve_loop_gap_evidence.py … --json` 的實際輸出為準。
+> - **Validator Scope**：這八條規則只覆蓋**本 task 的 evidence manifest**，不是全站
+>   evidence gate；分支 CI 不執行它（§7.5），因此它是審查工具，不是自動化防護。把它
+>   誤讀為「所有 evidence 都已被此規則保護」會是新的過度宣稱。
 
 ---
 
