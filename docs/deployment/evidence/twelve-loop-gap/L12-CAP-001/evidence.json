@@ -16,10 +16,10 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-27T00:32:27Z",
-    "evidence_cut_semantics": "Owner validation over token-fenced execution head aa64c1921b1f9b10994a327d633990dc8282fc0e replayed against dev 643181a067ec5c344faac0766c69de0d5cfb32eb; no independent approval, CI success, PR merge, deployment, or done state is claimed.",
+    "evidence_cut_at": "2026-07-27T01:13:06Z",
+    "evidence_cut_semantics": "Closeout annotation binds Claude's independent approval and successful required checks at exact reviewed PR head 2cc1a2e6af3cca1d274c8a2ef87648c13e2affa8. Owner validation remains bound to token-fenced execution head aa64c1921b1f9b10994a327d633990dc8282fc0e over dev 643181a067ec5c344faac0766c69de0d5cfb32eb; PR merge, deployment, hosted activation, done state, and live-capital enablement are not claimed.",
     "id": "L12-CAP-001",
-    "overall_admission": "owner_validation_passed_pending_independent_review",
+    "overall_admission": "review_approved",
     "owner": "Codex",
     "phase": "Twelve Loop Remediation / Capital",
     "product_level_required": true,
@@ -92,17 +92,17 @@
         "subject": "L12-CAP-001: resolve signal durability review blockers"
       },
       {
-        "delivery_state": "owner_validated_pending_independent_review",
+        "delivery_state": "independent_review_approved",
         "sha": "e4b87134299e2c633a74664efec7aac4b8c08f98",
         "subject": "L12-CAP-001: anchor atomic execution and fenced lease"
       },
       {
-        "delivery_state": "owner_validated_pending_independent_review",
+        "delivery_state": "independent_review_approved",
         "sha": "e94774b260f12b2751eb98ab563df49422e8c5b1",
         "subject": "L12-CAP-001: anchor Redis drills and capital authority"
       },
       {
-        "delivery_state": "owner_validated_pending_independent_review",
+        "delivery_state": "independent_review_approved",
         "note": "Closes the slow-buffer claim-expiry and blocked-spawn lease-expiry defects reproduced by independent review.",
         "sha": "da77966f29e7eb9adea286f1dde04dfa138f1f88",
         "subject": "L12-CAP-001: anchor execution and spawn fences"
@@ -114,13 +114,27 @@
         "subject": "L12-CAP-001: anchor execution-window claim renewal"
       },
       {
-        "delivery_state": "owner_validated_pending_independent_review",
+        "delivery_state": "independent_review_approved",
         "note": "Adds an atomic signal-scoped execution reservation/commit, publishes heartbeat lease loss to the executing path, and proves renew-false plus renew-exception reclaim races each call the executor exactly once.",
         "sha": "aa64c1921b1f9b10994a327d633990dc8282fc0e",
         "subject": "L12-CAP-001: anchor token-fenced execution"
       }
     ],
-    "required_checks": []
+    "required_checks": [
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "2cc1a2e6af3cca1d274c8a2ef87648c13e2affa8",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30227828295,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30227828295",
+        "workflow": "Branch CI Gate"
+      }
+    ]
   },
   "validation": {
     "commands": [
@@ -202,7 +216,7 @@
         "A reclaiming worker that observes another token's in-progress execution never calls the executor and atomically retains its copy in the binding DLQ.",
         "The real-Redis slow-buffer, healthy long-execution, renew-false, and renew-exception regressions each assert exactly one executor call in their respective reclaim windows."
       ],
-      "status": "owner_pass_pending_independent_review"
+      "status": "independent_review_approved"
     },
     "failure_and_degraded_behavior": {
       "proof": [
@@ -211,14 +225,14 @@
         "Validation and execution exceptions are durably dead-lettered; a failed DLQ transfer does not mark the signal processed.",
         "When a claim is reclaimed after execution started, the successor retains the ambiguous copy in the DLQ while the original execution token alone may commit success."
       ],
-      "status": "owner_pass_pending_independent_review"
+      "status": "independent_review_approved"
     },
     "request_receipt_downstream_correlation": {
       "proof": [
         "Binding, runtime, and capital-pool identity is checked before execution and retained in binding-scoped pending, claim, and DLQ state.",
         "Capital mutation bodies are rebound to verified service, actor, role, and tenant claims before endpoint logic executes."
       ],
-      "status": "owner_pass_pending_independent_review"
+      "status": "independent_review_approved"
     },
     "restart_and_recovery": {
       "proof": [
@@ -226,7 +240,7 @@
         "Two spawned reconcilers converge to one Redis-fenced leader; after expiry the successor receives a higher token and the stale predecessor cannot renew.",
         "A leader blocked inside subprocess spawn revalidates after spawn; when a successor owns the higher token, the stale child is terminated and never registered."
       ],
-      "status": "owner_pass_pending_independent_review"
+      "status": "independent_review_approved"
     },
     "rollback_or_compensation": {
       "proof": [
@@ -234,7 +248,7 @@
         "A successor that reclaims an already-started execution does not retry the side effect; it transfers the ambiguous copy to durable DLQ recovery.",
         "Leader demotion stops local worker mutations, and a fence lost during spawn triggers child termination, monitoring-session closure, and port release before registry mutation."
       ],
-      "status": "owner_pass_pending_independent_review"
+      "status": "independent_review_approved"
     }
   },
   "security_and_safety": {
@@ -254,20 +268,20 @@
     },
     "rbac": {
       "proof": "Capital mutation verbs require an allowed service and verified role; body actor and role spoofing are rejected.",
-      "status": "owner_pass_pending_independent_review"
+      "status": "pass"
     },
     "tenant_isolation": {
       "proof": "Signal queues and DLQs are binding scoped, signal runtime/binding/capital-pool mismatches fail closed, and Capital tenant claims must match mutation bodies.",
-      "status": "owner_pass_pending_independent_review"
+      "status": "pass"
     },
     "two_person_approval": {
-      "proof": "Owner Codex prepared this cut and handed the same PR and evidence file to distinct reviewer Claude; no reviewer verdict is predeclared.",
-      "status": "pending"
+      "proof": "Owner Codex prepared the implementation and evidence; distinct reviewer Claude independently approved exact PR head 2cc1a2e6af3cca1d274c8a2ef87648c13e2affa8 at https://github.com/ajoe734/pantheon/pull/4203#issuecomment-5086275280.",
+      "status": "pass"
     }
   },
   "acceptance": [
     {
-      "blocking_until": "Claude independently validates the repaired PR tip.",
+      "blocking_until": "PR #4203 merges into dev and the owner completes governed closeout.",
       "evidence_refs": [
         "services/execution/lean_runtime/pending_signal_store.py",
         "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/redis_crash_before_ack_proof.txt",
@@ -277,30 +291,30 @@
       ],
       "id": "AC1",
       "statement": "An accepted signal remains recoverable until execution acknowledgement.",
-      "status": "owner_pass_pending_independent_review"
+      "status": "pass"
     },
     {
-      "blocking_until": "Claude independently validates the repaired PR tip.",
+      "blocking_until": "PR #4203 merges into dev and the owner completes governed closeout.",
       "evidence_refs": [
         "services/execution/lean_runtime/signal_consumer.py",
         "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/execution_error_dlq_proof.txt"
       ],
       "id": "AC2",
       "statement": "Crash, validation failure, and execution exception produce a recoverable requeue or durable DLQ outcome.",
-      "status": "owner_pass_pending_independent_review"
+      "status": "pass"
     },
     {
-      "blocking_until": "Claude independently validates the repaired PR tip.",
+      "blocking_until": "PR #4203 merges into dev and the owner completes governed closeout.",
       "evidence_refs": [
         "services/execution/lean_runtime/test_signal_isolation.py",
         "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/six_binding_restart_isolation_drill.txt"
       ],
       "id": "AC3",
       "statement": "Missing or mismatched binding, runtime, or capital-pool identity is rejected in governed-paper mode.",
-      "status": "owner_pass_pending_independent_review"
+      "status": "pass"
     },
     {
-      "blocking_until": "Claude independently validates the repaired PR tip.",
+      "blocking_until": "PR #4203 merges into dev and the owner completes governed closeout.",
       "evidence_refs": [
         "services/execution/runtime-manager/paper_fleet_reconciler.py",
         "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/leader_lease_convergence_proof.txt",
@@ -308,37 +322,55 @@
       ],
       "id": "AC4",
       "statement": "Exactly one token-fenced fleet reconciler leader may mutate the worker fleet.",
-      "status": "owner_pass_pending_independent_review"
+      "status": "pass"
     },
     {
-      "blocking_until": "Claude independently validates the repaired PR tip.",
+      "blocking_until": "PR #4203 merges into dev and the owner completes governed closeout.",
       "evidence_refs": [
         "services/capital/inbound_authority.py",
         "services/capital/test_service.py#test_capital_mutations_bind_verified_actor_role_and_tenant"
       ],
       "id": "AC5",
       "statement": "Capital mutations authenticate actor and tenant, while live capital remains disabled.",
-      "status": "owner_pass_pending_independent_review"
+      "status": "pass"
     }
   ],
   "residual_risks": {
     "independent_review": {
-      "blocking_for_this_task": true,
-      "containment": "Task remains outside review_approved and done; manifest explicitly avoids an approval claim.",
-      "description": "Claude rejected exact head 945f47dce1d7deaaf4643499a899d3b499cca2bc after independently reproducing duplicate execution when heartbeat renewal returned false or raised after execute() started. Owner added atomic execution reservation/commit and lease-loss propagation at aa64c1921b1f9b10994a327d633990dc8282fc0e; no independent verdict on that repair is yet recorded.",
-      "expiry": "When Claude records an independent verdict for the repaired PR tip.",
+      "blocking_for_this_task": false,
+      "containment": "Approval is bound to immutable reviewed head 2cc1a2e6af3cca1d274c8a2ef87648c13e2affa8 and the exact PR verdict URL.",
+      "description": "Claude's approval supersedes the rejection at 945f47dce1d7deaaf4643499a899d3b499cca2bc after independent real-Redis probes proved the repaired lease-loss paths execute exactly once.",
+      "expiry": "Satisfied at 2026-07-27T00:57:22Z.",
       "owner": "Claude",
-      "recheck_trigger": "After the owner evidence commit is pushed to PR #4203.",
-      "severity": "high"
+      "recheck_trigger": "Re-review is required if implementation behavior changes after the approved head.",
+      "severity": "informational"
     },
     "branch_ci": {
-      "blocking_for_this_task": true,
-      "containment": "The previous rejected head checks are not reused; the repaired head must run fresh required checks.",
-      "description": "Required GitHub checks for the repaired PR tip are not yet available.",
-      "expiry": "When required checks for the repaired PR head conclude successfully.",
+      "blocking_for_this_task": false,
+      "containment": "The closeout-only evidence commit and dev merge remain subject to branch protection before PR merge.",
+      "description": "Commit trailers, Runtime mirror guard, and Smoke acceptance all passed at exact reviewed head 2cc1a2e6af3cca1d274c8a2ef87648c13e2affa8.",
+      "expiry": "Satisfied for the reviewed implementation head; GitHub remains authoritative for subsequent closeout-only checks.",
       "owner": "Codex",
-      "recheck_trigger": "After pushing the evidence commit.",
-      "severity": "high"
+      "recheck_trigger": "On each subsequent PR head before merge.",
+      "severity": "informational"
+    },
+    "abandoned_execution_reservation": {
+      "blocking_for_this_task": false,
+      "containment": "A bare started reservation fails closed: successors do not execute and retain the ambiguous copy in the scoped DLQ.",
+      "description": "An execution owner that dies after begin_execution but before complete_execution leaves a Redis started reservation without a TTL, so deliberate replay remains fenced until operator recovery removes the reservation.",
+      "expiry": "When the reservation has a bounded recovery contract and documented operator path.",
+      "owner": "Lean runtime follow-up",
+      "recheck_trigger": "Before enabling automatic replay of ambiguous execution DLQ entries.",
+      "severity": "medium"
+    },
+    "in_memory_store_fencing": {
+      "blocking_for_this_task": false,
+      "containment": "Production governed-paper construction uses Redis; the in-memory implementation remains a single-process test double.",
+      "description": "InMemoryPendingSignalStore derives its execution token from signal_id, so it does not provide Redis-grade fencing between concurrent claimants.",
+      "expiry": "When the in-memory test double allocates claimant-unique execution tokens.",
+      "owner": "Lean runtime follow-up",
+      "recheck_trigger": "If the in-memory store is proposed for concurrent or production use.",
+      "severity": "informational"
     },
     "hosted_activation": {
       "blocking_for_this_task": false,
@@ -378,7 +410,7 @@
     "manifest_path": "docs/deployment/evidence/twelve-loop-gap/L12-CAP-001/evidence.json",
     "normalized_hosted_readback": {
       "hosted_activation_claimed": false,
-      "independent_review_claimed": false,
+      "independent_review_claimed": true,
       "live_capital_enabled": false,
       "owner_validation_complete": true
     },
@@ -386,6 +418,7 @@
     "self_hash_reason": "The companion checksum contains the manifest digest and avoids recursive self-hashing.",
     "source_artifact_sha256_by_epoch": {
       "owner_readme_2026_07_26": "8a6787d8e1854c512d134002aa06cce341462739b3a7fd6d0d0423731d7dd387",
+      "closeout_readme_2026_07_27": "dee79558058759de17da8ae40aa5e3b22205b7db4bc0ccfb5563b167a1dcfd9e",
       "atomic_redis_proof_2026_07_26": "55ff7b8569b6162e76fa8b7364ffe188f59575ebf187d32ef8a6e2bdfde11c7b",
       "blocked_spawn_fence_proof_2026_07_26": "99866da6367d19636cead818f545e07683b4a7e0e19d9f36eb0f99ee7100ebbf",
       "execution_dlq_proof_2026_07_26": "199ce58f009757fef61cf85d6a4a516f461949a12f9f425b36ae17a39ba6d432",
@@ -494,6 +527,23 @@
       "sequence": 11,
       "sha": "aa64c1921b1f9b10994a327d633990dc8282fc0e",
       "status": "passed_pending_independent_review"
+    },
+    {
+      "actor": "Claude",
+      "kind": "independent_review",
+      "recorded_at": "2026-07-27T00:57:22Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4203#issuecomment-5086275280",
+      "sequence": 12,
+      "sha": "2cc1a2e6af3cca1d274c8a2ef87648c13e2affa8",
+      "status": "approved"
+    },
+    {
+      "actor": "Codex",
+      "kind": "owner_closeout_prepared",
+      "recorded_at": "2026-07-27T01:13:06Z",
+      "reference": "task/L12-CAP-001",
+      "sequence": 13,
+      "status": "pending_pr_merge"
     }
   ]
 }

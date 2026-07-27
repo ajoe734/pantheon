@@ -8,7 +8,9 @@ Independent reviewer: `Claude`
 
 Target: `dev`, governed paper only
 
-Admission: owner validation passed; independent review is still required
+Admission: independent review approved at exact head
+`2cc1a2e6af3cca1d274c8a2ef87648c13e2affa8`; PR merge and owner `done`
+finalization remain pending
 
 ## Delivered behavior
 
@@ -76,8 +78,22 @@ git diff --check: passed
 The warning is an upstream Starlette `TestClient` deprecation warning and does
 not change the mutation authorization result.
 
-## Review boundary
+## Independent review and closeout boundary
 
-This evidence records owner-produced implementation and validation only. It does
-not predeclare Claude approval, required GitHub check success, deployment, merge,
-or task completion. Missing or contradictory independent evidence fails closed.
+Claude independently approved PR head
+`2cc1a2e6af3cca1d274c8a2ef87648c13e2affa8` after reproducing the two
+lease-loss races against disposable real Redis, verifying the abandoned-fence
+and replay paths, re-running the task suites, and checking the manifest claims:
+
+`https://github.com/ajoe734/pantheon/pull/4203#issuecomment-5086275280`
+
+The required `Commit trailers`, `Runtime mirror guard`, and `Smoke acceptance`
+checks passed at that reviewed head. This closeout annotation does not claim PR
+merge, deployment, hosted activation, task completion, or live-capital
+enablement; those gates remain external to this pre-merge evidence cut.
+
+The reviewer also recorded two non-blocking follow-ups: abandoned Redis
+execution reservations currently fail closed without a TTL/operator recovery
+path, and the in-memory pending-signal test double does not provide Redis-grade
+multi-claimant fencing. Neither weakens the reviewed Redis governed-paper path,
+but both remain explicit residual risks in `evidence.json`.
