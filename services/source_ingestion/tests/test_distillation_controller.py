@@ -123,7 +123,7 @@ def test_distillation_controller_tick_success(tmp_path, monkeypatch) -> None:
         return {"entry": entry}
 
     monkeypatch.setattr("services.source_ingestion.distillation_controller._get_registry_entry", mock_get_registry_entry)
-    monkeypatch.setattr("services.source_ingestion.distillation_controller._register_strategy_spec", mock_register_strategy_spec)
+    monkeypatch.setattr("services.source_ingestion.distillation_controller._register_strategy_spec_if_absent", mock_register_strategy_spec)
 
     # 2. Run tick
     res = run_controller_tick(config=config, state=state, store=state_store, writer=writer)
@@ -190,7 +190,7 @@ def test_distillation_controller_immutable_protection(tmp_path, monkeypatch) -> 
         pytest.fail("Should not write to approved/immutable registry entry!")
         
     monkeypatch.setattr("services.source_ingestion.distillation_controller._get_registry_entry", mock_get_registry_entry)
-    monkeypatch.setattr("services.source_ingestion.distillation_controller._register_strategy_spec", mock_register_strategy_spec)
+    monkeypatch.setattr("services.source_ingestion.distillation_controller._register_strategy_spec_if_absent", mock_register_strategy_spec)
     
     # Run tick
     res = run_controller_tick(config=config, state=state, store=state_store, writer=writer)

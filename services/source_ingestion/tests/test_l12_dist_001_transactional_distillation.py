@@ -32,6 +32,7 @@ from typing import Any, Iterator
 import pytest
 import uvicorn
 
+from services.source_ingestion import distillation_controller as distillation_controller_module
 from services.source_ingestion.connectors.base import SourceRecord
 from services.source_ingestion.controller_state import ControllerState, ControllerStateStore
 from services.source_ingestion.distillation_controller import (
@@ -95,6 +96,7 @@ class _RecordingRegistry:
     def __init__(self) -> None:
         self.entries: dict[str, dict[str, Any]] = {}
         self.writes: list[str] = []
+        self.write_attempts: list[str] = []
         self.readbacks: list[str] = []
         self.fail_writes_until: int = 0
         self.drop_ack_after_write: bool = False
@@ -105,9 +107,12 @@ class _RecordingRegistry:
 
     def write(self, payload: dict[str, Any]) -> dict[str, Any]:
         registry_id = payload["registry_id"]
-        if len(self.writes) < self.fail_writes_until:
-            self.writes.append(registry_id)
+        self.write_attempts.append(registry_id)
+        if len(self.write_attempts) <= self.fail_writes_until:
             raise RuntimeError("registry outage: connection refused")
+        existing = self.entries.get(registry_id)
+        if existing is not None:
+            return existing
         self.writes.append(registry_id)
         entry = {"registry_id": registry_id, "artifact_state": "draft"}
         self.entries[registry_id] = {"entry": entry}
@@ -130,7 +135,7 @@ def registry(monkeypatch: pytest.MonkeyPatch) -> _RecordingRegistry:
         lambda url, registry_id: fake.get(registry_id),
     )
     monkeypatch.setattr(
-        "services.source_ingestion.distillation_controller._register_strategy_spec",
+        "services.source_ingestion.distillation_controller._register_strategy_spec_if_absent",
         lambda url, payload: fake.write(payload),
     )
     return fake
@@ -518,6 +523,58 @@ class TestConcurrentWorkers:
         assert registry.writes == [_registry_id_for(original), _registry_id_for(revised)]
         assert len(registry.entries) == 2
 
+    def test_versioned_jobs_ignore_newer_caller_map_and_replay_each_snapshot(
+        self, tmp_path: Path
+    ) -> None:
+        deliveries: list[tuple[str, str, str]] = []
+
+        def registry_sync(request: RegistrySyncRequest) -> RegistrySyncResult:
+            deliveries.append(
+                (
+                    request.job.source_digest,
+                    request.source.title,
+                    source_version_digest(request.source),
+                )
+            )
+            return RegistrySyncResult(
+                registry_id=_registry_id_for(request.source),
+                status="synced",
+            )
+
+        worker = make_distillation_worker(
+            queue_path=tmp_path / "queue.sqlite3",
+            seed_store_path=tmp_path / "seeds.jsonl",
+            created_by="snapshot-worker",
+            registry_sync=registry_sync,
+        )
+        original = _normalized_source(
+            "src-snapshot-versions",
+            title="Committed snapshot v1",
+        )
+        revised = _normalized_source(
+            "src-snapshot-versions",
+            title="Committed snapshot v2",
+        )
+        original_job = worker.enqueue_from_source_record(original)
+        revised_job = worker.enqueue_from_source_record(revised)
+
+        result = worker.run_pending({revised.source_id: revised})
+
+        assert result.processed == 2
+        assert result.registry_synced == 2
+        assert deliveries == [
+            (
+                original_job.source_digest,
+                original.title,
+                original_job.source_digest,
+            ),
+            (
+                revised_job.source_digest,
+                revised.title,
+                revised_job.source_digest,
+            ),
+        ]
+
 
 # ---------------------------------------------------------------------------
 # AC-3: Registry failure is truthful and durable
@@ -712,6 +769,35 @@ class TestApprovedArtifactsAreImmutable:
         assert result["actual"]["synced_count"] == 0
         assert registry.entries[registry_id]["entry"]["artifact_state"] == "approved"
 
+    def test_approval_after_probe_before_conditional_create_is_not_overwritten(
+        self, tmp_path: Path, registry: _RecordingRegistry
+    ) -> None:
+        config = _controller_config(tmp_path)
+        source = _normalized_source("src-approved-race-001")
+        _write_evidence(config, source)
+        registry_id = _registry_id_for(source)
+        original_write = registry.write
+
+        def approve_before_conditional_create(
+            payload: dict[str, Any],
+        ) -> dict[str, Any]:
+            # The controller's GET already returned 404. A concurrent actor
+            # creates and approves this stable id immediately before our POST.
+            registry.approve(registry_id)
+            return original_write(payload)
+
+        registry.write = approve_before_conditional_create  # type: ignore[method-assign]
+
+        result, error, _ = _run_tick(config, _DummyLoopWriter())
+
+        assert error is None
+        assert result["actual"]["skipped_immutable_count"] == 1
+        assert result["actual"]["synced_count"] == 0
+        assert registry.writes == []
+        assert registry.entries[registry_id]["entry"]["artifact_state"] == "approved"
+        job = DistillationJobQueue(config.job_queue_path).get(source.source_id)
+        assert job.status == DistillationJobStatus.SKIPPED.value
+
     def test_accepted_seed_draft_is_not_overwritten(self, tmp_path: Path) -> None:
         seed_path = tmp_path / "seeds.jsonl"
         worker = make_distillation_worker(
@@ -857,6 +943,17 @@ def _http_get_json(url: str) -> dict[str, Any]:
         return json.loads(response.read().decode("utf-8"))
 
 
+def _http_post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
 class TestRealSourceToRegistryService:
     def test_normalized_source_reaches_the_real_registry_service(self, tmp_path: Path) -> None:
         source = _normalized_source("src-live-001", title="TW momentum live service proof")
@@ -888,6 +985,61 @@ class TestRealSourceToRegistryService:
         job = DistillationJobQueue(config.job_queue_path).get(source.source_id)
         assert job.status == DistillationJobStatus.DONE.value
         assert job.registry_id == registry_id
+
+    def test_real_registry_approval_before_controller_post_is_not_overwritten(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        source = _normalized_source(
+            "src-live-approved-race",
+            title="Approved-before-POST service proof",
+        )
+        registry_id = _registry_id_for(source)
+        original_register = (
+            distillation_controller_module._register_strategy_spec_if_absent
+        )
+
+        with _registry_service() as registry_url:
+            config = _controller_config(tmp_path, registry_url=registry_url)
+            _write_evidence(config, source)
+
+            def approve_before_controller_post(
+                url: str,
+                payload: dict[str, Any],
+            ) -> dict[str, Any]:
+                original_register(url, payload)
+                advance_url = (
+                    f"{url}/api/registry/strategy-specs/{registry_id}/advance"
+                )
+                _http_post_json(advance_url, {"target_state": "candidate"})
+                _http_post_json(
+                    advance_url,
+                    {
+                        "target_state": "approved",
+                        "approver": "concurrent-reviewer",
+                    },
+                )
+                # This is the controller's create-if-absent POST. It must
+                # return the approved entry without replacing it with a draft.
+                return original_register(url, payload)
+
+            monkeypatch.setattr(
+                distillation_controller_module,
+                "_register_strategy_spec_if_absent",
+                approve_before_controller_post,
+            )
+
+            result, error, _ = _run_tick(config, _DummyLoopWriter())
+
+            assert error is None
+            assert result["actual"]["skipped_immutable_count"] == 1
+            assert result["actual"]["synced_count"] == 0
+            entry = _http_get_json(
+                f"{registry_url}/api/registry/strategy-specs/{registry_id}"
+            )
+            assert (entry.get("entry") or entry)["artifact_state"] == "approved"
+
+        job = DistillationJobQueue(config.job_queue_path).get(source.source_id)
+        assert job.status == DistillationJobStatus.SKIPPED.value
 
     def test_real_service_outage_then_recovery_replays_once(self, tmp_path: Path) -> None:
         source = _normalized_source("src-live-002", title="TW momentum outage replay proof")

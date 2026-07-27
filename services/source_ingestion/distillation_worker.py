@@ -1305,7 +1305,8 @@ class DistillationWorker:
 
         Args:
             source_records: mapping of source_id -> SourceRecord for lookup.
-                Typically the normalized records from the evidence repository.
+                Used only by legacy unversioned jobs. Versioned jobs always
+                replay their transactionally committed source snapshot.
             limit: maximum number of jobs to process in this pass.
             now: override for the current timestamp (used in tests).
 
@@ -1321,11 +1322,14 @@ class DistillationWorker:
         processed = created = refreshed = skipped = failed = 0
         registry_synced = retried = dead_lettered = 0
         for job in claimed:
-            source = (
-                source_records.get(job.source_id)
-                if source_records is not None
-                else self._queue.source_for_job(job)
-            )
+            if job.source_digest:
+                source = self._queue.source_for_job(job)
+            else:
+                source = (
+                    source_records.get(job.source_id)
+                    if source_records is not None
+                    else None
+                )
             if source is None:
                 self._queue.mark_failed(
                     job.job_id,

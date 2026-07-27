@@ -410,6 +410,48 @@ class TestFastAPIEndpoints:
         assert entry["metadata"]["source_seed_id"] == "source-seed-001"
         assert entry["metadata"]["strategy_spec"]["title"] == "Distilled momentum hypothesis"
 
+    def test_strategy_spec_same_id_registration_never_overwrites_approval(self):
+        registry_id = "reg-strategy-spec-approved-race"
+        payload = {
+            "registry_id": registry_id,
+            "strategy_id": "strat-approved-race",
+            "version": "1.0.0",
+            "source_seed_id": "source-seed-approved-race",
+            "strategy_spec": _minimal_strategy_spec("strat-approved-race"),
+        }
+        created = self.client.post("/api/registry/strategy-specs", json=payload)
+        assert created.status_code == 200, created.text
+        for target_state in ("candidate", "approved"):
+            advanced = self.client.post(
+                f"/api/registry/strategy-specs/{registry_id}/advance",
+                json={"target_state": target_state},
+            )
+            assert advanced.status_code == 200, advanced.text
+
+        duplicate = self.client.post(
+            "/api/registry/strategy-specs",
+            json={
+                **payload,
+                "strategy_spec": {
+                    **payload["strategy_spec"],
+                    "title": "A duplicate create must not replace approval",
+                },
+            },
+        )
+
+        assert duplicate.status_code == 200, duplicate.text
+        assert duplicate.json()["entry"]["artifact_state"] == "approved"
+        readback = self.client.get(
+            f"/api/registry/strategy-specs/{registry_id}"
+        )
+        assert readback.status_code == 200, readback.text
+        entry = readback.json()["entry"]
+        assert entry["artifact_state"] == "approved"
+        assert (
+            entry["metadata"]["strategy_spec"]["title"]
+            == "Distilled momentum hypothesis"
+        )
+
     def test_strategy_spec_facade_lists_gets_and_advances_only_strategy_specs(self):
         strategy_id = "strat-distilled"
         create_resp = self.client.post(

@@ -410,7 +410,11 @@ async def register_strategy_spec(payload: StrategySpecRegisterRequest):
     registry_service = get_registry_service()
     try:
         create_payload = _strategy_spec_register_payload(payload)
-        return registry_service.register(create_payload, registry_id)
+        view, _created = registry_service.register_if_absent(
+            create_payload,
+            registry_id,
+        )
+        return _ensure_strategy_spec_view(view, registry_id)
     except RegistryError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

@@ -147,7 +147,8 @@ def _get_registry_entry(registry_url: str, registry_id: str) -> dict | None:
         raise RuntimeError(f"Failed to query registry: {exc}") from exc
 
 
-def _register_strategy_spec(registry_url: str, payload: dict) -> dict:
+def _register_strategy_spec_if_absent(registry_url: str, payload: dict) -> dict:
+    """Create a StrategySpec id atomically or return its existing Registry entry."""
     url = f"{registry_url}/api/registry/strategy-specs"
     try:
         data = json.dumps(payload).encode("utf-8")
@@ -261,7 +262,7 @@ def _make_registry_sync(
             request=request,
             registry_id=registry_id,
         )
-        _register_strategy_spec(config.registry_url, payload)
+        _register_strategy_spec_if_absent(config.registry_url, payload)
         readback = _get_registry_entry(config.registry_url, registry_id)
         if readback is None:
             raise RuntimeError(
