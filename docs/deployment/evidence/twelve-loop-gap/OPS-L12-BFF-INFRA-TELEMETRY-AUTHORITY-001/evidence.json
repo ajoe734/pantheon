@@ -1,0 +1,620 @@
+{
+  "acceptance": [
+    {
+      "evidence_refs": [
+        "services/telemetry/telemetry_event.schema.json",
+        "services/telemetry/ingest_svc.py",
+        "services/telemetry/test_infrastructure_health_ingest.py"
+      ],
+      "id": "AC1",
+      "statement": "Infrastructure health uses a distinct authoritative non-trading schema and never requires or invents a RuntimeBinding. Every RuntimeBinding evidence field is refused at any depth by an unbounded, iterative ingest-path scan; metadata is deliberately additionalProperties true, so the scan rather than the schema is the enforcement point and the refusal must hold at depths no producer would reach.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/telemetry/auth.py",
+        "services/telemetry/main.py",
+        "services/telemetry/test_infrastructure_health_ingest.py",
+        "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/current-runtime-readback.json"
+      ],
+      "id": "AC2",
+      "statement": "Strict JWT service authentication plus tenant and producer scope is required for infrastructure ingestion and spoofed probe fields cannot bypass trading validation.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/telemetry/ingest_svc.py",
+        "services/telemetry/test_infrastructure_health_ingest.py",
+        "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/current-runtime-readback.json"
+      ],
+      "id": "AC3",
+      "statement": "The admitted event is durable and idempotent by stable event ID across retries and replicas: admission fails closed unless the configured buffer is a durable broker, no caller is told it succeeded before a durable receipt exists, an admitted event survives process crash and restart, and four contending replica processes produce exactly one commit owner, one committed ledger receipt bound to that owner's token, and one durable broker copy.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/telemetry/ingest_svc.py",
+        "services/telemetry/test_infrastructure_health_ingest.py",
+        "services/telemetry/test_main_routes.py"
+      ],
+      "id": "AC4",
+      "statement": "Trading telemetry binding and lineage validation remains unchanged and fails closed.",
+      "status": "pass"
+    },
+    {
+      "evidence_refs": [
+        "services/telemetry/test_infrastructure_health_ingest.py",
+        "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/current-runtime-readback.json"
+      ],
+      "id": "AC5",
+      "statement": "Real strict-auth service tests cover valid ingest, missing token, wrong tenant, wrong producer, runtime-health spoof, restart, and duplicate replay.",
+      "status": "pass"
+    },
+    {
+      "blocking_until": "The task PR is merged into dev with green checks and Codex2 records an independent review verdict. The canonical acceptance row still names Antigravity because it was written before the reviewer reassignment; Codex2 is the canonical reviewer on the task row and is the identity this criterion is judged against.",
+      "evidence_refs": [
+        "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/evidence.json"
+      ],
+      "id": "AC6",
+      "statement": "The task is delivered by PR to dev with green checks and independent Codex2 review.",
+      "status": "pending_reviewer"
+    }
+  ],
+  "authorities": {
+    "actual_state": [
+      "durable infrastructure health admission ledger",
+      "telemetry ingest counters and stats",
+      "telemetry dead-letter queue"
+    ],
+    "desired_state": [
+      "InfrastructureHealthEvent contract in telemetry_event.schema.json",
+      "strict service JWT tenant and producer scope",
+      "deployment producer allowlist PANTHEON_TELEMETRY_INFRA_PRODUCERS"
+    ],
+    "task_packet": ".orchestrator/task-briefs/ops_l12_bff_infra_telemetry_authority_001.md"
+  },
+  "behavioral_proof": {
+    "duplicate_safety": {
+      "proof": [
+        "Admission is keyed by the producer's stable event_id and a sha256 fingerprint of the canonical event JSON in a two-phase append-only ledger under a POSIX advisory lock. Only a committed record \u2014 written after a durable enqueue receipt \u2014 makes an exact retry answer 202 duplicate; a caller that meets a live reservation is answered 503 INFRA_ADMISSION_IN_FLIGHT so it retries instead of treating an unpersisted observation as delivered.",
+        "Reusing an event_id for different content is refused with 409 INFRA_EVENT_ID_CONFLICT rather than silently overwriting the first observation.",
+        "Four concurrent replica processes racing on one event ID through a shared ledger produced exactly one committed receipt and three in-flight retry answers, and exactly one committed ledger record.",
+        "Under four contending replica processes over one ledger and one durable broker log, exactly one replica reaches the commit-owner role, the single committed ledger record carries that owner's token, and the durable log holds exactly one copy of the event. A replica that begins after the receipt is durable reads the same ledger word 'committed' as the owner's own commit, so it is classified by role rather than by that word and is counted as an idempotent duplicate, never as a second admission."
+      ],
+      "status": "pass"
+    },
+    "failure_and_degraded_behavior": {
+      "proof": [
+        "Missing bearer token, a structured permissive-mode token, the shared static service token, a non-service role, an unbound or wildcard tenant claim, a cross-tenant header, a payload tenant mismatch, an unconfigured or wildcard producer scope, and an unallowlisted producer all fail closed with stable error codes.",
+        "When the deployment has no durable broker behind the route, ingestion refuses the event with 503 INFRA_BUFFER_NOT_DURABLE before taking a reservation, rather than admitting an observation it cannot keep.",
+        "When the authoritative schema or the durable admission ledger is unavailable, ingestion refuses the event with INFRA_SCHEMA_UNAVAILABLE or INFRA_LEDGER_UNCONFIGURED instead of admitting something it cannot deduplicate.",
+        "A full buffer answers 503 INFRA_BUFFER_OVERFLOW, and a cancelled enqueue raises, with the ledger reservation released in both cases so the producer's retry can still be admitted.",
+        "A RuntimeBinding evidence field is refused wherever it appears, not only where a well-behaved producer would put it. The ingest-path scan is iterative with no depth ceiling, so a binding_id nested at depth 12 and a runtime_id at depth 40 through alternating lists and objects are both answered 400 INFRA_BINDING_FIELD_FORBIDDEN over real HTTP, while clean metadata nested 40 levels deep is still admitted with 202 \u2014 depth itself is not the gate. The scan also terminates on a self-referential payload without hiding a field. The previous revision capped recursion at depth 8 and returned no findings past it, which admitted the nested spoof."
+      ],
+      "status": "pass"
+    },
+    "request_receipt_downstream_correlation": {
+      "proof": [
+        "HTTP 202 is returned only after the durable enqueue receipt exists and the reservation is committed, and the response echoes the event_id, content fingerprint, bound tenant, and proven producer.",
+        "Admitted infrastructure events are readable through the existing exact event route under the same tenant authority and are never projected into runtime status summaries, the lineage graph, or trade episode projections."
+      ],
+      "status": "pass"
+    },
+    "restart_and_recovery": {
+      "proof": [
+        "Against the running Flask telemetry service, a real shutdown() and startup() cycle over the same storage directory answered the replayed event with HTTP 202 duplicate=true while the restarted instance reported zero new admissions, because the durable committed receipt rather than process memory is the admission authority.",
+        "A real service instance SIGKILLed inside its durable enqueue left a reserved-not-committed claim. Retries were refused as in-flight while the lease was live, the claim was recovered by the next caller once the lease expired, and the event then reached a committed receipt \u2014 so a crash in that window neither loses the event nor strands the event_id forever.",
+        "A second telemetry service instance over the same storage directory treats an already admitted stable event ID as a duplicate, and four separate replica processes synchronising on a barrier admitted it exactly once.",
+        "Admission fails closed before any reservation and again before the commit unless the configured buffer proves durability through its own is_durable(). A deployment running the volatile memory buffer answers 503 INFRA_BUFFER_NOT_DURABLE, writes no ledger record at all, and reports infrastructure_health_buffer_durable=0 on /healthz, so no committed receipt can ever outlive the only copy of an event.",
+        "There is no production-enableable volatile bypass: the gate reads only the backend's own durability, and a test sets every PANTHEON_* telemetry environment variable found in main.py, ingest_svc.py, buffer.py, and auth.py to its most permissive value at once without changing the refusal. The injectable buffer seam used by the tests is an in-process constructor argument that buffer.create_buffer and the environment-driven service builder never reach, and injecting a volatile buffer through it still fails closed.",
+        "Against a real NATS JetStream broker (file storage, work-queue retention), an admitted event was still present in the stream after the telemetry process was SIGKILLed, and the restarted service answered the producer's replay with 202 duplicate=true \u2014 the duplicate answer is backed by an event that actually survived the crash.",
+        "A backend that stops proving durability between the enqueue and the commit is refused with the reservation released, so a degraded broker cannot convert an unsafe write into an idempotent success and the producer's retry stays admissible.",
+        "A process/broker crash matrix SIGKILLs a real ingest process in each admission window \u2014 before the durable put, after the durable put but before the commit, and after the commit \u2014 and asserts both failure modes are absent: no producer is answered accepted or duplicate for an observation that is not in durable storage, and a retry with the same stable event_id always ends with exactly one committed receipt over durable copies that are byte-identical to the original event. Four concurrent replica processes over the same broker log and ledger produce exactly one accepted admission, one durable copy, and one committed record."
+      ],
+      "status": "pass"
+    },
+    "rollback_or_compensation": {
+      "proof": [
+        "A reservation that is not followed by a durable enqueue is released with an append-only, token-scoped released record, so a failed admission never blocks the producer's retry, and an owner whose lease was taken over is fenced out of both commit and release.",
+        "This task grants no broker, allocation, deployment, runtime-control, or incident-mutation authority; infrastructure health carries only an optional incident_ref string that telemetry never acts on."
+      ],
+      "status": "pass"
+    }
+  },
+  "deployment": {
+    "applicable": false,
+    "canonical_root_deploy": {
+      "reason": "No service deployment or restart is part of this task; producer credential and Compose wiring for PANTHEON_TELEMETRY_INFRA_PRODUCERS remain a downstream manifest responsibility.",
+      "status": "not_applicable"
+    },
+    "environment": "dev integration",
+    "identity_admission": {
+      "proof": "The infrastructure health route requires a verified service JWT even when the deployment-wide telemetry auth mode is permissive; the tenant must be bound by the token's own claims, and the producer must be inside both the deployment allowlist and the token scope. Every missing or mismatched element fails closed.",
+      "status": "pass"
+    },
+    "public_bff_base_url": "not_applicable_internal_telemetry_service",
+    "publish_cut": {
+      "reason": "Hosted admission is not part of this telemetry-scope task.",
+      "status": "not_applicable"
+    }
+  },
+  "evidence_policy": {
+    "checksum_file": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/evidence.sha256",
+    "missing_or_contradicted_proof_fails_closed": true,
+    "mutation_rule": "Task-scoped changes require a reviewed Pantheon PR; append a record_log entry whenever the accepted evidence cut or formal review state changes.",
+    "recording_mode": "logical_append_only",
+    "redacted": true,
+    "self_hashing": false
+  },
+  "hosted_readback": {
+    "pre_deploy": {
+      "admitted_event_durable_after_crash": true,
+      "artifact": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/current-runtime-readback.json",
+      "binding_spoof_http": 400,
+      "binding_spoof_nested_depth_12_code": "INFRA_BINDING_FIELD_FORBIDDEN",
+      "binding_spoof_nested_depth_12_http": 400,
+      "binding_spoof_nested_depth_40_mixed_containers_code": "INFRA_BINDING_FIELD_FORBIDDEN",
+      "binding_spoof_nested_depth_40_mixed_containers_http": 400,
+      "buffer_backend": "jetstream (real NATS JetStream, file storage, work queue)",
+      "clean_deeply_nested_metadata_http": 202,
+      "durable_broker_messages_after_admission": 1,
+      "durable_broker_retention": "workqueue",
+      "durable_broker_storage": "file",
+      "durable_ledger_committed_ids": 3,
+      "durable_ledger_orphan_reservations": 0,
+      "durable_ledger_record_count": 7,
+      "environment": "bounded local nonprod telemetry over real HTTP on 127.0.0.1:18150 (durable) and :18151 (volatile refusal)",
+      "event_id_conflict_http": 409,
+      "healthz_buffer_durable": 1,
+      "healthz_http": 200,
+      "hosted_activation_claimed": false,
+      "missing_token_http": 401,
+      "observed_at": "2026-07-26T23:38:50.996783Z",
+      "payload_tenant_mismatch_http": 403,
+      "process_crash_signal": "SIGKILL",
+      "readback_harness": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/readback_probe.py",
+      "restart_replay_duplicate": true,
+      "restart_replay_http": 202,
+      "retry_replay_duplicate": true,
+      "status": "pass",
+      "stranded_reservation_recovered_http": 202,
+      "stranded_reservation_refused_code": "INFRA_ADMISSION_IN_FLIGHT",
+      "terminal_readback": "Re-executed at the validated head against the running telemetry service backed by a real NATS JetStream file-storage work queue. One stable event_id was admitted once and deduplicated on retry; a SIGKILL after the committed receipt left the admitted event readable in the stream and the post-restart replay answered duplicate; a stranded reservation was refused 503 INFRA_ADMISSION_IN_FLIGHT while its lease was live and admitted once it expired; a spoofed binding_id was refused at the top level, at depth 12 inside metadata, and at depth 40 through alternating lists and objects, while clean metadata nested 40 levels deep was still admitted; and a second service booted on a volatile buffer refused every admission with 503 INFRA_BUFFER_NOT_DURABLE and wrote zero ledger records. The harness that produces this is committed alongside the manifest so the readback is reproducible rather than an unverifiable transcript.",
+      "valid_ingest_http": 202,
+      "volatile_backend_admission_code": "INFRA_BUFFER_NOT_DURABLE",
+      "volatile_backend_admission_http": 503,
+      "volatile_backend_ledger_records": 0,
+      "wrong_producer_http": 403,
+      "wrong_tenant_http": 403
+    }
+  },
+  "implementation_delivery": {
+    "anchor_commits": [
+      {
+        "delivery_state": "on_task_branch_pending_pr",
+        "note": "First cut: schema, strict-auth admission, single-phase ledger.",
+        "sha": "0b6ac76800514fd4a842cd34079f51e91622aabb",
+        "subject": "OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001: anchor infra authority"
+      },
+      {
+        "delivery_state": "on_task_branch_pending_pr",
+        "note": "Two-phase fenced reservation repairing the first reviewed loss window.",
+        "sha": "2f723037e10c9d4a4f290f3e4729d187f4aea5d8",
+        "subject": "OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001: fence infra admission"
+      },
+      {
+        "delivery_state": "on_task_branch_pending_pr",
+        "note": "Client retry contract for the 503 admission answers.",
+        "sha": "0d0b015c9",
+        "subject": "OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001: state infra retry contract"
+      },
+      {
+        "delivery_state": "on_task_branch_pending_pr",
+        "note": "Durability gate plus crash matrix, repairing the second reviewed defect. Last commit to touch implementation files.",
+        "sha": "28b13a16d0af770f7825edf75014b4a2b8ae9b46",
+        "subject": "OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001: anchor durable admission gate"
+      },
+      {
+        "delivery_state": "on_task_branch_pending_pr",
+        "note": "Third evidence cut. Documentation only.",
+        "sha": "4e24e895f59853391d269270673f57b9248964eb",
+        "subject": "OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001: re-cut durability evidence"
+      },
+      {
+        "delivery_state": "on_task_branch_pending_pr",
+        "note": "Merge of dev 6578ef968f7e0374b046de0afb5b07ce2f81558e into the task branch. Clears the BEHIND state and the Commit trailers failure inherited from an already-merged dev commit. No conflict and no task file touched; this is the validated head.",
+        "sha": "cca84df537d274d8c71c4ac999eeb8907a3dd4cf",
+        "subject": "Merge remote-tracking branch 'origin/dev' into task/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001"
+      },
+      {
+        "delivery_state": "on_task_branch_pending_pr",
+        "note": "Fifth cut: the depth-8 escape in the RuntimeBinding evidence scan and the owner/duplicate conflation in the replica race test.",
+        "sha": "7537f2b4ca436d4e3a575e570a4288071eba531b",
+        "subject": "OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001: anchor depth and race fix"
+      }
+    ],
+    "pull_request": {
+      "base": "dev",
+      "head_sha": "a4f9083df372ba1a7660bdc7ab754743af6e9740",
+      "number": 4211,
+      "url": "https://github.com/ajoe734/pantheon/pull/4211"
+    },
+    "required_checks": [
+      {
+        "conclusion": "success",
+        "event": "pull_request",
+        "head_sha": "a4f9083df372ba1a7660bdc7ab754743af6e9740",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30225933588,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30225933588",
+        "workflow": "Branch CI Gate"
+      },
+      {
+        "conclusion": "success",
+        "event": "push",
+        "head_sha": "a4f9083df372ba1a7660bdc7ab754743af6e9740",
+        "jobs": {
+          "Commit trailers": "success",
+          "Runtime mirror guard": "success",
+          "Smoke acceptance": "success"
+        },
+        "run_id": 30225932068,
+        "url": "https://github.com/ajoe734/pantheon/actions/runs/30225932068",
+        "workflow": "Branch CI Gate"
+      }
+    ]
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum_coverage": [
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/current-runtime-readback.json",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/readback_probe.py"
+    ],
+    "companion_checksum_path": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/evidence.sha256",
+    "hosted_semantic_sha256": {},
+    "manifest_path": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/evidence.json",
+    "normalized_hosted_readback": {
+      "admitted_event_durable_after_sigkill": true,
+      "binding_spoof_refused": true,
+      "binding_spoof_refused_in_mixed_containers_at_depth_40": true,
+      "binding_spoof_refused_nested_past_old_depth_cap": true,
+      "clean_deeply_nested_metadata_admitted": true,
+      "concurrent_attempt_refused_without_receipt": true,
+      "durable_broker_is_file_backed": true,
+      "durable_ledger_committed_count": 3,
+      "durable_ledger_orphan_reservation_count": 0,
+      "event_id_conflict_refused": true,
+      "hosted_activation_claimed": false,
+      "missing_token_refused": true,
+      "readback_reexecuted_at_validated_head": true,
+      "restart_replay_deduplicated": true,
+      "retry_replay_deduplicated": true,
+      "stranded_reservation_recovered": true,
+      "valid_ingest_accepted": true,
+      "volatile_backend_admission_refused": true,
+      "volatile_backend_wrote_no_ledger_record": true,
+      "wrong_producer_refused": true,
+      "wrong_tenant_refused": true
+    },
+    "self_hash_omitted": true,
+    "self_hash_reason": "The companion checksum file contains the manifest digest and avoids recursive self-hashing.",
+    "source_artifact_sha256_by_epoch": {
+      "current_runtime_readback_2026_07_26_depth_and_race_repair": "93b4eb5b85e63f4349403c48f0e5f610153f913857c3823d58bc9f825be83828",
+      "implementation_files_at_validated_head": {
+        "files": {
+          "services/telemetry/auth.py": "05401dfafa4f933c8000e239ff663e28f69c2ebbf5bbb0328e46d0af0829e93f",
+          "services/telemetry/ingest_svc.py": "259cb601d19850a721edeeddfcc6747b4bd83896b3c056aa6805f40532044556",
+          "services/telemetry/main.py": "40f121c03786f40ee8985ddd13c18873291c97b65c1d755d2e57ffa7679b2d5d",
+          "services/telemetry/telemetry_event.schema.json": "5576f861a0aacbbb3e1057079f26e6b6d8e9e1c48a97c6897df791eb7008c04a",
+          "services/telemetry/test_infrastructure_health_ingest.py": "3ee524aa9779ab0213cc26c65236ccc8a1d89e201edca4aeb7cdb0b0e7fa2bb3"
+        },
+        "head_sha": "a4f9083df372ba1a7660bdc7ab754743af6e9740",
+        "note": "sha256 of each implementation file's content at the validated head. Reproduce with: git show <head>:<path> | sha256sum. The same five digests hold at anchor commit 7537f2b4ca436d4e3a575e570a4288071eba531b, which carries this cut's implementation change, and at the dev merge that became the validated head; the merge altered no implementation byte. The commits that carry this manifest land after the validated head and touch documentation and the task brief only, so re-running the five hashes at the final PR head must reproduce them exactly."
+      },
+      "readback_probe_2026_07_26_depth_and_race_repair": "c1d66830bd96c8a550d332e8c87c787c7bc59865072fe13c844eb24084c20c8f"
+    }
+  },
+  "record_log": [
+    {
+      "actor": "Claude",
+      "kind": "owner_evidence_ready",
+      "recorded_at": "2026-07-26T19:20:00Z",
+      "reference": "task/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001",
+      "sequence": 1,
+      "sha": "0b6ac76800514fd4a842cd34079f51e91622aabb",
+      "status": "pass"
+    },
+    {
+      "actor": "Antigravity",
+      "kind": "independent_review",
+      "recorded_at": "2026-07-26T19:26:46Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4211",
+      "sequence": 2,
+      "sha": "796c6e5e39c4651a4bb1dc384c78e00c4fd8175c",
+      "status": "changes_requested"
+    },
+    {
+      "actor": "Claude",
+      "kind": "owner_evidence_ready",
+      "recorded_at": "2026-07-26T19:41:00Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4211",
+      "sequence": 3,
+      "sha": "2f723037e10c9d4a4f290f3e4729d187f4aea5d8",
+      "status": "pass"
+    },
+    {
+      "actor": "Antigravity",
+      "kind": "independent_review",
+      "note": "The readback used a volatile memory buffer, so AC3 was not satisfied: the committed ledger receipt could outlive the only copy of the admitted event.",
+      "recorded_at": "2026-07-26T20:01:08Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4211",
+      "sequence": 4,
+      "sha": "0d0b015c9",
+      "status": "changes_requested"
+    },
+    {
+      "actor": "Claude",
+      "kind": "owner_evidence_ready",
+      "note": "Durability is now proven from the buffer itself before any reservation and again before the commit, with a real JetStream readback and a process/broker crash matrix.",
+      "recorded_at": "2026-07-26T20:40:00Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4211",
+      "sequence": 5,
+      "sha": "28b13a16d0af770f7825edf75014b4a2b8ae9b46",
+      "status": "pass"
+    },
+    {
+      "actor": "Supervisor",
+      "kind": "task_reassigned",
+      "note": "Canonical reviewer reassigned from Antigravity to Codex2 on the task row. Owner unchanged. The two Antigravity changes_requested decisions at sequences 2 and 4 stay as the historical review trail and are not restated under the new reviewer.",
+      "recorded_at": "2026-07-26T21:34:43Z",
+      "reference": "OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001",
+      "sequence": 6,
+      "status": "recorded"
+    },
+    {
+      "actor": "Claude",
+      "kind": "owner_evidence_ready",
+      "note": "Fourth cut. Task branch synced to dev 6578ef968f7e0374b046de0afb5b07ce2f81558e, clearing BEHIND and the Commit trailers failure that came from an already-merged dev commit. All three required checks green on the validated head. Focused and full telemetry validation rerun on that head, with the full telemetry suite now clean because the dev sync brought in the lineage test isolation fixture. Reviewer identity restated as Codex2. No implementation byte changed since head 28b13a16d. All three required checks are green on the validated head cca84df537d274d8c71c4ac999eeb8907a3dd4cf, on both the pull_request and push events, and are recorded in implementation_delivery.required_checks. The documentation-only commit that carries this manifest becomes the final PR head after it, and its own Branch CI Gate run cannot be named inside the manifest that commit creates; that run is the branch-protection merge gate and is visible on PR #4211. Because the commit changes no implementation file, the digests under integrity.source_artifact_sha256_by_epoch.implementation_files_at_validated_head are reproducible at the final head, which is what binds these check results to the head under review. The merged PR number, merge sha, and merge time are recorded in the post-merge closeout.",
+      "recorded_at": "2026-07-26T22:19:00Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4211",
+      "sequence": 7,
+      "sha": "cca84df537d274d8c71c4ac999eeb8907a3dd4cf",
+      "status": "pass"
+    },
+    {
+      "actor": "Codex2",
+      "kind": "independent_review",
+      "note": "Changes requested on the fourth cut at head cca84df537d274d8c71c4ac999eeb8907a3dd4cf. Blocker 1: a fresh focused run failed test_concurrent_replica_processes_admit_exactly_once with four committed outcomes, and ten isolated repeats failed twice; the helper conflated the one reservation owner that commits with callers that begin after the durable receipt and legitimately observe committed. Blocker 2: the schema, code comments, and README claimed RuntimeBinding evidence fields are rejected at any depth, but _forbidden_binding_fields silently stopped past depth 8 and a metadata binding_id nested at depth 10 passed. Independent checks that did pass: evidence schema validation, evidence.sha256, all five implementation hashes, PR CLEAN and required checks green.",
+      "recorded_at": "2026-07-26T23:10:00Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4211",
+      "sequence": 8,
+      "sha": "cca84df537d274d8c71c4ac999eeb8907a3dd4cf",
+      "status": "changes_requested"
+    },
+    {
+      "actor": "Claude",
+      "kind": "owner_evidence_ready",
+      "note": "Fifth cut. Both Codex2 blockers repaired in implementation. The RuntimeBinding evidence scan is now iterative with no depth ceiling and identity-based cycle protection, proven by five new scan tests, two new HTTP-level deep spoofs, a re-executed mutation control that reinstates the depth-8 cap and fails 5 tests, and two new runtime probes at depth 12 and depth 40. The replica race test now distinguishes the unique commit owner from post-receipt duplicates, binds the single committed ledger receipt to that owner's token, asserts one durable broker copy, and repeats the race over eight event IDs; a staged test covers the post-receipt interleaving deterministically because it is load-dependent and did not occur on the validation host. Stability: ten isolated repeats of the replica and crash-matrix classes and an eight-way concurrent run, 88 four-process races with no failure. The branch was BEHIND dev by 14 commits and was brought forward to 643181a067ec5c344faac0766c69de0d5cfb32eb before validation; all three required checks are green on the validated head a4f9083df372ba1a7660bdc7ab754743af6e9740 on both the pull_request and push events. Because ingest_svc.py changed, nothing is carried forward from an earlier head: the runtime readback and the three durability mutation controls were re-executed and each reproduced its recorded conclusion. The readback harness is now committed as readback_probe.py so the readback is reproducible. The documentation-only commit that carries this manifest becomes the final PR head after the validated head, and its own Branch CI Gate run cannot be named inside the manifest that commit creates; that run is the branch-protection merge gate and is visible on PR #4211. The merged PR number, merge sha, and merge time are recorded in the post-merge closeout.",
+      "recorded_at": "2026-07-27T00:05:00Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4211",
+      "sequence": 9,
+      "sha": "a4f9083df372ba1a7660bdc7ab754743af6e9740",
+      "status": "pass"
+    },
+    {
+      "actor": "Claude",
+      "kind": "evidence_correction",
+      "note": "Documentation correction to the fifth cut, no implementation or validation change. The README summary of blocker 1 said 'four new adversarial tests' while the Proof section of the same document correctly enumerates five scan tests plus two HTTP-level tests; the summary now says seven. The head-binding wording in the README, in integrity.source_artifact_sha256_by_epoch, and in the head-binding validation command is restated in the plural, because this correction is a second documentation commit after the validated head. The five implementation digests are unchanged and still reproduce at the final PR head. No test, command, conclusion, or readback observation changed.",
+      "recorded_at": "2026-07-27T00:15:00Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4211",
+      "sequence": 10,
+      "sha": "d21b8dafa9490c5c9e0d219663d3a2e4b5d05682",
+      "status": "pass"
+    }
+  ],
+  "residual_risks": {
+    "bff_client_adoption": {
+      "blocking_for_this_task": false,
+      "containment": "Until L12-BFF-001 adopts the contract, no producer is allowlisted and the route admits nothing, which is the fail-closed default.",
+      "description": "L12-BFF-001 still has to drop its out-of-scope telemetry edits and its shape-based binding bypass and become a strict-auth client of this contract.",
+      "expiry": "When L12-BFF-001 delivers its monitor against this route.",
+      "owner": "L12-BFF-001",
+      "recheck_trigger": "Before L12-BFF-001 acceptance.",
+      "severity": "medium"
+    },
+    "durable_backend_configuration": {
+      "blocking_for_this_task": false,
+      "containment": "This is the intended fail-closed behaviour and it is observable before any traffic: /healthz exposes infrastructure_health_buffer_durable, which is 0 for such a deployment. The deployed default backend is jetstream.",
+      "description": "A deployment that configures TELEMETRY_BUFFER_BACKEND=memory can no longer admit infrastructure health at all: the route answers 503 INFRA_BUFFER_NOT_DURABLE until a durable broker is configured behind it.",
+      "expiry": "Not applicable; this is a permanent contract of the route.",
+      "owner": "deployment manifest owner",
+      "recheck_trigger": "Before enabling infrastructure health in any root.",
+      "severity": "low"
+    },
+    "producer_credential_wiring": {
+      "blocking_for_this_task": false,
+      "containment": "PANTHEON_TELEMETRY_INFRA_PRODUCERS is empty by default and an unconfigured or wildcard allowlist is refused, so the channel stays closed until an operator admits an explicit producer.",
+      "description": "Issuing the infrastructure producer service JWT and setting the deployment allowlist is manifest and deployment work outside this telemetry scope.",
+      "expiry": "When the infrastructure producer credential is provisioned.",
+      "owner": "deployment manifest owner",
+      "recheck_trigger": "Before enabling infrastructure health in a deployed root.",
+      "severity": "medium"
+    },
+    "readback_canonical_write_sink": {
+      "blocking_for_this_task": false,
+      "containment": "The Postgres write path and its ON CONFLICT (event_id) idempotency are proven unchanged by L12-TEL-001 and by the telemetry suite; this task only changes what may be admitted into the buffer, and it admits strictly less than before.",
+      "description": "The bounded local readback ran without TELEMETRY_DB_DSN, so the canonical write sink behind the broker was the in-process dev sink and the batch interval was raised so the writer would not acknowledge inside the readback window. The durable receipt driving the commit phase was a real JetStream PubAck, but the canonical Postgres commit itself was not exercised here.",
+      "expiry": "When infrastructure health is exercised on a deployed root with TELEMETRY_DB_DSN set.",
+      "owner": "deployment manifest owner",
+      "recheck_trigger": "Before enabling infrastructure health in a deployed root.",
+      "severity": "low"
+    },
+    "reservation_lease_tuning": {
+      "blocking_for_this_task": false,
+      "containment": "The lease defaults to 30 seconds, far above the durable enqueue latency of the supported buffers, and a lease that is too short only causes retryable in-flight or fenced answers, never a false success or a lost event.",
+      "description": "TELEMETRY_INFRASTRUCTURE_HEALTH_LEASE_SECONDS must exceed the worst-case durable enqueue latency, and cross-host replicas sharing one ledger volume also share its wall-clock assumption.",
+      "expiry": "When telemetry replicas are deployed with a tuned lease.",
+      "owner": "deployment manifest owner",
+      "recheck_trigger": "Before scaling telemetry beyond one host.",
+      "severity": "low"
+    },
+    "shared_ledger_volume": {
+      "blocking_for_this_task": false,
+      "containment": "Cross-replica idempotency and crash recovery were proven over a shared storage path with real processes, and the canonical Postgres writer keeps ON CONFLICT (event_id) as the final idempotency authority when replicas do not share a volume.",
+      "description": "The durable admission ledger deduplicates across replicas only when they mount the same TELEMETRY_STORAGE_DIR or TELEMETRY_INFRASTRUCTURE_HEALTH_LEDGER path.",
+      "expiry": "When telemetry replicas are deployed with a documented shared volume.",
+      "owner": "deployment manifest owner",
+      "recheck_trigger": "Before scaling telemetry beyond one replica.",
+      "severity": "low"
+    }
+  },
+  "schema_status": {
+    "formal_schema_owner": "LOOP-PROD-002",
+    "formalization_trigger": "Owner evidence cut for the telemetry-side infrastructure health authority required by L12-BFF-001.",
+    "note": "Owner implementation and acceptance proof are complete for the fifth cut, which repairs both blockers from the Codex2 review of the fourth. No reviewer verdict is asserted; the formal Codex2 decision is still outstanding and AC6 remains pending_reviewer.",
+    "status": "formalized"
+  },
+  "schema_version": "loop_product_evidence.v1",
+  "scope": {
+    "authoritative_write_owner": "Telemetry service for the non-trading infrastructure health contract, its strict service-JWT admission authority, and its durable idempotent admission ledger",
+    "composes_with": [
+      "L12-BFF-001, which must drop its out-of-scope telemetry edits and its shape-based binding bypass and consume this contract as a strict-auth client",
+      "L12-EVO-001, which retains sole ownership of services/incidents",
+      "L12-TEL-001 durable telemetry ingest and tenant authority"
+    ],
+    "evidence_changed_files": [
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/current-runtime-readback.json",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/evidence.json",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/evidence.sha256",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/readback_probe.py"
+    ],
+    "implementation_changed_files": [
+      "services/telemetry/auth.py",
+      "services/telemetry/ingest_svc.py",
+      "services/telemetry/main.py",
+      "services/telemetry/telemetry_event.schema.json",
+      "services/telemetry/test_infrastructure_health_ingest.py"
+    ],
+    "not_changing": "services/incidents stays owned by L12-EVO-001 \u2014 telemetry never creates, mutates, or resolves an incident and only carries an optional incident_ref string; services/control-plane/bff stays owned by L12-BFF-001; and the trading telemetry evidence contract E-1 through E-6, its authoritative RuntimeBinding cross-validation, and the lineage write path are unchanged.",
+    "owned_layer": "The telemetry-side infrastructure health authority: the non-trading InfrastructureHealthEvent schema definition, the strict service-JWT tenant and producer authority in services/telemetry/auth.py, durable idempotent admission by stable event ID in services/telemetry/ingest_svc.py, and the POST /api/v1/telemetry/infrastructure-health route in services/telemetry/main.py"
+  },
+  "security_and_safety": {
+    "environment_boundary": {
+      "proof": "Only the task branch, focused service tests, and a bounded local nonprod readback on 127.0.0.1 were exercised. No hosted activation is claimed and no deployment was performed.",
+      "status": "pass"
+    },
+    "hosted_frontend": {
+      "status": "not_applicable"
+    },
+    "mfa": {
+      "proof": "This is a machine-to-machine service channel; no interactive operator authentication or MFA policy is changed.",
+      "status": "not_applicable"
+    },
+    "no_live_capital": {
+      "proof": "Infrastructure health telemetry carries no RuntimeBinding, no capital pool, and no order authority, and no live-capital path was enabled.",
+      "status": "pass"
+    },
+    "rbac": {
+      "proof": "The infrastructure health route requires the service role from a verified JWT; operator and admin roles are deliberately not accepted, and the existing trading routes keep their unchanged role sets.",
+      "status": "pass"
+    },
+    "tenant_isolation": {
+      "proof": "The admitted tenant is the authenticated tenant. It must be present in the service token's own claims \u2014 the deployment-wide PANTHEON_TELEMETRY_ALLOWED_TENANTS fallback and wildcard tenant claims are both refused here \u2014 and any payload tenant that differs is rejected.",
+      "status": "pass"
+    },
+    "two_person_approval": {
+      "proof": "Owner Claude and reviewer Codex2 are distinct. The reviewer was reassigned from Antigravity to Codex2 while this task was in progress; both reviewers are distinct from the owner, so two-person separation held across the reassignment. No reviewer verdict is asserted by this cut; the formal Codex2 decision must be appended to record_log before closeout.",
+      "status": "pass"
+    }
+  },
+  "task": {
+    "base_branch": "dev",
+    "evidence_cut_at": "2026-07-27T00:05:00Z",
+    "evidence_cut_semantics": "Fifth owner cut, over task head a4f9083df372ba1a7660bdc7ab754743af6e9740, which merges current dev 643181a067ec5c344faac0766c69de0d5cfb32eb into the task branch. It supersedes the fourth cut (head cca84df537d274d8c71c4ac999eeb8907a3dd4cf) and repairs the two blockers Codex2 raised against it. Blocker 1: the RuntimeBinding evidence scan claimed rejection at any depth but stopped past depth 8 and returned no findings, so a metadata binding_id nested at depth 10 was admitted; _forbidden_binding_fields is now an iterative traversal with no depth ceiling and identity-based cycle protection. Blocker 2: test_concurrent_replica_processes_admit_exactly_once asserted on the ledger word 'committed', which the ledger returns both to the one reservation owner and to a replica that legitimately began after the durable receipt existed, so the test failed under load on correct behaviour; the replica child now reports a structured role and the parent binds the single committed receipt to the single owner token, asserts one durable broker copy, and repeats the race over eight event IDs. The implementation change is carried by anchor commit 7537f2b4ca436d4e3a575e570a4288071eba531b, which touches services/telemetry/ingest_svc.py and services/telemetry/test_infrastructure_health_ingest.py only. PR #4211 was BEHIND dev again by 14 commits, so the branch was brought forward before anything was validated and every command in validation.commands ran at this head. Nothing is carried forward from an earlier head: because ingest_svc.py changed, the runtime readback and the three durability mutation controls were re-executed rather than reused. It asserts implementation and owner acceptance only; independent reviewer approval is not claimed.",
+    "id": "OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001",
+    "overall_admission": "pass_owner_evidence_ready",
+    "owner": "Claude",
+    "phase": "Twelve Loop Remediation / Telemetry",
+    "product_level_required": true,
+    "repository": "ajoe734/pantheon",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/evidence.json",
+    "reviewer": "Codex2",
+    "target_environment": "dev integration and bounded local nonprod telemetry",
+    "target_maturity": "reconciled",
+    "task_branch": "task/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001",
+    "title": "Add strict-auth infrastructure health telemetry authority"
+  },
+  "validation": {
+    "commands": [
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python -m pytest services/telemetry/test_infrastructure_health_ingest.py -q",
+        "conclusion": "52 passed in 30.10s. Eight tests are new in this cut. Five exercise the RuntimeBinding evidence scan directly: the field is found just past the old depth-8 cap, at 5000 levels of nesting where recursion could not reach at all, across mixed dict/list/tuple containers, and in a self-referential payload that must terminate without hiding a field, while a clean payload still reports clean. Two drive the same escape over the strict-auth HTTP route, one of them first asserting that the standalone schema accepts the payload so the test cannot pass for the wrong reason. The eighth stages a replica that begins after the durable receipt exists, which is the interleaving that made the old race assertion fail. The rest of the suite is unchanged: strict-auth route, replica concurrency, durability authority, and the process/broker crash matrix.",
+        "result": "pass"
+      },
+      {
+        "command": "10 isolated repeats: /home/lupin/pantheon/.venv/bin/python -m pytest services/telemetry/test_infrastructure_health_ingest.py::TestInfrastructureHealthReplicaAdmission services/telemetry/test_infrastructure_health_ingest.py::TestInfrastructureHealthCrashMatrix -q",
+        "conclusion": "16 passed on every one of the ten runs. This is the reviewer's own reproduction recipe: ten isolated repeats of the concurrency classes, which previously failed twice. Each run drives eight four-process races inside test_concurrent_replica_processes_admit_exactly_once plus the staged post-receipt test and the crash matrix.",
+        "result": "pass"
+      },
+      {
+        "command": "8 concurrent repeats: /home/lupin/pantheon/.venv/bin/python -m pytest services/telemetry/test_infrastructure_health_ingest.py::TestInfrastructureHealthReplicaAdmission -q, all launched at once to contend for CPU",
+        "conclusion": "11 passed in every one of the eight concurrent runs. The reviewer's failure was load-dependent \u2014 a replica scheduled late enough to see an already durable receipt \u2014 so the race is also run under deliberate contention rather than only on an idle host. Across the isolated and concurrent runs this cut exercises 88 four-process races with no failure.",
+        "result": "pass"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python -m pytest services/telemetry -q",
+        "conclusion": "348 passed, 1 skipped, 35 subtests passed in 127.25s, with no failures. The count rose from the fourth cut's 335 because this cut adds 8 tests and the dev merge brought in services/telemetry/test_discovery_imports.py from OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001. The telemetry suite carries no residual.",
+        "result": "pass"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python -m pytest tests/telemetry/test_ingest_load_10x.py services/control-plane/bff/test_p0_paper_operating_loop_smoke.py scripts/test_seed_tj_e2e_012_hosted_scenarios.py -q",
+        "conclusion": "11 passed and the same pre-existing failure the fourth cut recorded, in test_p0_paper_operating_loop_smoke.py::MinimumPaperOperatingLoopSmokeTest::test_deployment_plan_to_runtime_binding_to_bff_runtime_status. The assertion that trips is a null paper_state.last_heartbeat_at, caused by PermissionError: [Errno 13] Permission denied: '/data' while the paper runtime lifecycle outbox tries to create /data/runtime/lifecycle-outbox. That path is an unwritable host directory on this machine, is not created or consulted by telemetry admission, and no frame of the failure touches this task's files.",
+        "result": "pass_with_nonblocking_baseline_residual"
+      },
+      {
+        "command": "/home/lupin/pantheon/.venv/bin/python docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/readback_probe.py --nats-url nats://127.0.0.1:14222 --out docs/deployment/evidence/twelve-loop-gap/OPS-L12-BFF-INFRA-TELEMETRY-AUTHORITY-001/current-runtime-readback.json",
+        "conclusion": "Re-executed at this cut's implementation bytes rather than carried forward, because ingest_svc.py changed. Recorded in current-runtime-readback.json. The durable deployment admitted once, deduplicated the retry, refused the spoofed binding_id at the top level and at depths 12 and 40, still admitted clean metadata nested 40 levels deep, refused a live stranded reservation and admitted it after the lease expired, survived SIGKILL with the admitted event still in the JetStream stream, and answered the post-restart replay as a duplicate. The volatile deployment refused every admission with 503 INFRA_BUFFER_NOT_DURABLE and wrote zero ledger records. The harness is committed as readback_probe.py so a reviewer can rerun it.",
+        "result": "pass"
+      },
+      {
+        "command": "Mutation control: the depth-8 cap reinstated in _forbidden_binding_fields exactly as the fourth cut had it, re-running the focused suite",
+        "conclusion": "5 tests failed: both HTTP-level deep spoofs (test_binding_evidence_nested_past_the_old_depth_cap_is_rejected and test_binding_evidence_deep_inside_lists_is_rejected) and three of the direct scan tests, including the 5000-level one that recursion cannot reach at all. This is the reviewed defect in its most direct form, and the suite returned to green after restoring the implementation.",
+        "result": "pass"
+      },
+      {
+        "command": "Mutation control: the replica child reports a post-receipt duplicate as the commit owner \u2014 the conflation the reviewer found \u2014 re-running the focused suite",
+        "conclusion": "test_replica_that_begins_after_the_receipt_is_a_duplicate_not_an_owner failed and the rest stayed green, so the new classification is what the test keys on rather than the ledger word. A second control that lets a losing replica enqueue its own durable copy fails the same test, so the one-durable-admission assertion is load-bearing too.",
+        "result": "pass"
+      },
+      {
+        "command": "Mutation control: the buffer durability gate short-circuited to accept any backend, re-running the focused suite",
+        "conclusion": "Re-executed at this cut's head rather than carried forward. 5 of the 6 durability-authority tests failed, including test_volatile_buffer_fails_closed_before_any_reservation and test_strict_auth_route_answers_503_when_no_durable_broker_is_configured \u2014 the same conclusion the fourth cut recorded. The suite returned to green after restoring the implementation.",
+        "result": "pass"
+      },
+      {
+        "command": "Mutation control: the pre-commit durability re-check removed, re-running the focused suite",
+        "conclusion": "Re-executed at this cut's head. test_admission_is_refused_when_durability_is_lost_before_the_commit failed and the rest stayed green, so the second gate is still load-bearing on its own.",
+        "result": "pass"
+      },
+      {
+        "command": "Mutation control: the ledger committed immediately after the reservation instead of after the durable enqueue, re-running the focused suite",
+        "conclusion": "Re-executed at this cut's head. 8 tests failed, including all three crash-window tests, matching the fourth cut's recorded conclusion exactly.",
+        "result": "pass"
+      },
+      {
+        "command": "Head binding: git show <path> at a4f9083df372ba1a7660bdc7ab754743af6e9740 | sha256sum for every entry in scope.implementation_changed_files",
+        "conclusion": "The five digests are recorded under integrity.source_artifact_sha256_by_epoch.implementation_files_at_validated_head. They are identical at anchor commit 7537f2b4ca436d4e3a575e570a4288071eba531b, which carries this cut's implementation change, and at the validated head, because the dev merge altered no implementation byte. The commits after the validated head are this evidence cut and one documentation correction to it, both touching documentation and the task brief only, so re-running the same five hashes at the final PR head must reproduce these digests exactly.",
+        "result": "pass"
+      }
+    ],
+    "validated_at": "2026-07-27T00:05:00Z",
+    "validated_base_sha": "643181a067ec5c344faac0766c69de0d5cfb32eb",
+    "validated_head_sha": "a4f9083df372ba1a7660bdc7ab754743af6e9740"
+  }
+}
