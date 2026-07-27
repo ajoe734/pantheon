@@ -164,11 +164,16 @@
         "command": "jsonschema.validate(evidence.json, schemas/product-evidence.schema.json) && sha256sum -c evidence.sha256",
         "conclusion": "ProductEvidenceManifest schema and companion checksums pass.",
         "result": "pass"
+      },
+      {
+        "command": "Human/Ops compose revalidation after merging origin/dev 5a2fc69a3b432e0d1bc528981d66a2ee32defa71: scripts/git/check_commit_trailers.py --range origin/dev..HEAD --skip-merge; git diff --check; /home/lupin/pantheon/.venv/bin/python -m pytest services/control-plane/governance/test_evolution_decision.py services/control-plane/governance/test_evolution_controller.py services/control-plane/governance/test_evolution_dispatcher_invariants.py services/evolution/test_l12_evo_001_downstream_integration.py services/evolution/test_l12_evo_001_process_recovery.py services/evolution/test_worker_health.py services/evolution/test_dispatch_worker.py",
+        "conclusion": "Commit trailer gate and diff whitespace passed; 87 focused evolution/governance tests passed with one FastAPI/Starlette deprecation warning.",
+        "result": "pass"
       }
     ],
-    "validated_at": "2026-07-27T18:37:09Z",
-    "validated_base_sha": "a6966b13d84430387da9c3a33fcf224c841bc5c6",
-    "validated_head_sha": "fdcb121bdb50e8f53e9062dbe73bf096300b68fb"
+    "validated_at": "2026-07-27T19:06:26Z",
+    "validated_base_sha": "5a2fc69a3b432e0d1bc528981d66a2ee32defa71",
+    "validated_head_sha": "92cb3800065b04eeb5f8fed00e9055490a664097"
   },
   "deployment": {
     "applicable": false,
@@ -392,6 +397,15 @@
       "reference": "9f892149b3f8708cef695f3b7d7808d0c3e8be25",
       "sequence": 2,
       "sha": "9f892149b3f8708cef695f3b7d7808d0c3e8be25",
+      "status": "ready_for_independent_review"
+    },
+    {
+      "actor": "Human/Ops",
+      "kind": "post_dev_compose_revalidation",
+      "recorded_at": "2026-07-27T19:06:26Z",
+      "reference": "92cb3800065b04eeb5f8fed00e9055490a664097",
+      "sequence": 3,
+      "sha": "92cb3800065b04eeb5f8fed00e9055490a664097",
       "status": "ready_for_independent_review"
     }
   ]
