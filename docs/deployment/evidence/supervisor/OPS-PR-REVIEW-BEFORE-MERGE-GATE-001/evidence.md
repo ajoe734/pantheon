@@ -18,9 +18,9 @@ and composed authoritative base `6692d51c9bc5a48ffcbaac8cf817b635351a7c9a`.
 The next exact-head review rejected `dcd4b9ccf80d520c6d95cb84e5e4a83091c71dc3`
 because the integrator trusted a zero `--disable-auto` exit without reading
 live `autoMergeRequest` back. Codex added that mandatory readback, composed
-current authoritative base `125cf21c21d1570eba59904d809f774131f33d9e`, and
+current authoritative base `33e1c4d64e4accceab4d803e7b4ce2324f44306a`, and
 revalidated implementation tree
-`49e07cf7bc1a53d16ba3d6c32d95392ace13a95b` before this evidence-only refresh.
+`ca74166d2e1ff27097995bb07bf4e817041dc22d` before this evidence-only refresh.
 That final implementation pass also normalizes the gate/integrator regression
 imports to one module identity so package-mode pytest and direct script
 execution exercise the same `CommandFailure` class.
@@ -377,8 +377,8 @@ The full map of PR → entry point → fixture is the `live_regressions` table i
 See `validation.txt` for the captured transcript.
 
 This pass ran against authoritative `origin/dev`
-`125cf21c21d1570eba59904d809f774131f33d9e` and validated tree
-`49e07cf7bc1a53d16ba3d6c32d95392ace13a95b`.
+`33e1c4d64e4accceab4d803e7b4ce2324f44306a` and validated tree
+`ca74166d2e1ff27097995bb07bf4e817041dc22d`.
 
 ```
 .venv-pantheon/bin/python3 scripts/git/test_task_review_merge_gate.py
@@ -394,11 +394,12 @@ This pass ran against authoritative `origin/dev`
 .venv-pantheon/bin/python3 scripts/git/test_index_safety.py
                                                        Ran  17 tests - OK
 .venv-pantheon/bin/python3 scripts/test_ai_status.py   Ran 141 tests - OK
-bash -n scripts/git/task_finalize.sh scripts/git/safe_pr.sh   syntax ok
+bash -n task_finalize.sh safe_pr.sh nightly_publish.sh        syntax ok
 py_compile task_review_merge_gate.py auto_integrator.py ai_status.py
                                                         compile ok
 git diff --check origin/dev...HEAD                         clean
 pytest combined focused matrix                              332 passed, 31 subtests
+pytest post-dev-compose matrix                              341 passed, 45 subtests
 check_commit_trailers origin/dev..HEAD --skip-merge         ok
 ```
 

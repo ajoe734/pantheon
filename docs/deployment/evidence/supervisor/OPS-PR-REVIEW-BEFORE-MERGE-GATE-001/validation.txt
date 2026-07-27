@@ -8,10 +8,10 @@ unreadable or still-armed result; a nonzero command may continue only when the
 readback proves another actor already turned the request off.
 
 The task branch contains authoritative origin/dev
-125cf21c21d1570eba59904d809f774131f33d9e, fetched through the explicit
+33e1c4d64e4accceab4d803e7b4ce2324f44306a, fetched through the explicit
 remote-tracking refspec and composed by
-bee9830dc9bb6365c0cce0bd33f082e41ab07b24. The validated implementation tree
-is 49e07cf7bc1a53d16ba3d6c32d95392ace13a95b; the following task commit changes
+ca74166d2e1ff27097995bb07bf4e817041dc22d. The validated implementation tree
+is ca74166d2e1ff27097995bb07bf4e817041dc22d; the following task commit changes
 task-scoped evidence only. The final implementation pass also normalizes the
 gate/integrator regression imports to one `scripts.git.auto_integrator` module
 identity, so package-mode pytest and direct script execution exercise the same
@@ -64,7 +64,10 @@ OK
 == /home/lupin/pantheon/.venv/bin/python -m pytest scripts/git/test_task_review_merge_gate.py scripts/git/test_auto_integrator.py scripts/git/test_git_workflow_helpers.py scripts/git/test_task_pr_triage.py scripts/git/test_index_safety.py scripts/test_ai_status.py scripts/git/test_task_git_helpers_refspec.py -q
 332 passed, 31 subtests passed in 50.32s
 
-== bash -n helpers
+== /home/lupin/pantheon/.venv/bin/python -m pytest scripts/git/test_task_review_merge_gate.py scripts/git/test_auto_integrator.py scripts/git/test_git_workflow_helpers.py scripts/git/test_task_pr_triage.py scripts/git/test_index_safety.py scripts/test_ai_status.py scripts/git/test_task_git_helpers_refspec.py scripts/test_status_command_runtime_pin.py scripts/test_nightly_publish_cut.py -q
+341 passed, 45 subtests passed in 64.70s
+
+== bash -n scripts/git/task_finalize.sh scripts/git/safe_pr.sh scripts/git/nightly_publish.sh
 syntax ok
 
 == py_compile
