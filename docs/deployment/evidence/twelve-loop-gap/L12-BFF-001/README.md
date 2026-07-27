@@ -23,7 +23,7 @@ requires `approval_ref` plus `reason`; the actor and replay result are persisted
 
 ## Verified
 
-On branch head `bfc80889af58234edfab19679f5b094ffeea3f86`, based on dev
+On implementation head `f2be990d53f041cb52d6eadf4832b8873baab6b0`, based on dev
 `b81edf76dfc14087dd7d5e3a6599448cb9d0bb09`:
 
 ```text
@@ -33,7 +33,7 @@ On branch head `bfc80889af58234edfab19679f5b094ffeea3f86`, based on dev
   services/telemetry/test_infrastructure_health_ingest.py \
   services/incidents/test_main_routes.py
 
-166 passed, 29 warnings
+167 passed, 29 warnings
 ```
 
 The tests include a monitor-built event admitted through the real strict
@@ -41,7 +41,10 @@ telemetry HTTP route and durable admission ledger, two monitor replicas sharing
 one state store, restart readback, stable event ID dedupe, error-rate emission,
 MFA/approval-bound DLQ replay, a real local HTTP target stop/restart probe, and
 the incidents-owned non-trading `POST /api/incidents/consume-infrastructure-health`
-route.
+route. The post-review repair also proves incident authority HTTP 409 is not
+treated as an idempotent success, leaves conflicting delivery intent visible in
+DLQ, and bounds retained durable history with trigger-maintained delivery
+status counters so health reads do not scale with outbox history.
 
 ## Incident authority composition
 

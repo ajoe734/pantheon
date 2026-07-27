@@ -16,11 +16,11 @@
   },
   "task": {
     "base_branch": "dev",
-    "evidence_cut_at": "2026-07-27T20:14:00Z",
-    "evidence_cut_semantics": "BFF-owned implementation, focused integration validation, and the services/incidents non-trading infrastructure-health consume authority are complete on this PR branch after composing current origin/dev. The BFF payload still contains no caller-supplied RuntimeBinding fields; the incident authority maps infrastructure subject evidence internally and exact replay is idempotent. Hosted stop/recovery verification and independent reviewer approval are not claimed.",
+    "evidence_cut_at": "2026-07-27T20:17:00Z",
+    "evidence_cut_semantics": "BFF-owned implementation, focused integration validation, and the services/incidents non-trading infrastructure-health consume authority are complete on this PR branch after composing current origin/dev and applying the Claude review repair. The BFF payload still contains no caller-supplied RuntimeBinding fields; the incident authority maps infrastructure subject evidence internally and exact replay is idempotent. Incident authority HTTP 409 is no longer treated as successful delivery, and durable health history is bounded with trigger-maintained status counters. Hosted stop/recovery verification and independent reviewer approval are not claimed.",
     "id": "L12-BFF-001",
     "overall_admission": "implementation_ready",
-    "owner": "Codex2",
+    "owner": "Claude2",
     "phase": "Twelve Loop Remediation / BFF",
     "product_level_required": true,
     "repository": "ajoe734/pantheon",
@@ -80,7 +80,7 @@
       },
       {
         "delivery_state": "current_branch",
-        "note": "Recorded the canonical Codex2 owner and Claude reviewer boundary without changing telemetry or incidents ownership.",
+        "note": "Recorded the canonical Claude2 owner and Claude reviewer boundary without changing telemetry or incidents ownership.",
         "sha": "2ebe541cb8a3863c698eaf3bc312746c95949635",
         "subject": "L12-BFF-001: anchor canonical reassignment"
       },
@@ -105,7 +105,7 @@
     ],
     "pull_request": {
       "base": "dev",
-      "head_sha": "bfc80889af58234edfab19679f5b094ffeea3f86",
+      "head_sha": "f2be990d53f041cb52d6eadf4832b8873baab6b0",
       "number": 4274,
       "url": "https://github.com/ajoe734/pantheon/pull/4274"
     },
@@ -120,7 +120,7 @@
       },
       {
         "command": "/home/lupin/pantheon/.venv/bin/python -m pytest -q services/control-plane/bff/test_bff_downstream_health_monitor.py services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py services/telemetry/test_infrastructure_health_ingest.py services/incidents/test_main_routes.py",
-        "conclusion": "166 passed with 29 unchanged FastAPI on_event, Starlette TestClient, and jsonschema RefResolver deprecation warnings.",
+        "conclusion": "167 passed with 29 unchanged FastAPI on_event, Starlette TestClient, and jsonschema RefResolver deprecation warnings.",
         "result": "pass"
       },
       {
@@ -139,9 +139,9 @@
         "result": "pass"
       }
     ],
-    "validated_at": "2026-07-27T20:14:00Z",
+    "validated_at": "2026-07-27T20:17:00Z",
     "validated_base_sha": "b81edf76dfc14087dd7d5e3a6599448cb9d0bb09",
-    "validated_head_sha": "bfc80889af58234edfab19679f5b094ffeea3f86"
+    "validated_head_sha": "f2be990d53f041cb52d6eadf4832b8873baab6b0"
   },
   "deployment": {
     "applicable": false,
@@ -180,7 +180,7 @@
     "failure_and_degraded_behavior": {
       "proof": [
         "HTTP 503 and network failures retry with the identical body and event ID; bounded attempts transition to DLQ.",
-        "A telemetry 409 denotes a producer payload conflict and enters DLQ rather than being reported as success.",
+        "Telemetry and incident authority 409 responses denote identity or concurrency conflicts and enter DLQ rather than being reported as successful idempotent delivery.",
         "Missing service identity fails closed and probe/delivery failures do not propagate into active BFF request handlers."
       ],
       "status": "pass"
@@ -203,6 +203,8 @@
     "rollback_or_compensation": {
       "proof": [
         "The initializer preserves a pre-L12 delivery_outbox as a legacy table and migrates its pending, delivered, and DLQ receipts instead of deleting runtime state.",
+        "Delivered outbox history, completed probe windows, stale error windows, and replay audit records are pruned by bounded retention while retry/DLQ intent is retained.",
+        "Delivery status counters are trigger-maintained so GET /bff/v5/downstream-health reads summary rows instead of grouping over the full outbox history.",
         "Exact DLQ replay is operator-only, MFA-bound, approval-referenced, reason-bound, and durably audited.",
         "The controller grants no broker, order, allocation, runtime-control, or live-capital authority."
       ],
@@ -235,7 +237,7 @@
       "status": "pass"
     },
     "two_person_approval": {
-      "proof": "Owner Codex2 and reviewer Claude are distinct. Independent approval is pending and is not asserted in this evidence cut.",
+      "proof": "Owner Claude2 and reviewer Claude are distinct. Independent approval is pending and is not asserted in this evidence cut.",
       "status": "pending"
     }
   },
@@ -333,9 +335,9 @@
     "self_hash_reason": "The companion checksum file contains the manifest digest and avoids recursive self-hashing.",
     "source_artifact_sha256_by_epoch": {
       "validated_2026_07_27": {
-        "services/control-plane/bff/downstream_health_monitor.py": "68064c25a92426b41258907502ba0fe33b38f5cabdd5fd4b87a222bc63f1b965",
+        "services/control-plane/bff/downstream_health_monitor.py": "e66b67e9ff1976af3591b07eb1167d531f3edeac95b0024b5c41fcb22147b045",
         "services/control-plane/bff/main.py": "2aa2a8b6518f3e1b1b054f6c4742ac46802b145461a23e6e8454aac38e4fc958",
-        "services/control-plane/bff/test_bff_downstream_health_monitor.py": "f7ba11ba7271142c4bd14f772edb211feca0d0e8891014cbb1146164f50a5b48",
+        "services/control-plane/bff/test_bff_downstream_health_monitor.py": "9852f7df56d184435b35d8357dca8a54ff06589b027014e292a35c12559d3ab7",
         "services/control-plane/bff/test_bff_v5_loop_sentinel_contract.py": "25390e93cf05c11e5cf0111c84daf28ab3328b5fa614709e53b13ebb644a1381",
         "services/incidents/consumer.py": "01aa9e8eb04895bb289419b3b1c548b010e79de23e3f0b02643c06f317ca70d7",
         "services/incidents/main.py": "ae230e131355f74eb41427d39a8eb3e2fbee199d06ed86b111dbe7cd59005a1d",
@@ -378,6 +380,15 @@
       "reference": "https://github.com/ajoe734/pantheon/pull/4274",
       "sequence": 4,
       "sha": "bfc80889af58234edfab19679f5b094ffeea3f86",
+      "status": "implementation_ready_pending_review"
+    },
+    {
+      "actor": "Claude2",
+      "kind": "claude_review_repair_ready",
+      "recorded_at": "2026-07-27T20:17:00Z",
+      "reference": "https://github.com/ajoe734/pantheon/pull/4274",
+      "sequence": 5,
+      "sha": "f2be990d53f041cb52d6eadf4832b8873baab6b0",
       "status": "implementation_ready_pending_review"
     }
   ]
