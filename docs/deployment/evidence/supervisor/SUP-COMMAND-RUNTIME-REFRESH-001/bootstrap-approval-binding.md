@@ -42,17 +42,22 @@ dispatch changes. It composes with the separately reviewed
 
 | Command | Result |
 |---|---|
-| `python3 scripts/test_ai_status.py` | 141 tests, OK |
-| `python3 -m unittest scripts.test_ai_status.ReviewApprovedWorkflowTests` | 29 tests, OK |
-| `python3 scripts/test_status_command_runtime_pin.py` | 7 tests, OK |
-| `python3 -m py_compile scripts/ai_status.py scripts/test_ai_status.py scripts/test_status_command_runtime_pin.py` | OK |
-| `git diff --check` | clean |
+| `REVIEW_PR=9999 REVIEW_HEAD_SHA=<40-b> REVIEW_BASE=inherited REVIEW_HEAD_BRANCH=task/inherited .venv-pantheon/bin/python3 scripts/test_ai_status.py` | 142 tests, OK |
+| `.venv-pantheon/bin/python3 -m unittest scripts.test_ai_status.ReviewApprovedWorkflowTests` | 30 tests, OK |
+| `.venv-pantheon/bin/python3 scripts/test_status_command_runtime_pin.py` | 7 tests, OK |
+| `.venv-pantheon/bin/python3 -m py_compile scripts/ai_status.py scripts/test_ai_status.py scripts/test_status_command_runtime_pin.py` | OK |
+| `git diff --check origin/dev...HEAD` | clean, exit 0 |
 
 The runtime-pin suite initially exposed three fixture failures because the
 background worker's live `PANTHEON_TASK_STATE_STORE_MODE` and
 `PANTHEON_TASK_STATE_EVENT_LOG` leaked into its synthetic command root.
 Removing those inherited variables from the fixture environment made the
 normal, unmodified auto-worker invocation pass 7/7.
+
+The approval workflow fixture now also removes inherited `REVIEW_PR`,
+`REVIEW_HEAD_SHA`, `REVIEW_BASE`, and `REVIEW_HEAD_BRANCH` inputs. The
+142-test run above deliberately supplied all four variables and proved that
+the no-binding approval case remains unbound.
 
 ## Live intermediate state
 
